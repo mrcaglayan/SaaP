@@ -18020,15 +18020,118 @@
         "tags": [
           "Payments"
         ],
-        "operationId": "getApiV1PaymentsBatches",
-        "summary": "Auto-generated: GET /api/v1/payments/batches",
+        "operationId": "listPaymentBatches",
+        "summary": "List payment batches",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "bankAccountId",
+            "required": false,
+            "description": "Bank account identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Payment batch status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRAFT",
+                "APPROVED",
+                "EXPORTED",
+                "POSTED",
+                "FAILED",
+                "CANCELLED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceType",
+            "required": false,
+            "description": "Source module filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PAYROLL",
+                "AP",
+                "TAX",
+                "MANUAL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "description": "Source record identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Case-insensitive batch/bank search text",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Maximum rows to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Row offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payment batch list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PaymentBatchListResponse"
                 }
               }
             }
@@ -18048,15 +18151,25 @@
         "tags": [
           "Payments"
         ],
-        "operationId": "postApiV1PaymentsBatches",
-        "summary": "Auto-generated: POST /api/v1/payments/batches",
+        "operationId": "createPaymentBatch",
+        "summary": "Create payment batch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentBatchCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Payment batch created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PaymentBatchEnvelopeResponse"
                 }
               }
             }
@@ -18069,16 +18182,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -18088,15 +18191,37 @@
         "tags": [
           "Payments"
         ],
-        "operationId": "getApiV1PaymentsBatchesBatchid",
-        "summary": "Auto-generated: GET /api/v1/payments/batches/{batchId}",
+        "operationId": "getPaymentBatch",
+        "summary": "Get payment batch detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batchId",
+            "required": true,
+            "description": "Payment batch identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payment batch detail",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PaymentBatchEnvelopeResponse"
                 }
               }
             }
@@ -18110,19 +18235,7 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "batchId",
-            "required": true,
-            "description": "batchId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
+        }
       }
     },
     "/api/v1/payments/batches/{batchId}/approve": {
@@ -18130,35 +18243,14 @@
         "tags": [
           "Payments"
         ],
-        "operationId": "postApiV1PaymentsBatchesBatchidApprove",
-        "summary": "Auto-generated: POST /api/v1/payments/batches/{batchId}/approve",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
+        "operationId": "approvePaymentBatch",
+        "summary": "Approve payment batch",
         "parameters": [
           {
             "in": "path",
             "name": "batchId",
             "required": true,
-            "description": "batchId identifier",
+            "description": "Payment batch identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -18170,9 +18262,30 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/PayrollBuildLiabilitiesRequest"
               }
             }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment batch approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentBatchEnvelopeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
           }
         }
       }
@@ -18182,15 +18295,37 @@
         "tags": [
           "Payments"
         ],
-        "operationId": "postApiV1PaymentsBatchesBatchidCancel",
-        "summary": "Auto-generated: POST /api/v1/payments/batches/{batchId}/cancel",
+        "operationId": "cancelPaymentBatch",
+        "summary": "Cancel payment batch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batchId",
+            "required": true,
+            "description": "Payment batch identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentBatchCancelRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payment batch cancelled",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PaymentBatchEnvelopeResponse"
                 }
               }
             }
@@ -18203,28 +18338,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "batchId",
-            "required": true,
-            "description": "batchId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -18234,15 +18347,37 @@
         "tags": [
           "Payments"
         ],
-        "operationId": "postApiV1PaymentsBatchesBatchidExport",
-        "summary": "Auto-generated: POST /api/v1/payments/batches/{batchId}/export",
+        "operationId": "exportPaymentBatch",
+        "summary": "Export payment batch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batchId",
+            "required": true,
+            "description": "Payment batch identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentBatchExportRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payment batch exported",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PaymentBatchExportResponse"
                 }
               }
             }
@@ -18255,28 +18390,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "batchId",
-            "required": true,
-            "description": "batchId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -18286,15 +18399,37 @@
         "tags": [
           "Payments"
         ],
-        "operationId": "postApiV1PaymentsBatchesBatchidPost",
-        "summary": "Auto-generated: POST /api/v1/payments/batches/{batchId}/post",
+        "operationId": "postPaymentBatch",
+        "summary": "Post payment batch settlement",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batchId",
+            "required": true,
+            "description": "Payment batch identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentBatchPostRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payment batch posted",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PaymentBatchEnvelopeResponse"
                 }
               }
             }
@@ -18307,28 +18442,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "batchId",
-            "required": true,
-            "description": "batchId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -18886,15 +18999,155 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "getApiV1PayrollLiabilities",
-        "summary": "Auto-generated: GET /api/v1/payroll/liabilities",
+        "operationId": "listPayrollLiabilities",
+        "summary": "List payroll liabilities",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "runId",
+            "required": false,
+            "description": "Payroll run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Liability status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "IN_BATCH",
+                "PARTIALLY_PAID",
+                "PAID",
+                "CANCELLED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "liabilityType",
+            "required": false,
+            "description": "Liability type filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NET_PAY",
+                "EMPLOYEE_TAX",
+                "EMPLOYEE_SOCIAL_SECURITY",
+                "EMPLOYER_TAX",
+                "EMPLOYER_SOCIAL_SECURITY",
+                "OTHER_DEDUCTIONS"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "ownershipScope",
+            "required": false,
+            "description": "Owner context scope filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CENTRAL",
+                "OPERATING_UNIT"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Owner context operating unit identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "description": "Liability scope filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NET_PAY",
+                "STATUTORY",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Case-insensitive liability search text",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "description": "Opaque pagination cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Maximum rows to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Offset when cursor is not used",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll liability list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollLiabilityListResponse"
                 }
               }
             }
@@ -18958,55 +19211,37 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "getApiV1PayrollLiabilitiesLiabilityidManualSettlementRequests",
-        "summary": "Auto-generated: GET /api/v1/payroll/liabilities/{liabilityId}/manual-settlement-requests",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
+        "operationId": "listPayrollManualSettlementRequests",
+        "summary": "List payroll manual settlement requests",
         "parameters": [
           {
             "in": "path",
             "name": "liabilityId",
             "required": true,
-            "description": "liabilityId identifier",
+            "description": "Payroll liability identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
             "schema": {
               "type": "integer",
               "minimum": 1
             }
           }
-        ]
-      },
-      "post": {
-        "tags": [
-          "Payroll"
         ],
-        "operationId": "postApiV1PayrollLiabilitiesLiabilityidManualSettlementRequests",
-        "summary": "Auto-generated: POST /api/v1/payroll/liabilities/{liabilityId}/manual-settlement-requests",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll manual settlement requests",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollManualSettlementListResponse"
                 }
               }
             }
@@ -19020,13 +19255,20 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
+        }
+      },
+      "post": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "createPayrollManualSettlementRequest",
+        "summary": "Create payroll manual settlement request",
         "parameters": [
           {
             "in": "path",
             "name": "liabilityId",
             "required": true,
-            "description": "liabilityId identifier",
+            "description": "Payroll liability identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -19034,13 +19276,34 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/PayrollManualSettlementCreateRequest"
               }
             }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payroll manual settlement request created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollManualSettlementCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
           }
         }
       }
@@ -19050,15 +19313,37 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "postApiV1PayrollManualSettlementRequestsRequestidApproveApply",
-        "summary": "Auto-generated: POST /api/v1/payroll/manual-settlement-requests/{requestId}/approve-apply",
+        "operationId": "approveApplyPayrollManualSettlementRequest",
+        "summary": "Approve and apply payroll manual settlement request",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "description": "Manual settlement request identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollManualSettlementDecisionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll manual settlement request approved/applied",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollManualSettlementApproveResponse"
                 }
               }
             }
@@ -19071,28 +19356,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "requestId",
-            "required": true,
-            "description": "requestId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -19102,15 +19365,37 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "postApiV1PayrollManualSettlementRequestsRequestidReject",
-        "summary": "Auto-generated: POST /api/v1/payroll/manual-settlement-requests/{requestId}/reject",
+        "operationId": "rejectPayrollManualSettlementRequest",
+        "summary": "Reject payroll manual settlement request",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "description": "Manual settlement request identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollManualSettlementDecisionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll manual settlement request rejected",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollManualSettlementRejectResponse"
                 }
               }
             }
@@ -19123,28 +19408,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "requestId",
-            "required": true,
-            "description": "requestId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -19267,6 +19530,301 @@
                 "$ref": "#/components/schemas/AnyObject"
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/ownership/assignments": {
+      "get": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "listPayrollOwnershipAssignments",
+        "summary": "List payroll ownership assignments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "employeeCode",
+            "required": false,
+            "description": "Normalized employee code",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Operating unit identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Assignment status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ACTIVE",
+                "INACTIVE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Case-insensitive assignment search text",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Maximum rows to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Row offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payroll ownership assignments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollOwnershipAssignmentListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "createPayrollOwnershipAssignment",
+        "summary": "Create payroll ownership assignment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollOwnershipAssignmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payroll ownership assignment created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollOwnershipAssignmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/ownership/assignments/{assignmentId}": {
+      "get": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "getPayrollOwnershipAssignment",
+        "summary": "Get payroll ownership assignment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignmentId",
+            "required": true,
+            "description": "Payroll ownership assignment identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payroll ownership assignment detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollOwnershipAssignmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "updatePayrollOwnershipAssignment",
+        "summary": "Update payroll ownership assignment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignmentId",
+            "required": true,
+            "description": "Payroll ownership assignment identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollOwnershipAssignmentPatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payroll ownership assignment updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollOwnershipAssignmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/ownership/assignments/{assignmentId}/deactivate": {
+      "post": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "deactivatePayrollOwnershipAssignment",
+        "summary": "Deactivate payroll ownership assignment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignmentId",
+            "required": true,
+            "description": "Payroll ownership assignment identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payroll ownership assignment deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollOwnershipAssignmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
           }
         }
       }
@@ -19694,15 +20252,109 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "getApiV1PayrollRuns",
-        "summary": "Auto-generated: GET /api/v1/payroll/runs",
+        "operationId": "listPayrollRuns",
+        "summary": "List payroll runs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "entityCode",
+            "required": false,
+            "description": "Imported payroll entity code",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "providerCode",
+            "required": false,
+            "description": "Payroll provider code",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "payrollPeriod",
+            "required": false,
+            "description": "Payroll period",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Payroll run status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRAFT",
+                "IMPORTED",
+                "REVIEWED",
+                "FINALIZED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Case-insensitive payroll run search text",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Maximum rows to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Row offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll run list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollRunListResponse"
                 }
               }
             }
@@ -19724,15 +20376,25 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "postApiV1PayrollRunsImport",
-        "summary": "Auto-generated: POST /api/v1/payroll/runs/import",
+        "operationId": "importPayrollRunCsv",
+        "summary": "Import payroll run CSV",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollRunImportRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Payroll run imported",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollRunEnvelopeResponse"
                 }
               }
             }
@@ -19745,16 +20407,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -19764,15 +20416,37 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "getApiV1PayrollRunsRunid",
-        "summary": "Auto-generated: GET /api/v1/payroll/runs/{runId}",
+        "operationId": "getPayrollRun",
+        "summary": "Get payroll run detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Payroll run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll run detail",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollRunEnvelopeResponse"
                 }
               }
             }
@@ -19786,19 +20460,7 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runId",
-            "required": true,
-            "description": "runId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
+        }
       }
     },
     "/api/v1/payroll/runs/{runId}/accrual-preview": {
@@ -19942,15 +20604,37 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "getApiV1PayrollRunsRunidLiabilities",
-        "summary": "Auto-generated: GET /api/v1/payroll/runs/{runId}/liabilities",
+        "operationId": "getPayrollRunLiabilities",
+        "summary": "Get payroll run liabilities detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Payroll run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll run liabilities detail",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollRunLiabilitiesDetailResponse"
                 }
               }
             }
@@ -19964,19 +20648,7 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runId",
-            "required": true,
-            "description": "runId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
+        }
       }
     },
     "/api/v1/payroll/runs/{runId}/liabilities/build": {
@@ -19984,35 +20656,14 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "postApiV1PayrollRunsRunidLiabilitiesBuild",
-        "summary": "Auto-generated: POST /api/v1/payroll/runs/{runId}/liabilities/build",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
+        "operationId": "buildPayrollRunLiabilities",
+        "summary": "Build payroll run liabilities",
         "parameters": [
           {
             "in": "path",
             "name": "runId",
             "required": true,
-            "description": "runId identifier",
+            "description": "Payroll run identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -20024,9 +20675,30 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/PayrollBuildLiabilitiesRequest"
               }
             }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payroll run liabilities built",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollRunLiabilitiesBuildResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
           }
         }
       }
@@ -20036,15 +20708,100 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "getApiV1PayrollRunsRunidLines",
-        "summary": "Auto-generated: GET /api/v1/payroll/runs/{runId}/lines",
+        "operationId": "listPayrollRunLines",
+        "summary": "List payroll run lines",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Payroll run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Case-insensitive employee search text",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "costCenterCode",
+            "required": false,
+            "description": "Imported cost center code",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Resolved operating unit identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "ownershipResolutionStatus",
+            "required": false,
+            "description": "Ownership resolution status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "RESOLVED",
+                "UNRESOLVED",
+                "AMBIGUOUS",
+                "MISMATCH"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Maximum rows to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Row offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll run lines",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollRunLinesResponse"
                 }
               }
             }
@@ -20058,19 +20815,7 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runId",
-            "required": true,
-            "description": "runId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
+        }
       }
     },
     "/api/v1/payroll/runs/{runId}/payment-batch-preview": {
@@ -20078,15 +20823,61 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "getApiV1PayrollRunsRunidPaymentBatchPreview",
-        "summary": "Auto-generated: GET /api/v1/payroll/runs/{runId}/payment-batch-preview",
+        "operationId": "getPayrollRunPaymentBatchPreview",
+        "summary": "Preview payroll payment batch preparation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Payroll run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "description": "Liability scope to prepare",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NET_PAY",
+                "STATUTORY",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "bankAccountId",
+            "required": false,
+            "description": "Selected payer bank account identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll payment batch preview",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollPaymentBatchPreviewResponse"
                 }
               }
             }
@@ -20100,19 +20891,7 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runId",
-            "required": true,
-            "description": "runId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
+        }
       }
     },
     "/api/v1/payroll/runs/{runId}/payment-batches": {
@@ -20120,15 +20899,37 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "postApiV1PayrollRunsRunidPaymentBatches",
-        "summary": "Auto-generated: POST /api/v1/payroll/runs/{runId}/payment-batches",
+        "operationId": "createPayrollRunPaymentBatch",
+        "summary": "Create payroll payment batch from liabilities",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Payroll run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollCreateRunPaymentBatchRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Payroll payment batch created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollCreateRunPaymentBatchResponse"
                 }
               }
             }
@@ -20141,28 +20942,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runId",
-            "required": true,
-            "description": "runId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -20172,35 +20951,14 @@
         "tags": [
           "Payroll"
         ],
-        "operationId": "postApiV1PayrollRunsRunidPaymentSyncApply",
-        "summary": "Auto-generated: POST /api/v1/payroll/runs/{runId}/payment-sync-apply",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
+        "operationId": "applyPayrollRunPaymentSync",
+        "summary": "Apply payroll payment sync reconciliation",
         "parameters": [
           {
             "in": "path",
             "name": "runId",
             "required": true,
-            "description": "runId identifier",
+            "description": "Payroll run identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -20212,27 +20970,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/PayrollPaymentSyncApplyRequest"
               }
             }
           }
-        }
-      }
-    },
-    "/api/v1/payroll/runs/{runId}/payment-sync-preview": {
-      "get": {
-        "tags": [
-          "Payroll"
-        ],
-        "operationId": "getApiV1PayrollRunsRunidPaymentSyncPreview",
-        "summary": "Auto-generated: GET /api/v1/payroll/runs/{runId}/payment-sync-preview",
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Payroll payment sync applied",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/PayrollPaymentSyncApplyResponse"
                 }
               }
             }
@@ -20246,19 +20995,82 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
+        }
+      }
+    },
+    "/api/v1/payroll/runs/{runId}/payment-sync-preview": {
+      "get": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "getPayrollRunPaymentSyncPreview",
+        "summary": "Preview payroll payment sync reconciliation",
         "parameters": [
           {
             "in": "path",
             "name": "runId",
             "required": true,
-            "description": "runId identifier",
+            "description": "Payroll run identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
             }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "description": "Sync scope",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NET_PAY",
+                "STATUTORY",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "allowB04OnlySettlement",
+            "required": false,
+            "description": "Allow payment-line paid status to settle without B03 bank evidence",
+            "schema": {
+              "type": "boolean"
+            }
           }
-        ]
+        ],
+        "responses": {
+          "200": {
+            "description": "Payroll payment sync preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollPaymentSyncPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
       }
     },
     "/api/v1/payroll/runs/{runId}/reverse": {
@@ -40078,6 +40890,3709 @@
           "cashReversalTransactionId",
           "idempotentReplay"
         ]
+      },
+      "PaymentBatchStatus": {
+        "type": "string",
+        "enum": [
+          "DRAFT",
+          "APPROVED",
+          "EXPORTED",
+          "POSTED",
+          "FAILED",
+          "CANCELLED"
+        ]
+      },
+      "PaymentSourceType": {
+        "type": "string",
+        "enum": [
+          "PAYROLL",
+          "AP",
+          "TAX",
+          "MANUAL"
+        ]
+      },
+      "PaymentBatchLineStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "PAID",
+          "FAILED",
+          "CANCELLED"
+        ]
+      },
+      "PaymentBatchLineInput": {
+        "type": "object",
+        "properties": {
+          "beneficiaryType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "beneficiaryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "beneficiaryName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "beneficiaryBankRef": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "payableEntityType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "payableEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payableGlAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "payableRef": {
+            "type": "string",
+            "maxLength": 120,
+            "nullable": true
+          },
+          "amount": {
+            "oneOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "exclusiveMinimum": true
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        },
+        "required": [
+          "beneficiaryType",
+          "beneficiaryName",
+          "payableEntityType",
+          "payableGlAccountId",
+          "amount"
+        ]
+      },
+      "PaymentBatchCreateRequest": {
+        "type": "object",
+        "properties": {
+          "sourceType": {
+            "$ref": "#/components/schemas/PaymentSourceType"
+          },
+          "sourceId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bankAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/PaymentBatchLineInput"
+            }
+          }
+        },
+        "required": [
+          "sourceType",
+          "bankAccountId",
+          "currencyCode",
+          "lines"
+        ]
+      },
+      "PaymentBatchApproveRequest": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        }
+      },
+      "PaymentBatchExportRequest": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "CSV"
+            ],
+            "default": "CSV"
+          }
+        }
+      },
+      "PaymentBatchPostRequest": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "externalPaymentRefPrefix": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true
+          },
+          "postingDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          }
+        }
+      },
+      "PaymentBatchCancelRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        }
+      },
+      "PaymentBatchListRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "batch_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/PaymentSourceType"
+          },
+          "source_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bank_account_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "total_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PaymentBatchStatus"
+          },
+          "governance_approval_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "governance_approval_request_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "governance_approved_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "governance_approved_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "posted_journal_entry_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "created_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "approved_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "exported_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "posted_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "approved_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "exported_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "posted_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bank_operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "line_count": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "paid_line_count": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "pending_line_count": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "payer_context_scope": {
+            "type": "string",
+            "enum": [
+              "CENTRAL",
+              "OPERATING_UNIT"
+            ],
+            "nullable": true
+          },
+          "payer_context_label": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "bank_account_id",
+          "currency_code",
+          "status",
+          "payer_context_scope",
+          "payer_context_label"
+        ]
+      },
+      "PaymentBatchLineRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "batch_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "line_no": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "beneficiary_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "beneficiary_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_bank_ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_entity_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_entity_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payable_gl_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payable_gl_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_gl_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PaymentBatchLineStatus"
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "external_payment_ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bank_operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "payer_context_scope": {
+            "type": "string",
+            "enum": [
+              "CENTRAL",
+              "OPERATING_UNIT"
+            ],
+            "nullable": true
+          },
+          "payer_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_ownership_scope": {
+            "type": "string",
+            "enum": [
+              "CENTRAL",
+              "OPERATING_UNIT"
+            ],
+            "nullable": true
+          },
+          "liability_operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "liability_operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_owner_context_label": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "batch_id",
+          "line_no",
+          "amount",
+          "status",
+          "payer_context_scope",
+          "payer_context_label"
+        ]
+      },
+      "PaymentBatchExportRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "batch_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "export_format": {
+            "type": "string",
+            "nullable": true
+          },
+          "export_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_checksum": {
+            "type": "string",
+            "nullable": true
+          },
+          "export_payload_text": {
+            "type": "string",
+            "nullable": true
+          },
+          "raw_meta_json": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "exported_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "batch_id"
+        ]
+      },
+      "PaymentBatchAuditRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "batch_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "action": {
+            "type": "string",
+            "nullable": true
+          },
+          "payload_json": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "acted_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "acted_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "batch_id"
+        ]
+      },
+      "PaymentBatchDetailRow": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PaymentBatchListRow"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "lines": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PaymentBatchLineRow"
+                }
+              },
+              "exports": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PaymentBatchExportRow"
+                }
+              },
+              "audit": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PaymentBatchAuditRow"
+                }
+              }
+            },
+            "required": [
+              "lines",
+              "exports",
+              "audit"
+            ]
+          }
+        ]
+      },
+      "PaymentBatchListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentBatchListRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "PaymentBatchEnvelopeResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/PaymentBatchDetailRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "PaymentBatchExportResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "CSV"
+            ]
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "checksum": {
+            "type": "string"
+          },
+          "csv": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "format",
+          "file_name",
+          "checksum",
+          "csv"
+        ]
+      },
+      "PaymentBatchExportResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/PaymentBatchDetailRow"
+          },
+          "export": {
+            "$ref": "#/components/schemas/PaymentBatchExportResult"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "export"
+        ]
+      },
+      "PayrollLiabilityRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "liability_key": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_type": {
+            "$ref": "#/components/schemas/PayrollLiabilityType"
+          },
+          "liability_group": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_run_line_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "employee_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "employee_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "cost_center_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "beneficiary_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_bank_ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_component_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_gl_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payable_gl_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_gl_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "settled_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "outstanding_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PayrollLiabilityStatus"
+          },
+          "reserved_payment_batch_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "paid_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "payment_link_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "beneficiary_bank_snapshot_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "beneficiary_snapshot_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_ready_for_payment": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "run_id",
+          "liability_type",
+          "ownership_scope",
+          "owner_context_label",
+          "amount",
+          "currency_code",
+          "status"
+        ]
+      },
+      "PayrollLiabilityOwnerContextSummaryRow": {
+        "type": "object",
+        "properties": {
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_amount": {
+            "type": "number"
+          },
+          "selected_bank_settlement_mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "selected_bank_allowed": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "selected_bank_requires_self_balancing": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "ownership_scope",
+          "owner_context_label",
+          "liability_count",
+          "total_amount"
+        ]
+      },
+      "PayrollLiabilitySummary": {
+        "type": "object",
+        "properties": {
+          "total_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_amount": {
+            "type": "number"
+          },
+          "total_open": {
+            "type": "number"
+          },
+          "total_in_batch": {
+            "type": "number"
+          },
+          "total_partially_paid": {
+            "type": "number"
+          },
+          "total_paid": {
+            "type": "number"
+          },
+          "total_cancelled": {
+            "type": "number"
+          },
+          "total_partially_paid_outstanding": {
+            "type": "number"
+          },
+          "total_outstanding": {
+            "type": "number"
+          },
+          "total_employee_net": {
+            "type": "number"
+          },
+          "total_statutory": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "total_count",
+          "total_amount",
+          "total_open",
+          "total_in_batch",
+          "total_partially_paid",
+          "total_paid",
+          "total_cancelled",
+          "total_partially_paid_outstanding",
+          "total_outstanding",
+          "total_employee_net",
+          "total_statutory"
+        ]
+      },
+      "PayrollLiabilityListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollLiabilityRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pageMode": {
+            "type": "string",
+            "nullable": true
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "PayrollRunLiabilitiesDetailResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run": {
+            "$ref": "#/components/schemas/PayrollRunRow"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollLiabilityRow"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PayrollLiabilitySummary"
+          },
+          "audit": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollAuditRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "runId",
+          "run",
+          "items",
+          "summary",
+          "audit"
+        ]
+      },
+      "PayrollRunLiabilitiesBuildResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run": {
+            "$ref": "#/components/schemas/PayrollRunRow"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollLiabilityRow"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PayrollLiabilitySummary"
+          },
+          "audit": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollAuditRow"
+            }
+          },
+          "alreadyBuilt": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "runId",
+          "run",
+          "items",
+          "summary",
+          "audit",
+          "alreadyBuilt"
+        ]
+      },
+      "PayrollSelectedBankAccountRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "payer_context_scope": {
+            "type": "string",
+            "enum": [
+              "CENTRAL",
+              "OPERATING_UNIT"
+            ],
+            "nullable": true
+          },
+          "payer_context_label": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "payer_context_scope",
+          "payer_context_label"
+        ]
+      },
+      "PayrollPaymentPrepValidationError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "PayrollPaymentBatchPreviewSelectedBankEvaluation": {
+        "type": "object",
+        "properties": {
+          "bank_account_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "payer_context_scope": {
+            "type": "string",
+            "enum": [
+              "CENTRAL",
+              "OPERATING_UNIT"
+            ],
+            "nullable": true
+          },
+          "payer_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "settlement_mode": {
+            "type": "string",
+            "enum": [
+              "NONE",
+              "NOT_ALLOWED",
+              "SAME_CONTEXT",
+              "CROSS_CONTEXT_SELF_BALANCING"
+            ]
+          },
+          "mixed_owner_context": {
+            "type": "boolean"
+          },
+          "same_context_liability_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cross_context_liability_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "out_of_scope_liability_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requires_self_balancing": {
+            "type": "boolean"
+          },
+          "can_prepare_payment_batch": {
+            "type": "boolean"
+          },
+          "validation_errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollPaymentPrepValidationError"
+            }
+          }
+        },
+        "required": [
+          "bank_account_id",
+          "payer_context_scope",
+          "payer_context_label",
+          "settlement_mode",
+          "mixed_owner_context",
+          "same_context_liability_count",
+          "cross_context_liability_count",
+          "out_of_scope_liability_count",
+          "requires_self_balancing",
+          "can_prepare_payment_batch",
+          "validation_errors"
+        ]
+      },
+      "PayrollPaymentBatchPreviewLiabilityRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "liability_type": {
+            "$ref": "#/components/schemas/PayrollLiabilityType"
+          },
+          "liability_group": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "employee_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "employee_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "payable_gl_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "amount": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "selected_bank_settlement_mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "selected_bank_allowed": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "selected_bank_requires_self_balancing": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "liability_type",
+          "ownership_scope",
+          "owner_context_label",
+          "amount"
+        ]
+      },
+      "PayrollPaymentBatchPayloadTemplate": {
+        "type": "object",
+        "properties": {
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "PAYROLL"
+            ]
+          },
+          "sourceId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalAmount": {
+            "type": "number"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentBatchLineInput"
+            }
+          }
+        },
+        "required": [
+          "sourceType",
+          "sourceId",
+          "currencyCode",
+          "lineCount",
+          "totalAmount",
+          "lines"
+        ]
+      },
+      "PayrollPaymentBatchPreview": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/PayrollRunRow"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PayrollLiabilityScopeParam"
+          },
+          "eligible_liability_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_amount": {
+            "type": "number"
+          },
+          "can_prepare_payment_batch": {
+            "type": "boolean"
+          },
+          "can_prepare_with_selected_bank": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "default_idempotency_key": {
+            "type": "string",
+            "nullable": true
+          },
+          "selected_bank_account": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PayrollSelectedBankAccountRow"
+              }
+            ],
+            "nullable": true
+          },
+          "owner_context_summary": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollLiabilityOwnerContextSummaryRow"
+            }
+          },
+          "selected_bank_evaluation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PayrollPaymentBatchPreviewSelectedBankEvaluation"
+              }
+            ],
+            "nullable": true
+          },
+          "eligible_liabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollPaymentBatchPreviewLiabilityRow"
+            }
+          },
+          "batch_payload_template": {
+            "$ref": "#/components/schemas/PayrollPaymentBatchPayloadTemplate"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PayrollLiabilitySummary"
+          }
+        },
+        "required": [
+          "run",
+          "scope",
+          "eligible_liability_count",
+          "total_amount",
+          "can_prepare_payment_batch",
+          "default_idempotency_key",
+          "owner_context_summary",
+          "eligible_liabilities",
+          "batch_payload_template",
+          "summary"
+        ]
+      },
+      "PayrollPaymentBatchPreviewResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "preview": {
+            "$ref": "#/components/schemas/PayrollPaymentBatchPreview"
+          }
+        },
+        "required": [
+          "tenantId",
+          "runId",
+          "preview"
+        ]
+      },
+      "PayrollCreateRunPaymentBatchRequest": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/PayrollLiabilityScopeParam"
+          },
+          "bankAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 120,
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        },
+        "required": [
+          "bankAccountId"
+        ]
+      },
+      "PayrollLiabilityCollection": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollLiabilityRow"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PayrollLiabilitySummary"
+          },
+          "audit": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollAuditRow"
+            }
+          }
+        },
+        "required": [
+          "items",
+          "summary",
+          "audit"
+        ]
+      },
+      "PayrollPaymentBatchLinkSummary": {
+        "type": "object",
+        "properties": {
+          "linkedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "statusUpdatedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "paymentBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "paymentBatchNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PayrollLiabilityScopeParam"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      },
+      "PayrollCreateRunPaymentBatchResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run": {
+            "$ref": "#/components/schemas/PayrollRunRow"
+          },
+          "liabilities": {
+            "$ref": "#/components/schemas/PayrollLiabilityCollection"
+          },
+          "batch": {
+            "$ref": "#/components/schemas/PaymentBatchDetailRow"
+          },
+          "preview_before_prepare": {
+            "$ref": "#/components/schemas/PayrollPaymentBatchPreview"
+          },
+          "preview_after_prepare": {
+            "$ref": "#/components/schemas/PayrollPaymentBatchPreview"
+          },
+          "linkSummary": {
+            "$ref": "#/components/schemas/PayrollPaymentBatchLinkSummary"
+          }
+        },
+        "required": [
+          "tenantId",
+          "runId",
+          "run",
+          "liabilities",
+          "batch",
+          "preview_before_prepare",
+          "preview_after_prepare",
+          "linkSummary"
+        ]
+      },
+      "PayrollPaymentSyncVerdict": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/PayrollPaymentSyncAction"
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "deltaAmount": {
+            "type": "number",
+            "nullable": true
+          },
+          "targetSettledAmount": {
+            "type": "number",
+            "nullable": true
+          },
+          "currentSettledAmount": {
+            "type": "number",
+            "nullable": true
+          },
+          "currentOutstandingAmount": {
+            "type": "number",
+            "nullable": true
+          },
+          "settlementSource": {
+            "type": "string",
+            "nullable": true
+          },
+          "bankStatementLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "settledAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "PayrollPaymentSyncSummary": {
+        "type": "object",
+        "properties": {
+          "total_candidates": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mark_partial_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mark_partial_amount": {
+            "type": "number"
+          },
+          "mark_paid_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mark_paid_amount": {
+            "type": "number"
+          },
+          "release_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "release_amount": {
+            "type": "number"
+          },
+          "exception_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "exception_amount": {
+            "type": "number"
+          },
+          "noop_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "noop_amount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "total_candidates",
+          "mark_partial_count",
+          "mark_partial_amount",
+          "mark_paid_count",
+          "mark_paid_amount",
+          "release_count",
+          "release_amount",
+          "exception_count",
+          "exception_amount",
+          "noop_count",
+          "noop_amount"
+        ]
+      },
+      "PayrollPaymentSyncOwnerContextSummaryRow": {
+        "type": "object",
+        "properties": {
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "candidate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_liability_amount": {
+            "type": "number"
+          },
+          "total_allocated_amount": {
+            "type": "number"
+          },
+          "total_outstanding_amount": {
+            "type": "number"
+          },
+          "mark_partial_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mark_partial_amount": {
+            "type": "number"
+          },
+          "mark_paid_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mark_paid_amount": {
+            "type": "number"
+          },
+          "release_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "release_amount": {
+            "type": "number"
+          },
+          "exception_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "exception_amount": {
+            "type": "number"
+          },
+          "noop_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "noop_amount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "ownership_scope",
+          "owner_context_label",
+          "candidate_count",
+          "total_liability_amount",
+          "total_allocated_amount",
+          "total_outstanding_amount",
+          "mark_partial_count",
+          "mark_partial_amount",
+          "mark_paid_count",
+          "mark_paid_amount",
+          "release_count",
+          "release_amount",
+          "exception_count",
+          "exception_amount",
+          "noop_count",
+          "noop_amount"
+        ]
+      },
+      "PayrollPaymentSyncPreviewItem": {
+        "type": "object",
+        "properties": {
+          "payroll_liability_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "link_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payment_batch_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payment_batch_line_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "liability_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "liability_settled_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "liability_outstanding_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "allocated_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context": {
+            "$ref": "#/components/schemas/PayrollOwnerContext"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/PayrollPaymentSyncVerdict"
+          }
+        },
+        "required": [
+          "ownership_scope",
+          "owner_context_label",
+          "owner_context",
+          "verdict"
+        ]
+      },
+      "PayrollPaymentSyncPreview": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/PayrollRunRow"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PayrollLiabilityScopeParam"
+          },
+          "allow_b04_only_settlement": {
+            "type": "boolean"
+          },
+          "owner_context_summary": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollPaymentSyncOwnerContextSummaryRow"
+            }
+          },
+          "mixed_owner_context": {
+            "type": "boolean"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PayrollPaymentSyncSummary"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollPaymentSyncPreviewItem"
+            }
+          }
+        },
+        "required": [
+          "run",
+          "scope",
+          "allow_b04_only_settlement",
+          "owner_context_summary",
+          "mixed_owner_context",
+          "summary",
+          "items"
+        ]
+      },
+      "PayrollPaymentSyncPreviewResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "preview": {
+            "$ref": "#/components/schemas/PayrollPaymentSyncPreview"
+          }
+        },
+        "required": [
+          "tenantId",
+          "runId",
+          "preview"
+        ]
+      },
+      "PayrollPaymentSyncApplyRequest": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/PayrollLiabilityScopeParam"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "allowB04OnlySettlement": {
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "PayrollPaymentSyncAppliedSummary": {
+        "type": "object",
+        "properties": {
+          "mark_partial_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mark_partial_amount": {
+            "type": "number"
+          },
+          "mark_paid_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mark_paid_amount": {
+            "type": "number"
+          },
+          "release_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "release_amount": {
+            "type": "number"
+          },
+          "exception_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "mark_partial_count",
+          "mark_partial_amount",
+          "mark_paid_count",
+          "mark_paid_amount",
+          "release_count",
+          "release_amount",
+          "exception_count"
+        ]
+      },
+      "PayrollPaymentSyncApplyResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run": {
+            "$ref": "#/components/schemas/PayrollRunRow"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PayrollLiabilityScopeParam"
+          },
+          "allow_b04_only_settlement": {
+            "type": "boolean"
+          },
+          "preview_summary": {
+            "$ref": "#/components/schemas/PayrollPaymentSyncSummary"
+          },
+          "preview_owner_context_summary": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollPaymentSyncOwnerContextSummaryRow"
+            }
+          },
+          "preview_mixed_owner_context": {
+            "type": "boolean"
+          },
+          "applied": {
+            "$ref": "#/components/schemas/PayrollPaymentSyncAppliedSummary"
+          }
+        },
+        "required": [
+          "tenantId",
+          "runId",
+          "run",
+          "scope",
+          "allow_b04_only_settlement",
+          "preview_summary",
+          "preview_owner_context_summary",
+          "preview_mixed_owner_context",
+          "applied"
+        ]
+      },
+      "PayrollManualSettlementCreateRequest": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "oneOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "exclusiveMinimum": true
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "settledAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "externalRef": {
+            "type": "string",
+            "maxLength": 190,
+            "nullable": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 190,
+            "nullable": true
+          }
+        },
+        "required": [
+          "amount",
+          "settledAt",
+          "reason"
+        ]
+      },
+      "PayrollManualSettlementDecisionRequest": {
+        "type": "object",
+        "properties": {
+          "decisionNote": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        }
+      },
+      "PayrollManualSettlementLiabilityRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "liability_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_group": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context": {
+            "$ref": "#/components/schemas/PayrollOwnerContext"
+          },
+          "employee_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "employee_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number"
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PayrollLiabilityStatus"
+          },
+          "settled_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "outstanding_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "payment_link_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payment_batch_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payment_batch_line_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "allocated_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "link_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "link_settled_amount": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "legal_entity_id",
+          "ownership_scope",
+          "owner_context_label",
+          "owner_context",
+          "amount",
+          "currency_code",
+          "status"
+        ]
+      },
+      "PayrollManualSettlementRequestRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "payroll_liability_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "payroll_liability_payment_link_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "request_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "requested_amount": {
+            "type": "number"
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "settled_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "external_ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PayrollManualSettlementStatus"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "nullable": true
+          },
+          "requested_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "requested_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "approved_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "approved_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejected_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "rejected_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "decision_note": {
+            "type": "string",
+            "nullable": true
+          },
+          "applied_settlement_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "liability_group": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context": {
+            "$ref": "#/components/schemas/PayrollOwnerContext"
+          },
+          "employee_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "employee_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "beneficiary_name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "run_id",
+          "payroll_liability_id",
+          "requested_amount",
+          "currency_code",
+          "status",
+          "ownership_scope",
+          "owner_context_label",
+          "owner_context"
+        ]
+      },
+      "PayrollManualSettlementSettlementRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "settlement_key": {
+            "type": "string",
+            "nullable": true
+          },
+          "run_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payroll_liability_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payroll_liability_payment_link_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payment_batch_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "payment_batch_line_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bank_statement_line_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "settlement_source": {
+            "type": "string",
+            "nullable": true
+          },
+          "settled_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "settled_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "payload_json": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "created_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context": {
+            "$ref": "#/components/schemas/PayrollOwnerContext"
+          }
+        },
+        "required": [
+          "ownership_scope",
+          "owner_context_label",
+          "owner_context"
+        ]
+      },
+      "PayrollManualSettlementListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "liabilityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "liability": {
+            "$ref": "#/components/schemas/PayrollManualSettlementLiabilityRow"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollManualSettlementRequestRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "liabilityId",
+          "liability",
+          "items"
+        ]
+      },
+      "PayrollManualSettlementCreateResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "liabilityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "request": {
+            "$ref": "#/components/schemas/PayrollManualSettlementRequestRow"
+          },
+          "idempotent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "liabilityId",
+          "request",
+          "idempotent"
+        ]
+      },
+      "PayrollManualSettlementApproveResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requestId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "request": {
+            "$ref": "#/components/schemas/PayrollManualSettlementRequestRow"
+          },
+          "settlement": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PayrollManualSettlementSettlementRow"
+              }
+            ],
+            "nullable": true
+          },
+          "approval_required": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "approval_request": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "idempotent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "requestId",
+          "request",
+          "idempotent"
+        ]
+      },
+      "PayrollManualSettlementRejectResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requestId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "request": {
+            "$ref": "#/components/schemas/PayrollManualSettlementRequestRow"
+          },
+          "idempotent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "requestId",
+          "request",
+          "idempotent"
+        ]
+      },
+      "PayrollOwnershipScope": {
+        "type": "string",
+        "enum": [
+          "CENTRAL",
+          "OPERATING_UNIT"
+        ]
+      },
+      "PayrollAssignmentStatus": {
+        "type": "string",
+        "enum": [
+          "ACTIVE",
+          "INACTIVE"
+        ]
+      },
+      "PayrollRunStatus": {
+        "type": "string",
+        "enum": [
+          "DRAFT",
+          "IMPORTED",
+          "REVIEWED",
+          "FINALIZED"
+        ]
+      },
+      "PayrollOwnershipResolutionStatus": {
+        "type": "string",
+        "enum": [
+          "RESOLVED",
+          "UNRESOLVED",
+          "AMBIGUOUS",
+          "MISMATCH"
+        ]
+      },
+      "PayrollLiabilityStatus": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "IN_BATCH",
+          "PARTIALLY_PAID",
+          "PAID",
+          "CANCELLED"
+        ]
+      },
+      "PayrollLiabilityType": {
+        "type": "string",
+        "enum": [
+          "NET_PAY",
+          "EMPLOYEE_TAX",
+          "EMPLOYEE_SOCIAL_SECURITY",
+          "EMPLOYER_TAX",
+          "EMPLOYER_SOCIAL_SECURITY",
+          "OTHER_DEDUCTIONS"
+        ]
+      },
+      "PayrollLiabilityScopeParam": {
+        "type": "string",
+        "enum": [
+          "NET_PAY",
+          "STATUTORY",
+          "ALL"
+        ]
+      },
+      "PayrollManualSettlementStatus": {
+        "type": "string",
+        "enum": [
+          "REQUESTED",
+          "APPLIED",
+          "REJECTED"
+        ]
+      },
+      "PayrollPaymentSyncAction": {
+        "type": "string",
+        "enum": [
+          "MARK_PARTIAL",
+          "MARK_PAID",
+          "RELEASE_TO_OPEN",
+          "EXCEPTION",
+          "NOOP"
+        ]
+      },
+      "PayrollOwnerContext": {
+        "type": "object",
+        "properties": {
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner_context_label": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "ownership_scope",
+          "owner_context_label"
+        ]
+      },
+      "PayrollOwnershipAssignmentRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "employeeCode": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "employeeNameSnapshot": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "ownershipScope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "effectiveFrom": {
+            "type": "string",
+            "format": "date"
+          },
+          "effectiveTo": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PayrollAssignmentStatus"
+          },
+          "expectedCostCenterCode": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "sourceType": {
+            "type": "string",
+            "maxLength": 40,
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "employeeCode",
+          "ownershipScope",
+          "effectiveFrom",
+          "status"
+        ]
+      },
+      "PayrollOwnershipAssignmentPatchRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "employeeCode": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "employeeNameSnapshot": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "ownershipScope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "effectiveFrom": {
+            "type": "string",
+            "format": "date"
+          },
+          "effectiveTo": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PayrollAssignmentStatus"
+          },
+          "expectedCostCenterCode": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "sourceType": {
+            "type": "string",
+            "maxLength": 40,
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        }
+      },
+      "PayrollOwnershipAssignmentRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "employee_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "employee_name_snapshot": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/PayrollOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PayrollAssignmentStatus"
+          },
+          "expected_cost_center_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "updated_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "deactivated_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "deactivated_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_context": {
+            "$ref": "#/components/schemas/PayrollOwnerContext"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "employee_code",
+          "ownership_scope",
+          "effective_from",
+          "status",
+          "ownership_context"
+        ]
+      },
+      "PayrollOwnershipAssignmentListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollOwnershipAssignmentRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "PayrollOwnershipAssignmentResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "assignmentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "item": {
+            "$ref": "#/components/schemas/PayrollOwnershipAssignmentRow"
+          },
+          "alreadyInactive": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "item"
+        ]
+      },
+      "PayrollRunRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "run_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "provider_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "payroll_period": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "pay_date": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "ownership_as_of_date": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/PayrollRunStatus"
+          },
+          "source_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_provider_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_provider_import_job_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "run_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "correction_of_run_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "is_reversed": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "reversed_by_run_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "line_count_total": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "line_count_inserted": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "line_count_duplicates": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "employee_count": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "total_gross_pay": {
+            "type": "number",
+            "nullable": true
+          },
+          "total_net_pay": {
+            "type": "number",
+            "nullable": true
+          },
+          "total_employee_tax": {
+            "type": "number",
+            "nullable": true
+          },
+          "total_employee_social_security": {
+            "type": "number",
+            "nullable": true
+          },
+          "total_other_deductions": {
+            "type": "number",
+            "nullable": true
+          },
+          "total_employer_tax": {
+            "type": "number",
+            "nullable": true
+          },
+          "total_employer_social_security": {
+            "type": "number",
+            "nullable": true
+          },
+          "accrual_journal_entry_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reviewed_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "finalized_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "imported_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "liabilities_built_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "liabilities_built_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "payment_sync_last_preview_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "payment_sync_last_applied_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "currency_code",
+          "status"
+        ]
+      },
+      "PayrollRunLineRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "line_no": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "employee_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "employee_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "cost_center_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PayrollOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_assignment_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownership_resolution_status": {
+            "$ref": "#/components/schemas/PayrollOwnershipResolutionStatus"
+          },
+          "ownership_resolution_note": {
+            "type": "string",
+            "nullable": true
+          },
+          "base_salary": {
+            "type": "number",
+            "nullable": true
+          },
+          "overtime_pay": {
+            "type": "number",
+            "nullable": true
+          },
+          "bonus_pay": {
+            "type": "number",
+            "nullable": true
+          },
+          "allowances_total": {
+            "type": "number",
+            "nullable": true
+          },
+          "gross_pay": {
+            "type": "number",
+            "nullable": true
+          },
+          "employee_tax": {
+            "type": "number",
+            "nullable": true
+          },
+          "employee_social_security": {
+            "type": "number",
+            "nullable": true
+          },
+          "other_deductions": {
+            "type": "number",
+            "nullable": true
+          },
+          "net_pay": {
+            "type": "number",
+            "nullable": true
+          },
+          "employer_tax": {
+            "type": "number",
+            "nullable": true
+          },
+          "employer_social_security": {
+            "type": "number",
+            "nullable": true
+          },
+          "line_hash": {
+            "type": "string",
+            "nullable": true
+          },
+          "raw_row_json": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "run_id",
+          "line_no",
+          "employee_code",
+          "ownership_resolution_status"
+        ]
+      },
+      "PayrollRunOwnershipSummaryBreakdownRow": {
+        "type": "object",
+        "properties": {
+          "ownership_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PayrollOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "line_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resolved_line_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mismatch_line_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "line_count",
+          "resolved_line_count",
+          "mismatch_line_count"
+        ]
+      },
+      "PayrollRunOwnershipSummary": {
+        "type": "object",
+        "properties": {
+          "total_line_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resolved_line_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unresolved_line_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ambiguous_line_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mismatch_line_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "owner_context_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mixed_ou_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "has_mixed_owner_contexts": {
+            "type": "boolean"
+          },
+          "breakdown": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollRunOwnershipSummaryBreakdownRow"
+            }
+          }
+        },
+        "required": [
+          "total_line_count",
+          "resolved_line_count",
+          "unresolved_line_count",
+          "ambiguous_line_count",
+          "mismatch_line_count",
+          "owner_context_count",
+          "mixed_ou_count",
+          "has_mixed_owner_contexts",
+          "breakdown"
+        ]
+      },
+      "PayrollAuditRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "action": {
+            "type": "string",
+            "nullable": true
+          },
+          "payload_json": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "acted_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "acted_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "run_id"
+        ]
+      },
+      "PayrollRunDetailRow": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PayrollRunRow"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "lines": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PayrollRunLineRow"
+                }
+              },
+              "ownership_summary": {
+                "$ref": "#/components/schemas/PayrollRunOwnershipSummary"
+              },
+              "audit": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PayrollAuditRow"
+                }
+              }
+            },
+            "required": [
+              "lines",
+              "ownership_summary",
+              "audit"
+            ]
+          }
+        ]
+      },
+      "PayrollRunListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollRunRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "PayrollRunEnvelopeResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/PayrollRunDetailRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "PayrollRunLinesResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayrollRunLineRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "runId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "PayrollRunImportRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetRunId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "providerCode": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "payrollPeriod": {
+            "type": "string",
+            "format": "date"
+          },
+          "payDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "sourceBatchRef": {
+            "type": "string",
+            "maxLength": 120,
+            "nullable": true
+          },
+          "originalFilename": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "csvText": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "providerCode",
+          "payrollPeriod",
+          "payDate",
+          "currencyCode",
+          "csvText"
+        ]
+      },
+      "PayrollBuildLiabilitiesRequest": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        }
       }
     }
   }

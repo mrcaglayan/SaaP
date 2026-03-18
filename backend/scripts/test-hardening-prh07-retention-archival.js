@@ -28,6 +28,10 @@ function sha256(value) {
   return crypto.createHash("sha256").update(String(value || ""), "utf8").digest("hex");
 }
 
+function findSnapshotItem(items, itemCode) {
+  return (items || []).find((item) => String(item?.item_code || "").toUpperCase() === String(itemCode || "").toUpperCase());
+}
+
 function noScopeGuard() {
   return true;
 }
@@ -106,6 +110,84 @@ async function setupFixture(stamp) {
     ).rows?.[0]?.id
   );
   assert(legalEntityId > 0, "Failed to create legal entity fixture");
+
+  await query(
+    `INSERT INTO operating_units (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        unit_type,
+        has_subledger,
+        status
+      ) VALUES (?, ?, ?, ?, 'BRANCH', TRUE, 'ACTIVE')`,
+    [tenantId, legalEntityId, `PRH07_OU_${stamp}`, `PRH07 OU ${stamp}`]
+  );
+  const operatingUnitId = toInt(
+    (
+      await query(
+        `SELECT id
+         FROM operating_units
+         WHERE tenant_id = ?
+           AND legal_entity_id = ?
+           AND code = ?
+         LIMIT 1`,
+        [tenantId, legalEntityId, `PRH07_OU_${stamp}`]
+      )
+    ).rows?.[0]?.id
+  );
+  assert(operatingUnitId > 0, "Failed to create operating unit fixture");
+
+  await query(
+    `INSERT INTO charts_of_accounts (
+        tenant_id,
+        scope,
+        legal_entity_id,
+        code,
+        name
+      ) VALUES (?, 'LEGAL_ENTITY', ?, ?, ?)`,
+    [tenantId, legalEntityId, `PRH07_COA_${stamp}`, `PRH07 Chart ${stamp}`]
+  );
+  const coaId = toInt(
+    (
+      await query(
+        `SELECT id
+         FROM charts_of_accounts
+         WHERE tenant_id = ?
+           AND code = ?
+         LIMIT 1`,
+        [tenantId, `PRH07_COA_${stamp}`]
+      )
+    ).rows?.[0]?.id
+  );
+  assert(coaId > 0, "Failed to create chart of accounts fixture");
+
+  await query(
+    `INSERT INTO accounts (
+        coa_id,
+        code,
+        name,
+        account_type,
+        normal_side,
+        allow_posting,
+        parent_account_id,
+        is_active
+      ) VALUES (?, ?, ?, 'LIABILITY', 'CREDIT', TRUE, NULL, TRUE)`,
+    [coaId, `PRH07_PAY_${stamp}`, `PRH07 Payroll Liability ${stamp}`]
+  );
+  const liabilityAccountId = toInt(
+    (
+      await query(
+        `SELECT id
+         FROM accounts
+         WHERE coa_id = ?
+           AND code = ?
+         LIMIT 1`,
+        [coaId, `PRH07_PAY_${stamp}`]
+      )
+    ).rows?.[0]?.id
+  );
+  assert(liabilityAccountId > 0, "Failed to create liability account fixture");
 
   const passwordHash = await bcrypt.hash("PRH07#Smoke123", 10);
   const userEmail = `prh07_${stamp}@example.com`;
@@ -263,8 +345,9 @@ async function setupFixture(stamp) {
         file_checksum,
         status,
         source_type,
+        ownership_as_of_date,
         imported_by_user_id
-      ) VALUES (?, ?, ?, 'GENERIC_JSON', ?, CURDATE(), CURDATE(), ?, ?, ?, ?, 'FINALIZED', 'MANUAL', ?)`,
+      ) VALUES (?, ?, ?, 'GENERIC_JSON', ?, CURDATE(), CURDATE(), ?, ?, ?, ?, 'FINALIZED', 'MANUAL', CURDATE(), ?)`,
     [
       tenantId,
       legalEntityId,
@@ -300,11 +383,92 @@ async function setupFixture(stamp) {
         line_no,
         employee_code,
         employee_name,
+        cost_center_code,
         gross_pay,
         net_pay,
+        ownership_scope,
+        operating_unit_id,
+        ownership_resolution_status,
         line_hash
-      ) VALUES (?, ?, ?, 1, 'E001', 'PRH07 Employee', 1000.00, 800.00, ?)`,
-    [tenantId, legalEntityId, payrollRunId, sha256(`PRH07-RUN-LINE-${stamp}`)]
+      ) VALUES
+      (?, ?, ?, 1, 'E001', 'PRH07 Employee Central', 'CC-CENTRAL', 1000.00, 800.00, 'CENTRAL', NULL, 'RESOLVED', ?),
+      (?, ?, ?, 2, 'E002', 'PRH07 Employee OU', 'CC-OU', 1100.00, 900.00, 'OPERATING_UNIT', ?, 'RESOLVED', ?)` ,
+    [
+      tenantId,
+      legalEntityId,
+      payrollRunId,
+      sha256(`PRH07-RUN-LINE-CENTRAL-${stamp}`),
+      tenantId,
+      legalEntityId,
+      payrollRunId,
+      operatingUnitId,
+      sha256(`PRH07-RUN-LINE-OU-${stamp}`),
+    ]
+  );
+
+  const lineRows = (
+    await query(
+      `SELECT id, employee_code
+       FROM payroll_run_lines
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND run_id = ?
+       ORDER BY line_no ASC`,
+      [tenantId, legalEntityId, payrollRunId]
+    )
+  ).rows;
+  const centralLineId = toInt((lineRows || []).find((row) => String(row?.employee_code || "") === "E001")?.id);
+  const ouLineId = toInt((lineRows || []).find((row) => String(row?.employee_code || "") === "E002")?.id);
+  assert(centralLineId > 0 && ouLineId > 0, "Failed to create payroll run line fixtures");
+
+  await query(
+    `INSERT INTO payroll_run_liabilities (
+        tenant_id,
+        legal_entity_id,
+        run_id,
+        liability_key,
+        liability_type,
+        liability_group,
+        source_run_line_id,
+        employee_code,
+        employee_name,
+        cost_center_code,
+        ownership_scope,
+        operating_unit_id,
+        beneficiary_type,
+        beneficiary_id,
+        beneficiary_name,
+        beneficiary_bank_ref,
+        payable_component_code,
+        payable_gl_account_id,
+        payable_ref,
+        amount,
+        settled_amount,
+        outstanding_amount,
+        currency_code,
+        status
+      ) VALUES
+      (?, ?, ?, ?, 'NET_PAY', 'EMPLOYEE_NET', ?, 'E001', 'PRH07 Employee Central', 'CC-CENTRAL', 'CENTRAL', NULL, 'EMPLOYEE', NULL, 'PRH07 Employee Central', NULL, 'PAYROLL_NET_PAYABLE', ?, ?, 800.00, 0, 800.00, ?, 'OPEN'),
+      (?, ?, ?, ?, 'NET_PAY', 'EMPLOYEE_NET', ?, 'E002', 'PRH07 Employee OU', 'CC-OU', 'OPERATING_UNIT', ?, 'EMPLOYEE', NULL, 'PRH07 Employee OU', NULL, 'PAYROLL_NET_PAYABLE', ?, ?, 900.00, 0, 900.00, ?, 'OPEN')`,
+    [
+      tenantId,
+      legalEntityId,
+      payrollRunId,
+      `PRH07-LIAB-CENTRAL-${stamp}`,
+      centralLineId,
+      liabilityAccountId,
+      `PRH07-LIAB-CENTRAL-${stamp}`,
+      currencyCode,
+      tenantId,
+      legalEntityId,
+      payrollRunId,
+      `PRH07-LIAB-OU-${stamp}`,
+      ouLineId,
+      operatingUnitId,
+      liabilityAccountId,
+      `PRH07-LIAB-OU-${stamp}`,
+      currencyCode,
+    ]
   );
 
   return {
@@ -313,6 +477,7 @@ async function setupFixture(stamp) {
     userId,
     payrollCloseId,
     payrollRunId,
+    operatingUnitId,
   };
 }
 
@@ -499,6 +664,77 @@ async function main() {
     "Snapshot item hashes must be repeatable between exports"
   );
 
+  const runItem = findSnapshotItem(snapshot1Detail?.items, "PAYROLL_RUNS");
+  assert(runItem, "Snapshot detail should include PAYROLL_RUNS item");
+  assert(
+    toInt(runItem?.payload_json?.runs_with_ownership_as_of_date_count) === 1,
+    "Run snapshot should report runs_with_ownership_as_of_date_count"
+  );
+  assert(
+    (runItem?.payload_json?.sample_rows || []).some((row) => String(row?.ownership_as_of_date || "").length === 10),
+    "Run snapshot sample rows should expose ownership_as_of_date"
+  );
+
+  const lineItem = findSnapshotItem(snapshot1Detail?.items, "PAYROLL_RUN_LINES");
+  assert(lineItem, "Snapshot detail should include PAYROLL_RUN_LINES item");
+  const lineBuckets = Object.fromEntries(
+    ((lineItem?.payload_json?.owner_context_summary?.buckets || [])).map((bucket) => [
+      `${String(bucket?.ownership_scope || "")}:${toInt(bucket?.operating_unit_id)}`,
+      bucket,
+    ])
+  );
+  assert(
+    toInt(lineItem?.payload_json?.owner_context_summary?.context_count) === 2,
+    "Run-line snapshot should summarize two owner contexts"
+  );
+  assert(
+    toInt(lineBuckets["CENTRAL:0"]?.row_count) === 1,
+    "Run-line snapshot should include one CENTRAL row"
+  );
+  assert(
+    toInt(lineBuckets[`OPERATING_UNIT:${fixture.operatingUnitId}`]?.row_count) === 1,
+    "Run-line snapshot should include one OU row"
+  );
+  assert(
+    (lineItem?.payload_json?.sample_rows || []).some(
+      (row) =>
+        String(row?.ownership_scope || "") === "OPERATING_UNIT" &&
+        toInt(row?.operating_unit_id) === fixture.operatingUnitId
+    ),
+    "Run-line snapshot sample rows should expose OU owner-context fields"
+  );
+
+  const liabilityItem = findSnapshotItem(snapshot1Detail?.items, "PAYROLL_LIABILITIES");
+  assert(liabilityItem, "Snapshot detail should include PAYROLL_LIABILITIES item");
+  const liabilityBuckets = Object.fromEntries(
+    ((liabilityItem?.payload_json?.owner_context_summary?.buckets || [])).map((bucket) => [
+      `${String(bucket?.ownership_scope || "")}:${toInt(bucket?.operating_unit_id)}`,
+      bucket,
+    ])
+  );
+  assert(
+    toInt(liabilityItem?.payload_json?.owner_context_summary?.context_count) === 2,
+    "Liability snapshot should summarize two owner contexts"
+  );
+  assert(
+    toInt(liabilityBuckets["CENTRAL:0"]?.row_count) === 1 &&
+      Number(liabilityBuckets["CENTRAL:0"]?.total_amount || 0) === 800,
+    "Liability snapshot should expose CENTRAL owner-context totals"
+  );
+  assert(
+    toInt(liabilityBuckets[`OPERATING_UNIT:${fixture.operatingUnitId}`]?.row_count) === 1 &&
+      Number(liabilityBuckets[`OPERATING_UNIT:${fixture.operatingUnitId}`]?.total_amount || 0) === 900,
+    "Liability snapshot should expose OU owner-context totals"
+  );
+  assert(
+    (liabilityItem?.payload_json?.sample_rows || []).some(
+      (row) =>
+        String(row?.ownership_scope || "") === "OPERATING_UNIT" &&
+        toInt(row?.operating_unit_id) === fixture.operatingUnitId
+    ),
+    "Liability snapshot sample rows should expose OU owner-context fields"
+  );
+
   const runCount = toInt(
     (
       await query(
@@ -534,9 +770,22 @@ async function main() {
       )
     ).rows?.[0]?.total
   );
+  const liabilityCount = toInt(
+    (
+      await query(
+        `SELECT COUNT(*) AS total
+         FROM payroll_run_liabilities
+         WHERE tenant_id = ?
+           AND legal_entity_id = ?
+           AND run_id = ?`,
+        [fixture.tenantId, fixture.legalEntityId, fixture.payrollRunId]
+      )
+    ).rows?.[0]?.total
+  );
   assert(runCount === 1, "Core payroll_runs rows should not be deleted");
   assert(closeCount === 1, "Core payroll_period_closes row should not be deleted");
-  assert(runLineCount === 1, "Core payroll_run_lines row should not be deleted");
+  assert(runLineCount === 2, "Core payroll_run_lines rows should not be deleted");
+  assert(liabilityCount === 2, "Core payroll_run_liabilities rows should not be deleted");
 
   console.log("PR-H07 smoke test passed (retention policy/manual+job run + snapshot idempotency/hash stability).");
 }

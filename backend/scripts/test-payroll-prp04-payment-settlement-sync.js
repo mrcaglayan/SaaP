@@ -1,5 +1,4 @@
 import bcrypt from "bcrypt";
-import { seedCentralPayrollOwnershipAssignmentsFromCsv } from "./_payrollOwnershipTestHelpers.js";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
 import {
@@ -14,6 +13,7 @@ import {
   getPayrollRunLiabilitiesDetail,
 } from "../src/services/payroll.liabilities.service.js";
 import { upsertPayrollComponentMapping } from "../src/services/payroll.mappings.service.js";
+import { createPayrollOwnershipAssignment } from "../src/services/payroll.ownership.service.js";
 import { applyPayrollRunPaymentSync, getPayrollRunPaymentSyncPreview } from "../src/services/payroll.paymentSync.service.js";
 import { cancelPaymentBatch } from "../src/services/payments.service.js";
 import { importPayrollRunCsv } from "../src/services/payroll.runs.service.js";
@@ -51,6 +51,77 @@ function denyScopeGuard() {
   const err = new Error("Scope access denied");
   err.status = 403;
   throw err;
+}
+
+async function ensureOwnershipAssignment({
+  tenantId,
+  legalEntityId,
+  userId,
+  employeeCode,
+  employeeNameSnapshot,
+  ownershipScope,
+  operatingUnitId,
+  expectedCostCenterCode,
+}) {
+  const normalizedEmployeeCode = normalizeUpperText(employeeCode);
+  const existingRows = await query(
+    `SELECT id
+     FROM payroll_employee_owner_context_assignments
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND employee_code = ?
+       AND status = 'ACTIVE'
+       AND effective_from <= '2026-02-28'
+       AND COALESCE(effective_to, '9999-12-31') >= '2026-02-01'
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedEmployeeCode]
+  );
+  if (toNumber(existingRows.rows?.[0]?.id) > 0) {
+    return;
+  }
+
+  await createPayrollOwnershipAssignment({
+    req: null,
+    tenantId,
+    userId,
+    input: {
+      legalEntityId,
+      employeeCode: normalizedEmployeeCode,
+      employeeNameSnapshot,
+      ownershipScope,
+      operatingUnitId,
+      effectiveFrom: "2026-01-01",
+      effectiveTo: null,
+      status: "ACTIVE",
+      expectedCostCenterCode,
+      sourceType: "MANUAL",
+      notes: "PRP04 mixed owner-context seed",
+    },
+    assertScopeAccess: noScopeGuard,
+  });
+}
+
+async function seedMixedPayrollOwnershipAssignments({ fixture }) {
+  await ensureOwnershipAssignment({
+    tenantId: fixture.tenantId,
+    legalEntityId: fixture.legalEntityId,
+    userId: fixture.userId,
+    employeeCode: "E001",
+    employeeNameSnapshot: "Alpha User",
+    ownershipScope: "CENTRAL",
+    operatingUnitId: null,
+    expectedCostCenterCode: "CC-01",
+  });
+  await ensureOwnershipAssignment({
+    tenantId: fixture.tenantId,
+    legalEntityId: fixture.legalEntityId,
+    userId: fixture.userId,
+    employeeCode: "E002",
+    employeeNameSnapshot: "Beta User",
+    ownershipScope: "OPERATING_UNIT",
+    operatingUnitId: fixture.operatingUnitId,
+    expectedCostCenterCode: "CC-02",
+  });
 }
 
 async function expectFailure(work, { status, code, includes }) {
@@ -158,6 +229,31 @@ async function createTenantWithP04Fixtures(stamp) {
   );
   const legalEntityId = toNumber(legalEntityRows.rows?.[0]?.id);
   assert(legalEntityId > 0, "Failed to create legal entity fixture");
+
+  await query(
+    `INSERT INTO operating_units (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        unit_type,
+        has_subledger,
+        status
+      )
+      VALUES (?, ?, ?, ?, 'BRANCH', TRUE, 'ACTIVE')`,
+    [tenantId, legalEntityId, `PRP04_OU_${stamp}`, `PRP04 OU ${stamp}`]
+  );
+  const operatingUnitRows = await query(
+    `SELECT id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, `PRP04_OU_${stamp}`]
+  );
+  const operatingUnitId = toNumber(operatingUnitRows.rows?.[0]?.id);
+  assert(operatingUnitId > 0, "Failed to create operating unit fixture");
 
   await query(
     `INSERT INTO fiscal_calendars (
@@ -336,6 +432,7 @@ async function createTenantWithP04Fixtures(stamp) {
     userId,
     currencyCode,
     bankAccountId,
+    operatingUnitId,
     expenseGlAccountId,
     liabilityGlAccountId,
   };
@@ -406,13 +503,7 @@ async function createPreparedNetPayrollBatch({
   idempotencyKey,
 }) {
   const validCsv = buildValidCsv();
-  await seedCentralPayrollOwnershipAssignmentsFromCsv({
-    tenantId: fixture.tenantId,
-    legalEntityId: fixture.legalEntityId,
-    userId: fixture.userId,
-    csvText: validCsv,
-    assertScopeAccess: noScopeGuard,
-  });
+  await seedMixedPayrollOwnershipAssignments({ fixture });
 
   const imported = await importPayrollRunCsv({
     req: null,
@@ -441,8 +532,14 @@ async function createPreparedNetPayrollBatch({
   });
   assert((accrualPreview?.component_totals || []).length > 0, "Accrual preview should have components");
 
+  const seenMappingKeys = new Set();
   for (const component of accrualPreview.component_totals || []) {
     const entrySide = normalizeUpperText(component?.entry_side);
+    const mappingKey = `${normalizeUpperText(component?.component_code)}|${entrySide}`;
+    if (seenMappingKeys.has(mappingKey)) {
+      continue;
+    }
+    seenMappingKeys.add(mappingKey);
     await upsertPayrollComponentMapping({
       req: null,
       payload: {
@@ -493,7 +590,7 @@ async function createPreparedNetPayrollBatch({
     note: "build liabilities for PRP04",
     assertScopeAccess: noScopeGuard,
   });
-  assert((built?.items || []).length === 7, "Liability build should create 7 liabilities");
+  assert((built?.items || []).length === 12, "Mixed owner-context liability build should create 12 liabilities");
 
   const prepared = await createPayrollRunPaymentBatchFromLiabilities({
     req: null,
@@ -687,6 +784,37 @@ async function main() {
     toAmount(preview1?.summary?.mark_paid_amount) === 1820,
     "Preview MARK_PAID amount should equal 1820"
   );
+  assert(
+    Array.isArray(preview1?.owner_context_summary) && preview1.owner_context_summary.length === 2,
+    "Preview should summarize central and OU owner contexts"
+  );
+  assert(
+    preview1?.mixed_owner_context === true,
+    "Preview should flag mixed owner-context sync candidates"
+  );
+  assert(
+    (preview1?.items || []).some(
+      (item) =>
+        normalizeUpperText(item?.ownership_scope) === "OPERATING_UNIT" &&
+        toNumber(item?.operating_unit_id) === fixture.operatingUnitId &&
+        normalizeUpperText(item?.owner_context?.ownership_scope) === "OPERATING_UNIT"
+    ),
+    "Preview items should expose explicit OU owner-context fields"
+  );
+  const preview1OwnerContextMap = Object.fromEntries(
+    (preview1?.owner_context_summary || []).map((bucket) => [
+      `${normalizeUpperText(bucket?.ownership_scope)}:${toNumber(bucket?.operating_unit_id)}`,
+      bucket,
+    ])
+  );
+  assert(
+    toNumber(preview1OwnerContextMap["CENTRAL:0"]?.candidate_count) === 1,
+    "Preview owner-context summary should include one CENTRAL sync candidate"
+  );
+  assert(
+    toNumber(preview1OwnerContextMap[`OPERATING_UNIT:${fixture.operatingUnitId}`]?.candidate_count) === 1,
+    "Preview owner-context summary should include one OU sync candidate"
+  );
 
   const apply1 = await applyPayrollRunPaymentSync({
     req: null,
@@ -711,6 +839,12 @@ async function main() {
       toNumber(apply1?.applied?.release_count) === 0,
     "Apply should not produce partial/release for run1"
   );
+  assert(
+    Array.isArray(apply1?.preview_owner_context_summary) &&
+      apply1.preview_owner_context_summary.length === 2 &&
+      apply1.preview_mixed_owner_context === true,
+    "Apply response should carry the mixed owner-context preview summary"
+  );
 
   const run1Detail = await getPayrollRunLiabilitiesDetail({
     req: null,
@@ -733,6 +867,14 @@ async function main() {
   assert(
     run1NetLiabilities.every((row) => normalizeUpperText(row.beneficiary_snapshot_status) === "CAPTURED"),
     "Run1 NET links should keep CAPTURED beneficiary snapshot status"
+  );
+  assert(
+    run1NetLiabilities.some(
+      (row) =>
+        normalizeUpperText(row.ownership_scope) === "OPERATING_UNIT" &&
+        toNumber(row.operating_unit_id) === fixture.operatingUnitId
+    ),
+    "Run1 NET liabilities should preserve OU ownership after sync apply"
   );
 
   const run1SettleCountBeforeReplay = await countRunSettlementRows(
@@ -800,6 +942,12 @@ async function main() {
     toAmount(preview2?.summary?.release_amount) === 1820,
     "Release amount should equal 1820"
   );
+  assert(
+    preview2?.mixed_owner_context === true &&
+      Array.isArray(preview2?.owner_context_summary) &&
+      preview2.owner_context_summary.length === 2,
+    "Cancelled-batch preview should keep mixed owner-context summary"
+  );
 
   const apply2 = await applyPayrollRunPaymentSync({
     req: null,
@@ -837,6 +985,14 @@ async function main() {
   assert(
     run2NetLiabilities.every((row) => normalizeUpperText(row.beneficiary_snapshot_status) === "CAPTURED"),
     "Run2 NET liabilities should keep captured snapshots after release"
+  );
+  assert(
+    run2NetLiabilities.some(
+      (row) =>
+        normalizeUpperText(row.ownership_scope) === "OPERATING_UNIT" &&
+        toNumber(row.operating_unit_id) === fixture.operatingUnitId
+    ),
+    "Run2 NET liabilities should preserve OU ownership after release"
   );
 
   const run2LinkRows = await query(

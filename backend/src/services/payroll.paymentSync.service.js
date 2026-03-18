@@ -18,8 +18,13 @@ function normalizeScope(scope) {
   return normalized;
 }
 
+function normalizeOwnershipScope(value) {
+  const normalized = normalizeUpperText(value);
+  return normalized === "CENTRAL" || normalized === "OPERATING_UNIT" ? normalized : null;
+}
+
 function formatOwnerContextLabel(row) {
-  const ownershipScope = normalizeUpperText(row?.ownership_scope);
+  const ownershipScope = normalizeOwnershipScope(row?.ownership_scope);
   if (ownershipScope === "CENTRAL") {
     return "CENTRAL";
   }
@@ -43,6 +48,102 @@ function toAmount(value) {
 
 function amountString(value) {
   return toAmount(value).toFixed(6);
+}
+
+function buildOwnerContext(row) {
+  return {
+    ownership_scope: normalizeOwnershipScope(row?.ownership_scope),
+    operating_unit_id: parsePositiveInt(row?.operating_unit_id) || null,
+    operating_unit_code: String(row?.operating_unit_code || "").trim() || null,
+    operating_unit_name: String(row?.operating_unit_name || "").trim() || null,
+    owner_context_label: formatOwnerContextLabel(row),
+  };
+}
+
+function buildOwnerContextToken(row) {
+  const ownerContext = buildOwnerContext(row);
+  if (ownerContext.ownership_scope === "CENTRAL") {
+    return "CENTRAL";
+  }
+  if (ownerContext.ownership_scope === "OPERATING_UNIT" && ownerContext.operating_unit_id) {
+    return `OPERATING_UNIT:${ownerContext.operating_unit_id}`;
+  }
+  return "UNRESOLVED";
+}
+
+function summarizeSyncOwnerContexts(items = []) {
+  const grouped = new Map();
+
+  for (const item of items || []) {
+    const ownerContext = buildOwnerContext(item);
+    const token = buildOwnerContextToken(item);
+    if (!grouped.has(token)) {
+      grouped.set(token, {
+        ...ownerContext,
+        candidate_count: 0,
+        total_liability_amount: 0,
+        total_allocated_amount: 0,
+        total_outstanding_amount: 0,
+        mark_partial_count: 0,
+        mark_partial_amount: 0,
+        mark_paid_count: 0,
+        mark_paid_amount: 0,
+        release_count: 0,
+        release_amount: 0,
+        exception_count: 0,
+        exception_amount: 0,
+        noop_count: 0,
+        noop_amount: 0,
+      });
+    }
+
+    const bucket = grouped.get(token);
+    const verdictAction = normalizeUpperText(item?.verdict?.action || "NOOP");
+    const verdictAmount = toAmount(item?.verdict?.amount);
+
+    bucket.candidate_count += 1;
+    bucket.total_liability_amount = toAmount(
+      bucket.total_liability_amount + toAmount(item?.liability_amount)
+    );
+    bucket.total_allocated_amount = toAmount(
+      bucket.total_allocated_amount + toAmount(item?.allocated_amount ?? item?.liability_amount)
+    );
+    bucket.total_outstanding_amount = toAmount(
+      bucket.total_outstanding_amount + toAmount(item?.liability_outstanding_amount)
+    );
+
+    if (verdictAction === "MARK_PARTIAL") {
+      bucket.mark_partial_count += 1;
+      bucket.mark_partial_amount = toAmount(bucket.mark_partial_amount + verdictAmount);
+    } else if (verdictAction === "MARK_PAID") {
+      bucket.mark_paid_count += 1;
+      bucket.mark_paid_amount = toAmount(bucket.mark_paid_amount + verdictAmount);
+    } else if (verdictAction === "RELEASE_TO_OPEN") {
+      bucket.release_count += 1;
+      bucket.release_amount = toAmount(bucket.release_amount + verdictAmount);
+    } else if (verdictAction === "EXCEPTION") {
+      bucket.exception_count += 1;
+      bucket.exception_amount = toAmount(bucket.exception_amount + verdictAmount);
+    } else {
+      bucket.noop_count += 1;
+      bucket.noop_amount = toAmount(bucket.noop_amount + verdictAmount);
+    }
+  }
+
+  return Array.from(grouped.values()).sort((left, right) => {
+    const leftScope = normalizeOwnershipScope(left?.ownership_scope);
+    const rightScope = normalizeOwnershipScope(right?.ownership_scope);
+    if (leftScope !== rightScope) {
+      if (leftScope === "CENTRAL") return -1;
+      if (rightScope === "CENTRAL") return 1;
+    }
+    const leftCode = String(left?.operating_unit_code || left?.operating_unit_name || "").trim();
+    const rightCode = String(right?.operating_unit_code || right?.operating_unit_name || "").trim();
+    if (leftCode !== rightCode) {
+      return leftCode.localeCompare(rightCode);
+    }
+    return (left?.operating_unit_id || 0) - (right?.operating_unit_id || 0);
+  });
 }
 
 function safeJson(value) {
@@ -528,12 +629,19 @@ async function buildPaymentSyncPreviewInternal({
 
   const items = rows.map((row) => {
     const verdict = classifySyncCandidate(row, { allowB04OnlySettlement });
+    const ownerContext = buildOwnerContext(row);
     return {
       ...row,
-      owner_context_label: formatOwnerContextLabel(row),
+      ownership_scope: ownerContext.ownership_scope,
+      operating_unit_id: ownerContext.operating_unit_id,
+      operating_unit_code: ownerContext.operating_unit_code,
+      operating_unit_name: ownerContext.operating_unit_name,
+      owner_context_label: ownerContext.owner_context_label,
+      owner_context: ownerContext,
       verdict,
     };
   });
+  const ownerContextSummary = summarizeSyncOwnerContexts(items);
 
   if (updatePreviewTimestamp) {
     await updateRunPaymentSyncPreviewTimestamp(tenantId, runId, runQuery);
@@ -555,6 +663,8 @@ async function buildPaymentSyncPreviewInternal({
     },
     scope: normalizedScope,
     allow_b04_only_settlement: Boolean(allowB04OnlySettlement),
+    owner_context_summary: ownerContextSummary,
+    mixed_owner_context: ownerContextSummary.length > 1,
     summary: summarizePreviewItems(items),
     items,
   };
@@ -779,6 +889,7 @@ export async function applyPayrollRunPaymentSync({
           liabilityId,
           action: liabilityStatus === "PAID" ? "SETTLED" : "PARTIALLY_SETTLED",
           payload: {
+            ownerContext: item.owner_context || buildOwnerContext(item),
             settlementSource: verdict.settlementSource || "B03_RECON",
             paymentBatchId: batchId,
             paymentBatchLineId: batchLineId,
@@ -856,6 +967,7 @@ export async function applyPayrollRunPaymentSync({
           liabilityId,
           action: "RELEASED",
           payload: {
+            ownerContext: item.owner_context || buildOwnerContext(item),
             paymentBatchId: batchId,
             paymentBatchLineId: batchLineId,
             amount: toAmount(verdict.amount),
@@ -882,6 +994,7 @@ export async function applyPayrollRunPaymentSync({
         allowB04OnlySettlement: Boolean(allowB04OnlySettlement),
         note: note || null,
         previewSummary: preview.summary,
+        previewOwnerContextSummary: preview.owner_context_summary,
         applied: {
           markPartialCount: markPartialAppliedCount,
           markPartialAmount: markPartialAppliedAmount,
@@ -906,6 +1019,8 @@ export async function applyPayrollRunPaymentSync({
       scope: normalizedScope,
       allow_b04_only_settlement: Boolean(allowB04OnlySettlement),
       preview_summary: preview.summary,
+      preview_owner_context_summary: preview.owner_context_summary,
+      preview_mixed_owner_context: Boolean(preview.mixed_owner_context),
       applied: {
         mark_partial_count: markPartialAppliedCount,
         mark_partial_amount: markPartialAppliedAmount,

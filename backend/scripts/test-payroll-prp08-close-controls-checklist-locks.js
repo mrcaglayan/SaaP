@@ -602,6 +602,107 @@ async function insertPostedPayrollBatchMissingSelfBalancing({
   });
 }
 
+async function insertActivePayrollBatch({
+  tenantId,
+  legalEntityId,
+  runId,
+  liabilityId,
+  payableGlAccountId,
+  bankAccountId,
+  currencyCode,
+  batchNo,
+  amount,
+  userId,
+  batchStatus = "APPROVED",
+}) {
+  const normalizedBatchStatus = String(batchStatus || "APPROVED").trim().toUpperCase();
+  assert(
+    ["DRAFT", "APPROVED", "EXPORTED"].includes(normalizedBatchStatus),
+    `Unsupported active payroll batch status fixture: ${normalizedBatchStatus}`
+  );
+
+  return withTransaction(async (tx) => {
+    const approvedByUserId = normalizedBatchStatus === "DRAFT" ? null : userId;
+    const approvedAt = normalizedBatchStatus === "DRAFT" ? null : new Date();
+    const batchInsert = await tx.query(
+      `INSERT INTO payment_batches (
+          tenant_id,
+          legal_entity_id,
+          batch_no,
+          source_type,
+          source_id,
+          bank_account_id,
+          currency_code,
+          total_amount,
+          status,
+          notes,
+          created_by_user_id,
+          approved_by_user_id,
+          approved_at
+        )
+        VALUES (?, ?, ?, 'PAYROLL', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        batchNo,
+        runId,
+        bankAccountId,
+        currencyCode,
+        amount,
+        normalizedBatchStatus,
+        `PRP08 active payroll batch ${batchNo}`,
+        userId,
+        approvedByUserId,
+        approvedAt,
+      ]
+    );
+    const batchId = toNumber(batchInsert.rows?.insertId);
+    assert(batchId > 0, "Failed to create active payroll batch fixture");
+
+    const lineInsert = await tx.query(
+      `INSERT INTO payment_batch_lines (
+          tenant_id,
+          legal_entity_id,
+          batch_id,
+          line_no,
+          beneficiary_type,
+          beneficiary_id,
+          beneficiary_name,
+          beneficiary_bank_ref,
+          payable_entity_type,
+          payable_entity_id,
+          payable_gl_account_id,
+          payable_ref,
+          amount,
+          status,
+          external_payment_ref,
+          notes
+        )
+        VALUES (?, ?, ?, 1, 'EMPLOYEE', NULL, ?, NULL, 'PAYROLL_LIABILITY', ?, ?, ?, ?, 'PENDING', ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        batchId,
+        "Legacy In-Flight Employee",
+        liabilityId,
+        payableGlAccountId,
+        `PRP08-ACTIVE-${batchId}-L1`,
+        amount,
+        `PRP08-ACTIVE-PAYREF-${batchId}`,
+        "Legacy in-flight payroll batch fixture",
+      ]
+    );
+    const batchLineId = toNumber(lineInsert.rows?.insertId);
+    assert(batchLineId > 0, "Failed to create active payroll batch line fixture");
+
+    return {
+      batchId,
+      batchLineId,
+      batchStatus: normalizedBatchStatus,
+    };
+  });
+}
+
 async function insertFinalizedPayrollRunWithOwnershipLine({
   tenantId,
   legalEntityId,
@@ -690,6 +791,146 @@ async function insertFinalizedPayrollRunWithOwnershipLine({
   );
   const runId = toNumber(runRows.rows?.[0]?.id);
   assert(runId > 0, `Failed to create payroll run fixture ${runNo}`);
+
+  await query(
+    `INSERT INTO payroll_run_lines (
+        tenant_id,
+        legal_entity_id,
+        run_id,
+        line_no,
+        employee_code,
+        employee_name,
+        cost_center_code,
+        ownership_scope,
+        operating_unit_id,
+        ownership_assignment_id,
+        ownership_resolution_status,
+        ownership_resolution_note,
+        base_salary,
+        gross_pay,
+        employee_tax,
+        employee_social_security,
+        net_pay,
+        employer_tax,
+        employer_social_security,
+        line_hash,
+        raw_row_json
+      )
+      VALUES (
+        ?, ?, ?, ?, ?, ?, 'CC-001', ?, NULL, NULL, ?, ?,
+        100, 100, 10, 5, 85, 10, 5, ?, ?
+      )`,
+    [
+      tenantId,
+      legalEntityId,
+      runId,
+      lineNo,
+      employeeCode,
+      employeeName,
+      ownershipScope,
+      ownershipResolutionStatus,
+      ownershipResolutionNote,
+      lineHash,
+      JSON.stringify({ employee_code: employeeCode, employee_name: employeeName }),
+    ]
+  );
+
+  return runId;
+}
+
+async function insertInFlightPayrollRunWithOwnershipLine({
+  tenantId,
+  legalEntityId,
+  legalEntityCode,
+  userId,
+  runNo,
+  payrollPeriod,
+  payDate,
+  ownershipAsOfDate = null,
+  employeeCode,
+  employeeName,
+  ownershipResolutionStatus = "UNRESOLVED",
+  ownershipScope = null,
+  ownershipResolutionNote = null,
+  lineNo = 1,
+  status = "REVIEWED",
+}) {
+  const normalizedStatus = String(status || "REVIEWED").trim().toUpperCase();
+  assert(
+    ["DRAFT", "IMPORTED", "REVIEWED"].includes(normalizedStatus),
+    `Unsupported in-flight payroll run status fixture: ${normalizedStatus}`
+  );
+
+  const fileChecksum = hashToken(`run:${runNo}`);
+  const lineHash = hashToken(`line:${runNo}:${lineNo}:${employeeCode}`);
+
+  await query(
+    `INSERT INTO payroll_runs (
+        tenant_id,
+        legal_entity_id,
+        run_no,
+        provider_code,
+        entity_code,
+        payroll_period,
+        pay_date,
+        ownership_as_of_date,
+        currency_code,
+        original_filename,
+        file_checksum,
+        status,
+        run_type,
+        line_count_total,
+        line_count_inserted,
+        line_count_duplicates,
+        employee_count,
+        total_base_salary,
+        total_gross_pay,
+        total_employee_tax,
+        total_employee_social_security,
+        total_net_pay,
+        total_employer_tax,
+        total_employer_social_security,
+        raw_meta_json,
+        imported_by_user_id,
+        finalized_by_user_id,
+        finalized_at,
+        accrual_journal_entry_id,
+        accrual_posted_by_user_id,
+        accrual_posted_at
+      )
+      VALUES (
+        ?, ?, ?, 'TEST_PROVIDER', ?, ?, ?, ?, 'TRY', ?, ?, ?, 'REGULAR',
+        1, 1, 0, 1,
+        100, 100, 10, 5, 85, 10, 5,
+        ?, ?, NULL, NULL, NULL, NULL, NULL
+      )`,
+    [
+      tenantId,
+      legalEntityId,
+      runNo,
+      legalEntityCode,
+      payrollPeriod,
+      payDate,
+      ownershipAsOfDate,
+      `${runNo}.csv`,
+      fileChecksum,
+      normalizedStatus,
+      JSON.stringify({ fixture: "prp08-close-check-inflight" }),
+      userId,
+    ]
+  );
+
+  const runRows = await query(
+    `SELECT id
+     FROM payroll_runs
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND run_no = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, runNo]
+  );
+  const runId = toNumber(runRows.rows?.[0]?.id);
+  assert(runId > 0, `Failed to create in-flight payroll run fixture ${runNo}`);
 
   await query(
     `INSERT INTO payroll_run_lines (
@@ -895,6 +1136,12 @@ async function main() {
     String(initialLiabilityCheck?.status || "").toUpperCase() === "PASS",
     "Liability owner-context close check should pass when no liabilities exist in period"
   );
+  const initialLegacyInflightCheck = findCheck(prepared, "PRE_POU_IN_FLIGHT_STATE_CLEARED");
+  assert(initialLegacyInflightCheck, "Close checklist should include the legacy in-flight rollout check");
+  assert(
+    String(initialLegacyInflightCheck?.status || "").toUpperCase() === "PASS",
+    "Legacy in-flight rollout check should pass when no pre-POU in-flight state exists"
+  );
 
   const legacyRunId = await insertFinalizedPayrollRunWithOwnershipLine({
     tenantId,
@@ -975,6 +1222,178 @@ async function main() {
   assert(
     toNumber(legacyLiabilityCheck?.details_json?.ownership_aware_liability_count) === 0,
     "Legacy prepare should not count ownership-unaware liabilities as ownership-aware"
+  );
+
+  const legacyInFlightRunId = await insertInFlightPayrollRunWithOwnershipLine({
+    tenantId,
+    legalEntityId,
+    legalEntityCode,
+    userId: makerUserId,
+    runNo: `PRP08-LEGACY-INFLIGHT-${stamp}`,
+    payrollPeriod: "2026-02-14",
+    payDate: "2026-02-14",
+    ownershipAsOfDate: null,
+    employeeCode: "LEGACYINF001",
+    employeeName: "Legacy In-Flight Employee",
+    ownershipResolutionStatus: "UNRESOLVED",
+    ownershipScope: null,
+    ownershipResolutionNote: "Legacy in-flight row must be cancelled and recreated",
+    status: "REVIEWED",
+  });
+  const legacyInFlightLiabilityId = await insertPayrollLiability({
+    tenantId,
+    legalEntityId,
+    runId: legacyInFlightRunId,
+    liabilityKey: `PRP08-LIA-LEGACY-INFLIGHT-${stamp}`,
+    payableGlAccountId: liabilityGlAccountId,
+    employeeCode: "LEGACYINF001",
+    employeeName: "Legacy In-Flight Employee",
+    ownershipScope: null,
+    operatingUnitId: null,
+    status: "IN_BATCH",
+  });
+  const legacyInFlightBatch = await insertActivePayrollBatch({
+    tenantId,
+    legalEntityId,
+    runId: legacyInFlightRunId,
+    liabilityId: legacyInFlightLiabilityId,
+    payableGlAccountId: liabilityGlAccountId,
+    bankAccountId: paymentPostingFixture.centralBankAccountId,
+    currencyCode,
+    batchNo: `PRP08-LEGACY-ACTIVE-${stamp}`,
+    amount: 85,
+    userId: makerUserId,
+    batchStatus: "APPROVED",
+  });
+
+  const preparedWithLegacyInflightState = await preparePayrollPeriodClose({
+    req: null,
+    tenantId,
+    userId: makerUserId,
+    input: {
+      legalEntityId,
+      periodStart,
+      periodEnd,
+      lockRunChanges: true,
+      lockManualSettlements: true,
+      lockPaymentPrep: false,
+      note: "prepare with legacy in-flight payroll state",
+    },
+    assertScopeAccess: noScopeGuard,
+  });
+  assert(
+    String(preparedWithLegacyInflightState?.close?.status || "").toUpperCase() === "DRAFT",
+    "Legacy pre-POU in-flight payroll state should fail the close checklist until it is cancelled and recreated"
+  );
+  const blockedLegacyInflightCheck = findCheck(
+    preparedWithLegacyInflightState,
+    "PRE_POU_IN_FLIGHT_STATE_CLEARED"
+  );
+  assert(blockedLegacyInflightCheck, "Blocked prepare should include the legacy in-flight rollout check");
+  assert(
+    String(blockedLegacyInflightCheck?.status || "").toUpperCase() === "FAIL",
+    "Legacy in-flight rollout check should fail while ownership-unaware runs, liabilities, or batches remain active"
+  );
+  assert(
+    toNumber(blockedLegacyInflightCheck?.details_json?.legacy_non_finalized_run_count) === 1,
+    "Legacy in-flight rollout check should count the ownership-unaware non-finalized payroll run"
+  );
+  assert(
+    toNumber(blockedLegacyInflightCheck?.details_json?.legacy_derived_liability_count) === 1,
+    "Legacy in-flight rollout check should count the derived payroll liability"
+  );
+  assert(
+    toNumber(blockedLegacyInflightCheck?.details_json?.legacy_active_batch_count) === 1,
+    "Legacy in-flight rollout check should count the active payroll batch"
+  );
+  assert(
+    toNumber(blockedLegacyInflightCheck?.details_json?.approved_batch_count) === 1,
+    "Legacy in-flight rollout check should expose the approved-batch breakdown"
+  );
+  assert(
+    Array.isArray(blockedLegacyInflightCheck?.details_json?.remediation_steps) &&
+      blockedLegacyInflightCheck.details_json.remediation_steps.length >= 3,
+    "Legacy in-flight rollout check should return explicit cancel/recreate remediation guidance"
+  );
+  assert(
+    blockedLegacyInflightCheck?.details_json?.sample_runs?.[0]?.run_no ===
+      `PRP08-LEGACY-INFLIGHT-${stamp}`,
+    "Legacy in-flight rollout check should surface a blocking sample run"
+  );
+  assert(
+    blockedLegacyInflightCheck?.details_json?.sample_liabilities?.[0]?.liability_id ===
+      legacyInFlightLiabilityId,
+    "Legacy in-flight rollout check should surface a blocking sample liability"
+  );
+  assert(
+    blockedLegacyInflightCheck?.details_json?.sample_batches?.[0]?.batch_id ===
+      legacyInFlightBatch.batchId,
+    "Legacy in-flight rollout check should surface a blocking sample payment batch"
+  );
+
+  await query(
+    `DELETE FROM payment_batch_lines
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND batch_id = ?`,
+    [tenantId, legalEntityId, legacyInFlightBatch.batchId]
+  );
+  await query(
+    `DELETE FROM payment_batches
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?`,
+    [tenantId, legalEntityId, legacyInFlightBatch.batchId]
+  );
+  await query(
+    `DELETE FROM payroll_run_liabilities
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?`,
+    [tenantId, legalEntityId, legacyInFlightLiabilityId]
+  );
+  await query(
+    `DELETE FROM payroll_run_lines
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND run_id = ?`,
+    [tenantId, legalEntityId, legacyInFlightRunId]
+  );
+  await query(
+    `DELETE FROM payroll_runs
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?`,
+    [tenantId, legalEntityId, legacyInFlightRunId]
+  );
+
+  const preparedAfterLegacyInflightCleanup = await preparePayrollPeriodClose({
+    req: null,
+    tenantId,
+    userId: makerUserId,
+    input: {
+      legalEntityId,
+      periodStart,
+      periodEnd,
+      lockRunChanges: true,
+      lockManualSettlements: true,
+      lockPaymentPrep: false,
+      note: "prepare after removing legacy in-flight payroll state",
+    },
+    assertScopeAccess: noScopeGuard,
+  });
+  assert(
+    String(preparedAfterLegacyInflightCleanup?.close?.status || "").toUpperCase() === "READY",
+    "Close checklist should recover once legacy in-flight payroll state is cancelled and removed from the period"
+  );
+  const fixedLegacyInflightCheck = findCheck(
+    preparedAfterLegacyInflightCleanup,
+    "PRE_POU_IN_FLIGHT_STATE_CLEARED"
+  );
+  assert(fixedLegacyInflightCheck, "Recovered prepare should still include the legacy in-flight rollout check");
+  assert(
+    String(fixedLegacyInflightCheck?.status || "").toUpperCase() === "PASS",
+    "Legacy in-flight rollout check should pass after the legacy state has been cancelled/recreated"
   );
 
   const ownershipAwareRunId = await insertFinalizedPayrollRunWithOwnershipLine({
@@ -1496,7 +1915,7 @@ async function main() {
   );
 
   console.log(
-    "PR-P08 smoke test passed (ownership + liability close checks, posted payroll settlement structure, grandfathering boundary, prepare/request/approve/reopen, maker-checker, lock enforcement, idempotency)."
+    "PR-P08 smoke test passed (legacy grandfathering boundary, legacy in-flight rollout enforcement, ownership + liability close checks, posted payroll settlement structure, prepare/request/approve/reopen, maker-checker, lock enforcement, idempotency)."
   );
 }
 

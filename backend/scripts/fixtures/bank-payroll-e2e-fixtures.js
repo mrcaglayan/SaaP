@@ -14,17 +14,9 @@ export const BANK_PAYROLL_RELEASE_STAGES = [
   },
   {
     id: "payroll-flow",
-    title: "Payroll flow: import to close controls",
+    title: "Payroll flow: import, ownership/settlement contract, corrections, and close controls",
     scripts: [
-      "test:payroll:prp01",
-      "test:payroll:prp02",
-      "test:payroll:prp03",
-      "test:payroll:prp04",
-      "test:payroll:prp05",
-      "test:payroll:prp06",
-      "test:payroll:prp07",
-      "test:payroll:prp08",
-      "test:payroll:prp09",
+      "test:payroll:release-gate",
     ],
   },
   {

@@ -834,6 +834,43 @@ async function main() {
     "Prepared NET_PAY list should retain OU owner-context metadata"
   );
 
+  const liabilityWithEmployeeCode = (listedInBatch?.rows || []).find(
+    (row) => normalizeUpperText(row?.employee_code) === "E002"
+  );
+  assert(toNumber(liabilityWithEmployeeCode?.id) > 0, "Expected an IN_BATCH liability for E002");
+  await query(
+    `UPDATE payroll_run_liabilities
+     SET employee_code = ?
+     WHERE tenant_id = ?
+       AND id = ?`,
+    ["  e002  ", fixture.tenantId, toNumber(liabilityWithEmployeeCode?.id)]
+  );
+  const searchedLegacyCaseLiability = await listPayrollLiabilityRows({
+    req: null,
+    tenantId: fixture.tenantId,
+    filters: {
+      tenantId: fixture.tenantId,
+      runId,
+      legalEntityId: fixture.legalEntityId,
+      status: "IN_BATCH",
+      liabilityType: null,
+      ownershipScope: null,
+      operatingUnitId: null,
+      scope: "NET_PAY",
+      q: " E002 ",
+      cursor: null,
+      limit: 200,
+      offset: 0,
+    },
+    buildScopeFilter: allowAllScopeFilter,
+    assertScopeAccess: noScopeGuard,
+  });
+  assert(
+    (searchedLegacyCaseLiability?.rows || []).length === 1 &&
+      toNumber(searchedLegacyCaseLiability?.rows?.[0]?.id) === toNumber(liabilityWithEmployeeCode?.id),
+    "Liability search should normalize mixed-case legacy employee_code rows"
+  );
+
   const syncPreview = await getPayrollRunPaymentSyncPreview({
     req: null,
     tenantId: fixture.tenantId,

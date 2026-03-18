@@ -584,7 +584,11 @@ export async function listPayrollRunLineRows({
   if (filters.q) {
     const like = `%${normalizeSearchText(filters.q)}%`;
     conditions.push(
-      "(UPPER(l.employee_code) LIKE ? OR UPPER(l.employee_name) LIKE ? OR UPPER(COALESCE(l.cost_center_code, '')) LIKE ?)"
+      `(
+        UPPER(TRIM(COALESCE(l.employee_code, ''))) LIKE ?
+        OR UPPER(TRIM(COALESCE(l.employee_name, ''))) LIKE ?
+        OR UPPER(TRIM(COALESCE(l.cost_center_code, ''))) LIKE ?
+      )`
     );
     params.push(like, like, like);
   }

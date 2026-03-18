@@ -86,7 +86,7 @@
 - [x] `PR-POU05` - OU-attributed payroll liabilities
 - [x] `PR-POU06` - Payroll payment preparation and UI ownership visibility
 - [x] `PR-POU07` - Payroll settlement self-balancing posting
-- [ ] `PR-POU08` - Close controls, sync, overrides, reporting, and release gates
+- [x] `PR-POU08` - Close controls, sync, overrides, reporting, and release gates
 
 ---
 
@@ -506,28 +506,28 @@ Close the control loop so payroll cannot close with unresolved owner-context sta
 - [x] Treat `ownership_scope = 'CENTRAL'` plus `operating_unit_id IS NULL` as valid
 - [x] Treat `ownership_scope = 'OPERATING_UNIT'` plus non-null `operating_unit_id` as required
 - [x] Add close check: no posted payroll payment batch with cross-context owner / payer mismatch but missing self-balancing journal structure
-- [ ] Grandfather pre-POU finalized runs / liabilities in close checks unless a one-time historical backfill is implemented
-- [ ] Add rollout rule for pre-POU in-flight payroll state: non-finalized runs, derived liabilities, and draft/approved payroll payment batches must be cancelled and re-created unless an explicit backfill / re-resolution utility is implemented
-- [ ] Make the grandfathering boundary explicit in close-control queries so historical rows do not fail new checks accidentally
-- [ ] Normalize employee-code comparisons in read/search/report paths where legacy mixed-case rows and new normalized rows may coexist
-- [ ] Add owner-context fields to payroll export and reporting snapshots
-- [ ] Keep payment sync logic compatible with owner-context-attributed liabilities
-- [ ] Keep manual override logic compatible with owner-context-attributed liabilities
-- [ ] Regenerate OpenAPI via `backend/scripts/generate-openapi.js` and keep `backend/openapi.yaml` in sync with the implemented routes / schemas
-- [ ] Update OpenAPI for new ownership routes and new payroll response fields
-- [ ] Extend release gate scripts to cover:
+- [x] Grandfather pre-POU finalized runs / liabilities in close checks unless a one-time historical backfill is implemented
+- [x] Add rollout rule for pre-POU in-flight payroll state: non-finalized runs, derived liabilities, and draft/approved payroll payment batches must be cancelled and re-created unless an explicit backfill / re-resolution utility is implemented
+- [x] Make the grandfathering boundary explicit in close-control queries so historical rows do not fail new checks accidentally
+- [x] Normalize employee-code comparisons in read/search/report paths where legacy mixed-case rows and new normalized rows may coexist
+- [x] Add owner-context fields to payroll export and reporting snapshots
+- [x] Keep payment sync logic compatible with owner-context-attributed liabilities
+- [x] Keep manual override logic compatible with owner-context-attributed liabilities
+- [x] Regenerate OpenAPI via `backend/scripts/generate-openapi.js` and keep `backend/openapi.yaml` in sync with the implemented routes / schemas
+- [x] Update OpenAPI for new ownership routes and new payroll response fields
+- [x] Extend release gate scripts to cover:
   - ownership assignment resolution
   - accrual OU posting
   - liability owner-context grouping
   - cross-context payroll settlement
   - close-control blocking
-- [ ] Wire the new scripts into the existing payroll and bank/payroll gate runners, not only as standalone entry points
+- [x] Wire the new scripts into the existing payroll and bank/payroll gate runners, not only as standalone entry points
 
 ### Acceptance
 
-- [ ] Payroll close blocks unresolved ownership and missing owner-context state
-- [ ] Payroll reporting and sync flows surface owner context correctly
-- [ ] CI protects the new payroll ownership and settlement contract
+- [x] Payroll close blocks unresolved ownership and missing owner-context state
+- [x] Payroll reporting and sync flows surface owner context correctly
+- [x] CI protects the new payroll ownership and settlement contract
 
 ---
 
@@ -583,5 +583,5 @@ That order matters because settlement should not be touched before liabilities h
 - [x] Payroll liabilities persist owner context
 - [x] Payroll payment preparation shows payer-context vs owner-context behavior
 - [x] Cross-context payroll settlements generate due-to / due-from lines through the shared OU self-balancing engine
-- [ ] Payroll close controls block incomplete ownership or settlement states
-- [ ] Regression scripts cover the end-to-end ownership, accrual, liability, settlement, and close-control contract
+- [x] Payroll close controls block incomplete ownership or settlement states
+- [x] Regression scripts cover the end-to-end ownership, accrual, liability, settlement, and close-control contract

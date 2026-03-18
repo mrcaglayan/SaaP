@@ -102,6 +102,8 @@
     "test:payroll:prp09": "node scripts/test-payroll-prp09-provider-adapters.js",
     "test:payroll:pou06": "node scripts/test-payroll-pou06-payment-prep-ui-contract.js",
     "test:payroll:pou07": "node scripts/test-payroll-pou07-settlement-self-balancing.js",
+    "test:payroll:pou08-release-gate": "node scripts/test-payroll-pou08-release-gate.js",
+    "test:payroll:release-gate": "npm run test:payroll:prp01 && npm run test:payroll:pou08-release-gate && npm run test:payroll:pou06 && npm run test:payroll:prp05 && npm run test:payroll:prp06 && npm run test:payroll:prp07 && npm run test:payroll:prp09",
     "test:hardening:prh01": "node scripts/test-hardening-prh01-sensitive-data.js",
     "test:hardening:prh02": "node scripts/test-hardening-prh02-job-engine.js",
     "test:hardening:prh03": "node scripts/test-hardening-prh03-query-performance.js",

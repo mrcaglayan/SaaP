@@ -671,6 +671,36 @@ async function main() {
     "Line list should filter by operatingUnitId"
   );
 
+  await query(
+    `UPDATE payroll_run_lines
+     SET employee_code = ?
+     WHERE tenant_id = ?
+       AND run_id = ?
+       AND id = ?`,
+    ["  eMp002  ", fixture.tenantId, runId, toNumber(emp002Line?.id)]
+  );
+  const searchedLegacyCaseLine = await listPayrollRunLineRows({
+    req: null,
+    tenantId: fixture.tenantId,
+    runId,
+    filters: {
+      tenantId: fixture.tenantId,
+      runId,
+      q: " emp002 ",
+      costCenterCode: null,
+      operatingUnitId: null,
+      ownershipResolutionStatus: null,
+      limit: 50,
+      offset: 0,
+    },
+    assertScopeAccess: noScopeGuard,
+  });
+  assert(
+    (searchedLegacyCaseLine?.rows || []).length === 1 &&
+      toNumber(searchedLegacyCaseLine?.rows?.[0]?.id) === toNumber(emp002Line?.id),
+    "Line search should normalize mixed-case legacy employee_code rows"
+  );
+
   const correctionShell = await createPayrollCorrectionShell({
     req: null,
     tenantId: fixture.tenantId,

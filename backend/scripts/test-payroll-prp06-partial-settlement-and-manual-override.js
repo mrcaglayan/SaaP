@@ -1,5 +1,4 @@
 import bcrypt from "bcrypt";
-import { seedCentralPayrollOwnershipAssignmentsFromCsv } from "./_payrollOwnershipTestHelpers.js";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
 import {
@@ -20,6 +19,7 @@ import {
 } from "../src/services/payroll.liabilities.service.js";
 import { upsertPayrollComponentMapping } from "../src/services/payroll.mappings.service.js";
 import { applyPayrollRunPaymentSync, getPayrollRunPaymentSyncPreview } from "../src/services/payroll.paymentSync.service.js";
+import { createPayrollOwnershipAssignment } from "../src/services/payroll.ownership.service.js";
 import { importPayrollRunCsv } from "../src/services/payroll.runs.service.js";
 import {
   approveApplyPayrollManualSettlementRequest,
@@ -61,6 +61,87 @@ function denyScopeGuard() {
   const err = new Error("Scope access denied");
   err.status = 403;
   throw err;
+}
+
+function parseJsonish(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  return JSON.parse(value);
+}
+
+async function ensureOwnershipAssignment({
+  tenantId,
+  legalEntityId,
+  userId,
+  employeeCode,
+  employeeNameSnapshot,
+  ownershipScope,
+  operatingUnitId,
+  expectedCostCenterCode,
+}) {
+  const normalizedEmployeeCode = normalizeUpperText(employeeCode);
+  const existingRows = await query(
+    `SELECT id
+     FROM payroll_employee_owner_context_assignments
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND employee_code = ?
+       AND status = 'ACTIVE'
+       AND effective_from <= '2026-02-28'
+       AND COALESCE(effective_to, '9999-12-31') >= '2026-02-01'
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedEmployeeCode]
+  );
+  if (toNumber(existingRows.rows?.[0]?.id) > 0) {
+    return;
+  }
+
+  await createPayrollOwnershipAssignment({
+    req: null,
+    tenantId,
+    userId,
+    input: {
+      legalEntityId,
+      employeeCode: normalizedEmployeeCode,
+      employeeNameSnapshot,
+      ownershipScope,
+      operatingUnitId,
+      effectiveFrom: "2026-01-01",
+      effectiveTo: null,
+      status: "ACTIVE",
+      expectedCostCenterCode,
+      sourceType: "MANUAL",
+      notes: "PRP06 mixed owner-context seed",
+    },
+    assertScopeAccess: noScopeGuard,
+  });
+}
+
+async function seedMixedPayrollOwnershipAssignments({ fixture }) {
+  await ensureOwnershipAssignment({
+    tenantId: fixture.tenantId,
+    legalEntityId: fixture.legalEntityId,
+    userId: fixture.makerUserId,
+    employeeCode: "E001",
+    employeeNameSnapshot: "Alpha User",
+    ownershipScope: "CENTRAL",
+    operatingUnitId: null,
+    expectedCostCenterCode: "CC-01",
+  });
+  await ensureOwnershipAssignment({
+    tenantId: fixture.tenantId,
+    legalEntityId: fixture.legalEntityId,
+    userId: fixture.makerUserId,
+    employeeCode: "E002",
+    employeeNameSnapshot: "Beta User",
+    ownershipScope: "OPERATING_UNIT",
+    operatingUnitId: fixture.operatingUnitId,
+    expectedCostCenterCode: "CC-02",
+  });
 }
 
 async function expectFailure(work, { status, code, includes }) {
@@ -187,6 +268,31 @@ async function createTenantWithP06Fixtures(stamp) {
   );
   const legalEntityId = toNumber(legalEntityRows.rows?.[0]?.id);
   assert(legalEntityId > 0, "Failed to create legal entity fixture");
+
+  await query(
+    `INSERT INTO operating_units (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        unit_type,
+        has_subledger,
+        status
+      )
+      VALUES (?, ?, ?, ?, 'BRANCH', TRUE, 'ACTIVE')`,
+    [tenantId, legalEntityId, `PRP06_OU_${stamp}`, `PRP06 OU ${stamp}`]
+  );
+  const operatingUnitRows = await query(
+    `SELECT id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, `PRP06_OU_${stamp}`]
+  );
+  const operatingUnitId = toNumber(operatingUnitRows.rows?.[0]?.id);
+  assert(operatingUnitId > 0, "Failed to create operating unit fixture");
 
   await query(
     `INSERT INTO fiscal_calendars (
@@ -363,6 +469,7 @@ async function createTenantWithP06Fixtures(stamp) {
     checkerUserId,
     currencyCode,
     bankAccountId,
+    operatingUnitId,
     expenseGlAccountId,
     liabilityGlAccountId,
   };
@@ -433,13 +540,7 @@ async function createPreparedNetPayrollBatch({
   idempotencyKey,
 }) {
   const validCsv = buildValidCsv();
-  await seedCentralPayrollOwnershipAssignmentsFromCsv({
-    tenantId: fixture.tenantId,
-    legalEntityId: fixture.legalEntityId,
-    userId: fixture.makerUserId,
-    csvText: validCsv,
-    assertScopeAccess: noScopeGuard,
-  });
+  await seedMixedPayrollOwnershipAssignments({ fixture });
 
   const imported = await importPayrollRunCsv({
     req: null,
@@ -468,8 +569,14 @@ async function createPreparedNetPayrollBatch({
   });
   assert((accrualPreview?.component_totals || []).length > 0, "Accrual preview should have components");
 
+  const seenMappingKeys = new Set();
   for (const component of accrualPreview.component_totals || []) {
     const entrySide = normalizeUpperText(component?.entry_side);
+    const mappingKey = `${normalizeUpperText(component?.component_code)}|${entrySide}`;
+    if (seenMappingKeys.has(mappingKey)) {
+      continue;
+    }
+    seenMappingKeys.add(mappingKey);
     await upsertPayrollComponentMapping({
       req: null,
       payload: {
@@ -520,7 +627,7 @@ async function createPreparedNetPayrollBatch({
     note: "build liabilities for PRP06",
     assertScopeAccess: noScopeGuard,
   });
-  assert((built?.items || []).length === 7, "Liability build should create 7 liabilities");
+  assert((built?.items || []).length === 12, "Liability build should create 12 mixed owner-context liabilities");
 
   const prepared = await createPayrollRunPaymentBatchFromLiabilities({
     req: null,
@@ -769,6 +876,16 @@ async function main() {
   assert(e001Partial, "E001 NET liability should exist");
   assert(e002Partial, "E002 NET liability should exist");
   assert(
+    normalizeUpperText(e001Partial?.ownership_scope) === "CENTRAL" &&
+      toNumber(e001Partial?.operating_unit_id) === 0,
+    "E001 NET liability should remain central-owned"
+  );
+  assert(
+    normalizeUpperText(e002Partial?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(e002Partial?.operating_unit_id) === fixture.operatingUnitId,
+    "E002 NET liability should remain OU-owned"
+  );
+  assert(
     normalizeUpperText(e001Partial?.status) === "PARTIALLY_PAID" &&
       normalizeUpperText(e002Partial?.status) === "PARTIALLY_PAID",
     "Both NET liabilities should become PARTIALLY_PAID after partial sync"
@@ -801,13 +918,13 @@ async function main() {
   const req1Create = await createPayrollManualSettlementRequest({
     req: null,
     tenantId: fixture.tenantId,
-    liabilityId: toNumber(e001Partial.id),
+    liabilityId: toNumber(e002Partial.id),
     userId: fixture.makerUserId,
     input: {
-      amount: toAmount(e001Partial?.outstanding_amount),
+      amount: toAmount(e002Partial?.outstanding_amount),
       settledAt: "2026-02-20 11:00:00",
-      reason: "Manual settlement approval for E001",
-      externalRef: "PRP06-E001",
+      reason: "Manual settlement approval for E002 OU liability",
+      externalRef: "PRP06-E002",
       idempotencyKey: req1Key,
     },
     assertScopeAccess: noScopeGuard,
@@ -819,17 +936,27 @@ async function main() {
     normalizeUpperText(req1Create?.request?.status) === "REQUESTED",
     "Manual override request #1 should be REQUESTED"
   );
+  assert(
+    normalizeUpperText(req1Create?.request?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(req1Create?.request?.operating_unit_id) === fixture.operatingUnitId,
+    "Manual override request #1 should preserve OU owner-context metadata"
+  );
+  assert(
+    normalizeUpperText(req1Create?.request?.owner_context?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(req1Create?.request?.owner_context?.operating_unit_id) === fixture.operatingUnitId,
+    "Manual override request #1 should expose nested owner_context metadata"
+  );
 
   const req1Replay = await createPayrollManualSettlementRequest({
     req: null,
     tenantId: fixture.tenantId,
-    liabilityId: toNumber(e001Partial.id),
+    liabilityId: toNumber(e002Partial.id),
     userId: fixture.makerUserId,
     input: {
-      amount: toAmount(e001Partial?.outstanding_amount),
+      amount: toAmount(e002Partial?.outstanding_amount),
       settledAt: "2026-02-20 11:00:00",
-      reason: "Manual settlement approval for E001 replay",
-      externalRef: "PRP06-E001-REPLAY",
+      reason: "Manual settlement approval for E002 replay",
+      externalRef: "PRP06-E002-REPLAY",
       idempotencyKey: req1Key,
     },
     assertScopeAccess: noScopeGuard,
@@ -843,13 +970,13 @@ async function main() {
   const req2Create = await createPayrollManualSettlementRequest({
     req: null,
     tenantId: fixture.tenantId,
-    liabilityId: toNumber(e002Partial.id),
+    liabilityId: toNumber(e001Partial.id),
     userId: fixture.makerUserId,
     input: {
-      amount: toAmount(Math.min(10, toAmount(e002Partial?.outstanding_amount))),
+      amount: toAmount(Math.min(10, toAmount(e001Partial?.outstanding_amount))),
       settledAt: "2026-02-20 11:30:00",
       reason: "Manual settlement request to reject",
-      externalRef: "PRP06-E002",
+      externalRef: "PRP06-E001",
       idempotencyKey: `PRP06-REQ2-${stamp}`,
     },
     assertScopeAccess: noScopeGuard,
@@ -861,19 +988,40 @@ async function main() {
     "Manual override request #2 should be REQUESTED"
   );
 
-  const listedE001 = await listPayrollManualSettlementRequests({
+  const listedE002 = await listPayrollManualSettlementRequests({
     req: null,
     tenantId: fixture.tenantId,
-    liabilityId: toNumber(e001Partial.id),
+    liabilityId: toNumber(e002Partial.id),
     assertScopeAccess: noScopeGuard,
   });
   assert(
-    toNumber(listedE001?.liability?.id) === toNumber(e001Partial.id),
+    toNumber(listedE002?.liability?.id) === toNumber(e002Partial.id),
     "List requests should return liability context"
   );
   assert(
-    (listedE001?.items || []).some((row) => toNumber(row?.id) === req1Id),
+    normalizeUpperText(listedE002?.liability?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(listedE002?.liability?.operating_unit_id) === fixture.operatingUnitId,
+    "List requests should return OU owner-context metadata on the liability header"
+  );
+  assert(
+    normalizeUpperText(listedE002?.liability?.owner_context?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(listedE002?.liability?.owner_context?.operating_unit_id) === fixture.operatingUnitId,
+    "List requests should expose nested OU owner_context metadata on the liability header"
+  );
+  assert(
+    (listedE002?.items || []).some((row) => toNumber(row?.id) === req1Id),
     "List requests should include request #1"
+  );
+  const listedReq1 = (listedE002?.items || []).find((row) => toNumber(row?.id) === req1Id);
+  assert(
+    normalizeUpperText(listedReq1?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(listedReq1?.operating_unit_id) === fixture.operatingUnitId,
+    "Listed override request rows should preserve OU owner-context metadata"
+  );
+  assert(
+    normalizeUpperText(listedReq1?.owner_context?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(listedReq1?.owner_context?.operating_unit_id) === fixture.operatingUnitId,
+    "Listed override request rows should expose nested OU owner_context metadata"
   );
 
   await expectFailure(
@@ -929,7 +1077,7 @@ async function main() {
   const manualSettlementCountBeforeApply = await countManualOverrideSettlements({
     tenantId: fixture.tenantId,
     legalEntityId: fixture.legalEntityId,
-    liabilityId: toNumber(e001Partial.id),
+    liabilityId: toNumber(e002Partial.id),
   });
   assert(
     manualSettlementCountBeforeApply === 0,
@@ -951,11 +1099,21 @@ async function main() {
     "Request #1 should be APPLIED by checker"
   );
   assert(appliedSettlementId > 0, "APPLIED request should reference settlement row");
+  assert(
+    normalizeUpperText(approve1?.request?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(approve1?.request?.operating_unit_id) === fixture.operatingUnitId,
+    "Approve/apply response should preserve OU owner-context metadata"
+  );
+  assert(
+    normalizeUpperText(approve1?.settlement?.owner_context?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(approve1?.settlement?.owner_context?.operating_unit_id) === fixture.operatingUnitId,
+    "Approve/apply response should expose settlement owner_context metadata"
+  );
 
   const manualSettlementCountAfterApply = await countManualOverrideSettlements({
     tenantId: fixture.tenantId,
     legalEntityId: fixture.legalEntityId,
-    liabilityId: toNumber(e001Partial.id),
+    liabilityId: toNumber(e002Partial.id),
   });
   assert(
     manualSettlementCountAfterApply === 1,
@@ -980,7 +1138,7 @@ async function main() {
   const manualSettlementCountAfterReplay = await countManualOverrideSettlements({
     tenantId: fixture.tenantId,
     legalEntityId: fixture.legalEntityId,
-    liabilityId: toNumber(e001Partial.id),
+    liabilityId: toNumber(e002Partial.id),
   });
   assert(
     manualSettlementCountAfterReplay === manualSettlementCountAfterApply,
@@ -988,7 +1146,7 @@ async function main() {
   );
 
   const e001SettlementRows = await query(
-    `SELECT id, settlement_source, settled_amount
+    `SELECT id, settlement_source, settled_amount, payload_json
      FROM payroll_liability_settlements
      WHERE tenant_id = ?
        AND legal_entity_id = ?
@@ -1002,6 +1160,30 @@ async function main() {
     normalizeUpperText(e001Settlement?.settlement_source) === "MANUAL_OVERRIDE",
     "Applied settlement row should have MANUAL_OVERRIDE source"
   );
+  const e001SettlementPayload = parseJsonish(e001Settlement?.payload_json);
+  assert(
+    normalizeUpperText(e001SettlementPayload?.ownerContext?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(e001SettlementPayload?.ownerContext?.operating_unit_id) === fixture.operatingUnitId,
+    "Applied settlement payload should persist OU owner-context metadata"
+  );
+
+  const manualAppliedAuditRows = await query(
+    `SELECT payload_json
+     FROM payroll_liability_audit
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND payroll_liability_id = ?
+       AND action = 'MANUAL_SETTLEMENT_APPLIED'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [fixture.tenantId, fixture.legalEntityId, toNumber(e002Partial.id)]
+  );
+  const manualAppliedAuditPayload = parseJsonish(manualAppliedAuditRows.rows?.[0]?.payload_json);
+  assert(
+    normalizeUpperText(manualAppliedAuditPayload?.ownerContext?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(manualAppliedAuditPayload?.ownerContext?.operating_unit_id) === fixture.operatingUnitId,
+    "Manual settlement applied audit should persist OU owner-context metadata"
+  );
 
   const detailAfterApply = await getPayrollRunLiabilitiesDetail({
     req: null,
@@ -1014,16 +1196,16 @@ async function main() {
   assert(e001AfterApply, "E001 liability should still exist");
   assert(e002AfterApply, "E002 liability should still exist");
   assert(
-    normalizeUpperText(e001AfterApply?.status) === "PAID",
-    "E001 should become PAID after manual override apply"
+    normalizeUpperText(e002AfterApply?.status) === "PAID",
+    "E002 should become PAID after manual override apply"
   );
   assert(
-    toAmount(e001AfterApply?.outstanding_amount) === 0,
-    "E001 outstanding should be zero after manual override apply"
+    toAmount(e002AfterApply?.outstanding_amount) === 0,
+    "E002 outstanding should be zero after manual override apply"
   );
   assert(
-    normalizeUpperText(e002AfterApply?.status) === "PARTIALLY_PAID",
-    "E002 should remain PARTIALLY_PAID after request #2 rejection"
+    normalizeUpperText(e001AfterApply?.status) === "PARTIALLY_PAID",
+    "E001 should remain PARTIALLY_PAID after request #2 rejection"
   );
 
   const closePrepare = await preparePayrollPeriodClose({
@@ -1082,7 +1264,7 @@ async function main() {
       createPayrollManualSettlementRequest({
         req: null,
         tenantId: fixture.tenantId,
-        liabilityId: toNumber(e002AfterApply.id),
+        liabilityId: toNumber(e001AfterApply.id),
         userId: fixture.makerUserId,
         input: {
           amount: 10,
@@ -1101,7 +1283,7 @@ async function main() {
       listPayrollManualSettlementRequests({
         req: null,
         tenantId: fixture.tenantId,
-        liabilityId: toNumber(e001AfterApply.id),
+        liabilityId: toNumber(e002AfterApply.id),
         assertScopeAccess: denyScopeGuard,
       }),
     { status: 403, includes: "Scope access denied" }
@@ -1127,7 +1309,7 @@ async function main() {
   );
 
   console.log(
-    "PR-P06 smoke test passed (partial settlement sync + manual override request/approve/reject + maker-checker + idempotency + period lock + permission checks)."
+    "PR-P06 smoke test passed (mixed owner-context partial settlement sync + manual override request/list/approve/reject + maker-checker + idempotency + period lock + permission checks)."
   );
 }
 

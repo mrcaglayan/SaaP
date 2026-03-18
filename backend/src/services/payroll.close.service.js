@@ -8,8 +8,15 @@ const PAYROLL_OWNERSHIP_BLOCKING_STATUSES = Object.freeze([
   "AMBIGUOUS",
   "MISMATCH",
 ]);
+const PAYROLL_NON_FINALIZED_RUN_STATUSES = Object.freeze(["DRAFT", "IMPORTED", "REVIEWED"]);
 const PAYROLL_OWNERSHIP_SCOPE_VALUES = new Set(["CENTRAL", "OPERATING_UNIT"]);
 const PAYROLL_CLOSE_OWNERSHIP_SAMPLE_LIMIT = 10;
+const PRE_POU_ACTIVE_PAYROLL_BATCH_STATUSES = Object.freeze(["DRAFT", "APPROVED", "EXPORTED"]);
+const PRE_POU_IN_FLIGHT_REMEDIATION_STEPS = Object.freeze([
+  "Cancel pre-POU non-finalized payroll runs and recreate them under the locked owner-context contract",
+  "Cancel pre-POU derived payroll liabilities instead of retrofitting owner context in place",
+  "Cancel pre-POU DRAFT/APPROVED/EXPORTED payroll payment batches and rebuild them from recreated liabilities",
+]);
 const PAYROLL_LIABILITY_OWNERSHIP_VALIDITY_RULES = Object.freeze([
   "CENTRAL requires operating_unit_id to be NULL",
   "OPERATING_UNIT requires operating_unit_id to be non-null",
@@ -163,6 +170,54 @@ function mapPayrollCloseOwnershipSampleRow(row) {
     employee_name: String(row.employee_name || "").trim() || null,
     ownership_resolution_status: normalizeUpperText(row.ownership_resolution_status) || null,
     ownership_resolution_note: row.ownership_resolution_note || null,
+  };
+}
+
+function mapPrePouInFlightRunSampleRow(row) {
+  if (!row) return null;
+  return {
+    run_id: parsePositiveInt(row.run_id) || null,
+    run_no: row.run_no || null,
+    run_status: normalizeUpperText(row.run_status) || null,
+    run_type: normalizeUpperText(row.run_type) || null,
+    payroll_period: toDateOnly(row.payroll_period),
+    pay_date: toDateOnly(row.pay_date),
+    ownership_as_of_date: toDateOnly(row.ownership_as_of_date),
+  };
+}
+
+function mapPrePouInFlightLiabilitySampleRow(row) {
+  if (!row) return null;
+  return {
+    liability_id: parsePositiveInt(row.liability_id) || null,
+    liability_key: row.liability_key || null,
+    liability_status: normalizeUpperText(row.liability_status) || null,
+    run_id: parsePositiveInt(row.run_id) || null,
+    run_no: row.run_no || null,
+    run_status: normalizeUpperText(row.run_status) || null,
+    payroll_period: toDateOnly(row.payroll_period),
+    ownership_as_of_date: toDateOnly(row.ownership_as_of_date),
+    employee_code: String(row.employee_code || "").trim() || null,
+    employee_name: String(row.employee_name || "").trim() || null,
+  };
+}
+
+function mapPrePouInFlightBatchSampleRow(row) {
+  if (!row) return null;
+  return {
+    batch_id: parsePositiveInt(row.batch_id) || null,
+    batch_no: row.batch_no || null,
+    batch_status: normalizeUpperText(row.batch_status) || null,
+    batch_line_id: parsePositiveInt(row.batch_line_id) || null,
+    batch_line_no: parsePositiveInt(row.batch_line_no) || null,
+    batch_line_status: normalizeUpperText(row.batch_line_status) || null,
+    liability_id: parsePositiveInt(row.liability_id) || null,
+    liability_key: row.liability_key || null,
+    run_id: parsePositiveInt(row.run_id) || null,
+    run_no: row.run_no || null,
+    run_status: normalizeUpperText(row.run_status) || null,
+    payroll_period: toDateOnly(row.payroll_period),
+    ownership_as_of_date: toDateOnly(row.ownership_as_of_date),
   };
 }
 
@@ -716,6 +771,194 @@ async function computeChecklist({
   );
   const corrStats = correctionDraftStats.rows?.[0] || {};
 
+  const prePouInFlightRunStatsResult = await runQuery(
+    `SELECT
+        COUNT(*) AS legacy_non_finalized_run_count,
+        COALESCE(SUM(CASE WHEN status = 'DRAFT' THEN 1 ELSE 0 END), 0) AS draft_run_count,
+        COALESCE(SUM(CASE WHEN status = 'IMPORTED' THEN 1 ELSE 0 END), 0) AS imported_run_count,
+        COALESCE(SUM(CASE WHEN status = 'REVIEWED' THEN 1 ELSE 0 END), 0) AS reviewed_run_count
+     FROM payroll_runs
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND payroll_period BETWEEN ? AND ?
+       AND ownership_as_of_date IS NULL
+       AND status IN ('DRAFT', 'IMPORTED', 'REVIEWED')`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const prePouInFlightRunStats = prePouInFlightRunStatsResult.rows?.[0] || {};
+
+  let prePouInFlightRunSamples = [];
+  if (Number(prePouInFlightRunStats.legacy_non_finalized_run_count || 0) > 0) {
+    const prePouInFlightRunSamplesResult = await runQuery(
+      `SELECT
+          id AS run_id,
+          run_no,
+          status AS run_status,
+          run_type,
+          payroll_period,
+          pay_date,
+          ownership_as_of_date
+       FROM payroll_runs
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND payroll_period BETWEEN ? AND ?
+         AND ownership_as_of_date IS NULL
+         AND status IN ('DRAFT', 'IMPORTED', 'REVIEWED')
+       ORDER BY payroll_period DESC, id DESC
+       LIMIT ${PAYROLL_CLOSE_OWNERSHIP_SAMPLE_LIMIT}`,
+      [tenantId, legalEntityId, periodStart, periodEnd]
+    );
+    prePouInFlightRunSamples = (prePouInFlightRunSamplesResult.rows || []).map(
+      mapPrePouInFlightRunSampleRow
+    );
+  }
+
+  const prePouInFlightLiabilityStatsResult = await runQuery(
+    `SELECT
+        COUNT(*) AS legacy_derived_liability_count,
+        COUNT(DISTINCT pr.id) AS affected_run_count,
+        COALESCE(SUM(CASE WHEN COALESCE(l.status, 'OPEN') = 'OPEN' THEN 1 ELSE 0 END), 0)
+          AS open_liability_count,
+        COALESCE(SUM(CASE WHEN COALESCE(l.status, 'OPEN') = 'IN_BATCH' THEN 1 ELSE 0 END), 0)
+          AS in_batch_liability_count,
+        COALESCE(SUM(CASE WHEN COALESCE(l.status, 'OPEN') = 'PARTIALLY_PAID' THEN 1 ELSE 0 END), 0)
+          AS partially_paid_liability_count,
+        COALESCE(SUM(CASE WHEN COALESCE(l.status, 'OPEN') = 'PAID' THEN 1 ELSE 0 END), 0)
+          AS paid_liability_count
+     FROM payroll_run_liabilities l
+     JOIN payroll_runs pr
+       ON pr.tenant_id = l.tenant_id
+      AND pr.legal_entity_id = l.legal_entity_id
+      AND pr.id = l.run_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND pr.payroll_period BETWEEN ? AND ?
+       AND pr.ownership_as_of_date IS NULL
+       AND pr.status IN ('DRAFT', 'IMPORTED', 'REVIEWED')
+       AND COALESCE(l.status, 'OPEN') <> 'CANCELLED'`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const prePouInFlightLiabilityStats = prePouInFlightLiabilityStatsResult.rows?.[0] || {};
+
+  let prePouInFlightLiabilitySamples = [];
+  if (Number(prePouInFlightLiabilityStats.legacy_derived_liability_count || 0) > 0) {
+    const prePouInFlightLiabilitySamplesResult = await runQuery(
+      `SELECT
+          l.id AS liability_id,
+          l.liability_key,
+          l.status AS liability_status,
+          l.employee_code,
+          l.employee_name,
+          pr.id AS run_id,
+          pr.run_no,
+          pr.status AS run_status,
+          pr.payroll_period,
+          pr.ownership_as_of_date
+       FROM payroll_run_liabilities l
+       JOIN payroll_runs pr
+         ON pr.tenant_id = l.tenant_id
+        AND pr.legal_entity_id = l.legal_entity_id
+        AND pr.id = l.run_id
+       WHERE l.tenant_id = ?
+         AND l.legal_entity_id = ?
+         AND pr.payroll_period BETWEEN ? AND ?
+         AND pr.ownership_as_of_date IS NULL
+         AND pr.status IN ('DRAFT', 'IMPORTED', 'REVIEWED')
+         AND COALESCE(l.status, 'OPEN') <> 'CANCELLED'
+       ORDER BY pr.payroll_period DESC, pr.id DESC, l.id ASC
+       LIMIT ${PAYROLL_CLOSE_OWNERSHIP_SAMPLE_LIMIT}`,
+      [tenantId, legalEntityId, periodStart, periodEnd]
+    );
+    prePouInFlightLiabilitySamples = (prePouInFlightLiabilitySamplesResult.rows || []).map(
+      mapPrePouInFlightLiabilitySampleRow
+    );
+  }
+
+  const prePouInFlightBatchStatsResult = await runQuery(
+    `SELECT
+        COUNT(DISTINCT pb.id) AS legacy_active_batch_count,
+        COUNT(*) AS legacy_active_batch_line_count,
+        COUNT(DISTINCT pr.id) AS affected_run_count,
+        COUNT(DISTINCT CASE WHEN pb.status = 'DRAFT' THEN pb.id END) AS draft_batch_count,
+        COUNT(DISTINCT CASE WHEN pb.status = 'APPROVED' THEN pb.id END) AS approved_batch_count,
+        COUNT(DISTINCT CASE WHEN pb.status = 'EXPORTED' THEN pb.id END) AS exported_batch_count
+     FROM payment_batch_lines pbl
+     JOIN payment_batches pb
+       ON pb.id = pbl.batch_id
+      AND pb.tenant_id = pbl.tenant_id
+      AND pb.legal_entity_id = pbl.legal_entity_id
+     JOIN payroll_run_liabilities l
+       ON l.tenant_id = pbl.tenant_id
+      AND l.legal_entity_id = pbl.legal_entity_id
+      AND l.id = pbl.payable_entity_id
+     JOIN payroll_runs pr
+       ON pr.tenant_id = l.tenant_id
+      AND pr.legal_entity_id = l.legal_entity_id
+      AND pr.id = l.run_id
+     WHERE pbl.tenant_id = ?
+       AND pbl.legal_entity_id = ?
+       AND UPPER(COALESCE(pbl.payable_entity_type, '')) = 'PAYROLL_LIABILITY'
+       AND pr.payroll_period BETWEEN ? AND ?
+       AND pr.ownership_as_of_date IS NULL
+       AND pb.status IN ('DRAFT', 'APPROVED', 'EXPORTED')
+       AND COALESCE(l.status, 'OPEN') <> 'CANCELLED'
+       AND COALESCE(pbl.status, 'PENDING') <> 'CANCELLED'`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const prePouInFlightBatchStats = prePouInFlightBatchStatsResult.rows?.[0] || {};
+
+  let prePouInFlightBatchSamples = [];
+  if (Number(prePouInFlightBatchStats.legacy_active_batch_count || 0) > 0) {
+    const prePouInFlightBatchSamplesResult = await runQuery(
+      `SELECT
+          pb.id AS batch_id,
+          pb.batch_no,
+          pb.status AS batch_status,
+          pbl.id AS batch_line_id,
+          pbl.line_no AS batch_line_no,
+          pbl.status AS batch_line_status,
+          l.id AS liability_id,
+          l.liability_key,
+          pr.id AS run_id,
+          pr.run_no,
+          pr.status AS run_status,
+          pr.payroll_period,
+          pr.ownership_as_of_date
+       FROM payment_batch_lines pbl
+       JOIN payment_batches pb
+         ON pb.id = pbl.batch_id
+        AND pb.tenant_id = pbl.tenant_id
+        AND pb.legal_entity_id = pbl.legal_entity_id
+       JOIN payroll_run_liabilities l
+         ON l.tenant_id = pbl.tenant_id
+        AND l.legal_entity_id = pbl.legal_entity_id
+        AND l.id = pbl.payable_entity_id
+       JOIN payroll_runs pr
+         ON pr.tenant_id = l.tenant_id
+        AND pr.legal_entity_id = l.legal_entity_id
+        AND pr.id = l.run_id
+       WHERE pbl.tenant_id = ?
+         AND pbl.legal_entity_id = ?
+         AND UPPER(COALESCE(pbl.payable_entity_type, '')) = 'PAYROLL_LIABILITY'
+         AND pr.payroll_period BETWEEN ? AND ?
+         AND pr.ownership_as_of_date IS NULL
+         AND pb.status IN ('DRAFT', 'APPROVED', 'EXPORTED')
+         AND COALESCE(l.status, 'OPEN') <> 'CANCELLED'
+         AND COALESCE(pbl.status, 'PENDING') <> 'CANCELLED'
+       ORDER BY pr.payroll_period DESC, pb.id DESC, pbl.line_no ASC, pbl.id ASC
+       LIMIT ${PAYROLL_CLOSE_OWNERSHIP_SAMPLE_LIMIT}`,
+      [tenantId, legalEntityId, periodStart, periodEnd]
+    );
+    prePouInFlightBatchSamples = (prePouInFlightBatchSamplesResult.rows || []).map(
+      mapPrePouInFlightBatchSampleRow
+    );
+  }
+
+  const prePouInFlightBlockingCount =
+    Number(prePouInFlightRunStats.legacy_non_finalized_run_count || 0) +
+    Number(prePouInFlightLiabilityStats.legacy_derived_liability_count || 0) +
+    Number(prePouInFlightBatchStats.legacy_active_batch_count || 0);
+
   const finalizedOwnershipStatsResult = await runQuery(
     `SELECT
         COUNT(DISTINCT pr.id) AS ownership_aware_finalized_run_count,
@@ -965,6 +1208,55 @@ async function computeChecklist({
       metric_text: `${Number(runStats.non_finalized_runs || 0)} runs in DRAFT/IMPORTED/REVIEWED`,
       details_json: null,
       sort_order: 10,
+    },
+    {
+      check_code: "PRE_POU_IN_FLIGHT_STATE_CLEARED",
+      check_name: "Legacy pre-POU in-flight payroll state has been cancelled and recreated",
+      severity: "ERROR",
+      status: prePouInFlightBlockingCount === 0 ? "PASS" : "FAIL",
+      metric_value: prePouInFlightBlockingCount,
+      metric_text:
+        `${Number(prePouInFlightRunStats.legacy_non_finalized_run_count || 0)} legacy non-finalized runs, ` +
+        `${Number(prePouInFlightLiabilityStats.legacy_derived_liability_count || 0)} legacy derived liabilities, ` +
+        `${Number(prePouInFlightBatchStats.legacy_active_batch_count || 0)} legacy active payroll batches require cancel/re-create`,
+      details_json: {
+        non_finalized_run_statuses: [...PAYROLL_NON_FINALIZED_RUN_STATUSES],
+        active_payment_batch_statuses: [...PRE_POU_ACTIVE_PAYROLL_BATCH_STATUSES],
+        remediation_steps: [...PRE_POU_IN_FLIGHT_REMEDIATION_STEPS],
+        grandfathering_boundary: "payroll_runs.ownership_as_of_date IS NULL",
+        legacy_non_finalized_run_count: Number(
+          prePouInFlightRunStats.legacy_non_finalized_run_count || 0
+        ),
+        draft_run_count: Number(prePouInFlightRunStats.draft_run_count || 0),
+        imported_run_count: Number(prePouInFlightRunStats.imported_run_count || 0),
+        reviewed_run_count: Number(prePouInFlightRunStats.reviewed_run_count || 0),
+        legacy_derived_liability_count: Number(
+          prePouInFlightLiabilityStats.legacy_derived_liability_count || 0
+        ),
+        liability_affected_run_count: Number(
+          prePouInFlightLiabilityStats.affected_run_count || 0
+        ),
+        open_liability_count: Number(prePouInFlightLiabilityStats.open_liability_count || 0),
+        in_batch_liability_count: Number(
+          prePouInFlightLiabilityStats.in_batch_liability_count || 0
+        ),
+        partially_paid_liability_count: Number(
+          prePouInFlightLiabilityStats.partially_paid_liability_count || 0
+        ),
+        paid_liability_count: Number(prePouInFlightLiabilityStats.paid_liability_count || 0),
+        legacy_active_batch_count: Number(prePouInFlightBatchStats.legacy_active_batch_count || 0),
+        legacy_active_batch_line_count: Number(
+          prePouInFlightBatchStats.legacy_active_batch_line_count || 0
+        ),
+        batch_affected_run_count: Number(prePouInFlightBatchStats.affected_run_count || 0),
+        draft_batch_count: Number(prePouInFlightBatchStats.draft_batch_count || 0),
+        approved_batch_count: Number(prePouInFlightBatchStats.approved_batch_count || 0),
+        exported_batch_count: Number(prePouInFlightBatchStats.exported_batch_count || 0),
+        sample_runs: prePouInFlightRunSamples,
+        sample_liabilities: prePouInFlightLiabilitySamples,
+        sample_batches: prePouInFlightBatchSamples,
+      },
+      sort_order: 12,
     },
     {
       check_code: "FINALIZED_LINES_OWNERSHIP_RESOLVED",

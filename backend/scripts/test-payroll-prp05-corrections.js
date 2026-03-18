@@ -452,7 +452,10 @@ async function createFinalizedRunWithLiabilities({
     note: "build liabilities for PRP05",
     assertScopeAccess: noScopeGuard,
   });
-  assert((built?.items || []).length === 7, "Liability build should create 7 rows");
+  assert(
+    (built?.items || []).length === 12,
+    "Liability build should create 12 rows (2 net + 10 statutory owner splits)"
+  );
 
   return {
     runId,
@@ -616,7 +619,7 @@ async function main() {
     "Original run cancelled liability amount should be 2660"
   );
   assert(
-    (origLiabilitiesAfterReverse?.items || []).length === 7 &&
+    (origLiabilitiesAfterReverse?.items || []).length === 12 &&
       (origLiabilitiesAfterReverse?.items || []).every(
         (row) => normalizeUpperText(row?.status) === "CANCELLED"
       ),

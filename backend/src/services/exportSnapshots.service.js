@@ -35,6 +35,17 @@ function toDateOnly(value) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function toAmount(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Number(parsed.toFixed(6));
+}
+
+function normalizeOwnershipScope(value) {
+  const scope = up(value);
+  return scope === "CENTRAL" || scope === "OPERATING_UNIT" ? scope : null;
+}
+
 function notFound(message) {
   const err = new Error(message);
   err.status = 404;
@@ -88,6 +99,211 @@ function summarizeRows(rows = []) {
     row_count: rows.length,
     id_min: ids.length ? ids[0] : null,
     id_max: ids.length ? ids[ids.length - 1] : null,
+  };
+}
+
+function resolveOwnerContext(row, { scopeField = "ownership_scope", operatingUnitField = "operating_unit_id" } = {}) {
+  const ownershipScope = normalizeOwnershipScope(row?.[scopeField]);
+  const operatingUnitId = parsePositiveInt(row?.[operatingUnitField]) || null;
+  const isValid =
+    (ownershipScope === "CENTRAL" && operatingUnitId === null) ||
+    (ownershipScope === "OPERATING_UNIT" && operatingUnitId !== null);
+  const ownerContextKey = isValid
+    ? ownershipScope === "CENTRAL"
+      ? "CENTRAL"
+      : `OPERATING_UNIT:${operatingUnitId}`
+    : "INVALID";
+  const ownerContextLabel =
+    ownershipScope === "CENTRAL"
+      ? "CENTRAL"
+      : ownershipScope === "OPERATING_UNIT"
+        ? `OU#${operatingUnitId || "?"}`
+        : "UNRESOLVED";
+
+  return {
+    ownership_scope: ownershipScope,
+    operating_unit_id: operatingUnitId,
+    owner_context_key: ownerContextKey,
+    owner_context_label: ownerContextLabel,
+    is_valid: isValid,
+  };
+}
+
+function summarizeValueCounts(rows = [], getValue) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    const value = String(getValue(row) || "UNKNOWN").trim().toUpperCase() || "UNKNOWN";
+    counts.set(value, Number(counts.get(value) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([value, count]) => ({ value, count }));
+}
+
+function summarizeOwnerContextRows(
+  rows = [],
+  {
+    scopeField = "ownership_scope",
+    operatingUnitField = "operating_unit_id",
+    amountField = null,
+  } = {}
+) {
+  const buckets = new Map();
+  let invalidRowCount = 0;
+
+  for (const row of rows || []) {
+    const context = resolveOwnerContext(row, { scopeField, operatingUnitField });
+    if (!context.is_valid) {
+      invalidRowCount += 1;
+      continue;
+    }
+    const key = context.owner_context_key;
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        owner_context_key: key,
+        owner_context_label: context.owner_context_label,
+        ownership_scope: context.ownership_scope,
+        operating_unit_id: context.operating_unit_id,
+        row_count: 0,
+      });
+    }
+    const bucket = buckets.get(key);
+    bucket.row_count += 1;
+    if (amountField) {
+      bucket.total_amount = toAmount((bucket.total_amount || 0) + toAmount(row?.[amountField]));
+    }
+  }
+
+  const bucketRows = Array.from(buckets.values()).sort((left, right) => {
+    const leftScopeRank = left.ownership_scope === "CENTRAL" ? 0 : 1;
+    const rightScopeRank = right.ownership_scope === "CENTRAL" ? 0 : 1;
+    if (leftScopeRank !== rightScopeRank) return leftScopeRank - rightScopeRank;
+    return (left.operating_unit_id || 0) - (right.operating_unit_id || 0);
+  });
+
+  return {
+    context_count: bucketRows.length,
+    valid_row_count: rows.length - invalidRowCount,
+    invalid_row_count: invalidRowCount,
+    buckets: bucketRows,
+  };
+}
+
+function buildSampleRows(rows = [], mapper, limit = 5) {
+  return (rows || []).slice(0, limit).map((row) => mapper(row));
+}
+
+function buildRunSnapshotPayload(rows = []) {
+  return {
+    status_summary: summarizeValueCounts(rows, (row) => row?.status),
+    runs_with_ownership_as_of_date_count: (rows || []).filter((row) => Boolean(toDateOnly(row?.ownership_as_of_date)))
+      .length,
+    sample_rows: buildSampleRows(rows, (row) => ({
+      id: parsePositiveInt(row?.id) || null,
+      run_no: row?.run_no || null,
+      payroll_period: toDateOnly(row?.payroll_period),
+      pay_date: toDateOnly(row?.pay_date),
+      ownership_as_of_date: toDateOnly(row?.ownership_as_of_date),
+      status: up(row?.status) || null,
+    })),
+  };
+}
+
+function buildRunLineSnapshotPayload(rows = []) {
+  return {
+    owner_context_summary: summarizeOwnerContextRows(rows),
+    ownership_resolution_status_summary: summarizeValueCounts(
+      rows,
+      (row) => row?.ownership_resolution_status
+    ),
+    sample_rows: buildSampleRows(rows, (row) => {
+      const ownerContext = resolveOwnerContext(row);
+      return {
+        id: parsePositiveInt(row?.id) || null,
+        run_id: parsePositiveInt(row?.run_id) || null,
+        line_no: parsePositiveInt(row?.line_no) || null,
+        employee_code: row?.employee_code || null,
+        ownership_scope: ownerContext.ownership_scope,
+        operating_unit_id: ownerContext.operating_unit_id,
+        owner_context_label: ownerContext.owner_context_label,
+        ownership_resolution_status: up(row?.ownership_resolution_status) || null,
+      };
+    }),
+  };
+}
+
+function buildLiabilitySnapshotPayload(rows = []) {
+  return {
+    owner_context_summary: summarizeOwnerContextRows(rows, { amountField: "amount" }),
+    status_summary: summarizeValueCounts(rows, (row) => row?.status),
+    sample_rows: buildSampleRows(rows, (row) => {
+      const ownerContext = resolveOwnerContext(row);
+      return {
+        id: parsePositiveInt(row?.id) || null,
+        run_id: parsePositiveInt(row?.run_id) || null,
+        liability_type: row?.liability_type || null,
+        employee_code: row?.employee_code || null,
+        ownership_scope: ownerContext.ownership_scope,
+        operating_unit_id: ownerContext.operating_unit_id,
+        owner_context_label: ownerContext.owner_context_label,
+        amount: toAmount(row?.amount),
+        outstanding_amount: toAmount(row?.outstanding_amount),
+        status: up(row?.status) || null,
+      };
+    }),
+  };
+}
+
+function buildPaymentLinkSnapshotPayload(rows = []) {
+  return {
+    liability_owner_context_summary: summarizeOwnerContextRows(rows, {
+      scopeField: "liability_ownership_scope",
+      operatingUnitField: "liability_operating_unit_id",
+      amountField: "allocated_amount",
+    }),
+    status_summary: summarizeValueCounts(rows, (row) => row?.status),
+    sample_rows: buildSampleRows(rows, (row) => {
+      const ownerContext = resolveOwnerContext(row, {
+        scopeField: "liability_ownership_scope",
+        operatingUnitField: "liability_operating_unit_id",
+      });
+      return {
+        id: parsePositiveInt(row?.id) || null,
+        payroll_liability_id: parsePositiveInt(row?.payroll_liability_id) || null,
+        payment_batch_id: parsePositiveInt(row?.payment_batch_id) || null,
+        liability_type: row?.liability_type || null,
+        liability_employee_code: row?.liability_employee_code || null,
+        liability_ownership_scope: ownerContext.ownership_scope,
+        liability_operating_unit_id: ownerContext.operating_unit_id,
+        liability_owner_context_label: ownerContext.owner_context_label,
+        allocated_amount: toAmount(row?.allocated_amount),
+        status: up(row?.status) || null,
+      };
+    }),
+  };
+}
+
+const SNAPSHOT_PAYLOAD_BUILDERS = Object.freeze({
+  PAYROLL_RUNS: buildRunSnapshotPayload,
+  PAYROLL_RUN_LINES: buildRunLineSnapshotPayload,
+  PAYROLL_LIABILITIES: buildLiabilitySnapshotPayload,
+  PAYROLL_LIABILITY_PAYMENT_LINKS: buildPaymentLinkSnapshotPayload,
+});
+
+function buildSnapshotPayload(itemCode, rows, { periodStart, periodEnd } = {}) {
+  const normalizedItemCode = String(itemCode || "UNKNOWN").trim().toUpperCase();
+  const basePayload = {
+    ...summarizeRows(rows || []),
+    period_start: periodStart || null,
+    period_end: periodEnd || null,
+  };
+  const builder = SNAPSHOT_PAYLOAD_BUILDERS[normalizedItemCode];
+  if (typeof builder !== "function") {
+    return basePayload;
+  }
+  return {
+    ...basePayload,
+    ...builder(rows || []),
   };
 }
 
@@ -156,15 +372,12 @@ async function findPayrollCloseRow({ tenantId, closeId, runQuery = query, forUpd
 }
 
 function buildSnapshotItem(itemCode, rows, { periodStart, periodEnd } = {}) {
+  const normalizedItemCode = String(itemCode || "UNKNOWN").trim().toUpperCase();
   return {
-    item_code: String(itemCode || "UNKNOWN").trim().toUpperCase(),
+    item_code: normalizedItemCode,
     item_count: Number(rows?.length || 0),
     item_hash: hashRows(rows || []),
-    payload_json: {
-      ...summarizeRows(rows || []),
-      period_start: periodStart || null,
-      period_end: periodEnd || null,
-    },
+    payload_json: buildSnapshotPayload(normalizedItemCode, rows || [], { periodStart, periodEnd }),
   };
 }
 
@@ -235,12 +448,23 @@ async function collectSnapshotDatasets({
   );
 
   const paymentLinksRes = await runQuery(
-    `SELECT pl.*
+    `SELECT
+        pl.*,
+        l.liability_type,
+        l.employee_code AS liability_employee_code,
+        l.employee_name AS liability_employee_name,
+        l.ownership_scope AS liability_ownership_scope,
+        l.operating_unit_id AS liability_operating_unit_id
      FROM payroll_liability_payment_links pl
      JOIN payroll_runs pr
        ON pr.tenant_id = pl.tenant_id
       AND pr.legal_entity_id = pl.legal_entity_id
       AND pr.id = pl.run_id
+     JOIN payroll_run_liabilities l
+       ON l.tenant_id = pl.tenant_id
+      AND l.legal_entity_id = pl.legal_entity_id
+      AND l.run_id = pl.run_id
+      AND l.id = pl.payroll_liability_id
      WHERE pl.tenant_id = ?
        AND pl.legal_entity_id = ?
        AND pr.payroll_period BETWEEN ? AND ?

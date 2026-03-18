@@ -96,6 +96,10 @@ function normalizeUpperText(value) {
     .toUpperCase();
 }
 
+function normalizeSearchText(value) {
+  return normalizeUpperText(value);
+}
+
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
 }
@@ -1272,9 +1276,14 @@ export async function listPayrollLiabilityRows({
     conditions.push("l.liability_group = 'STATUTORY'");
   }
   if (filters.q) {
-    const like = `%${filters.q}%`;
+    const like = `%${normalizeSearchText(filters.q)}%`;
     conditions.push(
-      "(l.employee_code LIKE ? OR l.employee_name LIKE ? OR l.beneficiary_name LIKE ? OR l.liability_type LIKE ?)"
+      `(
+        UPPER(TRIM(COALESCE(l.employee_code, ''))) LIKE ?
+        OR UPPER(TRIM(COALESCE(l.employee_name, ''))) LIKE ?
+        OR UPPER(TRIM(COALESCE(l.beneficiary_name, ''))) LIKE ?
+        OR UPPER(TRIM(COALESCE(l.liability_type, ''))) LIKE ?
+      )`
     );
     params.push(like, like, like, like);
   }

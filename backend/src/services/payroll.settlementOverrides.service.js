@@ -60,8 +60,13 @@ function makeConflict(message) {
   return err;
 }
 
+function normalizeOwnershipScope(value) {
+  const normalized = normalizeUpperText(value);
+  return normalized === "CENTRAL" || normalized === "OPERATING_UNIT" ? normalized : null;
+}
+
 function formatOwnerContextLabel(row) {
-  const ownershipScope = normalizeUpperText(row?.ownership_scope);
+  const ownershipScope = normalizeOwnershipScope(row?.ownership_scope);
   if (ownershipScope === "CENTRAL") {
     return "CENTRAL";
   }
@@ -73,6 +78,110 @@ function formatOwnerContextLabel(row) {
     );
   }
   return "UNRESOLVED";
+}
+
+function buildOwnerContext(row) {
+  return {
+    ownership_scope: normalizeOwnershipScope(row?.ownership_scope),
+    operating_unit_id: parsePositiveInt(row?.operating_unit_id) || null,
+    operating_unit_code: String(row?.operating_unit_code || "").trim() || null,
+    operating_unit_name: String(row?.operating_unit_name || "").trim() || null,
+    owner_context_label: formatOwnerContextLabel(row),
+  };
+}
+
+function mapManualSettlementLiabilityRow(row) {
+  if (!row) return null;
+  const ownerContext = buildOwnerContext(row);
+  return {
+    id: parsePositiveInt(row.id),
+    run_id: parsePositiveInt(row.run_id),
+    legal_entity_id: parsePositiveInt(row.legal_entity_id),
+    liability_type: row.liability_type || null,
+    liability_group: row.liability_group || null,
+    ownership_scope: ownerContext.ownership_scope,
+    operating_unit_id: ownerContext.operating_unit_id,
+    operating_unit_code: ownerContext.operating_unit_code,
+    operating_unit_name: ownerContext.operating_unit_name,
+    owner_context_label: ownerContext.owner_context_label,
+    owner_context: ownerContext,
+    employee_code: row.employee_code || null,
+    employee_name: row.employee_name || null,
+    beneficiary_name: row.beneficiary_name || null,
+    amount: toAmount(row.amount),
+    currency_code: normalizeUpperText(row.currency_code),
+    status: normalizeUpperText(row.status),
+    settled_amount: toAmount(row.settled_amount),
+    outstanding_amount: toAmount(
+      row.outstanding_amount ?? toAmount(row.amount) - toAmount(row.settled_amount)
+    ),
+    payment_link_id: parsePositiveInt(row.link_id),
+    payment_batch_id: parsePositiveInt(row.payment_batch_id),
+    payment_batch_line_id: parsePositiveInt(row.payment_batch_line_id),
+    allocated_amount: toAmount(row.allocated_amount),
+    link_status: row.link_status || null,
+    link_settled_amount: toAmount(row.link_settled_amount),
+  };
+}
+
+function mapManualSettlementRequestRow(row, fallbackLiabilityRow = null) {
+  if (!row) return null;
+  const ownerContextSource =
+    normalizeOwnershipScope(row?.ownership_scope) || parsePositiveInt(row?.operating_unit_id)
+      ? row
+      : fallbackLiabilityRow;
+  const ownerContext = buildOwnerContext(ownerContextSource || {});
+  return {
+    id: parsePositiveInt(row.id),
+    tenant_id: parsePositiveInt(row.tenant_id),
+    legal_entity_id: parsePositiveInt(row.legal_entity_id),
+    run_id: parsePositiveInt(row.run_id),
+    payroll_liability_id: parsePositiveInt(row.payroll_liability_id),
+    payroll_liability_payment_link_id: parsePositiveInt(row.payroll_liability_payment_link_id),
+    request_type: row.request_type || null,
+    requested_amount: toAmount(row.requested_amount),
+    currency_code: normalizeUpperText(row.currency_code),
+    settled_at: row.settled_at || null,
+    reason: row.reason || null,
+    external_ref: row.external_ref || null,
+    status: normalizeUpperText(row.status),
+    idempotency_key: row.idempotency_key || null,
+    requested_by_user_id: parsePositiveInt(row.requested_by_user_id),
+    requested_at: row.requested_at || null,
+    approved_by_user_id: parsePositiveInt(row.approved_by_user_id),
+    approved_at: row.approved_at || null,
+    rejected_by_user_id: parsePositiveInt(row.rejected_by_user_id),
+    rejected_at: row.rejected_at || null,
+    decision_note: row.decision_note || null,
+    applied_settlement_id: parsePositiveInt(row.applied_settlement_id),
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+    liability_type: row.liability_type || null,
+    liability_group: row.liability_group || null,
+    ownership_scope: ownerContext.ownership_scope,
+    operating_unit_id: ownerContext.operating_unit_id,
+    operating_unit_code: ownerContext.operating_unit_code,
+    operating_unit_name: ownerContext.operating_unit_name,
+    owner_context_label: ownerContext.owner_context_label,
+    owner_context: ownerContext,
+    employee_code: row.employee_code || null,
+    employee_name: row.employee_name || null,
+    beneficiary_name: row.beneficiary_name || null,
+  };
+}
+
+function mapManualSettlementSettlementRow(row, ownerContextRow = null) {
+  if (!row) return null;
+  const ownerContext = buildOwnerContext(ownerContextRow || {});
+  return {
+    ...row,
+    ownership_scope: ownerContext.ownership_scope,
+    operating_unit_id: ownerContext.operating_unit_id,
+    operating_unit_code: ownerContext.operating_unit_code,
+    operating_unit_name: ownerContext.operating_unit_name,
+    owner_context_label: ownerContext.owner_context_label,
+    owner_context: ownerContext,
+  };
 }
 
 function noopScopeAccess() {
@@ -232,17 +341,49 @@ async function listOverrideRequestsForLiability({
 }) {
   const result = await runQuery(
     `SELECT
-        id, tenant_id, legal_entity_id, run_id, payroll_liability_id, payroll_liability_payment_link_id,
-        request_type, requested_amount, currency_code, settled_at, reason, external_ref,
-        status, idempotency_key,
-        requested_by_user_id, requested_at,
-        approved_by_user_id, approved_at,
-        rejected_by_user_id, rejected_at,
-        decision_note, applied_settlement_id,
-        created_at, updated_at
-     FROM payroll_liability_override_requests
-     WHERE tenant_id = ? AND legal_entity_id = ? AND payroll_liability_id = ?
-     ORDER BY id DESC`,
+        r.id,
+        r.tenant_id,
+        r.legal_entity_id,
+        r.run_id,
+        r.payroll_liability_id,
+        r.payroll_liability_payment_link_id,
+        r.request_type,
+        r.requested_amount,
+        r.currency_code,
+        r.settled_at,
+        r.reason,
+        r.external_ref,
+        r.status,
+        r.idempotency_key,
+        r.requested_by_user_id,
+        r.requested_at,
+        r.approved_by_user_id,
+        r.approved_at,
+        r.rejected_by_user_id,
+        r.rejected_at,
+        r.decision_note,
+        r.applied_settlement_id,
+        r.created_at,
+        r.updated_at,
+        l.liability_type,
+        l.liability_group,
+        l.ownership_scope,
+        l.operating_unit_id,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
+        l.employee_code,
+        l.employee_name,
+        l.beneficiary_name
+     FROM payroll_liability_override_requests r
+     JOIN payroll_run_liabilities l
+       ON l.tenant_id = r.tenant_id
+      AND l.legal_entity_id = r.legal_entity_id
+      AND l.id = r.payroll_liability_id
+     LEFT JOIN operating_units ou
+       ON ou.id = l.operating_unit_id
+      AND ou.tenant_id = l.tenant_id
+     WHERE r.tenant_id = ? AND r.legal_entity_id = ? AND r.payroll_liability_id = ?
+     ORDER BY r.id DESC`,
     [tenantId, legalEntityId, liabilityId]
   );
   return result.rows || [];
@@ -488,35 +629,8 @@ export async function listPayrollManualSettlementRequests({
   });
 
   return {
-    liability: {
-      id: parsePositiveInt(liability.id),
-      run_id: parsePositiveInt(liability.run_id),
-      legal_entity_id: legalEntityId,
-      liability_type: liability.liability_type,
-      liability_group: liability.liability_group,
-      ownership_scope: liability.ownership_scope || null,
-      operating_unit_id: parsePositiveInt(liability.operating_unit_id),
-      operating_unit_code: liability.operating_unit_code || null,
-      operating_unit_name: liability.operating_unit_name || null,
-      owner_context_label: formatOwnerContextLabel(liability),
-      employee_code: liability.employee_code || null,
-      employee_name: liability.employee_name || null,
-      beneficiary_name: liability.beneficiary_name || null,
-      amount: toAmount(liability.amount),
-      currency_code: normalizeUpperText(liability.currency_code),
-      status: normalizeUpperText(liability.status),
-      settled_amount: toAmount(liability.settled_amount),
-      outstanding_amount: toAmount(
-        liability.outstanding_amount ?? toAmount(liability.amount) - toAmount(liability.settled_amount)
-      ),
-      payment_link_id: parsePositiveInt(liability.link_id),
-      payment_batch_id: parsePositiveInt(liability.payment_batch_id),
-      payment_batch_line_id: parsePositiveInt(liability.payment_batch_line_id),
-      allocated_amount: toAmount(liability.allocated_amount),
-      link_status: liability.link_status || null,
-      link_settled_amount: toAmount(liability.link_settled_amount),
-    },
-    items,
+    liability: mapManualSettlementLiabilityRow(liability),
+    items: items.map((row) => mapManualSettlementRequestRow(row, liability)),
   };
 }
 
@@ -566,7 +680,10 @@ export async function createPayrollManualSettlementRequest({
         tenantId,
         requestId: parsePositiveInt(existing.id),
       });
-      return { request: existingRow, idempotent: true };
+      return {
+        request: mapManualSettlementRequestRow(existingRow, liability),
+        idempotent: true,
+      };
     }
   }
 
@@ -608,12 +725,16 @@ export async function createPayrollManualSettlementRequest({
       settledAt: input.settledAt,
       reason: input.reason,
       externalRef: input.externalRef || null,
+      ownerContext: buildOwnerContext(liability),
     },
     userId,
   });
 
   const request = await getOverrideRequestById({ tenantId, requestId });
-  return { request, idempotent: false };
+  return {
+    request: mapManualSettlementRequestRow(request, liability),
+    idempotent: false,
+  };
 }
 
 export async function approveApplyPayrollManualSettlementRequest({
@@ -646,6 +767,7 @@ export async function approveApplyPayrollManualSettlementRequest({
       });
 
       if (gov?.approval_required || gov?.approvalRequired) {
+        const previewOwnerContext = buildOwnerContext(previewRequestRow);
         const submitRes = await submitApprovalRequest({
           tenantId,
           userId,
@@ -672,12 +794,18 @@ export async function approveApplyPayrollManualSettlementRequest({
               requested_amount: toAmount(previewRequestRow.requested_amount),
               currency_code: normalizeUpperText(previewRequestRow.currency_code),
               status: requestStatus,
+              ownership_scope: previewOwnerContext.ownership_scope,
+              operating_unit_id: previewOwnerContext.operating_unit_id,
+              operating_unit_code: previewOwnerContext.operating_unit_code,
+              operating_unit_name: previewOwnerContext.operating_unit_name,
+              owner_context_label: previewOwnerContext.owner_context_label,
+              owner_context: previewOwnerContext,
             },
           },
         });
 
         return {
-          request: previewRequestRow,
+          request: mapManualSettlementRequestRow(previewRequestRow),
           approval_required: true,
           approval_request: submitRes?.item || null,
           idempotent: Boolean(submitRes?.idempotent),
@@ -699,14 +827,20 @@ export async function approveApplyPayrollManualSettlementRequest({
 
     const requestStatus = normalizeUpperText(requestRow.status);
     if (requestStatus === "APPLIED") {
-      const request = await getOverrideRequestById({ tenantId, requestId, runQuery: tx.query });
+      const request = mapManualSettlementRequestRow(
+        await getOverrideRequestById({ tenantId, requestId, runQuery: tx.query })
+      );
       const settlement = await getSettlementById({
         tenantId,
         legalEntityId,
         settlementId: parsePositiveInt(requestRow.applied_settlement_id),
         runQuery: tx.query,
       });
-      return { request, settlement, idempotent: true };
+      return {
+        request,
+        settlement: mapManualSettlementSettlementRow(settlement, request),
+        idempotent: true,
+      };
     }
     if (requestStatus !== "REQUESTED") {
       throw badRequest(`Request status ${requestStatus} cannot be approved/applied`);
@@ -805,6 +939,7 @@ export async function approveApplyPayrollManualSettlementRequest({
           approvalRequestId: parsePositiveInt(approvalRequestId) || null,
           deltaAmount: state.deltaAmount,
           decisionNote: decisionNote || null,
+          ownerContext: buildOwnerContext(liability),
         }),
         userId,
       ]
@@ -897,15 +1032,18 @@ export async function approveApplyPayrollManualSettlementRequest({
         outstandingAmount: state.liabilityOutstanding,
         liabilityStatus: state.liabilityStatus,
         linkStatus: state.linkStatus,
+        ownerContext: buildOwnerContext(liability),
       },
       userId,
       runQuery: tx.query,
     });
 
-    const request = await getOverrideRequestById({ tenantId, requestId, runQuery: tx.query });
+    const request = mapManualSettlementRequestRow(
+      await getOverrideRequestById({ tenantId, requestId, runQuery: tx.query })
+    );
     return {
       request,
-      settlement,
+      settlement: mapManualSettlementSettlementRow(settlement, request),
       idempotent: false,
     };
   });
@@ -956,7 +1094,9 @@ export async function rejectPayrollManualSettlementRequest({
 
     const requestStatus = normalizeUpperText(requestRow.status);
     if (requestStatus === "REJECTED") {
-      const request = await getOverrideRequestById({ tenantId, requestId, runQuery: tx.query });
+      const request = mapManualSettlementRequestRow(
+        await getOverrideRequestById({ tenantId, requestId, runQuery: tx.query })
+      );
       return { request, idempotent: true };
     }
     if (requestStatus === "APPLIED") {
@@ -995,39 +1135,26 @@ export async function rejectPayrollManualSettlementRequest({
       [userId, decisionNote || "Rejected", tenantId, legalEntityId, requestId]
     );
 
-    const liabilityScope = await getLiabilityScopeRow({
-      tenantId,
-      liabilityId: parsePositiveInt(requestRow.payroll_liability_id),
-      runQuery: tx.query,
-    });
-
-    if (liabilityScope) {
-      const liability = await tx.query(
-        `SELECT run_id
-         FROM payroll_run_liabilities
-         WHERE tenant_id = ? AND legal_entity_id = ? AND id = ?
-         LIMIT 1`,
-        [tenantId, legalEntityId, parsePositiveInt(requestRow.payroll_liability_id)]
-      );
-      const runId = parsePositiveInt(liability.rows?.[0]?.run_id);
-      if (runId) {
-        await writeLiabilityAudit({
-          tenantId,
-          legalEntityId,
-          runId,
-          liabilityId: parsePositiveInt(requestRow.payroll_liability_id),
-          action: "MANUAL_SETTLEMENT_REJECTED",
-          payload: {
-            requestId,
-            decisionNote: decisionNote || "Rejected",
-          },
-          userId,
-          runQuery: tx.query,
-        });
-      }
+    const request = mapManualSettlementRequestRow(
+      await getOverrideRequestById({ tenantId, requestId, runQuery: tx.query })
+    );
+    const runId = parsePositiveInt(request?.run_id);
+    if (runId) {
+      await writeLiabilityAudit({
+        tenantId,
+        legalEntityId,
+        runId,
+        liabilityId: parsePositiveInt(requestRow.payroll_liability_id),
+        action: "MANUAL_SETTLEMENT_REJECTED",
+        payload: {
+          requestId,
+          decisionNote: decisionNote || "Rejected",
+          ownerContext: request?.owner_context || buildOwnerContext(request),
+        },
+        userId,
+        runQuery: tx.query,
+      });
     }
-
-    const request = await getOverrideRequestById({ tenantId, requestId, runQuery: tx.query });
     return { request, idempotent: false };
   });
 }
