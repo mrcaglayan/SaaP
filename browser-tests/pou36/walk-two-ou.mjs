@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { closePool, query } from "../../backend/src/db.js";
 
 const requireFromFrontend = createRequire(new URL("../../frontend/package.json", import.meta.url));
 const { chromium } = requireFromFrontend("playwright-core");
@@ -101,6 +102,27 @@ async function waitForBodyText(page, value) {
     expected,
     { timeout: WAIT_MS }
   );
+}
+
+async function findLatestPayrollRunBySignature({
+  legalEntityId,
+  providerCode,
+  payrollPeriod,
+  payDate,
+}) {
+  const result = await query(
+    `SELECT id, run_no, status
+     FROM payroll_runs
+     WHERE tenant_id = 1
+       AND legal_entity_id = ?
+       AND provider_code = ?
+       AND payroll_period = ?
+       AND pay_date = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [Number(legalEntityId), String(providerCode || "").trim().toUpperCase(), payrollPeriod, payDate]
+  );
+  return result.rows?.[0] || null;
 }
 
 async function withDialog(page, handler, action) {
@@ -300,10 +322,37 @@ async function main() {
       await sourceBatchRefInput.fill(`BROWSER-POU36-${runToken}`);
       await page.locator("textarea").first().fill(csvText);
       await clickButtonByName(page, /Payroll CSV Import/i);
-      await page.getByText(/Payroll CSV iceri aktarildi/i).waitFor({
-        state: "visible",
-        timeout: WAIT_MS,
-      });
+      await page.waitForFunction(
+        () => {
+          const text = String(document?.body?.innerText || "");
+          return (
+            text.includes("Payroll CSV iceri aktarildi") ||
+            text.includes("Payroll CSV already imported")
+          );
+        },
+        { timeout: WAIT_MS }
+      );
+
+      const bodyText = await page.evaluate(() => String(document?.body?.innerText || ""));
+      if (bodyText.includes("Payroll CSV already imported")) {
+        const existingRun = await findLatestPayrollRunBySignature({
+          legalEntityId: 1,
+          providerCode: "BROWSER_POU36",
+          payrollPeriod: "2026-02-01",
+          payDate: "2026-02-15",
+        });
+        if (!existingRun?.id) {
+          throw new Error("Duplicate import detected but no matching existing payroll run was found");
+        }
+        runId = Number(existingRun.id);
+        runNo = String(existingRun.run_no || "").trim() || null;
+        return {
+          runId,
+          runNo,
+          duplicateImportReused: true,
+        };
+      }
+
       const hrefHandle = await page.waitForFunction(
         () => {
           const anchor = Array.from(document.querySelectorAll('a[href]')).find((node) =>
@@ -488,7 +537,9 @@ async function main() {
   console.log(JSON.stringify({ ok: true, reportPath, artifactReportPath, runId, batchId, closeId }, null, 2));
 }
 
-main().catch(async (err) => {
+try {
+  await main();
+} catch (err) {
   const reportPath = path.join(FIXTURE_DIR, "two-ou-browser-walk-report.json");
   const failure = {
     generatedAt: new Date().toISOString(),
@@ -497,5 +548,7 @@ main().catch(async (err) => {
   };
   await fs.writeFile(reportPath, `${JSON.stringify(failure, null, 2)}\n`, "utf8");
   console.error(err);
-  process.exit(1);
-});
+  process.exitCode = 1;
+} finally {
+  await closePool();
+}

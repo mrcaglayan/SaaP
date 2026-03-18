@@ -1,5 +1,5 @@
 {
-  "seededAt": "2026-03-18T21:13:16.165Z",
+  "seededAt": "2026-03-18T21:15:09.666Z",
   "tenantId": 1,
   "tenantCode": "DEFAULT",
   "legalEntityId": 1,
@@ -26,7 +26,7 @@
     "dueToParentAccountId": 9,
     "dueFromParentCode": "136",
     "dueToParentCode": "336",
-    "lastAppliedAt": "2026-03-18T21:13:16.000Z",
+    "lastAppliedAt": "2026-03-18T21:15:09.000Z",
     "createdAccounts": [],
     "reusedAccounts": [
       {

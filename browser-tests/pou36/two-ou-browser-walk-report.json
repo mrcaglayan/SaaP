@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-18T21:02:30.853Z",
+  "generatedAt": "2026-03-18T21:13:53.819Z",
   "status": "failed",
-  "error": "Error: runId missing after import\n    at file:///C:/Users/Maarif/Desktop/my-app/browser-tests/pou36/walk-two-ou.mjs:317:25\n    at runStep (file:///C:/Users/Maarif/Desktop/my-app/browser-tests/pou36/walk-two-ou.mjs:154:27)\n    at main (file:///C:/Users/Maarif/Desktop/my-app/browser-tests/pou36/walk-two-ou.mjs:316:11)"
+  "error": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText(/Payroll CSV iceri aktarildi/i) to be visible\u001b[22m\n\n    at C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\pou36\\walk-two-ou.mjs:303:60\n    at async runStep (C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\pou36\\walk-two-ou.mjs:158:21)\n    at async main (C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\pou36\\walk-two-ou.mjs:283:5)"
 }
