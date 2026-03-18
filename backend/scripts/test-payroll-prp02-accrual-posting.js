@@ -10,6 +10,7 @@ import {
   listPayrollComponentMappingRows,
   upsertPayrollComponentMapping,
 } from "../src/services/payroll.mappings.service.js";
+import { createPayrollOwnershipAssignment } from "../src/services/payroll.ownership.service.js";
 import { getPayrollRunByIdForTenant, importPayrollRunCsv } from "../src/services/payroll.runs.service.js";
 
 function assert(condition, message) {
@@ -29,6 +30,12 @@ function toAmount(value) {
     return 0;
   }
   return Number(parsed.toFixed(6));
+}
+
+function normalizeUpperText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
 function noScopeGuard() {
@@ -66,6 +73,48 @@ function buildValidCsv() {
     "E001,Alpha User,CC-01,1000,100,50,50,1200,120,80,20,150,100,980",
     "E002,Beta User,CC-02,900,0,0,100,1000,100,50,10,120,90,840",
   ].join("\n");
+}
+
+async function seedMixedContextOwnershipAssignments(fixture) {
+  await createPayrollOwnershipAssignment({
+    req: null,
+    tenantId: fixture.tenantId,
+    userId: fixture.userId,
+    input: {
+      legalEntityId: fixture.legalEntityId,
+      employeeCode: "E001",
+      employeeNameSnapshot: "Alpha User",
+      ownershipScope: "CENTRAL",
+      operatingUnitId: null,
+      effectiveFrom: "2026-01-01",
+      effectiveTo: null,
+      status: "ACTIVE",
+      expectedCostCenterCode: "CC-01",
+      sourceType: "MANUAL",
+      notes: "PRP02 central owner",
+    },
+    assertScopeAccess: noScopeGuard,
+  });
+
+  await createPayrollOwnershipAssignment({
+    req: null,
+    tenantId: fixture.tenantId,
+    userId: fixture.userId,
+    input: {
+      legalEntityId: fixture.legalEntityId,
+      employeeCode: "E002",
+      employeeNameSnapshot: "Beta User",
+      ownershipScope: "OPERATING_UNIT",
+      operatingUnitId: fixture.operatingUnitId,
+      effectiveFrom: "2026-01-01",
+      effectiveTo: null,
+      status: "ACTIVE",
+      expectedCostCenterCode: "CC-02",
+      sourceType: "MANUAL",
+      notes: "PRP02 OU owner",
+    },
+    assertScopeAccess: noScopeGuard,
+  });
 }
 
 async function createTenantWithAccrualFixtures(stamp) {
@@ -141,6 +190,31 @@ async function createTenantWithAccrualFixtures(stamp) {
   );
   const legalEntityId = toNumber(legalEntityRows.rows?.[0]?.id);
   assert(legalEntityId > 0, "Failed to create legal entity fixture");
+
+  await query(
+    `INSERT INTO operating_units (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        unit_type,
+        has_subledger,
+        status
+      )
+      VALUES (?, ?, ?, ?, 'BRANCH', TRUE, 'ACTIVE')`,
+    [tenantId, legalEntityId, `PRP02_OU_${stamp}`, `PRP02 OU ${stamp}`]
+  );
+  const operatingUnitRows = await query(
+    `SELECT id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, `PRP02_OU_${stamp}`]
+  );
+  const operatingUnitId = toNumber(operatingUnitRows.rows?.[0]?.id);
+  assert(operatingUnitId > 0, "Failed to create operating unit fixture");
 
   await query(
     `INSERT INTO fiscal_calendars (
@@ -256,6 +330,7 @@ async function createTenantWithAccrualFixtures(stamp) {
   return {
     tenantId,
     legalEntityId,
+    operatingUnitId,
     userId,
     currencyCode,
     expenseGlAccountId,
@@ -269,6 +344,9 @@ async function main() {
   const stamp = Date.now();
   const fixture = await createTenantWithAccrualFixtures(stamp);
   const providerCode = `PRP02_${stamp}`;
+  const validCsv = buildValidCsv();
+
+  await seedMixedContextOwnershipAssignments(fixture);
 
   const imported = await importPayrollRunCsv({
     req: null,
@@ -282,7 +360,7 @@ async function main() {
       currencyCode: fixture.currencyCode,
       sourceBatchRef: `PRP02-SRC-${stamp}`,
       originalFilename: `prp02-${stamp}.csv`,
-      csvText: buildValidCsv(),
+      csvText: validCsv,
     },
     assertScopeAccess: noScopeGuard,
   });
@@ -325,8 +403,18 @@ async function main() {
   );
 
   const mappingIds = [];
-  for (const component of previewBeforeMappings.component_totals || []) {
-    const entrySide = String(component?.entry_side || "").toUpperCase();
+  const uniquePreviewComponents = Array.from(
+    new Set(
+      (previewBeforeMappings.component_totals || []).map((component) =>
+        normalizeUpperText(component?.component_code)
+      )
+    )
+  );
+  for (const componentCode of uniquePreviewComponents) {
+    const component = (previewBeforeMappings.component_totals || []).find(
+      (row) => normalizeUpperText(row?.component_code) === componentCode
+    );
+    const entrySide = normalizeUpperText(component?.entry_side);
     const row = await upsertPayrollComponentMapping({
       req: null,
       payload: {
@@ -336,7 +424,7 @@ async function main() {
         entityCodeInput: null,
         providerCode,
         currencyCode: fixture.currencyCode,
-        componentCode: String(component?.component_code || "").toUpperCase(),
+        componentCode,
         entrySide,
         glAccountId: entrySide === "DEBIT" ? fixture.expenseGlAccountId : fixture.liabilityGlAccountId,
         effectiveFrom: "2026-01-01",
@@ -347,7 +435,7 @@ async function main() {
       assertScopeAccess: noScopeGuard,
     });
     const mappingId = toNumber(row?.id);
-    assert(mappingId > 0, `Mapping upsert should return id for ${component?.component_code}`);
+    assert(mappingId > 0, `Mapping upsert should return id for ${componentCode}`);
     mappingIds.push(mappingId);
   }
 
@@ -370,7 +458,7 @@ async function main() {
     assertScopeAccess: noScopeGuard,
   });
   assert(
-    (listedMappings.rows || []).length === (previewBeforeMappings.component_totals || []).length,
+    (listedMappings.rows || []).length === uniquePreviewComponents.length,
     "Mapping list should contain one active mapping per component"
   );
 
@@ -385,11 +473,35 @@ async function main() {
     "Accrual preview should have no missing mappings after setup"
   );
   assert(
-    (previewAfterMappings?.posting_lines || []).length === (previewBeforeMappings?.component_totals || []).length,
-    "Accrual preview posting lines should be generated for all components"
+    (previewAfterMappings?.posting_lines || []).length ===
+      (previewAfterMappings?.component_totals || []).length,
+    "Accrual preview posting lines should be generated for all grouped component rows"
   );
   assert(previewAfterMappings?.is_balanced === true, "Accrual preview should be balanced");
   assert(previewAfterMappings?.can_finalize === false, "Run still cannot finalize before review");
+  assert(
+    (previewAfterMappings?.component_totals || []).length > uniquePreviewComponents.length,
+    "Mixed owner-context preview should split grouped component totals beyond unique component mappings"
+  );
+  const centralBaseSalary = (previewAfterMappings?.component_totals || []).find(
+    (row) =>
+      normalizeUpperText(row?.component_code) === "BASE_SALARY_EXPENSE" &&
+      normalizeUpperText(row?.ownership_scope) === "CENTRAL"
+  );
+  const ouBaseSalary = (previewAfterMappings?.component_totals || []).find(
+    (row) =>
+      normalizeUpperText(row?.component_code) === "BASE_SALARY_EXPENSE" &&
+      normalizeUpperText(row?.ownership_scope) === "OPERATING_UNIT"
+  );
+  assert(
+    toAmount(centralBaseSalary?.amount) === 1000,
+    "Central BASE_SALARY_EXPENSE preview amount should equal E001 base salary"
+  );
+  assert(
+    toAmount(ouBaseSalary?.amount) === 900 &&
+      toNumber(ouBaseSalary?.operating_unit_id) === fixture.operatingUnitId,
+    "OU BASE_SALARY_EXPENSE preview amount should equal E002 base salary with OU attribution"
+  );
 
   const reviewed1 = await markPayrollRunReviewed({
     req: null,
@@ -420,6 +532,22 @@ async function main() {
     assertScopeAccess: noScopeGuard,
   });
   assert(previewReviewed?.can_finalize === true, "Run should be finalizable after review");
+  assert(
+    (previewReviewed?.posting_lines || []).some(
+      (line) =>
+        normalizeUpperText(line?.ownership_scope) === "OPERATING_UNIT" &&
+        toNumber(line?.operating_unit_id) === fixture.operatingUnitId
+    ),
+    "Reviewed preview should include OU-attributed posting lines"
+  );
+  assert(
+    (previewReviewed?.posting_lines || []).some(
+      (line) =>
+        normalizeUpperText(line?.ownership_scope) === "CENTRAL" &&
+        toNumber(line?.operating_unit_id) === 0
+    ),
+    "Reviewed preview should include central-attributed posting lines"
+  );
 
   const finalized1 = await finalizePayrollRunAccrual({
     req: null,
@@ -444,6 +572,18 @@ async function main() {
   assert(
     toNumber(runAfterFinalize?.accrual_journal_entry_id) === accrualJournalEntryId,
     "Run accrual_journal_entry_id should match finalize result"
+  );
+  const finalizedLinesByEmployee = new Map(
+    (runAfterFinalize?.lines || []).map((line) => [normalizeUpperText(line?.employee_code), line])
+  );
+  assert(
+    normalizeUpperText(finalizedLinesByEmployee.get("E001")?.ownership_scope) === "CENTRAL",
+    "E001 should remain CENTRAL-owned after finalize"
+  );
+  assert(
+    normalizeUpperText(finalizedLinesByEmployee.get("E002")?.ownership_scope) === "OPERATING_UNIT" &&
+      toNumber(finalizedLinesByEmployee.get("E002")?.operating_unit_id) === fixture.operatingUnitId,
+    "E002 should remain OU-owned after finalize"
   );
 
   const finalized2 = await finalizePayrollRunAccrual({
@@ -504,6 +644,22 @@ async function main() {
   assert(
     toAmount(journalLineAgg?.credit_total) === toAmount(previewReviewed?.credit_total),
     "Accrual journal lines credit sum should match preview credit total"
+  );
+  const journalOuAggRows = await query(
+    `SELECT
+        SUM(CASE WHEN operating_unit_id IS NULL THEN 1 ELSE 0 END) AS central_line_count,
+        SUM(CASE WHEN operating_unit_id = ? THEN 1 ELSE 0 END) AS ou_line_count
+     FROM journal_lines
+     WHERE journal_entry_id = ?`,
+    [fixture.operatingUnitId, accrualJournalEntryId]
+  );
+  assert(
+    toNumber(journalOuAggRows.rows?.[0]?.central_line_count) > 0,
+    "Accrual journal should include central-attributed lines"
+  );
+  assert(
+    toNumber(journalOuAggRows.rows?.[0]?.ou_line_count) > 0,
+    "Accrual journal should include OU-attributed lines"
   );
 
   const runAuditRows = await query(

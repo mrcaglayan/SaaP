@@ -20,6 +20,10 @@ export const EXPECTED_SIDE_BY_COMPONENT = Object.freeze({
   EMPLOYER_SOCIAL_SECURITY_PAYABLE: "CREDIT",
   OTHER_DEDUCTIONS_PAYABLE: "CREDIT",
 });
+export const ACCRUAL_COMPONENT_ORDER = Object.freeze(Object.keys(EXPECTED_SIDE_BY_COMPONENT));
+const ACCRUAL_COMPONENT_ORDER_INDEX = new Map(
+  ACCRUAL_COMPONENT_ORDER.map((componentCode, index) => [componentCode, index])
+);
 
 function normalizeUpperText(value) {
   return String(value || "")
@@ -580,6 +584,112 @@ export function buildPayrollAccrualComponentAmountsFromRun(run) {
       amount: toAmount(rawAmount),
     }))
     .filter((row) => row.amount > 0);
+}
+
+function buildPayrollAccrualComponentAmountsFromLine(line) {
+  const totals = [
+    ["BASE_SALARY_EXPENSE", line?.base_salary, "DEBIT"],
+    ["OVERTIME_EXPENSE", line?.overtime_pay, "DEBIT"],
+    ["BONUS_EXPENSE", line?.bonus_pay, "DEBIT"],
+    ["ALLOWANCES_EXPENSE", line?.allowances_total, "DEBIT"],
+    ["EMPLOYER_TAX_EXPENSE", line?.employer_tax, "DEBIT"],
+    ["EMPLOYER_SOCIAL_SECURITY_EXPENSE", line?.employer_social_security, "DEBIT"],
+    ["PAYROLL_NET_PAYABLE", line?.net_pay, "CREDIT"],
+    ["EMPLOYEE_TAX_PAYABLE", line?.employee_tax, "CREDIT"],
+    ["EMPLOYEE_SOCIAL_SECURITY_PAYABLE", line?.employee_social_security, "CREDIT"],
+    ["EMPLOYER_TAX_PAYABLE", line?.employer_tax, "CREDIT"],
+    ["EMPLOYER_SOCIAL_SECURITY_PAYABLE", line?.employer_social_security, "CREDIT"],
+    ["OTHER_DEDUCTIONS_PAYABLE", line?.other_deductions, "CREDIT"],
+  ];
+
+  return totals
+    .map(([componentCode, rawAmount, entrySide]) => ({
+      componentCode,
+      entrySide,
+      amount: toAmount(rawAmount),
+    }))
+    .filter((row) => row.amount > 0);
+}
+
+function compareGroupedPayrollAccrualRows(left, right) {
+  const leftOrder = ACCRUAL_COMPONENT_ORDER_INDEX.get(left?.componentCode) ?? 999;
+  const rightOrder = ACCRUAL_COMPONENT_ORDER_INDEX.get(right?.componentCode) ?? 999;
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+
+  const leftScope = normalizeUpperText(left?.ownership_scope);
+  const rightScope = normalizeUpperText(right?.ownership_scope);
+  const scopeRank = (scope) => {
+    if (scope === "CENTRAL") {
+      return 0;
+    }
+    if (scope === "OPERATING_UNIT") {
+      return 1;
+    }
+    return 2;
+  };
+  const leftScopeRank = scopeRank(leftScope);
+  const rightScopeRank = scopeRank(rightScope);
+  if (leftScopeRank !== rightScopeRank) {
+    return leftScopeRank - rightScopeRank;
+  }
+
+  const leftCode = String(left?.operating_unit_code || "").trim();
+  const rightCode = String(right?.operating_unit_code || "").trim();
+  if (leftCode !== rightCode) {
+    return leftCode.localeCompare(rightCode);
+  }
+
+  const leftName = String(left?.operating_unit_name || "").trim();
+  const rightName = String(right?.operating_unit_name || "").trim();
+  if (leftName !== rightName) {
+    return leftName.localeCompare(rightName);
+  }
+
+  return (parsePositiveInt(left?.operating_unit_id) || 0) - (parsePositiveInt(right?.operating_unit_id) || 0);
+}
+
+export function buildPayrollAccrualComponentAmountsFromRunLines(lines = []) {
+  const groupedRows = new Map();
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const ownershipScope = normalizeUpperText(line?.ownership_scope) || null;
+    const operatingUnitId = parsePositiveInt(line?.operating_unit_id) || null;
+
+    for (const component of buildPayrollAccrualComponentAmountsFromLine(line)) {
+      const key = [
+        component.componentCode,
+        ownershipScope || "UNRESOLVED",
+        operatingUnitId || 0,
+      ].join("|");
+
+      if (!groupedRows.has(key)) {
+        groupedRows.set(key, {
+          componentCode: component.componentCode,
+          entrySide: component.entrySide,
+          ownership_scope: ownershipScope,
+          operating_unit_id: operatingUnitId,
+          operating_unit_code: String(line?.operating_unit_code || "").trim() || null,
+          operating_unit_name: String(line?.operating_unit_name || "").trim() || null,
+          amount: 0,
+        });
+      }
+
+      const current = groupedRows.get(key);
+      current.amount = toAmount(current.amount + component.amount);
+      if (!current.operating_unit_code) {
+        current.operating_unit_code = String(line?.operating_unit_code || "").trim() || null;
+      }
+      if (!current.operating_unit_name) {
+        current.operating_unit_name = String(line?.operating_unit_name || "").trim() || null;
+      }
+    }
+  }
+
+  return Array.from(groupedRows.values())
+    .filter((row) => row.amount > 0)
+    .sort(compareGroupedPayrollAccrualRows);
 }
 
 export async function findApplicablePayrollComponentMapping({

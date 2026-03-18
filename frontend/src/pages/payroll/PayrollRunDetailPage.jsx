@@ -129,6 +129,43 @@ function buildPayrollRunLifecycleEvents(run) {
   return events;
 }
 
+function ownershipScopeBadgeClass(scope) {
+  return String(scope || "").toUpperCase() === "OPERATING_UNIT"
+    ? "border-sky-200 bg-sky-50 text-sky-700"
+    : "border-amber-200 bg-amber-50 text-amber-700";
+}
+
+function ownershipStatusBadgeClass(status) {
+  const normalized = String(status || "").toUpperCase();
+  if (normalized === "RESOLVED") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (normalized === "MISMATCH") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (normalized === "AMBIGUOUS") {
+    return "border-violet-200 bg-violet-50 text-violet-700";
+  }
+  return "border-rose-200 bg-rose-50 text-rose-700";
+}
+
+function formatOwnershipContextLabel(line) {
+  const scope = String(line?.ownership_scope || "").toUpperCase();
+  if (scope === "CENTRAL") {
+    return "CENTRAL";
+  }
+  if (scope === "OPERATING_UNIT") {
+    if (line?.operating_unit_code) {
+      return line.operating_unit_code;
+    }
+    if (line?.operating_unit_id) {
+      return `OU #${line.operating_unit_id}`;
+    }
+    return line?.operating_unit_name || "OPERATING_UNIT";
+  }
+  return "-";
+}
+
 export default function PayrollRunDetailPage() {
   const { runId } = useParams();
   const { hasPermission } = useAuth();
@@ -426,6 +463,10 @@ export default function PayrollRunDetailPage() {
                 <div className="font-medium">{formatDate(row.pay_date)}</div>
               </div>
               <div>
+                <div className="text-xs text-slate-500">Ownership As Of</div>
+                <div className="font-medium">{formatDate(row.ownership_as_of_date)}</div>
+              </div>
+              <div>
                 <div className="text-xs text-slate-500">Currency</div>
                 <div className="font-medium">{row.currency_code}</div>
               </div>
@@ -507,6 +548,94 @@ export default function PayrollRunDetailPage() {
                 <div className="font-medium break-all">{row.original_filename}</div>
               </div>
             </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Ownership Snapshot (PR-POU02)</h2>
+                <p className="mt-1 text-xs text-slate-600">
+                  Locked owner-context resolution by payroll period end or pay date fallback.
+                </p>
+              </div>
+              <span className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700">
+                As Of {formatDate(row.ownership_as_of_date)}
+              </span>
+            </div>
+
+            <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-6">
+              <div>
+                <div className="text-xs text-slate-500">Resolved</div>
+                <div className="font-medium">{row?.ownership_summary?.resolved_line_count || 0}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Unresolved</div>
+                <div className="font-medium">{row?.ownership_summary?.unresolved_line_count || 0}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Ambiguous</div>
+                <div className="font-medium">{row?.ownership_summary?.ambiguous_line_count || 0}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Mismatch</div>
+                <div className="font-medium">{row?.ownership_summary?.mismatch_line_count || 0}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Owner Contexts</div>
+                <div className="font-medium">{row?.ownership_summary?.owner_context_count || 0}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">OU Contexts</div>
+                <div className="font-medium">{row?.ownership_summary?.mixed_ou_count || 0}</div>
+              </div>
+            </div>
+
+            {Number(row?.ownership_summary?.unresolved_line_count || 0) > 0 ||
+            Number(row?.ownership_summary?.ambiguous_line_count || 0) > 0 ||
+            Number(row?.ownership_summary?.mismatch_line_count || 0) > 0 ? (
+              <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Ownership issues are present on this run. Review unresolved, ambiguous, or mismatch lines before posting.
+              </div>
+            ) : null}
+
+            {(row?.ownership_summary?.breakdown || []).length > 0 ? (
+              <div className="mt-4 overflow-auto">
+                <table className="min-w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="p-2 text-left">Owner Context</th>
+                      <th className="p-2 text-left">Line Count</th>
+                      <th className="p-2 text-left">Resolved</th>
+                      <th className="p-2 text-left">Mismatch</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(row?.ownership_summary?.breakdown || []).map((item, idx) => (
+                      <tr key={`${item.ownership_scope || "NONE"}-${item.operating_unit_id || 0}-${idx}`} className="border-b">
+                        <td className="p-2">
+                          <span
+                            className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${ownershipScopeBadgeClass(
+                              item.ownership_scope
+                            )}`}
+                          >
+                            {item.ownership_scope || "UNKNOWN"}
+                          </span>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {formatOwnershipContextLabel(item)}
+                            {item.operating_unit_name ? ` - ${item.operating_unit_name}` : ""}
+                          </div>
+                        </td>
+                        <td className="p-2">{item.line_count || 0}</td>
+                        <td className="p-2">{item.resolved_line_count || 0}</td>
+                        <td className="p-2">{item.mismatch_line_count || 0}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="mt-3 text-sm text-slate-500">Ownership breakdown is not available yet.</div>
+            )}
           </section>
 
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -706,9 +835,9 @@ export default function PayrollRunDetailPage() {
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-sm font-semibold text-slate-900">Tahakkuk Preview (PR-P02)</h2>
+                <h2 className="text-sm font-semibold text-slate-900">Tahakkuk Preview (PR-POU04)</h2>
                 <p className="mt-1 text-xs text-slate-600">
-                  Payroll component mapping kontrolu + finalize edilecek GL tahakkuk satirlari.
+                  Payroll component mapping kontrolu + owner-context-grouped GL tahakkuk satirlari.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -792,6 +921,7 @@ export default function PayrollRunDetailPage() {
                             item.amount,
                             row?.currency_code || preview?.run?.currency_code
                           )}
+                          {item.owner_context_label ? ` @ ${item.owner_context_label}` : ""}
                           {item.issue ? ` - ${item.issue}` : ""}
                         </li>
                       ))}
@@ -809,6 +939,7 @@ export default function PayrollRunDetailPage() {
                       <tr className="border-b">
                         <th className="p-2 text-left">Component</th>
                         <th className="p-2 text-left">Side</th>
+                        <th className="p-2 text-left">Owner Context</th>
                         <th className="p-2 text-left">GL</th>
                         <th className="p-2 text-left">Amount</th>
                       </tr>
@@ -816,12 +947,42 @@ export default function PayrollRunDetailPage() {
                     <tbody>
                       {(preview.posting_lines || []).map((line, idx) => (
                         <tr key={`${line.component_code}-${idx}`} className="border-b">
-                          <td className="p-2">{line.component_code}</td>
+                          <td className="p-2">
+                            {line.component_code}
+                            {line.description ? (
+                              <div className="text-xs text-slate-500">{line.description}</div>
+                            ) : null}
+                          </td>
                           <td className="p-2">{line.entry_side}</td>
+                          <td className="p-2">
+                            {line.ownership_scope ? (
+                              <>
+                                <span
+                                  className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${ownershipScopeBadgeClass(
+                                    line.ownership_scope
+                                  )}`}
+                                >
+                                  {line.owner_context_label || formatOwnershipContextLabel(line)}
+                                </span>
+                                {line.operating_unit_name ? (
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {line.operating_unit_name}
+                                  </div>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span className="text-slate-500">
+                                {line.owner_context_label || "UNRESOLVED"}
+                              </span>
+                            )}
+                          </td>
                           <td className="p-2">
                             {line.gl_account_code || line.gl_account_id}
                             {line.gl_account_name ? (
                               <div className="text-xs text-slate-500">{line.gl_account_name}</div>
+                            ) : null}
+                            {line.subledger_reference_no ? (
+                              <div className="text-xs text-slate-400">{line.subledger_reference_no}</div>
                             ) : null}
                           </td>
                           <td className="p-2">
@@ -834,7 +995,7 @@ export default function PayrollRunDetailPage() {
                       ))}
                       {(preview.posting_lines || []).length === 0 ? (
                         <tr>
-                          <td className="p-3 text-slate-500" colSpan={4}>
+                          <td className="p-3 text-slate-500" colSpan={5}>
                             Tahakkuk satiri yok.
                           </td>
                         </tr>
@@ -904,6 +1065,8 @@ export default function PayrollRunDetailPage() {
                     <th className="p-2 text-left">#</th>
                     <th className="p-2 text-left">Employee</th>
                     <th className="p-2 text-left">Cost Center</th>
+                    <th className="p-2 text-left">Owner Context</th>
+                    <th className="p-2 text-left">Ownership Status</th>
                     <th className="p-2 text-left">Gross</th>
                     <th className="p-2 text-left">Net</th>
                     <th className="p-2 text-left">Emp Tax</th>
@@ -920,6 +1083,39 @@ export default function PayrollRunDetailPage() {
                         {line.employee_code} - {line.employee_name}
                       </td>
                       <td className="p-2">{line.cost_center_code || "-"}</td>
+                      <td className="p-2">
+                        {line.ownership_scope ? (
+                          <>
+                            <span
+                              className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${ownershipScopeBadgeClass(
+                                line.ownership_scope
+                              )}`}
+                            >
+                              {line.ownership_scope}
+                            </span>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {formatOwnershipContextLabel(line)}
+                              {line.operating_unit_name ? ` - ${line.operating_unit_name}` : ""}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-slate-500">-</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${ownershipStatusBadgeClass(
+                            line.ownership_resolution_status
+                          )}`}
+                        >
+                          {line.ownership_resolution_status || "UNRESOLVED"}
+                        </span>
+                        {line.ownership_resolution_note ? (
+                          <div className="mt-1 max-w-xs text-xs text-slate-500">
+                            {line.ownership_resolution_note}
+                          </div>
+                        ) : null}
+                      </td>
                       <td className="p-2">
                         <MoneyText amount={line.gross_pay} currencyCode={row?.currency_code} />
                       </td>
@@ -948,7 +1144,7 @@ export default function PayrollRunDetailPage() {
                   ))}
                   {(row.lines || []).length === 0 ? (
                     <tr>
-                      <td className="p-3 text-slate-500" colSpan={9}>
+                      <td className="p-3 text-slate-500" colSpan={11}>
                         Satir yok.
                       </td>
                     </tr>

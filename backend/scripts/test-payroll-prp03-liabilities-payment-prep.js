@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import { seedCentralPayrollOwnershipAssignmentsFromCsv } from "./_payrollOwnershipTestHelpers.js";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
 import {
@@ -344,6 +345,15 @@ async function main() {
   const stamp = Date.now();
   const fixture = await createTenantWithP03Fixtures(stamp);
   const providerCode = `PRP03_${stamp}`;
+  const validCsv = buildValidCsv();
+
+  await seedCentralPayrollOwnershipAssignmentsFromCsv({
+    tenantId: fixture.tenantId,
+    legalEntityId: fixture.legalEntityId,
+    userId: fixture.userId,
+    csvText: validCsv,
+    assertScopeAccess: noScopeGuard,
+  });
 
   const imported = await importPayrollRunCsv({
     req: null,
@@ -357,7 +367,7 @@ async function main() {
       currencyCode: fixture.currencyCode,
       sourceBatchRef: `PRP03-SRC-${stamp}`,
       originalFilename: `prp03-${stamp}.csv`,
-      csvText: buildValidCsv(),
+      csvText: validCsv,
     },
     assertScopeAccess: noScopeGuard,
   });

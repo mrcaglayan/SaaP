@@ -122,6 +122,8 @@ import migration131CariDocumentLinesWarehouseBinding from "./m131_cari_document_
 import migration132CariDocumentLineStockLinksWarehouseBinding from "./m132_cari_document_line_stock_links_warehouse_binding.js";
 import migration133CashTransitAccountNullable from "./m133_cash_transit_account_nullable.js";
 import migration134DropCashTransitAccount from "./m134_drop_cash_transit_account.js";
+import migration135PayrollEmployeeOwnerContextAssignments from "./m135_payroll_employee_owner_context_assignments.js";
+import migration136PayrollRunLineOwnershipSnapshot from "./m136_payroll_run_line_ownership_snapshot.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -248,6 +250,8 @@ const migrations = [
   migration132CariDocumentLineStockLinksWarehouseBinding,
   migration133CashTransitAccountNullable,
   migration134DropCashTransitAccount,
+  migration135PayrollEmployeeOwnerContextAssignments,
+  migration136PayrollRunLineOwnershipSnapshot,
 ];
 
 export default migrations;

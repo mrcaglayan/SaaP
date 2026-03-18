@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import { seedCentralPayrollOwnershipAssignmentsFromCsv } from "./_payrollOwnershipTestHelpers.js";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
 import {
@@ -453,6 +454,14 @@ async function importRun({
   sourceRef,
   csvText,
 }) {
+  await seedCentralPayrollOwnershipAssignmentsFromCsv({
+    tenantId: fixture.tenantId,
+    legalEntityId: fixture.legalEntityId,
+    userId: fixture.userId,
+    csvText,
+    assertScopeAccess: noScopeGuard,
+  });
+
   const imported = await importPayrollRunCsv({
     req: null,
     payload: {

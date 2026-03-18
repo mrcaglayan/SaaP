@@ -3,6 +3,12 @@ import { query, withTransaction } from "../db.js";
 import { assertCurrencyExists, assertLegalEntityBelongsToTenant } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { parsePayrollCsv } from "./payroll.parsers.csv.js";
+import {
+  buildPayrollRunOwnershipValidationDetails,
+  buildPayrollRunOwnershipSummary,
+  derivePayrollOwnershipAsOfDate,
+  resolvePayrollRunLineOwnershipSnapshot,
+} from "./payroll.ownership.service.js";
 
 function normalizeUpperText(value) {
   return String(value || "")
@@ -60,6 +66,12 @@ function parseOptionalJson(value) {
   } catch {
     return value;
   }
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
 function isDuplicateEntryError(err) {
@@ -167,6 +179,7 @@ async function findPayrollRunHeaderById({ tenantId, runId, runQuery = query }) {
         r.entity_code,
         r.payroll_period,
         r.pay_date,
+        r.ownership_as_of_date,
         r.currency_code,
         r.source_batch_ref,
         r.original_filename,
@@ -254,6 +267,11 @@ async function findPayrollRunLinesByRunId({ tenantId, runId, runQuery = query })
         l.employee_code,
         l.employee_name,
         l.cost_center_code,
+        l.ownership_scope,
+        l.operating_unit_id,
+        l.ownership_assignment_id,
+        l.ownership_resolution_status,
+        l.ownership_resolution_note,
         l.base_salary,
         l.overtime_pay,
         l.bonus_pay,
@@ -267,8 +285,13 @@ async function findPayrollRunLinesByRunId({ tenantId, runId, runQuery = query })
         l.employer_social_security,
         l.line_hash,
         l.raw_row_json,
-        l.created_at
+        l.created_at,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name
      FROM payroll_run_lines l
+     LEFT JOIN operating_units ou
+       ON ou.id = l.operating_unit_id
+      AND ou.tenant_id = l.tenant_id
      WHERE l.tenant_id = ?
        AND l.run_id = ?
      ORDER BY l.line_no ASC, l.id ASC`,
@@ -317,6 +340,7 @@ async function buildPayrollRunDetail({ tenantId, runId, runQuery = query }) {
   return {
     ...header,
     lines,
+    ownership_summary: buildPayrollRunOwnershipSummary(lines),
     audit,
   };
 }
@@ -474,6 +498,7 @@ export async function listPayrollRunRows({
         r.entity_code,
         r.payroll_period,
         r.pay_date,
+        r.ownership_as_of_date,
         r.currency_code,
         r.status,
         r.source_type,
@@ -548,9 +573,19 @@ export async function listPayrollRunLineRows({
     conditions.push("l.cost_center_code = ?");
     params.push(filters.costCenterCode);
   }
+  if (filters.operatingUnitId) {
+    conditions.push("l.operating_unit_id = ?");
+    params.push(filters.operatingUnitId);
+  }
+  if (filters.ownershipResolutionStatus) {
+    conditions.push("l.ownership_resolution_status = ?");
+    params.push(filters.ownershipResolutionStatus);
+  }
   if (filters.q) {
-    const like = `%${filters.q}%`;
-    conditions.push("(l.employee_code LIKE ? OR l.employee_name LIKE ? OR l.cost_center_code LIKE ?)");
+    const like = `%${normalizeSearchText(filters.q)}%`;
+    conditions.push(
+      "(UPPER(l.employee_code) LIKE ? OR UPPER(l.employee_name) LIKE ? OR UPPER(COALESCE(l.cost_center_code, '')) LIKE ?)"
+    );
     params.push(like, like, like);
   }
 
@@ -579,6 +614,11 @@ export async function listPayrollRunLineRows({
         l.employee_code,
         l.employee_name,
         l.cost_center_code,
+        l.ownership_scope,
+        l.operating_unit_id,
+        l.ownership_assignment_id,
+        l.ownership_resolution_status,
+        l.ownership_resolution_note,
         l.base_salary,
         l.overtime_pay,
         l.bonus_pay,
@@ -592,8 +632,13 @@ export async function listPayrollRunLineRows({
         l.employer_social_security,
         l.line_hash,
         l.raw_row_json,
-        l.created_at
+        l.created_at,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name
      FROM payroll_run_lines l
+     LEFT JOIN operating_units ou
+       ON ou.id = l.operating_unit_id
+      AND ou.tenant_id = l.tenant_id
      WHERE ${whereSql}
      ORDER BY l.line_no ASC, l.id ASC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
@@ -648,6 +693,7 @@ export async function importPayrollRunCsv({
       let entityCode = null;
       let runNo = null;
       let newRunId = null;
+      let ownershipAsOfDate = null;
       let importedIntoCorrectionShell = false;
 
       if (parsePositiveInt(payload.targetRunId)) {
@@ -690,6 +736,12 @@ export async function importPayrollRunCsv({
         if (normalizeUpperText(targetRun.currency_code) !== payload.currencyCode) {
           throw badRequest("currencyCode must match target correction shell");
         }
+        ownershipAsOfDate =
+          toDateOnly(targetRun.ownership_as_of_date) ||
+          derivePayrollOwnershipAsOfDate({
+            payrollPeriod: targetRun.payroll_period,
+            payDate: targetRun.pay_date,
+          });
 
         const linePresence = await tx.query(
           `SELECT id
@@ -721,6 +773,7 @@ export async function importPayrollRunCsv({
                entity_code = ?,
                payroll_period = ?,
                pay_date = ?,
+               ownership_as_of_date = ?,
                currency_code = ?,
                source_batch_ref = COALESCE(?, source_batch_ref),
                original_filename = ?,
@@ -759,6 +812,7 @@ export async function importPayrollRunCsv({
             entityCode,
             payload.payrollPeriod,
             payload.payDate,
+            ownershipAsOfDate,
             payload.currencyCode,
             payload.sourceBatchRef,
             payload.originalFilename,
@@ -816,6 +870,10 @@ export async function importPayrollRunCsv({
         if (existing?.id) {
           throw conflictError("Payroll CSV already imported for this entity/period/provider (same checksum)");
         }
+        ownershipAsOfDate = derivePayrollOwnershipAsOfDate({
+          payrollPeriod: payload.payrollPeriod,
+          payDate: payload.payDate,
+        });
 
         runNo = await nextPayrollRunNo({
           tenantId: payload.tenantId,
@@ -833,6 +891,7 @@ export async function importPayrollRunCsv({
               entity_code,
               payroll_period,
               pay_date,
+              ownership_as_of_date,
               currency_code,
               source_batch_ref,
               original_filename,
@@ -857,7 +916,7 @@ export async function importPayrollRunCsv({
               imported_by_user_id
             )
             VALUES (
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'IMPORTED',
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'IMPORTED',
               ?, ?, ?, ?,
               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )`,
@@ -869,6 +928,7 @@ export async function importPayrollRunCsv({
             entityCode,
             payload.payrollPeriod,
             payload.payDate,
+            ownershipAsOfDate,
             payload.currencyCode,
             payload.sourceBatchRef,
             payload.originalFilename,
@@ -906,6 +966,7 @@ export async function importPayrollRunCsv({
       let insertedCount = 0;
       let duplicateCount = 0;
       const seenLineHashes = new Set();
+      const insertedOwnershipLines = [];
 
       for (const row of parsedRows) {
         const lineHash = buildPayrollLineHash(
@@ -924,6 +985,16 @@ export async function importPayrollRunCsv({
         seenLineHashes.add(lineHash);
 
         // eslint-disable-next-line no-await-in-loop
+        const ownershipSnapshot = await resolvePayrollRunLineOwnershipSnapshot({
+          tenantId: payload.tenantId,
+          legalEntityId: resolvedLegalEntityId,
+          employeeCode: row.employee_code,
+          costCenterCode: row.cost_center_code,
+          asOfDate: ownershipAsOfDate,
+          runQuery: tx.query,
+        });
+
+        // eslint-disable-next-line no-await-in-loop
         await tx.query(
           `INSERT INTO payroll_run_lines (
               tenant_id,
@@ -933,6 +1004,11 @@ export async function importPayrollRunCsv({
               employee_code,
               employee_name,
               cost_center_code,
+              ownership_scope,
+              operating_unit_id,
+              ownership_assignment_id,
+              ownership_resolution_status,
+              ownership_resolution_note,
               base_salary,
               overtime_pay,
               bonus_pay,
@@ -948,7 +1024,7 @@ export async function importPayrollRunCsv({
               raw_row_json
             )
             VALUES (
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )`,
           [
             payload.tenantId,
@@ -958,6 +1034,11 @@ export async function importPayrollRunCsv({
             row.employee_code,
             row.employee_name,
             row.cost_center_code,
+            ownershipSnapshot.ownership_scope,
+            ownershipSnapshot.operating_unit_id,
+            ownershipSnapshot.ownership_assignment_id,
+            ownershipSnapshot.ownership_resolution_status,
+            ownershipSnapshot.ownership_resolution_note,
             row.base_salary,
             row.overtime_pay,
             row.bonus_pay,
@@ -973,6 +1054,20 @@ export async function importPayrollRunCsv({
             safeJson(row.raw_row_json),
           ]
         );
+        insertedOwnershipLines.push({
+          line_no: row.line_no,
+          employee_code: row.employee_code,
+          employee_name: row.employee_name,
+          cost_center_code: row.cost_center_code,
+          ownership_scope: ownershipSnapshot.ownership_scope,
+          operating_unit_id: ownershipSnapshot.operating_unit_id,
+          ownership_assignment_id: ownershipSnapshot.ownership_assignment_id,
+          ownership_resolution_status: ownershipSnapshot.ownership_resolution_status,
+          ownership_resolution_note: ownershipSnapshot.ownership_resolution_note,
+          operating_unit_code: ownershipSnapshot.assignment?.operating_unit_code || null,
+          operating_unit_name: ownershipSnapshot.assignment?.operating_unit_name || null,
+          ownership_as_of_date: ownershipAsOfDate,
+        });
         insertedCount += 1;
       }
 
@@ -992,8 +1087,15 @@ export async function importPayrollRunCsv({
         action: "VALIDATION",
         payload: {
           parser: "payroll.parsers.csv",
-          checks: ["gross_pay_consistency", "net_pay_consistency"],
+          checks: [
+            "gross_pay_consistency",
+            "net_pay_consistency",
+            "ownership_snapshot_resolution",
+          ],
           rowCount: parsedRows.length,
+          ownership: buildPayrollRunOwnershipValidationDetails(insertedOwnershipLines, {
+            ownershipAsOfDate,
+          }),
         },
         userId: payload.userId,
         runQuery: tx.query,
@@ -1010,6 +1112,7 @@ export async function importPayrollRunCsv({
           entityCode,
           payrollPeriod: payload.payrollPeriod,
           payDate: payload.payDate,
+          ownershipAsOfDate,
           currencyCode: payload.currencyCode,
           lineCountTotal: parsedRows.length,
           lineCountInserted: insertedCount,

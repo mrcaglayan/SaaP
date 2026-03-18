@@ -10,6 +10,12 @@ import {
 } from "./cash.validators.common.js";
 
 const PAYROLL_RUN_STATUS_VALUES = ["DRAFT", "IMPORTED", "REVIEWED", "FINALIZED"];
+const PAYROLL_OWNERSHIP_RESOLUTION_STATUS_VALUES = [
+  "RESOLVED",
+  "UNRESOLVED",
+  "AMBIGUOUS",
+  "MISMATCH",
+];
 
 function normalizeEnumOrNull(value, label, allowedValues) {
   if (value === undefined || value === null || value === "") {
@@ -162,6 +168,15 @@ export function parsePayrollRunLineListFilters(req) {
     req.query?.costCenterCode ?? req.query?.cost_center_code,
     "costCenterCode"
   );
+  const operatingUnitId = optionalPositiveInt(
+    req.query?.operatingUnitId ?? req.query?.operating_unit_id,
+    "operatingUnitId"
+  );
+  const ownershipResolutionStatus = normalizeEnumOrNull(
+    req.query?.ownershipResolutionStatus ?? req.query?.ownership_resolution_status,
+    "ownershipResolutionStatus",
+    PAYROLL_OWNERSHIP_RESOLUTION_STATUS_VALUES
+  );
   const pagination = parsePagination(req.query, { limit: 200, offset: 0, maxLimit: 500 });
 
   return {
@@ -169,6 +184,8 @@ export function parsePayrollRunLineListFilters(req) {
     runId,
     q,
     costCenterCode,
+    operatingUnitId,
+    ownershipResolutionStatus,
     limit: pagination.limit,
     offset: pagination.offset,
   };

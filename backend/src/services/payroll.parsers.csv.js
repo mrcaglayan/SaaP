@@ -1,3 +1,5 @@
+import { normalizePayrollEmployeeCode } from "./payroll.ownership.service.js";
+
 function parseCsvLine(line) {
   const out = [];
   let current = "";
@@ -91,15 +93,22 @@ export function parsePayrollCsv(csvText) {
       raw[column] = cols[columnIndex[column]] ?? "";
     }
 
-    const employeeCode = String(raw.employee_code || "").trim();
+    const employeeCodeRaw = String(raw.employee_code || "").trim();
     const employeeName = String(raw.employee_name || "").trim();
     const costCenterCode = String(raw.cost_center_code || "").trim() || null;
 
-    if (!employeeCode) {
+    if (!employeeCodeRaw) {
       throw new Error(`Row ${lineIndex + 1}: employee_code is required`);
     }
     if (!employeeName) {
       throw new Error(`Row ${lineIndex + 1}: employee_name is required`);
+    }
+
+    let employeeCode;
+    try {
+      employeeCode = normalizePayrollEmployeeCode(employeeCodeRaw);
+    } catch (err) {
+      throw new Error(`Row ${lineIndex + 1}: ${err?.message || "employee_code is invalid"}`);
     }
 
     const row = {

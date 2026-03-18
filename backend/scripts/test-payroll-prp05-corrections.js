@@ -13,6 +13,7 @@ import {
 } from "../src/services/payroll.corrections.service.js";
 import { buildPayrollRunLiabilities, getPayrollRunLiabilitiesDetail } from "../src/services/payroll.liabilities.service.js";
 import { upsertPayrollComponentMapping } from "../src/services/payroll.mappings.service.js";
+import { createPayrollOwnershipAssignment } from "../src/services/payroll.ownership.service.js";
 import { importPayrollRunCsv } from "../src/services/payroll.runs.service.js";
 
 function assert(condition, message) {
@@ -85,6 +86,47 @@ function buildCorrectionCsv() {
     "E001,Alpha User,CC-01,1100,100,50,50,1300,130,80,20,160,110,1070",
     "E002,Beta User,CC-02,900,0,0,100,1000,100,50,10,120,90,840",
   ].join("\n");
+}
+
+async function seedMixedContextOwnershipAssignments(fixture) {
+  await createPayrollOwnershipAssignment({
+    req: null,
+    tenantId: fixture.tenantId,
+    userId: fixture.userId,
+    input: {
+      legalEntityId: fixture.legalEntityId,
+      employeeCode: "E001",
+      employeeNameSnapshot: "Alpha User",
+      ownershipScope: "CENTRAL",
+      operatingUnitId: null,
+      effectiveFrom: "2026-01-01",
+      effectiveTo: null,
+      status: "ACTIVE",
+      expectedCostCenterCode: "CC-01",
+      sourceType: "MANUAL",
+      notes: "PRP05 central owner",
+    },
+    assertScopeAccess: noScopeGuard,
+  });
+  await createPayrollOwnershipAssignment({
+    req: null,
+    tenantId: fixture.tenantId,
+    userId: fixture.userId,
+    input: {
+      legalEntityId: fixture.legalEntityId,
+      employeeCode: "E002",
+      employeeNameSnapshot: "Beta User",
+      ownershipScope: "OPERATING_UNIT",
+      operatingUnitId: fixture.operatingUnitId,
+      effectiveFrom: "2026-01-01",
+      effectiveTo: null,
+      status: "ACTIVE",
+      expectedCostCenterCode: "CC-02",
+      sourceType: "MANUAL",
+      notes: "PRP05 OU owner",
+    },
+    assertScopeAccess: noScopeGuard,
+  });
 }
 
 async function createTenantWithP05Fixtures(stamp) {
@@ -162,6 +204,31 @@ async function createTenantWithP05Fixtures(stamp) {
   const legalEntityCode = String(legalEntityRows.rows?.[0]?.code || "");
   assert(legalEntityId > 0, "Failed to create legal entity fixture");
   assert(Boolean(legalEntityCode), "Legal entity code should exist");
+
+  await query(
+    `INSERT INTO operating_units (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        unit_type,
+        has_subledger,
+        status
+      )
+      VALUES (?, ?, ?, ?, 'BRANCH', TRUE, 'ACTIVE')`,
+    [tenantId, legalEntityId, `PRP05_OU_${stamp}`, `PRP05 OU ${stamp}`]
+  );
+  const operatingUnitRows = await query(
+    `SELECT id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, `PRP05_OU_${stamp}`]
+  );
+  const operatingUnitId = toNumber(operatingUnitRows.rows?.[0]?.id);
+  assert(operatingUnitId > 0, "Failed to create operating unit fixture");
 
   await query(
     `INSERT INTO fiscal_calendars (
@@ -278,6 +345,7 @@ async function createTenantWithP05Fixtures(stamp) {
     tenantId,
     legalEntityId,
     legalEntityCode,
+    operatingUnitId,
     userId,
     currencyCode,
     expenseGlAccountId,
@@ -291,6 +359,8 @@ async function createFinalizedRunWithLiabilities({
   sourceRef,
   csvText,
 }) {
+  await seedMixedContextOwnershipAssignments(fixture);
+
   const imported = await importPayrollRunCsv({
     req: null,
     payload: {
@@ -318,7 +388,17 @@ async function createFinalizedRunWithLiabilities({
   });
   assert((preview?.component_totals || []).length > 0, "Accrual preview should contain component totals");
 
-  for (const component of preview.component_totals || []) {
+  const uniquePreviewComponents = Array.from(
+    new Set(
+      (preview.component_totals || []).map((component) =>
+        normalizeUpperText(component?.component_code)
+      )
+    )
+  );
+  for (const componentCode of uniquePreviewComponents) {
+    const component = (preview.component_totals || []).find(
+      (row) => normalizeUpperText(row?.component_code) === componentCode
+    );
     const entrySide = normalizeUpperText(component?.entry_side);
     await upsertPayrollComponentMapping({
       req: null,
@@ -329,7 +409,7 @@ async function createFinalizedRunWithLiabilities({
         entityCodeInput: null,
         providerCode,
         currencyCode: fixture.currencyCode,
-        componentCode: normalizeUpperText(component?.component_code),
+        componentCode,
         entrySide,
         glAccountId:
           entrySide === "DEBIT" ? fixture.expenseGlAccountId : fixture.liabilityGlAccountId,
@@ -569,6 +649,31 @@ async function main() {
     "Original accrual JE should point to reversal journal id"
   );
   assert(normalizeUpperText(reversalAccrualJe?.status) === "POSTED", "Reversal accrual JE should be POSTED");
+  const journalOuAggRows = await query(
+    `SELECT
+        journal_entry_id,
+        SUM(CASE WHEN operating_unit_id IS NULL THEN 1 ELSE 0 END) AS central_line_count,
+        SUM(CASE WHEN operating_unit_id = ? THEN 1 ELSE 0 END) AS ou_line_count
+     FROM journal_lines
+     WHERE journal_entry_id IN (?, ?)
+     GROUP BY journal_entry_id`,
+    [fixture.operatingUnitId, original.accrualJournalEntryId, reversalAccrualJeId]
+  );
+  const journalOuAggById = new Map(
+    (journalOuAggRows.rows || []).map((row) => [toNumber(row.journal_entry_id), row])
+  );
+  const originalOuAgg = journalOuAggById.get(original.accrualJournalEntryId);
+  const reversalOuAgg = journalOuAggById.get(reversalAccrualJeId);
+  assert(
+    toNumber(originalOuAgg?.central_line_count) > 0 &&
+      toNumber(originalOuAgg?.ou_line_count) > 0,
+    "Original accrual journal should contain both central and OU-attributed lines"
+  );
+  assert(
+    toNumber(reversalOuAgg?.central_line_count) === toNumber(originalOuAgg?.central_line_count) &&
+      toNumber(reversalOuAgg?.ou_line_count) === toNumber(originalOuAgg?.ou_line_count),
+    "Reversal accrual journal should preserve the original central-vs-OU line structure"
+  );
 
   const correctionsList = await listPayrollRunCorrections({
     req: null,

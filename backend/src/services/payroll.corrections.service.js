@@ -3,6 +3,7 @@ import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertPayrollPeriodActionAllowed } from "./payroll.close.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
+import { derivePayrollOwnershipAsOfDate } from "./payroll.ownership.service.js";
 
 function u(v) {
   return String(v || "").trim().toUpperCase();
@@ -91,6 +92,7 @@ async function findRun({ tenantId, runId, runQuery = query, forUpdate = false })
     ...row,
     payroll_period: d(row.payroll_period),
     pay_date: d(row.pay_date),
+    ownership_as_of_date: d(row.ownership_as_of_date),
     imported_at: row.imported_at ? String(row.imported_at) : null,
     reviewed_at: row.reviewed_at ? String(row.reviewed_at) : null,
     finalized_at: row.finalized_at ? String(row.finalized_at) : null,
@@ -348,7 +350,7 @@ async function createReversalRunTx({
 
   const ins = await runQuery(
     `INSERT INTO payroll_runs (
-        tenant_id, legal_entity_id, run_no, provider_code, entity_code, payroll_period, pay_date, currency_code,
+        tenant_id, legal_entity_id, run_no, provider_code, entity_code, payroll_period, pay_date, ownership_as_of_date, currency_code,
         source_batch_ref, original_filename, file_checksum, status, run_type, correction_of_run_id, correction_reason,
         line_count_total, line_count_inserted, line_count_duplicates, employee_count,
         total_base_salary, total_overtime_pay, total_bonus_pay, total_allowances, total_gross_pay,
@@ -358,7 +360,7 @@ async function createReversalRunTx({
         accrual_journal_entry_id, accrual_posted_by_user_id, accrual_posted_at
      )
      SELECT
-        tenant_id, legal_entity_id, ?, provider_code, entity_code, payroll_period, pay_date, currency_code,
+        tenant_id, legal_entity_id, ?, provider_code, entity_code, payroll_period, pay_date, ownership_as_of_date, currency_code,
         ?, ?, ?, 'FINALIZED', 'REVERSAL', id, ?,
         line_count_total, line_count_inserted, 0, employee_count,
         total_base_salary * -1, total_overtime_pay * -1, total_bonus_pay * -1, total_allowances * -1, total_gross_pay * -1,
@@ -391,12 +393,14 @@ async function createReversalRunTx({
   await runQuery(
     `INSERT INTO payroll_run_lines (
         tenant_id, legal_entity_id, run_id, line_no, employee_code, employee_name, cost_center_code,
+        ownership_scope, operating_unit_id, ownership_assignment_id, ownership_resolution_status, ownership_resolution_note,
         base_salary, overtime_pay, bonus_pay, allowances_total, gross_pay,
         employee_tax, employee_social_security, other_deductions, net_pay,
         employer_tax, employer_social_security, line_hash, raw_row_json
      )
      SELECT
         tenant_id, legal_entity_id, ?, line_no, employee_code, employee_name, cost_center_code,
+        ownership_scope, operating_unit_id, ownership_assignment_id, ownership_resolution_status, ownership_resolution_note,
         base_salary * -1, overtime_pay * -1, bonus_pay * -1, allowances_total * -1, gross_pay * -1,
         employee_tax * -1, employee_social_security * -1, other_deductions * -1, net_pay * -1,
         employer_tax * -1, employer_social_security * -1,
@@ -749,19 +753,23 @@ export async function createPayrollCorrectionShell({
       correctionType,
       runQuery: tx.query,
     });
+    const ownershipAsOfDate = derivePayrollOwnershipAsOfDate({
+      payrollPeriod,
+      payDate,
+    });
     const fileChecksum = hash(`PRCORR-SHELL|${tenantId}|${legalEntityId}|${correctionType}|${runNo}`);
     const originalFilename = clip(`${correctionType.toLowerCase()}-shell-${runNo}.virtual.csv`, 255);
 
     const ins = await tx.query(
       `INSERT INTO payroll_runs (
-          tenant_id, legal_entity_id, run_no, provider_code, entity_code, payroll_period, pay_date, currency_code,
+          tenant_id, legal_entity_id, run_no, provider_code, entity_code, payroll_period, pay_date, ownership_as_of_date, currency_code,
           source_batch_ref, original_filename, file_checksum, status, run_type, correction_of_run_id, correction_reason,
           line_count_total, line_count_inserted, line_count_duplicates, employee_count,
           total_base_salary, total_overtime_pay, total_bonus_pay, total_allowances, total_gross_pay,
           total_employee_tax, total_employee_social_security, total_other_deductions, total_net_pay,
           total_employer_tax, total_employer_social_security, raw_meta_json, imported_by_user_id
        ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?,
           0, 0, 0, 0,
           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
           ?, NULL
@@ -774,6 +782,7 @@ export async function createPayrollCorrectionShell({
         entityCode,
         payrollPeriod,
         payDate,
+        ownershipAsOfDate,
         currencyCode,
         clip(`${correctionType}-SHELL`, 120),
         originalFilename,

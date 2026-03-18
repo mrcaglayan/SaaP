@@ -55,6 +55,7 @@ import PayrollRunDetailPage from "./pages/payroll/PayrollRunDetailPage.jsx";
 import PayrollComponentMappingsPage from "./pages/payroll/PayrollComponentMappingsPage.jsx";
 import PayrollLiabilitiesPage from "./pages/payroll/PayrollLiabilitiesPage.jsx";
 import PayrollBeneficiariesPage from "./pages/payroll/PayrollBeneficiariesPage.jsx";
+import PayrollEmployeeOwnershipPage from "./pages/payroll/PayrollEmployeeOwnershipPage.jsx";
 import PayrollCloseControlsPage from "./pages/payroll/PayrollCloseControlsPage.jsx";
 import CariCounterpartyPage from "./pages/cari/CariCounterpartyPage.jsx";
 import CariDocumentsPage from "./pages/cari/CariDocumentsPage.jsx";
@@ -252,6 +253,11 @@ const implementedRoutes = [
     appPath: "/app/payroll-mappings",
     childPath: "payroll-mappings",
     element: <PayrollComponentMappingsPage />,
+  },
+  {
+    appPath: "/app/payroll-ownership",
+    childPath: "payroll-ownership",
+    element: <PayrollEmployeeOwnershipPage />,
   },
   {
     appPath: "/app/payroll-liabilities",

@@ -1,11 +1,15 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
-  buildPayrollAccrualComponentAmountsFromRun,
+  buildPayrollAccrualComponentAmountsFromRunLines,
   EXPECTED_SIDE_BY_COMPONENT,
   findApplicablePayrollComponentMapping,
 } from "./payroll.mappings.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
+import {
+  getPayrollRunOwnershipValidationDetails,
+  reresolvePayrollRunOwnershipSnapshots,
+} from "./payroll.ownership.service.js";
 
 function normalizeUpperText(value) {
   return String(value || "")
@@ -71,6 +75,36 @@ function resolvePayrollAccrualDate(run) {
   return periodEnd.toISOString().slice(0, 10);
 }
 
+function buildOwnershipFinalizeBlockedMessage(validation) {
+  const samples = Array.isArray(validation?.sample_lines)
+    ? validation.sample_lines
+    : [];
+  const sampleText = samples
+    .slice(0, 5)
+    .map((line) => {
+      const employeeCode = String(line?.employee_code || "").trim() || "UNKNOWN";
+      const status = String(line?.ownership_resolution_status || "").trim() || "UNRESOLVED";
+      return `${employeeCode} [${status}]`;
+    })
+    .join(", ");
+  const blockingCount = Number(validation?.blocking_line_count || 0);
+  if (!sampleText) {
+    return `Payroll ownership validation blocked finalize for ${blockingCount} line(s).`;
+  }
+  return `Payroll ownership validation blocked finalize for ${blockingCount} line(s): ${sampleText}`;
+}
+
+function createOwnershipFinalizeBlockedError(validation, extraDetails = {}) {
+  const err = badRequest(buildOwnershipFinalizeBlockedMessage(validation));
+  err.code = "PAYROLL_OWNERSHIP_FINALIZE_BLOCKED";
+  err.details = {
+    type: "OWNERSHIP_FINALIZE_BLOCKED",
+    ...extraDetails,
+    ownership_validation: validation,
+  };
+  return err;
+}
+
 async function findPayrollRunHeaderById({ tenantId, runId, runQuery = query }) {
   const result = await runQuery(
     `SELECT
@@ -82,6 +116,7 @@ async function findPayrollRunHeaderById({ tenantId, runId, runQuery = query }) {
         r.entity_code,
         r.payroll_period,
         r.pay_date,
+        r.ownership_as_of_date,
         r.currency_code,
         r.status,
         r.total_base_salary,
@@ -162,6 +197,25 @@ async function writePayrollRunAudit({
       VALUES (?, ?, ?, ?, ?, ?)`,
     [tenantId, legalEntityId, runId, action, safeJson(payload), userId]
   );
+}
+
+async function writePayrollRunAuditImmediate({
+  tenantId,
+  legalEntityId,
+  runId,
+  action = "STATUS",
+  payload = null,
+  userId = null,
+}) {
+  await writePayrollRunAudit({
+    tenantId,
+    legalEntityId,
+    runId,
+    action,
+    payload,
+    userId,
+    runQuery: query,
+  });
 }
 
 async function getEffectivePeriodStatus(bookId, fiscalPeriodId, runQuery = query) {
@@ -256,20 +310,108 @@ function validateMappingAccountForAccrual({ mapping, run }) {
   return issues;
 }
 
+function formatAccrualOwnerContextLabel(row) {
+  const ownershipScope = normalizeUpperText(row?.ownership_scope);
+  if (ownershipScope === "CENTRAL") {
+    return "CENTRAL";
+  }
+  if (ownershipScope === "OPERATING_UNIT") {
+    const operatingUnitCode = String(row?.operating_unit_code || "").trim();
+    if (operatingUnitCode) {
+      return operatingUnitCode;
+    }
+    const operatingUnitId = parsePositiveInt(row?.operating_unit_id);
+    if (operatingUnitId) {
+      return `OU#${operatingUnitId}`;
+    }
+    const operatingUnitName = String(row?.operating_unit_name || "").trim();
+    if (operatingUnitName) {
+      return operatingUnitName;
+    }
+    return "OPERATING_UNIT";
+  }
+  return "UNRESOLVED";
+}
+
+function buildAccrualPostingDescription({ runNo, componentCode, ownerContextLabel }) {
+  return `Payroll accrual ${runNo} ${componentCode} [${ownerContextLabel}]`;
+}
+
+function buildAccrualSubledgerReferenceNo({
+  runId,
+  componentCode,
+  ownershipScope,
+  operatingUnitId,
+}) {
+  return [
+    "PAYROLL_RUN",
+    runId,
+    componentCode,
+    normalizeUpperText(ownershipScope) || "UNRESOLVED",
+    parsePositiveInt(operatingUnitId) || 0,
+  ].join(":");
+}
+
+async function listPayrollRunAccrualSourceLines({
+  tenantId,
+  legalEntityId,
+  runId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        l.id,
+        l.line_no,
+        l.ownership_scope,
+        l.operating_unit_id,
+        l.base_salary,
+        l.overtime_pay,
+        l.bonus_pay,
+        l.allowances_total,
+        l.employee_tax,
+        l.employee_social_security,
+        l.other_deductions,
+        l.net_pay,
+        l.employer_tax,
+        l.employer_social_security,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name
+     FROM payroll_run_lines l
+     LEFT JOIN operating_units ou
+       ON ou.id = l.operating_unit_id
+      AND ou.tenant_id = l.tenant_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND l.run_id = ?
+     ORDER BY l.line_no ASC, l.id ASC`,
+    [tenantId, legalEntityId, runId]
+  );
+  return result.rows || [];
+}
+
 async function buildPayrollAccrualPreviewFromRun({
   run,
+  ownershipValidation = null,
   runQuery = query,
 }) {
   if (!run) {
     throw badRequest("Payroll run not found");
   }
 
-  const componentAmounts = buildPayrollAccrualComponentAmountsFromRun(run);
+  const componentAmounts = buildPayrollAccrualComponentAmountsFromRunLines(
+    await listPayrollRunAccrualSourceLines({
+      tenantId: parsePositiveInt(run.tenant_id),
+      legalEntityId: parsePositiveInt(run.legal_entity_id),
+      runId: parsePositiveInt(run.id),
+      runQuery,
+    })
+  );
   const postingLines = [];
   const missingMappings = [];
   const accrualDate = resolvePayrollAccrualDate(run);
 
   for (const component of componentAmounts) {
+    const ownerContextLabel = formatAccrualOwnerContextLabel(component);
     const mapping = await findApplicablePayrollComponentMapping({
       tenantId: parsePositiveInt(run.tenant_id),
       legalEntityId: parsePositiveInt(run.legal_entity_id),
@@ -285,6 +427,11 @@ async function buildPayrollAccrualPreviewFromRun({
         component_code: component.componentCode,
         entry_side: component.entrySide,
         amount: component.amount,
+        ownership_scope: component.ownership_scope,
+        operating_unit_id: parsePositiveInt(component.operating_unit_id),
+        operating_unit_code: component.operating_unit_code || null,
+        operating_unit_name: component.operating_unit_name || null,
+        owner_context_label: ownerContextLabel,
         issue: "missing_mapping",
       });
       continue;
@@ -296,6 +443,11 @@ async function buildPayrollAccrualPreviewFromRun({
         component_code: component.componentCode,
         entry_side: component.entrySide,
         amount: component.amount,
+        ownership_scope: component.ownership_scope,
+        operating_unit_id: parsePositiveInt(component.operating_unit_id),
+        operating_unit_code: component.operating_unit_code || null,
+        operating_unit_name: component.operating_unit_name || null,
+        owner_context_label: ownerContextLabel,
         issue: `mapping_entry_side_mismatch_expected_${expectedSide}`,
         mapping_id: parsePositiveInt(mapping.id),
       });
@@ -306,6 +458,11 @@ async function buildPayrollAccrualPreviewFromRun({
         component_code: component.componentCode,
         entry_side: component.entrySide,
         amount: component.amount,
+        ownership_scope: component.ownership_scope,
+        operating_unit_id: parsePositiveInt(component.operating_unit_id),
+        operating_unit_code: component.operating_unit_code || null,
+        operating_unit_name: component.operating_unit_name || null,
+        owner_context_label: ownerContextLabel,
         issue: "mapping_entry_side_mismatch_component",
         mapping_id: parsePositiveInt(mapping.id),
       });
@@ -318,6 +475,11 @@ async function buildPayrollAccrualPreviewFromRun({
         component_code: component.componentCode,
         entry_side: component.entrySide,
         amount: component.amount,
+        ownership_scope: component.ownership_scope,
+        operating_unit_id: parsePositiveInt(component.operating_unit_id),
+        operating_unit_code: component.operating_unit_code || null,
+        operating_unit_name: component.operating_unit_name || null,
+        owner_context_label: ownerContextLabel,
         issue: accountIssues.join(","),
         mapping_id: parsePositiveInt(mapping.id),
       });
@@ -328,12 +490,28 @@ async function buildPayrollAccrualPreviewFromRun({
       component_code: component.componentCode,
       entry_side: normalizeUpperText(component.entrySide),
       amount: component.amount,
+      ownership_scope: component.ownership_scope,
+      operating_unit_id: parsePositiveInt(component.operating_unit_id),
+      operating_unit_code: component.operating_unit_code || null,
+      operating_unit_name: component.operating_unit_name || null,
+      owner_context_label: ownerContextLabel,
       mapping_id: parsePositiveInt(mapping.id),
       provider_code: mapping.provider_code || null,
       gl_account_id: parsePositiveInt(mapping.gl_account_id),
       gl_account_code: mapping.gl_account_code || null,
       gl_account_name: mapping.gl_account_name || null,
       currency_code: normalizeUpperText(run.currency_code),
+      description: buildAccrualPostingDescription({
+        runNo: run.run_no,
+        componentCode: component.componentCode,
+        ownerContextLabel,
+      }),
+      subledger_reference_no: buildAccrualSubledgerReferenceNo({
+        runId: parsePositiveInt(run.id),
+        componentCode: component.componentCode,
+        ownershipScope: component.ownership_scope,
+        operatingUnitId: component.operating_unit_id,
+      }),
     });
   }
 
@@ -358,6 +536,7 @@ async function buildPayrollAccrualPreviewFromRun({
       status: normalizedStatus,
       pay_date: toDateOnly(run.pay_date),
       payroll_period: toDateOnly(run.payroll_period),
+      ownership_as_of_date: toDateOnly(run.ownership_as_of_date),
       accrual_date: accrualDate,
       currency_code: normalizeUpperText(run.currency_code),
       provider_code: normalizeUpperText(run.provider_code),
@@ -370,15 +549,22 @@ async function buildPayrollAccrualPreviewFromRun({
       component_code: row.componentCode,
       entry_side: row.entrySide,
       amount: row.amount,
+      ownership_scope: row.ownership_scope,
+      operating_unit_id: parsePositiveInt(row.operating_unit_id),
+      operating_unit_code: row.operating_unit_code || null,
+      operating_unit_name: row.operating_unit_name || null,
+      owner_context_label: formatAccrualOwnerContextLabel(row),
     })),
     posting_lines: postingLines,
     missing_mappings: missingMappings,
+    ownership_validation: ownershipValidation,
     debit_total: debitTotal,
     credit_total: creditTotal,
     is_balanced: isBalanced,
     can_finalize:
       postingLines.length > 0 &&
       missingMappings.length === 0 &&
+      Number(ownershipValidation?.blocking_line_count || 0) === 0 &&
       isBalanced &&
       normalizedStatus === "REVIEWED",
   };
@@ -453,8 +639,16 @@ async function createPayrollAccrualJournalTx(tx, {
 
   const description = note || `Payroll accrual ${run.run_no}`;
   const referenceNo = `PAYROLL-RUN:${run.id}`;
-  const debitTotal = toAmount(preview.debit_total);
-  const creditTotal = toAmount(preview.credit_total);
+  const debitTotal = toAmount(
+    (preview.posting_lines || [])
+      .filter((line) => normalizeUpperText(line.entry_side) === "DEBIT")
+      .reduce((sum, line) => sum + toAmount(line.amount), 0)
+  );
+  const creditTotal = toAmount(
+    (preview.posting_lines || [])
+      .filter((line) => normalizeUpperText(line.entry_side) === "CREDIT")
+      .reduce((sum, line) => sum + toAmount(line.amount), 0)
+  );
 
   const headerInsert = await tx.query(
     `INSERT INTO journal_entries (
@@ -514,8 +708,21 @@ async function createPayrollAccrualJournalTx(tx, {
     const amountTxn = isDebit ? amount : -amount;
     const debitBase = isDebit ? amount : 0;
     const creditBase = isDebit ? 0 : amount;
-    const subledgerRef = `PAYROLL_RUN:${run.id}:${line.component_code}`;
-    const descriptionLine = `Payroll accrual ${run.run_no} ${line.component_code}`;
+    const subledgerRef =
+      line.subledger_reference_no ||
+      buildAccrualSubledgerReferenceNo({
+        runId: parsePositiveInt(run.id),
+        componentCode: line.component_code,
+        ownershipScope: line.ownership_scope,
+        operatingUnitId: line.operating_unit_id,
+      });
+    const descriptionLine =
+      line.description ||
+      buildAccrualPostingDescription({
+        runNo: run.run_no,
+        componentCode: line.component_code,
+        ownerContextLabel: formatAccrualOwnerContextLabel(line),
+      });
 
     // eslint-disable-next-line no-await-in-loop
     await tx.query(
@@ -533,11 +740,12 @@ async function createPayrollAccrualJournalTx(tx, {
           credit_base,
           tax_code
         )
-        VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
+        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
       [
         journalEntryId,
         lineNo,
         parsePositiveInt(line.gl_account_id),
+        parsePositiveInt(line.operating_unit_id),
         descriptionLine,
         subledgerRef,
         runCurrency,
@@ -571,7 +779,14 @@ export async function getPayrollRunAccrualPreview({
   }
 
   assertScopeAccess(req, "legal_entity", parsePositiveInt(run.legal_entity_id), "runId");
-  return buildPayrollAccrualPreviewFromRun({ run });
+  const ownershipValidation = await getPayrollRunOwnershipValidationDetails({
+    tenantId,
+    legalEntityId: parsePositiveInt(run.legal_entity_id),
+    runId,
+    ownershipAsOfDate: toDateOnly(run.ownership_as_of_date),
+    runQuery: query,
+  });
+  return buildPayrollAccrualPreviewFromRun({ run, ownershipValidation });
 }
 
 export async function markPayrollRunReviewed({
@@ -688,6 +903,57 @@ export async function finalizePayrollRunAccrual({
     if (!["IMPORTED", "REVIEWED", "FINALIZED"].includes(currentStatus)) {
       throw badRequest(`Payroll run status ${currentStatus} cannot be finalized`);
     }
+    const ownershipAsOfDate = toDateOnly(current.ownership_as_of_date);
+    if (!ownershipAsOfDate) {
+      const err = badRequest(
+        "Payroll run ownership_as_of_date is missing; cancel and re-import the run under the ownership contract"
+      );
+      err.code = "PAYROLL_OWNERSHIP_AS_OF_DATE_MISSING";
+      err.details = {
+        type: "OWNERSHIP_AS_OF_DATE_MISSING",
+        run_id: parsePositiveInt(current.id),
+        run_type: normalizeUpperText(current.run_type || "REGULAR"),
+      };
+      throw err;
+    }
+
+    const ownershipReresolution = await reresolvePayrollRunOwnershipSnapshots({
+      tenantId,
+      legalEntityId: parsePositiveInt(current.legal_entity_id),
+      runId,
+      ownershipAsOfDate,
+      runType: current.run_type,
+      runQuery: tx.query,
+    });
+
+    if (Number(ownershipReresolution?.validation?.blocking_line_count || 0) > 0) {
+      await writePayrollRunAuditImmediate({
+        tenantId,
+        legalEntityId: parsePositiveInt(current.legal_entity_id),
+        runId,
+        action: "VALIDATION",
+        payload: {
+          type: "OWNERSHIP_FINALIZE_BLOCKED",
+          ownership_reresolution: {
+            updatedLineCount: ownershipReresolution.updated_line_count,
+            totalLineCount: ownershipReresolution.total_line_count,
+            skipped: Boolean(ownershipReresolution.skipped),
+            skipReason: ownershipReresolution.skip_reason || null,
+          },
+          ownership_validation: ownershipReresolution.validation,
+        },
+        userId,
+      });
+      throw createOwnershipFinalizeBlockedError(ownershipReresolution.validation, {
+        run_id: parsePositiveInt(current.id),
+        ownership_reresolution: {
+          updatedLineCount: ownershipReresolution.updated_line_count,
+          totalLineCount: ownershipReresolution.total_line_count,
+          skipped: Boolean(ownershipReresolution.skipped),
+          skipReason: ownershipReresolution.skip_reason || null,
+        },
+      });
+    }
 
     const currentForPreview = {
       ...current,
@@ -696,6 +962,26 @@ export async function finalizePayrollRunAccrual({
     };
     const preview = await buildPayrollAccrualPreviewFromRun({
       run: currentForPreview,
+      ownershipValidation: ownershipReresolution.validation,
+      runQuery: tx.query,
+    });
+
+    await writePayrollRunAudit({
+      tenantId,
+      legalEntityId: parsePositiveInt(current.legal_entity_id),
+      runId,
+      action: "VALIDATION",
+      payload: {
+        type: "OWNERSHIP_READY_FOR_FINALIZE",
+        ownership_reresolution: {
+          updatedLineCount: ownershipReresolution.updated_line_count,
+          totalLineCount: ownershipReresolution.total_line_count,
+          skipped: Boolean(ownershipReresolution.skipped),
+          skipReason: ownershipReresolution.skip_reason || null,
+        },
+        ownership_validation: ownershipReresolution.validation,
+      },
+      userId,
       runQuery: tx.query,
     });
 
@@ -704,7 +990,7 @@ export async function finalizePayrollRunAccrual({
         new Set(preview.missing_mappings.map((m) => m.component_code).filter(Boolean))
       );
 
-      await writePayrollRunAudit({
+      await writePayrollRunAuditImmediate({
         tenantId,
         legalEntityId: parsePositiveInt(current.legal_entity_id),
         runId,
@@ -716,13 +1002,12 @@ export async function finalizePayrollRunAccrual({
           missingMappings: preview.missing_mappings,
         },
         userId,
-        runQuery: tx.query,
       });
 
       throw badRequest(`Missing payroll component mappings: ${missingCodes.join(", ")}`);
     }
     if ((preview.posting_lines || []).length === 0) {
-      await writePayrollRunAudit({
+      await writePayrollRunAuditImmediate({
         tenantId,
         legalEntityId: parsePositiveInt(current.legal_entity_id),
         runId,
@@ -732,12 +1017,11 @@ export async function finalizePayrollRunAccrual({
           reason: "NO_NONZERO_COMPONENTS",
         },
         userId,
-        runQuery: tx.query,
       });
       throw badRequest("No non-zero payroll accrual components to post");
     }
     if (!preview.is_balanced) {
-      await writePayrollRunAudit({
+      await writePayrollRunAuditImmediate({
         tenantId,
         legalEntityId: parsePositiveInt(current.legal_entity_id),
         runId,
@@ -749,7 +1033,6 @@ export async function finalizePayrollRunAccrual({
           creditTotal: preview.credit_total,
         },
         userId,
-        runQuery: tx.query,
       });
       throw badRequest("Payroll accrual preview is not balanced");
     }

@@ -375,6 +375,12 @@ export const sidebarItems = [
         implemented: true,
       },
       {
+        label: "Bordro Ownership",
+        to: "/app/payroll-ownership",
+        requiredPermissions: ["payroll.ownership.read"],
+        implemented: true,
+      },
+      {
         label: "Bordro Liabilities",
         to: "/app/payroll-liabilities",
         requiredPermissions: ["payroll.liabilities.read"],
