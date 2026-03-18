@@ -104,6 +104,50 @@ function formatBankAccountOptionLabel(account) {
   return parts.join(" | ") || `Bank #${account?.id || "?"}`;
 }
 
+function formatOwnerContextLabel(row) {
+  const ownershipScope = String(row?.ownership_scope || "").trim().toUpperCase();
+  if (ownershipScope === "CENTRAL") {
+    return "CENTRAL";
+  }
+  if (ownershipScope === "OPERATING_UNIT") {
+    return (
+      String(row?.operating_unit_code || row?.operatingUnitCode || "").trim() ||
+      String(row?.operating_unit_name || row?.operatingUnitName || "").trim() ||
+      `OU#${toPositiveInt(row?.operating_unit_id || row?.operatingUnitId) || "?"}`
+    );
+  }
+  return "-";
+}
+
+function formatPayerContextLabel(row) {
+  const operatingUnitId = toPositiveInt(row?.operating_unit_id || row?.operatingUnitId);
+  if (!operatingUnitId) {
+    return "CENTRAL";
+  }
+  return (
+    String(row?.operating_unit_code || row?.operatingUnitCode || "").trim() ||
+    String(row?.operating_unit_name || row?.operatingUnitName || "").trim() ||
+    `OU#${operatingUnitId}`
+  );
+}
+
+function formatSettlementMode(mode) {
+  switch (String(mode || "").trim().toUpperCase()) {
+    case "SAME_CONTEXT":
+      return "Same-context";
+    case "CROSS_CONTEXT_SELF_BALANCING":
+      return "Cross-context self-balancing";
+    case "NOT_ALLOWED":
+      return "Not allowed";
+    case "OUT_OF_SCOPE":
+      return "Out of scope";
+    case "NONE":
+      return "None";
+    default:
+      return "-";
+  }
+}
+
 export default function PayrollLiabilitiesPage() {
   const params = useParams();
   const routeRunId = toPositiveInt(params.runId ?? params.id);
@@ -211,9 +255,7 @@ export default function PayrollLiabilitiesPage() {
   const runLegalEntityId = toPositiveInt(
     runDetail?.legal_entity_id ?? runDetail?.legalEntityId ?? runDetail?.entity_id ?? runDetail?.entityId
   );
-  const runOperatingUnitId = toPositiveInt(
-    runDetail?.operating_unit_id ?? runDetail?.operatingUnitId
-  );
+  const selectedPreviewBankAccountId = toPositiveInt(batchForm.bankAccountId);
   const bankAccountOptions = useMemo(
     () =>
       [...(bankAccounts || [])].sort((left, right) =>
@@ -231,6 +273,9 @@ export default function PayrollLiabilitiesPage() {
   const canUseBankAccountLookup = Boolean(
     routeRunId && canPrepare && canReadBanks && !bankAccountLookupError
   );
+  const canPrepareWithSelectedBank = selectedPreviewBankAccountId
+    ? currentPreview?.can_prepare_with_selected_bank === true
+    : currentPreview?.can_prepare_payment_batch === true;
 
   function toAmount(value) {
     const parsed = Number(value);
@@ -416,7 +461,10 @@ export default function PayrollLiabilitiesPage() {
   async function loadRun() {
     const [liabRes, previewRes, syncRes] = await Promise.all([
       getPayrollRunLiabilities(routeRunId),
-      getPayrollRunPaymentBatchPreview(routeRunId, { scope }).catch((err) => {
+      getPayrollRunPaymentBatchPreview(routeRunId, {
+        scope,
+        bankAccountId: selectedPreviewBankAccountId || undefined,
+      }).catch((err) => {
         const messageText = err?.response?.data?.message || err?.message || "";
         if (messageText) {
           setPreview((prev) =>
@@ -487,7 +535,7 @@ export default function PayrollLiabilitiesPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canRead, routeRunId, scope, syncScope, allowB04OnlySync, canSyncRead]);
+  }, [canRead, routeRunId, scope, syncScope, allowB04OnlySync, canSyncRead, selectedPreviewBankAccountId]);
 
   useEffect(() => {
     if (!routeRunId || !canPrepare) {
@@ -521,7 +569,6 @@ export default function PayrollLiabilitiesPage() {
 
     listBankAccounts({
       legalEntityId: runLegalEntityId,
-      operatingUnitId: runOperatingUnitId || undefined,
       isActive: true,
       limit: 300,
       offset: 0,
@@ -558,11 +605,11 @@ export default function PayrollLiabilitiesPage() {
     return () => {
       active = false;
     };
-  }, [canPrepare, canReadBanks, routeRunId, runLegalEntityId, runOperatingUnitId]);
+  }, [canPrepare, canReadBanks, routeRunId, runLegalEntityId]);
 
   useEffect(() => {
     setBatchForm((prev) => ({ ...prev, bankAccountId: "" }));
-  }, [routeRunId, runLegalEntityId, runOperatingUnitId]);
+  }, [routeRunId, runLegalEntityId]);
 
   useEffect(() => {
     if (!routeRunId || !canPrepare || !canUseBankAccountLookup || bankAccountsLoading) {
@@ -943,7 +990,7 @@ export default function PayrollLiabilitiesPage() {
                   type="button"
                   className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
                   onClick={handlePrepareBatch}
-                  disabled={busy || loading || !currentPreview?.can_prepare_payment_batch}
+                  disabled={busy || loading || !canPrepareWithSelectedBank}
                 >
                   Payment Batch Hazirla
                 </button>
@@ -952,7 +999,11 @@ export default function PayrollLiabilitiesPage() {
             {routeRunId && canPrepare ? (
               <div className="mt-2 text-xs text-slate-500">
                 {selectedBankAccount ? (
-                  <div>Secili banka hesabi: {formatBankAccountOptionLabel(selectedBankAccount)}</div>
+                  <div>
+                    Secili banka hesabi: {formatBankAccountOptionLabel(selectedBankAccount)}
+                    {" "}
+                    ({formatPayerContextLabel(selectedBankAccount)})
+                  </div>
                 ) : null}
                 {bankAccountLookupError ? (
                   <div className="text-amber-700">{bankAccountLookupError}</div>
@@ -982,7 +1033,7 @@ export default function PayrollLiabilitiesPage() {
               </div>
             ) : (
               <div className="mt-3 space-y-3 text-sm">
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-5">
                   <div>
                     <div className="text-xs text-slate-500">Eligible Liabilities</div>
                     <div className="font-medium">{currentPreview.eligible_liability_count || 0}</div>
@@ -995,11 +1046,93 @@ export default function PayrollLiabilitiesPage() {
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">Can Prepare</div>
-                    <div className="font-medium">{currentPreview.can_prepare_payment_batch ? "YES" : "NO"}</div>
+                    <div className="font-medium">
+                      {selectedPreviewBankAccountId
+                        ? currentPreview.can_prepare_with_selected_bank
+                          ? "YES"
+                          : "NO"
+                        : currentPreview.can_prepare_payment_batch
+                          ? "YES"
+                          : "NO"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Payer Context</div>
+                    <div className="font-medium">
+                      {currentPreview.selected_bank_account?.payer_context_label || "Bank not selected"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Settlement Mode</div>
+                    <div className="font-medium">
+                      {formatSettlementMode(currentPreview.selected_bank_evaluation?.settlement_mode)}
+                    </div>
                   </div>
                 </div>
                 <div className="text-xs text-slate-500">
                   Default idempotency key: {currentPreview.default_idempotency_key || "-"}
+                </div>
+                {currentPreview.selected_bank_evaluation?.validation_errors?.length ? (
+                  <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    {(currentPreview.selected_bank_evaluation.validation_errors || []).map((item) => (
+                      <div key={item.code || item.message}>{item.message}</div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold text-slate-700">Selected Bank</div>
+                    {currentPreview.selected_bank_account ? (
+                      <div className="mt-2 space-y-1 text-sm">
+                        <div className="font-medium">
+                          {formatBankAccountOptionLabel(currentPreview.selected_bank_account)}
+                        </div>
+                        <div className="text-slate-600">
+                          Payer context: {currentPreview.selected_bank_account.payer_context_label}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-sm text-slate-500">
+                        Select a bank to see payer-vs-owner evaluation.
+                      </div>
+                    )}
+                  </div>
+                  <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold text-slate-700">Owner Context Breakdown</div>
+                    <div className="mt-2 overflow-auto">
+                      <table className="min-w-full border-collapse text-sm">
+                        <thead>
+                          <tr className="border-b">
+                            <th className="py-1 pr-3 text-left">Context</th>
+                            <th className="py-1 pr-3 text-left">Count</th>
+                            <th className="py-1 pr-3 text-left">Amount</th>
+                            <th className="py-1 text-left">Mode</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(currentPreview.owner_context_summary || []).map((row) => (
+                            <tr key={`${row.ownership_scope || "X"}-${row.operating_unit_id || 0}`} className="border-b">
+                              <td className="py-1 pr-3">{row.owner_context_label || formatOwnerContextLabel(row)}</td>
+                              <td className="py-1 pr-3">{row.liability_count || 0}</td>
+                              <td className="py-1 pr-3">
+                                <MoneyText amount={row.total_amount} currencyCode={runDetail?.currency_code} />
+                              </td>
+                              <td className="py-1">
+                                {formatSettlementMode(row.selected_bank_settlement_mode)}
+                              </td>
+                            </tr>
+                          ))}
+                          {(currentPreview.owner_context_summary || []).length === 0 ? (
+                            <tr>
+                              <td className="py-2 text-slate-500" colSpan={4}>
+                                Breakdown yok.
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
                 <div className="overflow-auto">
                   <table className="min-w-full border-collapse text-sm">
@@ -1007,9 +1140,11 @@ export default function PayrollLiabilitiesPage() {
                       <tr className="border-b">
                         <th className="p-2 text-left">Liability ID</th>
                         <th className="p-2 text-left">Type</th>
+                        <th className="p-2 text-left">Owner Context</th>
                         <th className="p-2 text-left">Beneficiary</th>
                         <th className="p-2 text-left">GL</th>
                         <th className="p-2 text-left">Amount</th>
+                        <th className="p-2 text-left">Settlement</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1017,6 +1152,7 @@ export default function PayrollLiabilitiesPage() {
                         <tr key={row.id} className="border-b">
                           <td className="p-2">{row.id}</td>
                           <td className="p-2">{row.liability_type}</td>
+                          <td className="p-2">{row.owner_context_label || formatOwnerContextLabel(row)}</td>
                           <td className="p-2">
                             {row.employee_code ? `${row.employee_code} - ${row.employee_name || ""}` : row.beneficiary_name}
                           </td>
@@ -1027,11 +1163,14 @@ export default function PayrollLiabilitiesPage() {
                               currencyCode={row.currency_code || runDetail?.currency_code}
                             />
                           </td>
+                          <td className="p-2">
+                            {formatSettlementMode(row.selected_bank_settlement_mode)}
+                          </td>
                         </tr>
                       ))}
                       {(currentPreview.eligible_liabilities || []).length === 0 ? (
                         <tr>
-                          <td className="p-3 text-slate-500" colSpan={5}>
+                          <td className="p-3 text-slate-500" colSpan={7}>
                             Uygun liability yok.
                           </td>
                         </tr>

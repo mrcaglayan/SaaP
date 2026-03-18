@@ -83,9 +83,9 @@
 - [x] `PR-POU02` - Ownership snapshot on payroll run lines
 - [x] `PR-POU03` - Import / review / finalize ownership validation
 - [x] `PR-POU04` - OU-attributed payroll accrual preview and posting
-- [ ] `PR-POU05` - OU-attributed payroll liabilities
-- [ ] `PR-POU06` - Payroll payment preparation and UI ownership visibility
-- [ ] `PR-POU07` - Payroll settlement self-balancing posting
+- [x] `PR-POU05` - OU-attributed payroll liabilities
+- [x] `PR-POU06` - Payroll payment preparation and UI ownership visibility
+- [x] `PR-POU07` - Payroll settlement self-balancing posting
 - [ ] `PR-POU08` - Close controls, sync, overrides, reporting, and release gates
 
 ---
@@ -332,31 +332,31 @@ Persist payroll owner context onto liabilities so settlement can compare liabili
 
 #### Migration
 
-- [ ] Add `ownership_scope ENUM('CENTRAL','OPERATING_UNIT') NOT NULL` to `payroll_run_liabilities`
-- [ ] Add `operating_unit_id BIGINT UNSIGNED NULL` to `payroll_run_liabilities`
-- [ ] Add index `(tenant_id, legal_entity_id, run_id, ownership_scope, operating_unit_id, status)`
-- [ ] Add FK `payroll_run_liabilities.operating_unit_id -> operating_units.id`
+- [x] Add `ownership_scope ENUM('CENTRAL','OPERATING_UNIT') NOT NULL` to `payroll_run_liabilities`
+- [x] Add `operating_unit_id BIGINT UNSIGNED NULL` to `payroll_run_liabilities`
+- [x] Add index `(tenant_id, legal_entity_id, run_id, ownership_scope, operating_unit_id, status)`
+- [x] Add FK `payroll_run_liabilities.operating_unit_id -> operating_units.id`
 
 #### Liability build logic
 
-- [ ] Net pay liabilities inherit owner context from their source run line
-- [ ] Statutory liabilities are grouped by:
+- [x] Net pay liabilities inherit owner context from their source run line
+- [x] Statutory liabilities are grouped by:
   - `liability_type`
   - `ownership_scope`
   - `operating_unit_id`
-- [ ] Update liability key generation so statutory keys include explicit owner-context token such as central vs specific OU
-- [ ] Keep rebuild / sync / manual-override idempotency stable under the new statutory key shape
-- [ ] Return OU code / name in liability list / detail responses
-- [ ] Return explicit owner-context fields in liability list / detail responses even when central-owned
-- [ ] Add list filters by `operatingUnitId`
-- [ ] Add list filters by `ownershipScope`
-- [ ] Carry OU through payment sync and override queries
+- [x] Update liability key generation so statutory keys include explicit owner-context token such as central vs specific OU
+- [x] Keep rebuild / sync / manual-override idempotency stable under the new statutory key shape
+- [x] Return OU code / name in liability list / detail responses
+- [x] Return explicit owner-context fields in liability list / detail responses even when central-owned
+- [x] Add list filters by `operatingUnitId`
+- [x] Add list filters by `ownershipScope`
+- [x] Carry OU through payment sync and override queries
 
 ### Acceptance
 
-- [ ] Every buildable payroll liability row has a durable owner context in V1
-- [ ] Statutory liabilities are no longer only one legal-entity aggregate when runs are mixed-context
-- [ ] Payment preparation can identify the owner context of each liability
+- [x] Every buildable payroll liability row has a durable owner context in V1
+- [x] Statutory liabilities are no longer only one legal-entity aggregate when runs are mixed-context
+- [x] Payment preparation can identify the owner context of each liability
 
 ---
 
@@ -383,33 +383,33 @@ Remove the current single-run-OU assumption from payroll payment preparation and
 
 ### Checklist
 
-- [ ] Stop treating `runOperatingUnitId` as the run authority for bank lookup
-- [ ] Use legal-entity bank list as the base lookup
-- [ ] Extend payroll payment preview input / validator so `bankAccountId` can be supplied with preview requests
-- [ ] Keep preview usable without a selected bank for baseline liability summary, but when `bankAccountId` is present return backend-derived payer-vs-owner context evaluation and settlement mode
-- [ ] Show bank ownership context:
+- [x] Stop treating `runOperatingUnitId` as the run authority for bank lookup
+- [x] Use legal-entity bank list as the base lookup
+- [x] Extend payroll payment preview input / validator so `bankAccountId` can be supplied with preview requests
+- [x] Keep preview usable without a selected bank for baseline liability summary, but when `bankAccountId` is present return backend-derived payer-vs-owner context evaluation and settlement mode
+- [x] Show bank ownership context:
   - central
   - specific OU
-- [ ] Show liability owner-context breakdown in payment preparation preview
-- [ ] Show whether selected bank causes:
+- [x] Show liability owner-context breakdown in payment preparation preview
+- [x] Show whether selected bank causes:
   - same-context settlement
   - cross-context self-balancing
-- [ ] Allow central bank account for mixed-OU payroll runs
-- [ ] Allow OU bank payment for central-owned liabilities in V1
-- [ ] In V1, prevent OU bank payment when selected liabilities are mixed or owned by another OU
-- [ ] Re-read current bank-account ownership during preview / prepare validation because V1 payer context follows current bank-account state rather than a draft-time snapshot
-- [ ] Payment-batch create / prepare / validate helpers must fetch bank `operating_unit_id` before context validation is performed
-- [ ] Payment batch list / header / detail mappers must expose payer context consistently, not only the detail page
-- [ ] Update `frontend/src/api/payments.js` for any added generic payment batch list/detail payer-context and owner-context response fields
-- [ ] Return bank account `operating_unit_id`, code, and name from payment batch detail where needed
-- [ ] Return payroll liability owner context on payment batch lines for display, including explicit central vs OU scope
-- [ ] Show payer-vs-owner context after batch creation on generic payment batch detail, not only in payroll pre-prepare preview
+- [x] Allow central bank account for mixed-OU payroll runs
+- [x] Allow OU bank payment for central-owned liabilities in V1
+- [x] In V1, prevent OU bank payment when selected liabilities are mixed or owned by another OU
+- [x] Re-read current bank-account ownership during preview / prepare validation because V1 payer context follows current bank-account state rather than a draft-time snapshot
+- [x] Payment-batch create / prepare / validate helpers must fetch bank `operating_unit_id` before context validation is performed
+- [x] Payment batch list / header / detail mappers must expose payer context consistently, not only the detail page
+- [x] Update `frontend/src/api/payments.js` for any added generic payment batch list/detail payer-context and owner-context response fields
+- [x] Return bank account `operating_unit_id`, code, and name from payment batch detail where needed
+- [x] Return payroll liability owner context on payment batch lines for display, including explicit central vs OU scope
+- [x] Show payer-vs-owner context after batch creation on generic payment batch detail, not only in payroll pre-prepare preview
 
 ### Acceptance
 
-- [ ] Payroll payment preparation no longer depends on a fake single run OU
-- [ ] Users can see from backend preview / prepare results when a selected bank account will generate self-balancing lines
-- [ ] Mixed-OU payroll payment preparation remains supported
+- [x] Payroll payment preparation no longer depends on a fake single run OU
+- [x] Users can see from backend preview / prepare results when a selected bank account will generate self-balancing lines
+- [x] Mixed-OU payroll payment preparation remains supported
 
 ---
 
@@ -433,44 +433,44 @@ Teach generic payment settlement posting to generate cross-context payroll balan
 
 #### Query enrichment
 
-- [ ] Extend payment batch detail and line queries so payroll payment lines expose:
+- [x] Extend payment batch detail and line queries so payroll payment lines expose:
   - liability owner `ownership_scope`
   - liability owner `operating_unit_id`
   - owner OU code and name
   - paying bank `operating_unit_id`
   - payer context derived consistently from the selected bank account
-- [ ] Do not redesign generic payment batch schema in V1 unless a missing immutable snapshot forces it
-- [ ] Revalidate payer context against the current selected bank-account row before posting; do not rely on draft-time UI assumptions
+- [x] Do not redesign generic payment batch schema in V1 unless a missing immutable snapshot forces it
+- [x] Revalidate payer context against the current selected bank-account row before posting; do not rely on draft-time UI assumptions
 
 #### Posting logic
 
-- [ ] Refactor generic payment settlement posting to build the full journal line set first, then derive journal header totals from generated lines
-- [ ] Apply payroll cross-context expansion only when `payable_entity_type = 'PAYROLL_LIABILITY'` and payer-vs-owner context actually differs
-- [ ] For same-context settlements:
+- [x] Refactor generic payment settlement posting to build the full journal line set first, then derive journal header totals from generated lines
+- [x] Apply payroll cross-context expansion only when `payable_entity_type = 'PAYROLL_LIABILITY'` and payer-vs-owner context actually differs
+- [x] For same-context settlements:
   - debit liability with liability OU
   - credit bank with bank OU or central context
-- [ ] For central bank paying OU liability:
+- [x] For central bank paying OU liability:
   - debit payroll liability at OU
   - credit OU due-to-central
   - debit central due-from-OU
   - credit central bank
-- [ ] For OU bank paying central liability:
+- [x] For OU bank paying central liability:
   - debit central payroll liability
   - credit central due-to-OU
   - debit OU due-from-central
   - credit OU bank
-- [ ] Call `resolveOuSelfBalancingAccountsTx(...)` for cross-context cases
-- [ ] Recompute journal header debit / credit totals from generated lines
-- [ ] Keep `settlement_journal_line_ref` pointing to the main liability-settlement line for compatibility
-- [ ] Add clear descriptions and subledger refs for balancing lines
-- [ ] Add regression coverage proving non-payroll payment batches still post with their existing simple structure
+- [x] Call `resolveOuSelfBalancingAccountsTx(...)` for cross-context cases
+- [x] Recompute journal header debit / credit totals from generated lines
+- [x] Keep `settlement_journal_line_ref` pointing to the main liability-settlement line for compatibility
+- [x] Add clear descriptions and subledger refs for balancing lines
+- [x] Add regression coverage proving non-payroll payment batches still post with their existing simple structure
 
 ### Acceptance
 
-- [ ] Payroll settlement journals post with correct owner-context attribution
-- [ ] Cross-context payroll payments generate due-to / due-from entries
-- [ ] Same-context payroll payments remain simple and backward-compatible
-- [ ] Non-payroll payment batches remain behaviorally unchanged
+- [x] Payroll settlement journals post with correct owner-context attribution
+- [x] Cross-context payroll payments generate due-to / due-from entries
+- [x] Same-context payroll payments remain simple and backward-compatible
+- [x] Non-payroll payment batches remain behaviorally unchanged
 
 ---
 
@@ -501,11 +501,11 @@ Close the control loop so payroll cannot close with unresolved owner-context sta
 
 ### Checklist
 
-- [ ] Add close check: no finalized payroll lines with unresolved ownership
-- [ ] Add close check: no payroll liabilities in period with invalid owner context
-- [ ] Treat `ownership_scope = 'CENTRAL'` plus `operating_unit_id IS NULL` as valid
-- [ ] Treat `ownership_scope = 'OPERATING_UNIT'` plus non-null `operating_unit_id` as required
-- [ ] Add close check: no posted payroll payment batch with cross-context owner / payer mismatch but missing self-balancing journal structure
+- [x] Add close check: no finalized payroll lines with unresolved ownership
+- [x] Add close check: no payroll liabilities in period with invalid owner context
+- [x] Treat `ownership_scope = 'CENTRAL'` plus `operating_unit_id IS NULL` as valid
+- [x] Treat `ownership_scope = 'OPERATING_UNIT'` plus non-null `operating_unit_id` as required
+- [x] Add close check: no posted payroll payment batch with cross-context owner / payer mismatch but missing self-balancing journal structure
 - [ ] Grandfather pre-POU finalized runs / liabilities in close checks unless a one-time historical backfill is implemented
 - [ ] Add rollout rule for pre-POU in-flight payroll state: non-finalized runs, derived liabilities, and draft/approved payroll payment batches must be cancelled and re-created unless an explicit backfill / re-resolution utility is implemented
 - [ ] Make the grandfathering boundary explicit in close-control queries so historical rows do not fail new checks accidentally
@@ -580,8 +580,8 @@ That order matters because settlement should not be touched before liabilities h
 - [x] Payroll run lines persist resolved owner-context snapshots
 - [x] Finalize blocks unresolved ownership
 - [x] Payroll accrual journals carry explicit owner-context / OU attribution on posted lines
-- [ ] Payroll liabilities persist owner context
-- [ ] Payroll payment preparation shows payer-context vs owner-context behavior
-- [ ] Cross-context payroll settlements generate due-to / due-from lines through the shared OU self-balancing engine
+- [x] Payroll liabilities persist owner context
+- [x] Payroll payment preparation shows payer-context vs owner-context behavior
+- [x] Cross-context payroll settlements generate due-to / due-from lines through the shared OU self-balancing engine
 - [ ] Payroll close controls block incomplete ownership or settlement states
 - [ ] Regression scripts cover the end-to-end ownership, accrual, liability, settlement, and close-control contract

@@ -42,6 +42,42 @@ function canCancelStatus(status) {
   return status === "DRAFT" || status === "APPROVED" || status === "EXPORTED";
 }
 
+function formatContextLabel(scope, operatingUnitId, operatingUnitCode, operatingUnitName) {
+  const normalizedScope = String(scope || "").trim().toUpperCase();
+  if (normalizedScope === "CENTRAL" || !operatingUnitId) {
+    return "CENTRAL";
+  }
+  return (
+    String(operatingUnitCode || "").trim() ||
+    String(operatingUnitName || "").trim() ||
+    `OU#${operatingUnitId}`
+  );
+}
+
+function formatPayerOwnerSettlement(batchRow, line) {
+  if (String(line?.payable_entity_type || "").trim().toUpperCase() !== "PAYROLL_LIABILITY") {
+    return "-";
+  }
+  const payerScope = String(batchRow?.payer_context_scope || "").trim().toUpperCase();
+  const payerOuId = Number(batchRow?.bank_operating_unit_id || 0);
+  const ownerScope = String(line?.liability_ownership_scope || "").trim().toUpperCase();
+  const ownerOuId = Number(line?.liability_operating_unit_id || 0);
+
+  if (payerScope === "CENTRAL") {
+    return ownerScope === "CENTRAL" ? "Same-context" : "Cross-context self-balancing";
+  }
+  if (payerScope === "OPERATING_UNIT") {
+    if (ownerScope === "CENTRAL") {
+      return "Cross-context self-balancing";
+    }
+    if (ownerScope === "OPERATING_UNIT" && payerOuId > 0 && payerOuId === ownerOuId) {
+      return "Same-context";
+    }
+    return "Out of scope";
+  }
+  return "-";
+}
+
 export default function PaymentBatchDetailPage() {
   const { batchId } = useParams();
   const { hasPermission } = useAuth();
@@ -287,6 +323,18 @@ export default function PaymentBatchDetailPage() {
                 <div className="text-xs text-slate-500">{row.bank_account_name}</div>
               </div>
               <div>
+                <div className="text-slate-500">Payer Context</div>
+                <div className="font-medium">
+                  {row.payer_context_label ||
+                    formatContextLabel(
+                      row.payer_context_scope,
+                      row.bank_operating_unit_id,
+                      row.bank_operating_unit_code,
+                      row.bank_operating_unit_name
+                    )}
+                </div>
+              </div>
+              <div>
                 <div className="text-slate-500">Para Birimi</div>
                 <div className="font-medium">{row.currency_code}</div>
               </div>
@@ -408,10 +456,12 @@ export default function PaymentBatchDetailPage() {
                 <th className="p-2 text-left">#</th>
                 <th className="p-2 text-left">Lehdar</th>
                 <th className="p-2 text-left">Payable</th>
+                <th className="p-2 text-left">Owner Context</th>
                 <th className="p-2 text-left">GL</th>
                 <th className="p-2 text-left">Tutar</th>
                 <th className="p-2 text-left">Exec Tutar</th>
                 <th className="p-2 text-left">Durum</th>
+                <th className="p-2 text-left">Expected Settlement</th>
                 <th className="p-2 text-left">Bank Exec</th>
                 <th className="p-2 text-left">Ack</th>
                 <th className="p-2 text-left">External Ref</th>
@@ -434,6 +484,15 @@ export default function PaymentBatchDetailPage() {
                     </div>
                   </td>
                   <td className="p-2">
+                    {line.liability_owner_context_label ||
+                      formatContextLabel(
+                        line.liability_ownership_scope,
+                        line.liability_operating_unit_id,
+                        line.liability_operating_unit_code,
+                        line.liability_operating_unit_name
+                      )}
+                  </td>
+                  <td className="p-2">
                     {line.payable_gl_account_code || line.payable_gl_account_id}
                     <div className="text-xs text-slate-500">{line.payable_gl_account_name || ""}</div>
                   </td>
@@ -444,6 +503,7 @@ export default function PaymentBatchDetailPage() {
                     <MoneyText amount={line.executed_amount} currencyCode={row?.currency_code} />
                   </td>
                   <td className="p-2">{line.status}</td>
+                  <td className="p-2">{formatPayerOwnerSettlement(row, line)}</td>
                   <td className="p-2">
                     <div>{line.bank_execution_status || "-"}</div>
                     <div className="text-xs text-slate-500">{formatDateTime(line.acknowledged_at)}</div>
@@ -458,7 +518,7 @@ export default function PaymentBatchDetailPage() {
               ))}
               {(row?.lines || []).length === 0 ? (
                 <tr>
-                  <td className="p-3 text-slate-500" colSpan={11}>
+                  <td className="p-3 text-slate-500" colSpan={13}>
                     Satir yok.
                   </td>
                 </tr>

@@ -108,6 +108,7 @@ router.get(
       tenantId: payload.tenantId,
       runId: payload.runId,
       scope: payload.scope,
+      bankAccountId: payload.bankAccountId,
       assertScopeAccess,
     });
     return res.json({
@@ -142,4 +143,3 @@ router.post(
 );
 
 export default router;
-

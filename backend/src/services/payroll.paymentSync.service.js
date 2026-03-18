@@ -18,6 +18,21 @@ function normalizeScope(scope) {
   return normalized;
 }
 
+function formatOwnerContextLabel(row) {
+  const ownershipScope = normalizeUpperText(row?.ownership_scope);
+  if (ownershipScope === "CENTRAL") {
+    return "CENTRAL";
+  }
+  if (ownershipScope === "OPERATING_UNIT") {
+    return (
+      String(row?.operating_unit_code || "").trim() ||
+      String(row?.operating_unit_name || "").trim() ||
+      `OU#${parsePositiveInt(row?.operating_unit_id) || "?"}`
+    );
+  }
+  return "UNRESOLVED";
+}
+
 function toAmount(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -179,6 +194,10 @@ async function listSyncCandidates({
         l.run_id,
         l.liability_type,
         l.liability_group,
+        l.ownership_scope,
+        l.operating_unit_id,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
         l.employee_code,
         l.employee_name,
         l.beneficiary_name,
@@ -228,6 +247,9 @@ async function listSyncCandidates({
        ON pb.tenant_id = pl.tenant_id
       AND pb.legal_entity_id = pl.legal_entity_id
       AND pb.id = pl.payment_batch_id
+     LEFT JOIN operating_units ou
+       ON ou.id = l.operating_unit_id
+      AND ou.tenant_id = l.tenant_id
      LEFT JOIN payment_batch_lines pbl
        ON pbl.tenant_id = pl.tenant_id
       AND pbl.legal_entity_id = pl.legal_entity_id
@@ -508,6 +530,7 @@ async function buildPaymentSyncPreviewInternal({
     const verdict = classifySyncCandidate(row, { allowB04OnlySettlement });
     return {
       ...row,
+      owner_context_label: formatOwnerContextLabel(row),
       verdict,
     };
   });

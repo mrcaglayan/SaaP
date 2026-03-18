@@ -60,6 +60,21 @@ function makeConflict(message) {
   return err;
 }
 
+function formatOwnerContextLabel(row) {
+  const ownershipScope = normalizeUpperText(row?.ownership_scope);
+  if (ownershipScope === "CENTRAL") {
+    return "CENTRAL";
+  }
+  if (ownershipScope === "OPERATING_UNIT") {
+    return (
+      String(row?.operating_unit_code || "").trim() ||
+      String(row?.operating_unit_name || "").trim() ||
+      `OU#${parsePositiveInt(row?.operating_unit_id) || "?"}`
+    );
+  }
+  return "UNRESOLVED";
+}
+
 function noopScopeAccess() {
   return true;
 }
@@ -118,6 +133,10 @@ async function getLiabilityWithLatestActiveLink({
         l.run_id,
         l.liability_type,
         l.liability_group,
+        l.ownership_scope,
+        l.operating_unit_id,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
         l.employee_code,
         l.employee_name,
         l.beneficiary_name,
@@ -154,6 +173,9 @@ async function getLiabilityWithLatestActiveLink({
         ORDER BY pl2.id DESC
         LIMIT 1
       )
+     LEFT JOIN operating_units ou
+       ON ou.id = l.operating_unit_id
+      AND ou.tenant_id = l.tenant_id
      WHERE l.tenant_id = ? AND l.id = ?
      LIMIT 1`,
     [tenantId, liabilityId]
@@ -169,6 +191,10 @@ async function getOverrideRequestById({ tenantId, requestId, runQuery = query })
         l.legal_entity_id,
         l.liability_type,
         l.liability_group,
+        l.ownership_scope,
+        l.operating_unit_id,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
         l.employee_code,
         l.employee_name,
         l.beneficiary_name
@@ -177,6 +203,9 @@ async function getOverrideRequestById({ tenantId, requestId, runQuery = query })
        ON l.tenant_id = r.tenant_id
       AND l.legal_entity_id = r.legal_entity_id
       AND l.id = r.payroll_liability_id
+     LEFT JOIN operating_units ou
+       ON ou.id = l.operating_unit_id
+      AND ou.tenant_id = l.tenant_id
      WHERE r.tenant_id = ? AND r.id = ?
      LIMIT 1`,
     [tenantId, requestId]
@@ -465,6 +494,11 @@ export async function listPayrollManualSettlementRequests({
       legal_entity_id: legalEntityId,
       liability_type: liability.liability_type,
       liability_group: liability.liability_group,
+      ownership_scope: liability.ownership_scope || null,
+      operating_unit_id: parsePositiveInt(liability.operating_unit_id),
+      operating_unit_code: liability.operating_unit_code || null,
+      operating_unit_name: liability.operating_unit_name || null,
+      owner_context_label: formatOwnerContextLabel(liability),
       employee_code: liability.employee_code || null,
       employee_name: liability.employee_name || null,
       beneficiary_name: liability.beneficiary_name || null,

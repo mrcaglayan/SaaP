@@ -3,6 +3,34 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { evaluateApprovalNeed, submitApprovalRequest } from "./approvalPolicies.service.js";
 
 const CLOSE_STATUS_VALUES = new Set(["DRAFT", "READY", "REQUESTED", "CLOSED", "REOPENED"]);
+const PAYROLL_OWNERSHIP_BLOCKING_STATUSES = Object.freeze([
+  "UNRESOLVED",
+  "AMBIGUOUS",
+  "MISMATCH",
+]);
+const PAYROLL_OWNERSHIP_SCOPE_VALUES = new Set(["CENTRAL", "OPERATING_UNIT"]);
+const PAYROLL_CLOSE_OWNERSHIP_SAMPLE_LIMIT = 10;
+const PAYROLL_LIABILITY_OWNERSHIP_VALIDITY_RULES = Object.freeze([
+  "CENTRAL requires operating_unit_id to be NULL",
+  "OPERATING_UNIT requires operating_unit_id to be non-null",
+]);
+const PAYROLL_POSTED_BATCH_SETTLEMENT_REQUIREMENTS = Object.freeze([
+  "Posted payroll batches must keep one payer-context bank journal line via PAYBATCH:{batchId}",
+  "Cross-context payroll batch lines must keep the main liability settlement line ref",
+  "Cross-context payroll batch lines must include an owner-context credit self-balancing line",
+  "Cross-context payroll batch lines must include a payer-context debit self-balancing line",
+]);
+const PAYROLL_POSTED_BATCH_SETTLEMENT_ISSUE_CODES = Object.freeze([
+  "posted_journal_missing",
+  "payer_context_journal_line_missing",
+  "payer_context_journal_line_ambiguous",
+  "settlement_journal_ref_missing",
+  "settlement_journal_ref_invalid",
+  "main_settlement_line_missing",
+  "main_settlement_line_invalid",
+  "self_balancing_owner_credit_missing",
+  "self_balancing_payer_debit_missing",
+]);
 
 function normalizeUpperText(value) {
   return String(value || "")
@@ -14,6 +42,10 @@ function toAmount(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
   return Number(parsed.toFixed(6));
+}
+
+function toOptionalPositiveInt(value) {
+  return parsePositiveInt(value) || null;
 }
 
 function safeJson(value) {
@@ -118,6 +150,447 @@ function mapAuditRow(row) {
   };
 }
 
+function mapPayrollCloseOwnershipSampleRow(row) {
+  if (!row) return null;
+  return {
+    run_id: parsePositiveInt(row.run_id) || null,
+    run_no: row.run_no || null,
+    payroll_period: toDateOnly(row.payroll_period),
+    ownership_as_of_date: toDateOnly(row.ownership_as_of_date),
+    line_id: parsePositiveInt(row.line_id) || null,
+    line_no: parsePositiveInt(row.line_no) || null,
+    employee_code: String(row.employee_code || "").trim() || null,
+    employee_name: String(row.employee_name || "").trim() || null,
+    ownership_resolution_status: normalizeUpperText(row.ownership_resolution_status) || null,
+    ownership_resolution_note: row.ownership_resolution_note || null,
+  };
+}
+
+function normalizePayrollOwnershipScope(value) {
+  const normalized = normalizeUpperText(value);
+  return PAYROLL_OWNERSHIP_SCOPE_VALUES.has(normalized) ? normalized : null;
+}
+
+function listPayrollLiabilityOwnershipIssues(row) {
+  const ownershipScope = normalizePayrollOwnershipScope(row?.ownership_scope);
+  const operatingUnitId = parsePositiveInt(row?.operating_unit_id) || null;
+  const issues = [];
+  if (!ownershipScope) {
+    issues.push("ownership_scope_missing_or_invalid");
+    return issues;
+  }
+  if (ownershipScope === "CENTRAL" && operatingUnitId) {
+    issues.push("central_liability_must_not_set_operating_unit");
+  }
+  if (ownershipScope === "OPERATING_UNIT" && !operatingUnitId) {
+    issues.push("operating_unit_liability_requires_operating_unit");
+  }
+  return issues;
+}
+
+function mapPayrollCloseLiabilitySampleRow(row) {
+  if (!row) return null;
+  return {
+    run_id: parsePositiveInt(row.run_id) || null,
+    run_no: row.run_no || null,
+    payroll_period: toDateOnly(row.payroll_period),
+    ownership_as_of_date: toDateOnly(row.ownership_as_of_date),
+    liability_id: parsePositiveInt(row.liability_id) || null,
+    liability_type: row.liability_type || null,
+    liability_group: row.liability_group || null,
+    employee_code: String(row.employee_code || "").trim() || null,
+    employee_name: String(row.employee_name || "").trim() || null,
+    ownership_scope: normalizePayrollOwnershipScope(row.ownership_scope),
+    operating_unit_id: parsePositiveInt(row.operating_unit_id) || null,
+    operating_unit_code: String(row.operating_unit_code || "").trim() || null,
+    operating_unit_name: String(row.operating_unit_name || "").trim() || null,
+    status: normalizeUpperText(row.status) || null,
+    issues: listPayrollLiabilityOwnershipIssues(row),
+  };
+}
+
+function buildInvalidPayrollLiabilityOwnershipPredicate(alias) {
+  return `(
+    ${alias}.ownership_scope IS NULL
+    OR ${alias}.ownership_scope NOT IN ('CENTRAL', 'OPERATING_UNIT')
+    OR (${alias}.ownership_scope = 'CENTRAL' AND ${alias}.operating_unit_id IS NOT NULL)
+    OR (${alias}.ownership_scope = 'OPERATING_UNIT' AND ${alias}.operating_unit_id IS NULL)
+  )`;
+}
+
+function buildPayrollOwnershipContextKey(scope, operatingUnitId) {
+  const normalizedScope = normalizePayrollOwnershipScope(scope);
+  const normalizedOperatingUnitId = toOptionalPositiveInt(operatingUnitId);
+  if (normalizedScope === "CENTRAL") {
+    return "CENTRAL";
+  }
+  if (normalizedScope === "OPERATING_UNIT" && normalizedOperatingUnitId) {
+    return `OPERATING_UNIT:${normalizedOperatingUnitId}`;
+  }
+  return null;
+}
+
+function buildJournalOperatingUnitOwnershipContext(operatingUnitId) {
+  const normalizedOperatingUnitId = toOptionalPositiveInt(operatingUnitId);
+  return {
+    scope: normalizedOperatingUnitId ? "OPERATING_UNIT" : "CENTRAL",
+    operatingUnitId: normalizedOperatingUnitId,
+  };
+}
+
+function samePayrollOwnershipContext(left, right) {
+  const leftKey = buildPayrollOwnershipContextKey(left?.scope, left?.operatingUnitId);
+  const rightKey = buildPayrollOwnershipContextKey(right?.scope, right?.operatingUnitId);
+  return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
+
+function parseJournalLineRef(value) {
+  const match = /^JE:(\d+)\/L(\d+)$/i.exec(String(value || "").trim());
+  if (!match) return null;
+  return {
+    journalEntryId: parsePositiveInt(match[1]) || null,
+    lineNo: parsePositiveInt(match[2]) || null,
+  };
+}
+
+function mapPayrollClosePostedBatchSampleRow(row, evaluation = {}) {
+  if (!row) return null;
+  const ownerOperatingUnitId = toOptionalPositiveInt(row.operating_unit_id);
+  const payerOperatingUnitId = toOptionalPositiveInt(evaluation?.payerContext?.operatingUnitId);
+  return {
+    batch_id: toOptionalPositiveInt(row.batch_id),
+    batch_no: row.batch_no || null,
+    batch_status: normalizeUpperText(row.batch_status) || null,
+    posted_journal_entry_id: toOptionalPositiveInt(row.posted_journal_entry_id),
+    batch_line_id: toOptionalPositiveInt(row.batch_line_id),
+    batch_line_no: toOptionalPositiveInt(row.batch_line_no),
+    amount: toAmount(row.amount),
+    settlement_journal_line_ref: row.settlement_journal_line_ref || null,
+    run_id: toOptionalPositiveInt(row.run_id),
+    run_no: row.run_no || null,
+    payroll_period: toDateOnly(row.payroll_period),
+    ownership_as_of_date: toDateOnly(row.ownership_as_of_date),
+    liability_id: toOptionalPositiveInt(row.liability_id),
+    liability_key: row.liability_key || null,
+    employee_code: String(row.employee_code || "").trim() || null,
+    employee_name: String(row.employee_name || "").trim() || null,
+    owner_context: {
+      ownership_scope: normalizePayrollOwnershipScope(row.ownership_scope),
+      operating_unit_id: ownerOperatingUnitId,
+      operating_unit_code: String(row.operating_unit_code || "").trim() || null,
+      operating_unit_name: String(row.operating_unit_name || "").trim() || null,
+    },
+    payer_context: evaluation?.payerContext
+      ? {
+          ownership_scope: normalizePayrollOwnershipScope(evaluation.payerContext.scope),
+          operating_unit_id: payerOperatingUnitId,
+        }
+      : null,
+    issues: Array.isArray(evaluation?.issues) ? [...evaluation.issues] : [],
+  };
+}
+
+function evaluatePostedPayrollBatchSettlementCandidate({ row, journalLines = [] }) {
+  const issues = [];
+  const batchId = toOptionalPositiveInt(row?.batch_id);
+  const batchLineNo = toOptionalPositiveInt(row?.batch_line_no);
+  const postedJournalEntryId = toOptionalPositiveInt(row?.posted_journal_entry_id);
+  const payableGlAccountId = toOptionalPositiveInt(row?.payable_gl_account_id);
+  const ownerContext = {
+    scope: normalizePayrollOwnershipScope(row?.ownership_scope),
+    operatingUnitId: toOptionalPositiveInt(row?.operating_unit_id),
+  };
+  const amount = toAmount(row?.amount);
+  const candidateJournalLines = Array.isArray(journalLines) ? journalLines : [];
+
+  let payerContext = null;
+  if (!postedJournalEntryId) {
+    issues.push("posted_journal_missing");
+  }
+
+  const bankSubledgerReferenceNo = batchId ? `PAYBATCH:${batchId}` : null;
+  const bankContextLines =
+    postedJournalEntryId && bankSubledgerReferenceNo
+      ? candidateJournalLines.filter(
+          (line) =>
+            String(line?.subledger_reference_no || "") === bankSubledgerReferenceNo &&
+            toAmount(line?.credit_base) > 0
+        )
+      : [];
+  if (postedJournalEntryId) {
+    if (bankContextLines.length === 0) {
+      issues.push("payer_context_journal_line_missing");
+    } else if (bankContextLines.length > 1) {
+      issues.push("payer_context_journal_line_ambiguous");
+    } else {
+      payerContext = buildJournalOperatingUnitOwnershipContext(bankContextLines[0].operating_unit_id);
+    }
+  }
+
+  const isCrossContext =
+    payerContext && !samePayrollOwnershipContext(ownerContext, payerContext);
+  if (!isCrossContext) {
+    return {
+      isCrossContext: false,
+      payerContext,
+      issues,
+    };
+  }
+
+  const lineSubledgerReferenceNo =
+    batchId && batchLineNo ? `PAYBATCH:${batchId}:L${batchLineNo}` : null;
+  const lineJournalLines = lineSubledgerReferenceNo
+    ? candidateJournalLines.filter(
+        (line) => String(line?.subledger_reference_no || "") === lineSubledgerReferenceNo
+      )
+    : [];
+
+  const settlementJournalLineRef = String(row?.settlement_journal_line_ref || "").trim();
+  const parsedSettlementJournalLineRef = parseJournalLineRef(settlementJournalLineRef);
+  let mainSettlementLine = null;
+  if (!settlementJournalLineRef) {
+    issues.push("settlement_journal_ref_missing");
+  } else if (
+    !parsedSettlementJournalLineRef ||
+    parsedSettlementJournalLineRef.journalEntryId !== postedJournalEntryId ||
+    !parsedSettlementJournalLineRef.lineNo
+  ) {
+    issues.push("settlement_journal_ref_invalid");
+  } else {
+    mainSettlementLine =
+      candidateJournalLines.find(
+        (line) => toOptionalPositiveInt(line?.line_no) === parsedSettlementJournalLineRef.lineNo
+      ) || null;
+  }
+
+  if (!mainSettlementLine) {
+    issues.push("main_settlement_line_missing");
+  } else {
+    const mainSettlementLineValid =
+      toOptionalPositiveInt(mainSettlementLine?.account_id) === payableGlAccountId &&
+      toOptionalPositiveInt(mainSettlementLine?.operating_unit_id) ===
+        ownerContext.operatingUnitId &&
+      toAmount(mainSettlementLine?.debit_base) === amount &&
+      toAmount(mainSettlementLine?.credit_base) === 0 &&
+      String(mainSettlementLine?.subledger_reference_no || "") === lineSubledgerReferenceNo;
+    if (!mainSettlementLineValid) {
+      issues.push("main_settlement_line_invalid");
+    }
+  }
+
+  const hasOwnerContextCredit = lineJournalLines.some(
+    (line) =>
+      toOptionalPositiveInt(line?.account_id) !== payableGlAccountId &&
+      toOptionalPositiveInt(line?.operating_unit_id) === ownerContext.operatingUnitId &&
+      toAmount(line?.credit_base) === amount &&
+      toAmount(line?.debit_base) === 0
+  );
+  if (!hasOwnerContextCredit) {
+    issues.push("self_balancing_owner_credit_missing");
+  }
+
+  const hasPayerContextDebit = lineJournalLines.some(
+    (line) =>
+      toOptionalPositiveInt(line?.account_id) !== payableGlAccountId &&
+      toOptionalPositiveInt(line?.operating_unit_id) === payerContext?.operatingUnitId &&
+      toAmount(line?.debit_base) === amount &&
+      toAmount(line?.credit_base) === 0
+  );
+  if (!hasPayerContextDebit) {
+    issues.push("self_balancing_payer_debit_missing");
+  }
+
+  return {
+    isCrossContext: true,
+    payerContext,
+    issues,
+  };
+}
+
+async function computePostedPayrollBatchSettlementIntegrity({
+  tenantId,
+  legalEntityId,
+  periodStart,
+  periodEnd,
+  invalidLiabilityOwnershipPredicate,
+  runQuery = query,
+}) {
+  const eligiblePostedPayrollLinesResult = await runQuery(
+    `SELECT
+        pb.id AS batch_id,
+        pb.batch_no,
+        pb.status AS batch_status,
+        pb.posted_journal_entry_id,
+        l.id AS batch_line_id,
+        l.line_no AS batch_line_no,
+        l.amount,
+        l.settlement_journal_line_ref,
+        l.payable_gl_account_id,
+        pr.id AS run_id,
+        pr.run_no,
+        pr.payroll_period,
+        pr.ownership_as_of_date,
+        prl.id AS liability_id,
+        prl.liability_key,
+        prl.employee_code,
+        prl.employee_name,
+        prl.ownership_scope,
+        prl.operating_unit_id,
+        owner_ou.code AS operating_unit_code,
+        owner_ou.name AS operating_unit_name
+     FROM payment_batch_lines l
+     JOIN payment_batches pb
+       ON pb.id = l.batch_id
+      AND pb.tenant_id = l.tenant_id
+      AND pb.legal_entity_id = l.legal_entity_id
+     JOIN payroll_run_liabilities prl
+       ON prl.tenant_id = l.tenant_id
+      AND prl.legal_entity_id = l.legal_entity_id
+      AND prl.id = l.payable_entity_id
+     JOIN payroll_runs pr
+       ON pr.tenant_id = prl.tenant_id
+      AND pr.legal_entity_id = prl.legal_entity_id
+      AND pr.id = prl.run_id
+     LEFT JOIN operating_units owner_ou
+       ON owner_ou.id = prl.operating_unit_id
+      AND owner_ou.tenant_id = prl.tenant_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND UPPER(COALESCE(l.payable_entity_type, '')) = 'PAYROLL_LIABILITY'
+       AND pb.status = 'POSTED'
+       AND pr.payroll_period BETWEEN ? AND ?
+       AND pr.ownership_as_of_date IS NOT NULL
+       AND COALESCE(prl.status, 'OPEN') <> 'CANCELLED'
+       AND NOT ${invalidLiabilityOwnershipPredicate}
+     ORDER BY pr.payroll_period DESC, pb.id DESC, l.line_no ASC, l.id ASC`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const eligiblePostedPayrollLines = eligiblePostedPayrollLinesResult.rows || [];
+
+  const grandfatheredPostedPayrollStatsResult = await runQuery(
+    `SELECT
+        COUNT(DISTINCT pb.id) AS grandfathered_posted_batch_count,
+        COUNT(*) AS grandfathered_posted_line_count
+     FROM payment_batch_lines l
+     JOIN payment_batches pb
+       ON pb.id = l.batch_id
+      AND pb.tenant_id = l.tenant_id
+      AND pb.legal_entity_id = l.legal_entity_id
+     JOIN payroll_run_liabilities prl
+       ON prl.tenant_id = l.tenant_id
+      AND prl.legal_entity_id = l.legal_entity_id
+      AND prl.id = l.payable_entity_id
+     JOIN payroll_runs pr
+       ON pr.tenant_id = prl.tenant_id
+      AND pr.legal_entity_id = prl.legal_entity_id
+      AND pr.id = prl.run_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND UPPER(COALESCE(l.payable_entity_type, '')) = 'PAYROLL_LIABILITY'
+       AND pb.status = 'POSTED'
+       AND pr.payroll_period BETWEEN ? AND ?
+       AND pr.ownership_as_of_date IS NULL`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const grandfatheredPostedPayrollStats =
+    grandfatheredPostedPayrollStatsResult.rows?.[0] || {};
+
+  const eligiblePostedBatchIds = new Set();
+  const journalEntryIds = new Set();
+  for (const row of eligiblePostedPayrollLines) {
+    const batchId = toOptionalPositiveInt(row.batch_id);
+    const postedJournalEntryId = toOptionalPositiveInt(row.posted_journal_entry_id);
+    if (batchId) {
+      eligiblePostedBatchIds.add(batchId);
+    }
+    if (postedJournalEntryId) {
+      journalEntryIds.add(postedJournalEntryId);
+    }
+  }
+
+  const journalLinesByEntryId = new Map();
+  if (journalEntryIds.size > 0) {
+    const placeholders = Array.from(journalEntryIds)
+      .map(() => "?")
+      .join(", ");
+    const journalLineRows = await runQuery(
+      `SELECT
+          journal_entry_id,
+          line_no,
+          account_id,
+          operating_unit_id,
+          subledger_reference_no,
+          debit_base,
+          credit_base
+       FROM journal_lines
+       WHERE journal_entry_id IN (${placeholders})
+       ORDER BY journal_entry_id ASC, line_no ASC`,
+      [...journalEntryIds]
+    );
+    for (const row of journalLineRows.rows || []) {
+      const journalEntryId = toOptionalPositiveInt(row.journal_entry_id);
+      if (!journalEntryId) {
+        continue;
+      }
+      if (!journalLinesByEntryId.has(journalEntryId)) {
+        journalLinesByEntryId.set(journalEntryId, []);
+      }
+      journalLinesByEntryId.get(journalEntryId).push(row);
+    }
+  }
+
+  const issueCounts = Object.fromEntries(
+    PAYROLL_POSTED_BATCH_SETTLEMENT_ISSUE_CODES.map((code) => [code, 0])
+  );
+  const blockingSamples = [];
+  const affectedBatchIds = new Set();
+  let crossContextLineCount = 0;
+  let blockingLineCount = 0;
+
+  for (const row of eligiblePostedPayrollLines) {
+    const postedJournalEntryId = toOptionalPositiveInt(row.posted_journal_entry_id);
+    const evaluation = evaluatePostedPayrollBatchSettlementCandidate({
+      row,
+      journalLines: journalLinesByEntryId.get(postedJournalEntryId) || [],
+    });
+    if (evaluation.isCrossContext) {
+      crossContextLineCount += 1;
+    }
+    if ((evaluation.issues || []).length === 0) {
+      continue;
+    }
+    blockingLineCount += 1;
+    const batchId = toOptionalPositiveInt(row.batch_id);
+    if (batchId) {
+      affectedBatchIds.add(batchId);
+    }
+    for (const issueCode of evaluation.issues) {
+      if (Object.prototype.hasOwnProperty.call(issueCounts, issueCode)) {
+        issueCounts[issueCode] += 1;
+      }
+    }
+    if (blockingSamples.length < PAYROLL_CLOSE_OWNERSHIP_SAMPLE_LIMIT) {
+      blockingSamples.push(mapPayrollClosePostedBatchSampleRow(row, evaluation));
+    }
+  }
+
+  return {
+    eligiblePostedBatchCount: eligiblePostedBatchIds.size,
+    eligiblePostedLineCount: eligiblePostedPayrollLines.length,
+    crossContextLineCount,
+    affectedBatchCount: affectedBatchIds.size,
+    blockingLineCount,
+    issueCounts,
+    grandfatheredPostedBatchCount: Number(
+      grandfatheredPostedPayrollStats.grandfathered_posted_batch_count || 0
+    ),
+    grandfatheredPostedLineCount: Number(
+      grandfatheredPostedPayrollStats.grandfathered_posted_line_count || 0
+    ),
+    sampleLines: blockingSamples,
+  };
+}
+
 async function writeCloseAudit({
   tenantId,
   legalEntityId,
@@ -210,6 +683,10 @@ async function computeChecklist({
   periodEnd,
   runQuery = query,
 }) {
+  const invalidLiabilityOwnershipPredicate = buildInvalidPayrollLiabilityOwnershipPredicate("l");
+  const invalidSettlementLiabilityOwnershipPredicate =
+    buildInvalidPayrollLiabilityOwnershipPredicate("prl");
+
   const runsStats = await runQuery(
     `SELECT
         COUNT(*) AS run_count,
@@ -238,6 +715,189 @@ async function computeChecklist({
     [tenantId, legalEntityId, periodStart, periodEnd]
   );
   const corrStats = correctionDraftStats.rows?.[0] || {};
+
+  const finalizedOwnershipStatsResult = await runQuery(
+    `SELECT
+        COUNT(DISTINCT pr.id) AS ownership_aware_finalized_run_count,
+        COUNT(DISTINCT CASE WHEN rl.id IS NOT NULL THEN pr.id END) AS affected_run_count,
+        COUNT(rl.id) AS blocking_line_count,
+        COALESCE(SUM(CASE WHEN rl.ownership_resolution_status = 'UNRESOLVED' THEN 1 ELSE 0 END), 0)
+          AS unresolved_line_count,
+        COALESCE(SUM(CASE WHEN rl.ownership_resolution_status = 'AMBIGUOUS' THEN 1 ELSE 0 END), 0)
+          AS ambiguous_line_count,
+        COALESCE(SUM(CASE WHEN rl.ownership_resolution_status = 'MISMATCH' THEN 1 ELSE 0 END), 0)
+          AS mismatch_line_count
+     FROM payroll_runs pr
+     LEFT JOIN payroll_run_lines rl
+       ON rl.tenant_id = pr.tenant_id
+      AND rl.legal_entity_id = pr.legal_entity_id
+      AND rl.run_id = pr.id
+      AND rl.ownership_resolution_status IN ('UNRESOLVED', 'AMBIGUOUS', 'MISMATCH')
+     WHERE pr.tenant_id = ?
+       AND pr.legal_entity_id = ?
+       AND pr.status = 'FINALIZED'
+       AND pr.payroll_period BETWEEN ? AND ?
+       AND pr.ownership_as_of_date IS NOT NULL`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const finalizedOwnershipStats = finalizedOwnershipStatsResult.rows?.[0] || {};
+
+  const grandfatheredFinalizedRunsResult = await runQuery(
+    `SELECT COUNT(*) AS grandfathered_finalized_run_count
+     FROM payroll_runs
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND status = 'FINALIZED'
+       AND payroll_period BETWEEN ? AND ?
+       AND ownership_as_of_date IS NULL`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const grandfatheredFinalizedRuns =
+    grandfatheredFinalizedRunsResult.rows?.[0] || {};
+
+  let finalizedOwnershipSamples = [];
+  if (Number(finalizedOwnershipStats.blocking_line_count || 0) > 0) {
+    const finalizedOwnershipSamplesResult = await runQuery(
+      `SELECT
+          pr.id AS run_id,
+          pr.run_no,
+          pr.payroll_period,
+          pr.ownership_as_of_date,
+          rl.id AS line_id,
+          rl.line_no,
+          rl.employee_code,
+          rl.employee_name,
+          rl.ownership_resolution_status,
+          rl.ownership_resolution_note
+       FROM payroll_runs pr
+       JOIN payroll_run_lines rl
+         ON rl.tenant_id = pr.tenant_id
+        AND rl.legal_entity_id = pr.legal_entity_id
+        AND rl.run_id = pr.id
+       WHERE pr.tenant_id = ?
+         AND pr.legal_entity_id = ?
+         AND pr.status = 'FINALIZED'
+         AND pr.payroll_period BETWEEN ? AND ?
+         AND pr.ownership_as_of_date IS NOT NULL
+         AND rl.ownership_resolution_status IN ('UNRESOLVED', 'AMBIGUOUS', 'MISMATCH')
+       ORDER BY pr.payroll_period DESC, pr.id DESC, rl.line_no ASC, rl.id ASC
+       LIMIT ${PAYROLL_CLOSE_OWNERSHIP_SAMPLE_LIMIT}`,
+      [tenantId, legalEntityId, periodStart, periodEnd]
+    );
+    finalizedOwnershipSamples = (finalizedOwnershipSamplesResult.rows || []).map(
+      mapPayrollCloseOwnershipSampleRow
+    );
+  }
+
+  const liabilityOwnershipStatsResult = await runQuery(
+    `SELECT
+        COUNT(*) AS ownership_aware_liability_count,
+        COUNT(DISTINCT CASE WHEN ${invalidLiabilityOwnershipPredicate} THEN pr.id END)
+          AS affected_run_count,
+        COALESCE(SUM(CASE WHEN ${invalidLiabilityOwnershipPredicate} THEN 1 ELSE 0 END), 0)
+          AS invalid_liability_count,
+        COALESCE(SUM(
+          CASE
+            WHEN l.ownership_scope IS NULL OR l.ownership_scope NOT IN ('CENTRAL', 'OPERATING_UNIT')
+            THEN 1
+            ELSE 0
+          END
+        ), 0) AS ownership_scope_issue_count,
+        COALESCE(SUM(
+          CASE
+            WHEN l.ownership_scope = 'CENTRAL' AND l.operating_unit_id IS NOT NULL
+            THEN 1
+            ELSE 0
+          END
+        ), 0) AS central_with_operating_unit_count,
+        COALESCE(SUM(
+          CASE
+            WHEN l.ownership_scope = 'OPERATING_UNIT' AND l.operating_unit_id IS NULL
+            THEN 1
+            ELSE 0
+          END
+        ), 0) AS operating_unit_missing_operating_unit_count
+     FROM payroll_run_liabilities l
+     JOIN payroll_runs pr
+       ON pr.tenant_id = l.tenant_id
+      AND pr.legal_entity_id = l.legal_entity_id
+      AND pr.id = l.run_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND pr.payroll_period BETWEEN ? AND ?
+       AND pr.ownership_as_of_date IS NOT NULL
+       AND COALESCE(l.status, 'OPEN') <> 'CANCELLED'`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const liabilityOwnershipStats = liabilityOwnershipStatsResult.rows?.[0] || {};
+
+  const grandfatheredLiabilityStatsResult = await runQuery(
+    `SELECT COUNT(*) AS grandfathered_liability_count
+     FROM payroll_run_liabilities l
+     JOIN payroll_runs pr
+       ON pr.tenant_id = l.tenant_id
+      AND pr.legal_entity_id = l.legal_entity_id
+      AND pr.id = l.run_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND pr.payroll_period BETWEEN ? AND ?
+       AND pr.ownership_as_of_date IS NULL
+       AND COALESCE(l.status, 'OPEN') <> 'CANCELLED'`,
+    [tenantId, legalEntityId, periodStart, periodEnd]
+  );
+  const grandfatheredLiabilityStats =
+    grandfatheredLiabilityStatsResult.rows?.[0] || {};
+
+  let invalidLiabilitySamples = [];
+  if (Number(liabilityOwnershipStats.invalid_liability_count || 0) > 0) {
+    const invalidLiabilitySamplesResult = await runQuery(
+      `SELECT
+          pr.id AS run_id,
+          pr.run_no,
+          pr.payroll_period,
+          pr.ownership_as_of_date,
+          l.id AS liability_id,
+          l.liability_type,
+          l.liability_group,
+          l.employee_code,
+          l.employee_name,
+          l.ownership_scope,
+          l.operating_unit_id,
+          ou.code AS operating_unit_code,
+          ou.name AS operating_unit_name,
+          l.status
+       FROM payroll_run_liabilities l
+       JOIN payroll_runs pr
+         ON pr.tenant_id = l.tenant_id
+        AND pr.legal_entity_id = l.legal_entity_id
+        AND pr.id = l.run_id
+       LEFT JOIN operating_units ou
+         ON ou.id = l.operating_unit_id
+        AND ou.tenant_id = l.tenant_id
+       WHERE l.tenant_id = ?
+         AND l.legal_entity_id = ?
+         AND pr.payroll_period BETWEEN ? AND ?
+         AND pr.ownership_as_of_date IS NOT NULL
+         AND COALESCE(l.status, 'OPEN') <> 'CANCELLED'
+         AND ${invalidLiabilityOwnershipPredicate}
+       ORDER BY pr.payroll_period DESC, pr.id DESC, l.id ASC
+       LIMIT ${PAYROLL_CLOSE_OWNERSHIP_SAMPLE_LIMIT}`,
+      [tenantId, legalEntityId, periodStart, periodEnd]
+    );
+    invalidLiabilitySamples = (invalidLiabilitySamplesResult.rows || []).map(
+      mapPayrollCloseLiabilitySampleRow
+    );
+  }
+
+  const postedPayrollBatchSettlementStats =
+    await computePostedPayrollBatchSettlementIntegrity({
+      tenantId,
+      legalEntityId,
+      periodStart,
+      periodEnd,
+      invalidLiabilityOwnershipPredicate: invalidSettlementLiabilityOwnershipPredicate,
+      runQuery,
+    });
 
   const overrideStatsResult = await runQuery(
     `SELECT
@@ -305,6 +965,121 @@ async function computeChecklist({
       metric_text: `${Number(runStats.non_finalized_runs || 0)} runs in DRAFT/IMPORTED/REVIEWED`,
       details_json: null,
       sort_order: 10,
+    },
+    {
+      check_code: "FINALIZED_LINES_OWNERSHIP_RESOLVED",
+      check_name: "Finalized payroll lines have resolved ownership",
+      severity: "ERROR",
+      status: Number(finalizedOwnershipStats.blocking_line_count || 0) === 0 ? "PASS" : "FAIL",
+      metric_value: Number(finalizedOwnershipStats.blocking_line_count || 0),
+      metric_text: `${Number(finalizedOwnershipStats.blocking_line_count || 0)} finalized payroll lines with blocking ownership status`,
+      details_json: {
+        blocking_statuses: [...PAYROLL_OWNERSHIP_BLOCKING_STATUSES],
+        ownership_aware_finalized_run_count: Number(
+          finalizedOwnershipStats.ownership_aware_finalized_run_count || 0
+        ),
+        affected_run_count: Number(finalizedOwnershipStats.affected_run_count || 0),
+        grandfathered_finalized_run_count: Number(
+          grandfatheredFinalizedRuns.grandfathered_finalized_run_count || 0
+        ),
+        unresolved_line_count: Number(finalizedOwnershipStats.unresolved_line_count || 0),
+        ambiguous_line_count: Number(finalizedOwnershipStats.ambiguous_line_count || 0),
+        mismatch_line_count: Number(finalizedOwnershipStats.mismatch_line_count || 0),
+        grandfathering_boundary: "payroll_runs.ownership_as_of_date IS NULL",
+        sample_lines: finalizedOwnershipSamples,
+      },
+      sort_order: 15,
+    },
+    {
+      check_code: "LIABILITIES_OWNER_CONTEXT_VALID",
+      check_name: "Payroll liabilities have valid owner context",
+      severity: "ERROR",
+      status: Number(liabilityOwnershipStats.invalid_liability_count || 0) === 0 ? "PASS" : "FAIL",
+      metric_value: Number(liabilityOwnershipStats.invalid_liability_count || 0),
+      metric_text: `${Number(liabilityOwnershipStats.invalid_liability_count || 0)} payroll liabilities with invalid owner context`,
+      details_json: {
+        validity_rules: [...PAYROLL_LIABILITY_OWNERSHIP_VALIDITY_RULES],
+        ownership_aware_liability_count: Number(
+          liabilityOwnershipStats.ownership_aware_liability_count || 0
+        ),
+        affected_run_count: Number(liabilityOwnershipStats.affected_run_count || 0),
+        grandfathered_liability_count: Number(
+          grandfatheredLiabilityStats.grandfathered_liability_count || 0
+        ),
+        ownership_scope_issue_count: Number(
+          liabilityOwnershipStats.ownership_scope_issue_count || 0
+        ),
+        central_with_operating_unit_count: Number(
+          liabilityOwnershipStats.central_with_operating_unit_count || 0
+        ),
+        operating_unit_missing_operating_unit_count: Number(
+          liabilityOwnershipStats.operating_unit_missing_operating_unit_count || 0
+        ),
+        grandfathering_boundary: "payroll_runs.ownership_as_of_date IS NULL",
+        sample_liabilities: invalidLiabilitySamples,
+      },
+      sort_order: 18,
+    },
+    {
+      check_code: "POSTED_PAYROLL_BATCHES_SELF_BALANCED",
+      check_name: "Posted payroll batches preserve required cross-context journal structure",
+      severity: "ERROR",
+      status:
+        Number(postedPayrollBatchSettlementStats.blockingLineCount || 0) === 0 ? "PASS" : "FAIL",
+      metric_value: Number(postedPayrollBatchSettlementStats.blockingLineCount || 0),
+      metric_text: `${Number(postedPayrollBatchSettlementStats.blockingLineCount || 0)} posted payroll payment lines missing required settlement journal structure`,
+      details_json: {
+        requirements: [...PAYROLL_POSTED_BATCH_SETTLEMENT_REQUIREMENTS],
+        issue_codes: [...PAYROLL_POSTED_BATCH_SETTLEMENT_ISSUE_CODES],
+        eligible_posted_batch_count: Number(
+          postedPayrollBatchSettlementStats.eligiblePostedBatchCount || 0
+        ),
+        eligible_posted_line_count: Number(
+          postedPayrollBatchSettlementStats.eligiblePostedLineCount || 0
+        ),
+        cross_context_line_count: Number(
+          postedPayrollBatchSettlementStats.crossContextLineCount || 0
+        ),
+        affected_batch_count: Number(
+          postedPayrollBatchSettlementStats.affectedBatchCount || 0
+        ),
+        grandfathered_posted_batch_count: Number(
+          postedPayrollBatchSettlementStats.grandfatheredPostedBatchCount || 0
+        ),
+        grandfathered_posted_line_count: Number(
+          postedPayrollBatchSettlementStats.grandfatheredPostedLineCount || 0
+        ),
+        posted_journal_missing_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.posted_journal_missing || 0
+        ),
+        payer_context_journal_line_missing_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.payer_context_journal_line_missing || 0
+        ),
+        payer_context_journal_line_ambiguous_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.payer_context_journal_line_ambiguous || 0
+        ),
+        settlement_journal_ref_missing_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.settlement_journal_ref_missing || 0
+        ),
+        settlement_journal_ref_invalid_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.settlement_journal_ref_invalid || 0
+        ),
+        main_settlement_line_missing_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.main_settlement_line_missing || 0
+        ),
+        main_settlement_line_invalid_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.main_settlement_line_invalid || 0
+        ),
+        self_balancing_owner_credit_missing_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.self_balancing_owner_credit_missing || 0
+        ),
+        self_balancing_payer_debit_missing_count: Number(
+          postedPayrollBatchSettlementStats.issueCounts?.self_balancing_payer_debit_missing || 0
+        ),
+        grandfathering_boundary: "payroll_runs.ownership_as_of_date IS NULL",
+        sample_lines: postedPayrollBatchSettlementStats.sampleLines,
+      },
+      sort_order: 19,
     },
     {
       check_code: "RUNS_ACCRUAL_POSTED",

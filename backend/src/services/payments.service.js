@@ -7,6 +7,8 @@ import {
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
+import { insertPostedJournalWithLinesTx } from "./inventory.service.js";
+import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
 
 const ACTIVE_BATCH_STATUSES = ["DRAFT", "APPROVED", "EXPORTED", "POSTED"];
 
@@ -20,6 +22,69 @@ function normalizeUpperText(value) {
     .toUpperCase();
 }
 
+function buildPayerContextScope(row) {
+  const operatingUnitId = parsePositiveInt(
+    row?.bank_operating_unit_id ?? row?.operating_unit_id
+  );
+  return operatingUnitId ? "OPERATING_UNIT" : "CENTRAL";
+}
+
+function formatPayerContextLabel(row) {
+  const operatingUnitId = parsePositiveInt(
+    row?.bank_operating_unit_id ?? row?.operating_unit_id
+  );
+  if (!operatingUnitId) {
+    return "CENTRAL";
+  }
+  return (
+    String(row?.bank_operating_unit_code ?? row?.operating_unit_code ?? "").trim() ||
+    String(row?.bank_operating_unit_name ?? row?.operating_unit_name ?? "").trim() ||
+    `OU#${operatingUnitId}`
+  );
+}
+
+function formatPayrollLiabilityOwnerContextLabel(row) {
+  const ownershipScope = normalizeUpperText(row?.liability_ownership_scope);
+  const operatingUnitId = parsePositiveInt(row?.liability_operating_unit_id);
+  if (ownershipScope === "CENTRAL") {
+    return "CENTRAL";
+  }
+  if (ownershipScope === "OPERATING_UNIT") {
+    return (
+      String(row?.liability_operating_unit_code || "").trim() ||
+      String(row?.liability_operating_unit_name || "").trim() ||
+      `OU#${operatingUnitId || "?"}`
+    );
+  }
+  return null;
+}
+
+function decoratePaymentBatchHeaderRow(row) {
+  if (!row) {
+    return row;
+  }
+  return {
+    ...row,
+    bank_operating_unit_id: parsePositiveInt(row.bank_operating_unit_id),
+    payer_context_scope: buildPayerContextScope(row),
+    payer_context_label: formatPayerContextLabel(row),
+  };
+}
+
+function decoratePaymentBatchLineRow(row) {
+  if (!row) {
+    return row;
+  }
+  return {
+    ...row,
+    bank_operating_unit_id: parsePositiveInt(row.bank_operating_unit_id),
+    payer_context_scope: buildPayerContextScope(row),
+    payer_context_label: formatPayerContextLabel(row),
+    liability_operating_unit_id: parsePositiveInt(row.liability_operating_unit_id),
+    liability_owner_context_label: formatPayrollLiabilityOwnerContextLabel(row),
+  };
+}
+
 function safeJson(value) {
   return JSON.stringify(value ?? null);
 }
@@ -30,6 +95,133 @@ function toAmount(value) {
     return 0;
   }
   return Number(parsed.toFixed(6));
+}
+
+function buildOwnershipContextKey(scope, operatingUnitId) {
+  return scope === "OPERATING_UNIT"
+    ? `OPERATING_UNIT:${parsePositiveInt(operatingUnitId) || "?"}`
+    : "CENTRAL";
+}
+
+function isPayrollPaymentLine(line) {
+  return normalizeUpperText(line?.payable_entity_type) === "PAYROLL_LIABILITY";
+}
+
+function resolveCurrentBankPayerContext(bankAccount) {
+  const operatingUnitId = parsePositiveInt(bankAccount?.operating_unit_id);
+  return {
+    scope: operatingUnitId ? "OPERATING_UNIT" : "CENTRAL",
+    operatingUnitId: operatingUnitId || null,
+    label: formatPayerContextLabel({
+      bank_operating_unit_id: operatingUnitId,
+      bank_operating_unit_code: bankAccount?.operating_unit_code,
+      bank_operating_unit_name: bankAccount?.operating_unit_name,
+    }),
+  };
+}
+
+function resolvePayrollLiabilityOwnerContext(line) {
+  const ownershipScope = normalizeUpperText(line?.liability_ownership_scope);
+  const operatingUnitId = parsePositiveInt(line?.liability_operating_unit_id);
+  if (ownershipScope === "CENTRAL") {
+    if (operatingUnitId) {
+      throw badRequest(
+        `Payroll payment batch line ${line?.line_no || "?"} has invalid owner context`
+      );
+    }
+    return {
+      scope: "CENTRAL",
+      operatingUnitId: null,
+      label: formatPayrollLiabilityOwnerContextLabel(line) || "CENTRAL",
+    };
+  }
+  if (ownershipScope === "OPERATING_UNIT" && operatingUnitId) {
+    return {
+      scope: "OPERATING_UNIT",
+      operatingUnitId,
+      label:
+        formatPayrollLiabilityOwnerContextLabel(line) || `OU#${operatingUnitId}`,
+    };
+  }
+  throw badRequest(
+    `Payroll payment batch line ${line?.line_no || "?"} is missing liability owner context; cancel and recreate the batch under the current payroll ownership contract`
+  );
+}
+
+function sameOwnershipContext(left, right) {
+  const leftScope = normalizeUpperText(left?.scope);
+  const rightScope = normalizeUpperText(right?.scope);
+  if (leftScope !== rightScope) {
+    return false;
+  }
+  return parsePositiveInt(left?.operatingUnitId) === parsePositiveInt(right?.operatingUnitId);
+}
+
+function buildSettlementJournalLine({
+  accountId,
+  operatingUnitId = null,
+  description,
+  subledgerReferenceNo,
+  currencyCode,
+  debitBase = 0,
+  creditBase = 0,
+}) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  const normalizedDebitBase = toAmount(debitBase);
+  const normalizedCreditBase = toAmount(creditBase);
+  if (!normalizedAccountId) {
+    throw badRequest("Settlement journal line account is invalid");
+  }
+  if (
+    (normalizedDebitBase > 0 && normalizedCreditBase > 0) ||
+    (normalizedDebitBase <= 0 && normalizedCreditBase <= 0)
+  ) {
+    throw badRequest("Settlement journal line must be either debit or credit");
+  }
+  return {
+    accountId: normalizedAccountId,
+    operatingUnitId: parsePositiveInt(operatingUnitId) || null,
+    description: String(description || "").slice(0, 255) || null,
+    subledgerReferenceNo: String(subledgerReferenceNo || "").slice(0, 100) || null,
+    currencyCode,
+    amountTxn: normalizedDebitBase > 0 ? normalizedDebitBase : normalizedCreditBase * -1,
+    debitBase: normalizedDebitBase,
+    creditBase: normalizedCreditBase,
+    counterpartyLegalEntityId: null,
+    taxCode: null,
+  };
+}
+
+function assertCurrentPayerContextCanPostPayrollLines({ pendingLines, payerContext }) {
+  const payrollLines = (pendingLines || []).filter(isPayrollPaymentLine);
+  if (payrollLines.length === 0 || payerContext?.scope !== "OPERATING_UNIT") {
+    return;
+  }
+
+  const ownerContexts = new Set();
+  let outOfScopeLine = null;
+  for (const line of payrollLines) {
+    const ownerContext = resolvePayrollLiabilityOwnerContext(line);
+    ownerContexts.add(buildOwnershipContextKey(ownerContext.scope, ownerContext.operatingUnitId));
+    if (
+      ownerContext.scope === "OPERATING_UNIT" &&
+      ownerContext.operatingUnitId !== parsePositiveInt(payerContext.operatingUnitId)
+    ) {
+      outOfScopeLine = line;
+    }
+  }
+
+  if (ownerContexts.size > 1) {
+    throw badRequest(
+      "Selected bank account cannot post payroll payment batch: OU bank payment is not allowed when payroll liabilities span multiple owner contexts"
+    );
+  }
+
+  if (outOfScopeLine) {
+    throw badRequest(
+      `Selected bank account cannot post payroll payment batch: OU bank payment is only allowed for central-owned liabilities or liabilities owned by the same OU (line ${outOfScopeLine.line_no || "?"})`
+    );
+  }
 }
 
 function todayDateOnlyUtc() {
@@ -100,17 +292,23 @@ async function findBankAccountForPayments({ tenantId, bankAccountId, runQuery = 
         ba.id,
         ba.tenant_id,
         ba.legal_entity_id,
+        ba.operating_unit_id,
         ba.code,
         ba.name,
         ba.currency_code,
         ba.gl_account_id,
         ba.is_active,
         le.code AS legal_entity_code,
-        le.name AS legal_entity_name
+        le.name AS legal_entity_name,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name
      FROM bank_accounts ba
      JOIN legal_entities le
        ON le.id = ba.legal_entity_id
       AND le.tenant_id = ba.tenant_id
+     LEFT JOIN operating_units ou
+       ON ou.id = ba.operating_unit_id
+      AND ou.tenant_id = ba.tenant_id
      WHERE ba.tenant_id = ?
        AND ba.id = ?
      LIMIT 1`,
@@ -226,16 +424,22 @@ async function findPaymentBatchHeaderById({ tenantId, batchId, runQuery = query 
         ba.name AS bank_account_name,
         ba.gl_account_id AS bank_gl_account_id,
         ba.currency_code AS bank_account_currency_code,
+        ba.operating_unit_id AS bank_operating_unit_id,
+        ou.code AS bank_operating_unit_code,
+        ou.name AS bank_operating_unit_name,
         le.code AS legal_entity_code,
         le.name AS legal_entity_name
      FROM payment_batches pb
      JOIN bank_accounts ba
        ON ba.id = pb.bank_account_id
-      AND ba.tenant_id = pb.tenant_id
-      AND ba.legal_entity_id = pb.legal_entity_id
+       AND ba.tenant_id = pb.tenant_id
+       AND ba.legal_entity_id = pb.legal_entity_id
+     LEFT JOIN operating_units ou
+       ON ou.id = ba.operating_unit_id
+      AND ou.tenant_id = ba.tenant_id
      JOIN legal_entities le
        ON le.id = pb.legal_entity_id
-      AND le.tenant_id = pb.tenant_id
+       AND le.tenant_id = pb.tenant_id
      WHERE pb.tenant_id = ?
        AND pb.id = ?
      LIMIT 1`,
@@ -326,6 +530,10 @@ async function listPaymentBatchLinesByBatchId({ tenantId, batchId, runQuery = qu
         pl.id AS payroll_payment_link_id,
         pl.beneficiary_bank_snapshot_id,
         pl.beneficiary_snapshot_status,
+        prl.ownership_scope AS liability_ownership_scope,
+        prl.operating_unit_id AS liability_operating_unit_id,
+        prlou.code AS liability_operating_unit_code,
+        prlou.name AS liability_operating_unit_name,
         s.account_holder_name AS snap_account_holder_name,
         s.bank_name AS snap_bank_name,
         s.iban AS snap_iban,
@@ -334,9 +542,23 @@ async function listPaymentBatchLinesByBatchId({ tenantId, batchId, runQuery = qu
         s.swift_bic AS snap_swift_bic,
         s.account_last4 AS snap_account_last4,
         s.currency_code AS snap_currency_code,
+        ba.operating_unit_id AS bank_operating_unit_id,
+        bankou.code AS bank_operating_unit_code,
+        bankou.name AS bank_operating_unit_name,
         l.created_at,
         l.updated_at
      FROM payment_batch_lines l
+     JOIN payment_batches pb
+       ON pb.id = l.batch_id
+      AND pb.tenant_id = l.tenant_id
+      AND pb.legal_entity_id = l.legal_entity_id
+     JOIN bank_accounts ba
+       ON ba.id = pb.bank_account_id
+      AND ba.tenant_id = pb.tenant_id
+      AND ba.legal_entity_id = pb.legal_entity_id
+     LEFT JOIN operating_units bankou
+       ON bankou.id = ba.operating_unit_id
+      AND bankou.tenant_id = ba.tenant_id
      LEFT JOIN accounts a
        ON a.id = l.payable_gl_account_id
      LEFT JOIN payroll_liability_payment_links pl
@@ -344,6 +566,14 @@ async function listPaymentBatchLinesByBatchId({ tenantId, batchId, runQuery = qu
       AND pl.legal_entity_id = l.legal_entity_id
       AND pl.payment_batch_id = l.batch_id
       AND pl.payment_batch_line_id = l.id
+     LEFT JOIN payroll_run_liabilities prl
+       ON prl.tenant_id = l.tenant_id
+      AND prl.legal_entity_id = l.legal_entity_id
+      AND prl.id = l.payable_entity_id
+      AND l.payable_entity_type = 'PAYROLL_LIABILITY'
+     LEFT JOIN operating_units prlou
+       ON prlou.id = prl.operating_unit_id
+      AND prlou.tenant_id = prl.tenant_id
      LEFT JOIN payroll_beneficiary_bank_snapshots s
        ON s.tenant_id = pl.tenant_id
       AND s.legal_entity_id = pl.legal_entity_id
@@ -421,8 +651,8 @@ async function buildPaymentBatchDetail({ tenantId, batchId, runQuery = query }) 
   ]);
 
   return {
-    ...header,
-    lines,
+    ...decoratePaymentBatchHeaderRow(header),
+    lines: (lines || []).map(decoratePaymentBatchLineRow),
     exports,
     audit,
   };
@@ -683,6 +913,38 @@ async function createSettlementJournalTx(tx, payload) {
     throw badRequest("Payment batch total must be positive");
   }
 
+  const currentBankAccount = await findBankAccountForPayments({
+    tenantId,
+    bankAccountId: batch.bank_account_id,
+    runQuery: tx.query.bind(tx),
+  });
+  if (!currentBankAccount) {
+    throw badRequest("Payment batch bank account is no longer available");
+  }
+  if (parsePositiveInt(currentBankAccount.legal_entity_id) !== legalEntityId) {
+    throw badRequest("Payment batch bank account no longer belongs to the batch legal entity");
+  }
+  if (!parseDbBoolean(currentBankAccount.is_active)) {
+    throw badRequest("Payment batch bank account is inactive");
+  }
+  if (normalizeUpperText(currentBankAccount.currency_code) !== batchCurrency) {
+    throw badRequest(
+      `Payment batch bank currency (${currentBankAccount.currency_code || "-"}) no longer matches batch currency (${batchCurrency})`
+    );
+  }
+  const bankPostingAccount = await fetchPaymentPostingAccount({
+    tenantId,
+    legalEntityId,
+    accountId: currentBankAccount.gl_account_id,
+    label: "payment batch bank gl account",
+    runQuery: tx.query.bind(tx),
+  });
+  const payerContext = resolveCurrentBankPayerContext(currentBankAccount);
+  assertCurrentPayerContextCanPostPayrollLines({
+    pendingLines,
+    payerContext,
+  });
+
   const journalContext = await resolveBookAndPeriodForPaymentPostingTx(tx, {
     tenantId,
     legalEntityId,
@@ -702,46 +964,101 @@ async function createSettlementJournalTx(tx, payload) {
     : `PB-${batch.id}`;
   const description = note || `Payment batch settlement ${batch.batch_no}`;
 
-  const headerInsert = await tx.query(
-    `INSERT INTO journal_entries (
-        tenant_id,
-        legal_entity_id,
-        book_id,
-        fiscal_period_id,
-        journal_no,
-        source_type,
-        status,
-        entry_date,
-        document_date,
-        currency_code,
-        description,
-        reference_no,
-        total_debit_base,
-        total_credit_base,
-        created_by_user_id,
-        posted_by_user_id,
-        posted_at
-      )
-      VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'POSTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-    [
-      tenantId,
-      legalEntityId,
-      journalContext.bookId,
-      journalContext.fiscalPeriodId,
-      journalNo,
-      postingDate,
-      postingDate,
-      batchCurrency,
-      description,
-      referenceNo,
-      total,
-      total,
-      userId,
-      userId,
-    ]
+  const journalLines = [];
+  const mainLineNoByPaymentLineId = new Map();
+  const selfBalancingCache = {
+    operatingUnitById: new Map(),
+    partnerPairById: new Map(),
+  };
+  const hasPayrollLines = pendingLines.some(isPayrollPaymentLine);
+
+  for (const line of pendingLines) {
+    const amount = toAmount(line.amount);
+    const lineId = parsePositiveInt(line.id);
+    const payableAccountId = parsePositiveInt(line.payable_gl_account_id);
+    const subledgerReferenceNo = `PAYBATCH:${batch.id}:L${line.line_no}`;
+    if (!lineId || !payableAccountId || !(amount > 0)) {
+      throw badRequest(`Payment batch line ${line?.line_no || "?"} is invalid for posting`);
+    }
+
+    let settlementOperatingUnitId = null;
+    let ownerContext = null;
+    if (isPayrollPaymentLine(line)) {
+      ownerContext = resolvePayrollLiabilityOwnerContext(line);
+      settlementOperatingUnitId = ownerContext.operatingUnitId;
+    }
+
+    mainLineNoByPaymentLineId.set(lineId, journalLines.length + 1);
+    journalLines.push(
+      buildSettlementJournalLine({
+        accountId: payableAccountId,
+        operatingUnitId: settlementOperatingUnitId,
+        description: `Settlement ${batch.batch_no} line ${line.line_no} liability`,
+        subledgerReferenceNo,
+        currencyCode: batchCurrency,
+        debitBase: amount,
+      })
+    );
+
+    if (ownerContext && !sameOwnershipContext(payerContext, ownerContext)) {
+      // eslint-disable-next-line no-await-in-loop
+      const selfBalancingAccounts = await resolveOuSelfBalancingAccountsTx(tx, {
+        tenantId,
+        legalEntityId,
+        sourceOperatingUnitId: payerContext.operatingUnitId,
+        targetOperatingUnitId: ownerContext.operatingUnitId,
+        cache: selfBalancingCache,
+      });
+
+      journalLines.push(
+        buildSettlementJournalLine({
+          accountId: selfBalancingAccounts.targetDueToAccount.id,
+          operatingUnitId: ownerContext.operatingUnitId,
+          description: `Settlement ${batch.batch_no} line ${line.line_no} | payroll self-balance due to ${payerContext.label}`,
+          subledgerReferenceNo,
+          currencyCode: batchCurrency,
+          creditBase: amount,
+        })
+      );
+      journalLines.push(
+        buildSettlementJournalLine({
+          accountId: selfBalancingAccounts.sourceDueFromAccount.id,
+          operatingUnitId: payerContext.operatingUnitId,
+          description: `Settlement ${batch.batch_no} line ${line.line_no} | payroll self-balance due from ${ownerContext.label}`,
+          subledgerReferenceNo,
+          currencyCode: batchCurrency,
+          debitBase: amount,
+        })
+      );
+    }
+  }
+
+  journalLines.push(
+    buildSettlementJournalLine({
+      accountId: bankPostingAccount.id,
+      operatingUnitId: hasPayrollLines ? payerContext.operatingUnitId : null,
+      description: `Settlement ${batch.batch_no} bank credit`,
+      subledgerReferenceNo: `PAYBATCH:${batch.id}`,
+      currencyCode: batchCurrency,
+      creditBase: total,
+    })
   );
 
-  const journalEntryId = parsePositiveInt(headerInsert.rows?.insertId);
+  const insertResult = await insertPostedJournalWithLinesTx(tx, {
+    tenantId,
+    legalEntityId,
+    bookId: journalContext.bookId,
+    fiscalPeriodId: journalContext.fiscalPeriodId,
+    journalNo,
+    entryDate: postingDate,
+    documentDate: postingDate,
+    currencyCode: batchCurrency,
+    description,
+    referenceNo,
+    userId,
+    lines: journalLines,
+  });
+  const journalEntryId = parsePositiveInt(insertResult?.journalEntryId);
   if (!journalEntryId) {
     throw new Error("Failed to create payment settlement journal");
   }
@@ -754,69 +1071,9 @@ async function createSettlementJournalTx(tx, payload) {
   });
 
   const lineRefByPaymentLineId = new Map();
-  let journalLineNo = 1;
-  for (const line of pendingLines) {
-    const amount = toAmount(line.amount);
-    const subledgerReferenceNo = `PAYBATCH:${batch.id}:L${line.line_no}`;
-    // eslint-disable-next-line no-await-in-loop
-    await tx.query(
-      `INSERT INTO journal_lines (
-          journal_entry_id,
-          line_no,
-          account_id,
-          operating_unit_id,
-          counterparty_legal_entity_id,
-          description,
-          subledger_reference_no,
-          currency_code,
-          amount_txn,
-          debit_base,
-          credit_base,
-          tax_code
-        )
-        VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 0, NULL)`,
-      [
-        journalEntryId,
-        journalLineNo,
-        parsePositiveInt(line.payable_gl_account_id),
-        `Settlement ${batch.batch_no} line ${line.line_no}`,
-        subledgerReferenceNo,
-        batchCurrency,
-        amount,
-        amount,
-      ]
-    );
-    lineRefByPaymentLineId.set(parsePositiveInt(line.id), `JE:${journalEntryId}/L${journalLineNo}`);
-    journalLineNo += 1;
+  for (const [lineId, lineNo] of mainLineNoByPaymentLineId.entries()) {
+    lineRefByPaymentLineId.set(lineId, `JE:${journalEntryId}/L${lineNo}`);
   }
-
-  await tx.query(
-    `INSERT INTO journal_lines (
-        journal_entry_id,
-        line_no,
-        account_id,
-        operating_unit_id,
-        counterparty_legal_entity_id,
-        description,
-        subledger_reference_no,
-        currency_code,
-        amount_txn,
-        debit_base,
-        credit_base,
-        tax_code
-      )
-      VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, 0, ?, NULL)`,
-    [
-      journalEntryId,
-      journalLineNo,
-      parsePositiveInt(batch.bank_gl_account_id),
-      `Settlement ${batch.batch_no} bank credit`,
-      `PAYBATCH:${batch.id}`,
-      batchCurrency,
-      -total,
-      total,
-    ]
-  );
 
   return {
     journalEntryId,
@@ -978,6 +1235,9 @@ export async function listPaymentBatchRows({
         pb.created_at,
         ba.code AS bank_account_code,
         ba.name AS bank_account_name,
+        ba.operating_unit_id AS bank_operating_unit_id,
+        ou.code AS bank_operating_unit_code,
+        ou.name AS bank_operating_unit_name,
         le.code AS legal_entity_code,
         le.name AS legal_entity_name,
         (SELECT COUNT(*) FROM payment_batch_lines pbl WHERE pbl.batch_id = pb.id AND pbl.tenant_id = pb.tenant_id) AS line_count,
@@ -988,6 +1248,9 @@ export async function listPaymentBatchRows({
        ON ba.id = pb.bank_account_id
       AND ba.tenant_id = pb.tenant_id
       AND ba.legal_entity_id = pb.legal_entity_id
+     LEFT JOIN operating_units ou
+       ON ou.id = ba.operating_unit_id
+      AND ou.tenant_id = ba.tenant_id
      JOIN legal_entities le
        ON le.id = pb.legal_entity_id
       AND le.tenant_id = pb.tenant_id
@@ -998,7 +1261,7 @@ export async function listPaymentBatchRows({
   );
 
   return {
-    rows: listResult.rows || [],
+    rows: (listResult.rows || []).map(decoratePaymentBatchHeaderRow),
     total,
     limit: filters.limit,
     offset: filters.offset,

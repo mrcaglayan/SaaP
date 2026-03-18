@@ -16,6 +16,18 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
+function formatPayerContextLabel(row) {
+  const operatingUnitId = Number(row?.bank_operating_unit_id || 0);
+  if (!operatingUnitId) {
+    return "CENTRAL";
+  }
+  return (
+    String(row?.bank_operating_unit_code || "").trim() ||
+    String(row?.bank_operating_unit_name || "").trim() ||
+    `OU#${operatingUnitId}`
+  );
+}
+
 function buildSampleCreateJson(bankAccount) {
   return JSON.stringify(
     {
@@ -335,6 +347,9 @@ export default function PaymentBatchListPage() {
                   <td className="p-2">
                     <div>{row.bank_account_code}</div>
                     <div className="text-xs text-slate-500">{row.bank_account_name}</div>
+                    <div className="text-xs text-slate-500">
+                      {row.payer_context_label || formatPayerContextLabel(row)}
+                    </div>
                   </td>
                   <td className="p-2">{row.currency_code}</td>
                   <td className="p-2">

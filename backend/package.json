@@ -100,6 +100,8 @@
     "test:payroll:prp07": "node scripts/test-payroll-prp07-beneficiary-snapshots.js",
     "test:payroll:prp08": "node scripts/test-payroll-prp08-close-controls-checklist-locks.js",
     "test:payroll:prp09": "node scripts/test-payroll-prp09-provider-adapters.js",
+    "test:payroll:pou06": "node scripts/test-payroll-pou06-payment-prep-ui-contract.js",
+    "test:payroll:pou07": "node scripts/test-payroll-pou07-settlement-self-balancing.js",
     "test:hardening:prh01": "node scripts/test-hardening-prh01-sensitive-data.js",
     "test:hardening:prh02": "node scripts/test-hardening-prh02-job-engine.js",
     "test:hardening:prh03": "node scripts/test-hardening-prh03-query-performance.js",

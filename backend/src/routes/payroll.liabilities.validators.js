@@ -10,6 +10,7 @@ import {
 import { parsePayrollRunIdParam } from "./payroll.runs.validators.js";
 
 const LIABILITY_SCOPE_VALUES = ["NET_PAY", "STATUTORY", "ALL"];
+const LIABILITY_OWNERSHIP_SCOPE_VALUES = ["CENTRAL", "OPERATING_UNIT"];
 const LIABILITY_STATUS_VALUES = ["OPEN", "IN_BATCH", "PARTIALLY_PAID", "PAID", "CANCELLED"];
 const LIABILITY_TYPE_VALUES = [
   "NET_PAY",
@@ -48,6 +49,15 @@ export function parsePayrollLiabilityListFilters(req) {
     "liabilityType",
     LIABILITY_TYPE_VALUES
   );
+  const ownershipScope = normalizeEnumOrNull(
+    req.query?.ownershipScope ?? req.query?.ownership_scope,
+    "ownershipScope",
+    LIABILITY_OWNERSHIP_SCOPE_VALUES
+  );
+  const operatingUnitId = optionalPositiveInt(
+    req.query?.operatingUnitId ?? req.query?.operating_unit_id,
+    "operatingUnitId"
+  );
   const scope = normalizeScope(req.query?.scope, "scope", null);
   const q = normalizeText(req.query?.q, "q", 120);
   const cursor = normalizeText(req.query?.cursor, "cursor", 1200) || null;
@@ -59,6 +69,8 @@ export function parsePayrollLiabilityListFilters(req) {
     legalEntityId,
     status,
     liabilityType,
+    ownershipScope,
+    operatingUnitId,
     scope,
     q,
     cursor,
@@ -88,6 +100,10 @@ export function parsePayrollRunPaymentBatchPreviewInput(req) {
     tenantId: requireTenantId(req),
     runId: parsePayrollRunIdParam(req),
     scope: normalizeScope(req.query?.scope, "scope", "NET_PAY") || "NET_PAY",
+    bankAccountId: optionalPositiveInt(
+      req.query?.bankAccountId ?? req.query?.bank_account_id,
+      "bankAccountId"
+    ),
   };
 }
 
