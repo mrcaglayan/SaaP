@@ -104,6 +104,15 @@ async function waitForBodyText(page, value) {
   );
 }
 
+async function assertPreparedBatchBreakdown(page, { batchNo = null } = {}) {
+  await waitForBodyText(page, "Prepared Batch Breakdown");
+  if (batchNo) {
+    await waitForBodyText(page, batchNo);
+  }
+  await waitForBodyText(page, "BROWSER_POU36_OU");
+  await waitForBodyText(page, "BROWSER_POU36_OU2");
+}
+
 async function findLatestPayrollRunBySignature({
   legalEntityId,
   providerCode,
@@ -121,6 +130,20 @@ async function findLatestPayrollRunBySignature({
      ORDER BY id DESC
      LIMIT 1`,
     [Number(legalEntityId), String(providerCode || "").trim().toUpperCase(), payrollPeriod, payDate]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function findLatestPaymentBatchForRun(runId) {
+  const result = await query(
+    `SELECT id, batch_no, status
+     FROM payment_batches
+     WHERE tenant_id = 1
+       AND source_type = 'PAYROLL'
+       AND source_id = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [Number(runId)]
   );
   return result.rows?.[0] || null;
 }
@@ -417,30 +440,51 @@ async function main() {
         timeout: WAIT_MS,
       });
       await clickButtonByName(page, /Liabilities Build/i);
-      await page.getByText("Liabilities olusturuldu").waitFor({
-        state: "visible",
-        timeout: WAIT_MS,
-      });
+      await page.waitForFunction(
+        () => {
+          const text = String(document?.body?.innerText || "");
+          return (
+            text.includes("Liabilities olusturuldu") ||
+            text.includes("Liabilities zaten olusturulmus")
+          );
+        },
+        { timeout: WAIT_MS }
+      );
       await waitForBodyText(page, "CENTRAL");
       await waitForBodyText(page, "BROWSER_POU36_OU");
       await waitForBodyText(page, "BROWSER_POU36_OU2");
-      return {};
+      const bodyText = await page.evaluate(() => String(document?.body?.innerText || ""));
+      return {
+        liabilitiesAlreadyBuilt: bodyText.includes("Liabilities zaten olusturulmus"),
+      };
     });
 
     await runStep("payroll-batch-prepare", async () => {
+      const existingBatch = await findLatestPaymentBatchForRun(runId);
+      if (existingBatch?.id) {
+        batchId = Number(existingBatch.id);
+        batchNo = String(existingBatch.batch_no || "").trim() || null;
+        await assertPreparedBatchBreakdown(page, { batchNo });
+        return {
+          batchId,
+          batchNo,
+          reusedExistingBatch: true,
+        };
+      }
+
       const bankSelect = page.locator("select").filter({ hasText: "BROWSER_POU36_BANK_C" }).first();
       await bankSelect.waitFor({ state: "visible", timeout: WAIT_MS });
       await bankSelect.selectOption(centralBankAccountId);
       await clickButtonByName(page, /Payment Batch Hazirla/i);
+      await waitForBodyText(page, "Batch olustu:");
       const batchLink = page.locator('a[href*="/app/odeme-batchleri/"]').last();
       await batchLink.waitFor({ state: "visible", timeout: WAIT_MS });
       batchNo = (await batchLink.textContent())?.trim() || null;
       const href = await batchLink.getAttribute("href");
       const match = href?.match(/\/app\/odeme-batchleri\/(\d+)/);
       batchId = match?.[1] ? Number(match[1]) : null;
-      await page.getByText("CENTRAL").first().waitFor({ state: "visible", timeout: WAIT_MS });
-      await waitForBodyText(page, "BROWSER_POU36_OU");
-      await waitForBodyText(page, "BROWSER_POU36_OU2");
+      await waitForBodyText(page, "Payer context: CENTRAL");
+      await assertPreparedBatchBreakdown(page, { batchNo });
       return {
         batchId,
         batchNo,

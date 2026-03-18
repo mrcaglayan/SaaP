@@ -148,6 +148,61 @@ function formatSettlementMode(mode) {
   }
 }
 
+function summarizePreparedBatchOwnerContexts(rows) {
+  const grouped = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const ownershipScope = String(row?.ownership_scope || "").trim().toUpperCase() || "UNRESOLVED";
+    const operatingUnitId = toPositiveInt(row?.operating_unit_id || row?.operatingUnitId) || 0;
+    const key = `${ownershipScope}:${operatingUnitId}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        ownership_scope: ownershipScope,
+        operating_unit_id: operatingUnitId || null,
+        operating_unit_code:
+          String(row?.operating_unit_code || row?.operatingUnitCode || "").trim() || null,
+        operating_unit_name:
+          String(row?.operating_unit_name || row?.operatingUnitName || "").trim() || null,
+        owner_context_label: row?.owner_context_label || formatOwnerContextLabel(row),
+        liability_count: 0,
+        total_amount: 0,
+        selected_bank_settlement_mode:
+          String(row?.selected_bank_settlement_mode || "").trim() || null,
+      });
+    }
+    const current = grouped.get(key);
+    current.liability_count += 1;
+    current.total_amount += Number(row?.amount || 0);
+    if (!current.operating_unit_code) {
+      current.operating_unit_code =
+        String(row?.operating_unit_code || row?.operatingUnitCode || "").trim() || null;
+    }
+    if (!current.operating_unit_name) {
+      current.operating_unit_name =
+        String(row?.operating_unit_name || row?.operatingUnitName || "").trim() || null;
+    }
+    if (!current.selected_bank_settlement_mode && row?.selected_bank_settlement_mode) {
+      current.selected_bank_settlement_mode = row.selected_bank_settlement_mode;
+    }
+  }
+
+  return Array.from(grouped.values())
+    .sort((left, right) => {
+      const leftScope = String(left?.ownership_scope || "").trim().toUpperCase();
+      const rightScope = String(right?.ownership_scope || "").trim().toUpperCase();
+      if (leftScope !== rightScope) {
+        if (leftScope === "CENTRAL") return -1;
+        if (rightScope === "CENTRAL") return 1;
+      }
+      return String(left?.owner_context_label || "").localeCompare(
+        String(right?.owner_context_label || "")
+      );
+    })
+    .map((row) => ({
+      ...row,
+      total_amount: Number(row.total_amount || 0),
+    }));
+}
+
 export default function PayrollLiabilitiesPage() {
   const params = useParams();
   const routeRunId = toPositiveInt(params.runId ?? params.id);
@@ -276,6 +331,79 @@ export default function PayrollLiabilitiesPage() {
   const canPrepareWithSelectedBank = selectedPreviewBankAccountId
     ? currentPreview?.can_prepare_with_selected_bank === true
     : currentPreview?.can_prepare_payment_batch === true;
+  const latestLinkedBatch = useMemo(() => {
+    return (audit || []).find((row) => {
+      const action = String(row?.action || "").trim().toUpperCase();
+      const payload = row?.payload_json || {};
+      return action === "LINKED_BATCH" && toPositiveInt(payload.paymentBatchId);
+    }) || null;
+  }, [audit]);
+  const latestLinkedBatchPayload = latestLinkedBatch?.payload_json || null;
+  const preparedBatchId =
+    toPositiveInt(createdBatch?.id) || toPositiveInt(latestLinkedBatchPayload?.paymentBatchId) || null;
+  const preparedBatchNo =
+    String(createdBatch?.batch_no || latestLinkedBatchPayload?.paymentBatchNo || "").trim() || null;
+  const preparedBatchScope =
+    String(
+      createdBatch?.linkSummary?.scope ||
+        createdBatch?.preview_before_prepare?.scope ||
+        latestLinkedBatchPayload?.scope ||
+        ""
+    )
+      .trim()
+      .toUpperCase() || null;
+  const preparedBatchIdempotencyKey =
+    String(
+      createdBatch?.linkSummary?.idempotencyKey || latestLinkedBatchPayload?.idempotencyKey || ""
+    ).trim() || null;
+  const preparedBatchLinkedCount =
+    Number(createdBatch?.linkSummary?.linkedCount ?? latestLinkedBatchPayload?.linkedCount ?? 0) || 0;
+  const preparedBatchPreviewBefore = createdBatch?.preview_before_prepare || null;
+  const preparedBatchPreviewAfter = createdBatch?.preview_after_prepare || null;
+  const preparedBatchSelectedBank =
+    preparedBatchPreviewBefore?.selected_bank_account ||
+    preparedBatchPreviewAfter?.selected_bank_account ||
+    null;
+  const preparedBatchLiabilities = useMemo(() => {
+    if (Array.isArray(preparedBatchPreviewBefore?.eligible_liabilities)) {
+      return preparedBatchPreviewBefore.eligible_liabilities;
+    }
+    if (!preparedBatchId) {
+      return [];
+    }
+    return (items || []).filter(
+      (row) => toPositiveInt(row?.reserved_payment_batch_id) === preparedBatchId
+    );
+  }, [preparedBatchPreviewBefore?.eligible_liabilities, preparedBatchId, items]);
+  const preparedBatchOwnerContextSummary = useMemo(() => {
+    if (Array.isArray(preparedBatchPreviewBefore?.owner_context_summary)) {
+      return preparedBatchPreviewBefore.owner_context_summary;
+    }
+    return summarizePreparedBatchOwnerContexts(preparedBatchLiabilities);
+  }, [preparedBatchPreviewBefore?.owner_context_summary, preparedBatchLiabilities]);
+  const preparedBatchTotalAmount = useMemo(() => {
+    if (preparedBatchPreviewBefore?.total_amount !== undefined && preparedBatchPreviewBefore?.total_amount !== null) {
+      return Number(preparedBatchPreviewBefore.total_amount || 0);
+    }
+    return preparedBatchLiabilities.reduce((sum, row) => sum + Number(row?.amount || 0), 0);
+  }, [preparedBatchPreviewBefore?.total_amount, preparedBatchLiabilities]);
+  const preparedBatchMoneyMeta = useMemo(
+    () =>
+      buildAggregateMoneyMeta(preparedBatchTotalAmount, {
+        explicitCurrencyCode: runCurrencyCode,
+        rows: preparedBatchLiabilities,
+        resolveRowCurrencyCode: (row) => row?.currency_code || row?.currencyCode,
+      }),
+    [preparedBatchLiabilities, preparedBatchTotalAmount, runCurrencyCode]
+  );
+  const preparedBatchSettlementMode =
+    preparedBatchPreviewBefore?.selected_bank_evaluation?.settlement_mode || null;
+  const hasPreparedBatchBreakdown = Boolean(
+    preparedBatchId &&
+      (preparedBatchLiabilities.length > 0 ||
+        preparedBatchOwnerContextSummary.length > 0 ||
+        preparedBatchSelectedBank)
+  );
 
   function toAmount(value) {
     const parsed = Number(value);
@@ -694,7 +822,7 @@ export default function PayrollLiabilitiesPage() {
     }
     setBusy(true);
     setError("");
-    setMessage("");
+      setMessage("");
     try {
       const res = await createPayrollRunPaymentBatch(routeRunId, {
         scope,
@@ -702,7 +830,16 @@ export default function PayrollLiabilitiesPage() {
         idempotencyKey: String(batchForm.idempotencyKey || "").trim() || undefined,
         notes: String(batchForm.notes || "").trim() || undefined,
       });
-      setCreatedBatch(res?.batch || null);
+      setCreatedBatch(
+        res?.batch
+          ? {
+              ...res.batch,
+              preview_before_prepare: res?.preview_before_prepare || null,
+              preview_after_prepare: res?.preview_after_prepare || null,
+              linkSummary: res?.linkSummary || null,
+            }
+          : null
+      );
       setMessage("Payroll payment batch hazirlandi");
       if (!batchForm.idempotencyKey && res?.linkSummary?.idempotencyKey) {
         setBatchForm((prev) => ({ ...prev, idempotencyKey: res.linkSummary.idempotencyKey }));
@@ -1014,16 +1151,184 @@ export default function PayrollLiabilitiesPage() {
               </div>
             ) : null}
 
-            {createdBatch?.id ? (
+            {preparedBatchId ? (
               <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-                Batch olustu:
+                Latest prepared batch:
                 {" "}
-                <Link className="underline" to={`/app/odeme-batchleri/${createdBatch.id}`}>
-                  {createdBatch.batch_no || `#${createdBatch.id}`}
+                <Link className="underline" to={`/app/odeme-batchleri/${preparedBatchId}`}>
+                  {preparedBatchNo || `#${preparedBatchId}`}
                 </Link>
               </div>
             ) : null}
           </section>
+
+          {hasPreparedBatchBreakdown ? (
+            <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900">Prepared Batch Breakdown</h2>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Snapshot of the liabilities that were prepared into the latest payroll payment batch.
+                  </p>
+                </div>
+                <div className="text-sm text-slate-700">
+                  Batch:
+                  {" "}
+                  <Link className="font-medium underline" to={`/app/odeme-batchleri/${preparedBatchId}`}>
+                    {preparedBatchNo || `#${preparedBatchId}`}
+                  </Link>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 text-sm md:grid-cols-5">
+                <div>
+                  <div className="text-xs text-slate-500">Prepared Liabilities</div>
+                  <div className="font-medium">{preparedBatchLiabilities.length}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Prepared Total</div>
+                  <div className="font-medium">
+                    {formatAggregateMoneyValue(preparedBatchTotalAmount, preparedBatchMoneyMeta)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Scope</div>
+                  <div className="font-medium">{preparedBatchScope || "-"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Payer Context</div>
+                  <div className="font-medium">
+                    {preparedBatchSelectedBank?.payer_context_label || "Unavailable on reload"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Settlement Mode</div>
+                  <div className="font-medium">
+                    {formatSettlementMode(preparedBatchSettlementMode)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                <div>Linked count: {preparedBatchLinkedCount || preparedBatchLiabilities.length}</div>
+                <div>Owner contexts: {preparedBatchOwnerContextSummary.length}</div>
+                <div>Idempotency key: {preparedBatchIdempotencyKey || "-"}</div>
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <div className="rounded border border-emerald-200 bg-white p-3">
+                  <div className="text-xs font-semibold text-slate-700">Prepared Bank</div>
+                  {preparedBatchSelectedBank ? (
+                    <div className="mt-2 space-y-1 text-sm">
+                      <div className="font-medium">
+                        {formatBankAccountOptionLabel(preparedBatchSelectedBank)}
+                      </div>
+                      <div className="text-slate-600">
+                        Payer context: {preparedBatchSelectedBank.payer_context_label}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm text-slate-500">
+                      Bank snapshot is available immediately after prepare. After reload, the latest prepared batch still shows the prepared owner-context lines below.
+                    </div>
+                  )}
+                </div>
+                <div className="rounded border border-emerald-200 bg-white p-3">
+                  <div className="text-xs font-semibold text-slate-700">Prepared Owner Context Breakdown</div>
+                  <div className="mt-2 overflow-auto">
+                    <table className="min-w-full border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="py-1 pr-3 text-left">Context</th>
+                          <th className="py-1 pr-3 text-left">Count</th>
+                          <th className="py-1 pr-3 text-left">Amount</th>
+                          <th className="py-1 text-left">Mode</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preparedBatchOwnerContextSummary.map((row) => (
+                          <tr
+                            key={`${row.ownership_scope || "X"}-${row.operating_unit_id || 0}`}
+                            className="border-b"
+                          >
+                            <td className="py-1 pr-3">
+                              {row.owner_context_label || formatOwnerContextLabel(row)}
+                            </td>
+                            <td className="py-1 pr-3">{row.liability_count || 0}</td>
+                            <td className="py-1 pr-3">
+                              <MoneyText
+                                amount={row.total_amount}
+                                currencyCode={runDetail?.currency_code}
+                              />
+                            </td>
+                            <td className="py-1">
+                              {formatSettlementMode(row.selected_bank_settlement_mode)}
+                            </td>
+                          </tr>
+                        ))}
+                        {preparedBatchOwnerContextSummary.length === 0 ? (
+                          <tr>
+                            <td className="py-2 text-slate-500" colSpan={4}>
+                              Breakdown yok.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-auto">
+                <table className="min-w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="p-2 text-left">Liability ID</th>
+                      <th className="p-2 text-left">Type</th>
+                      <th className="p-2 text-left">Owner Context</th>
+                      <th className="p-2 text-left">Beneficiary</th>
+                      <th className="p-2 text-left">GL</th>
+                      <th className="p-2 text-left">Amount</th>
+                      <th className="p-2 text-left">Settlement</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preparedBatchLiabilities.map((row) => (
+                      <tr key={row.id} className="border-b">
+                        <td className="p-2">{row.id}</td>
+                        <td className="p-2">{row.liability_type}</td>
+                        <td className="p-2">
+                          {row.owner_context_label || formatOwnerContextLabel(row)}
+                        </td>
+                        <td className="p-2">
+                          {row.employee_code
+                            ? `${row.employee_code} - ${row.employee_name || ""}`
+                            : row.beneficiary_name}
+                        </td>
+                        <td className="p-2">{row.payable_gl_account_id}</td>
+                        <td className="p-2">
+                          <MoneyText
+                            amount={row.amount}
+                            currencyCode={row.currency_code || runDetail?.currency_code}
+                          />
+                        </td>
+                        <td className="p-2">
+                          {formatSettlementMode(row.selected_bank_settlement_mode)}
+                        </td>
+                      </tr>
+                    ))}
+                    {preparedBatchLiabilities.length === 0 ? (
+                      <tr>
+                        <td className="p-3 text-slate-500" colSpan={7}>
+                          Prepared batch liability snapshot unavailable.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
 
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="text-sm font-semibold text-slate-900">Payment Batch Preview ({scope})</h2>
