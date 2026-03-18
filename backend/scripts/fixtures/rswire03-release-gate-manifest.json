@@ -36,6 +36,11 @@
       "packageScriptName": "test:ux:raw-audit-logs-smoke"
     },
     {
+      "routePath": "/app/payroll-ownership",
+      "smokeScriptPath": "backend/scripts/test-payroll-pou08-release-gate.js",
+      "packageScriptName": "test:payroll:pou08-release-gate"
+    },
+    {
       "routePath": "/app/stok-karti-olustur",
       "smokeScriptPath": "backend/scripts/test-inventory-pr26-release-gate.js",
       "packageScriptName": "test:inventory:release-gate"
