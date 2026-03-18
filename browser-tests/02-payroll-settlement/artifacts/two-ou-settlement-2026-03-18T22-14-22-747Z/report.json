@@ -1,0 +1,88 @@
+{
+  "generatedAt": "2026-03-18T22:15:00.424Z",
+  "flow": "settlement",
+  "status": "ok",
+  "baseUrl": "http://localhost:5173",
+  "apiUrl": "http://localhost:3000",
+  "headless": true,
+  "runId": 1,
+  "runNo": "PR-202602-1-0001",
+  "batchId": 1,
+  "batchNo": "PB-1-000001",
+  "closeId": 1,
+  "artifactsDir": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\02-payroll-settlement\\artifacts\\two-ou-settlement-2026-03-18T22-14-22-747Z",
+  "prerequisiteCreationReport": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\01-payroll-creation\\two-ou-creation-browser-walk-report.json",
+  "seedScripts": [
+    {
+      "scriptName": "seed-readiness.mjs",
+      "stdout": "[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }\n{\n  \"ok\": true,\n  \"outputPath\": \"C:\\\\Users\\\\Maarif\\\\Desktop\\\\my-app\\\\browser-tests\\\\00-preparation\\\\readiness-seed-summary.json\",\n  \"summary\": {\n    \"seededAt\": \"2026-03-18T22:14:23.384Z\",\n    \"tenantId\": 1,\n    \"tenantCode\": \"DEFAULT\",\n    \"legalEntityId\": 1,\n    \"legalEntityCode\": \"BROWSER_POU36_LE\",\n    \"userId\": 1,\n    \"userEmail\": \"test@example.com\",\n    \"currencyCode\": \"TRY\",\n    \"capitalParentAccountId\": 5,\n    \"commitmentParentAccountId\": 6,\n    \"shareholderId\": 1,\n    \"workflowDefinitions\": [\n      {\n        \"code\": \"BROWSER_POU36_PERIOD_CLOSE_V1\",\n        \"definitionId\": 1,\n        \"assignmentId\": 1,\n        \"processType\": \"PERIOD_CLOSE\",\n        \"requiredPermissionCode\": \"gl.period.close\"\n      },\n      {\n        \"code\": \"BROWSER_POU36_CONSOLIDATION_V1\",\n        \"definitionId\": 2,\n        \"assignmentId\": 2,\n        \"processType\": \"CONSOLIDATION_RUN\",\n        \"requiredPermissionCode\": \"consolidation.run.finalize\"\n      }\n    ],\n    \"beforeCounts\": {\n      \"shareholders\": 1,\n      \"shareholderPurposeMappings\": 2,\n      \"activeWorkflowAssignments\": 2\n    },\n    \"afterCounts\": {\n      \"shareholders\": 1,\n      \"shareholderPurposeMappings\": 2,\n      \"activeWorkflowAssignments\": 2\n    }\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "scriptName": "seed-two-ou.mjs",
+      "stdout": "[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚡️ secrets for agents: https://dotenvx.com/as2\n{\n  \"ok\": true,\n  \"outPath\": \"C:\\\\Users\\\\Maarif\\\\Desktop\\\\my-app\\\\browser-tests\\\\01-payroll-creation\\\\two-ou-seed-summary.json\",\n  \"summary\": {\n    \"tenantId\": 1,\n    \"tenantCode\": \"DEFAULT\",\n    \"legalEntityId\": 1,\n    \"legalEntityCode\": \"BROWSER_POU36_LE\",\n    \"currencyCode\": \"TRY\",\n    \"userId\": 1,\n    \"userEmail\": \"test@example.com\",\n    \"ou1\": {\n      \"id\": 1,\n      \"code\": \"BROWSER_POU36_OU\",\n      \"name\": \"Browser Payroll Ownership OU\"\n    },\n    \"ou2\": {\n      \"id\": 2,\n      \"code\": \"BROWSER_POU36_OU2\",\n      \"name\": \"Browser Payroll Ownership OU 2\"\n    },\n    \"ou2BankGlAccountId\": 7,\n    \"ou2BankAccountId\": 3,\n    \"emp003AssignmentId\": 3,\n    \"emp003BeneficiaryId\": 3,\n    \"operatingUnitCurrentAccounts\": {\n      \"dueFromParentAccountId\": 8,\n      \"dueToParentAccountId\": 9,\n      \"dueFromParentCode\": \"136\",\n      \"dueToParentCode\": \"336\",\n      \"lastAppliedAt\": \"2026-03-18T22:14:24.000Z\",\n      \"createdAccounts\": [],\n      \"reusedAccounts\": [\n        {\n          \"id\": 10,\n          \"code\": \"136.01\",\n          \"name\": \"Central Due From BROWSER_POU36_OU\",\n          \"role\": \"CENTRAL_DUE_FROM\",\n          \"operatingUnitId\": 1\n        },\n        {\n          \"id\": 11,\n          \"code\": \"336.01\",\n          \"name\": \"BROWSER_POU36_OU Due To Central\",\n          \"role\": \"OU_DUE_TO_CENTRAL\",\n          \"operatingUnitId\": 1\n        },\n        {\n          \"id\": 12,\n          \"code\": \"136.02\",\n          \"name\": \"BROWSER_POU36_OU Due From Central\",\n          \"role\": \"OU_DUE_FROM_CENTRAL\",\n          \"operatingUnitId\": 1\n        },\n        {\n          \"id\": 13,\n          \"code\": \"336.02\",\n          \"name\": \"Central Due To BROWSER_POU36_OU\",\n          \"role\": \"CENTRAL_DUE_TO\",\n          \"operatingUnitId\": 1\n        },\n        {\n          \"id\": 14,\n          \"code\": \"136.03\",\n          \"name\": \"Central Due From BROWSER_POU36_OU2\",\n          \"role\": \"CENTRAL_DUE_FROM\",\n          \"operatingUnitId\": 2\n        },\n        {\n          \"id\": 15,\n          \"code\": \"336.03\",\n          \"name\": \"BROWSER_POU36_OU2 Due To Central\",\n          \"role\": \"OU_DUE_TO_CENTRAL\",\n          \"operatingUnitId\": 2\n        },\n        {\n          \"id\": 16,\n          \"code\": \"136.04\",\n          \"name\": \"BROWSER_POU36_OU2 Due From Central\",\n          \"role\": \"OU_DUE_FROM_CENTRAL\",\n          \"operatingUnitId\": 2\n        },\n        {\n          \"id\": 17,\n          \"code\": \"336.04\",\n          \"name\": \"Central Due To BROWSER_POU36_OU2\",\n          \"role\": \"CENTRAL_DUE_TO\",\n          \"operatingUnitId\": 2\n        },\n        {\n          \"id\": 18,\n          \"code\": \"136.05\",\n          \"name\": \"BROWSER_POU36_OU Due From BROWSER_POU36_OU2\",\n          \"role\": \"DUE_FROM\",\n          \"operatingUnitId\": 1,\n          \"partnerOperatingUnitId\": 2\n        },\n        {\n          \"id\": 19,\n          \"code\": \"336.05\",\n          \"name\": \"BROWSER_POU36_OU Due To BROWSER_POU36_OU2\",\n          \"role\": \"DUE_TO\",\n          \"operatingUnitId\": 1,\n          \"partnerOperatingUnitId\": 2\n        },\n        {\n          \"id\": 20,\n          \"code\": \"136.06\",\n          \"name\": \"BROWSER_POU36_OU2 Due From BROWSER_POU36_OU\",\n          \"role\": \"DUE_FROM\",\n          \"operatingUnitId\": 2,\n          \"partnerOperatingUnitId\": 1\n        },\n        {\n          \"id\": 21,\n          \"code\": \"336.06\",\n          \"name\": \"BROWSER_POU36_OU2 Due To BROWSER_POU36_OU\",\n          \"role\": \"DUE_TO\",\n          \"operatingUnitId\": 2,\n          \"partnerOperatingUnitId\": 1\n        }\n      ],\n      \"updatedOperatingUnits\": [],\n      \"updatedPartnerMappings\": [],\n      \"warnings\": []\n    },\n    \"scenario\": {\n      \"centralEmployeeCode\": \"EMP001\",\n      \"ou1EmployeeCode\": \"EMP002\",\n      \"ou2EmployeeCode\": \"EMP003\"\n    }\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "scriptName": "walk-two-ou-creation.mjs",
+      "stdout": "[dotenv@17.3.1] injecting env (0) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild\n{\n  \"ok\": true,\n  \"reportPath\": \"C:\\\\Users\\\\Maarif\\\\Desktop\\\\my-app\\\\browser-tests\\\\01-payroll-creation\\\\two-ou-creation-browser-walk-report.json\",\n  \"runId\": 1,\n  \"runNo\": \"PR-202602-1-0001\"\n}\n",
+      "stderr": ""
+    }
+  ],
+  "results": [
+    {
+      "name": "login",
+      "status": "ok",
+      "url": "http://localhost:5173/app",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\02-payroll-settlement\\artifacts\\two-ou-settlement-2026-03-18T22-14-22-747Z\\01-login.png",
+      "userEmail": "test@example.com"
+    },
+    {
+      "name": "payroll-liabilities-settlement-entry",
+      "status": "ok",
+      "url": "http://localhost:5173/app/payroll-runs/1/liabilities",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\02-payroll-settlement\\artifacts\\two-ou-settlement-2026-03-18T22-14-22-747Z\\02-payroll-liabilities-settlement-entry.png",
+      "runId": 1,
+      "runNo": "PR-202602-1-0001"
+    },
+    {
+      "name": "payroll-batch-prepare",
+      "status": "ok",
+      "url": "http://localhost:5173/app/payroll-runs/1/liabilities",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\02-payroll-settlement\\artifacts\\two-ou-settlement-2026-03-18T22-14-22-747Z\\03-payroll-batch-prepare.png",
+      "batchId": 1,
+      "batchNo": "PB-1-000001",
+      "reusedExistingBatch": true
+    },
+    {
+      "name": "payroll-beneficiary-snapshot",
+      "status": "ok",
+      "url": "http://localhost:5173/app/payroll-runs/1/liabilities",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\02-payroll-settlement\\artifacts\\two-ou-settlement-2026-03-18T22-14-22-747Z\\04-payroll-beneficiary-snapshot.png"
+    },
+    {
+      "name": "payroll-sync-preview",
+      "status": "ok",
+      "url": "http://localhost:5173/app/payroll-runs/1/liabilities",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\02-payroll-settlement\\artifacts\\two-ou-settlement-2026-03-18T22-14-22-747Z\\05-payroll-sync-preview.png"
+    },
+    {
+      "name": "payment-batch-detail",
+      "status": "ok",
+      "url": "http://localhost:5173/app/odeme-batchleri/1",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\02-payroll-settlement\\artifacts\\two-ou-settlement-2026-03-18T22-14-22-747Z\\06-payment-batch-detail.png"
+    },
+    {
+      "name": "payroll-close-controls",
+      "status": "ok",
+      "url": "http://localhost:5173/app/payroll-close-controls?legalEntityId=1&payrollPeriod=2026-02-01",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\02-payroll-settlement\\artifacts\\two-ou-settlement-2026-03-18T22-14-22-747Z\\07-payroll-close-controls.png",
+      "closeId": 1
+    }
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "pageErrors": []
+}

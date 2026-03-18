@@ -9,7 +9,51 @@ Below is a **PR-by-PR integration roadmap** focused only on:
 
 ---
 
-# Integration Roadmap (Bank excluded)
+# Cash + Cari Integration Historical Roadmap
+
+Status:
+- Historical planning/spec document
+- Repo-aware status checked: `2026-03-19`
+- Do not treat this file as an open backlog list
+
+Current repo status:
+- [x] PR-17 Cari and cash integration foundation
+- [x] PR-18 Cash-driven `apply-cari` flow
+- [x] PR-19 Cari-driven cash-linked settlement flow
+- [x] PR-20 Frontend integration UX for collection/payment flows
+- [x] PR-21 Contracts to Cari auto-billing
+- [x] PR-22 Contracts to RevRec auto schedule generation
+- [x] PR-23 RevRec line-level account derivation
+- [x] PR-24 Contract financial rollups
+- [x] PR-25 Settlement posting refinement and FX fallback
+- [x] PR-26 Cash cross-OU transit workflow
+
+Evidence snapshot:
+- cash/cari foundation and integrated apply:
+  - `backend/src/migrations/m027_cari_cash_integration_foundation.js`
+  - `backend/src/routes/cash.transaction.routes.js`
+  - `backend/scripts/test-cash-cari-pr18-integrated-apply.js`
+  - `backend/scripts/test-cari-pr25-settlement-posting-fx-fallback.js`
+  - `backend/scripts/test-cash-pr26-transit-workflow.js`
+- contracts/revenue chain:
+  - `npm run test:contracts-pr16`
+  - `npm run test:revenue-pr17-all`
+  - `node scripts/test-contracts-revenue-pr18.js`
+  - `npm run test:contracts-pr20`
+  - `npm run test:contracts-pr21`
+  - `npm run test:contracts-pr21-billing`
+- operational manuals:
+  - `docs/kullanim-kilavuzlari/KULLANIM_KILAVUZU_KASA_MODULU.md`
+  - `docs/kullanim-kilavuzlari/cari-islemler-kullanim-kilavuzu.md`
+  - `docs/kullanim-kilavuzlari/KULLANIM_KILAVUZU_CONTRACTS_REVENUE_PR16_PR19.md`
+
+Related status docs:
+- `PR-STEPS/02-PR-STEPS_CONTRACTS_PERIDOTS GELECEK YILLARA AIT GGELIRLER GIDERLER.md`
+- `PR-STEPS/03-CONTRACTS_FOLLOW_UPS_IMPLEMENTATION_STATUS.md`
+
+## Historical roadmap content
+
+## Integration Roadmap (Bank excluded)
 
 ## Global rules for every PR (repeat these in each PR)
 
@@ -707,7 +751,7 @@ If you want the cleanest value fast:
 7. **PR-23** revrec account derivation from contract lines (done)
 8. **PR-24** contract rollup KPIs (done)
 9. **PR-25** settlement posting/FX refinement (done)
-10. **PR-26** cross-OU transit 
+10. **PR-26** cross-OU transit (done)
 
 ---
 
@@ -722,5 +766,5 @@ This will save you from duplicate clicks / retries causing duplicate settlement 
 
 ---
 
-
-at the end, after analyzing through the all application edit the related manuals in the same style for the changes we have done in 00-CASH CARI INTEGRATION.md file that others explained in detailed with examples etc. also if you see missing ones add them as wellfor the relevant flows in the relevant manuals. 
+Documentation follow-up note:
+- user-facing explanations for these flows now live in the module manuals and runbooks listed in the status banner above

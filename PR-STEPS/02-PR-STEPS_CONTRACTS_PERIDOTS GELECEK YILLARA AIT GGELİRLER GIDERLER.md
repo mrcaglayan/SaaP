@@ -1,3 +1,32 @@
+# Contracts + Periodization Historical Implementation Spec
+
+Status:
+- Historical implementation/spec document
+- Repo-aware status checked: `2026-03-19`
+- This file covers the original `PR-16` .. `PR-19` contracts/revenue chain
+
+Current repo status:
+- [x] PR-16 Contracts foundation
+- [x] PR-17A Revenue foundation
+- [x] PR-17B DEFREV + PREPAID lifecycle
+- [x] PR-17C Accrual lifecycle
+- [x] PR-17D Reports + reconciliation
+- [x] PR-18 Contracts/revenue UI + fetch gating
+- [x] PR-19 Counterparty AR/AP mapping + posting resolution
+
+Verification snapshot:
+- `npm run test:contracts-pr16`
+- `npm run test:revenue-pr17-all`
+- `node scripts/test-contracts-revenue-pr18.js`
+- `npm run test:cari-pr19`
+- `npm run test:cari-pr19-frontend-smoke`
+- Usage guide: `docs/kullanim-kilavuzlari/KULLANIM_KILAVUZU_CONTRACTS_REVENUE_PR16_PR19.md`
+
+Follow-up status:
+- `PR-20` .. `PR-29` are tracked in `PR-STEPS/03-CONTRACTS_FOLLOW_UPS_IMPLEMENTATION_STATUS.md`
+
+## Historical spec content
+
 ## 9) PR-16: Contracts Foundation (Backend First)
 
 ### Goal

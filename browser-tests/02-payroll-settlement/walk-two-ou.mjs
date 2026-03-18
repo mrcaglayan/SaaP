@@ -1,174 +1,55 @@
-import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
-import { spawnSync } from "node:child_process";
-import { closePool, query } from "../../backend/src/db.js";
+import { closePool } from "../../backend/src/db.js";
+import {
+  chromium,
+  BASE_URL,
+  API_URL,
+  LOGIN_EMAIL,
+  LOGIN_PASSWORD,
+  CHROME_PATH,
+  HEADLESS,
+  WAIT_MS,
+  SCENARIO,
+  resolveFixtureDir,
+  timestampToken,
+  sanitizeForFile,
+  ensureDir,
+  runNodeScript,
+  readJson,
+  writeJson,
+  takeStepScreenshot,
+  waitForQuiet,
+  clickButtonByName,
+  fillDateInput,
+  fillInputByLabel,
+  waitForBodyText,
+  assertPreparedBatchBreakdown,
+  findLatestPaymentBatchForRun,
+} from "../shared/pou36.browser-utils.mjs";
 
-const requireFromFrontend = createRequire(new URL("../../frontend/package.json", import.meta.url));
-const { chromium } = requireFromFrontend("playwright-core");
-
-const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
+const FIXTURE_DIR = resolveFixtureDir(import.meta.url);
+const PREPARATION_DIR = path.resolve(FIXTURE_DIR, "../00-preparation");
 const CREATION_DIR = path.resolve(FIXTURE_DIR, "../01-payroll-creation");
 const ARTIFACT_ROOT = path.join(FIXTURE_DIR, "artifacts");
-const CSV_PATH = path.join(CREATION_DIR, "payroll-starter-template.csv");
-const BASE_URL = process.env.POU36_BASE_URL || "http://localhost:5173";
-const API_URL = process.env.POU36_API_URL || "http://localhost:3000";
-const LOGIN_EMAIL = process.env.POU36_EMAIL || "test@example.com";
-const LOGIN_PASSWORD = process.env.POU36_PASSWORD || "123456";
-const CHROME_PATH =
-  process.env.POU36_CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const HEADLESS = process.env.POU36_HEADLESS !== "0";
-const WAIT_MS = 30000;
-
-function timestampToken() {
-  const now = new Date();
-  return now.toISOString().replace(/[:.]/g, "-");
-}
-
-function sanitizeForFile(value) {
-  return String(value || "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-async function ensureDir(dirPath) {
-  await fs.mkdir(dirPath, { recursive: true });
-}
-
-function runNodeScript(scriptName) {
-  const scriptPath = path.resolve(FIXTURE_DIR, scriptName);
-  const result = spawnSync(process.execPath, [scriptPath], {
-    cwd: ROOT_DIR,
-    encoding: "utf8",
-    stdio: "pipe",
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `Script failed: ${scriptName}\nSTDOUT:\n${result.stdout || ""}\nSTDERR:\n${result.stderr || ""}`
-    );
-  }
-  return {
-    scriptName,
-    stdout: result.stdout || "",
-    stderr: result.stderr || "",
-  };
-}
-
-async function takeStepScreenshot(page, artifactDir, stepIndex, stepName) {
-  const prefix = String(stepIndex).padStart(2, "0");
-  const filePath = path.join(artifactDir, `${prefix}-${stepName}.png`);
-  await page.screenshot({ path: filePath, fullPage: true });
-  return filePath;
-}
-
-async function waitForQuiet(page, ms = 250) {
-  await page.waitForTimeout(ms);
-}
-
-async function clickButtonByName(page, name) {
-  const button = page.getByRole("button", { name }).first();
-  await button.waitFor({ state: "visible", timeout: WAIT_MS });
-  await button.click();
-}
-
-async function fillDateInput(page, label, value) {
-  const input = page.getByLabel(label).first();
-  await input.waitFor({ state: "visible", timeout: WAIT_MS });
-  await input.fill(value);
-}
-
-async function fillInputByLabel(page, label, value) {
-  const input = page.getByLabel(label).first();
-  await input.waitFor({ state: "visible", timeout: WAIT_MS });
-  await input.fill(value);
-}
-
-function getInputFollowingLabel(page, labelText) {
-  return page
-    .locator(`label:has-text("${labelText}")`)
-    .locator("xpath=following-sibling::input[1]")
-    .first();
-}
-
-async function waitForBodyText(page, value) {
-  const expected = String(value || "").trim();
-  if (!expected) {
-    throw new Error("waitForBodyText requires a non-empty value");
-  }
-  await page.waitForFunction(
-    (needle) => String(document?.body?.innerText || "").includes(needle),
-    expected,
-    { timeout: WAIT_MS }
-  );
-}
-
-async function assertPreparedBatchBreakdown(page, { batchNo = null } = {}) {
-  await waitForBodyText(page, "Prepared Batch Breakdown");
-  if (batchNo) {
-    await waitForBodyText(page, batchNo);
-  }
-  await waitForBodyText(page, "BROWSER_POU36_OU");
-  await waitForBodyText(page, "BROWSER_POU36_OU2");
-}
-
-async function findLatestPayrollRunBySignature({
-  legalEntityId,
-  providerCode,
-  payrollPeriod,
-  payDate,
-}) {
-  const result = await query(
-    `SELECT id, run_no, status
-     FROM payroll_runs
-     WHERE tenant_id = 1
-       AND legal_entity_id = ?
-       AND provider_code = ?
-       AND payroll_period = ?
-       AND pay_date = ?
-     ORDER BY id DESC
-     LIMIT 1`,
-    [Number(legalEntityId), String(providerCode || "").trim().toUpperCase(), payrollPeriod, payDate]
-  );
-  return result.rows?.[0] || null;
-}
-
-async function findLatestPaymentBatchForRun(runId) {
-  const result = await query(
-    `SELECT id, batch_no, status
-     FROM payment_batches
-     WHERE tenant_id = 1
-       AND source_type = 'PAYROLL'
-       AND source_id = ?
-     ORDER BY id DESC
-     LIMIT 1`,
-    [Number(runId)]
-  );
-  return result.rows?.[0] || null;
-}
-
-async function withDialog(page, handler, action) {
-  const dialogPromise = page.waitForEvent("dialog", { timeout: WAIT_MS });
-  await action();
-  const dialog = await dialogPromise;
-  await handler(dialog);
-}
+const REPORT_PATH = path.join(FIXTURE_DIR, "two-ou-settlement-browser-walk-report.json");
 
 async function main() {
   const runToken = timestampToken();
-  const artifactDir = path.join(ARTIFACT_ROOT, `two-ou-walk-${runToken}`);
+  const artifactDir = path.join(ARTIFACT_ROOT, `two-ou-settlement-${runToken}`);
   await ensureDir(artifactDir);
 
   const scriptRuns = [];
-  scriptRuns.push(runNodeScript("../01-payroll-creation/seed-readiness.mjs"));
-  scriptRuns.push(runNodeScript("seed-two-ou.mjs"));
+  scriptRuns.push(runNodeScript(PREPARATION_DIR, "seed-readiness.mjs"));
+  scriptRuns.push(runNodeScript(CREATION_DIR, "seed-two-ou.mjs"));
+  scriptRuns.push(runNodeScript(CREATION_DIR, "walk-two-ou-creation.mjs"));
 
-  const csvText = await fs.readFile(CSV_PATH, "utf8");
-  const baseSeedSummary = JSON.parse(
-    await fs.readFile(path.join(CREATION_DIR, "seed-summary.json"), "utf8")
+  const creationReport = await readJson(
+    path.join(CREATION_DIR, "two-ou-creation-browser-walk-report.json")
   );
+  if (creationReport?.status !== "ok" || !creationReport?.runId) {
+    throw new Error("Creation prerequisite report is missing or failed");
+  }
+  const baseSeedSummary = await readJson(path.join(CREATION_DIR, "seed-summary.json"));
   const centralBankAccountId = String(baseSeedSummary?.centralBankAccountId || "");
   const browser = await chromium.launch({
     headless: HEADLESS,
@@ -182,8 +63,8 @@ async function main() {
   const pageErrors = [];
   const results = [];
   let stepCounter = 0;
-  let runId = null;
-  let runNo = null;
+  const runId = Number(creationReport.runId);
+  const runNo = String(creationReport.runNo || "").trim() || null;
   let batchId = null;
   let batchNo = null;
   let closeId = null;
@@ -237,202 +118,7 @@ async function main() {
       };
     });
 
-    await runStep("readiness-checklist-details", async () => {
-      await page.goto(`${BASE_URL}/app/ayarlar/organizasyon-yonetimi`, {
-        waitUntil: "domcontentloaded",
-      });
-      const checklist = page
-        .locator("section")
-        .filter({
-          hasText: /Tenant Readiness Checklist|Kiraci Hazirlik Kontrol Listesi/i,
-        })
-        .first();
-      await checklist.waitFor({ state: "visible", timeout: WAIT_MS });
-      const detailsButton = checklist
-        .getByRole("button", {
-          name: /Show details|Detaylari Goster|Hide details|Detaylari Gizle/i,
-        })
-        .first();
-      await detailsButton.waitFor({ state: "visible", timeout: WAIT_MS });
-      const buttonLabel = ((await detailsButton.textContent()) || "").trim();
-      if (/Show details|Detaylari Goster/i.test(buttonLabel)) {
-        await detailsButton.click();
-      }
-      await checklist
-        .getByText(
-          /Operating-unit current-account readiness|Operasyon birimi cari hesap hazirligi/i
-        )
-        .first()
-        .waitFor({
-          state: "visible",
-          timeout: WAIT_MS,
-        });
-      const checklistText = ((await checklist.textContent()) || "")
-        .replace(/\s+/g, " ")
-        .trim();
-      return {
-        checklistExcerpt: checklistText.slice(0, 600),
-      };
-    });
-
-    await runStep("payroll-ownership", async () => {
-      await page.goto(`${BASE_URL}/app/payroll-ownership`, { waitUntil: "domcontentloaded" });
-      await page.getByRole("heading", { name: "Payroll Ownership" }).waitFor({
-        state: "visible",
-        timeout: WAIT_MS,
-      });
-      await clickButtonByName(page, /^Load$/);
-      await page.getByText("EMP001").waitFor({ state: "visible", timeout: WAIT_MS });
-      await page.getByText("EMP002").waitFor({ state: "visible", timeout: WAIT_MS });
-      await page.getByText("EMP003").waitFor({ state: "visible", timeout: WAIT_MS });
-      await waitForBodyText(page, "BROWSER_POU36_OU");
-      await waitForBodyText(page, "BROWSER_POU36_OU2");
-      return {
-        employees: ["EMP001", "EMP002", "EMP003"],
-      };
-    });
-
-    await runStep("payroll-mappings", async () => {
-      await page.goto(`${BASE_URL}/app/payroll-mappings`, { waitUntil: "domcontentloaded" });
-      await page.getByRole("heading", { name: "Bordro Mappingleri" }).waitFor({
-        state: "visible",
-        timeout: WAIT_MS,
-      });
-      await clickButtonByName(page, /Listele/i);
-      await waitForBodyText(page, "Toplam kayit: 12");
-      await waitForBodyText(page, "BASE_SALARY_EXPENSE");
-      await waitForBodyText(page, "EMPLOYEE_SOCIAL_SECURITY_PAYABLE");
-      return {
-        providerCode: "BROWSER_POU36",
-      };
-    });
-
-    await runStep("payroll-beneficiaries-ou1", async () => {
-      await page.goto(`${BASE_URL}/app/payroll-beneficiaries`, { waitUntil: "domcontentloaded" });
-      await page.getByRole("heading", { name: "Payroll Beneficiaries" }).waitFor({
-        state: "visible",
-        timeout: WAIT_MS,
-      });
-      await fillInputByLabel(page, /Employee Code \*/i, "EMP002");
-      await clickButtonByName(page, /^Load$/);
-      await page.getByText("EMP002").first().waitFor({ state: "visible", timeout: WAIT_MS });
-      return { employeeCode: "EMP002" };
-    });
-
-    await runStep("payroll-beneficiaries-ou2", async () => {
-      await fillInputByLabel(page, /Employee Code \*/i, "EMP003");
-      await clickButtonByName(page, /^Load$/);
-      await page.getByText("EMP003").first().waitFor({ state: "visible", timeout: WAIT_MS });
-      return { employeeCode: "EMP003" };
-    });
-
-    await runStep("payroll-import", async () => {
-      await page.goto(`${BASE_URL}/app/payroll-runs/import`, { waitUntil: "domcontentloaded" });
-      await page.getByRole("heading", { name: "Bordro Import" }).waitFor({
-        state: "visible",
-        timeout: WAIT_MS,
-      });
-      const providerCodeInput = getInputFollowingLabel(page, "Provider Code");
-      await providerCodeInput.waitFor({ state: "visible", timeout: WAIT_MS });
-      await providerCodeInput.fill("BROWSER_POU36");
-      const payrollPeriodInput = getInputFollowingLabel(page, "Payroll Period");
-      await payrollPeriodInput.waitFor({ state: "visible", timeout: WAIT_MS });
-      await payrollPeriodInput.fill("2026-02-01");
-      const payDateInput = getInputFollowingLabel(page, "Pay Date");
-      await payDateInput.waitFor({ state: "visible", timeout: WAIT_MS });
-      await payDateInput.fill("2026-02-15");
-      const sourceBatchRefInput = getInputFollowingLabel(page, "Source Batch Ref");
-      await sourceBatchRefInput.waitFor({ state: "visible", timeout: WAIT_MS });
-      await sourceBatchRefInput.fill(`BROWSER-POU36-${runToken}`);
-      await page.locator("textarea").first().fill(csvText);
-      await clickButtonByName(page, /Payroll CSV Import/i);
-      await page.waitForFunction(
-        () => {
-          const text = String(document?.body?.innerText || "");
-          return (
-            text.includes("Payroll CSV iceri aktarildi") ||
-            text.includes("Payroll CSV already imported")
-          );
-        },
-        { timeout: WAIT_MS }
-      );
-
-      const bodyText = await page.evaluate(() => String(document?.body?.innerText || ""));
-      if (bodyText.includes("Payroll CSV already imported")) {
-        const existingRun = await findLatestPayrollRunBySignature({
-          legalEntityId: 1,
-          providerCode: "BROWSER_POU36",
-          payrollPeriod: "2026-02-01",
-          payDate: "2026-02-15",
-        });
-        if (!existingRun?.id) {
-          throw new Error("Duplicate import detected but no matching existing payroll run was found");
-        }
-        runId = Number(existingRun.id);
-        runNo = String(existingRun.run_no || "").trim() || null;
-        return {
-          runId,
-          runNo,
-          duplicateImportReused: true,
-        };
-      }
-
-      const hrefHandle = await page.waitForFunction(
-        () => {
-          const anchor = Array.from(document.querySelectorAll('a[href]')).find((node) =>
-            /\/app\/payroll-runs\/\d+$/.test(node.getAttribute("href") || "")
-          );
-          return anchor ? anchor.getAttribute("href") : null;
-        },
-        { timeout: WAIT_MS }
-      );
-      const runHref = await hrefHandle.jsonValue();
-      if (typeof runHref !== "string" || !runHref) {
-        throw new Error("Imported payroll run link not found on result panel");
-      }
-      const runLink = page.locator(`a[href="${runHref}"]`).first();
-      const label = (await runLink.textContent())?.trim() || "";
-      runNo = label || null;
-      const match = runHref.match(/\/app\/payroll-runs\/(\d+)/);
-      runId = match?.[1] ? Number(match[1]) : null;
-      return {
-        runId,
-        runNo,
-      };
-    });
-
-    await runStep("payroll-run-detail", async () => {
-      if (!runId) throw new Error("runId missing after import");
-      await page.goto(`${BASE_URL}/app/payroll-runs/${runId}`, { waitUntil: "domcontentloaded" });
-      await page.getByRole("link", { name: /Liabilities & Payment Prep/i }).waitFor({
-        state: "visible",
-        timeout: WAIT_MS,
-      });
-      await page.getByText("EMP001").waitFor({ state: "visible", timeout: WAIT_MS });
-      await page.getByText("EMP002").waitFor({ state: "visible", timeout: WAIT_MS });
-      await page.getByText("EMP003").waitFor({ state: "visible", timeout: WAIT_MS });
-      await waitForBodyText(page, "BROWSER_POU36_OU");
-      await waitForBodyText(page, "BROWSER_POU36_OU2");
-      return {};
-    });
-
-    await runStep("payroll-review-finalize", async () => {
-      let bodyText = await page.evaluate(() => String(document?.body?.innerText || ""));
-      if (!bodyText.includes("REVIEWED") && !bodyText.includes("FINALIZED")) {
-        await clickButtonByName(page, /Mark Reviewed/i);
-        await waitForBodyText(page, "REVIEWED");
-        bodyText = await page.evaluate(() => String(document?.body?.innerText || ""));
-      }
-      if (!bodyText.includes("FINALIZED")) {
-        await clickButtonByName(page, /Finalize \+ Post Accrual/i);
-      }
-      await waitForBodyText(page, "Run FINALIZED.");
-      return {
-        alreadyFinalized: bodyText.includes("FINALIZED"),
-      };
-    });
-
-    await runStep("payroll-liabilities-build", async () => {
+    await runStep("payroll-liabilities-settlement-entry", async () => {
       await page.goto(`${BASE_URL}/app/payroll-runs/${runId}/liabilities`, {
         waitUntil: "domcontentloaded",
       });
@@ -440,23 +126,12 @@ async function main() {
         state: "visible",
         timeout: WAIT_MS,
       });
-      await clickButtonByName(page, /Liabilities Build/i);
-      await page.waitForFunction(
-        () => {
-          const text = String(document?.body?.innerText || "");
-          return (
-            text.includes("Liabilities olusturuldu") ||
-            text.includes("Liabilities zaten olusturulmus")
-          );
-        },
-        { timeout: WAIT_MS }
-      );
       await waitForBodyText(page, "CENTRAL");
-      await waitForBodyText(page, "BROWSER_POU36_OU");
-      await waitForBodyText(page, "BROWSER_POU36_OU2");
-      const bodyText = await page.evaluate(() => String(document?.body?.innerText || ""));
+      await waitForBodyText(page, SCENARIO.operatingUnitCodes.ou1);
+      await waitForBodyText(page, SCENARIO.operatingUnitCodes.ou2);
       return {
-        liabilitiesAlreadyBuilt: bodyText.includes("Liabilities zaten olusturulmus"),
+        runId,
+        runNo,
       };
     });
 
@@ -473,7 +148,10 @@ async function main() {
         };
       }
 
-      const bankSelect = page.locator("select").filter({ hasText: "BROWSER_POU36_BANK_C" }).first();
+      const bankSelect = page
+        .locator("select")
+        .filter({ hasText: SCENARIO.centralBankAccountCode })
+        .first();
       await bankSelect.waitFor({ state: "visible", timeout: WAIT_MS });
       await bankSelect.selectOption(centralBankAccountId);
       await clickButtonByName(page, /Payment Batch Hazirla/i);
@@ -493,9 +171,7 @@ async function main() {
     });
 
     await runStep("payroll-beneficiary-snapshot", async () => {
-      const snapshotButton = page
-        .getByRole("button", { name: "Snapshot" })
-        .first();
+      const snapshotButton = page.getByRole("button", { name: "Snapshot" }).first();
       await snapshotButton.waitFor({ state: "visible", timeout: WAIT_MS });
       await snapshotButton.click();
       await page.getByRole("heading", { name: /Beneficiary Snapshot/i }).waitFor({
@@ -516,7 +192,9 @@ async function main() {
     });
 
     await runStep("payment-batch-detail", async () => {
-      if (!batchId) throw new Error("batchId missing after prepare");
+      if (!batchId) {
+        throw new Error("batchId missing after prepare");
+      }
       await page.goto(`${BASE_URL}/app/odeme-batchleri/${batchId}`, {
         waitUntil: "domcontentloaded",
       });
@@ -532,7 +210,7 @@ async function main() {
 
     await runStep("payroll-close-controls", async () => {
       await page.goto(
-        `${BASE_URL}/app/payroll-close-controls?legalEntityId=1&payrollPeriod=2026-02-01`,
+        `${BASE_URL}/app/payroll-close-controls?legalEntityId=${SCENARIO.legalEntityId}&payrollPeriod=${SCENARIO.payrollPeriod}`,
         { waitUntil: "domcontentloaded" }
       );
       await page.getByRole("heading", { name: "Payroll Close Controls" }).waitFor({
@@ -547,16 +225,12 @@ async function main() {
         state: "visible",
         timeout: WAIT_MS,
       });
-      const closeIdMatch = page.url().match(/close-controls(?:\?.*)?$/);
-      void closeIdMatch;
       const closeLabel = page.getByText(/Close #\d+/).first();
       await closeLabel.waitFor({ state: "visible", timeout: WAIT_MS });
       const closeText = (await closeLabel.textContent()) || "";
       const match = closeText.match(/Close #(\d+)/);
       closeId = match?.[1] ? Number(match[1]) : null;
-      return {
-        closeId,
-      };
+      return { closeId };
     });
   } finally {
     await browser.close();
@@ -564,6 +238,7 @@ async function main() {
 
   const report = {
     generatedAt: new Date().toISOString(),
+    flow: "settlement",
     status: "ok",
     baseUrl: BASE_URL,
     apiUrl: API_URL,
@@ -574,29 +249,27 @@ async function main() {
     batchNo,
     closeId,
     artifactsDir: artifactDir,
+    prerequisiteCreationReport: path.join(CREATION_DIR, "two-ou-creation-browser-walk-report.json"),
     seedScripts: scriptRuns,
     results,
     consoleErrors,
     pageErrors,
   };
 
-  const reportPath = path.join(FIXTURE_DIR, "two-ou-browser-walk-report.json");
-  await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  const artifactReportPath = path.join(artifactDir, "report.json");
-  await fs.writeFile(artifactReportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  console.log(JSON.stringify({ ok: true, reportPath, artifactReportPath, runId, batchId, closeId }, null, 2));
+  await writeJson(REPORT_PATH, report);
+  await writeJson(path.join(artifactDir, "report.json"), report);
+  console.log(JSON.stringify({ ok: true, reportPath: REPORT_PATH, runId, batchId, closeId }, null, 2));
 }
 
 try {
   await main();
 } catch (err) {
-  const reportPath = path.join(FIXTURE_DIR, "two-ou-browser-walk-report.json");
-  const failure = {
+  await writeJson(REPORT_PATH, {
     generatedAt: new Date().toISOString(),
+    flow: "settlement",
     status: "failed",
     error: err?.stack || err?.message || String(err),
-  };
-  await fs.writeFile(reportPath, `${JSON.stringify(failure, null, 2)}\n`, "utf8");
+  });
   console.error(err);
   process.exitCode = 1;
 } finally {

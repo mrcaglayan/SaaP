@@ -34192,7 +34192,7 @@ Reference context docs:
 
 - `01-PR_STEPS CARI.md`
 - `02-PR-STEPS_CONTRACTS_PERIDOTS GELECEK YILLARA AIT GGELİRLER GIDERLER.md`
-- `03-PR_FOLLOW_UPS_OF_CONTRACTS_PERIDOS.md`
+- `03-CONTRACTS_FOLLOW_UPS_IMPLEMENTATION_STATUS.md`
 - `05-gelir gider thaakkukları.md`
 
 ### Integration tracker
@@ -34358,7 +34358,7 @@ Scope:
 Reference:
 
 - `02-PR-STEPS_CONTRACTS_PERIDOTS GELECEK YILLARA AIT GGELİRLER GIDERLER.md`
-- `03-PR_FOLLOW_UPS_OF_CONTRACTS_PERIDOS.md`
+- `03-CONTRACTS_FOLLOW_UPS_IMPLEMENTATION_STATUS.md`
 
 Acceptance:
 
@@ -34418,4 +34418,3 @@ Implementation notes:
   - final summary prints per-stage duration/status.
 - Updated CI workflow:
   - `.github/workflows/backend-release-gate.yml` now exposes `workflow_dispatch` inputs mapped to unified gate env flags.
-

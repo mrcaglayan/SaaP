@@ -29,6 +29,14 @@ function toUpper(value) {
     .toUpperCase();
 }
 
+function resolveRowVersion(value) {
+  const rowVersion = Number(value?.rowVersion ?? value?.row_version ?? value);
+  if (!Number.isFinite(rowVersion) || rowVersion <= 0) {
+    throw new Error("rowVersion missing from counterparty payload");
+  }
+  return rowVersion;
+}
+
 async function apiRequest({
   token,
   method = "GET",
@@ -1185,6 +1193,7 @@ async function main() {
       method: "PUT",
       requestPath: `/api/v1/cari/counterparties/${mappedCustomerId}`,
       body: {
+        rowVersion: resolveRowVersion(detailBeforeOmittedUpdate),
         name: "PR19 Customer Mapped Updated",
       },
       expectedStatus: 200,
@@ -1200,6 +1209,7 @@ async function main() {
       method: "PUT",
       requestPath: `/api/v1/cari/counterparties/${mappedCustomerId}`,
       body: {
+        rowVersion: resolveRowVersion(detailAfterOmittedUpdate),
         arAccountId: null,
       },
       expectedStatus: 200,
@@ -1229,11 +1239,13 @@ async function main() {
       "List enrichment fields should return null when AR mapping is null"
     );
 
+    const vendorBeforeNullClear = await getCounterparty(token, mappedVendorId);
     await apiRequest({
       token,
       method: "PUT",
       requestPath: `/api/v1/cari/counterparties/${mappedVendorId}`,
       body: {
+        rowVersion: resolveRowVersion(vendorBeforeNullClear),
         apAccountId: null,
       },
       expectedStatus: 200,
