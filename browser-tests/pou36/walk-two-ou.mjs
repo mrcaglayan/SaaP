@@ -393,11 +393,19 @@ async function main() {
     });
 
     await runStep("payroll-review-finalize", async () => {
-      await clickButtonByName(page, /Mark Reviewed/i);
-      await page.getByText("REVIEWED").first().waitFor({ state: "visible", timeout: WAIT_MS });
-      await clickButtonByName(page, /Finalize \+ Post Accrual/i);
-      await page.getByText("Run FINALIZED.").waitFor({ state: "visible", timeout: WAIT_MS });
-      return {};
+      let bodyText = await page.evaluate(() => String(document?.body?.innerText || ""));
+      if (!bodyText.includes("REVIEWED") && !bodyText.includes("FINALIZED")) {
+        await clickButtonByName(page, /Mark Reviewed/i);
+        await waitForBodyText(page, "REVIEWED");
+        bodyText = await page.evaluate(() => String(document?.body?.innerText || ""));
+      }
+      if (!bodyText.includes("FINALIZED")) {
+        await clickButtonByName(page, /Finalize \+ Post Accrual/i);
+      }
+      await waitForBodyText(page, "Run FINALIZED.");
+      return {
+        alreadyFinalized: bodyText.includes("FINALIZED"),
+      };
     });
 
     await runStep("payroll-liabilities-build", async () => {
@@ -413,7 +421,7 @@ async function main() {
         state: "visible",
         timeout: WAIT_MS,
       });
-      await page.getByText("CENTRAL").first().waitFor({ state: "visible", timeout: WAIT_MS });
+      await waitForBodyText(page, "CENTRAL");
       await waitForBodyText(page, "BROWSER_POU36_OU");
       await waitForBodyText(page, "BROWSER_POU36_OU2");
       return {};
