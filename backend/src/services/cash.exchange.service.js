@@ -954,6 +954,7 @@ async function postDirectExchangeBatch({
         journalEntryId: sharedJournalEntryId,
         sourceRefType: "CASH_TRANSACTION",
         sourceRefId: parsePositiveInt(lockedInTxn.id),
+        linkRole: "SUPPORTING",
       });
 
       await postCashTransaction({
@@ -1247,6 +1248,7 @@ async function reverseDirectExchangeBatch({
         journalEntryId: reversalJournalEntryId,
         sourceRefType: "CASH_TRANSACTION",
         sourceRefId: parsePositiveInt(reversalInTxn.id),
+        linkRole: "SUPPORTING",
       });
 
       await postCashTransaction({
