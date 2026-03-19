@@ -21,3 +21,5 @@ what happens etc.
 
 
 let's move to the next step, do it after fully reading analyzing the file of 06-CANONICAL-IMPLEMENTATION-PLAN and marke what is completed what is next after each steps been done. in following style.After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.
+
+let's move to the next step, first read   from top to bottom, when you stuck or get lost use the file as references cuz it has the plan how things been locked and needed to be imlpemented etc. Once you complete make the master tracker completed. from `[ ]` to `[x]`

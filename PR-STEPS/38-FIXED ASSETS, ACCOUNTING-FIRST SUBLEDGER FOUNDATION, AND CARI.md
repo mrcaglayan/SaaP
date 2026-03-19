@@ -21,16 +21,16 @@
 ## Execution Tracking
 - This file now has two layers:
   - feature-scope sections `FA01` to `FA14`, which define business and technical requirements
-  - serialized execution sections `PR-FA01` to `PR-FA20`, which define review-sized implementation steps
-- When using Codex for implementation, prompt against one `PR-FA##` step at a time.
+  - serialized execution sections `STEP-FA01` to `STEP-FA48`, which define review-sized implementation steps
+- When using Codex for implementation, prompt against one `STEP-FA##` step at a time.
 - A Codex prompt should name:
-  - the single `PR-FA##` patch target
+  - the single `STEP-FA##` patch target
   - the files or surfaces that are in scope
   - the step-level definition of done
   - any explicit non-goals for that patch
-- Do not ask Codex to span multiple `PR-FA##` steps in one patch unless the later step is directly blocked by the earlier one and the combined change is still review-sized.
+- Do not ask Codex to span multiple `STEP-FA##` steps in one patch unless the later step is directly blocked by the earlier one and the combined change is still review-sized.
 - Update the master tracker checkbox only when the step-level definition of done is actually satisfied.
-- Treat the feature-scope sections below as the source of truth for requirements; treat the serialized `PR-FA##` sections as the source of truth for implementation order.
+- Treat the feature-scope sections below as the source of truth for requirements; treat the serialized `STEP-FA##` sections as the source of truth for implementation order.
 
 ## Repo Reality Check
 
@@ -61,8 +61,10 @@ The frontend fixed-assets surface is not greenfield, but it is still largely she
 Current reality:
 - `frontend/src/App.jsx` already contains fixed-assets routes
 - `frontend/src/layouts/sidebarConfig.js` already contains fixed-assets sidebar entries
+- `frontend/src/layouts/AppLayout.jsx` already contains shared demirbas/asset/amortisman app-chrome icon heuristics
 - `frontend/src/i18n/messages.js` already contains fixed-assets labels
 - `frontend/src/pages/fixedAssets/*` already contains dedicated fixed-assets page files
+- `frontend/src/pages/fixedAssets/FixedAssetModulePage.jsx` is part of the current scaffold dependency layer used by multiple fixed-assets page scaffolds
 - `frontend/src/api/fixedAssets.js` already exists as a partial API helper
 - those frontend pages are still scaffolds/placeholders for much of the real behavior; they are not yet complete feature pages
 
@@ -70,6 +72,8 @@ Planning implication:
 - describe backend fixed-assets as greenfield
 - describe frontend fixed-assets as scaffolded but unimplemented
 - do not describe frontend fixed-assets pages, routes, labels, or API wiring as missing from zero
+- do not omit `frontend/src/pages/fixedAssets/FixedAssetModulePage.jsx` from frontend repo-surface planning just because it is a shared wrapper rather than a primary route page
+- treat `frontend/src/layouts/AppLayout.jsx` as a verify/update surface only if shared demirbas navigation chrome or icon heuristics need cleanup; do not treat it as a primary fixed-assets page
 
 ### Backend architecture in this repo
 This repo does not use a separate entity/model layer for domain implementation.
@@ -380,13 +384,15 @@ Locked direction:
 - replace old placeholder behavior with real fixed-assets pages inside that existing folder
 - normalize the route family around the updated plan
 
-### Current frontend route, label, page, and API scaffolds already exist
-`frontend/src/App.jsx`, `frontend/src/layouts/sidebarConfig.js`, `frontend/src/i18n/messages.js`, `frontend/src/pages/fixedAssets/*`, and `frontend/src/api/fixedAssets.js` already contain the fixed-assets scaffold surface.
+### Current frontend route, label, page, API, and app-chrome scaffolds already exist
+`frontend/src/App.jsx`, `frontend/src/layouts/sidebarConfig.js`, `frontend/src/layouts/AppLayout.jsx`, `frontend/src/i18n/messages.js`, `frontend/src/pages/fixedAssets/*`, and `frontend/src/api/fixedAssets.js` already contain the fixed-assets scaffold surface.
 
 Planning implication:
 - treat those files as verify/update/replace surfaces, not foundational missing gaps
 - the page files are scaffold shells that need implementation work, not missing frontend modules that need to be created from zero
 - normalize legacy aliases, redirects, and labels only where needed to match the locked canonical routes and behavior
+- the repo also still carries legacy alias handling around `/app/demirbaslar`; keep-or-retire that alias explicitly rather than leaving it implicit behind the newer canonical route set
+- treat `frontend/src/layouts/AppLayout.jsx` demirbas icon heuristics as shared chrome that may need verification when route naming or alias cleanup changes, not as a greenfield feature surface
 
 ### Frontend API helper is only partially scaffolded
 `frontend/src/api/fixedAssets.js` already exists, but it currently covers only part of the planned API surface.
@@ -1174,6 +1180,7 @@ Most fixed-assets frontend files in this list already exist as scaffolds. Treat 
 - `frontend/src/utils/journalSourceLinkDestinations.js` if Journal Workbench drillback/reverse-block destination logic is extracted for reuse outside the page
 - `frontend/src/pages/fixedAssets/FixedAssetsPage.jsx`
 - `frontend/src/pages/fixedAssets/FixedAssetFormPage.jsx`
+- `frontend/src/pages/fixedAssets/FixedAssetModulePage.jsx`
 - `frontend/src/pages/fixedAssets/FixedAssetDetailPage.jsx`
 - `frontend/src/pages/fixedAssets/FixedAssetAcquisitionsPage.jsx`
 - `frontend/src/pages/fixedAssets/FixedAssetDisposalsPage.jsx`
@@ -1184,6 +1191,7 @@ Most fixed-assets frontend files in this list already exist as scaffolds. Treat 
 - `frontend/src/pages/JournalWorkbenchPage.jsx`
 - expand `frontend/src/api/fixedAssets.js` for reversal actions, report `/export` calls, and deep-link-supporting reads such as run detail and transaction-focus loading
 - verify/update `frontend/src/App.jsx` if route cleanup, redirects, or canonical demirbas path normalization is needed
+- verify/update `frontend/src/layouts/AppLayout.jsx` if shared demirbas navigation chrome or icon heuristics need cleanup
 - verify/update `frontend/src/layouts/sidebarConfig.js` if sidebar visibility or route normalization changes are needed
 - verify/update `frontend/src/i18n/messages.js` if fixed-assets labels, aliases, or route text need cleanup
 
@@ -1191,6 +1199,8 @@ Frontend helper ownership note:
 - `frontend/src/utils/sourceRefTypes.js` owns shared source-type constants only
 - if reusable Journal Workbench destination selection or deep-link normalization logic is extracted from `frontend/src/pages/JournalWorkbenchPage.jsx`, it should live in `frontend/src/utils/journalSourceLinkDestinations.js`
 - keep that extracted frontend helper focused on consuming backend-owned destination metadata and fallback selection; do not re-embed fixed-assets route ownership rules only inside the page component
+- `frontend/src/pages/fixedAssets/FixedAssetModulePage.jsx` is a shared fixed-assets wrapper dependency; frontend steps that replace scaffold shells or shared page framing must either include it in `Allowed files` or explicitly state that it must remain untouched
+- `frontend/src/layouts/AppLayout.jsx` is shared app chrome rather than a fixed-assets feature page, but it already contains demirbas icon heuristics; if fixed-assets navigation naming changes, update it intentionally rather than leaving it as an implicit side effect
 
 ## Canonical UI Route Set
 
@@ -1210,35 +1220,65 @@ Canonical routes:
 Implementation notes:
 - delete the old generic placeholder usage for demirbas routes
 - the old `/app/demirbas-amortisman-ayarlar` placeholder should not remain the canonical route
+- the repo also still carries legacy alias `/app/demirbaslar`; keep it only as an explicit compatibility alias or retire it explicitly with redirects/cleanup
+- `frontend/src/layouts/AppLayout.jsx` already recognizes demirbas/asset/amortisman in shared icon heuristics; keep that app chrome aligned when route names or aliases are normalized
 - route aliases or redirects are acceptable for backward compatibility
 - `/app/demirbas-karti-detayi/:assetId` is a canonical workflow/detail route even if it is not a primary sidebar destination
 - dynamic reverse-block routing may target canonical list/workflow/detail routes, not only sidebar landing pages
 
 ## Master Tracker
-- [ ] `PR-FA01` - Shared source-ref constants, error-details helper, and secondary RBAC assertion
-- [ ] `PR-FA02` - Shared-platform journal-source-link `PRIMARY` compliance and writer hardening
-- [ ] `PR-FA03` - Backend reverse-block destination contract and additive journal-detail enrichment
-- [ ] `PR-FA04` - Frontend Journal Workbench prefer-backend / fallback-local contract migration
-- [ ] `PR-FA05` - OpenAPI fixed-assets tag and path inference support
-- [ ] `PR-FA06` - `m138` fixed-assets foundation base tables
-- [ ] `PR-FA07` - `m138` fixed-assets foundation constraints and indexes
-- [ ] `PR-FA08` - `m139` custodian employees and deferred foreign keys
-- [ ] `PR-FA09` - `m140` CARI traceability and `journal_source_links` schema tail
-- [ ] `PR-FA10` - Fixed-assets module skeleton, scope service, route mount, and route ordering
-- [ ] `PR-FA11` - Categories, depreciation profiles, custodians, and settings surfaces
-- [ ] `PR-FA12` - Asset register and detail foundation
-- [ ] `PR-FA13` - Manual draft/create/edit/activate workflow
-- [ ] `PR-FA14` - CARI AP-line capitalization workflow
-- [ ] `PR-FA15` - Depreciation schedule engine
-- [ ] `PR-FA16` - Depreciation run preview/create/post/reverse/delete lifecycle
-- [ ] `PR-FA17` - Physical move and ownership transfer workflows
-- [ ] `PR-FA18` - Disposal, sale, write-off, and source-owned non-run reversal workflows
-- [ ] `PR-FA19` - Evidence, source traceability, and Journal Workbench fixed-assets drillback
-- [ ] `PR-FA20` - Reports, permissions, sidebar gating, and release gates
+- [ ] `STEP-FA01` - Shared source-ref constants, error-details helper, and secondary RBAC assertion
+- [ ] `STEP-FA02` - Journal-source-link duplicate-`PRIMARY` preflight and normalization plan
+- [ ] `STEP-FA03` - Shared-platform journal-link writer compliance for CARI, cash, and payments
+- [ ] `STEP-FA04` - Shared-platform journal-link writer compliance for inventory and payroll
+- [ ] `STEP-FA05` - Repo-wide journal-link `PRIMARY` regression coverage and release gate
+- [ ] `STEP-FA06` - Backend reverse-block destination contract and additive journal-detail enrichment
+- [ ] `STEP-FA07` - Frontend Journal Workbench prefer-backend / fallback-local contract migration
+- [ ] `STEP-FA08` - OpenAPI fixed-assets tag and path inference support
+- [ ] `STEP-FA09` - `m138` fixed-assets foundation base tables
+- [ ] `STEP-FA10` - `m138` fixed-assets foundation constraints and indexes
+- [ ] `STEP-FA11` - `m139` custodian employees and deferred foreign keys
+- [ ] `STEP-FA12` - `m140` CARI traceability and `journal_source_links` schema tail
+- [ ] `STEP-FA13` - Fixed-assets module skeleton, scope service, route mount, and route ordering
+- [ ] `STEP-FA14` - Categories CRUD and default-rule backend surface
+- [ ] `STEP-FA15` - Depreciation profiles CRUD and snapshot-default backend surface
+- [ ] `STEP-FA16` - Custodian maintenance and fixed-assets settings UI/API integration
+- [ ] `STEP-FA17` - Asset register backend read surface and filter contract
+- [ ] `STEP-FA18` - Asset detail backend read surface with tabs/foundations
+- [ ] `STEP-FA19` - Fixed-assets list/detail frontend pages and API integration
+- [ ] `STEP-FA20` - Manual asset draft create/read/update foundation
+- [ ] `STEP-FA21` - Manual activation standard path
+- [ ] `STEP-FA22` - Manual legacy-onboarding activation path
+- [ ] `STEP-FA23` - Manual low-value same-period full-expense activation path
+- [ ] `STEP-FA24` - FA06 eligible AP-line read surface and remaining-unit calculation
+- [ ] `STEP-FA25` - FA06 same-OU capitalization create/activate flow
+- [ ] `STEP-FA26` - FA06 cross-OU capitalization accounting template and blocking rules
+- [ ] `STEP-FA27` - FA06 draft-link revalidation, source drift refresh, and activation-time safeguards
+- [ ] `STEP-FA28` - Schedule engine period resolution, read surface, and standard straight-line/none math
+- [ ] `STEP-FA29` - Declining-balance math, salvage-floor enforcement, and legacy-onboarding forward schedule path
+- [ ] `STEP-FA30` - Lifecycle cutoff eligibility for suspension, reactivation, transfer, and disposal in schedule generation
+- [ ] `STEP-FA31` - Depreciation run preview and persisted draft creation
+- [ ] `STEP-FA32` - Depreciation run detail read and draft delete lifecycle
+- [ ] `STEP-FA33` - Depreciation run post workflow
+- [ ] `STEP-FA34` - Depreciation run reverse workflow
+- [ ] `STEP-FA35` - Depreciation run chunked persistence and volume safety hardening
+- [ ] `STEP-FA36` - Physical move workflow
+- [ ] `STEP-FA37` - Ownership transfer workflow and accounting
+- [ ] `STEP-FA38` - Write-off workflow
+- [ ] `STEP-FA39` - Sale staged draft/link/update workflow
+- [ ] `STEP-FA40` - Sale finalize workflow
+- [ ] `STEP-FA41` - Source-owned non-run reversal workflow
+- [ ] `STEP-FA42` - Fixed-assets evidence service extension and nested evidence routes
+- [ ] `STEP-FA43` - Fixed-assets journal source-link writing and backend destination resolution support
+- [ ] `STEP-FA44` - Fixed-assets deep-link pages, Journal Workbench drillback, and query-contract completion
+- [ ] `STEP-FA45` - Fixed-assets permission seeding and backend authorization hardening
+- [ ] `STEP-FA46` - Frontend sidebar, route, and action gating
+- [ ] `STEP-FA47` - Fixed-assets reports and paired export endpoints
+- [ ] `STEP-FA48` - Release gates, smoke suite, and rollout readiness checks
 
 ---
 
-## `PR-FA01` - Shared source-ref constants, error-details helper, and secondary RBAC assertion
+## `STEP-FA01` - Shared source-ref constants, error-details helper, and secondary RBAC assertion
 
 ### Patch target
 Land only the shared backend/frontend primitives that later fixed-assets, evidence, and reverse-block work depend on.
@@ -1252,21 +1292,154 @@ Land only the shared backend/frontend primitives that later fixed-assets, eviden
 
 ---
 
-## `PR-FA02` - Shared-platform journal-source-link `PRIMARY` compliance and writer hardening
+## `STEP-FA02` - Journal-source-link duplicate-`PRIMARY` preflight and normalization plan
 
 ### Patch target
-Handle the repo-wide `journal_source_links` ownership-contract cleanup before any DB-backed one-`PRIMARY` guard is enabled.
+Prepare the repo for DB-backed one-`PRIMARY`-per-journal enforcement by discovering real duplicate states and defining deterministic normalization behavior before any writer code or DDL is changed.
+
+### In scope
+- inspect current `journal_source_links` data shape
+- add a repo-native preflight script or migration-preflight utility that reports duplicate `PRIMARY` rows by `journal_entry_id`
+- define deterministic normalization rules for legacy rows that currently violate one-`PRIMARY`-per-journal
+- identify journals with multiple `PRIMARY` links, no `PRIMARY` link, and mixed shared-journal flows that currently appear to rely on multiple owning links
+- record which existing modules write those rows
+
+### Explicit non-goals
+- do not add the DB uniqueness guard yet
+- do not change writer workflows yet
+- do not silently mutate production data in this step unless the repo already has an accepted migration-preflight write pattern
+- do not assume fixed-assets is the only module affected
 
 ### Definition of done
-- real-environment duplicate-`PRIMARY` preflight is part of the step plan
-- existing non-fixed-assets journal-link writers are audited and updated where shared journals would otherwise emit more than one owning `PRIMARY`
-- shared-journal flows demote non-owning links to non-primary roles instead of relying on fixed-assets-only discipline
-- regression coverage exists for the affected CARI, cash, payments, inventory, and payroll flows
-- this step does not yet rely on the final DB uniqueness guard
+- a repeatable preflight surface exists that identifies all current duplicate-`PRIMARY` journals
+- the output is grouped by producer/workflow where possible
+- the repo now has a deterministic normalization rule for legacy duplicate cases, including how to choose the surviving `PRIMARY`, how to demote non-owning links, and how to handle journals with no `PRIMARY`
+- the step documents which existing modules must be updated before the DB guard is safe
+- this step leaves runtime behavior unchanged
+
+### Smoke tests
+- run the preflight against a seeded/local database with one journal with exactly one `PRIMARY`, one journal with two `PRIMARY` rows, and one journal with zero `PRIMARY` rows
+- verify the preflight reports the valid case as clean, the duplicate case as blocking, and the zero-`PRIMARY` case as a compatibility warning or remediation case
+- verify repeated runs produce stable output ordering
+- verify the script/report can run without fixed-assets tables existing yet
+
+### Acceptance
+- there is now a real inventory of duplicate-`PRIMARY` risk in the current repo
+- normalization is defined before enforcement
+- this step reduces hidden migration risk without changing app behavior
+- later steps no longer need to guess how to remediate legacy shared-journal data
 
 ---
 
-## `PR-FA03` - Backend reverse-block destination contract and additive journal-detail enrichment
+## `STEP-FA03` - Shared-platform journal-link writer compliance for CARI, cash, and payments
+
+### Patch target
+Bring the highest-risk existing writer flows into compliance with the future one-`PRIMARY`-per-journal invariant.
+
+### In scope
+- audit and update current journal-link writers for CARI, cash, and payments
+- identify shared-journal flows in those modules that currently attach multiple links
+- make those flows write exactly one owning `PRIMARY` and all additional links with non-primary roles
+- preserve current drillback semantics where possible
+- update any helper code in those modules that currently assumes multiple `PRIMARY` links are acceptable
+
+### Explicit non-goals
+- do not add the DB uniqueness guard yet
+- do not update inventory or payroll in this step
+- do not add fixed-assets source links yet
+- do not change Journal Workbench routing contracts here
+
+### Definition of done
+- all in-scope CARI, cash, and payments flows that write `journal_source_links` are reviewed
+- any shared-journal flow in those modules now emits at most one `PRIMARY`
+- non-owning links are intentionally demoted to non-primary roles
+- the chosen owning `PRIMARY` matches the business event that should drive reverse-block primary routing later
+- existing journal posting/reversal flows continue to succeed
+
+### Smoke tests
+- for each updated flow, create a journal through the real service path and assert `journal_source_links` rows are created, exactly one row has `link_role = PRIMARY`, and additional rows, if any, are not `PRIMARY`
+- re-run the flow twice where the module supports idempotent/retry-safe behavior and verify no accidental duplicate ownership appears
+- open the created journal in the current GL detail read and verify source links still load
+- reverse or attempt reverse on affected journals where current repo behavior allows it and verify no regression in baseline error handling
+
+### Acceptance
+- CARI, cash, and payments no longer rely on multiple `PRIMARY` rows
+- shared-journal ownership is now intentional, not accidental
+- this step materially lowers the blast radius of the future DB guard
+- in-scope posting/reversal behavior remains functional
+
+---
+
+## `STEP-FA04` - Shared-platform journal-link writer compliance for inventory and payroll
+
+### Patch target
+Finish repo-wide writer compliance for the remaining known journal-link producers before DB-backed enforcement lands.
+
+### In scope
+- audit and update current journal-link writers for inventory and payroll
+- identify shared-journal flows that may currently produce multiple owning links
+- apply the same ownership/demotion discipline as `STEP-FA03`
+- verify that downstream read/reversal flows still behave correctly after writer cleanup
+
+### Explicit non-goals
+- do not add the DB uniqueness guard yet
+- do not modify fixed-assets writers yet
+- do not redesign source-link roles repo-wide beyond what is required for one-owning-link discipline
+
+### Definition of done
+- inventory and payroll writer flows are brought into compliance
+- those flows emit exactly one owning `PRIMARY` when they attach multiple source links to one journal
+- compatibility with existing read and reverse flows remains intact
+- the repo no longer has known active writer paths that would violate the planned DB guard under normal operation
+
+### Smoke tests
+- create representative inventory journals and payroll journals through the real service flows
+- assert source links exist, exactly one `PRIMARY` exists per journal, and secondary links remain attached where needed
+- confirm journal detail read still exposes source links
+- attempt baseline reverse behavior on in-scope journals and verify there is no immediate regression
+- run the duplicate-`PRIMARY` preflight again and confirm new in-scope writes no longer create violations
+
+### Acceptance
+- inventory and payroll are aligned with the future ownership rule
+- all currently known non-fixed-assets writer modules are compliant before DB enforcement
+- future one-`PRIMARY` DDL can be treated as enforcement, not discovery
+
+---
+
+## `STEP-FA05` - Repo-wide journal-link `PRIMARY` regression coverage and release gate
+
+### Patch target
+Lock the repo into one-owning-link discipline with regression coverage before the DB guard is enabled later in the migration track.
+
+### In scope
+- add regression coverage for the in-scope existing writers cleaned up in `STEP-FA03` and `STEP-FA04`
+- add a release-gate check that fails if a known shared-journal flow starts emitting more than one `PRIMARY`
+- document the writer contract clearly: one owning `PRIMARY`, secondary links must use non-primary roles
+- make this part of the fixed-assets prerequisite chain
+
+### Explicit non-goals
+- do not add the DB uniqueness DDL yet
+- do not add fixed-assets writers yet
+- do not widen the gate into unrelated data-quality areas
+
+### Definition of done
+- automated regression coverage exists for current known source-link producers
+- a repeatable check exists that would catch reintroduction of duplicate `PRIMARY` behavior
+- the fixed-assets plan can now safely sequence the schema-side one-`PRIMARY` enforcement in `STEP-FA12`
+
+### Smoke tests
+- run the in-scope posting flows under test and verify the assertions fail if a second `PRIMARY` is intentionally injected in a local test fixture
+- run the preflight after the test suite and confirm no unexpected duplicate-`PRIMARY` rows remain
+- verify the release-gate or smoke command exits non-zero when the contract is violated
+
+### Acceptance
+- one-owning-link behavior is now protected, not just discussed
+- the later DB guard has meaningful regression backing
+- repo-wide writer cleanup is complete enough to justify schema enforcement later
+
+---
+
+## `STEP-FA06` - Backend reverse-block destination contract and additive journal-detail enrichment
 
 ### Patch target
 Land the backend-owned destination contract for normal drillback and reverse blocking without breaking existing clients.
@@ -1280,7 +1453,7 @@ Land the backend-owned destination contract for normal drillback and reverse blo
 
 ---
 
-## `PR-FA04` - Frontend Journal Workbench prefer-backend / fallback-local contract migration
+## `STEP-FA07` - Frontend Journal Workbench prefer-backend / fallback-local contract migration
 
 ### Patch target
 Move Journal Workbench to consume backend-owned destination metadata first while preserving compatibility with non-upgraded source types.
@@ -1294,7 +1467,7 @@ Move Journal Workbench to consume backend-owned destination metadata first while
 
 ---
 
-## `PR-FA05` - OpenAPI fixed-assets tag and path inference support
+## `STEP-FA08` - OpenAPI fixed-assets tag and path inference support
 
 ### Patch target
 Make fixed-assets a first-class OpenAPI surface before backend routes are treated as complete.
@@ -1308,7 +1481,7 @@ Make fixed-assets a first-class OpenAPI surface before backend routes are treate
 
 ---
 
-## `PR-FA06` - `m138` fixed-assets foundation base tables
+## `STEP-FA09` - `m138` fixed-assets foundation base tables
 
 ### Patch target
 Create only the dependency-safe base tables and base columns for the fixed-assets foundation.
@@ -1322,7 +1495,7 @@ Create only the dependency-safe base tables and base columns for the fixed-asset
 
 ---
 
-## `PR-FA07` - `m138` fixed-assets foundation constraints and indexes
+## `STEP-FA10` - `m138` fixed-assets foundation constraints and indexes
 
 ### Patch target
 Finish the `m138` constraint/index pass without reopening the base-table scope.
@@ -1336,7 +1509,7 @@ Finish the `m138` constraint/index pass without reopening the base-table scope.
 
 ---
 
-## `PR-FA08` - `m139` custodian employees and deferred foreign keys
+## `STEP-FA11` - `m139` custodian employees and deferred foreign keys
 
 ### Patch target
 Deliver the interim custodian table and then attach the deferred custodian foreign keys.
@@ -1349,20 +1522,20 @@ Deliver the interim custodian table and then attach the deferred custodian forei
 
 ---
 
-## `PR-FA09` - `m140` CARI traceability and `journal_source_links` schema tail
+## `STEP-FA12` - `m140` CARI traceability and `journal_source_links` schema tail
 
 ### Patch target
 Finish the remaining schema hardening that fixed-assets needs for CARI-linked traceability and safe source ownership.
 
 ### Definition of done
 - `m140_fixed_asset_cari_capitalization_and_traceability.js` lands the exact source-traceability fields and unit-slot enforcement needed for FA06
-- the schema side of one-`PRIMARY`-per-journal hardening lands only after `PR-FA02` writer compliance work is complete
+- the schema side of one-`PRIMARY`-per-journal hardening lands only after `STEP-FA02` to `STEP-FA05` are complete
 - `m140` does not pretend to own the repo-wide writer cleanup; it only lands the DB tail of that shared-platform rollout
 - fixed-assets source-line provenance and multi-asset-per-line uniqueness are DB-backed after this step
 
 ---
 
-## `PR-FA10` - Fixed-assets module skeleton, scope service, route mount, and route ordering
+## `STEP-FA13` - Fixed-assets module skeleton, scope service, route mount, and route ordering
 
 ### Patch target
 Create the repo-native backend fixed-assets module shell so later feature slices land into stable owning files.
@@ -1376,142 +1549,1915 @@ Create the repo-native backend fixed-assets module shell so later feature slices
 
 ---
 
-## `PR-FA11` - Categories, depreciation profiles, custodians, and settings surfaces
+## `STEP-FA14` - Categories CRUD and default-rule backend surface
 
 ### Patch target
-Deliver the fixed-assets settings/master-data surfaces before asset workflows depend on them.
+Implement fixed-assets category CRUD with the locked threshold, salvage-default, and account-default semantics before frontend settings pages or asset workflows depend on it.
+
+### In scope
+- category schema consumption through backend routes, validators, and services
+- `GET /api/v1/fixed-assets/categories`
+- `POST /api/v1/fixed-assets/categories`
+- `PATCH /api/v1/fixed-assets/categories/:categoryId`
+- category default fields:
+  - `capitalization_threshold_base`
+  - `default_useful_life_months`
+  - `default_salvage_rule_type`
+  - `default_salvage_percent`
+  - `default_salvage_amount_base`
+  - `default_depreciation_profile_id`
+  - `default_asset_account_id`
+  - `default_accum_depr_account_id`
+  - `default_depr_expense_account_id`
+  - `default_disposal_gain_account_id`
+  - `default_disposal_loss_account_id`
+- code uniqueness within `(tenant_id, legal_entity_id)`
+- status handling with uppercase repo-native values
+- validator/service enforcement of:
+  - legal-entity ownership through `charts_of_accounts`
+  - expected account types
+  - locked salvage rule types
+
+### Explicit non-goals
+- do not implement depreciation profile CRUD in this step
+- do not implement frontend settings pages in this step
+- do not implement asset create/edit behavior here
+- do not apply category defaults automatically to assets yet beyond what later steps consume
+- do not treat `name` as DB-unique
 
 ### Definition of done
-- categories CRUD exists with locked threshold, salvage-default, and account-default rules
-- depreciation profiles CRUD exists with locked method/rate/switch rules
-- custodian maintenance surface exists at the lightweight interim level
-- account mapping validation follows the locked account-type and legal-entity chart-ownership rules
-- settings routes, validators, API helpers, and pages are no longer placeholder-only
+- categories can be listed, created, and updated
+- category codes are unique per `(tenant_id, legal_entity_id)`
+- account-default fields validate:
+  - `asset_account_id` as `ASSET`
+  - `accum_depr_account_id` as `ASSET`
+  - `depr_expense_account_id` as `EXPENSE`
+  - `disposal_gain_account_id` as `REVENUE`
+  - `disposal_loss_account_id` as `EXPENSE`
+- those account ids must belong to a chart of accounts with `scope = LEGAL_ENTITY` and matching `legal_entity_id`
+- salvage defaults accept only:
+  - `NONE`
+  - `FIXED_BASE_AMOUNT`
+  - `PERCENT_OF_COST`
+- threshold/default values persist without needing any asset workflow yet
+
+### Smoke tests
+- create a category with valid code, legal entity, threshold, salvage defaults, and valid account defaults; verify it persists
+- create a second category with the same `code` in the same legal entity and verify rejection
+- create a category with the same `code` in a different legal entity and verify it is allowed if the repo’s tenancy/legal-entity scope permits it
+- attempt to assign an `EXPENSE` account as `default_asset_account_id` and verify rejection
+- attempt to assign an account from a different legal entity’s chart and verify rejection
+- attempt to persist an invalid salvage rule type and verify rejection
+- list categories and verify returned rows include the locked default fields
+
+### Acceptance
+- category defaults are concrete and enforce the locked accounting/salvage rules
+- category uniqueness is code-first, not name-first
+- backend category behavior is real and stable before assets depend on it
 
 ---
 
-## `PR-FA12` - Asset register and detail foundation
+## `STEP-FA15` - Depreciation profiles CRUD and snapshot-default backend surface
 
 ### Patch target
-Deliver the core read-side asset experience before complex posting workflows are layered on top.
+Implement depreciation profile CRUD with the locked method/rate/switch semantics before activation and schedule generation consume profile snapshots.
+
+### In scope
+- `GET /api/v1/fixed-assets/depreciation-profiles`
+- `POST /api/v1/fixed-assets/depreciation-profiles`
+- `PATCH /api/v1/fixed-assets/depreciation-profiles/:profileId`
+- profile fields:
+  - `code`
+  - `name`
+  - `status`
+  - `method`
+  - `declining_balance_rate_percent`
+  - `switch_to_straight_line`
+  - `description`
+- code uniqueness within `(tenant_id, legal_entity_id)`
+- profile method validation:
+  - `STRAIGHT_LINE`
+  - `DECLINING_BALANCE`
+  - `NONE`
+- method/rate compatibility validation
+
+### Explicit non-goals
+- do not implement category CRUD here
+- do not implement asset activation here
+- do not implement schedule generation here
+- do not implement draft asset snapshot refresh behavior here beyond exposing the backend data needed later
 
 ### Definition of done
-- register list/read endpoints exist with the locked filter set
-- asset detail returns the overview, accounting, schedule, transactions, evidence, and audit-trail foundations needed by later steps
-- frontend fixed-assets list/detail pages are real feature pages rather than generic shells
-- owner OU, location OU, and custodian remain visibly distinct in both API and UI
+- profiles can be listed, created, and updated
+- profile codes are unique within `(tenant_id, legal_entity_id)`
+- when `method = DECLINING_BALANCE`, `declining_balance_rate_percent` is required
+- when `method <> DECLINING_BALANCE`, `declining_balance_rate_percent` must be null
+- `switch_to_straight_line` persists as the locked permanent-switch flag
+- profiles are clearly setup templates, not live behavior records for activated assets
+
+### Smoke tests
+- create a valid `STRAIGHT_LINE` profile and verify persistence
+- create a valid `DECLINING_BALANCE` profile with an annual rate and verify persistence
+- attempt to create a `DECLINING_BALANCE` profile without a rate and verify rejection
+- attempt to create a `STRAIGHT_LINE` or `NONE` profile with a non-null declining-balance rate and verify rejection
+- create two profiles with the same code in one legal entity and verify rejection
+- list profiles and verify returned rows include method/rate/switch fields
+
+### Acceptance
+- profile setup is concrete and enforceable
+- later activation/schedule work can safely snapshot from these profiles
+- profile rules are backend-owned, not just frontend conventions
 
 ---
 
-## `PR-FA13` - Manual draft/create/edit/activate workflow
+## `STEP-FA16` - Custodian maintenance and fixed-assets settings UI/API integration
 
 ### Patch target
-Implement manual asset creation and activation as the first real fixed-assets business workflow.
+Connect categories, depreciation profiles, and custodians into real settings maintenance surfaces so fixed-assets no longer depends on placeholder settings UI.
+
+### In scope
+- `GET /api/v1/fixed-assets/custodians`
+- `POST /api/v1/fixed-assets/custodians`
+- `PATCH /api/v1/fixed-assets/custodians/:custodianId`
+- frontend settings pages/API helper integration for:
+  - categories
+  - depreciation profiles
+  - custodians
+- fixed-assets settings page(s) and custodian page(s)
+- status handling and minimum maintenance fields for custodians
+- page-level permission gating for:
+  - `fixed_assets.settings.read`
+  - `fixed_assets.settings.upsert`
+  - `fixed_assets.custodian.read`
+  - `fixed_assets.custodian.write`
+
+### Explicit non-goals
+- do not implement asset workflows here
+- do not implement schedule/run logic here
+- do not implement report pages here
+- do not change the backend rules already locked in `STEP-FA14` and `STEP-FA15`
 
 ### Definition of done
-- draft save, edit, and activate flows exist for manual assets
-- activation enforces the locked validation matrix, legacy-onboarding rules, threshold behavior, and snapshot/freeze rules
-- manual activation creates the correct transaction history without double-booking `ACQUISITION` and `CAPITALIZATION`
-- low-value same-period full-expense behavior and below-threshold legacy-onboarding exceptions follow the locked MVP rules
-- the workflow stays inside one `withTransaction(...)` boundary
+- custodians can be listed, created, and updated
+- custodian maintenance supports:
+  - `employee_code`
+  - `display_name`
+  - `operating_unit_id`
+  - `status`
+  - `notes`
+- frontend settings surfaces are no longer placeholder-only
+- frontend API helpers cover categories, profiles, and custodians
+- settings pages respect backend permission design
+
+### Smoke tests
+- create a custodian and verify it appears in list/read surfaces
+- update a custodian’s status and verify persistence
+- open the settings page and verify categories/profiles/custodians are backed by real API calls, not shell content
+- verify users missing settings permissions cannot access edit actions
+- verify a user with read but not write permission can view but not save settings/custodian changes
+
+### Acceptance
+- settings/master-data surfaces are now real and usable
+- custodians are maintainable at the interim MVP level
+- frontend settings scaffolds are replaced with functioning pages
 
 ---
 
-## `PR-FA14` - CARI AP-line capitalization workflow
+## `STEP-FA17` - Asset register backend read surface and filter contract
 
 ### Patch target
-Implement the AP-line-driven asset creation/capitalization flow with exact source traceability.
+Implement the backend read/list contract for the asset register with the full locked filter set before detail tabs or frontend register UI are finalized.
+
+### In scope
+- `GET /api/v1/fixed-assets`
+- locked register filters:
+  - legal entity
+  - owner operating unit
+  - location operating unit
+  - category
+  - status
+  - acquisition date range
+  - in-service date range
+  - department code
+  - cost center code
+  - custodian
+  - disposed yes/no
+- register row shape sufficient for list pages
+- distinct exposure of:
+  - owner OU
+  - location OU
+  - custodian
+  - status
+  - category
+  - acquisition/in-service dates
+  - cost/nbv summary fields where appropriate
+
+### Explicit non-goals
+- do not implement the detail page yet
+- do not implement mutation flows here
+- do not implement reports here
+- do not assume department/cost-center lookup master tables exist
 
 ### Definition of done
-- eligible AP-line selection uses remaining unconsumed unit quantity, not one-line-one-asset assumptions
-- request-level `unitCount` batch creation is atomic and deterministic
-- source line/unit-slot provenance is stored exactly and revalidated before activation/posting
-- same-OU and cross-OU capitalization use the locked accounting templates
-- CARI-linked assets create `CAPITALIZATION` history correctly without duplicating `ACQUISITION`
+- backend list endpoint exists with the locked filter semantics
+- nullable `department_code` and `cost_center_code` are treated as simple classification values
+- disposed filtering works off the asset’s lifecycle state/disposal state rather than a vague heuristic
+- owner OU and location OU remain separate read fields, not a collapsed “operating unit”
+
+### Smoke tests
+- seed assets across multiple legal entities, owner OUs, location OUs, categories, statuses, and custodians; verify filters return correct subsets
+- verify `disposed=true/false` changes the result set correctly
+- verify `department_code` and `cost_center_code` filters work on stored nullable code fields
+- verify owner-OU and location-OU filters behave independently
+- verify date range filters work for acquisition and in-service dates separately
+
+### Acceptance
+- the asset register has a stable backend contract
+- the locked list-filter set is implemented and testable
+- the repo no longer needs to guess at register filter semantics later
 
 ---
 
-## `PR-FA15` - Depreciation schedule engine
+## `STEP-FA18` - Asset detail backend read surface with tabs/foundations
 
 ### Patch target
-Implement deterministic schedule generation before persisted run posting is introduced.
+Implement the backend detail read contract for the asset detail hub before the frontend detail page and later workflows depend on it.
+
+### In scope
+- `GET /api/v1/fixed-assets/:assetId`
+- backend detail payload foundations for:
+  - overview
+  - accounting
+  - depreciation schedule foundation
+  - transactions foundation
+  - evidence foundation
+  - audit trail foundation
+- detail exposure of:
+  - source CARI linkage fields
+  - profile linkage and snapped profile fields
+  - salvage snapshot inputs and resolved salvage values
+  - account mappings
+  - lifecycle status
+  - owner OU / location OU / custodian separation
+  - transaction history summary
+  - evidence summary
+  - audit-trail summary
+
+### Explicit non-goals
+- do not implement schedule endpoint here if it is a separate endpoint
+- do not implement transaction-list endpoint here if it is a separate endpoint
+- do not implement deep-link focus behavior in the frontend here
+- do not implement mutation actions
 
 ### Definition of done
-- schedule generation follows the locked `DAILY_PRORATA` convention and method math
-- legacy onboarding forward-only schedule behavior works from imported carrying values and remaining life
-- below-threshold low-value assets are excluded from the normal schedule path as locked
-- suspension, reactivation, transfer, and disposal cutoffs are represented in schedule eligibility logic
-- schedule math uses the snapped asset-level depreciation and salvage fields, not mutable profile/category rows
+- asset detail read exists and exposes the traceability hub data required by later steps
+- detail payload can support the intended tabs without needing ad hoc follow-up queries for basic identity/configuration context
+- detail shows both lineage and frozen runtime behavior:
+  - `depreciation_profile_id`
+  - snapped method/rate/switch
+  - salvage snapshot inputs
+  - resolved salvage values
+
+### Smoke tests
+- fetch an asset detail and verify owner OU, location OU, and custodian are distinct
+- fetch an asset detail and verify source CARI linkage fields are present when applicable, profile linkage and snapped profile fields are both present, salvage snapshot inputs and resolved salvage values are both present, and account mappings are present
+- fetch a legacy-onboarding asset and verify legacy fields are exposed appropriately
+- fetch a low-value fully expensed asset and verify status/traceability remain readable
+
+### Acceptance
+- asset detail is now a real backend hub, not a placeholder
+- lineage versus frozen runtime fields are explicit and inspectable
+- later UI and workflow steps have a stable detail contract
 
 ---
 
-## `PR-FA16` - Depreciation run preview/create/post/reverse/delete lifecycle
+## `STEP-FA19` - Fixed-assets list/detail frontend pages and API integration
 
 ### Patch target
-Deliver the persisted run workflow after the schedule engine is stable.
+Replace placeholder list/detail UI with real fixed-assets register/detail pages that consume the backend read contracts from `STEP-FA17` and `STEP-FA18`.
+
+### In scope
+- `frontend/src/pages/fixedAssets/FixedAssetsPage.jsx`
+- `frontend/src/pages/fixedAssets/FixedAssetDetailPage.jsx`
+- `frontend/src/api/fixedAssets.js` list/detail helper expansion
+- register filters in the frontend
+- detail tab structure for:
+  - overview
+  - accounting
+  - depreciation schedule foundation
+  - transactions foundation
+  - evidence foundation
+  - audit trail foundation
+- canonical route usage for:
+  - `/app/demirbas-karti-listesi`
+  - `/app/demirbas-karti-detayi/:assetId`
+
+### Explicit non-goals
+- do not implement activation/move/transfer/disposal actions here
+- do not implement deep-link query focus behavior yet if that is handled later in drillback completion
+- do not leave generic placeholder shells in place for list/detail
+
+### Definition of done
+- register page is a functioning list page using the real backend filters
+- detail page is a functioning detail hub using the real backend payload
+- list/detail pages are no longer generic placeholder content
+- UI clearly distinguishes owner OU, location OU, and custodian
+- detail UI exposes both profile lineage and frozen runtime depreciation/salvage behavior
+
+### Smoke tests
+- open the register page and verify list rows load from API
+- apply each major filter and verify the UI result set changes correctly
+- open detail for an asset and verify each planned tab foundation renders real data
+- verify profile linkage plus snapped fields are visible together
+- verify salvage snapshot inputs and resolved values are visible together
+- verify placeholder copy/shell components are no longer the primary list/detail experience
+
+### Acceptance
+- fixed-assets read-side UI is now real
+- list/detail pages are suitable foundations for later workflows
+- the module no longer depends on placeholder list/detail behavior
+
+---
+
+## `STEP-FA20` - Manual asset draft create/read/update foundation
+
+### Patch target
+Deliver the manual asset draft lifecycle before activation logic is introduced.
+
+### In scope
+- `POST /api/v1/fixed-assets`
+- `GET /api/v1/fixed-assets/:assetId`
+- `PATCH /api/v1/fixed-assets/:assetId` for allowed `DRAFT`-state edits
+- asset-number reservation and creation-time numbering inside one transaction
+- asset detail/read support for manual drafts
+- draft-side prefill/default logic from category/profile where applicable
+- `DRAFT`-state mutability rules only
+
+### Explicit non-goals
+- do not implement activation yet
+- do not implement legacy-onboarding activation yet
+- do not implement low-value posting yet
+- do not implement CARI capitalization yet
+- do not allow post-activation edits
+
+### Definition of done
+- manual draft assets can be created
+- backend assigns `sequence_no` and `asset_no` with locked `FA-######` format
+- draft rows persist the required `DRAFT`-allowed fields
+- `PATCH` allows only fields that are editable while status is `DRAFT`
+- category/profile/default data may populate draft-side values, including salvage defaults and profile snapshots, but no activation happens in this step
+- detail reads clearly expose asset status, profile linkage and snapped profile fields, salvage snapshot inputs and resolved salvage values, and owner OU vs location OU distinction
+
+### Smoke tests
+- create a draft manual asset with the minimum required `DRAFT` fields and verify status is `DRAFT`, `asset_no` is assigned, and `sequence_no` is assigned
+- create two draft assets in the same legal entity and verify numbering increments
+- create one draft in a different legal entity and verify uniqueness still holds within the locked scope
+- patch a draft asset and verify allowed draft fields update
+- attempt to patch a non-draft-only field after simulating non-`DRAFT` status and verify the request is rejected or the mutation path is blocked
+- verify `GET /:assetId` returns the snapped profile/salvage fields and distinct OU fields
+
+### Acceptance
+- manual draft assets exist as real records, not placeholder UI state
+- numbering is backend-owned and transaction-safe
+- draft mutability is explicit and constrained
+- read-side detail already exposes the frozen-field concepts needed later
+
+---
+
+## `STEP-FA21` - Manual activation standard path
+
+### Patch target
+Implement activation for normal manual assets that are not legacy-onboarding imports and are not below-threshold low-value exceptions.
+
+### In scope
+- `POST /api/v1/fixed-assets/:assetId/activate` for standard manual assets
+- activation-time validation matrix for normal depreciable/manual assets
+- activation-time book, fiscal period, and posting-date validation
+- creation of the `ACQUISITION` transaction row
+- transition from `DRAFT` to the correct active lifecycle state for normal assets
+- freeze of profile snapshot fields, salvage snapshot inputs, resolved salvage values, mapped accounts, and source linkage mutability
+
+### Explicit non-goals
+- do not implement legacy-onboarding special logic in this step
+- do not implement low-value same-period full-expense in this step
+- do not implement CARI-linked activation in this step
+- do not implement schedule generation beyond what is strictly required to support activation if that is split to `STEP-FA28` to `STEP-FA30`
+
+### Definition of done
+- standard manual activation validates all required activation-time fields
+- the workflow rejects invalid combinations such as missing capitalization or in-service date, in-service before acquisition, missing profile/life for normal depreciable assets, and invalid salvage or account mappings
+- activation creates one `ACQUISITION` transaction row
+- activation does not create `CAPITALIZATION`
+- activated assets can no longer be freely edited in draft-style ways
+- the whole workflow runs inside one `withTransaction(...)` boundary
+
+### Smoke tests
+- activate a valid manual draft asset and verify status changes from `DRAFT`, one `ACQUISITION` transaction exists, no `CAPITALIZATION` transaction exists, and frozen profile and salvage fields remain persisted
+- attempt activation with missing required activation fields and verify rejection
+- attempt activation with invalid account types and verify rejection
+- attempt to patch frozen accounting/depreciation fields after activation and verify rejection
+- verify no partial mutation remains if activation fails midway
+
+### Acceptance
+- normal manual activation works end to end
+- it produces one auditable acquisition lifecycle event
+- activation-time validation is real, not UI-only
+- freeze semantics are enforced at the backend
+
+---
+
+## `STEP-FA22` - Manual legacy-onboarding activation path
+
+### Patch target
+Implement the go-live/manual legacy-onboarding activation path without double-booking current-period acquisition accounting.
+
+### In scope
+- activation of manually created assets with legacy onboarding fields
+- validation of legacy accumulated depreciation, legacy NBV, remaining useful life, and salvage floor compatibility
+- creation of one onboarding `ACQUISITION` transaction row with no new acquisition journal
+- correct post-activation status for remaining depreciable amount exists and already fully depreciated at onboarding
+
+### Explicit non-goals
+- do not implement low-value same-period full-expense for non-legacy assets here
+- do not implement CARI-linked legacy onboarding because that is out of scope
+- do not backfill historical schedules
+
+### Definition of done
+- manual legacy-onboarding assets can be activated only while they are manual and `DRAFT`
+- validation enforces `legacy_accum_depr <= original_cost`, `legacy_nbv = original_cost - legacy_accum_depr`, legacy NBV not below salvage, and `remaining_useful_life_months` when remaining depreciation exists
+- activation creates one `ACQUISITION` transaction row
+- that onboarding `ACQUISITION` row does not create a fresh acquisition journal
+- assets with zero remaining depreciable amount can land in `FULLY_DEPRECIATED` without low-value auto-expense logic being applied just because they are below threshold
+
+### Smoke tests
+- activate a valid legacy-onboarding asset with remaining depreciation and verify one `ACQUISITION` row exists, `journal_entry_id` is null, and the asset is not treated as a new current-period purchase
+- activate a valid legacy-onboarding asset with zero remaining depreciable amount and verify status may become `FULLY_DEPRECIATED` and no same-period low-value `DEPRECIATION` is auto-created solely from threshold
+- attempt activation with inconsistent legacy NBV math and verify rejection
+- attempt legacy onboarding on a source-linked/CARI-linked draft and verify rejection
+
+### Acceptance
+- legacy onboarding is supported without double-booking
+- imported carrying values are validated and frozen properly
+- below-threshold legacy imports follow Option B exactly
+- go-live onboarding semantics are distinct from fresh acquisition semantics
+
+---
+
+## `STEP-FA23` - Manual low-value same-period full-expense activation path
+
+### Patch target
+Implement the below-threshold new-manual-asset activation path that posts immediate same-period full expense while keeping the asset tracked.
+
+### In scope
+- activation-time threshold evaluation for new manual assets without legacy onboarding values
+- one-time `DEPRECIATION` transaction creation with `depreciation_kind = LOW_VALUE_FULL_EXPENSE`
+- correct status transition to `FULLY_DEPRECIATED`
+- correct salvage rule/value handling for this path
+- coexistence with the standard manual activation path
+
+### Explicit non-goals
+- do not apply this path to manual legacy-onboarding assets
+- do not apply this path to CARI capitalization here
+- do not route this through run-based depreciation
+
+### Definition of done
+- if `original_cost_base` is below category threshold and no legacy onboarding values exist, activation routes through the low-value path
+- activation still creates one `ACQUISITION` transaction row
+- the same business event also creates one inline `DEPRECIATION` transaction row with `depreciation_kind = LOW_VALUE_FULL_EXPENSE`
+- the asset remains tracked and ends at zero NBV
+- the asset becomes `FULLY_DEPRECIATED`, not `DISPOSED`
+- no future normal schedule/run eligibility is created for that asset
+
+### Smoke tests
+- activate a below-threshold manual draft asset and verify one `ACQUISITION` row exists, one `DEPRECIATION` row exists, `depreciation_kind = LOW_VALUE_FULL_EXPENSE`, final asset status is `FULLY_DEPRECIATED`, and no disposal/write-off status is used
+- verify salvage snapshot/value rules are forced to the locked zero/none shape for this path
+- attempt the same path with legacy onboarding values present and verify this low-value route is not auto-applied
+- verify the asset is excluded from later normal depreciation-run eligibility queries
+
+### Acceptance
+- low-value same-period full-expense works as a controlled path
+- it is distinct from legacy onboarding and distinct from disposal
+- the asset remains traceable and reportable after immediate full expense
+
+---
+
+## `STEP-FA24` - FA06 eligible AP-line read surface and remaining-unit calculation
+
+### Patch target
+Deliver the read-side FA06 selection surface before posting/create logic is introduced.
+
+### In scope
+- eligible AP-line discovery using existing CARI document detail infrastructure
+- remaining unconsumed unit quantity calculation
+- per-line eligibility filtering for FA06
+- shared request-shape groundwork for `unitCount`
+- source-line quantity/provenance assumptions: positive whole-unit quantity and equal per-unit split assumption for multi-asset creation
+
+### Explicit non-goals
+- do not create or activate assets yet
+- do not reserve unit slots yet
+- do not post capitalization journals yet
+- do not handle cross-OU accounting yet
+
+### Definition of done
+- the repo can expose eligible AP lines for fixed-assets capitalization without building a second ad hoc CARI detail backend
+- eligibility is based on current remaining unconsumed unit quantity, not line-level exclusion after first use
+- the read surface can show enough information for FA06: document status, direction, line id, quantity, txn/base amounts, current remaining units, and whether equal per-unit split is valid for MVP
+- users who lack `cari.doc.read` cannot access this surface
+
+### Smoke tests
+- read an AP document with one untouched eligible line and verify it appears with full remaining units
+- create a draft asset linked to one unit of that line and verify the remaining count decreases logically
+- clear/delete that draft linkage and verify the remaining count becomes available again
+- test a line with invalid quantity semantics and verify it is surfaced as ineligible for multi-asset FA06
+- verify a user lacking `cari.doc.read` is blocked
+
+### Acceptance
+- FA06 line selection is now driven by real remaining-unit math
+- draft reservations are visible in eligibility results
+- no posting logic has been coupled into the read surface
+
+---
+
+## `STEP-FA25` - FA06 same-OU capitalization create/activate flow
+
+### Patch target
+Implement same-OU AP-line-driven asset creation/capitalization before cross-OU accounting is added.
+
+### In scope
+- `POST /api/v1/fixed-assets/from-cari-document-line`
+- request-level shared-setup batch creation for same-OU cases
+- deterministic assignment of the lowest available `source_cari_document_line_unit_no` values
+- atomic `unitCount` creation
+- creation of assets in draft or activated shape according to the locked FA06 behavior
+- one `CAPITALIZATION` transaction row per created asset card
+- below-threshold same-period low-value handling for CARI-linked assets in same-OU cases
+
+### Explicit non-goals
+- do not implement cross-OU due-to/due-from capitalization in this step
+- do not implement source-drift revalidation edge handling beyond the basic same-OU create path if that is split to `STEP-FA27`
+- do not redesign CARI document APIs
+
+### Definition of done
+- same-OU FA06 can create multiple assets from one AP line using request-level `unitCount`
+- all units in the request share one category, one owner OU, one location OU, one capitalization/in-service date set, and one accounting treatment path
+- each created asset gets exact line provenance and deterministic unit-slot allocation
+- per-asset threshold evaluation is applied to the split per-unit amount
+- created assets receive `CAPITALIZATION`, not `ACQUISITION`
+- below-threshold same-OU CARI assets follow the locked immediate full-expense path
+
+### Smoke tests
+- create one same-OU asset from a single-unit AP line and verify one asset exists, one `CAPITALIZATION` transaction exists, and exact source line provenance is stored
+- create multiple same-OU assets from a multi-unit line and verify `unitCount` assets are created, unit slot numbers are assigned from the lowest available slots, and all assets share the request-level setup fields
+- verify the request is atomic by forcing one unit in the batch to fail validation and confirming no units are created
+- verify below-threshold split per-unit amounts create one `CAPITALIZATION` row, one inline `DEPRECIATION` row with `LOW_VALUE_FULL_EXPENSE`, and final `FULLY_DEPRECIATED` status
+
+### Acceptance
+- same-OU FA06 works end to end
+- the multi-unit path is atomic and deterministic
+- exact line/unit provenance is persisted
+- `CAPITALIZATION` semantics are distinct from manual acquisition semantics
+
+---
+
+## `STEP-FA26` - FA06 cross-OU capitalization accounting template and blocking rules
+
+### Patch target
+Add the locked direct cross-OU capitalization accounting path for owner-OU mismatch against the CARI/AP source OU.
+
+### In scope
+- cross-OU validation for FA06
+- `resolveOuSelfBalancingAccountsTx` integration using `sourceOperatingUnitId = CARI document OU` and `targetOperatingUnitId = asset owner OU`
+- locked direct capitalization journal template
+- hard blocking when required self-balancing/current-account setup is unavailable
+- same request-level shared-setup batch behavior as the same-OU path
+
+### Explicit non-goals
+- do not route cross-OU FA06 through same-date FA10 ownership transfer
+- do not add asset-master inter-OU clearing override fields
+- do not change FA10 transfer accounting in this step
+
+### Definition of done
+- FA06 supports owner OU different from source/payer OU only through the locked direct due-to/due-from capitalization template
+- the template posts debit fixed-asset account in owner OU, credit `targetDueToAccount` in owner OU, debit `sourceDueFromAccount` in source/payer OU, and credit AP/vendor or AP-clearing in source/payer OU
+- if the directional self-balancing accounts cannot be resolved, the request is blocked
+- no unbalanced cross-OU capitalization is allowed to persist
+
+### Smoke tests
+- capitalize a valid cross-OU AP line with configured self-balancing accounts and verify journal lines match the locked template
+- verify the owner OU receives the asset debit and the source/payer OU carries the AP-side credit
+- verify the correct directional pair is used, not the opposite-direction due-to/due-from pair
+- remove or invalidate self-balancing setup and verify the request fails before persistence
+- verify same-OU requests still bypass this path and remain unaffected
+
+### Acceptance
+- cross-OU capitalization now has one locked accounting backbone
+- unbalanced owner/source mismatch is impossible in supported flows
+- FA06 no longer needs an ambiguous alternate mismatch path in MVP
+
+---
+
+## `STEP-FA27` - FA06 draft-link revalidation, source drift refresh, and activation-time safeguards
+
+### Patch target
+Harden FA06 draft-linked assets so activation/finalization never proceeds against stale or invalid source-line assumptions.
+
+### In scope
+- activation-time reload of current linked CARI document/line
+- revalidation of source document status, quantity, currency, txn/base amounts, remaining unit-slot eligibility, equal per-unit split assumptions, and threshold-path implications from current per-unit amounts
+- safe auto-refresh of source-derived draft values only
+- blocking when the current source state no longer supports the reserved slot or assumptions
+
+### Explicit non-goals
+- do not overwrite user-owned fields like category, owner OU, location OU, capitalization date, and in-service date
+- do not auto-heal impossible source changes by silently reassigning to another unit slot
+- do not implement upstream CARI auto-unwind behavior
+
+### Definition of done
+- source-linked draft assets are treated as provisional until activation
+- activation/finalization always re-checks the current source line/document
+- source-derived values may auto-refresh when safe
+- the workflow blocks when document is not `POSTED`, the reserved unit slot is no longer valid, per-unit amount assumptions no longer support the draft, or threshold-path implications changed in a way that requires user intervention
+- stale source-derived data can no longer slip through activation unnoticed
+
+### Smoke tests
+- link a draft asset to a draft CARI line, then change line amounts and verify activation reloads the current values
+- change quantity so the reserved unit slot is no longer available and verify activation is blocked
+- change document status away from `POSTED` and verify activation is blocked
+- verify auto-refresh updates source-derived values but leaves category/OU/date selections unchanged
+- verify threshold-path drift causes the correct blocking or reclassification logic rather than silent stale activation
+
+### Acceptance
+- source-linked draft activation is now safe against upstream drift
+- user-owned draft decisions are preserved while source-derived values remain current
+- FA06 no longer relies on stale copied source data
+
+---
+
+## `STEP-FA28` - Schedule engine period resolution, read surface, and standard straight-line/none math
+
+### Patch target
+Implement the schedule engine foundation for supported periods and the standard schedule path before the more complex declining-balance and lifecycle-cutoff rules are layered on.
+
+### In scope
+- schedule-service period resolution for:
+  - non-adjustment periods only
+  - month-aligned fiscal periods only
+  - locked `period_key = YYYY-MM`
+- `GET /api/v1/fixed-assets/:assetId/depreciation-schedule`
+- standard schedule generation path for:
+  - `STRAIGHT_LINE`
+  - `NONE`
+- use of snapped asset-level fields rather than mutable profile/category rows
+- basic NBV floor at salvage for standard path
+- forward-only schedule generation for normal assets without run posting
+
+### Explicit non-goals
+- do not implement `DECLINING_BALANCE` yet
+- do not implement legacy-onboarding schedule path yet
+- do not implement lifecycle cutoffs for suspend/reactivate/transfer/disposal yet
+- do not implement run posting here
+
+### Definition of done
+- supported fiscal periods are resolved with explicit non-adjustment enforcement
+- schedule endpoint exists
+- standard schedule rows generate deterministically for `STRAIGHT_LINE` and `NONE`
+- period keys use locked `YYYY-MM`
+- schedule generation reads frozen asset-level method/salvage fields
+
+### Smoke tests
+- generate schedule for a standard straight-line asset and verify period keys, opening NBV, planned amounts, and closing NBV progress correctly
+- generate schedule for a `NONE`-method asset and verify no depreciation amounts are scheduled
+- attempt schedule generation for an adjustment period or non-month-aligned period and verify rejection/blocking
+- verify changing the underlying profile row after activation does not change the schedule result for the already activated asset
+
+### Acceptance
+- schedule generation exists as a real read-side engine
+- standard straight-line/none paths are deterministic
+- supported-period rules are enforced before more complex logic is added
+
+---
+
+## `STEP-FA29` - Declining-balance math, salvage-floor enforcement, and legacy-onboarding forward schedule path
+
+### Patch target
+Add the remaining locked depreciation math and the manual legacy-onboarding schedule path without reopening the standard schedule contract.
+
+### In scope
+- `DECLINING_BALANCE` math using:
+  - annual nominal rate
+  - monthly rate
+  - full-month calculation before daily proration
+- `switch_to_straight_line` permanent-switch comparison logic
+- explicit salvage-floor enforcement across methods
+- final-line residual rounding absorption without breaching salvage
+- legacy-onboarding forward schedule path using:
+  - legacy NBV at activation
+  - stored `remaining_useful_life_months`
+  - frozen asset-level depreciation/salvage fields
+
+### Explicit non-goals
+- do not implement lifecycle cutoffs yet
+- do not implement run persistence/posting here
+- do not create historical backfilled schedule rows for legacy onboarding
+
+### Definition of done
+- declining-balance assets can generate deterministic schedules with the locked switch logic
+- schedules never depreciate below salvage
+- legacy-onboarding assets generate forward-only schedules from the imported carrying state
+- stored `remaining_useful_life_months` is used for legacy onboarding rather than inferred date math
+
+### Smoke tests
+- generate a declining-balance schedule and verify monthly amounts follow the locked rate formula
+- generate a declining-balance asset with `switch_to_straight_line = true` and verify the switch occurs only when the locked comparison says so
+- verify salvage floor is never breached
+- generate a legacy-onboarding schedule and verify it starts from the imported NBV and remaining life rather than original acquisition history
+- verify no historical pre-activation schedule rows are created for legacy-onboarding assets
+
+### Acceptance
+- all locked depreciation methods are now supported
+- salvage-floor behavior is deterministic and enforced
+- legacy-onboarding forward schedule logic is explicit and correct
+
+---
+
+## `STEP-FA30` - Lifecycle cutoff eligibility for suspension, reactivation, transfer, and disposal in schedule generation
+
+### Patch target
+Complete schedule eligibility logic for lifecycle events so the run engine later inherits correct partial-period behavior.
+
+### In scope
+- daily-prorata eligible-day handling for:
+  - suspension
+  - reactivation
+  - ownership transfer
+  - disposal/write-off
+- use of effective dates:
+  - prior state through day before
+  - new state from effective date
+- schedule eligibility changes for suspended days excluded, reactivation days included from effective date, transfer-month owner change split basis, and disposal cutoff on effective date
+- exclusion of below-threshold low-value fully expensed assets from normal future schedule generation
+
+### Explicit non-goals
+- do not implement persisted run creation/posting here
+- do not create disposal-month zero-amount postings as schedule artifacts
+- do not create multiple normal depreciation transaction rows for one asset-period
+
+### Definition of done
+- schedule generation respects lifecycle history rows
+- suspended assets do not accrue for suspended days
+- reactivated assets resume prospectively from the reactivation date
+- transfer months can be represented in schedule eligibility in a way compatible with later run-line allocation splits
+- disposal months stop on the effective disposal date
+- low-value fully expensed assets do not leak back into normal future schedule generation
+
+### Smoke tests
+- suspend an asset mid-month and verify schedule eligibility excludes suspended days
+- reactivate mid-month and verify eligibility resumes from the reactivation date
+- transfer ownership mid-month and verify the month is represented in a way compatible with later OU allocation splitting
+- dispose/write off mid-month and verify no days on or after the disposal date are eligible
+- verify a low-value fully expensed asset has no future normal schedule lines
+
+### Acceptance
+- lifecycle cutoffs are now explicit in schedule generation
+- later run logic can rely on correct period eligibility inputs
+- low-value path remains distinct from normal schedule consumption
+
+---
+
+## `STEP-FA31` - Depreciation run preview and persisted draft creation
+
+### Patch target
+Deliver preview and frozen `DRAFT` run creation before posting or reversal are added.
+
+### In scope
+- `POST /api/v1/fixed-assets/runs/preview`
+- `POST /api/v1/fixed-assets/runs`
+- non-adjustment fiscal-period validation
+- supported month-aligned `period_key` validation
+- frozen run header, run lines, and allocation rows
+- run totals and skipped/error capture at creation time
+
+### Explicit non-goals
+- do not implement post yet
+- do not implement reverse yet
+- do not implement draft delete yet
+- do not optimize large-payload chunking beyond correctness unless split later
 
 ### Definition of done
 - preview is transient only
-- persisted `DRAFT` run create, post, reverse, and draft-delete flows exist
-- run-line and allocation snapshots persist the frozen daily-prorata basis and OU allocation context
-- posting and reversal honor the locked admissibility, uniqueness, and schedule-line status rules
-- large run persistence uses chunked writes inside one `withTransaction(...)` boundary
+- persisted run creation writes a frozen `DRAFT` snapshot
+- only one persisted `DRAFT` run can exist for the same scope
+- run lines retain `eligible_days` and `days_in_period`
+- ownership-transfer month allocation segments persist in allocation rows where applicable
+- if run creation fails, nothing persists
+
+### Smoke tests
+- preview a valid run and verify no run rows are persisted
+- create a persisted `DRAFT` run and verify header exists, lines exist, allocation rows exist where required, and period key and period id align
+- attempt to create a second `DRAFT` for the same scope and verify rejection
+- attempt preview/create against an adjustment period and verify rejection
+- force a failure mid-create and verify the transaction rolls back fully
+
+### Acceptance
+- preview and persisted draft creation are distinct
+- run snapshots are frozen and auditable
+- uniqueness and rollback rules are enforced
 
 ---
 
-## `PR-FA17` - Physical move and ownership transfer workflows
+## `STEP-FA32` - Depreciation run detail read and draft delete lifecycle
 
 ### Patch target
-Implement the two explicit post-activation movement workflows without mixing their accounting semantics.
+Deliver the read and stale-draft disposal surfaces needed before run posting is layered on.
+
+### In scope
+- `GET /api/v1/fixed-assets/runs`
+- `GET /api/v1/fixed-assets/runs/:runId`
+- `DELETE /api/v1/fixed-assets/runs/:runId` for `DRAFT` runs only
+- read-side support for totals, line statuses, allocation detail, and skipped/error details
+
+### Explicit non-goals
+- do not implement post yet
+- do not implement reverse yet
+- do not allow delete for `POSTED` or `REVERSED` runs
 
 ### Definition of done
-- physical move persists one `PHYSICAL_MOVE` transaction plus one DB-backed move-detail row
-- ownership transfer persists one `OWNERSHIP_TRANSFER` transaction plus one DB-backed transfer-detail row
-- owner-OU changes and location/custodian changes remain separated by workflow as locked
-- ownership-transfer accounting uses the locked gross-cost-plus-accumulated-depreciation template with directional self-balancing on NBV
-- transfer-month depreciation split context remains compatible with the later run engine and reports
+- run list and run detail are readable
+- run detail exposes the frozen snapshot needed for audit/review
+- only `DRAFT` runs may be deleted
+- deleting a `DRAFT` run removes the draft snapshot rows so a new run for the same scope can later be created
+
+### Smoke tests
+- create a `DRAFT` run, fetch it by id, and verify lines and allocations are returned
+- delete a `DRAFT` run and verify header/children are removed
+- verify a new `DRAFT` run can be created for the same scope after delete
+- attempt delete on a non-`DRAFT` run fixture and verify rejection
+
+### Acceptance
+- stale draft replacement is now explicit and safe
+- read-side auditability of draft runs exists before posting
+- the repo does not accumulate unusable stale draft snapshots
 
 ---
 
-## `PR-FA18` - Disposal, sale, write-off, and source-owned non-run reversal workflows
+## `STEP-FA33` - Depreciation run post workflow
 
 ### Patch target
-Deliver the retirement and reversal workflows after acquisition, capitalization, and movement flows exist.
+Implement posting of frozen `DRAFT` runs without recomputation.
+
+### In scope
+- `POST /api/v1/fixed-assets/runs/:runId/post`
+- posting-date validation
+- book resolution/validation
+- creation of posted depreciation transactions with `depreciation_kind = RUN`
+- journal creation and source-link writing
+- schedule-line status/link updates
+- run status/totals updates
+
+### Explicit non-goals
+- do not implement reversal here
+- do not re-run calculation logic at post time
+- do not allow partial line posting semantics outside the locked design
 
 ### Definition of done
-- write-off and sale use the locked transaction semantics and status transitions
-- sale uses the staged AR-document contract rather than one overloaded endpoint
-- posted sale rows keep exact AR line provenance in `source_ref_line_id`
-- non-run source-owned reversal exists at `POST /api/v1/fixed-assets/transactions/:transactionId/reverse`
-- successor-event blocking and linked-CARI progression blocking follow the locked admissibility rules
+- posting uses saved run lines and allocations only
+- no silent recomputation occurs at post time
+- one normal posted depreciation result exists per asset-period in the effective/current sense
+- schedule lines move from `PLANNED` to `POSTED` with current posted links set
+- run status becomes `POSTED`
+- if post fails, the run remains `DRAFT`
+
+### Smoke tests
+- create a valid `DRAFT` run and post it; verify run becomes `POSTED`, depreciation transactions exist with `depreciation_kind = RUN`, journal source link uses `FIXED_ASSET_DEPRECIATION_RUN` as primary, and schedule lines update to `POSTED`
+- modify asset state after draft creation but before post and verify post still uses frozen run lines, not recomputed data
+- attempt post with invalid posting date/book/period state and verify rejection
+- force a failure mid-post and verify the run remains `DRAFT`
+
+### Acceptance
+- posting is frozen-snapshot based
+- run-posted depreciation is distinguishable from low-value inline expense
+- schedule and journal traceability update correctly
 
 ---
 
-## `PR-FA19` - Evidence, source traceability, and Journal Workbench fixed-assets drillback
+## `STEP-FA34` - Depreciation run reverse workflow
 
 ### Patch target
-Finish the evidence and source-drillback surfaces after the fixed-assets business records they depend on already exist.
+Implement source-owned run reversal with successor-history blocking and reversal-safe repostability.
+
+### In scope
+- `POST /api/v1/fixed-assets/runs/:runId/reverse`
+- admissibility checks for later lifecycle events and later posted depreciation results
+- reversal journal support if used by design
+- run-line and schedule-line `REVERSED` behavior
+- clearing current posted links on schedule lines
+- run status transition to `REVERSED`
+
+### Explicit non-goals
+- do not implement partial per-asset run reversal
+- do not auto-unwind successor chains
+- do not reopen unrelated later transactions automatically
 
 ### Definition of done
-- fixed-assets evidence routes exist for asset, transaction, and run surfaces through nested mounts
-- `backend/src/services/evidence.service.js` supports the locked fixed-assets source types
-- fixed-assets journals write the correct source-link types and route users back to the owning workflow
-- Journal Workbench normal drillback and reverse-block navigation both work through the backend-owned destination contract for fixed-assets source types
-- fixed-assets deep-link pages honor the locked query contract (`runId`, `transactionId`, `assetId`, `tab`)
+- reversal is all-or-nothing for the run
+- if any affected asset violates reversal admissibility, the whole run reversal is blocked
+- run lines become `REVERSED`
+- linked schedule lines become `REVERSED`
+- schedule-line current posted links are cleared
+- repost for the same asset/period remains possible later
+- if reversal fails, the run remains `POSTED`
+
+### Smoke tests
+- reverse a valid posted run and verify run status is `REVERSED`, run lines are `REVERSED`, schedule lines are `REVERSED`, and current schedule posted links are cleared
+- create a later lifecycle event on one affected asset and verify the whole run reversal is blocked
+- create a later posted depreciation result and verify reversal is blocked
+- verify a fresh repost for the same asset/period becomes possible after successful reversal
+- force a failure during reversal and verify the run remains `POSTED`
+
+### Acceptance
+- run reversal is controlled, auditable, and safe
+- reversal does not strand the asset-period forever
+- successor-chain auto-unwind is not required for MVP
 
 ---
 
-## `PR-FA20` - Reports, permissions, sidebar gating, and release gates
+## `STEP-FA35` - Depreciation run chunked persistence and volume safety hardening
 
 ### Patch target
-Close the module with reporting, security, navigation, and release-readiness work.
+Harden large run persistence to fit the repo’s one-transaction rule without relying on oversized insert payloads.
+
+### In scope
+- chunked insert/write strategy for run lines, allocation rows, and any large post-time persistence where relevant
+- keep one `withTransaction(...)` boundary
+- packet-size aware implementation
+- stress-oriented validation of volume behavior
+
+### Explicit non-goals
+- do not change business semantics of runs
+- do not split one business workflow across multiple commits
+- do not introduce a second transaction boundary to solve volume
 
 ### Definition of done
-- fixed-assets report endpoints and paired `/export` routes exist for the locked report set
-- `fixed_assets.account_override` is seeded and assigned to the locked role bundles
-- fixed-assets pages, sidebar entries, and action visibility follow the locked permission model
-- frontend scaffolds are replaced by real demirbas pages across the canonical route set
-- release-readiness checks cover OpenAPI, reports, permissions, and the locked reverse-block / source-link contracts
+- large run creation and related persistence write in chunks inside one transaction
+- implementation is explicit about batch sizing
+- no change in correctness or audit shape versus unchunked semantics
+- the repo has a repeatable way to test larger run sizes
+
+### Smoke tests
+- create a run with enough lines/allocations to exercise chunking
+- verify the transaction still commits atomically, all expected rows are persisted, and totals match the pre-chunk logical result
+- force a failure on a later chunk and verify the whole transaction rolls back
+- verify smaller runs still behave identically
+
+### Acceptance
+- run persistence is now volume-safe within the repo’s transaction model
+- correctness is preserved while reducing environment sensitivity
+- chunking is implementation hardening, not a semantic change
+
+---
+
+## `STEP-FA36` - Physical move workflow
+
+### Patch target
+Implement the non-accounting physical move/reassignment workflow without mixing it with ownership transfer semantics.
+
+### In scope
+- `POST /api/v1/fixed-assets/:assetId/physical-move`
+- updates to:
+  - `location_operating_unit_id`
+  - `custodian_employee_id`
+  - `department_code`
+  - `cost_center_code`
+- creation of one `PHYSICAL_MOVE` transaction row
+- creation of one `fixed_asset_physical_move_details` row
+- from/to snapshot persistence for:
+  - location OU
+  - custodian
+  - department code
+  - cost center code
+
+### Explicit non-goals
+- do not change `owner_operating_unit_id`
+- do not create accounting journals by default
+- do not implement ownership transfer here
+
+### Definition of done
+- physical move changes only physical/responsibility dimensions
+- workflow creates one transaction and one child detail row
+- from/to state is DB-backed and auditable
+- no ownership or accounting movement is implied by this workflow
+
+### Smoke tests
+- move an active asset to a new location and custodian and verify one `PHYSICAL_MOVE` transaction exists, one detail row exists, asset master updates location/custodian, and owner OU remains unchanged
+- move an asset with only department/cost-center change and verify the move still records from/to snapshots and no accounting owner change occurs
+- verify repeated move history can be read in chronological order
+
+### Acceptance
+- physical move is now a distinct workflow
+- physical placement and responsibility changes are auditable
+- accounting ownership remains untouched by this flow
+
+---
+
+## `STEP-FA37` - Ownership transfer workflow and accounting
+
+### Patch target
+Implement ownership transfer as a separate accounting workflow with the locked gross-cost-plus-accumulated-depreciation template and directional self-balancing on NBV.
+
+### In scope
+- `POST /api/v1/fixed-assets/:assetId/ownership-transfer`
+- change to `owner_operating_unit_id`
+- optional location update as part of transfer
+- creation of one `OWNERSHIP_TRANSFER` transaction row
+- creation of one `fixed_asset_ownership_transfer_details` row
+- locked journal template:
+  - debit fixed-asset account in target owner OU for gross cost
+  - credit fixed-asset account in source owner OU for gross cost
+  - debit accumulated-depreciation account in source owner OU
+  - credit accumulated-depreciation account in target owner OU
+  - debit `sourceDueFromAccount` in source owner OU for transferred NBV
+  - credit `targetDueToAccount` in target owner OU for transferred NBV
+- directional self-balancing account resolution using sourceOperatingUnitId = source owner OU and targetOperatingUnitId = target owner OU
+
+### Explicit non-goals
+- do not treat this as a physical move
+- do not use a net-only template
+- do not use opposite-direction due-to/due-from accounts
+- do not add asset-master inter-OU override fields
+
+### Definition of done
+- ownership transfer updates owner OU only after successful posting
+- transfer persists one transaction and one detail row
+- accounting uses the locked gross/accum/NBV template
+- zero-NBV transfers omit zero self-balancing lines rather than posting zero amounts
+- the workflow remains distinct from physical move even if location is also updated
+
+### Smoke tests
+- transfer an asset between owner OUs with non-zero NBV and verify journal lines match the locked template
+- verify the source owner OU and target owner OU directional due-to/due-from pair is resolved correctly
+- verify owner OU changes only after successful posting
+- transfer an asset with zero NBV and verify zero self-balancing lines are not created
+- verify a transfer can optionally update location but still remains an ownership-transfer workflow, not a physical move
+
+### Acceptance
+- ownership transfer is now a controlled accounting workflow
+- transfer accounting is deterministic and repo-native
+- owner OU change no longer relies on ad hoc direct edits
+
+---
+
+## `STEP-FA38` - Write-off workflow
+
+### Patch target
+Implement the no-proceeds disposal path before sale complexity is introduced.
+
+### In scope
+- `POST /api/v1/fixed-assets/:assetId/writeoff`
+- NBV calculation
+- disposal cutoff handling
+- `WRITEOFF` transaction creation
+- disposal journal creation
+- asset status transition to `DISPOSED`
+- gain/loss account usage as applicable for write-off behavior
+
+### Explicit non-goals
+- do not implement sale in this step
+- do not implement non-run reversal in this step
+- do not create a generic `DISPOSAL` transaction type
+
+### Definition of done
+- write-off creates one `WRITEOFF` transaction row
+- the asset becomes `DISPOSED`
+- future depreciation is cut off correctly
+- already fully depreciated assets do not receive zero-amount depreciation formality postings just to mark disposal month cutoff
+
+### Smoke tests
+- write off a partially depreciated asset and verify one `WRITEOFF` row exists, asset status is `DISPOSED`, disposal journal exists, and future depreciation eligibility is gone
+- write off an already fully depreciated asset and verify no zero-amount depreciation transaction is created and the asset still disposes correctly
+- attempt write-off on an already disposed asset and verify rejection
+
+### Acceptance
+- write-off is now a complete disposal path
+- it is distinct from sale
+- disposal cutoffs and zero-amount edge handling follow the locked rules
+
+---
+
+## `STEP-FA39` - Sale staged draft/link/update workflow
+
+### Patch target
+Implement the staged AR-side sale preparation flow without final disposal accounting yet.
+
+### In scope
+- `POST /api/v1/fixed-assets/:assetId/sale/create-draft-ar-document`
+- `POST /api/v1/fixed-assets/:assetId/sale/link-ar-document`
+- `PATCH /api/v1/fixed-assets/:assetId/sale/draft-ar-document`
+- exact AR line linkage requirements
+- action-specific `cari.doc.*` permission checks
+- draft/pre-finalize fixed-assets state management
+
+### Explicit non-goals
+- do not create the fixed-assets `SALE` row yet
+- do not post disposal accounting yet
+- do not transition the asset to `DISPOSED` yet
+- do not finalize the sale here
+
+### Definition of done
+- sale can create a draft AR-side context
+- sale can link an existing AR-direction document and exact dedicated line
+- sale can update the linked draft AR-side context
+- none of these staged actions create a fixed-assets `SALE` row, a disposal journal, or a disposed asset state
+- the workflow stores enough linkage context for later finalization
+
+### Smoke tests
+- create a draft AR-side sale document and verify a dedicated line is created for the asset, no `SALE` row exists yet, and the asset remains in pre-sale state
+- link an existing AR document/line and verify exact line linkage is stored and shared-line linkage is rejected
+- update the linked draft AR-side context and verify allowed draft fields change and no disposal accounting is created
+- verify permission failures for missing `cari.doc.create`, `read`, or `update`
+
+### Acceptance
+- staged sale preparation is real and explicit
+- draft preparation is separated from disposal finalization
+- line-exact provenance is enforced before final posting
+
+---
+
+## `STEP-FA40` - Sale finalize workflow
+
+### Patch target
+Implement the only sale step that may create the fixed-assets `SALE` row, disposal journal, and disposed asset state.
+
+### In scope
+- `POST /api/v1/fixed-assets/:assetId/sale/finalize`
+- final AR-side validation
+- exact `source_ref_line_id` enforcement
+- NBV relief, gain/loss logic, and disposal posting
+- asset status transition to `DISPOSED`
+- final `SALE` transaction creation
+
+### Explicit non-goals
+- do not implement sale reversal in this step
+- do not allow finalize to succeed without exact AR line provenance
+- do not overload earlier staged endpoints with finalize behavior
+
+### Definition of done
+- finalize fails unless an exact dedicated AR sale line is resolved
+- finalize creates one `SALE` transaction row
+- the posted `SALE` row stores `source_ref_type = CARI_DOCUMENT`, `source_ref_id`, and `source_ref_line_id`
+- disposal journal is created
+- asset becomes `DISPOSED`
+- earlier draft/link/update actions remain non-finalizing
+
+### Smoke tests
+- finalize a prepared sale and verify one `SALE` row exists, exact AR line provenance is stored, disposal journal exists, and asset status becomes `DISPOSED`
+- attempt finalize without a dedicated AR line and verify rejection
+- verify one AR line cannot be reused for multiple asset finalizations
+- verify missing `cari.doc.post` blocks finalize
+
+### Acceptance
+- sale finalization is now explicit and auditable
+- only finalize creates the sale event
+- exact AR-line provenance is guaranteed on posted sale rows
+
+---
+
+## `STEP-FA41` - Source-owned non-run reversal workflow
+
+### Patch target
+Implement reversal for posted non-run fixed-assets transactions through fixed-assets-owned endpoints rather than direct GL reversal.
+
+### In scope
+- `POST /api/v1/fixed-assets/transactions/:transactionId/reverse`
+- reversal support for posted non-run transaction types in MVP: `ACQUISITION`, `CAPITALIZATION`, inline low-value `DEPRECIATION`, `OWNERSHIP_TRANSFER`, `WRITEOFF`, and `SALE`
+- successor-event blocking
+- linked-CARI progression blocking
+- authoritative reversal lineage using `reversed_transaction_id`
+- optional convenience backlink update
+
+### Explicit non-goals
+- do not reverse run-posted depreciation here
+- do not auto-unwind later dependent events
+- do not permit reversal of non-posting lifecycle events merely because they exist as transactions
+
+### Definition of done
+- non-run posted transactions can be reversed only when they are still the latest finalized lifecycle event for the asset
+- `SALE` reversal is blocked until the linked AR-side document/line is already reversed or back in a reversal-compatible non-posted state
+- reversal creates one `REVERSAL` transaction row
+- one original posted source-owned transaction cannot be reversed twice
+- permission mapping follows original transaction type, not a blanket reversal permission
+
+### Smoke tests
+- reverse a posted `CAPITALIZATION` with no successor event and verify one `REVERSAL` row exists, `reversed_transaction_id` is set, and original state is not double-reversible
+- create a successor transaction and verify reversal is blocked
+- attempt to reverse the same original transaction twice and verify the second attempt fails
+- attempt to reverse a `SALE` while AR-side state is still progressed and verify blocking
+- verify permission enforcement differs for `post`, `transfer`, and `dispose` reversal cases
+
+### Acceptance
+- non-run source-owned reversal is real and protected
+- reversal lineage is authoritative and DB-backed
+- successor-state and linked-CARI blocking rules are enforced
+
+---
+
+## `STEP-FA42` - Fixed-assets evidence service extension and nested evidence routes
+
+### Patch target
+Extend evidence support to fixed-assets surfaces and expose nested evidence routes for asset, transaction, and run levels.
+
+### In scope
+- extend `backend/src/services/evidence.service.js` for:
+  - `FIXED_ASSET`
+  - `FIXED_ASSET_TRANSACTION`
+  - `FIXED_ASSET_DEPRECIATION_RUN`
+- add `backend/src/routes/fixed-assets.evidence.routes.js`
+- nested mounts inside `fixed-assets.routes.js`:
+  - `/:assetId/evidence`
+  - `/transactions/:transactionId/evidence`
+  - `/runs/:runId/evidence`
+- asset/transaction/run evidence operations:
+  - list
+  - create metadata
+  - read single evidence record
+  - upload content
+  - download content
+  - delete
+
+### Explicit non-goals
+- do not finalize journal drillback here
+- do not add a separate top-level app mount for fixed-assets evidence
+- do not use the leaner inventory-transfer evidence route shape as the template
+
+### Definition of done
+- evidence service supports all locked fixed-assets source types
+- one merged-params router serves asset, transaction, and run evidence surfaces
+- routes follow the richer CARI evidence pattern
+- fixed-assets evidence is nested under fixed-assets routes, not mounted at app root separately
+
+### Smoke tests
+- create metadata for asset evidence and verify `uploadPath` is returned
+- upload, download, and delete asset evidence content successfully
+- repeat the same flow for transaction evidence and run evidence
+- verify RBAC scope resolution works correctly for asset, transaction, and run evidence routes
+- verify the routes do not get swallowed by `/:assetId` route ordering mistakes
+
+### Acceptance
+- evidence support for fixed-assets is complete at all required levels
+- route mounting and evidence service behavior match the locked design
+- evidence is no longer an uncovered dependency for the module
+
+---
+
+## `STEP-FA43` - Fixed-assets journal source-link writing and backend destination resolution support
+
+### Patch target
+Connect fixed-assets posting workflows to journal source links and extend the shared backend destination resolver for fixed-assets source types.
+
+### In scope
+- fixed-assets posting workflows write:
+  - `FIXED_ASSET_TRANSACTION` as primary for non-run journals
+  - `FIXED_ASSET_DEPRECIATION_RUN` as primary for run journals
+- ensure exactly one owning `PRIMARY` link is written for fixed-assets generated journals
+- extend `backend/src/services/gl.reverse-block-destination.service.js` for:
+  - `FIXED_ASSET_TRANSACTION`
+  - `FIXED_ASSET_DEPRECIATION_RUN`
+- implement locked route/query resolution rules and fallbacks for those source types
+- ensure fixed-assets source-link rows can carry backend-owned `destination` metadata in journal detail reads
+
+### Explicit non-goals
+- do not finish frontend deep-link page consumption here
+- do not leave source-type literals hardcoded ad hoc in multiple files
+- do not alter non-fixed-assets destination contracts beyond what shared infrastructure already supports
+
+### Definition of done
+- fixed-assets journals write the correct source-link types and one owning `PRIMARY`
+- backend destination resolver can resolve fixed-assets source rows dynamically
+- journal detail reads now expose fixed-assets `source_links[].destination` via the shared contract
+- reverse-blocking can produce destination metadata for fixed-assets source types without relying on static UI route maps
+
+### Smoke tests
+- post a fixed-assets non-run journal and verify one primary source link exists and source type is `FIXED_ASSET_TRANSACTION`
+- post a depreciation run journal and verify one primary source link exists and source type is `FIXED_ASSET_DEPRECIATION_RUN`
+- fetch the journal detail and verify `source_links[].destination` resolves to asset detail with `tab=transactions&transactionId=...` for normal fixed-assets transaction cases, disposals workflow for `SALE` and `WRITEOFF`, and depreciation-runs workflow with `runId=...` for run journals
+- intentionally break a source record lookup and verify fallback destination shape is still returned with `isFallback = true`
+
+### Acceptance
+- fixed-assets journals are now fully wired into the shared source-link ownership/drillback contract
+- backend-owned route resolution for fixed-assets exists
+- Journal Workbench no longer needs fixed-assets-specific hardcoded route ownership to be correct
+
+---
+
+## `STEP-FA44` - Fixed-assets deep-link pages, Journal Workbench drillback, and query-contract completion
+
+### Patch target
+Finish the fixed-assets side of the drillback contract by making fixed-assets pages honor the locked query parameters and verifying Journal Workbench can navigate correctly for fixed-assets source types.
+
+### In scope
+- `frontend/src/pages/fixedAssets/FixedAssetDetailPage.jsx`
+  - consume `tab`
+  - consume `transactionId`
+  - focus/highlight the matching transaction when `tab=transactions`
+- `frontend/src/pages/fixedAssets/FixedAssetDepreciationRunsPage.jsx`
+  - consume `runId`
+  - load/focus matching run
+- `frontend/src/pages/fixedAssets/FixedAssetDisposalsPage.jsx`
+  - consume `transactionId`
+  - consume optional `assetId`
+  - focus/filter matching disposal transaction
+- `frontend/src/pages/JournalWorkbenchPage.jsx`
+  - verify fixed-assets drillback and reverse-block navigation work through backend-owned destination metadata
+- frontend API helper support for:
+  - run detail loading
+  - transaction-list loading with transaction focus support
+  - disposal focus/loading where needed
+
+### Explicit non-goals
+- do not reintroduce local fixed-assets route maps as the primary logic
+- do not change the shared backend destination shape here
+- do not widen this step into unrelated fixed-assets page redesign work
+
+### Definition of done
+- fixed-assets target pages honor the locked deep-link query contract exactly:
+  - `runId`
+  - `transactionId`
+  - `assetId`
+  - `tab`
+- Journal Workbench can navigate to fixed-assets pages using backend-owned destination metadata on both normal “Open Source” and reverse-block navigation
+- fixed-assets deep-link pages are no longer passive endpoints; they actively focus the linked context
+
+### Smoke tests
+- open a journal with `FIXED_ASSET_TRANSACTION` source link and trigger “Open Source”; verify navigation lands on asset detail with `tab=transactions` and focuses the matching transaction
+- open a journal with `FIXED_ASSET_DEPRECIATION_RUN` source link and verify navigation lands on depreciation runs page with the correct run focused
+- open a disposal-related fixed-assets journal and verify navigation lands on disposals page with the correct transaction and optional asset context focused
+- attempt reverse on a blocked fixed-assets journal and verify the reverse-block navigation hint lands on the correct owning workflow
+- verify the UI no longer depends on fixed-assets-specific local static maps for upgraded paths
+
+### Acceptance
+- the fixed-assets side of the drillback contract is complete
+- backend-owned navigation metadata now works end to end
+- Journal Workbench and fixed-assets pages agree on one exact query contract
+
+---
+
+## `STEP-FA45` - Fixed-assets permission seeding and backend authorization hardening
+
+### Patch target
+Finish the backend permission model and route-level enforcement before UI gating is finalized.
+
+### In scope
+- add `fixed_assets.account_override` to `backend/src/seedCore.js`
+- assign roles exactly as locked
+- backend route guards for fixed-assets surfaces
+- cross-module permission enforcement using the secondary RBAC assertion helper
+- non-run reversal permission mapping by original transaction type
+
+### Explicit non-goals
+- do not finalize sidebar visibility here
+- do not implement reports here
+- do not treat frontend hiding as security
+
+### Definition of done
+- `fixed_assets.account_override` is seeded
+- role bundle assignment matches the locked rule exactly
+- fixed-assets routes use owning `fixed_assets.*` permission plus required `cari.doc.*` checks where applicable
+- stacked `requirePermission(...)` overwrites are avoided
+- reversal authorization is action-specific and transaction-type aware
+
+### Smoke tests
+- seed a fresh environment and verify `fixed_assets.account_override` exists
+- verify `TenantAdmin`, `CountryController`, and `EntityAccountant` have it while `GroupController`, `BranchOperator`, and `AuditorReadOnly` do not
+- call FA06/FA11 endpoints with missing CARI permission and verify rejection
+- call a route requiring account override without that permission and verify rejection
+- call non-run reversal endpoints with wrong permission family and verify rejection
+
+### Acceptance
+- backend authorization matches the locked model
+- role assignment is explicit and testable
+- CARI cross-module permissions are enforced correctly
+
+---
+
+## `STEP-FA46` - Frontend sidebar, route, and action gating
+
+### Patch target
+Wire the permission model into the frontend without changing backend security assumptions.
+
+### In scope
+- sidebar visibility
+- shared app-chrome demirbas navigation/icon heuristic cleanup where needed for canonical routes and aliases
+- page-level action visibility
+- route-level UX gating for canonical fixed-assets routes
+- action gating for settings, custodians, disposal, transfer, depreciation actions, and account overrides
+- cleanup of remaining placeholder-era demirbas navigation assumptions
+
+### Explicit non-goals
+- do not rely on frontend gating as the security boundary
+- do not build reports here
+- do not change backend permission semantics
+
+### Definition of done
+- fixed-assets sidebar entries reflect the user’s permission set
+- fixed-assets actions only appear when the relevant permissions exist
+- account-override actions are separately gated from broad upsert/post actions
+- canonical routes are now backed by real pages, not generic placeholders
+
+### Smoke tests
+- log in as users with different permission bundles and verify sidebar/page/action visibility changes correctly
+- verify a read-only user can view but not see mutation actions
+- verify a user with broad fixed-assets access but no account-override permission cannot see override actions
+- verify a user with missing disposal/transfer permissions cannot see those actions even if they can open detail pages
+
+### Acceptance
+- frontend gating now mirrors backend authorization
+- sensitive actions are visibly explicit
+- placeholder-driven demirbas navigation is gone
+
+---
+
+## `STEP-FA47` - Fixed-assets reports and paired export endpoints
+
+### Patch target
+Implement the locked report set and its paired export contract.
+
+### In scope
+- report endpoints for register, depreciation schedule, additions, disposals, transfers, by owner OU, by location OU, by custodian, depreciation by owner OU, and rollforward
+- paired `/export` endpoints for each report
+- frontend report page/API integration
+- report filters aligned with the locked report purposes
+- report distinctions such as `by-owner-ou` vs `depreciation-by-owner-ou`, `ACQUISITION` vs `CAPITALIZATION`, `WRITEOFF` vs `SALE`, and `RUN` vs `LOW_VALUE_FULL_EXPENSE`
+
+### Explicit non-goals
+- do not collapse reports into one generic endpoint
+- do not use `?export=1` as the contract
+- do not postpone export semantics as “later”
+
+### Definition of done
+- the locked report set exists
+- each report has a dedicated `/export` pair
+- report SQL respects the locked lifecycle/report semantics
+- frontend report surface is no longer placeholder-only
+
+### Smoke tests
+- run each report with a minimal seeded dataset and verify rows return
+- run each paired `/export` endpoint and verify a downloadable result is produced
+- verify `by-owner-ou` and `depreciation-by-owner-ou` differ in grouping logic and basis
+- verify additions separate `ACQUISITION` from `CAPITALIZATION`
+- verify disposals separate `WRITEOFF` from `SALE`
+- verify low-value same-period full-expense appears without being misclassified as retirement
+- verify transfer-month allocation-aware reports reflect persisted allocation rows
+
+### Acceptance
+- reporting is practical and complete for MVP scope
+- export is first-class, not bolted on
+- financial/reporting distinctions match the locked semantics
+
+---
+
+## `STEP-FA48` - Release gates, smoke suite, and rollout readiness checks
+
+### Patch target
+Close the track with explicit release-readiness checks so the module is not considered done only because routes compile.
+
+### In scope
+- cross-cutting smoke suite for the fixed-assets track
+- release-readiness checks covering OpenAPI generation, source-link ownership contract, reverse-block contract, permissions, reports/export, and key workflows
+- rollout/readiness documentation for one-`PRIMARY` source-link enforcement dependency, fixed-assets route availability, fixed-assets page readiness, and required OU self-balancing setup for cross-OU flows
+
+### Explicit non-goals
+- do not add new business scope here
+- do not hide missing prerequisites behind a green build
+- do not treat ad hoc manual clicking as sufficient rollout readiness
+
+### Definition of done
+- there is a named smoke suite or equivalent release gate covering the fixed-assets MVP
+- the release gate verifies the critical contracts introduced earlier in the plan
+- rollout blockers are explicit if prerequisites are missing
+- the module can now be judged on behavior, not just code presence
+
+### Smoke tests
+- the smoke suite verifies one journal has at most one `PRIMARY`, journal detail still returns raw `source_links`, journal detail additively returns `source_links[].destination` where supported, reverse-block errors preserve message text and include `details.reverseBlock`, and Journal Workbench can use backend-owned metadata on upgraded paths
+- the smoke suite verifies manual draft creation, standard manual activation, legacy-onboarding activation, and below-threshold manual activation
+- the smoke suite verifies same-OU AP-line capitalization, cross-OU AP-line capitalization with configured self-balancing, missing-setup blocking, and stale source-linked activation blocking
+- the smoke suite verifies preview run, create draft run, post run, reverse run, delete stale draft run, and low-value exclusion from run eligibility
+- the smoke suite verifies physical move, ownership transfer, write-off, staged sale create/link/update without final disposal, sale finalize, and source-owned non-run reversal
+- the smoke suite verifies asset/transaction/run evidence CRUD plus one report read and one paired export per report family
+- the smoke suite verifies missing `cari.doc.*` permission blocks FA06/FA11 correctly, missing `fixed_assets.account_override` blocks account override correctly, and non-run reversal permission mapping follows transaction type
+
+### Acceptance
+- the track has an explicit release bar
+- smoke coverage proves the critical contracts actually work together
+- rollout prerequisites are visible and testable
+- "done" now means operationally ready, not only implemented
+
+---
+
+## Notes On How To Use These With Codex
+
+For each serialized step prompt, include all of these:
+- the exact `STEP-FA##` step name
+- the step `Patch target`
+- the step `In scope`
+- the step `Explicit non-goals`
+- the step `Definition of done`
+- the step `Smoke tests`
+- the matching execution-matrix block below, especially `Allowed files`, `Dependencies`, and `Blocked by`
+
+Prompt shape to prefer:
+- `Implement STEP-FA33 only.`
+- `In scope: ...`
+- `Explicit non-goals: ...`
+- `Files allowed: ...`
+- `The patch is not complete unless the smoke tests described in the step pass.`
+
+## Codex Execution Matrix
+
+Use this matrix together with each serialized step body. `Allowed files` means the primary write scope for that prompt; if the step needs files outside the list, split the work instead of widening the patch casually.
+
+### `STEP-FA01`
+- `AI size`: Small
+- `Allowed files`: `backend/src/utils/source-ref-types.js`, `frontend/src/utils/sourceRefTypes.js`, `backend/src/routes/_utils.js`, `backend/src/middleware/rbac.js`
+- `Dependencies`: none beyond repo baseline
+- `Blocked by`: none
+- `Rollback risk`: Low
+- `Smoke command ideas`: `npm run test:permission-matrix`; local reverse-error serialization smoke through the journal reverse path
+
+### `STEP-FA02`
+- `AI size`: Small
+- `Allowed files`: `backend/scripts/*`, `backend/package.json`, `backend/src/migrate.js`, `backend/src/migrationRunner.js`
+- `Dependencies`: none beyond repo baseline
+- `Blocked by`: access to representative `journal_source_links` data in local or seeded environments
+- `Rollback risk`: Low
+- `Smoke command ideas`: `npm run db:migrate:status`; run the duplicate-`PRIMARY` preflight against local data and inspect stable output ordering
+
+### `STEP-FA03`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/cash.service.js`, `backend/src/services/cash.transaction.service.js`, `backend/src/services/payments.service.js`, `backend/src/services/journal.source-link.service.js`, directly owning route files only if the write entrypoint lives there
+- `Dependencies`: `STEP-FA02`
+- `Blocked by`: unresolved survivor/demotion rule from the duplicate-`PRIMARY` preflight
+- `Rollback risk`: Medium
+- `Smoke command ideas`: `npm run test:cari-pr06`; `npm run test:cash-posting-reversal`; `npm run test:payments:prb04`
+
+### `STEP-FA04`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/services/inventory.service.js`, `backend/src/services/inventory.transfer.service.js`, `backend/src/services/payroll.accruals.service.js`, `backend/src/services/payroll.runs.service.js`, `backend/src/services/payroll.paymentSync.service.js`, `backend/src/services/payroll.liabilities.service.js`, `backend/src/services/journal.source-link.service.js`, directly owning route files only if the write entrypoint lives there
+- `Dependencies`: `STEP-FA02`, `STEP-FA03`
+- `Blocked by`: the one-owning-link writer contract not yet being settled in earlier shared-platform flows
+- `Rollback risk`: Medium
+- `Smoke command ideas`: `npm run test:inventory:release-gate`; `npm run test:payroll:release-gate`
+
+### `STEP-FA05`
+- `AI size`: Small
+- `Allowed files`: `backend/scripts/*`, `backend/package.json`, the directly related shared-platform files changed in `STEP-FA03` and `STEP-FA04` only where assertions must be wired in
+- `Dependencies`: `STEP-FA02`, `STEP-FA03`, `STEP-FA04`
+- `Blocked by`: writer-compliance gaps still open in shared-journal producers
+- `Rollback risk`: Low
+- `Smoke command ideas`: existing CARI/cash/inventory/payroll gate scripts plus a new duplicate-`PRIMARY` release-gate check
+
+### `STEP-FA06`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/services/gl.reverse-block-destination.service.js`, `backend/src/routes/gl.write.journal.routes.js`, `backend/src/routes/gl.read.journal.routes.js`, `backend/src/routes/_utils.js`, `backend/src/utils/source-ref-types.js`, `backend/src/services/journal.source-link.service.js`
+- `Dependencies`: `STEP-FA01`
+- `Blocked by`: shared source-ref constants and structured-error helper not being available
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local `GET /gl/journals/:journalId`; local reverse attempt that should return legacy text plus `details.reverseBlock`
+
+### `STEP-FA07`
+- `AI size`: Medium
+- `Allowed files`: `frontend/src/pages/JournalWorkbenchPage.jsx`, `frontend/src/utils/sourceRefTypes.js`, `frontend/src/utils/journalSourceLinkDestinations.js`
+- `Dependencies`: `STEP-FA06`
+- `Blocked by`: backend detail/read and reverse-error metadata not yet landing additively
+- `Rollback risk`: Medium
+- `Smoke command ideas`: `npm run build`; manual Journal Workbench open-source and reverse-block smoke against upgraded journal detail payloads
+
+### `STEP-FA08`
+- `AI size`: Small
+- `Allowed files`: `backend/scripts/generate-openapi.js`, `backend/openapi.yaml`, `backend/package.json`
+- `Dependencies`: none beyond the locked route base `/api/v1/fixed-assets`
+- `Blocked by`: none
+- `Rollback risk`: Low
+- `Smoke command ideas`: `npm run openapi:generate`; `npm run check:openapi`
+
+### `STEP-FA09`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/migrations/m138_fixed_assets_foundation.js`, `backend/src/migrations/index.js`
+- `Dependencies`: none beyond the locked schema decisions in `FA01`
+- `Blocked by`: migration numbering or base-table-order drift
+- `Rollback risk`: High
+- `Smoke command ideas`: `npm run db:migrate:status`; `npm run db:migrate` against a fresh local database
+
+### `STEP-FA10`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/migrations/m138_fixed_assets_foundation.js`, `backend/src/migrations/index.js`
+- `Dependencies`: `STEP-FA09`
+- `Blocked by`: base tables from `m138` not being in place yet
+- `Rollback risk`: High
+- `Smoke command ideas`: `npm run db:migrate`; schema inspection for the locked foreign keys, unique guards, and indexes
+
+### `STEP-FA11`
+- `AI size`: Small
+- `Allowed files`: `backend/src/migrations/m139_fixed_asset_custodian_employees.js`, `backend/src/migrations/index.js`
+- `Dependencies`: `STEP-FA09`
+- `Blocked by`: custodian columns not existing from the `m138` base pass
+- `Rollback risk`: Medium
+- `Smoke command ideas`: `npm run db:migrate`; verify deferred custodian foreign keys attach only after the interim table exists
+
+### `STEP-FA12`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/migrations/m140_fixed_asset_cari_capitalization_and_traceability.js`, `backend/src/migrations/index.js`
+- `Dependencies`: `STEP-FA02` to `STEP-FA05`, `STEP-FA09` to `STEP-FA11`
+- `Blocked by`: one-`PRIMARY` writer hardening or legacy data normalization still being incomplete
+- `Rollback risk`: High
+- `Smoke command ideas`: `npm run db:migrate`; targeted SQL assertions for source-line provenance, unit-slot uniqueness, and the journal-link tail
+
+### `STEP-FA13`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/index.js`, `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.reporting.service.js`, `backend/src/services/fixed-assets.scope.service.js`
+- `Dependencies`: `STEP-FA01`, `STEP-FA09` to `STEP-FA12`
+- `Blocked by`: fixed-assets schema slices not being present or route ordering still being ambiguous
+- `Rollback risk`: Medium
+- `Smoke command ideas`: start the backend locally; hit `/api/v1/fixed-assets` and verify static and nested-prefixed routes are not swallowed by `/:assetId`
+
+### `STEP-FA14`
+- `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: `STEP-FA13`, `STEP-FA09`
+- `Blocked by`: category tables or shared fixed-assets module skeleton not being in place
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local category create/list/update smoke with account-type and legal-entity ownership validation cases
+
+### `STEP-FA15`
+- `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: `STEP-FA13`, `STEP-FA09`
+- `Blocked by`: depreciation-profile tables or fixed-assets route skeleton missing
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local depreciation-profile create/list/update smoke covering method/rate compatibility
+
+### `STEP-FA16`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `frontend/src/pages/fixedAssets/FixedAssetSettingsPage.jsx`, `frontend/src/pages/fixedAssets/FixedAssetCustodiansPage.jsx`, `frontend/src/pages/fixedAssets/FixedAssetModulePage.jsx`, `frontend/src/api/fixedAssets.js`, `frontend/src/i18n/messages.js`
+- `Dependencies`: `STEP-FA11`, `STEP-FA14`, `STEP-FA15`
+- `Blocked by`: category/profile/custodian backend surfaces not yet being stable enough to wire into the frontend
+- `Rollback risk`: Medium
+- `Smoke command ideas`: `npm run build`; local settings/custodians page smoke plus backend CRUD checks
+
+### `STEP-FA17`
+- `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.scope.service.js`
+- `Dependencies`: `STEP-FA13`, `STEP-FA14`, `STEP-FA15`, `STEP-FA16`
+- `Blocked by`: missing read-side filters or scope-resolution helpers in the fixed-assets module shell
+- `Rollback risk`: Low
+- `Smoke command ideas`: local `GET /api/v1/fixed-assets` smoke with legal-entity, owner-OU, location-OU, category, status, and disposed filters
+
+### `STEP-FA18`
+- `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.scope.service.js`
+- `Dependencies`: `STEP-FA17`
+- `Blocked by`: asset register read contract or detail payload foundations not yet being stable
+- `Rollback risk`: Low
+- `Smoke command ideas`: local `GET /api/v1/fixed-assets/:assetId` smoke for normal, legacy-onboarding, and low-value fully expensed assets
+
+### `STEP-FA19`
+- `AI size`: Medium
+- `Allowed files`: `frontend/src/pages/fixedAssets/FixedAssetsPage.jsx`, `frontend/src/pages/fixedAssets/FixedAssetModulePage.jsx`, `frontend/src/pages/fixedAssets/FixedAssetDetailPage.jsx`, `frontend/src/api/fixedAssets.js`, `frontend/src/i18n/messages.js`, `frontend/src/App.jsx`
+- `Dependencies`: `STEP-FA17`, `STEP-FA18`
+- `Blocked by`: list/detail backend contracts not yet being stable enough for page wiring
+- `Rollback risk`: Low
+- `Smoke command ideas`: `npm run build`; register filter smoke and asset-detail tab-foundation smoke in the browser
+
+### `STEP-FA20`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.scope.service.js`, optionally `frontend/src/api/fixedAssets.js` and `frontend/src/pages/fixedAssets/FixedAssetFormPage.jsx` only if the branch must expose the draft flow immediately
+- `Dependencies`: `STEP-FA13`, `STEP-FA14`, `STEP-FA15`, `STEP-FA16`
+- `Blocked by`: category/profile defaults and draft mutability rules not yet being stable
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local draft create/read/update smoke including numbering and status-gated patch behavior
+
+### `STEP-FA21`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`
+- `Dependencies`: `STEP-FA20`, `STEP-FA14`, `STEP-FA15`
+- `Blocked by`: manual draft create not yet being stable or activation-time account/profile validation still missing
+- `Rollback risk`: High
+- `Smoke command ideas`: local manual activation smoke for valid and invalid assets, including post-activation mutability rejection
+
+### `STEP-FA22`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`
+- `Dependencies`: `STEP-FA20`, `STEP-FA15`
+- `Blocked by`: legacy-onboarding value validation or remaining-life capture not yet being stable
+- `Rollback risk`: High
+- `Smoke command ideas`: local legacy-onboarding activation smoke for remaining-life and zero-remaining-life cases
+
+### `STEP-FA23`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`
+- `Dependencies`: `STEP-FA20`, `STEP-FA14`, `STEP-FA15`
+- `Blocked by`: category-threshold logic and inline low-value depreciation handling not yet being stable
+- `Rollback risk`: High
+- `Smoke command ideas`: local below-threshold manual activation smoke verifying `ACQUISITION` plus inline `LOW_VALUE_FULL_EXPENSE`
+
+### `STEP-FA24`
+- `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/cari.document.service.js`, `backend/src/routes/cari.document.routes.js` only if a shared helper must be extracted from the existing detail path
+- `Dependencies`: `STEP-FA13`, `STEP-FA20`
+- `Blocked by`: CARI document detail reuse or remaining-unit calculation rules not yet being settled
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local eligible-AP-line read smoke with draft reservation, release, and permission checks
+
+### `STEP-FA25`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/cari.document.service.js`, `backend/src/services/journal.source-link.service.js`
+- `Dependencies`: `STEP-FA23`, `STEP-FA24`
+- `Blocked by`: eligible-line read surface or low-value inline capitalization handling not yet being stable
+- `Rollback risk`: High
+- `Smoke command ideas`: local same-OU capitalization smoke for one-unit, multi-unit, and below-threshold split cases
+
+### `STEP-FA26`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/cari.document.service.js`, `backend/src/services/ou.self-balancing.service.js`, `backend/src/services/ou.current-account-eligibility.service.js`
+- `Dependencies`: `STEP-FA25`
+- `Blocked by`: OU self-balancing/current-account setup not being available in the target legal entity
+- `Rollback risk`: High
+- `Smoke command ideas`: local cross-OU capitalization smoke with configured and missing self-balancing setups
+
+### `STEP-FA27`
+- `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/cari.document.service.js`
+- `Dependencies`: `STEP-FA24`, `STEP-FA25`, `STEP-FA26`
+- `Blocked by`: draft-link source-drift rules and activation-time refresh semantics not yet being stable
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local draft-link refresh/revalidation smoke for quantity drift, amount drift, and non-`POSTED` source-state blocking
+
+### `STEP-FA28`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`
+- `Dependencies`: `STEP-FA21`, `STEP-FA22`, `STEP-FA23`
+- `Blocked by`: snapped asset-level depreciation fields or period-resolution rules not yet being stable
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local `GET /api/v1/fixed-assets/:assetId/depreciation-schedule` smoke for `STRAIGHT_LINE` and `NONE`
+
+### `STEP-FA29`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`
+- `Dependencies`: `STEP-FA28`
+- `Blocked by`: standard schedule math not yet being stable enough to layer in declining-balance switching and legacy-forward logic
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local schedule smoke for `DECLINING_BALANCE`, switch-to-straight-line, and legacy-onboarding forward schedules
+
+### `STEP-FA30`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`
+- `Dependencies`: `STEP-FA28`, `STEP-FA29`
+- `Blocked by`: lifecycle history rows not yet being stable enough to drive daily-prorata eligibility
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local schedule smoke for suspension, reactivation, transfer, disposal, and low-value exclusion cases
+
+### `STEP-FA31`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: `STEP-FA28`, `STEP-FA29`, `STEP-FA30`
+- `Blocked by`: schedule engine not yet producing stable eligible-day and allocation-row inputs
+- `Rollback risk`: High
+- `Smoke command ideas`: local run preview and persisted-draft creation smoke with draft-uniqueness blocking
+
+### `STEP-FA32`
+- `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: `STEP-FA31`
+- `Blocked by`: persisted draft-run snapshot shape not yet being stable
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local run list/detail/read smoke plus draft-delete and recreate-for-same-scope smoke
+
+### `STEP-FA33`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/journal.source-link.service.js`
+- `Dependencies`: `STEP-FA01`, `STEP-FA31`, `STEP-FA32`
+- `Blocked by`: frozen draft-run snapshot or journal-number/source-link primitives not yet being stable
+- `Rollback risk`: High
+- `Smoke command ideas`: local run-post smoke covering posting-date validation, `depreciation_kind = RUN`, and schedule-line link updates
+
+### `STEP-FA34`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/journal.source-link.service.js`, `backend/src/services/gl.journal-reversal.service.js` only if the implementation reuses reversal primitives
+- `Dependencies`: `STEP-FA33`
+- `Blocked by`: run-post lineage not yet being stable enough to enforce successor-history blocking safely
+- `Rollback risk`: High
+- `Smoke command ideas`: local run-reverse smoke covering blocked-successor cases and clean repostability after successful reversal
+
+### `STEP-FA35`
+- `AI size`: Small
+- `Allowed files`: `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`
+- `Dependencies`: `STEP-FA31`
+- `Blocked by`: draft-run persistence not yet being stable enough to harden with chunking
+- `Rollback risk`: Medium
+- `Smoke command ideas`: large local run-create smoke that forces multiple write chunks and then validates rollback on injected late-chunk failure
+
+### `STEP-FA36`
+- `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: `STEP-FA21`
+- `Blocked by`: active-asset lifecycle history or move-detail rows not yet being stable
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local physical-move smoke covering location, custodian, department, and cost-center updates without owner-OU changes
+
+### `STEP-FA37`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/ou.self-balancing.service.js`, `backend/src/services/ou.current-account-eligibility.service.js`
+- `Dependencies`: `STEP-FA21`, `STEP-FA30`, `STEP-FA36`
+- `Blocked by`: OU self-balancing/current-account setup not being available or transfer-history rows not yet being stable
+- `Rollback risk`: High
+- `Smoke command ideas`: local ownership-transfer smoke for non-zero-NBV and zero-NBV transfers plus optional location update
+
+### `STEP-FA38`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`
+- `Dependencies`: `STEP-FA21`, `STEP-FA28`, `STEP-FA29`, `STEP-FA30`
+- `Blocked by`: disposal cutoff logic or NBV/gain-loss computation not yet being stable
+- `Rollback risk`: High
+- `Smoke command ideas`: local write-off smoke for partially depreciated and already fully depreciated assets
+
+### `STEP-FA39`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/cari.document.service.js`, `backend/src/routes/cari.document.routes.js` only if a shared helper extraction is required
+- `Dependencies`: `STEP-FA13`, `STEP-FA21`
+- `Blocked by`: AR-side exact-line linking rules or cross-module `cari.doc.*` permission checks not yet being stable
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local staged sale create/link/update smoke without creating a `SALE` row or disposal journal
+
+### `STEP-FA40`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/cari.document.service.js`, `backend/src/services/journal.source-link.service.js`
+- `Dependencies`: `STEP-FA39`
+- `Blocked by`: exact AR-line provenance or sale-preparation linkage not yet being stable enough to finalize
+- `Rollback risk`: High
+- `Smoke command ideas`: local sale-finalize smoke covering exact `source_ref_line_id`, disposed-state transition, and missing-`cari.doc.post` rejection
+
+### `STEP-FA41`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/journal.source-link.service.js`, `backend/src/services/gl.journal-reversal.service.js` only if the implementation reuses generic reversal primitives
+- `Dependencies`: `STEP-FA21` to `STEP-FA40`
+- `Blocked by`: authoritative reversal-lineage fields or successor-history blocking not yet being stable
+- `Rollback risk`: High
+- `Smoke command ideas`: local non-run reversal smoke for `CAPITALIZATION`, `OWNERSHIP_TRANSFER`, and `SALE` with successor and linked-AR blocking cases
+
+### `STEP-FA42`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.evidence.routes.js`, `backend/src/services/evidence.service.js`, `backend/src/services/evidence.policy.service.js`, `backend/src/services/fixed-assets.scope.service.js`, `backend/src/utils/source-ref-types.js`
+- `Dependencies`: `STEP-FA01`, `STEP-FA13`
+- `Blocked by`: fixed-assets scope resolvers or nested route ordering not yet being stable
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local asset, transaction, and run evidence create/upload/download/delete smoke
+
+### `STEP-FA43`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/journal.source-link.service.js`, `backend/src/services/gl.reverse-block-destination.service.js`, `backend/src/routes/gl.read.journal.routes.js`, `backend/src/utils/source-ref-types.js`
+- `Dependencies`: `STEP-FA01`, `STEP-FA06`, `STEP-FA33`, `STEP-FA38`, `STEP-FA40`
+- `Blocked by`: fixed-assets posting flows not yet emitting stable source ownership or destination-resolution rules not yet being locked
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local journal-detail smoke for non-run and run journals with backend-owned destination metadata and fallback resolution
+
+### `STEP-FA44`
+- `AI size`: Medium
+- `Allowed files`: `frontend/src/pages/fixedAssets/FixedAssetModulePage.jsx`, `frontend/src/pages/fixedAssets/FixedAssetDetailPage.jsx`, `frontend/src/pages/fixedAssets/FixedAssetDepreciationRunsPage.jsx`, `frontend/src/pages/fixedAssets/FixedAssetDisposalsPage.jsx`, `frontend/src/pages/JournalWorkbenchPage.jsx`, `frontend/src/api/fixedAssets.js`, `frontend/src/utils/journalSourceLinkDestinations.js`, `frontend/src/App.jsx` only if route cleanup is required
+- `Dependencies`: `STEP-FA07`, `STEP-FA19`, `STEP-FA32`, `STEP-FA39`, `STEP-FA40`, `STEP-FA43`
+- `Blocked by`: backend destination metadata or fixed-assets target-page read contracts not yet being stable
+- `Rollback risk`: Medium
+- `Smoke command ideas`: `npm run build`; manual drillback smoke for asset-detail, run-detail, and disposal-focused navigation from Journal Workbench
+
+### `STEP-FA45`
+- `AI size`: Small
+- `Allowed files`: `backend/src/seedCore.js`, `backend/src/middleware/rbac.js`, `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.evidence.routes.js`, `backend/src/routes/fixed-assets.validators.js`
+- `Dependencies`: `STEP-FA01`, `STEP-FA13`, `STEP-FA42`
+- `Blocked by`: secondary RBAC assertion helper or fixed-assets route skeleton not yet being in place
+- `Rollback risk`: Medium
+- `Smoke command ideas`: `npm run db:seed:core`; `npm run test:permission-matrix`; targeted FA06/FA11 authorization smoke by role
+
+### `STEP-FA46`
+- `AI size`: Small
+- `Allowed files`: `frontend/src/layouts/sidebarConfig.js`, `frontend/src/layouts/AppLayout.jsx`, `frontend/src/App.jsx`, `frontend/src/i18n/messages.js`, `frontend/src/pages/fixedAssets/*.jsx`, `frontend/src/api/fixedAssets.js`
+- `Dependencies`: `STEP-FA16`, `STEP-FA19`, `STEP-FA45`
+- `Blocked by`: backend permission surfaces not yet being stable enough to mirror in the UI
+- `Rollback risk`: Low
+- `Smoke command ideas`: `npm run build`; role-based sidebar and action-visibility smoke in the browser
+
+### `STEP-FA47`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.reporting.service.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `frontend/src/pages/fixedAssets/FixedAssetReportsPage.jsx`, `frontend/src/api/fixedAssets.js`, `frontend/src/i18n/messages.js`
+- `Dependencies`: `STEP-FA17` to `STEP-FA19`, `STEP-FA28` to `STEP-FA40`
+- `Blocked by`: register/detail/read-side contracts or lifecycle posting data not yet being stable enough for reporting reconciliation
+- `Rollback risk`: Medium
+- `Smoke command ideas`: local report and `/export` endpoint smoke plus `npm run build` for the reports page
+
+### `STEP-FA48`
+- `AI size`: Small
+- `Allowed files`: `backend/scripts/*`, `backend/package.json`, `frontend/package.json`, `backend/openapi.yaml`, this step-tracker document only if the release gate needs step-level wiring notes
+- `Dependencies`: `STEP-FA01` to `STEP-FA47`
+- `Blocked by`: any incomplete prerequisite slice in the fixed-assets track
+- `Rollback risk`: Low
+- `Smoke command ideas`: `npm run openapi:generate`; `npm run check:openapi`; `npm run build`; `npm run db:migrate:status`; the new fixed-assets smoke/release-gate runner when it exists
 
 ---
 
@@ -1531,17 +3477,16 @@ These are shared infrastructure prerequisites, not late feature-specific polish.
 - OpenAPI `FixedAssets` tag support and `/api/v1/fixed-assets` path inference in `backend/scripts/generate-openapi.js`
 
 ### Suggested landing order
-1. `PR-FA01`
-2. `PR-FA02`
-3. `PR-FA03`
-4. `PR-FA04`
-5. `PR-FA05`
-6. `PR-FA06` to `PR-FA09`
-7. `PR-FA10` onward in order
+1. `STEP-FA01`
+2. `STEP-FA02` to `STEP-FA05`
+3. `STEP-FA06` and `STEP-FA07`
+4. `STEP-FA08`
+5. `STEP-FA09` to `STEP-FA12`
+6. `STEP-FA13` onward in order
 
 ### Implementation note
 - treat these as explicit cross-cutting stages, not as scattered follow-up chores hidden inside whichever feature lands first
-- do not hide the one-`PRIMARY` journal-link hardening work inside `PR-FA09` as if fixed-assets alone owned that contract; fixed-assets depends on it, but existing repo writers must be brought into compliance first
+- do not hide the one-`PRIMARY` journal-link hardening work inside `STEP-FA12` as if fixed-assets alone owned that contract; fixed-assets depends on it, but existing repo writers must be brought into compliance first
 - land the reverse-block / drillback contract additively: backend metadata first, frontend prefer-backend second, fixed-assets source-type routing after that, cleanup of old local assumptions last
 - later feature tracks may consume these prerequisites, but should not each redefine them ad hoc in local route/page code
 
@@ -1551,18 +3496,18 @@ These are shared infrastructure prerequisites, not late feature-specific polish.
 Create the minimum trustworthy schema for an OU-aware fixed-assets subledger that matches repo conventions.
 
 ### Serialized PR mapping
-This feature-scope item is implemented through these linear PR steps:
+This feature-scope item is implemented through these linear execution steps:
 
-1. `PR-FA06` - `m138` base-table pass
-2. `PR-FA07` - `m138` constraint/index pass
-3. `PR-FA08` - `m139` custodian employees and deferred foreign keys
-4. `PR-FA09` - `m140` CARI traceability and `journal_source_links` schema tail
+1. `STEP-FA09` - `m138` base-table pass
+2. `STEP-FA10` - `m138` constraint/index pass
+3. `STEP-FA11` - `m139` custodian employees and deferred foreign keys
+4. `STEP-FA12` - `m140` CARI traceability and `journal_source_links` schema tail
 
 Implementation sequencing note:
-- `PR-FA06` and `PR-FA07` are the minimum schema-foundation slices required before backend fixed-assets services can start landing safely
-- `PR-FA08` overlaps with the business surface of `FA02`, but it is also a migration-sequencing dependency because custodian foreign keys are deliberately deferred out of `m138`
-- `PR-FA09` overlaps with the business surface of `FA06` and `FA12`, but it completes the schema invariants that make CARI-linked capitalization and primary source-link ownership DB-safe rather than validator-only
-- the `journal_source_links` one-`PRIMARY` guard sequenced inside `PR-FA09` is a shared-platform migration even if its DDL lands inside the fixed-assets migration family; do not land that DDL before repo-wide writer compliance and real-environment data preflight are complete
+- `STEP-FA09` and `STEP-FA10` are the minimum schema-foundation slices required before backend fixed-assets services can start landing safely
+- `STEP-FA11` overlaps with the business surface of `FA02`, but it is also a migration-sequencing dependency because custodian foreign keys are deliberately deferred out of `m138`
+- `STEP-FA12` overlaps with the business surface of `FA06` and `FA12`, but it completes the schema invariants that make CARI-linked capitalization and primary source-link ownership DB-safe rather than validator-only
+- the `journal_source_links` one-`PRIMARY` guard sequenced inside `STEP-FA12` is a shared-platform migration even if its DDL lands inside the fixed-assets migration family; do not land that DDL before repo-wide writer compliance and real-environment data preflight are complete
 
 ### Required tables
 - `fixed_asset_categories`
@@ -3184,3 +5129,5 @@ Require dedicated permission and, if later needed, approval-sensitive handling f
 - reports and exports are both contracted, with dedicated `/export` endpoints for fixed-assets reports
 - key uniqueness rules are DB-enforced
 - open decisions remain visible instead of being buried in implicit behavior
+
+
