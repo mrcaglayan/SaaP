@@ -66,6 +66,15 @@ import ItemCardsPage from "./pages/inventory/ItemCardsPage.jsx";
 import InventoryMovementsPage from "./pages/inventory/InventoryMovementsPage.jsx";
 import InventoryTransfersPage from "./pages/inventory/InventoryTransfersPage.jsx";
 import ContractsPage from "./pages/contracts/ContractsPage.jsx";
+import FixedAssetsPage from "./pages/fixedAssets/FixedAssetsPage.jsx";
+import FixedAssetFormPage from "./pages/fixedAssets/FixedAssetFormPage.jsx";
+import FixedAssetDetailPage from "./pages/fixedAssets/FixedAssetDetailPage.jsx";
+import FixedAssetAcquisitionsPage from "./pages/fixedAssets/FixedAssetAcquisitionsPage.jsx";
+import FixedAssetDisposalsPage from "./pages/fixedAssets/FixedAssetDisposalsPage.jsx";
+import FixedAssetDepreciationRunsPage from "./pages/fixedAssets/FixedAssetDepreciationRunsPage.jsx";
+import FixedAssetReportsPage from "./pages/fixedAssets/FixedAssetReportsPage.jsx";
+import FixedAssetSettingsPage from "./pages/fixedAssets/FixedAssetSettingsPage.jsx";
+import FixedAssetCustodiansPage from "./pages/fixedAssets/FixedAssetCustodiansPage.jsx";
 import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
 import YearEndRevrecChecklistPage from "./pages/YearEndRevrecChecklistPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
@@ -345,6 +354,64 @@ const implementedRoutes = [
     appPath: "/app/stok-transferleri",
     childPath: "stok-transferleri",
     element: <InventoryTransfersPage />,
+  },
+  {
+    appPath: "/app/demirbaslar",
+    childPath: "demirbaslar",
+    permissionPath: "/app/demirbas-karti-listesi",
+    element: <Navigate to="/app/demirbas-karti-listesi" replace />,
+  },
+  {
+    appPath: "/app/demirbas-karti-listesi",
+    childPath: "demirbas-karti-listesi",
+    element: <FixedAssetsPage />,
+  },
+  {
+    appPath: "/app/demirbas-karti-olustur",
+    childPath: "demirbas-karti-olustur",
+    element: <FixedAssetFormPage />,
+  },
+  {
+    appPath: "/app/demirbas-karti-detayi/:assetId",
+    childPath: "demirbas-karti-detayi/:assetId",
+    permissionPath: "/app/demirbas-karti-listesi",
+    element: <FixedAssetDetailPage />,
+  },
+  {
+    appPath: "/app/demirbas-alim-islemleri",
+    childPath: "demirbas-alim-islemleri",
+    element: <FixedAssetAcquisitionsPage />,
+  },
+  {
+    appPath: "/app/demirbas-satis-islemleri",
+    childPath: "demirbas-satis-islemleri",
+    element: <FixedAssetDisposalsPage />,
+  },
+  {
+    appPath: "/app/demirbas-amortisman-islemleri",
+    childPath: "demirbas-amortisman-islemleri",
+    element: <FixedAssetDepreciationRunsPage />,
+  },
+  {
+    appPath: "/app/demirbas-amortisman-ayarlar",
+    childPath: "demirbas-amortisman-ayarlar",
+    permissionPath: "/app/demirbas-amortisman-islemleri",
+    element: <Navigate to="/app/demirbas-amortisman-islemleri" replace />,
+  },
+  {
+    appPath: "/app/demirbas-raporu",
+    childPath: "demirbas-raporu",
+    element: <FixedAssetReportsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/demirbas-ayarlari",
+    childPath: "ayarlar/demirbas-ayarlari",
+    element: <FixedAssetSettingsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/demirbas-zimmetlileri",
+    childPath: "ayarlar/demirbas-zimmetlileri",
+    element: <FixedAssetCustodiansPage />,
   },
   {
     appPath: "/app/contracts",

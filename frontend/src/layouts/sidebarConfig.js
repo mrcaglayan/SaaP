@@ -436,23 +436,61 @@ export const sidebarItems = [
     type: "section",
     title: "Demirbaslar",
     icon: "inventory",
-    matchPrefix: "/app/demirbaslar",
+    matchPrefix: "/app/demirbas",
     items: [
+      {
+        label: "Demirbas Karti Listesi",
+        to: "/app/demirbas-karti-listesi",
+        requiredPermissions: ["fixed_assets.read"],
+        implemented: true,
+      },
       {
         label: "Demirbas Karti Olustur",
         to: "/app/demirbas-karti-olustur",
+        requiredPermissions: ["fixed_assets.upsert"],
+        implemented: true,
       },
       {
         label: "Demirbas Alim Islemleri",
         to: "/app/demirbas-alim-islemleri",
+        requiredPermissions: ["fixed_assets.upsert", "fixed_assets.post"],
+        implemented: true,
       },
       {
         label: "Demirbas Satis Islemleri",
         to: "/app/demirbas-satis-islemleri",
+        requiredPermissions: ["fixed_assets.dispose"],
+        implemented: true,
       },
       {
-        label: "Amortisman Ayarlari",
-        to: "/app/demirbas-amortisman-ayarlar",
+        label: "Amortisman Islemleri",
+        to: "/app/demirbas-amortisman-islemleri",
+        requiredPermissions: ["fixed_assets.depreciation.run"],
+        implemented: true,
+      },
+      {
+        label: "Demirbas Raporu",
+        to: "/app/demirbas-raporu",
+        requiredPermissions: ["fixed_assets.report.read"],
+        implemented: true,
+      },
+      {
+        label: "Demirbas Ayarlari",
+        to: "/app/ayarlar/demirbas-ayarlari",
+        requiredPermissions: [
+          "fixed_assets.settings.read",
+          "fixed_assets.settings.upsert",
+        ],
+        implemented: true,
+      },
+      {
+        label: "Demirbas Zimmetlileri",
+        to: "/app/ayarlar/demirbas-zimmetlileri",
+        requiredPermissions: [
+          "fixed_assets.custodian.read",
+          "fixed_assets.custodian.write",
+        ],
+        implemented: true,
       },
     ],
   },
@@ -537,10 +575,6 @@ export const sidebarItems = [
       {
         label: "Stok Raporu",
         to: "/app/stok-raporu",
-      },
-      {
-        label: "Demirbas Raporu",
-        to: "/app/demirbas-raporu",
       },
       {
         label: "Mizan Raporu",
@@ -668,10 +702,6 @@ export const sidebarItems = [
       {
         label: "Stok Ayarlari",
         to: "/app/ayarlar/stok-ayarlari",
-      },
-      {
-        label: "Demirbas Ayarlari",
-        to: "/app/ayarlar/demirbas-ayarlari",
       },
     ],
   },
