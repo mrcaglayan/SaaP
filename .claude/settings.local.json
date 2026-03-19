@@ -3,7 +3,10 @@
     "allow": [
       "Bash(npm run:*)",
       "Bash(ls -la /c/Users/Maarif/Desktop/my-app/backend/src/migrations/m069*)",
-      "Bash(grep -n \"upsertJournalSourceLinkTx\" /c/Users/Maarif/Desktop/my-app/backend/src/services/*.js)"
+      "Bash(grep -n \"upsertJournalSourceLinkTx\" /c/Users/Maarif/Desktop/my-app/backend/src/services/*.js)",
+      "Bash(node scripts/test-fa05-journal-link-primary-release-gate.js)",
+      "Bash(echo \"EXIT CODE: $?\")",
+      "Bash(echo $?)"
     ]
   }
 }

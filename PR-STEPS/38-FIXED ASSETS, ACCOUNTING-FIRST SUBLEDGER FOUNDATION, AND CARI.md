@@ -1230,8 +1230,8 @@ Implementation notes:
 - [x] `STEP-FA01` - Shared source-ref constants, error-details helper, and secondary RBAC assertion
 - [x] `STEP-FA02` - Journal-source-link duplicate-`PRIMARY` preflight and normalization plan
 - [x] `STEP-FA03` - Shared-platform journal-link writer compliance for CARI, cash, and payments
-- [ ] `STEP-FA04` - Shared-platform journal-link writer compliance for inventory and payroll
-- [ ] `STEP-FA05` - Repo-wide journal-link `PRIMARY` regression coverage and release gate
+- [x] `STEP-FA04` - Shared-platform journal-link writer compliance for inventory and payroll
+- [x] `STEP-FA05` - Repo-wide journal-link `PRIMARY` regression coverage and release gate
 - [ ] `STEP-FA06` - Backend reverse-block destination contract and additive journal-detail enrichment
 - [ ] `STEP-FA07` - Frontend Journal Workbench prefer-backend / fallback-local contract migration
 - [ ] `STEP-FA08` - OpenAPI fixed-assets tag and path inference support
