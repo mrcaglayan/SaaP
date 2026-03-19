@@ -1010,6 +1010,49 @@ export function assertScopeAccess(req, scopeKind, scopeId, label = "scope") {
   }
 }
 
+/**
+ * Assert that the authenticated user also holds `permissionCode` for the
+ * current tenant, without replacing or overwriting the existing `req.rbac`
+ * context that was set by `requirePermission(...)`.
+ *
+ * Use this inside route handlers that already sit behind a primary
+ * `requirePermission(...)` middleware but need to verify a secondary
+ * cross-module permission (e.g. a fixed-assets route that also checks a
+ * CARI permission).
+ *
+ * Throws 403 if the permission is missing. Does not mutate `req.rbac`.
+ */
+export async function assertSecondaryPermission(req, permissionCode) {
+  const normalizedCode = String(permissionCode || "").trim();
+  if (!normalizedCode) {
+    throw new Error("permissionCode is required for assertSecondaryPermission");
+  }
+
+  const userId = parsePositiveInt(req.user?.userId);
+  if (!userId) {
+    throw badRequest("Authenticated user is required");
+  }
+
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  const bundle = await getPermissionBundleForRequest(req, userId, tenantId, normalizedCode);
+
+  if (
+    bundle?.missingPermission ||
+    !bundle?.permissionScopeContext ||
+    !bundle?.scopeContext
+  ) {
+    throw forbidden(`Missing secondary permission: ${normalizedCode}`);
+  }
+
+  if (!isScopeAllowed(bundle.permissionScopeContext, null)) {
+    throw forbidden(`Missing secondary permission: ${normalizedCode}`);
+  }
+}
+
 export function buildScopeFilter(req, scopeKind, columnName, params) {
   const context = getScopeContext(req);
   if (!context) {

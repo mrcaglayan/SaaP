@@ -1227,8 +1227,8 @@ Implementation notes:
 - dynamic reverse-block routing may target canonical list/workflow/detail routes, not only sidebar landing pages
 
 ## Master Tracker
-- [ ] `STEP-FA01` - Shared source-ref constants, error-details helper, and secondary RBAC assertion
-- [ ] `STEP-FA02` - Journal-source-link duplicate-`PRIMARY` preflight and normalization plan
+- [x] `STEP-FA01` - Shared source-ref constants, error-details helper, and secondary RBAC assertion
+- [x] `STEP-FA02` - Journal-source-link duplicate-`PRIMARY` preflight and normalization plan
 - [ ] `STEP-FA03` - Shared-platform journal-link writer compliance for CARI, cash, and payments
 - [ ] `STEP-FA04` - Shared-platform journal-link writer compliance for inventory and payroll
 - [ ] `STEP-FA05` - Repo-wide journal-link `PRIMARY` regression coverage and release gate

@@ -4,9 +4,12 @@ export function asyncHandler(fn) {
   };
 }
 
-export function badRequest(message) {
+export function badRequest(message, details = null) {
   const err = new Error(message);
   err.status = 400;
+  if (details !== null && details !== undefined) {
+    err.details = details;
+  }
   return err;
 }
 

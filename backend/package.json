@@ -165,6 +165,7 @@
     "backfill:tax-account-mappings": "node scripts/backfill-tax-account-mappings.js",
     "backfill:canonical-mappings": "node scripts/backfill-canonical-consolidation-mappings.js",
     "backfill:bank-control-parent": "node scripts/backfill-bank-control-parent-mappings.js",
+    "preflight:journal-source-link-primary": "node scripts/preflight-journal-source-link-primary.js",
     "test:ux:prcore02": "node scripts/test-ux-prcore02-idempotency-standardization.js",
     "test:ux:prcore03": "node scripts/test-ux-prcore03-optimistic-locking-row-version.js",
     "test:ux:prcore04": "node scripts/test-ux-prcore04-job-progress-retry-ux.js",

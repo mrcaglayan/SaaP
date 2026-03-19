@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(ls -la /c/Users/Maarif/Desktop/my-app/backend/src/migrations/m069*)",
+      "Bash(grep -n \"upsertJournalSourceLinkTx\" /c/Users/Maarif/Desktop/my-app/backend/src/services/*.js)"
+    ]
+  }
+}
