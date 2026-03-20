@@ -24,6 +24,12 @@ const VALID_DEPRECIATION_METHODS = new Set([
   "NONE",
 ]);
 
+const VALID_DEPRECIATION_RUN_STATUSES = new Set([
+  "DRAFT",
+  "POSTED",
+  "REVERSED",
+]);
+
 function normalizeUpperText(value) {
   if (value === undefined || value === null) return null;
   return String(value).trim().toUpperCase();
@@ -117,6 +123,108 @@ export function parseAssetDetailParams(req) {
   if (!assetId) throw badRequest("assetId is required");
 
   return { tenantId, assetId };
+}
+
+export function parseAssetDepreciationScheduleInput(req) {
+  return parseAssetDetailParams(req);
+}
+
+function parseDepreciationRunScopeInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const body = req.body || {};
+
+  const legalEntityId = parsePositiveInt(
+    body.legalEntityId ?? body.legal_entity_id
+  );
+  if (!legalEntityId) {
+    throw badRequest("legalEntityId is required");
+  }
+
+  const fiscalPeriodId = parsePositiveInt(
+    body.fiscalPeriodId ?? body.fiscal_period_id
+  );
+  if (!fiscalPeriodId) {
+    throw badRequest("fiscalPeriodId is required");
+  }
+
+  const bookId = normalizeOptionalPositiveInteger(
+    body.bookId ?? body.book_id,
+    "bookId"
+  );
+
+  const postingDate = normalizeDateOnlyOptional(
+    body.postingDate ?? body.posting_date,
+    "postingDate"
+  );
+
+  return {
+    tenantId,
+    legalEntityId,
+    fiscalPeriodId,
+    bookId,
+    postingDate,
+  };
+}
+
+export function parseDepreciationRunPreviewInput(req) {
+  return parseDepreciationRunScopeInput(req);
+}
+
+export function parseDepreciationRunCreateInput(req) {
+  return {
+    ...parseDepreciationRunScopeInput(req),
+    userId: req.user?.userId || null,
+  };
+}
+
+export function parseDepreciationRunListInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const legalEntityId = parsePositiveInt(
+    req.query?.legalEntityId ?? req.query?.legal_entity_id
+  );
+  if (!legalEntityId) {
+    throw badRequest("legalEntityId is required");
+  }
+
+  const bookId = normalizeOptionalPositiveInteger(
+    req.query?.bookId ?? req.query?.book_id,
+    "bookId"
+  );
+  const fiscalPeriodId = normalizeOptionalPositiveInteger(
+    req.query?.fiscalPeriodId ?? req.query?.fiscal_period_id,
+    "fiscalPeriodId"
+  );
+  const status = normalizeUpperText(req.query?.status);
+  if (status && !VALID_DEPRECIATION_RUN_STATUSES.has(status)) {
+    throw badRequest(
+      `status must be one of: ${[...VALID_DEPRECIATION_RUN_STATUSES].join(", ")}`
+    );
+  }
+
+  return {
+    tenantId,
+    legalEntityId,
+    bookId,
+    fiscalPeriodId,
+    status,
+  };
+}
+
+export function parseDepreciationRunParams(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const runId = parsePositiveInt(req.params?.runId);
+  if (!runId) throw badRequest("runId is required");
+
+  return {
+    tenantId,
+    runId,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -25,6 +25,22 @@ function normalizeUpperText(value) {
   return String(value).trim().toUpperCase();
 }
 
+function formatDateOnly(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function parseDateOnlyStrict(dateText, label) {
+  const text = String(dateText || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw badRequest(`${label} must be YYYY-MM-DD`);
+  }
+  const parsed = new Date(`${text}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+    throw badRequest(`${label} must be a valid date`);
+  }
+  return parsed;
+}
+
 // ── Account-type expectations per default-account field ───────────
 const ACCOUNT_TYPE_RULES = [
   { field: "defaultAssetAccountId",        column: "default_asset_account_id",         expectedType: "ASSET",   label: "default asset account" },
@@ -545,7 +561,194 @@ export async function getAssetDetail({ tenantId, assetId }) {
   };
 }
 
+function mapAssetDepreciationSnapshotRow(row) {
+  return {
+    id: Number(row.id),
+    tenantId: Number(row.tenant_id),
+    legalEntityId: Number(row.legal_entity_id),
+    assetNo: row.asset_no || null,
+    name: row.name || null,
+    status: row.status || null,
+    ownerOperatingUnitId: row.owner_operating_unit_id != null
+      ? Number(row.owner_operating_unit_id)
+      : null,
+    inServiceDate: row.in_service_date || null,
+    capitalizationDate: row.capitalization_date || null,
+    acquisitionDate: row.acquisition_date || null,
+    disposalDate: row.disposal_date || null,
+    currencyCode: row.currency_code || null,
+    originalCostTxn: row.original_cost_txn != null ? Number(row.original_cost_txn) : 0,
+    originalCostBase: row.original_cost_base != null ? Number(row.original_cost_base) : 0,
+    salvageValueTxn: row.salvage_value_txn != null ? Number(row.salvage_value_txn) : 0,
+    salvageValueBase: row.salvage_value_base != null ? Number(row.salvage_value_base) : 0,
+    depreciationMethod: row.depreciation_method || null,
+    decliningBalanceRatePercent: row.declining_balance_rate_percent != null
+      ? Number(row.declining_balance_rate_percent)
+      : null,
+    switchToStraightLine: row.switch_to_straight_line === 1
+      || row.switch_to_straight_line === true
+      || row.switch_to_straight_line === "1",
+    usefulLifeMonths: row.useful_life_months != null ? Number(row.useful_life_months) : null,
+    remainingUsefulLifeMonths: row.remaining_useful_life_months != null
+      ? Number(row.remaining_useful_life_months)
+      : null,
+    depreciationProfileId: row.depreciation_profile_id != null
+      ? Number(row.depreciation_profile_id)
+      : null,
+    lastDepreciationPeriod: row.last_depreciation_period || null,
+    legacyAccumDeprTxn: row.legacy_accum_depr_txn != null ? Number(row.legacy_accum_depr_txn) : null,
+    legacyAccumDeprBase: row.legacy_accum_depr_base != null ? Number(row.legacy_accum_depr_base) : null,
+    legacyNbvTxn: row.legacy_nbv_txn != null ? Number(row.legacy_nbv_txn) : null,
+    legacyNbvBase: row.legacy_nbv_base != null ? Number(row.legacy_nbv_base) : null,
+  };
+}
+
+export async function loadAssetDepreciationSnapshot({ tenantId, assetId, queryFn = query }) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT id,
+            tenant_id,
+            legal_entity_id,
+            status,
+            owner_operating_unit_id,
+            acquisition_date,
+            capitalization_date,
+            in_service_date,
+            disposal_date,
+            currency_code,
+            original_cost_txn,
+            original_cost_base,
+            salvage_value_txn,
+            salvage_value_base,
+            useful_life_months,
+            remaining_useful_life_months,
+            depreciation_profile_id,
+            depreciation_method,
+            declining_balance_rate_percent,
+            switch_to_straight_line,
+            legacy_accum_depr_txn,
+            legacy_accum_depr_base,
+            legacy_nbv_txn,
+            legacy_nbv_base,
+            last_depreciation_period
+       FROM fixed_assets
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+
+  const row = result.rows?.[0];
+  if (!row) {
+    throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+  }
+
+  return mapAssetDepreciationSnapshotRow(row);
+}
+
+export async function listDepreciationRunAssetSnapshots({
+  tenantId,
+  legalEntityId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!legalEntityId) throw badRequest("legalEntityId is required");
+
+  const result = await queryFn(
+    `SELECT id,
+            tenant_id,
+            legal_entity_id,
+            asset_no,
+            name,
+            status,
+            owner_operating_unit_id,
+            acquisition_date,
+            capitalization_date,
+            in_service_date,
+            disposal_date,
+            currency_code,
+            original_cost_txn,
+            original_cost_base,
+            salvage_value_txn,
+            salvage_value_base,
+            useful_life_months,
+            remaining_useful_life_months,
+            depreciation_profile_id,
+            depreciation_method,
+            declining_balance_rate_percent,
+            switch_to_straight_line,
+            legacy_accum_depr_txn,
+            legacy_accum_depr_base,
+            legacy_nbv_txn,
+            legacy_nbv_base,
+            last_depreciation_period
+       FROM fixed_assets
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+        AND status <> 'DRAFT'
+      ORDER BY asset_no ASC, id ASC`,
+    [tenantId, legalEntityId]
+  );
+
+  return (result.rows || []).map(mapAssetDepreciationSnapshotRow);
+}
+
 // ═══════════════════════════════════════════════════════════════════
+function mapAssetDepreciationLifecycleRow(row) {
+  return {
+    transactionId: Number(row.id),
+    transactionType: row.transaction_type || null,
+    status: row.status || null,
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    depreciationKind: row.depreciation_kind || null,
+    fromOwnerOperatingUnitId: row.from_owner_operating_unit_id != null
+      ? Number(row.from_owner_operating_unit_id)
+      : null,
+    toOwnerOperatingUnitId: row.to_owner_operating_unit_id != null
+      ? Number(row.to_owner_operating_unit_id)
+      : null,
+  };
+}
+
+export async function loadAssetDepreciationLifecycleHistory({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT fat.id,
+            fat.transaction_type,
+            fat.status,
+            fat.effective_date,
+            fat.depreciation_kind,
+            transfer.from_owner_operating_unit_id,
+            transfer.to_owner_operating_unit_id
+       FROM fixed_asset_transactions fat
+       LEFT JOIN fixed_asset_ownership_transfer_details transfer
+         ON transfer.transaction_id = fat.id
+      WHERE fat.tenant_id = ?
+        AND fat.asset_id = ?
+        AND fat.status = 'POSTED'
+        AND fat.transaction_type <> 'REVERSAL'
+        AND fat.reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY fat.effective_date ASC, fat.id ASC`,
+    [tenantId, assetId]
+  );
+
+  return (result.rows || []).map(mapAssetDepreciationLifecycleRow);
+}
+
 const FA06_REQUIRED_DOCUMENT_DIRECTION = "AP";
 const FA06_REQUIRED_DOCUMENT_STATUS = "POSTED";
 const FA06_REQUIRED_LINE_KIND = "STANDARD";
@@ -1430,6 +1633,190 @@ function hasSourceLinkage(asset) {
     || asset.source_cari_document_line_unit_no != null;
 }
 
+/**
+ * FA27 — Revalidate a source-linked (CARI) draft asset's source document/line
+ * at activation time. Detects source drift, auto-refreshes safe source-derived
+ * fields, and blocks when unsafe drift is detected.
+ *
+ * Source-derived fields (auto-refreshable):
+ *   original_cost_txn, original_cost_base, currency_code
+ *
+ * Hard-blocking conditions:
+ *   - source document no longer POSTED
+ *   - reserved unit slot no longer valid (quantity shrank or slot taken)
+ *   - quantity / equal-split assumptions no longer hold
+ *   - threshold-path changed (low-value ↔ standard) due to amount drift
+ *
+ * User-owned fields (never overwritten):
+ *   category_id, owner_operating_unit_id, location_operating_unit_id,
+ *   capitalization_date, in_service_date
+ */
+async function revalidateSourceLinkageForActivation({
+  asset,
+  category,
+  tenantId,
+  req,
+  assertScopeAccess,
+  queryFn,
+}) {
+  const sourceCariDocumentId = parsePositiveInt(asset.source_cari_document_id);
+  const sourceCariDocumentLineId = parsePositiveInt(asset.source_cari_document_line_id);
+  const reservedUnitNo = parsePositiveInt(asset.source_cari_document_line_unit_no);
+
+  if (!sourceCariDocumentId || !sourceCariDocumentLineId || !reservedUnitNo) {
+    throw badRequest(
+      "Source-linked asset is missing complete source linkage " +
+      "(source_cari_document_id, source_cari_document_line_id, source_cari_document_line_unit_no)"
+    );
+  }
+
+  // ── Reload current source document/line under transaction ─────
+  const document = await getCariDocumentByIdForTenant({
+    req: req || {
+      requestId: "fa27-revalidation",
+      headers: {},
+      ip: "127.0.0.1",
+      user: { tenantId },
+    },
+    tenantId,
+    documentId: sourceCariDocumentId,
+    assertScopeAccess: assertScopeAccess || (() => {}),
+    runQuery: queryFn,
+  });
+
+  // ── Validate document is still POSTED ─────────────────────────
+  const docStatus = normalizeUpperText(document?.status);
+  if (docStatus !== FA06_REQUIRED_DOCUMENT_STATUS) {
+    throw badRequest(
+      `Source CARI document (id=${sourceCariDocumentId}) is no longer POSTED (status=${docStatus}). ` +
+      "Activation of source-linked assets requires the source document to remain in POSTED status."
+    );
+  }
+
+  const docDirection = normalizeUpperText(document?.direction);
+  if (docDirection !== FA06_REQUIRED_DOCUMENT_DIRECTION) {
+    throw badRequest(
+      `Source CARI document (id=${sourceCariDocumentId}) direction is ${docDirection}, expected AP`
+    );
+  }
+
+  // ── Find the source line ──────────────────────────────────────
+  const line = (Array.isArray(document?.lines) ? document.lines : []).find(
+    (candidate) => parsePositiveInt(candidate?.id) === sourceCariDocumentLineId
+  );
+  if (!line) {
+    throw badRequest(
+      `Source line (id=${sourceCariDocumentLineId}) no longer exists on document (id=${sourceCariDocumentId})`
+    );
+  }
+
+  // ── Validate quantity/equal-split assumptions ─────────────────
+  if (!isPositiveWholeUnitQuantity(line.quantity)) {
+    throw badRequest(
+      `Source line (id=${sourceCariDocumentLineId}) quantity is no longer positive whole units ` +
+      `(quantity=${line.quantity}). Cannot proceed with activation.`
+    );
+  }
+  const totalUnitQuantity = Number(line.quantity);
+
+  if (!isEqualPerUnitSplitValidForMvp(line, totalUnitQuantity)) {
+    throw badRequest(
+      `Source line (id=${sourceCariDocumentLineId}) amounts no longer support equal per-unit split. ` +
+      "Cannot proceed with activation."
+    );
+  }
+
+  // ── Validate reserved unit slot is still valid ────────────────
+  if (reservedUnitNo > totalUnitQuantity) {
+    throw badRequest(
+      `Reserved unit slot ${reservedUnitNo} exceeds current source line quantity (${totalUnitQuantity}). ` +
+      "Source quantity may have decreased. Cannot proceed with activation."
+    );
+  }
+
+  // The slot must either belong to this asset or be free.
+  // Check if another asset holds the same slot:
+  const slotOwnerResult = await queryFn(
+    `SELECT id FROM fixed_assets
+      WHERE tenant_id = ?
+        AND source_cari_document_id = ?
+        AND source_cari_document_line_id = ?
+        AND source_cari_document_line_unit_no = ?
+        AND id != ?
+      LIMIT 1`,
+    [tenantId, sourceCariDocumentId, sourceCariDocumentLineId, reservedUnitNo, asset.id]
+  );
+  if (slotOwnerResult.rows?.[0]) {
+    throw badRequest(
+      `Reserved unit slot ${reservedUnitNo} on source line (id=${sourceCariDocumentLineId}) ` +
+      `is now held by another asset (id=${slotOwnerResult.rows[0].id}). ` +
+      "Cannot proceed with activation."
+    );
+  }
+
+  // ── Recompute per-unit amounts from current source ────────────
+  const { originalCostTxn: currentCostTxn, originalCostBase: currentCostBase } =
+    computeFa06PerUnitAmounts(line, totalUnitQuantity);
+
+  const currentCurrencyCode = document.currencyCode || null;
+  const draftCostTxn = Number(asset.original_cost_txn);
+  const draftCostBase = Number(asset.original_cost_base);
+  const draftCurrencyCode = asset.currency_code || null;
+
+  // ── Detect threshold-path change ──────────────────────────────
+  const capitalizationThresholdBase = category.capitalization_threshold_base != null
+    ? Number(category.capitalization_threshold_base)
+    : null;
+
+  const draftWasLowValue = capitalizationThresholdBase != null && draftCostBase < capitalizationThresholdBase;
+  const currentIsLowValue = capitalizationThresholdBase != null && currentCostBase < capitalizationThresholdBase;
+
+  if (draftWasLowValue !== currentIsLowValue) {
+    const draftPath = draftWasLowValue ? "low-value full-expense" : "standard depreciable";
+    const currentPath = currentIsLowValue ? "low-value full-expense" : "standard depreciable";
+    throw badRequest(
+      `Source amount drift changed the activation path from "${draftPath}" to "${currentPath}". ` +
+      `Draft cost base was ${draftCostBase}, current per-unit cost base is ${currentCostBase}, ` +
+      `threshold is ${capitalizationThresholdBase}. ` +
+      "This requires user review — delete the draft and re-create from the current source."
+    );
+  }
+
+  // ── Currency drift check ──────────────────────────────────────
+  if (currentCurrencyCode && draftCurrencyCode && currentCurrencyCode !== draftCurrencyCode) {
+    throw badRequest(
+      `Source document currency changed from ${draftCurrencyCode} to ${currentCurrencyCode}. ` +
+      "Cannot auto-refresh — delete the draft and re-create from the current source."
+    );
+  }
+
+  // ── Build auto-refresh set ────────────────────────────────────
+  const refreshedFields = {};
+  let costDrifted = false;
+
+  if (!amountsEqualForActivation(draftCostTxn, currentCostTxn)
+      || !amountsEqualForActivation(draftCostBase, currentCostBase)) {
+    costDrifted = true;
+    refreshedFields.original_cost_txn = currentCostTxn;
+    refreshedFields.original_cost_base = currentCostBase;
+  }
+
+  if (currentCurrencyCode && currentCurrencyCode !== draftCurrencyCode) {
+    refreshedFields.currency_code = currentCurrencyCode;
+  }
+
+  return {
+    document,
+    line,
+    totalUnitQuantity,
+    currentCostTxn,
+    currentCostBase,
+    costDrifted,
+    refreshedFields,
+    useLowValueSamePeriodPath: currentIsLowValue,
+  };
+}
+
 function validateSalvageSnapshotForActivation({
   salvageRuleType,
   salvagePercent,
@@ -1499,7 +1886,7 @@ function validateSalvageSnapshotForActivation({
 /**
  * Resolve the LOCAL book for a legal entity.
  */
-async function resolveBookForLegalEntity(tenantId, legalEntityId, queryFn = query) {
+export async function resolveBookForLegalEntity(tenantId, legalEntityId, queryFn = query) {
   const result = await queryFn(
     `SELECT id, calendar_id, base_currency_code, code, name, book_type
        FROM books
@@ -1519,6 +1906,80 @@ async function resolveBookForLegalEntity(tenantId, legalEntityId, queryFn = quer
     throw badRequest(`Book configuration is invalid for legal entity (legalEntityId=${legalEntityId})`);
   }
   return row;
+}
+
+export async function resolveSupportedFixedAssetFiscalPeriod(
+  calendarId,
+  fiscalPeriodId,
+  queryFn = query
+) {
+  const normalizedCalendarId = parsePositiveInt(calendarId);
+  const normalizedFiscalPeriodId = parsePositiveInt(fiscalPeriodId);
+  if (!normalizedCalendarId) throw badRequest("calendarId is required");
+  if (!normalizedFiscalPeriodId) throw badRequest("fiscalPeriodId is required");
+
+  const result = await queryFn(
+    `SELECT id,
+            fiscal_year,
+            period_no,
+            period_name,
+            start_date,
+            end_date,
+            is_adjustment
+       FROM fiscal_periods
+      WHERE calendar_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [normalizedCalendarId, normalizedFiscalPeriodId]
+  );
+  const row = result.rows?.[0];
+  if (!row) {
+    throw badRequest(
+      `Fiscal period (id=${normalizedFiscalPeriodId}) does not belong to calendarId=${normalizedCalendarId}`
+    );
+  }
+
+  const isAdjustment = row.is_adjustment === 1
+    || row.is_adjustment === true
+    || row.is_adjustment === "1";
+  if (isAdjustment) {
+    throw badRequest(
+      `Fixed-assets depreciation runs do not support adjustment fiscal periods (fiscalPeriodId=${normalizedFiscalPeriodId})`
+    );
+  }
+
+  const startDate = String(row.start_date || "").slice(0, 10);
+  const endDate = String(row.end_date || "").slice(0, 10);
+  const start = parseDateOnlyStrict(startDate, "fiscalPeriod.startDate");
+  const expectedMonthStart = new Date(Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth(),
+    1
+  ));
+  const expectedMonthEnd = new Date(Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth() + 1,
+    0
+  ));
+  const expectedStartText = formatDateOnly(expectedMonthStart);
+  const expectedEndText = formatDateOnly(expectedMonthEnd);
+
+  if (startDate !== expectedStartText || endDate !== expectedEndText) {
+    throw badRequest(
+      `Fixed-assets depreciation runs require month-aligned non-adjustment fiscal periods; ` +
+      `fiscalPeriodId=${normalizedFiscalPeriodId} is not aligned to a single calendar YYYY-MM bucket`
+    );
+  }
+
+  return {
+    id: Number(row.id),
+    fiscalYear: row.fiscal_year != null ? Number(row.fiscal_year) : null,
+    periodNo: row.period_no != null ? Number(row.period_no) : null,
+    periodName: row.period_name || null,
+    startDate,
+    endDate,
+    periodKey: startDate.slice(0, 7),
+  };
 }
 
 /**
@@ -1559,6 +2020,27 @@ async function ensurePeriodOpen(bookId, fiscalPeriodId, queryFn = query) {
   const status = String(result.rows?.[0]?.status || "OPEN").toUpperCase();
   if (status !== "OPEN") {
     throw badRequest(`Fiscal period is ${status}; cannot post activation`);
+  }
+}
+
+export async function ensurePeriodOpenForFixedAssets(
+  bookId,
+  fiscalPeriodId,
+  actionLabel,
+  queryFn = query
+) {
+  const result = await queryFn(
+    `SELECT status
+       FROM period_statuses
+      WHERE book_id = ?
+        AND fiscal_period_id = ?
+      LIMIT 1`,
+    [bookId, fiscalPeriodId]
+  );
+  const status = String(result.rows?.[0]?.status || "OPEN").toUpperCase();
+  if (status !== "OPEN") {
+    const normalizedActionLabel = String(actionLabel || "run depreciation").trim() || "run depreciation";
+    throw badRequest(`Fiscal period is ${status}; cannot ${normalizedActionLabel}`);
   }
 }
 
@@ -2339,6 +2821,40 @@ export async function activateAsset(input) {
       tx.query
     );
 
+    // ── FA27: Source-link revalidation & auto-refresh ──────────────
+    const isSourceLinked = hasSourceLinkage(asset);
+    let sourceRevalidation = null;
+
+    if (isSourceLinked) {
+      const isLegacyOnboardingCheck = hasLegacyOnboardingValues(asset);
+      if (isLegacyOnboardingCheck) {
+        throw badRequest("Legacy onboarding activation does not support source-linked/CARI assets");
+      }
+
+      sourceRevalidation = await revalidateSourceLinkageForActivation({
+        asset,
+        category,
+        tenantId,
+        queryFn: tx.query,
+      });
+
+      // Auto-refresh source-derived fields on the in-memory asset row
+      if (Object.keys(sourceRevalidation.refreshedFields).length > 0) {
+        const refreshCols = [];
+        const refreshVals = [];
+        for (const [col, val] of Object.entries(sourceRevalidation.refreshedFields)) {
+          asset[col] = val;
+          refreshCols.push(`${col} = ?`);
+          refreshVals.push(val);
+        }
+        refreshVals.push(userId, assetId, tenantId);
+        await tx.query(
+          `UPDATE fixed_assets SET ${refreshCols.join(", ")}, updated_by_user_id = ? WHERE id = ? AND tenant_id = ?`,
+          refreshVals
+        );
+      }
+    }
+
     // ── Apply capitalization/in-service dates from input or existing ─
     const capitalizationDate = inputCapDate || asset.capitalization_date;
     const inServiceDate = inputInServiceDate || asset.in_service_date;
@@ -2356,9 +2872,11 @@ export async function activateAsset(input) {
       ? Number(category.capitalization_threshold_base)
       : null;
     const useLowValueSamePeriodPath =
-      !isLegacyOnboarding
-      && capitalizationThresholdBase != null
-      && costBase < capitalizationThresholdBase;
+      isSourceLinked
+        ? (sourceRevalidation?.useLowValueSamePeriodPath ?? false)
+        : (!isLegacyOnboarding
+            && capitalizationThresholdBase != null
+            && costBase < capitalizationThresholdBase);
 
     if (!capitalizationDate) throw badRequest("capitalizationDate is required for activation");
     if (!inServiceDate) throw badRequest("inServiceDate is required for activation");
@@ -2434,13 +2952,6 @@ export async function activateAsset(input) {
     await ensurePeriodOpen(book.id, period.id, tx.query);
 
     // ── Determine activated status ──────────────────────────────
-    if (hasSourceLinkage(asset)) {
-      if (isLegacyOnboarding) {
-        throw badRequest("Legacy onboarding activation does not support source-linked/CARI assets");
-      }
-      throw badRequest("This activation path does not support source-linked/CARI assets");
-    }
-
     let activatedStatus = "ACTIVE";
     let remainingUsefulLifeMonths = Number(asset.useful_life_months);
     let acquisitionAccumDeprAmountTxn = 0;

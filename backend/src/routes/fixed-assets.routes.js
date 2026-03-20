@@ -30,6 +30,11 @@ import { resolveCariDocumentScope } from "../services/cari.document.service.js";
 import {
   parseRegisterListFilters,
   parseAssetDetailParams,
+  parseAssetDepreciationScheduleInput,
+  parseDepreciationRunListInput,
+  parseDepreciationRunParams,
+  parseDepreciationRunPreviewInput,
+  parseDepreciationRunCreateInput,
   parseCariEligibleApLineReadInput,
   parseCariDocumentLineCapitalizationInput,
   parseActivateAssetInput,
@@ -63,6 +68,14 @@ import {
   createCustodian,
   updateCustodian,
 } from "../services/fixed-assets.service.js";
+import {
+  getAssetDepreciationSchedule,
+  listDepreciationRuns,
+  getDepreciationRunDetail,
+  deleteDepreciationRunDraft,
+  previewDepreciationRun,
+  createDepreciationRunDraft,
+} from "../services/fixed-assets.depreciation.service.js";
 
 const router = express.Router();
 
@@ -208,8 +221,10 @@ router.get(
   requirePermission("fixed_assets.depreciation.run", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.json({ rows: [], total: 0 });
+  asyncHandler(async (req, res) => {
+    const filters = parseDepreciationRunListInput(req);
+    const result = await listDepreciationRuns(filters);
+    return res.json(result);
   })
 );
 
@@ -218,8 +233,10 @@ router.post(
   requirePermission("fixed_assets.depreciation.run", {
     resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseDepreciationRunPreviewInput(req);
+    const result = await previewDepreciationRun(input);
+    return res.json(result);
   })
 );
 
@@ -228,8 +245,10 @@ router.post(
   requirePermission("fixed_assets.depreciation.run", {
     resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseDepreciationRunCreateInput(req);
+    const result = await createDepreciationRunDraft(input);
+    return res.status(201).json(result);
   })
 );
 
@@ -239,8 +258,10 @@ router.get(
     resolveScope: async (req) =>
       resolveFixedAssetRunScope(req.params?.runId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseDepreciationRunParams(req);
+    const result = await getDepreciationRunDetail(input);
+    return res.json(result);
   })
 );
 
@@ -250,8 +271,10 @@ router.delete(
     resolveScope: async (req) =>
       resolveFixedAssetRunScope(req.params?.runId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseDepreciationRunParams(req);
+    const result = await deleteDepreciationRunDraft(input);
+    return res.json(result);
   })
 );
 
@@ -448,8 +471,10 @@ router.get(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.json({ rows: [], total: 0 });
+  asyncHandler(async (req, res) => {
+    const input = parseAssetDepreciationScheduleInput(req);
+    const result = await getAssetDepreciationSchedule(input);
+    return res.json(result);
   })
 );
 

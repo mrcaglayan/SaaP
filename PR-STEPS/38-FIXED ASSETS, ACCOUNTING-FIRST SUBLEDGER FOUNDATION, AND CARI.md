@@ -1253,7 +1253,7 @@ Implementation notes:
 - [x] `STEP-FA24` - FA06 eligible AP-line read surface and remaining-unit calculation
 - [x] `STEP-FA25` - FA06 same-OU capitalization create/activate flow
 - [x] `STEP-FA26` - FA06 cross-OU capitalization accounting template and blocking rules
-- [ ] `STEP-FA27` - FA06 draft-link revalidation, source drift refresh, and activation-time safeguards
+- [x] `STEP-FA27` - FA06 draft-link revalidation, source drift refresh, and activation-time safeguards
 - [ ] `STEP-FA28` - Schedule engine period resolution, read surface, and standard straight-line/none math
 - [ ] `STEP-FA29` - Declining-balance math, salvage-floor enforcement, and legacy-onboarding forward schedule path
 - [ ] `STEP-FA30` - Lifecycle cutoff eligibility for suspension, reactivation, transfer, and disposal in schedule generation

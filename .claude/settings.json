@@ -7,7 +7,13 @@
       "Bash(grep -n \"CREATE TABLE.*period_statuses\\\\|CREATE TABLE.*gl_entries\" /c/Users/Maarif/Desktop/my-app/backend/src/migrations/*.js)",
       "Bash(grep -n \"resolveBookAndPeriodForPostingTx\\\\|ensurePeriodOpen\" /c/Users/Maarif/Desktop/my-app/backend/src/services/*.js)",
       "Bash(node --check scripts/test-fa26-cross-ou-capitalization-smoke.js)",
-      "Bash(node scripts/test-fa26-cross-ou-capitalization-smoke.js)"
+      "Bash(node scripts/test-fa26-cross-ou-capitalization-smoke.js)",
+      "Bash(node --check src/services/fixed-assets.service.js)",
+      "Bash(node --check src/routes/fixed-assets.routes.js)",
+      "Bash(node --check src/routes/fixed-assets.validators.js)",
+      "Bash(node --check src/services/cari.document.service.js)",
+      "Bash(node --check scripts/test-fa27-draft-link-revalidation-smoke.js)",
+      "Bash(node scripts/test-fa27-draft-link-revalidation-smoke.js)"
     ]
   }
 }
