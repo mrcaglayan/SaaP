@@ -41,6 +41,79 @@ export function parseFixedAssetsListFilters(req) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Asset register list validators
+// ═══════════════════════════════════════════════════════════════════
+
+const VALID_ASSET_STATUSES = new Set([
+  "DRAFT",
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+  "DISPOSED",
+]);
+
+export function parseRegisterListFilters(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+  const ownerOperatingUnitId = parsePositiveInt(req.query?.ownerOperatingUnitId);
+  const locationOperatingUnitId = parsePositiveInt(req.query?.locationOperatingUnitId);
+  const categoryId = parsePositiveInt(req.query?.categoryId);
+  const custodianId = parsePositiveInt(req.query?.custodianId);
+
+  const status = normalizeUpperText(req.query?.status);
+  if (status && !VALID_ASSET_STATUSES.has(status)) {
+    throw badRequest(`status must be one of: ${[...VALID_ASSET_STATUSES].join(", ")}`);
+  }
+
+  const acquisitionDateFrom = req.query?.acquisitionDateFrom
+    ? String(req.query.acquisitionDateFrom).trim() || null
+    : null;
+  const acquisitionDateTo = req.query?.acquisitionDateTo
+    ? String(req.query.acquisitionDateTo).trim() || null
+    : null;
+  const inServiceDateFrom = req.query?.inServiceDateFrom
+    ? String(req.query.inServiceDateFrom).trim() || null
+    : null;
+  const inServiceDateTo = req.query?.inServiceDateTo
+    ? String(req.query.inServiceDateTo).trim() || null
+    : null;
+
+  const departmentCode = req.query?.departmentCode
+    ? String(req.query.departmentCode).trim() || null
+    : null;
+  const costCenterCode = req.query?.costCenterCode
+    ? String(req.query.costCenterCode).trim() || null
+    : null;
+
+  // disposed=true → only DISPOSED; disposed=false → exclude DISPOSED; omitted → no filter
+  let disposed = undefined;
+  if (req.query?.disposed !== undefined && req.query.disposed !== "") {
+    const raw = String(req.query.disposed).toLowerCase();
+    if (raw === "true" || raw === "1") disposed = true;
+    else if (raw === "false" || raw === "0") disposed = false;
+  }
+
+  return {
+    tenantId,
+    legalEntityId,
+    ownerOperatingUnitId,
+    locationOperatingUnitId,
+    categoryId,
+    custodianId,
+    status,
+    acquisitionDateFrom,
+    acquisitionDateTo,
+    inServiceDateFrom,
+    inServiceDateTo,
+    departmentCode,
+    costCenterCode,
+    disposed,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Category validators
 // ═══════════════════════════════════════════════════════════════════
 

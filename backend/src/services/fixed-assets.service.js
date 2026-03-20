@@ -150,6 +150,147 @@ function enforceSalvageRuleConsistency(salvageRuleType, salvagePercent, salvageA
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Asset register list
+// ═══════════════════════════════════════════════════════════════════
+
+function mapAssetRow(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    legalEntityId: row.legal_entity_id,
+    assetNo: row.asset_no,
+    sequenceNo: row.sequence_no != null ? Number(row.sequence_no) : null,
+    assetTag: row.asset_tag || null,
+    name: row.name,
+    description: row.description || null,
+    categoryId: row.category_id != null ? Number(row.category_id) : null,
+    categoryCode: row.category_code || null,
+    categoryName: row.category_name || null,
+    status: row.status,
+    ownerOperatingUnitId: row.owner_operating_unit_id != null
+      ? Number(row.owner_operating_unit_id) : null,
+    locationOperatingUnitId: row.location_operating_unit_id != null
+      ? Number(row.location_operating_unit_id) : null,
+    departmentCode: row.department_code || null,
+    costCenterCode: row.cost_center_code || null,
+    custodianEmployeeId: row.custodian_employee_id != null
+      ? Number(row.custodian_employee_id) : null,
+    custodianDisplayName: row.custodian_display_name || null,
+    counterpartyId: row.counterparty_id != null
+      ? Number(row.counterparty_id) : null,
+    serialNo: row.serial_no || null,
+    acquisitionDate: row.acquisition_date,
+    capitalizationDate: row.capitalization_date || null,
+    inServiceDate: row.in_service_date || null,
+    disposalDate: row.disposal_date || null,
+    currencyCode: row.currency_code,
+    originalCostTxn: row.original_cost_txn != null
+      ? Number(row.original_cost_txn) : 0,
+    originalCostBase: row.original_cost_base != null
+      ? Number(row.original_cost_base) : 0,
+    salvageValueBase: row.salvage_value_base != null
+      ? Number(row.salvage_value_base) : 0,
+    usefulLifeMonths: row.useful_life_months != null
+      ? Number(row.useful_life_months) : null,
+    remainingUsefulLifeMonths: row.remaining_useful_life_months != null
+      ? Number(row.remaining_useful_life_months) : null,
+    depreciationMethod: row.depreciation_method || null,
+    lastDepreciationPeriod: row.last_depreciation_period || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function listAssets(filters) {
+  const {
+    tenantId, legalEntityId, ownerOperatingUnitId, locationOperatingUnitId,
+    categoryId, custodianId, status,
+    acquisitionDateFrom, acquisitionDateTo,
+    inServiceDateFrom, inServiceDateTo,
+    departmentCode, costCenterCode, disposed,
+  } = filters;
+
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const conditions = ["fa.tenant_id = ?"];
+  const params = [tenantId];
+
+  if (legalEntityId) {
+    conditions.push("fa.legal_entity_id = ?");
+    params.push(legalEntityId);
+  }
+  if (ownerOperatingUnitId) {
+    conditions.push("fa.owner_operating_unit_id = ?");
+    params.push(ownerOperatingUnitId);
+  }
+  if (locationOperatingUnitId) {
+    conditions.push("fa.location_operating_unit_id = ?");
+    params.push(locationOperatingUnitId);
+  }
+  if (categoryId) {
+    conditions.push("fa.category_id = ?");
+    params.push(categoryId);
+  }
+  if (custodianId) {
+    conditions.push("fa.custodian_employee_id = ?");
+    params.push(custodianId);
+  }
+  if (status) {
+    conditions.push("fa.status = ?");
+    params.push(status);
+  }
+  if (acquisitionDateFrom) {
+    conditions.push("fa.acquisition_date >= ?");
+    params.push(acquisitionDateFrom);
+  }
+  if (acquisitionDateTo) {
+    conditions.push("fa.acquisition_date <= ?");
+    params.push(acquisitionDateTo);
+  }
+  if (inServiceDateFrom) {
+    conditions.push("fa.in_service_date >= ?");
+    params.push(inServiceDateFrom);
+  }
+  if (inServiceDateTo) {
+    conditions.push("fa.in_service_date <= ?");
+    params.push(inServiceDateTo);
+  }
+  if (departmentCode) {
+    conditions.push("fa.department_code = ?");
+    params.push(departmentCode);
+  }
+  if (costCenterCode) {
+    conditions.push("fa.cost_center_code = ?");
+    params.push(costCenterCode);
+  }
+
+  // disposed filtering based on lifecycle state
+  if (disposed === true) {
+    conditions.push("fa.status = 'DISPOSED'");
+  } else if (disposed === false) {
+    conditions.push("fa.status != 'DISPOSED'");
+  }
+
+  const result = await query(
+    `SELECT fa.*,
+            cat.code   AS category_code,
+            cat.name   AS category_name,
+            cust.display_name AS custodian_display_name
+       FROM fixed_assets fa
+       LEFT JOIN fixed_asset_categories cat ON cat.id = fa.category_id
+       LEFT JOIN fixed_asset_custodian_employees cust ON cust.id = fa.custodian_employee_id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY fa.asset_no ASC`,
+    params
+  );
+
+  return {
+    rows: (result.rows || []).map(mapAssetRow),
+    total: result.rows?.length || 0,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Category CRUD
 // ═══════════════════════════════════════════════════════════════════
 

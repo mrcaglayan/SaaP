@@ -23,6 +23,7 @@ import {
   resolveFixedAssetRunScope,
 } from "../services/fixed-assets.scope.service.js";
 import {
+  parseRegisterListFilters,
   parseCategoryListFilters,
   parseCategoryCreateInput,
   parseCategoryUpdateInput,
@@ -34,6 +35,7 @@ import {
   parseCustodianUpdateInput,
 } from "./fixed-assets.validators.js";
 import {
+  listAssets,
   listCategories,
   createCategory,
   updateCategory,
@@ -315,8 +317,10 @@ router.get(
   requirePermission("fixed_assets.read", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.json({ rows: [], total: 0 });
+  asyncHandler(async (req, res) => {
+    const filters = parseRegisterListFilters(req);
+    const result = await listAssets(filters);
+    return res.json(result);
   })
 );
 
