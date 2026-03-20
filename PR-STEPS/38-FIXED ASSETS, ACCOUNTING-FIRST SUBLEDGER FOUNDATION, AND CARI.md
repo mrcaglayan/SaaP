@@ -1238,7 +1238,7 @@ Implementation notes:
 - [x] `STEP-FA09` - `m138` fixed-assets foundation base tables
 - [x] `STEP-FA10` - `m138` fixed-assets foundation constraints and indexes
 - [x] `STEP-FA11` - `m139` custodian employees and deferred foreign keys
-- [ ] `STEP-FA12` - `m140` CARI traceability and `journal_source_links` schema tail
+- [x] `STEP-FA12` - `m140` CARI traceability and `journal_source_links` schema tail
 - [ ] `STEP-FA13` - Fixed-assets module skeleton, scope service, route mount, and route ordering
 - [ ] `STEP-FA14` - Categories CRUD and default-rule backend surface
 - [ ] `STEP-FA15` - Depreciation profiles CRUD and snapshot-default backend surface
