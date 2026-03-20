@@ -472,6 +472,56 @@ export function parsePhysicalMoveInput(req) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Ownership transfer validators
+// ═══════════════════════════════════════════════════════════════════
+
+export function parseOwnershipTransferInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  const effectiveDate = normalizeDateOnlyRequired(
+    body.effectiveDate ?? body.effective_date,
+    "effectiveDate"
+  );
+
+  const postingDate = normalizeDateOnlyRequired(
+    body.postingDate ?? body.posting_date,
+    "postingDate"
+  );
+
+  const targetOwnerOperatingUnitId = parsePositiveInt(
+    body.targetOwnerOperatingUnitId ?? body.target_owner_operating_unit_id
+  );
+  if (!targetOwnerOperatingUnitId) {
+    throw badRequest("targetOwnerOperatingUnitId is required");
+  }
+
+  const targetLocationOperatingUnitId = body.targetLocationOperatingUnitId != null
+    || body.target_location_operating_unit_id != null
+    ? parsePositiveInt(body.targetLocationOperatingUnitId ?? body.target_location_operating_unit_id)
+    : undefined;
+
+  const note = body.note != null ? String(body.note).trim() || null : null;
+  const userId = req.user?.userId || null;
+
+  return {
+    tenantId,
+    assetId,
+    effectiveDate,
+    postingDate,
+    targetOwnerOperatingUnitId,
+    targetLocationOperatingUnitId,
+    note,
+    userId,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Asset create validators
 // ═══════════════════════════════════════════════════════════════════
 

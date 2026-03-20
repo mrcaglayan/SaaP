@@ -41,6 +41,7 @@ import {
   parseCariDocumentLineCapitalizationInput,
   parseActivateAssetInput,
   parsePhysicalMoveInput,
+  parseOwnershipTransferInput,
   parseAssetCreateInput,
   parseAssetDraftUpdateInput,
   parseCategoryListFilters,
@@ -60,6 +61,7 @@ import {
   createAssetsFromCariDocumentLineFa06,
   activateAsset,
   physicalMoveAsset,
+  ownershipTransferAsset,
   createAssetDraft,
   updateAssetDraft,
   listCategories,
@@ -543,8 +545,10 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseOwnershipTransferInput(req);
+    const result = await ownershipTransferAsset(input);
+    return res.json(result);
   })
 );
 

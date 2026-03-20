@@ -3334,6 +3334,346 @@ export async function physicalMoveAsset(input) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Ownership transfer workflow
+// ═══════════════════════════════════════════════════════════════════
+
+const OWNERSHIP_TRANSFER_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+]);
+
+function buildOwnershipTransferJournalNo(assetId) {
+  return `FA-TXN-XFER-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
+}
+
+function roundTransferAmount(value) {
+  return Math.round(Number(value || 0) * 10000) / 10000;
+}
+
+async function resolveCurrentAssetNbv(tenantId, assetId, queryFn) {
+  const result = await queryFn(
+    `SELECT nbv_amount_txn, nbv_amount_base
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'
+        AND reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fixed_asset_transactions.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY effective_date DESC, id DESC
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+  const row = result.rows?.[0];
+  if (!row) {
+    return { nbvTxn: 0, nbvBase: 0 };
+  }
+  return {
+    nbvTxn: roundTransferAmount(row.nbv_amount_txn),
+    nbvBase: roundTransferAmount(row.nbv_amount_base),
+  };
+}
+
+export async function ownershipTransferAsset(input) {
+  const {
+    tenantId,
+    assetId,
+    effectiveDate,
+    postingDate,
+    targetOwnerOperatingUnitId,
+    targetLocationOperatingUnitId,
+    note,
+    userId,
+  } = input;
+
+  return withTransaction(async (tx) => {
+    // ── Load and lock asset ──────────────────────────────────────
+    const existingResult = await tx.query(
+      `SELECT id, tenant_id, legal_entity_id, status, asset_no,
+              owner_operating_unit_id,
+              location_operating_unit_id,
+              currency_code,
+              original_cost_txn,
+              original_cost_base,
+              asset_account_id,
+              accum_depr_account_id
+         FROM fixed_assets
+        WHERE id = ? AND tenant_id = ?
+        LIMIT 1
+        FOR UPDATE`,
+      [assetId, tenantId]
+    );
+    const asset = existingResult.rows?.[0];
+    if (!asset) throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+
+    const assetStatus = normalizeUpperText(asset.status);
+    if (!OWNERSHIP_TRANSFER_ELIGIBLE_STATUSES.has(assetStatus)) {
+      throw badRequest(
+        `Ownership transfer is only allowed for ACTIVE, SUSPENDED, or FULLY_DEPRECIATED assets ` +
+        `(assetId=${assetId}, status=${assetStatus})`
+      );
+    }
+
+    const legalEntityId = Number(asset.legal_entity_id);
+    const sourceOwnerOperatingUnitId = Number(asset.owner_operating_unit_id);
+    if (!sourceOwnerOperatingUnitId) {
+      throw badRequest("Asset is missing ownerOperatingUnitId; ownership transfer requires an existing owner");
+    }
+
+    if (targetOwnerOperatingUnitId === sourceOwnerOperatingUnitId) {
+      throw badRequest(
+        `targetOwnerOperatingUnitId (${targetOwnerOperatingUnitId}) must differ from ` +
+        `current ownerOperatingUnitId (${sourceOwnerOperatingUnitId})`
+      );
+    }
+
+    const assetNo = asset.asset_no || `ID-${assetId}`;
+    const currencyCode = asset.currency_code || "USD";
+    const assetAccountId = asset.asset_account_id != null ? Number(asset.asset_account_id) : null;
+    const accumDeprAccountId = asset.accum_depr_account_id != null ? Number(asset.accum_depr_account_id) : null;
+
+    if (!assetAccountId) {
+      throw badRequest("Asset is missing assetAccountId; ownership transfer requires an asset GL account");
+    }
+    if (!accumDeprAccountId) {
+      throw badRequest("Asset is missing accumDeprAccountId; ownership transfer requires an accumulated depreciation GL account");
+    }
+
+    // ── Capture from-state ───────────────────────────────────────
+    const fromLocationOperatingUnitId = asset.location_operating_unit_id != null
+      ? Number(asset.location_operating_unit_id) : sourceOwnerOperatingUnitId;
+    const toLocationOperatingUnitId = targetLocationOperatingUnitId !== undefined
+      && targetLocationOperatingUnitId != null
+      ? targetLocationOperatingUnitId
+      : fromLocationOperatingUnitId;
+
+    // ── Compute gross cost and accumulated depreciation ──────────
+    const grossCostTxn = roundTransferAmount(asset.original_cost_txn);
+    const grossCostBase = roundTransferAmount(asset.original_cost_base);
+
+    const currentNbv = await resolveCurrentAssetNbv(tenantId, assetId, tx.query);
+    const accumDeprTxn = roundTransferAmount(grossCostTxn - currentNbv.nbvTxn);
+    const accumDeprBase = roundTransferAmount(grossCostBase - currentNbv.nbvBase);
+    const transferredNbvTxn = currentNbv.nbvTxn;
+    const transferredNbvBase = currentNbv.nbvBase;
+
+    // ── Resolve book & fiscal period ─────────────────────────────
+    const book = await resolveBookForLegalEntity(tenantId, legalEntityId, tx.query);
+    const period = await resolveFiscalPeriodForDate(book.calendar_id, postingDate, tx.query);
+    await ensurePeriodOpen(book.id, period.id, tx.query);
+
+    // ── Resolve self-balancing accounts ──────────────────────────
+    const selfBalancingAccounts = await resolveOuSelfBalancingAccountsTx(tx, {
+      tenantId,
+      legalEntityId,
+      sourceOperatingUnitId: sourceOwnerOperatingUnitId,
+      targetOperatingUnitId: targetOwnerOperatingUnitId,
+      cache: {
+        operatingUnitById: new Map(),
+        partnerPairById: new Map(),
+      },
+    });
+
+    // ── Build journal lines using locked gross/accum/NBV template ─
+    const journalLines = [];
+
+    // 1. Debit fixed-asset account in target owner OU for gross cost
+    journalLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: assetAccountId,
+        side: "DEBIT",
+        amountTxn: grossCostTxn,
+        amountBase: grossCostBase,
+        lineDescription: `FA ownership transfer ${assetNo} gross cost to target OU`,
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: targetOwnerOperatingUnitId,
+      })
+    );
+
+    // 2. Credit fixed-asset account in source owner OU for gross cost
+    journalLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: assetAccountId,
+        side: "CREDIT",
+        amountTxn: grossCostTxn,
+        amountBase: grossCostBase,
+        lineDescription: `FA ownership transfer ${assetNo} gross cost from source OU`,
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: sourceOwnerOperatingUnitId,
+      })
+    );
+
+    // 3. Debit accumulated-depreciation account in source owner OU
+    if (accumDeprTxn > 0 || accumDeprBase > 0) {
+      journalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: accumDeprAccountId,
+          side: "DEBIT",
+          amountTxn: accumDeprTxn,
+          amountBase: accumDeprBase,
+          lineDescription: `FA ownership transfer ${assetNo} accum depr from source OU`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: sourceOwnerOperatingUnitId,
+        })
+      );
+
+      // 4. Credit accumulated-depreciation account in target owner OU
+      journalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: accumDeprAccountId,
+          side: "CREDIT",
+          amountTxn: accumDeprTxn,
+          amountBase: accumDeprBase,
+          lineDescription: `FA ownership transfer ${assetNo} accum depr to target OU`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: targetOwnerOperatingUnitId,
+        })
+      );
+    }
+
+    // 5/6. Self-balancing due-from/due-to lines for transferred NBV
+    //      Zero-NBV transfers omit zero self-balancing lines
+    if (transferredNbvTxn > 0 || transferredNbvBase > 0) {
+      // 5. Debit sourceDueFromAccount in source owner OU for NBV
+      journalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: selfBalancingAccounts.sourceDueFromAccount.id,
+          side: "DEBIT",
+          amountTxn: transferredNbvTxn,
+          amountBase: transferredNbvBase,
+          lineDescription: `FA ownership transfer ${assetNo} due from target OU`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: sourceOwnerOperatingUnitId,
+        })
+      );
+
+      // 6. Credit targetDueToAccount in target owner OU for NBV
+      journalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: selfBalancingAccounts.targetDueToAccount.id,
+          side: "CREDIT",
+          amountTxn: transferredNbvTxn,
+          amountBase: transferredNbvBase,
+          lineDescription: `FA ownership transfer ${assetNo} due to source OU`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: targetOwnerOperatingUnitId,
+        })
+      );
+    }
+
+    // ── Post journal ─────────────────────────────────────────────
+    const journalResult = await insertPostedJournalWithLinesTx(tx, {
+      tenantId,
+      legalEntityId,
+      bookId: book.id,
+      fiscalPeriodId: period.id,
+      journalNo: buildOwnershipTransferJournalNo(assetId),
+      entryDate: postingDate,
+      documentDate: effectiveDate,
+      currencyCode,
+      description: `FA ownership transfer ${assetNo}`.slice(0, 255),
+      referenceNo: assetNo,
+      userId,
+      operatingUnitId: sourceOwnerOperatingUnitId,
+      lines: journalLines,
+    });
+
+    // ── Write PRIMARY source link ────────────────────────────────
+    const transactionId = await insertFixedAssetTransaction(tx, {
+      tenantId,
+      legalEntityId,
+      assetId,
+      transactionType: "OWNERSHIP_TRANSFER",
+      effectiveDate,
+      postingDate,
+      bookId: book.id,
+      fiscalPeriodId: period.id,
+      currencyCode,
+      journalEntryId: journalResult.journalEntryId,
+      grossAmountTxn: grossCostTxn,
+      grossAmountBase: grossCostBase,
+      accumDeprAmountTxn: accumDeprTxn,
+      accumDeprAmountBase: accumDeprBase,
+      nbvAmountTxn: transferredNbvTxn,
+      nbvAmountBase: transferredNbvBase,
+      note: note || `Ownership transfer from OU ${sourceOwnerOperatingUnitId} to OU ${targetOwnerOperatingUnitId}`,
+      createdByUserId: userId,
+    });
+
+    if (!transactionId) {
+      throw badRequest("Failed to create OWNERSHIP_TRANSFER transaction");
+    }
+
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId,
+      journalEntryId: journalResult.journalEntryId,
+      sourceRefType: "FIXED_ASSET_TRANSACTION",
+      sourceRefId: transactionId,
+    });
+
+    // ── Create ownership transfer detail row ─────────────────────
+    await tx.query(
+      `INSERT INTO fixed_asset_ownership_transfer_details (
+         tenant_id,
+         legal_entity_id,
+         transaction_id,
+         asset_id,
+         from_owner_operating_unit_id,
+         to_owner_operating_unit_id,
+         from_location_operating_unit_id,
+         to_location_operating_unit_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        transactionId,
+        assetId,
+        sourceOwnerOperatingUnitId,
+        targetOwnerOperatingUnitId,
+        fromLocationOperatingUnitId,
+        toLocationOperatingUnitId,
+      ]
+    );
+
+    // ── Update asset master (owner OU changes only after posting) ─
+    const updateClauses = [
+      "owner_operating_unit_id = ?",
+      "updated_by_user_id = ?",
+    ];
+    const updateParams = [targetOwnerOperatingUnitId, userId];
+
+    if (toLocationOperatingUnitId !== fromLocationOperatingUnitId) {
+      updateClauses.push("location_operating_unit_id = ?");
+      updateParams.push(toLocationOperatingUnitId);
+    }
+
+    updateParams.push(assetId, tenantId);
+    await tx.query(
+      `UPDATE fixed_assets
+          SET ${updateClauses.join(", ")}
+        WHERE id = ? AND tenant_id = ?`,
+      updateParams
+    );
+
+    return assetId;
+  }).then(async (transferredAssetId) => {
+    return getAssetDetail({ tenantId, assetId: transferredAssetId });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Category CRUD
 // ═══════════════════════════════════════════════════════════════════
 
