@@ -1243,9 +1243,9 @@ Implementation notes:
 - [x] `STEP-FA14` - Categories CRUD and default-rule backend surface
 - [x] `STEP-FA15` - Depreciation profiles CRUD and snapshot-default backend surface
 - [x] `STEP-FA16` - Custodian maintenance and fixed-assets settings UI/API integration
-- [ ] `STEP-FA17` - Asset register backend read surface and filter contract
-- [ ] `STEP-FA18` - Asset detail backend read surface with tabs/foundations
-- [ ] `STEP-FA19` - Fixed-assets list/detail frontend pages and API integration
+- [x] `STEP-FA17` - Asset register backend read surface and filter contract
+- [x] `STEP-FA18` - Asset detail backend read surface with tabs/foundations
+- [x] `STEP-FA19` - Fixed-assets list/detail frontend pages and API integration
 - [ ] `STEP-FA20` - Manual asset draft create/read/update foundation
 - [ ] `STEP-FA21` - Manual activation standard path
 - [ ] `STEP-FA22` - Manual legacy-onboarding activation path
