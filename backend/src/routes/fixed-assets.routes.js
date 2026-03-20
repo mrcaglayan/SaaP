@@ -42,6 +42,7 @@ import {
   parseActivateAssetInput,
   parsePhysicalMoveInput,
   parseOwnershipTransferInput,
+  parseWriteoffInput,
   parseAssetCreateInput,
   parseAssetDraftUpdateInput,
   parseCategoryListFilters,
@@ -62,6 +63,7 @@ import {
   activateAsset,
   physicalMoveAsset,
   ownershipTransferAsset,
+  writeoffAsset,
   createAssetDraft,
   updateAssetDraft,
   listCategories,
@@ -558,8 +560,10 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseWriteoffInput(req);
+    const result = await writeoffAsset(input);
+    return res.json(result);
   })
 );
 

@@ -3674,6 +3674,223 @@ export async function ownershipTransferAsset(input) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Write-off (no-proceeds disposal)
+// ═══════════════════════════════════════════════════════════════════
+
+const WRITEOFF_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+]);
+
+function buildWriteoffJournalNo(assetId) {
+  return `FA-TXN-WO-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
+}
+
+function roundDisposalAmount(value) {
+  return Math.round(Number(value || 0) * 10000) / 10000;
+}
+
+export async function writeoffAsset(input) {
+  const {
+    tenantId,
+    assetId,
+    effectiveDate,
+    postingDate,
+    note,
+    userId,
+  } = input;
+
+  return withTransaction(async (tx) => {
+    // ── Load and lock asset ──────────────────────────────────────
+    const existingResult = await tx.query(
+      `SELECT id, tenant_id, legal_entity_id, status, asset_no,
+              owner_operating_unit_id,
+              currency_code,
+              original_cost_txn,
+              original_cost_base,
+              asset_account_id,
+              accum_depr_account_id,
+              disposal_gain_account_id,
+              disposal_loss_account_id
+         FROM fixed_assets
+        WHERE id = ? AND tenant_id = ?
+        LIMIT 1
+        FOR UPDATE`,
+      [assetId, tenantId]
+    );
+    const asset = existingResult.rows?.[0];
+    if (!asset) throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+
+    const assetStatus = normalizeUpperText(asset.status);
+    if (!WRITEOFF_ELIGIBLE_STATUSES.has(assetStatus)) {
+      throw badRequest(
+        `Write-off is only allowed for ACTIVE, SUSPENDED, or FULLY_DEPRECIATED assets ` +
+        `(assetId=${assetId}, status=${assetStatus})`
+      );
+    }
+
+    const legalEntityId = Number(asset.legal_entity_id);
+    const assetNo = asset.asset_no || `ID-${assetId}`;
+    const currencyCode = asset.currency_code || "USD";
+    const ownerOperatingUnitId = asset.owner_operating_unit_id != null
+      ? Number(asset.owner_operating_unit_id) : null;
+    const assetAccountId = asset.asset_account_id != null ? Number(asset.asset_account_id) : null;
+    const accumDeprAccountId = asset.accum_depr_account_id != null ? Number(asset.accum_depr_account_id) : null;
+    const disposalLossAccountId = asset.disposal_loss_account_id != null ? Number(asset.disposal_loss_account_id) : null;
+
+    if (!assetAccountId) {
+      throw badRequest("Asset is missing assetAccountId; write-off requires an asset GL account");
+    }
+    if (!accumDeprAccountId) {
+      throw badRequest("Asset is missing accumDeprAccountId; write-off requires an accumulated depreciation GL account");
+    }
+
+    // ── Compute carrying values at disposal ──────────────────────
+    const grossCostTxn = roundDisposalAmount(asset.original_cost_txn);
+    const grossCostBase = roundDisposalAmount(asset.original_cost_base);
+
+    const currentNbv = await resolveCurrentAssetNbv(tenantId, assetId, tx.query);
+    const accumDeprTxn = roundDisposalAmount(grossCostTxn - currentNbv.nbvTxn);
+    const accumDeprBase = roundDisposalAmount(grossCostBase - currentNbv.nbvBase);
+    const writeoffNbvTxn = currentNbv.nbvTxn;
+    const writeoffNbvBase = currentNbv.nbvBase;
+
+    // ── Resolve book & fiscal period ─────────────────────────────
+    const book = await resolveBookForLegalEntity(tenantId, legalEntityId, tx.query);
+    const period = await resolveFiscalPeriodForDate(book.calendar_id, postingDate, tx.query);
+    await ensurePeriodOpen(book.id, period.id, tx.query);
+
+    // ── Build disposal journal lines ─────────────────────────────
+    // Write-off is a no-proceeds disposal:
+    //   Debit  accumulated depreciation (remove accum)
+    //   Credit fixed asset account (remove gross cost)
+    //   Debit  disposal loss account (remaining NBV = write-off loss)
+    // If NBV is zero, no loss line needed (gross = accum, they balance).
+    const journalLines = [];
+
+    // 1. Debit accumulated depreciation account (clear accumulated depreciation)
+    if (accumDeprTxn > 0 || accumDeprBase > 0) {
+      journalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: accumDeprAccountId,
+          side: "DEBIT",
+          amountTxn: accumDeprTxn,
+          amountBase: accumDeprBase,
+          lineDescription: `FA write-off ${assetNo} clear accum depreciation`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: ownerOperatingUnitId,
+        })
+      );
+    }
+
+    // 2. Credit fixed-asset account (remove asset at gross cost)
+    journalLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: assetAccountId,
+        side: "CREDIT",
+        amountTxn: grossCostTxn,
+        amountBase: grossCostBase,
+        lineDescription: `FA write-off ${assetNo} remove asset`,
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: ownerOperatingUnitId,
+      })
+    );
+
+    // 3. Debit disposal loss account for remaining NBV (write-off loss)
+    //    Only if NBV > 0 (non-zero loss)
+    if (writeoffNbvTxn > 0 || writeoffNbvBase > 0) {
+      if (!disposalLossAccountId) {
+        throw badRequest(
+          "Asset is missing disposalLossAccountId; write-off with non-zero NBV requires a disposal loss GL account"
+        );
+      }
+      journalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: disposalLossAccountId,
+          side: "DEBIT",
+          amountTxn: writeoffNbvTxn,
+          amountBase: writeoffNbvBase,
+          lineDescription: `FA write-off ${assetNo} disposal loss`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: ownerOperatingUnitId,
+        })
+      );
+    }
+
+    // ── Post journal ─────────────────────────────────────────────
+    const journalResult = await insertPostedJournalWithLinesTx(tx, {
+      tenantId,
+      legalEntityId,
+      bookId: book.id,
+      fiscalPeriodId: period.id,
+      journalNo: buildWriteoffJournalNo(assetId),
+      entryDate: postingDate,
+      documentDate: effectiveDate,
+      currencyCode,
+      description: `FA write-off ${assetNo}`.slice(0, 255),
+      referenceNo: assetNo,
+      userId,
+      operatingUnitId: ownerOperatingUnitId,
+      lines: journalLines,
+    });
+
+    // ── Create WRITEOFF transaction ──────────────────────────────
+    const transactionId = await insertFixedAssetTransaction(tx, {
+      tenantId,
+      legalEntityId,
+      assetId,
+      transactionType: "WRITEOFF",
+      effectiveDate,
+      postingDate,
+      bookId: book.id,
+      fiscalPeriodId: period.id,
+      currencyCode,
+      journalEntryId: journalResult.journalEntryId,
+      grossAmountTxn: grossCostTxn,
+      grossAmountBase: grossCostBase,
+      accumDeprAmountTxn: accumDeprTxn,
+      accumDeprAmountBase: accumDeprBase,
+      nbvAmountTxn: writeoffNbvTxn,
+      nbvAmountBase: writeoffNbvBase,
+      note: note || `Write-off of asset ${assetNo}`,
+      createdByUserId: userId,
+    });
+
+    if (!transactionId) {
+      throw badRequest("Failed to create WRITEOFF transaction");
+    }
+
+    // ── PRIMARY source link ──────────────────────────────────────
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId,
+      journalEntryId: journalResult.journalEntryId,
+      sourceRefType: "FIXED_ASSET_TRANSACTION",
+      sourceRefId: transactionId,
+    });
+
+    // ── Transition asset to DISPOSED ─────────────────────────────
+    // Owner OU changes only after posting succeeds
+    await tx.query(
+      `UPDATE fixed_assets
+          SET status = 'DISPOSED',
+              disposal_date = ?,
+              updated_by_user_id = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [effectiveDate, userId, assetId, tenantId]
+    );
+
+    return assetId;
+  }).then(async (disposedAssetId) => {
+    return getAssetDetail({ tenantId, assetId: disposedAssetId });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Category CRUD
 // ═══════════════════════════════════════════════════════════════════
 

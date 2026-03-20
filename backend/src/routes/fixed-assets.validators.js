@@ -521,6 +521,38 @@ export function parseOwnershipTransferInput(req) {
   };
 }
 
+export function parseWriteoffInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  const effectiveDate = normalizeDateOnlyRequired(
+    body.effectiveDate ?? body.effective_date,
+    "effectiveDate"
+  );
+
+  const postingDate = normalizeDateOnlyRequired(
+    body.postingDate ?? body.posting_date,
+    "postingDate"
+  );
+
+  const note = body.note != null ? String(body.note).trim() || null : null;
+  const userId = req.user?.userId || null;
+
+  return {
+    tenantId,
+    assetId,
+    effectiveDate,
+    postingDate,
+    note,
+    userId,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Asset create validators
 // ═══════════════════════════════════════════════════════════════════

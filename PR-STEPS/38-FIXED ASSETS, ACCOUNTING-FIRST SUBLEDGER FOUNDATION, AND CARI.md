@@ -1264,7 +1264,7 @@ Implementation notes:
 - [x] `STEP-FA35` - Depreciation run chunked persistence and volume safety hardening
 - [x] `STEP-FA36` - Physical move workflow
 - [x] `STEP-FA37` - Ownership transfer workflow and accounting
-- [ ] `STEP-FA38` - Write-off workflow
+- [x] `STEP-FA38` - Write-off workflow
 - [ ] `STEP-FA39` - Sale staged draft/link/update workflow
 - [ ] `STEP-FA40` - Sale finalize workflow
 - [ ] `STEP-FA41` - Source-owned non-run reversal workflow
