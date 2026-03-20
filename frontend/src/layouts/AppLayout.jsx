@@ -355,7 +355,7 @@ function renderSidebarIcon(item, options = {}) {
 }
 
 function mainLinkClass({ isActive }, collapsed) {
-  return `group flex items-center text-sm font-semibold transition-colors ${collapsed ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg p-0" : "w-full gap-2 rounded-lg pl-4 pr-0 py-1.5"
+  return `group flex items-center text-left text-sm font-semibold transition-colors ${collapsed ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg p-0" : "w-full gap-2 rounded-lg pl-4 pr-0 py-1.5"
     } ${isActive
       ? "bg-gray-100 text-[#143c62]"
       : "text-[#143c62] hover:bg-gray-100 hover:text-[#143c62]"
@@ -940,58 +940,18 @@ export default function AppLayout() {
               if (item.type === "link") {
                 if (item.isLocked) {
                   return (
-                    <div
-                      key={item.to}
-                      title={item.lockedReason || t("layout.lockedMenu", "Access restricted")}
-                      className={`group flex items-center text-sm font-semibold transition-colors ${collapsed
-                        ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg border border-amber-300 bg-amber-50/80 p-0 text-amber-900"
-                        : "w-full gap-2 rounded-lg border border-amber-300 bg-amber-50/80 pl-4 pr-2 py-1.5 text-amber-900"
-                        }`}
-                      aria-disabled="true"
-                    >
-                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-amber-800">
-                        {renderSidebarIcon(item, {
-                          svgClass: "h-4 w-4",
-                          emojiClass: "text-[18px]",
-                        })}
-                      </span>
-                      {!collapsed && (
-                        <span className="min-w-0 flex-1 truncate whitespace-nowrap leading-5">
-                          {getItemDisplayText(item, "label")}
-                        </span>
-                      )}
-                      {!collapsed && (
-                        <button
-                          type="button"
-                          onClick={() => handleCopyAccessRequest(item)}
-                          className="ml-auto rounded border border-amber-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
-                        >
-                          {t("layout.copyAccessRequest", "Copy request")}
-                        </button>
-                      )}
-                    </div>
-                  );
-                }
-
-                return (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.end}
-                    title={collapsed ? getItemDisplayText(item, "label") : undefined}
-                    className={(state) => mainLinkClass(state, collapsed)}
-                    onClick={closeMobileSidebar}
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <span
-                          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center transition-colors ${isActive
-                            ? "text-[#143c62]"
-                            : "text-[#143c62]"
-                            }`}
-                        >
+                    <div key={item.to} className="relative">
+                      <div
+                        title={item.lockedReason || t("layout.lockedMenu", "Access restricted")}
+                        className={`group flex items-center text-left text-sm font-semibold transition-colors ${collapsed
+                          ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg border border-amber-300 bg-amber-50/80 p-0 text-amber-900"
+                          : "w-full gap-2 rounded-lg border border-amber-300 bg-amber-50/80 pl-4 pr-2 py-1.5 text-amber-900"
+                          }`}
+                        aria-disabled="true"
+                      >
+                        <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-amber-800">
                           {renderSidebarIcon(item, {
-                            svgClass: "h-4 w-4",
+                            svgClass: "h-5 w-5",
                             emojiClass: "text-[18px]",
                           })}
                         </span>
@@ -1000,14 +960,51 @@ export default function AppLayout() {
                             {getItemDisplayText(item, "label")}
                           </span>
                         )}
-                        {!collapsed && item.badge && (
-                          <span className="ml-auto rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-slate-700">
-                            {item.badge}
-                          </span>
+                        {!collapsed && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyAccessRequest(item)}
+                            className="ml-auto rounded border border-amber-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
+                          >
+                            {t("layout.copyAccessRequest", "Copy request")}
+                          </button>
                         )}
-                      </>
-                    )}
-                  </NavLink>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={item.to} className="relative">
+                    <NavLink
+                      to={item.to}
+                      end={item.end}
+                      title={collapsed ? getItemDisplayText(item, "label") : undefined}
+                      className={(state) => mainLinkClass(state, collapsed)}
+                      onClick={closeMobileSidebar}
+                    >
+                      {() => (
+                        <>
+                          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center transition-colors text-[#143c62]">
+                            {renderSidebarIcon(item, {
+                              svgClass: "h-5 w-5",
+                              emojiClass: "text-[18px]",
+                            })}
+                          </span>
+                          {!collapsed && (
+                            <span className="min-w-0 flex-1 truncate whitespace-nowrap leading-5">
+                              {getItemDisplayText(item, "label")}
+                            </span>
+                          )}
+                          {!collapsed && item.badge && (
+                            <span className="ml-auto rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-slate-700">
+                              {item.badge}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </NavLink>
+                  </div>
                 );
               }
 

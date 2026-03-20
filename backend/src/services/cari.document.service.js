@@ -1479,6 +1479,93 @@ async function resolveCariPostingAccounts({
   };
 }
 
+export async function resolveCariControlAccountTx({
+  tenantId,
+  legalEntityId,
+  direction,
+  counterpartyId = null,
+  counterpartyRow = null,
+  runQuery = query,
+}) {
+  const purposeDefinition = CARI_POSTING_PURPOSES[normalizeUpperText(direction)];
+  if (!purposeDefinition) {
+    throw badRequest("direction must be AR or AP");
+  }
+
+  const normalizedCounterpartyId =
+    parsePositiveInt(counterpartyId) || parsePositiveInt(counterpartyRow?.id) || null;
+
+  let effectiveCounterpartyRow = counterpartyRow || null;
+  if (!effectiveCounterpartyRow && normalizedCounterpartyId) {
+    effectiveCounterpartyRow = await fetchCounterpartyRow({
+      tenantId,
+      legalEntityId,
+      counterpartyId: normalizedCounterpartyId,
+      runQuery,
+    });
+    if (!effectiveCounterpartyRow) {
+      throw badRequest("counterpartyId must belong to legalEntityId");
+    }
+  }
+
+  await autoRemapCariPurposeMappingsForLegalEntity({
+    tenantId,
+    legalEntityId,
+    purposeCodes: [purposeDefinition.control],
+    runQuery,
+  });
+
+  const result = await runQuery(
+    `SELECT
+        a.id AS account_id,
+        a.code AS account_code
+     FROM journal_purpose_accounts jpa
+     JOIN accounts a ON a.id = jpa.account_id
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE jpa.tenant_id = ?
+       AND jpa.legal_entity_id = ?
+       AND jpa.purpose_code = ?
+       AND c.tenant_id = ?
+       AND c.legal_entity_id = ?
+       AND a.is_active = TRUE
+       AND a.allow_posting = TRUE
+     ORDER BY jpa.id ASC
+     LIMIT 1`,
+    [tenantId, legalEntityId, purposeDefinition.control, tenantId, legalEntityId]
+  );
+
+  const mappedControl = result.rows?.[0]
+    ? {
+        id: parsePositiveInt(result.rows[0].account_id),
+        code: String(result.rows[0].account_code || ""),
+      }
+    : null;
+  if (!mappedControl?.id) {
+    throw badRequest(
+      `Setup required: configure journal_purpose_accounts for ${purposeDefinition.control}`
+    );
+  }
+
+  const overrideControl = await resolveCounterpartyControlAccountOverride({
+    tenantId,
+    legalEntityId,
+    direction,
+    counterpartyRow: effectiveCounterpartyRow,
+    runQuery,
+  });
+  const effectiveControl = overrideControl?.id
+    ? {
+        id: overrideControl.id,
+        code: overrideControl.code || null,
+      }
+    : mappedControl;
+
+  return {
+    controlAccountId: effectiveControl.id,
+    controlAccountCode: effectiveControl.code || null,
+  };
+}
+
 function buildCariPostingLines({
   direction,
   documentType,
@@ -1560,7 +1647,7 @@ function resolveCariPostingSides({ direction, documentType }) {
   throw badRequest("direction must be AR or AP");
 }
 
-function buildCariDirectionalJournalLine({
+export function buildCariDirectionalJournalLine({
   accountId,
   side,
   amountTxn,
@@ -1685,7 +1772,7 @@ function summarizePostingLineDescription({
   return normalizedBase;
 }
 
-async function insertPostedJournalWithLinesTx(tx, payload) {
+export async function insertPostedJournalWithLinesTx(tx, payload) {
   const totals = ensureBalancedJournalLines(payload.lines);
   const insertResult = await tx.query(
     `INSERT INTO journal_entries (
@@ -2954,8 +3041,9 @@ export async function getCariDocumentByIdForTenant({
   tenantId,
   documentId,
   assertScopeAccess,
+  runQuery = query,
 }) {
-  const row = await fetchDocumentRow({ tenantId, documentId });
+  const row = await fetchDocumentRow({ tenantId, documentId, runQuery });
   if (!row) {
     throw badRequest("Document not found");
   }
@@ -2964,6 +3052,7 @@ export async function getCariDocumentByIdForTenant({
     tenantId,
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     documentId,
+    runQuery,
   });
   return mapDocumentRow(row, { lines });
 }

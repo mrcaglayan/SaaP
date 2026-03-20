@@ -13,8 +13,12 @@
  */
 
 import express from "express";
-import { asyncHandler, parsePositiveInt } from "./_utils.js";
-import { requirePermission } from "../middleware/rbac.js";
+import { asyncHandler } from "./_utils.js";
+import {
+  assertScopeAccess,
+  assertSecondaryPermission,
+  requirePermission,
+} from "../middleware/rbac.js";
 import {
   resolveLegalEntityScopeFromQuery,
   resolveLegalEntityScopeFromBody,
@@ -22,9 +26,15 @@ import {
   resolveFixedAssetTransactionScope,
   resolveFixedAssetRunScope,
 } from "../services/fixed-assets.scope.service.js";
+import { resolveCariDocumentScope } from "../services/cari.document.service.js";
 import {
   parseRegisterListFilters,
   parseAssetDetailParams,
+  parseCariEligibleApLineReadInput,
+  parseCariDocumentLineCapitalizationInput,
+  parseActivateAssetInput,
+  parseAssetCreateInput,
+  parseAssetDraftUpdateInput,
   parseCategoryListFilters,
   parseCategoryCreateInput,
   parseCategoryUpdateInput,
@@ -38,6 +48,11 @@ import {
 import {
   listAssets,
   getAssetDetail,
+  listCariEligibleApLinesForFa06,
+  createAssetsFromCariDocumentLineFa06,
+  activateAsset,
+  createAssetDraft,
+  updateAssetDraft,
   listCategories,
   createCategory,
   updateCategory,
@@ -50,6 +65,22 @@ import {
 } from "../services/fixed-assets.service.js";
 
 const router = express.Router();
+
+function resolveSourceCariDocumentIdFromQuery(req) {
+  return req.query?.sourceCariDocumentId
+    ?? req.query?.source_cari_document_id
+    ?? req.query?.cariDocumentId
+    ?? req.query?.documentId
+    ?? null;
+}
+
+function resolveSourceCariDocumentIdFromBody(req) {
+  return req.body?.sourceCariDocumentId
+    ?? req.body?.source_cari_document_id
+    ?? req.body?.cariDocumentId
+    ?? req.body?.documentId
+    ?? null;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // 1. STATIC PREFIXED ROUTES
@@ -270,13 +301,39 @@ router.get(
 
 // ── CARI capitalization entry point ──────────────────────────────
 // STEP-FA25 lands the real handler here.
+router.get(
+  "/from-cari-document-line",
+  requirePermission("fixed_assets.post", {
+    resolveScope: async (req, tenantId) =>
+      resolveCariDocumentScope(resolveSourceCariDocumentIdFromQuery(req), tenantId),
+  }),
+  asyncHandler(async (req, res) => {
+    await assertSecondaryPermission(req, "cari.doc.read");
+    const input = parseCariEligibleApLineReadInput(req);
+    const result = await listCariEligibleApLinesForFa06({
+      req,
+      ...input,
+      assertScopeAccess,
+    });
+    return res.json(result);
+  })
+);
+
 router.post(
   "/from-cari-document-line",
   requirePermission("fixed_assets.post", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
+    resolveScope: async (req, tenantId) =>
+      resolveCariDocumentScope(resolveSourceCariDocumentIdFromBody(req), tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    await assertSecondaryPermission(req, "cari.doc.read");
+    const input = parseCariDocumentLineCapitalizationInput(req);
+    const result = await createAssetsFromCariDocumentLineFa06({
+      req,
+      ...input,
+      assertScopeAccess,
+    });
+    return res.status(201).json(result);
   })
 );
 
@@ -327,14 +384,15 @@ router.get(
 );
 
 // ── Asset create ──────────────────────────────────────────────────
-// STEP-FA20 lands the real handler here.
 router.post(
   "/",
   requirePermission("fixed_assets.upsert", {
     resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseAssetCreateInput(req);
+    const asset = await createAssetDraft(input);
+    return res.status(201).json(asset);
   })
 );
 
@@ -364,8 +422,10 @@ router.patch(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const { tenantId, assetId, updates, userId } = parseAssetDraftUpdateInput(req);
+    const asset = await updateAssetDraft({ tenantId, assetId, updates, userId });
+    return res.json(asset);
   })
 );
 
@@ -400,8 +460,10 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseActivateAssetInput(req);
+    const asset = await activateAsset(input);
+    return res.json(asset);
   })
 );
 
