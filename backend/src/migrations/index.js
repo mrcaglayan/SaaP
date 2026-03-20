@@ -128,6 +128,7 @@ import migration137PayrollLiabilityOperatingUnitAttribution from "./m137_payroll
 import migration138FixedAssetsFoundation from "./m138_fixed_assets_foundation.js";
 import migration139FixedAssetCustodianEmployees from "./m139_fixed_asset_custodian_employees.js";
 import migration140FixedAssetCariCapitalizationAndTraceability from "./m140_fixed_asset_cari_capitalization_and_traceability.js";
+import migration141FixedAssetSaleStaging from "./m141_fixed_asset_sale_staging.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -260,6 +261,7 @@ const migrations = [
   migration138FixedAssetsFoundation,
   migration139FixedAssetCustodianEmployees,
   migration140FixedAssetCariCapitalizationAndTraceability,
+  migration141FixedAssetSaleStaging,
 ];
 
 export default migrations;

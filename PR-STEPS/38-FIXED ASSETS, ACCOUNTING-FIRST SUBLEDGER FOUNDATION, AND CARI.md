@@ -1265,7 +1265,7 @@ Implementation notes:
 - [x] `STEP-FA36` - Physical move workflow
 - [x] `STEP-FA37` - Ownership transfer workflow and accounting
 - [x] `STEP-FA38` - Write-off workflow
-- [ ] `STEP-FA39` - Sale staged draft/link/update workflow
+- [x] `STEP-FA39` - Sale staged draft/link/update workflow
 - [ ] `STEP-FA40` - Sale finalize workflow
 - [ ] `STEP-FA41` - Source-owned non-run reversal workflow
 - [ ] `STEP-FA42` - Fixed-assets evidence service extension and nested evidence routes
@@ -2656,6 +2656,7 @@ Implement the staged AR-side sale preparation flow without final disposal accoun
 - exact AR line linkage requirements
 - action-specific `cari.doc.*` permission checks
 - draft/pre-finalize fixed-assets state management
+- DB-backed staged-linkage persistence on fixed_assets
 
 ### Explicit non-goals
 - do not create the fixed-assets `SALE` row yet
@@ -2669,14 +2670,18 @@ Implement the staged AR-side sale preparation flow without final disposal accoun
 - sale can update the linked draft AR-side context
 - none of these staged actions create a fixed-assets `SALE` row, a disposal journal, or a disposed asset state
 - the workflow stores enough linkage context for later finalization
+- the workflow stores enough DB-backed linkage context for later finalization
 
 ### Smoke tests
+-2675 — draft create smoke now checks pending-sale AR document/line linkage persisted on
+-link smoke now checks exact linkage stored in pending-sale fields
 - create a draft AR-side sale document and verify a dedicated line is created for the asset, no `SALE` row exists yet, and the asset remains in pre-sale state
 - link an existing AR document/line and verify exact line linkage is stored and shared-line linkage is rejected
 - update the linked draft AR-side context and verify allowed draft fields change and no disposal accounting is created
 - verify permission failures for missing `cari.doc.create`, `read`, or `update`
 
 ### Acceptance
+- staged linkage is DB-backed before final sale posting
 - staged sale preparation is real and explicit
 - draft preparation is separated from disposal finalization
 - line-exact provenance is enforced before final posting
@@ -3329,6 +3334,7 @@ Use this matrix together with each serialized step body. `Allowed files` means t
 - `Dependencies`: `STEP-FA31`
 - `Blocked by`: persisted draft-run snapshot shape not yet being stable
 - `Rollback risk`: Medium
+- `backend/src/db/migrations/m141_fixed_asset_sale_staging.js
 - `Smoke command ideas`: local run list/detail/read smoke plus draft-delete and recreate-for-same-scope smoke
 
 ### `STEP-FA33`

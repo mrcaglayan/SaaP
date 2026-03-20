@@ -11,9 +11,11 @@ import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   buildCariDirectionalJournalLine,
+  createCariDraftDocument,
   getCariDocumentByIdForTenant,
   insertPostedJournalWithLinesTx,
   resolveCariControlAccountTx,
+  updateCariDraftDocumentById,
 } from "./cari.document.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
@@ -3888,6 +3890,327 @@ export async function writeoffAsset(input) {
   }).then(async (disposedAssetId) => {
     return getAssetDetail({ tenantId, assetId: disposedAssetId });
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Sale staged draft/link/update (FA39)
+// ═══════════════════════════════════════════════════════════════════
+
+const SALE_STAGING_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+]);
+
+async function loadAndLockAssetForSaleStaging(tx, tenantId, assetId) {
+  const result = await tx.query(
+    `SELECT id, tenant_id, legal_entity_id, status, asset_no, name,
+            owner_operating_unit_id, currency_code,
+            original_cost_txn, original_cost_base,
+            disposal_gain_account_id, disposal_loss_account_id,
+            pending_sale_cari_document_id,
+            pending_sale_cari_document_line_id
+       FROM fixed_assets
+      WHERE id = ? AND tenant_id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [assetId, tenantId]
+  );
+  const asset = result.rows?.[0];
+  if (!asset) throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+
+  const assetStatus = normalizeUpperText(asset.status);
+  if (!SALE_STAGING_ELIGIBLE_STATUSES.has(assetStatus)) {
+    throw badRequest(
+      `Sale staging is only allowed for ACTIVE, SUSPENDED, or FULLY_DEPRECIATED assets ` +
+      `(assetId=${assetId}, status=${assetStatus})`
+    );
+  }
+  return asset;
+}
+
+export async function saleCreateDraftArDocument(input) {
+  const {
+    req,
+    tenantId,
+    assetId,
+    counterpartyId,
+    documentDate,
+    saleAmountTxn,
+    currencyCode,
+    description,
+    dueDate,
+    paymentTermId,
+    userId,
+    assertScopeAccess,
+  } = input;
+
+  return withTransaction(async (tx) => {
+    const asset = await loadAndLockAssetForSaleStaging(tx, tenantId, assetId);
+    const legalEntityId = Number(asset.legal_entity_id);
+
+    // Reject if already has a pending sale linkage
+    if (asset.pending_sale_cari_document_id) {
+      throw badRequest(
+        `Asset (id=${assetId}) already has a pending sale AR document ` +
+        `(documentId=${asset.pending_sale_cari_document_id}). ` +
+        `Clear or finalize the existing linkage first.`
+      );
+    }
+
+    const assetNo = asset.asset_no || `ID-${assetId}`;
+    const assetCurrency = currencyCode || asset.currency_code || "USD";
+
+    // Create draft AR document with one dedicated sale line
+    const lineDescription = description
+      || `Sale of fixed asset ${assetNo} — ${asset.name || ""}`.trim().slice(0, 500);
+
+    const draftDoc = await createCariDraftDocument({
+      req,
+      payload: {
+        tenantId,
+        legalEntityId,
+        counterpartyId,
+        operatingUnitId: asset.owner_operating_unit_id
+          ? Number(asset.owner_operating_unit_id)
+          : undefined,
+        direction: "AR",
+        documentType: "INVOICE",
+        currencyCode: assetCurrency,
+        documentDate,
+        dueDate: dueDate || documentDate,
+        paymentTermId,
+        amountTxn: saleAmountTxn,
+        lines: [
+          {
+            description: lineDescription,
+            quantity: 1,
+            unitPriceTxn: saleAmountTxn,
+            lineNetAmountTxn: saleAmountTxn,
+            lineTaxAmountTxn: 0,
+            lineGrossAmountTxn: saleAmountTxn,
+            postingAccountId: asset.disposal_gain_account_id
+              ? Number(asset.disposal_gain_account_id)
+              : undefined,
+          },
+        ],
+        userId,
+      },
+      assertScopeAccess,
+    });
+
+    const docId = Number(draftDoc.id);
+    const firstLine = (draftDoc.lines || [])[0];
+    const lineId = firstLine ? Number(firstLine.id) : null;
+
+    if (!docId || !lineId) {
+      throw badRequest("Failed to create draft AR document or dedicated sale line");
+    }
+
+    // Store pending sale linkage on the asset
+    await tx.query(
+      `UPDATE fixed_assets
+          SET pending_sale_cari_document_id = ?,
+              pending_sale_cari_document_line_id = ?,
+              updated_by_user_id = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [docId, lineId, userId, assetId, tenantId]
+    );
+
+    return {
+      assetId,
+      pendingSaleCariDocumentId: docId,
+      pendingSaleCariDocumentLineId: lineId,
+      document: draftDoc,
+    };
+  });
+}
+
+export async function saleLinkArDocument(input) {
+  const {
+    req,
+    tenantId,
+    assetId,
+    cariDocumentId,
+    cariDocumentLineId,
+    userId,
+    assertScopeAccess,
+  } = input;
+
+  return withTransaction(async (tx) => {
+    const asset = await loadAndLockAssetForSaleStaging(tx, tenantId, assetId);
+
+    // Reject if already has a pending sale linkage
+    if (asset.pending_sale_cari_document_id) {
+      throw badRequest(
+        `Asset (id=${assetId}) already has a pending sale AR document ` +
+        `(documentId=${asset.pending_sale_cari_document_id}). ` +
+        `Clear or finalize the existing linkage first.`
+      );
+    }
+
+    // Load and validate the target AR document
+    const doc = await getCariDocumentByIdForTenant({
+      req,
+      tenantId,
+      documentId: cariDocumentId,
+      assertScopeAccess,
+      runQuery: tx.query,
+    });
+
+    if (normalizeUpperText(doc.direction) !== "AR") {
+      throw badRequest(
+        `Linked document (id=${cariDocumentId}) must be AR-direction; got ${doc.direction}`
+      );
+    }
+
+    // Validate the exact target line exists
+    const targetLine = (doc.lines || []).find(
+      (l) => Number(l.id) === cariDocumentLineId
+    );
+    if (!targetLine) {
+      throw badRequest(
+        `Line (id=${cariDocumentLineId}) not found on document (id=${cariDocumentId})`
+      );
+    }
+
+    // Reject shared-line linkage: ensure no other asset is linked to this line
+    const sharedResult = await tx.query(
+      `SELECT id FROM fixed_assets
+        WHERE tenant_id = ?
+          AND pending_sale_cari_document_line_id = ?
+          AND id != ?
+        LIMIT 1`,
+      [tenantId, cariDocumentLineId, assetId]
+    );
+    if (sharedResult.rows?.length > 0) {
+      throw badRequest(
+        `AR line (id=${cariDocumentLineId}) is already linked to another asset sale ` +
+        `(assetId=${sharedResult.rows[0].id}). One line per asset sale is enforced.`
+      );
+    }
+
+    // Store pending sale linkage on the asset
+    await tx.query(
+      `UPDATE fixed_assets
+          SET pending_sale_cari_document_id = ?,
+              pending_sale_cari_document_line_id = ?,
+              updated_by_user_id = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [cariDocumentId, cariDocumentLineId, userId, assetId, tenantId]
+    );
+
+    return {
+      assetId,
+      pendingSaleCariDocumentId: cariDocumentId,
+      pendingSaleCariDocumentLineId: cariDocumentLineId,
+      document: doc,
+    };
+  });
+}
+
+export async function saleUpdateDraftArDocument(input) {
+  const {
+    req,
+    tenantId,
+    assetId,
+    saleAmountTxn,
+    description,
+    dueDate,
+    userId,
+    assertScopeAccess,
+  } = input;
+
+  // Load asset to get the pending linkage
+  const assetResult = await query(
+    `SELECT id, pending_sale_cari_document_id, pending_sale_cari_document_line_id
+       FROM fixed_assets
+      WHERE id = ? AND tenant_id = ?
+      LIMIT 1`,
+    [assetId, tenantId]
+  );
+  const asset = assetResult.rows?.[0];
+  if (!asset) throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+
+  const pendingDocId = asset.pending_sale_cari_document_id
+    ? Number(asset.pending_sale_cari_document_id)
+    : null;
+  if (!pendingDocId) {
+    throw badRequest(
+      `Asset (id=${assetId}) has no pending sale AR document to update. ` +
+      `Create or link one first.`
+    );
+  }
+
+  // Build the update payload — only allowed draft fields
+  const updatePayload = {
+    tenantId,
+    documentId: pendingDocId,
+    userId,
+  };
+
+  // Fetch existing doc to get rowVersion
+  const existingDoc = await getCariDocumentByIdForTenant({
+    req,
+    tenantId,
+    documentId: pendingDocId,
+    assertScopeAccess,
+  });
+
+  if (normalizeUpperText(existingDoc.status) !== "DRAFT") {
+    throw badRequest(
+      `Linked AR document (id=${pendingDocId}) is not DRAFT; cannot update`
+    );
+  }
+
+  updatePayload.rowVersion = existingDoc.rowVersion;
+
+  if (dueDate !== undefined) {
+    updatePayload.dueDate = dueDate;
+  }
+
+  // If sale amount or description changed, rebuild lines
+  if (saleAmountTxn !== undefined || description !== undefined) {
+    const existingLine = (existingDoc.lines || []).find(
+      (l) => Number(l.id) === Number(asset.pending_sale_cari_document_line_id)
+    );
+
+    const resolvedAmount = saleAmountTxn !== undefined
+      ? saleAmountTxn
+      : (existingLine?.unitPriceTxn ?? existingLine?.lineNetAmountTxn ?? 0);
+    updatePayload.lines = [
+      {
+        id: existingLine ? Number(existingLine.id) : undefined,
+        description: description !== undefined
+          ? description
+          : (existingLine?.description || null),
+        quantity: 1,
+        unitPriceTxn: resolvedAmount,
+        lineNetAmountTxn: resolvedAmount,
+        lineTaxAmountTxn: 0,
+        lineGrossAmountTxn: resolvedAmount,
+      },
+    ];
+
+    if (saleAmountTxn !== undefined) {
+      updatePayload.amountTxn = saleAmountTxn;
+    }
+  }
+
+  const updatedDoc = await updateCariDraftDocumentById({
+    req,
+    payload: updatePayload,
+    assertScopeAccess,
+  });
+
+  return {
+    assetId,
+    pendingSaleCariDocumentId: pendingDocId,
+    pendingSaleCariDocumentLineId: asset.pending_sale_cari_document_line_id
+      ? Number(asset.pending_sale_cari_document_line_id)
+      : null,
+    document: updatedDoc,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════

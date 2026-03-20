@@ -554,6 +554,100 @@ export function parseWriteoffInput(req) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Sale staging validators
+// ═══════════════════════════════════════════════════════════════════
+
+export function parseSaleCreateDraftArInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  const counterpartyId = parsePositiveInt(body.counterpartyId ?? body.counterparty_id);
+  if (!counterpartyId) throw badRequest("counterpartyId is required");
+
+  const documentDate = normalizeDateOnlyRequired(
+    body.documentDate ?? body.document_date,
+    "documentDate"
+  );
+
+  const saleAmountTxn = Number(body.saleAmountTxn ?? body.sale_amount_txn);
+  if (!Number.isFinite(saleAmountTxn) || saleAmountTxn <= 0) {
+    throw badRequest("saleAmountTxn must be a positive number");
+  }
+
+  const currencyCode = body.currencyCode ?? body.currency_code ?? null;
+  const description = body.description != null ? String(body.description).trim() || null : null;
+  const dueDate = body.dueDate ?? body.due_date ?? null;
+  const paymentTermId = parsePositiveInt(body.paymentTermId ?? body.payment_term_id) || null;
+  const userId = req.user?.userId || null;
+
+  return {
+    tenantId,
+    assetId,
+    counterpartyId,
+    documentDate,
+    saleAmountTxn,
+    currencyCode,
+    description,
+    dueDate,
+    paymentTermId,
+    userId,
+  };
+}
+
+export function parseSaleLinkArInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  const cariDocumentId = parsePositiveInt(body.cariDocumentId ?? body.cari_document_id);
+  if (!cariDocumentId) throw badRequest("cariDocumentId is required");
+
+  const cariDocumentLineId = parsePositiveInt(body.cariDocumentLineId ?? body.cari_document_line_id);
+  if (!cariDocumentLineId) throw badRequest("cariDocumentLineId is required");
+
+  const userId = req.user?.userId || null;
+
+  return { tenantId, assetId, cariDocumentId, cariDocumentLineId, userId };
+}
+
+export function parseSaleUpdateDraftArInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  const saleAmountTxn = body.saleAmountTxn !== undefined || body.sale_amount_txn !== undefined
+    ? Number(body.saleAmountTxn ?? body.sale_amount_txn)
+    : undefined;
+  if (saleAmountTxn !== undefined && (!Number.isFinite(saleAmountTxn) || saleAmountTxn <= 0)) {
+    throw badRequest("saleAmountTxn must be a positive number");
+  }
+
+  const description = body.description !== undefined
+    ? (body.description != null ? String(body.description).trim() || null : null)
+    : undefined;
+  const dueDate = body.dueDate !== undefined || body.due_date !== undefined
+    ? (body.dueDate ?? body.due_date ?? null)
+    : undefined;
+
+  const userId = req.user?.userId || null;
+
+  return { tenantId, assetId, saleAmountTxn, description, dueDate, userId };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Asset create validators
 // ═══════════════════════════════════════════════════════════════════
 

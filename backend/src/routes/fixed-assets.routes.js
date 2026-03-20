@@ -43,6 +43,9 @@ import {
   parsePhysicalMoveInput,
   parseOwnershipTransferInput,
   parseWriteoffInput,
+  parseSaleCreateDraftArInput,
+  parseSaleLinkArInput,
+  parseSaleUpdateDraftArInput,
   parseAssetCreateInput,
   parseAssetDraftUpdateInput,
   parseCategoryListFilters,
@@ -64,6 +67,9 @@ import {
   physicalMoveAsset,
   ownershipTransferAsset,
   writeoffAsset,
+  saleCreateDraftArDocument,
+  saleLinkArDocument,
+  saleUpdateDraftArDocument,
   createAssetDraft,
   updateAssetDraft,
   listCategories,
@@ -574,8 +580,11 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    await assertSecondaryPermission(req, "cari.doc.create");
+    const input = parseSaleCreateDraftArInput(req);
+    const result = await saleCreateDraftArDocument({ req, ...input, assertScopeAccess });
+    return res.status(201).json(result);
   })
 );
 
@@ -585,8 +594,11 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    await assertSecondaryPermission(req, "cari.doc.read");
+    const input = parseSaleLinkArInput(req);
+    const result = await saleLinkArDocument({ req, ...input, assertScopeAccess });
+    return res.json(result);
   })
 );
 
@@ -596,8 +608,11 @@ router.patch(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    await assertSecondaryPermission(req, "cari.doc.update");
+    const input = parseSaleUpdateDraftArInput(req);
+    const result = await saleUpdateDraftArDocument({ req, ...input, assertScopeAccess });
+    return res.json(result);
   })
 );
 
