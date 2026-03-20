@@ -99,6 +99,7 @@ const TAG_DESCRIPTION_MAP = new Map([
   ["Bank", "Bank account, statements, reconciliation, and payment-file workflows."],
   ["Payments", "Generic payment batch workflows (create, approve, export, post, cancel)."],
   ["Payroll", "Payroll import runs and payroll subledger workflow endpoints."],
+  ["FixedAssets", "Fixed-assets register, depreciation, disposal, and subledger workflow endpoints."],
   ["Jobs", "Background jobs, retries, and operational queue management endpoints."],
   ["Ops", "Operational dashboards for KPI, SLA, and pipeline health summaries."],
   ["Exceptions", "Unified exception workbench endpoints across bank and payroll operations."],
@@ -272,6 +273,9 @@ function inferTagFromPath(endpointPath) {
   }
   if (normalizedPath.startsWith("/api/v1/payroll")) {
     return "Payroll";
+  }
+  if (normalizedPath.startsWith("/api/v1/fixed-assets")) {
+    return "FixedAssets";
   }
   if (normalizedPath.startsWith("/api/v1/org")) {
     return "Org";

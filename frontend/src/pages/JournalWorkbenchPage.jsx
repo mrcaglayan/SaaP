@@ -37,6 +37,12 @@ import {
   resolveBookBaseCurrencyCode,
   resolveContextBaseCurrencyCode,
 } from "../utils/money.js";
+import {
+  resolveSourceLinkDestination,
+  resolveReverseBlockStatus,
+  formatReverseBlockMessage,
+  extractReverseBlockFromError,
+} from "../utils/journalSourceLinkDestinations.js";
 
 const JOURNAL_SOURCE_TYPES = [
   "MANUAL",
@@ -63,16 +69,6 @@ const JOURNAL_COMPLIANCE_DEFAULT_FILTERS = {
   includeDraft: true,
   limit: "200",
 };
-const JOURNAL_REVERSE_SOURCE_DESTINATIONS = Object.freeze({
-  CARI_DOCUMENT: "/app/cari-belgeler",
-  CARI_SETTLEMENT_BATCH: "/app/cari-settlements",
-  CASH_TRANSACTION: "/app/kasa-islemleri",
-  PAYMENT_BATCH: "/app/odeme-batchleri",
-  PAYROLL_RUN: "/app/payroll-runs",
-});
-const JOURNAL_REVERSE_BLOCK_SOURCE_TYPES = new Set(
-  Object.keys(JOURNAL_REVERSE_SOURCE_DESTINATIONS)
-);
 const PERIOD_CLOSE_FX_GATE_REQUIRED_CODE = "CASH_FX_REVALUATION_REQUIRED";
 const PERIOD_CLOSE_FX_GATE_REVERSAL_CODE =
   "CASH_FX_REVALUATION_REVERSAL_REQUIRED";
@@ -92,20 +88,6 @@ function parsePositiveIntOrNull(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function resolveReverseBlockedSourceLinks(sourceLinks = []) {
-  return (Array.isArray(sourceLinks) ? sourceLinks : [])
-    .map((row) => ({
-      sourceRefType: normalizeSourceRefType(row?.source_ref_type || row?.sourceRefType),
-      sourceRefId: parsePositiveIntOrNull(row?.source_ref_id || row?.sourceRefId),
-    }))
-    .filter(
-      (row) =>
-        row.sourceRefType &&
-        row.sourceRefId &&
-        JOURNAL_REVERSE_BLOCK_SOURCE_TYPES.has(row.sourceRefType)
-    );
-}
-
 function formatSettlementSourceLinkRole(role, l) {
   const normalizedRole = normalizeSourceRefType(role || "PRIMARY");
   if (normalizedRole === "REVERSAL_OF") {
@@ -115,47 +97,6 @@ function formatSettlementSourceLinkRole(role, l) {
     return l("Source Settlement", "Kaynak Mahsup");
   }
   return normalizedRole || l("Settlement Link", "Mahsup Baglantisi");
-}
-
-function resolveJournalSourceLinkPath(sourceLink, settlementDrilldowns = []) {
-  const sourceRefType = normalizeSourceRefType(
-    sourceLink?.source_ref_type || sourceLink?.sourceRefType
-  );
-  const sourceRefId = parsePositiveIntOrNull(
-    sourceLink?.source_ref_id || sourceLink?.sourceRefId
-  );
-  if (!sourceRefType || !sourceRefId) {
-    return null;
-  }
-
-  if (sourceRefType === "CARI_DOCUMENT") {
-    return `/app/cari-belgeler?documentId=${sourceRefId}`;
-  }
-
-  if (sourceRefType === "CARI_SETTLEMENT_BATCH") {
-    const settlement =
-      (Array.isArray(settlementDrilldowns) ? settlementDrilldowns : []).find(
-        (row) => parsePositiveIntOrNull(row?.settlementBatchId) === sourceRefId
-      ) || null;
-    const params = new URLSearchParams({
-      settlementBatchId: String(sourceRefId),
-    });
-    const legalEntityId = parsePositiveIntOrNull(settlement?.legalEntityId);
-    const counterpartyId = parsePositiveIntOrNull(settlement?.counterpartyId);
-    if (legalEntityId) {
-      params.set("legalEntityId", String(legalEntityId));
-    }
-    if (counterpartyId) {
-      params.set("counterpartyId", String(counterpartyId));
-    }
-    return `/app/cari-settlements?${params.toString()}`;
-  }
-
-  if (sourceRefType === "PAYMENT_BATCH") {
-    return `/app/odeme-batchleri/${sourceRefId}`;
-  }
-
-  return null;
 }
 
 function formatJournalSourceLinkAction(sourceLink, l) {
@@ -1014,8 +955,8 @@ export default function JournalWorkbenchPage() {
     searchParams.get("journalId") || searchParams.get("journal_id") || ""
   ).trim();
   const deepLinkedJournalId = toInt(deepLinkedJournalIdRaw);
-  const selectedJournalReverseBlockedSourceLinks = useMemo(
-    () => resolveReverseBlockedSourceLinks(selectedJournal?.source_links),
+  const selectedJournalReverseBlock = useMemo(
+    () => resolveReverseBlockStatus(selectedJournal),
     [selectedJournal]
   );
   const selectedJournalCariSettlementDrilldowns = useMemo(() => {
@@ -1086,38 +1027,15 @@ export default function JournalWorkbenchPage() {
     if (!selectedId || !reverseJournalId || selectedId !== reverseJournalId) {
       return false;
     }
-    return selectedJournalReverseBlockedSourceLinks.length > 0;
-  }, [reverseForm.journalId, selectedJournal, selectedJournalReverseBlockedSourceLinks]);
-  const reverseBlockedMessage = useMemo(() => {
-    if (!isReverseBlockedForSelectedJournal) {
-      return "";
-    }
-    const linkTokens = selectedJournalReverseBlockedSourceLinks.map(
-      (row) => `${row.sourceRefType}:${row.sourceRefId}`
-    );
-    const destinationPaths = Array.from(
-      new Set(
-        selectedJournalReverseBlockedSourceLinks
-          .map((row) => JOURNAL_REVERSE_SOURCE_DESTINATIONS[row.sourceRefType] || null)
-          .filter(Boolean)
-      )
-    );
-    const destinationSuffix =
-      destinationPaths.length > 0
-        ? l(
-            ` Open from: ${destinationPaths.join(", ")}.`,
-            ` Su ekranlardan tersleyin: ${destinationPaths.join(", ")}.`
-          )
-        : "";
-    return l(
-      `This journal is linked to subledger record(s) [${linkTokens.join(", ")}]. Reverse from source module, not from Journal Workbench.${destinationSuffix}`,
-      `Bu fis alt-defter kayit(lar)ina bagli [${linkTokens.join(", ")}]. Ters kaydi Mahsup ekranindan degil, ilgili kaynak modulden yapin.${destinationSuffix}`
-    );
-  }, [
-    isReverseBlockedForSelectedJournal,
-    selectedJournalReverseBlockedSourceLinks,
-    l,
-  ]);
+    return selectedJournalReverseBlock.isBlocked;
+  }, [reverseForm.journalId, selectedJournal, selectedJournalReverseBlock]);
+  const reverseBlockedMessage = useMemo(
+    () =>
+      isReverseBlockedForSelectedJournal
+        ? formatReverseBlockMessage(selectedJournalReverseBlock, l)
+        : "",
+    [isReverseBlockedForSelectedJournal, selectedJournalReverseBlock, l]
+  );
   const trialBalanceBookBaseCurrencyCode = useMemo(
     () => resolveBookBaseCurrencyCode(books, tbForm.bookId),
     [books, tbForm.bookId]
@@ -2774,7 +2692,15 @@ export default function JournalWorkbenchPage() {
         }
       }
     } catch (err) {
-      setError(err?.response?.data?.message || l("Failed to reverse journal.", "Fis ters kaydi yapilamadi."));
+      const errReverseBlock = extractReverseBlockFromError(err);
+      const blockMsg = errReverseBlock?.isBlocked
+        ? formatReverseBlockMessage(errReverseBlock, l)
+        : "";
+      setError(
+        blockMsg ||
+          err?.response?.data?.message ||
+          l("Failed to reverse journal.", "Fis ters kaydi yapilamadi.")
+      );
     } finally {
       setSaving("");
     }
@@ -4073,7 +3999,7 @@ export default function JournalWorkbenchPage() {
                         const sourceRefId = parsePositiveIntOrNull(
                           row?.source_ref_id || row?.sourceRefId
                         );
-                        const destination = resolveJournalSourceLinkPath(
+                        const destination = resolveSourceLinkDestination(
                           row,
                           selectedJournalCariSettlementDrilldowns
                         );
@@ -4143,7 +4069,7 @@ export default function JournalWorkbenchPage() {
                               </span>
                               {settlementBatchId ? (
                                 <Link
-                                  to={resolveJournalSourceLinkPath(
+                                  to={resolveSourceLinkDestination(
                                     {
                                       sourceRefType: "CARI_SETTLEMENT_BATCH",
                                       sourceRefId: settlementBatchId,

@@ -125,6 +125,7 @@ import migration134DropCashTransitAccount from "./m134_drop_cash_transit_account
 import migration135PayrollEmployeeOwnerContextAssignments from "./m135_payroll_employee_owner_context_assignments.js";
 import migration136PayrollRunLineOwnershipSnapshot from "./m136_payroll_run_line_ownership_snapshot.js";
 import migration137PayrollLiabilityOperatingUnitAttribution from "./m137_payroll_liability_operating_unit_attribution.js";
+import migration138FixedAssetsFoundation from "./m138_fixed_assets_foundation.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -254,6 +255,7 @@ const migrations = [
   migration135PayrollEmployeeOwnerContextAssignments,
   migration136PayrollRunLineOwnershipSnapshot,
   migration137PayrollLiabilityOperatingUnitAttribution,
+  migration138FixedAssetsFoundation,
 ];
 
 export default migrations;
