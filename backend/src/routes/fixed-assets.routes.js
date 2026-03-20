@@ -33,11 +33,14 @@ import {
   parseAssetDepreciationScheduleInput,
   parseDepreciationRunListInput,
   parseDepreciationRunParams,
+  parseDepreciationRunPostInput,
+  parseDepreciationRunReverseInput,
   parseDepreciationRunPreviewInput,
   parseDepreciationRunCreateInput,
   parseCariEligibleApLineReadInput,
   parseCariDocumentLineCapitalizationInput,
   parseActivateAssetInput,
+  parsePhysicalMoveInput,
   parseAssetCreateInput,
   parseAssetDraftUpdateInput,
   parseCategoryListFilters,
@@ -56,6 +59,7 @@ import {
   listCariEligibleApLinesForFa06,
   createAssetsFromCariDocumentLineFa06,
   activateAsset,
+  physicalMoveAsset,
   createAssetDraft,
   updateAssetDraft,
   listCategories,
@@ -73,6 +77,8 @@ import {
   listDepreciationRuns,
   getDepreciationRunDetail,
   deleteDepreciationRunDraft,
+  postDepreciationRun,
+  reverseDepreciationRun,
   previewDepreciationRun,
   createDepreciationRunDraft,
 } from "../services/fixed-assets.depreciation.service.js";
@@ -284,8 +290,10 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetRunScope(req.params?.runId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseDepreciationRunPostInput(req);
+    const result = await postDepreciationRun(input);
+    return res.json(result);
   })
 );
 
@@ -295,8 +303,10 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetRunScope(req.params?.runId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseDepreciationRunReverseInput(req);
+    const result = await reverseDepreciationRun(input);
+    return res.json(result);
   })
 );
 
@@ -520,8 +530,10 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parsePhysicalMoveInput(req);
+    const result = await physicalMoveAsset(input);
+    return res.json(result);
   })
 );
 

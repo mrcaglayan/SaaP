@@ -227,6 +227,38 @@ export function parseDepreciationRunParams(req) {
   };
 }
 
+export function parseDepreciationRunPostInput(req) {
+  const { tenantId, runId } = parseDepreciationRunParams(req);
+  const body = req.body || {};
+
+  const bookId = normalizeOptionalPositiveInteger(
+    body.bookId ?? body.book_id,
+    "bookId"
+  );
+  const postingDate = normalizeDateOnlyOptional(
+    body.postingDate ?? body.posting_date,
+    "postingDate"
+  );
+
+  return {
+    tenantId,
+    runId,
+    bookId,
+    postingDate,
+    userId: req.user?.userId || null,
+  };
+}
+
+export function parseDepreciationRunReverseInput(req) {
+  const { tenantId, runId } = parseDepreciationRunParams(req);
+
+  return {
+    tenantId,
+    runId,
+    userId: req.user?.userId || null,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // FA06 eligible CARI AP-line read validators
 // ═══════════════════════════════════════════════════════════════════
@@ -367,6 +399,76 @@ export function parseActivateAssetInput(req) {
   const userId = req.user?.userId || null;
 
   return { tenantId, assetId, postingDate, capitalizationDate, inServiceDate, userId };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Physical move validators
+// ═══════════════════════════════════════════════════════════════════
+
+export function parsePhysicalMoveInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  const effectiveDate = normalizeDateOnlyRequired(
+    body.effectiveDate ?? body.effective_date,
+    "effectiveDate"
+  );
+
+  const locationOperatingUnitId = body.locationOperatingUnitId != null
+    || body.location_operating_unit_id != null
+    ? parsePositiveInt(body.locationOperatingUnitId ?? body.location_operating_unit_id)
+    : undefined;
+
+  const custodianEmployeeId = hasOwn(body, "custodianEmployeeId")
+    || hasOwn(body, "custodian_employee_id")
+    ? (parsePositiveInt(body.custodianEmployeeId ?? body.custodian_employee_id) || null)
+    : undefined;
+
+  const departmentCode = hasOwn(body, "departmentCode")
+    || hasOwn(body, "department_code")
+    ? (body.departmentCode ?? body.department_code) != null
+      ? String(body.departmentCode ?? body.department_code).trim() || null
+      : null
+    : undefined;
+
+  const costCenterCode = hasOwn(body, "costCenterCode")
+    || hasOwn(body, "cost_center_code")
+    ? (body.costCenterCode ?? body.cost_center_code) != null
+      ? String(body.costCenterCode ?? body.cost_center_code).trim() || null
+      : null
+    : undefined;
+
+  const hasAnyChange = locationOperatingUnitId !== undefined
+    || custodianEmployeeId !== undefined
+    || departmentCode !== undefined
+    || costCenterCode !== undefined;
+
+  if (!hasAnyChange) {
+    throw badRequest(
+      "At least one physical-move field is required: " +
+      "locationOperatingUnitId, custodianEmployeeId, departmentCode, or costCenterCode"
+    );
+  }
+
+  const note = body.note != null ? String(body.note).trim() || null : null;
+  const userId = req.user?.userId || null;
+
+  return {
+    tenantId,
+    assetId,
+    effectiveDate,
+    locationOperatingUnitId,
+    custodianEmployeeId,
+    departmentCode,
+    costCenterCode,
+    note,
+    userId,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════

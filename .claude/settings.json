@@ -13,7 +13,16 @@
       "Bash(node --check src/routes/fixed-assets.validators.js)",
       "Bash(node --check src/services/cari.document.service.js)",
       "Bash(node --check scripts/test-fa27-draft-link-revalidation-smoke.js)",
-      "Bash(node scripts/test-fa27-draft-link-revalidation-smoke.js)"
+      "Bash(node scripts/test-fa27-draft-link-revalidation-smoke.js)",
+      "Read(//c/Users/Maarif/.claude/**)",
+      "Read(//c/Users/Maarif/Desktop/my-app/backend/src/migrations//**)",
+      "Read(//c/Users/Maarif/Desktop/my-app/backend/src/migrations/**)",
+      "Bash(node -c backend/src/services/fixed-assets.service.js)",
+      "Bash(node -c backend/src/routes/fixed-assets.validators.js)",
+      "Bash(node -c backend/src/routes/fixed-assets.routes.js)",
+      "Read(//c/c/Users/Maarif/Desktop/my-app/**)",
+      "Read(//c/Users/Maarif/Desktop/my-app/**)",
+      "Bash(wc -l /c/Users/Maarif/Desktop/my-app/backend/scripts/test-fa*.js)"
     ]
   }
 }

@@ -3159,6 +3159,181 @@ export async function activateAssetStandard(input) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Physical move workflow
+// ═══════════════════════════════════════════════════════════════════
+
+const PHYSICAL_MOVE_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+]);
+
+export async function physicalMoveAsset(input) {
+  const {
+    tenantId,
+    assetId,
+    effectiveDate,
+    locationOperatingUnitId,
+    custodianEmployeeId,
+    departmentCode,
+    costCenterCode,
+    note,
+    userId,
+  } = input;
+
+  return withTransaction(async (tx) => {
+    // ── Load and lock asset ──────────────────────────────────────
+    const existingResult = await tx.query(
+      `SELECT id, tenant_id, legal_entity_id, status,
+              owner_operating_unit_id,
+              location_operating_unit_id,
+              custodian_employee_id,
+              department_code,
+              cost_center_code,
+              currency_code
+         FROM fixed_assets
+        WHERE id = ? AND tenant_id = ?
+        LIMIT 1
+        FOR UPDATE`,
+      [assetId, tenantId]
+    );
+    const asset = existingResult.rows?.[0];
+    if (!asset) throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+
+    const assetStatus = normalizeUpperText(asset.status);
+    if (!PHYSICAL_MOVE_ELIGIBLE_STATUSES.has(assetStatus)) {
+      throw badRequest(
+        `Physical move is only allowed for ACTIVE, SUSPENDED, or FULLY_DEPRECIATED assets ` +
+        `(assetId=${assetId}, status=${assetStatus})`
+      );
+    }
+
+    const legalEntityId = Number(asset.legal_entity_id);
+
+    // ── Capture from-state ───────────────────────────────────────
+    const fromLocationOperatingUnitId = asset.location_operating_unit_id != null
+      ? Number(asset.location_operating_unit_id)
+      : null;
+    if (fromLocationOperatingUnitId == null) {
+      throw badRequest(
+        "Asset is missing locationOperatingUnitId; physical move requires an existing location"
+      );
+    }
+    const fromCustodianEmployeeId = asset.custodian_employee_id != null
+      ? Number(asset.custodian_employee_id)
+      : null;
+    const fromDepartmentCode = asset.department_code || null;
+    const fromCostCenterCode = asset.cost_center_code || null;
+
+    // ── Resolve to-state (use from-state for fields not provided) ─
+    const toLocationOperatingUnitId = locationOperatingUnitId !== undefined
+      ? locationOperatingUnitId
+      : fromLocationOperatingUnitId;
+    const toCustodianEmployeeId = custodianEmployeeId !== undefined
+      ? custodianEmployeeId
+      : fromCustodianEmployeeId;
+    const toDepartmentCode = departmentCode !== undefined
+      ? departmentCode
+      : fromDepartmentCode;
+    const toCostCenterCode = costCenterCode !== undefined
+      ? costCenterCode
+      : fromCostCenterCode;
+
+    // ── Ensure at least one field actually changes ───────────────
+    const locationChanged = toLocationOperatingUnitId !== fromLocationOperatingUnitId;
+    const custodianChanged = toCustodianEmployeeId !== fromCustodianEmployeeId;
+    const departmentChanged = toDepartmentCode !== fromDepartmentCode;
+    const costCenterChanged = toCostCenterCode !== fromCostCenterCode;
+
+    if (!locationChanged && !custodianChanged && !departmentChanged && !costCenterChanged) {
+      throw badRequest(
+        "Physical move requires at least one field to change from its current value"
+      );
+    }
+
+    // ── Validate location OU is not null ─────────────────────────
+    if (toLocationOperatingUnitId == null) {
+      throw badRequest("locationOperatingUnitId cannot be null for physical move");
+    }
+
+    // ── Update asset master (physical/responsibility fields only) ─
+    await tx.query(
+      `UPDATE fixed_assets
+          SET location_operating_unit_id = ?,
+              custodian_employee_id = ?,
+              department_code = ?,
+              cost_center_code = ?,
+              updated_by_user_id = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [
+        toLocationOperatingUnitId,
+        toCustodianEmployeeId,
+        toDepartmentCode,
+        toCostCenterCode,
+        userId,
+        assetId,
+        tenantId,
+      ]
+    );
+
+    // ── Create PHYSICAL_MOVE transaction ─────────────────────────
+    const transactionId = await insertFixedAssetTransaction(tx, {
+      tenantId,
+      legalEntityId,
+      assetId,
+      transactionType: "PHYSICAL_MOVE",
+      effectiveDate,
+      postingDate: effectiveDate,
+      bookId: null,
+      fiscalPeriodId: null,
+      currencyCode: asset.currency_code || null,
+      note,
+      createdByUserId: userId,
+    });
+
+    if (!transactionId) {
+      throw badRequest("Failed to create PHYSICAL_MOVE transaction");
+    }
+
+    // ── Create physical move detail row ──────────────────────────
+    await tx.query(
+      `INSERT INTO fixed_asset_physical_move_details (
+         tenant_id,
+         legal_entity_id,
+         transaction_id,
+         asset_id,
+         from_location_operating_unit_id,
+         to_location_operating_unit_id,
+         from_custodian_employee_id,
+         to_custodian_employee_id,
+         from_department_code,
+         to_department_code,
+         from_cost_center_code,
+         to_cost_center_code
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        transactionId,
+        assetId,
+        fromLocationOperatingUnitId,
+        toLocationOperatingUnitId,
+        fromCustodianEmployeeId,
+        toCustodianEmployeeId,
+        fromDepartmentCode,
+        toDepartmentCode,
+        fromCostCenterCode,
+        toCostCenterCode,
+      ]
+    );
+
+    return assetId;
+  }).then(async (movedAssetId) => {
+    return getAssetDetail({ tenantId, assetId: movedAssetId });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Category CRUD
 // ═══════════════════════════════════════════════════════════════════
 

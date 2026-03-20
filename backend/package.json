@@ -172,6 +172,7 @@
     "test:fa24:eligible-ap-line-smoke": "node scripts/test-fa24-eligible-ap-line-smoke.js",
     "test:fa26:cross-ou-capitalization-smoke": "node scripts/test-fa26-cross-ou-capitalization-smoke.js",
     "test:fa27:draft-link-revalidation-smoke": "node scripts/test-fa27-draft-link-revalidation-smoke.js",
+    "test:fa36:physical-move-smoke": "node scripts/test-fa36-physical-move-smoke.js",
     "test:ux:prcore02": "node scripts/test-ux-prcore02-idempotency-standardization.js",
     "test:ux:prcore03": "node scripts/test-ux-prcore03-optimistic-locking-row-version.js",
     "test:ux:prcore04": "node scripts/test-ux-prcore04-job-progress-retry-ux.js",

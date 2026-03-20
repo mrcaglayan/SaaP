@@ -1254,15 +1254,15 @@ Implementation notes:
 - [x] `STEP-FA25` - FA06 same-OU capitalization create/activate flow
 - [x] `STEP-FA26` - FA06 cross-OU capitalization accounting template and blocking rules
 - [x] `STEP-FA27` - FA06 draft-link revalidation, source drift refresh, and activation-time safeguards
-- [ ] `STEP-FA28` - Schedule engine period resolution, read surface, and standard straight-line/none math
-- [ ] `STEP-FA29` - Declining-balance math, salvage-floor enforcement, and legacy-onboarding forward schedule path
-- [ ] `STEP-FA30` - Lifecycle cutoff eligibility for suspension, reactivation, transfer, and disposal in schedule generation
-- [ ] `STEP-FA31` - Depreciation run preview and persisted draft creation
-- [ ] `STEP-FA32` - Depreciation run detail read and draft delete lifecycle
-- [ ] `STEP-FA33` - Depreciation run post workflow
-- [ ] `STEP-FA34` - Depreciation run reverse workflow
-- [ ] `STEP-FA35` - Depreciation run chunked persistence and volume safety hardening
-- [ ] `STEP-FA36` - Physical move workflow
+- [x] `STEP-FA28` - Schedule engine period resolution, read surface, and standard straight-line/none math
+- [x] `STEP-FA29` - Declining-balance math, salvage-floor enforcement, and legacy-onboarding forward schedule path
+- [x] `STEP-FA30` - Lifecycle cutoff eligibility for suspension, reactivation, transfer, and disposal in schedule generation
+- [x] `STEP-FA31` - Depreciation run preview and persisted draft creation
+- [x] `STEP-FA32` - Depreciation run detail read and draft delete lifecycle
+- [x] `STEP-FA33` - Depreciation run post workflow
+- [x] `STEP-FA34` - Depreciation run reverse workflow
+- [x] `STEP-FA35` - Depreciation run chunked persistence and volume safety hardening
+- [x] `STEP-FA36` - Physical move workflow
 - [ ] `STEP-FA37` - Ownership transfer workflow and accounting
 - [ ] `STEP-FA38` - Write-off workflow
 - [ ] `STEP-FA39` - Sale staged draft/link/update workflow
