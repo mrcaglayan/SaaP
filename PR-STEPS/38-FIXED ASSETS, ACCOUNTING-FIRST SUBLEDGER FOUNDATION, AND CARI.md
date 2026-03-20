@@ -1232,7 +1232,7 @@ Implementation notes:
 - [x] `STEP-FA03` - Shared-platform journal-link writer compliance for CARI, cash, and payments
 - [x] `STEP-FA04` - Shared-platform journal-link writer compliance for inventory and payroll
 - [x] `STEP-FA05` - Repo-wide journal-link `PRIMARY` regression coverage and release gate
-- [ ] `STEP-FA06` - Backend reverse-block destination contract and additive journal-detail enrichment
+- [x] `STEP-FA06` - Backend reverse-block destination contract and additive journal-detail enrichment
 - [ ] `STEP-FA07` - Frontend Journal Workbench prefer-backend / fallback-local contract migration
 - [ ] `STEP-FA08` - OpenAPI fixed-assets tag and path inference support
 - [ ] `STEP-FA09` - `m138` fixed-assets foundation base tables

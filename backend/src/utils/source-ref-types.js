@@ -12,6 +12,9 @@
 export const CASH_TRANSACTION = "CASH_TRANSACTION";
 export const CARI_DOCUMENT = "CARI_DOCUMENT";
 export const CARI_SETTLEMENT_BATCH = "CARI_SETTLEMENT_BATCH";
+export const PAYMENT_BATCH = "PAYMENT_BATCH";
+export const PAYROLL_RUN = "PAYROLL_RUN";
+export const INVENTORY_MOVEMENT = "INVENTORY_MOVEMENT";
 export const INVENTORY_TRANSFER = "INVENTORY_TRANSFER";
 
 // ── fixed-assets source-ref types ───────────────────────────────────
@@ -28,6 +31,9 @@ export const SOURCE_REF_TYPES = Object.freeze(
     CASH_TRANSACTION,
     CARI_DOCUMENT,
     CARI_SETTLEMENT_BATCH,
+    PAYMENT_BATCH,
+    PAYROLL_RUN,
+    INVENTORY_MOVEMENT,
     INVENTORY_TRANSFER,
     FIXED_ASSET,
     FIXED_ASSET_TRANSACTION,

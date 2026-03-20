@@ -388,6 +388,8 @@ async function upsertCariPurposeMappings({
   arOffsetAccountId,
   apControlAccountId,
   apOffsetAccountId,
+  fxGainAccountId,
+  fxLossAccountId,
 }) {
   await query(
     `INSERT INTO journal_purpose_accounts (tenant_id, legal_entity_id, purpose_code, account_id)
@@ -395,7 +397,9 @@ async function upsertCariPurposeMappings({
        (?, ?, 'CARI_AR_CONTROL', ?),
        (?, ?, 'CARI_AR_OFFSET', ?),
        (?, ?, 'CARI_AP_CONTROL', ?),
-       (?, ?, 'CARI_AP_OFFSET', ?)
+       (?, ?, 'CARI_AP_OFFSET', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_GAIN', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_LOSS', ?)
      ON DUPLICATE KEY UPDATE account_id = VALUES(account_id)`,
     [
       tenantId,
@@ -410,6 +414,12 @@ async function upsertCariPurposeMappings({
       tenantId,
       legalEntityId,
       apOffsetAccountId,
+      tenantId,
+      legalEntityId,
+      fxGainAccountId,
+      tenantId,
+      legalEntityId,
+      fxLossAccountId,
     ]
   );
 }
@@ -562,7 +572,8 @@ async function runScenario({
   paymentTermId,
   customerCounterpartyId,
   vendorCounterpartyId,
-  linkedCashCounterAccountId,
+  arControlAccountId,
+  apControlAccountId,
   registerByCurrency,
   scenario,
   scenarioIndex,
@@ -607,9 +618,11 @@ async function runScenario({
   if (scenario.channel === "CASH_LINKED") {
     const registerId = registerByCurrency[up(settlementCurrencyCode)];
     assert(registerId > 0, `Missing register for ${settlementCurrencyCode}`);
+    const cashCounterAccountId =
+      up(direction) === "AR" ? arControlAccountId : apControlAccountId;
     body.linkedCashTransaction = {
       registerId,
-      counterAccountId: linkedCashCounterAccountId,
+      counterAccountId: cashCounterAccountId,
       bookDate: SETTLEMENT_DATE,
       txnDatetime: `${SETTLEMENT_DATE}T10:00:00`,
       idempotencyKey: `MCSR01-CASH-${scenario.id}-${suffix}`,
@@ -848,13 +861,75 @@ async function main() {
       "ASSET",
       "DEBIT"
     );
-    const linkedCashCounterAccountId = await createAccount(
+    const fxGainAccountId = await createAccount(
       token,
       base.coaId,
-      `MCSR1_CNT_${String(stamp).slice(-5)}`,
-      "MCSR1 Linked Cash Counter",
+      `MCSR1_FXG_${String(stamp).slice(-5)}`,
+      "MCSR1 Settlement FX Gain",
+      "REVENUE",
+      "CREDIT"
+    );
+    const fxLossAccountId = await createAccount(
+      token,
+      base.coaId,
+      `MCSR1_FXL_${String(stamp).slice(-5)}`,
+      "MCSR1 Settlement FX Loss",
       "EXPENSE",
       "DEBIT"
+    );
+
+    // OU self-balancing accounts (required for cash-linked settlement posting)
+    const centralDueFromAccountId = await createAccount(
+      token,
+      base.coaId,
+      `MCSR1_CDF_${String(stamp).slice(-5)}`,
+      "MCSR1 Central Due From",
+      "ASSET",
+      "DEBIT"
+    );
+    const centralDueToAccountId = await createAccount(
+      token,
+      base.coaId,
+      `MCSR1_CDT_${String(stamp).slice(-5)}`,
+      "MCSR1 Central Due To",
+      "LIABILITY",
+      "CREDIT"
+    );
+    const ouDueFromCentralAccountId = await createAccount(
+      token,
+      base.coaId,
+      `MCSR1_ODF_${String(stamp).slice(-5)}`,
+      "MCSR1 OU Due From Central",
+      "ASSET",
+      "DEBIT"
+    );
+    const ouDueToCentralAccountId = await createAccount(
+      token,
+      base.coaId,
+      `MCSR1_ODT_${String(stamp).slice(-5)}`,
+      "MCSR1 OU Due To Central",
+      "LIABILITY",
+      "CREDIT"
+    );
+    await query(
+      `UPDATE operating_units
+       SET central_due_from_account_id = ?,
+           central_due_to_account_id = ?,
+           ou_due_from_central_account_id = ?,
+           ou_due_to_central_account_id = ?
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND id = ?
+       LIMIT 1`,
+      [
+        centralDueFromAccountId,
+        centralDueToAccountId,
+        ouDueFromCentralAccountId,
+        ouDueToCentralAccountId,
+        tenantId,
+        base.legalEntityId,
+        base.operatingUnitId,
+      ]
     );
 
     await upsertCariPurposeMappings({
@@ -864,6 +939,8 @@ async function main() {
       arOffsetAccountId,
       apControlAccountId,
       apOffsetAccountId,
+      fxGainAccountId,
+      fxLossAccountId,
     });
 
     const registerByCurrency = {
@@ -939,7 +1016,8 @@ async function main() {
         paymentTermId,
         customerCounterpartyId,
         vendorCounterpartyId,
-        linkedCashCounterAccountId,
+        arControlAccountId,
+        apControlAccountId,
         registerByCurrency,
         scenario: matrix[i],
         scenarioIndex: i,

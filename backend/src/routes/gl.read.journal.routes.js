@@ -16,6 +16,10 @@ import {
 } from "./_utils.js";
 import { listJournalSourceLinksByJournalIds } from "../services/journal.source-link.service.js";
 import { listCariSettlementDrilldownsByBatchIds } from "../services/cari.settlement.drilldown.service.js";
+import {
+  enrichSourceLinksWithDestinations,
+  resolveReverseBlock,
+} from "../services/gl.reverse-block-destination.service.js";
 
 function normalizeUpperText(value) {
   return String(value || "")
@@ -299,12 +303,18 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
             })
           : [];
 
+      // Additive enrichment: destination metadata + reverse-block status.
+      // Raw source_links fields are preserved; .destination is added per link.
+      const enrichedSourceLinks = enrichSourceLinksWithDestinations(sourceLinks);
+      const reverseBlock = resolveReverseBlock(sourceLinks);
+
       return res.json({
         tenantId,
         row: {
           ...journal,
           lines: lineResult.rows || [],
-          source_links: sourceLinks,
+          source_links: enrichedSourceLinks,
+          reverseBlock,
           cari_settlement_drilldowns: cariSettlementDrilldowns.map((row) => ({
             ...row,
             sourceLinkRoles: Array.from(

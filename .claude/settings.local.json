@@ -6,7 +6,11 @@
       "Bash(grep -n \"upsertJournalSourceLinkTx\" /c/Users/Maarif/Desktop/my-app/backend/src/services/*.js)",
       "Bash(node scripts/test-fa05-journal-link-primary-release-gate.js)",
       "Bash(echo \"EXIT CODE: $?\")",
-      "Bash(echo $?)"
+      "Bash(echo $?)",
+      "Bash(node scripts/test-ux-rsdep02-source-linking-contract.js)",
+      "Bash(rm -rf /c/Users/Maarif/AppData/Local/Temp/claude/c--Users-Maarif-Desktop-my-app/*/tasks/*.output)",
+      "Bash(npm cache:*)",
+      "Bash(node scripts/test-cari-mcsr01-uat-matrix.js)"
     ]
   }
 }
