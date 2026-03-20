@@ -1240,7 +1240,7 @@ Implementation notes:
 - [x] `STEP-FA11` - `m139` custodian employees and deferred foreign keys
 - [x] `STEP-FA12` - `m140` CARI traceability and `journal_source_links` schema tail
 - [x] `STEP-FA13` - Fixed-assets module skeleton, scope service, route mount, and route ordering
-- [ ] `STEP-FA14` - Categories CRUD and default-rule backend surface
+- [x] `STEP-FA14` - Categories CRUD and default-rule backend surface
 - [ ] `STEP-FA15` - Depreciation profiles CRUD and snapshot-default backend surface
 - [ ] `STEP-FA16` - Custodian maintenance and fixed-assets settings UI/API integration
 - [ ] `STEP-FA17` - Asset register backend read surface and filter contract

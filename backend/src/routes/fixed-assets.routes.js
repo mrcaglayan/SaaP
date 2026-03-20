@@ -22,6 +22,16 @@ import {
   resolveFixedAssetTransactionScope,
   resolveFixedAssetRunScope,
 } from "../services/fixed-assets.scope.service.js";
+import {
+  parseCategoryListFilters,
+  parseCategoryCreateInput,
+  parseCategoryUpdateInput,
+} from "./fixed-assets.validators.js";
+import {
+  listCategories,
+  createCategory,
+  updateCategory,
+} from "../services/fixed-assets.service.js";
 
 const router = express.Router();
 
@@ -31,14 +41,15 @@ const router = express.Router();
 // ═══════════════════════════════════════════════════════════════════
 
 // ── Categories ────────────────────────────────────────────────────
-// STEP-FA14 lands real handlers here.
 router.get(
   "/categories",
   requirePermission("fixed_assets.settings.read", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.json({ rows: [], total: 0 });
+  asyncHandler(async (req, res) => {
+    const filters = parseCategoryListFilters(req);
+    const result = await listCategories(filters);
+    return res.json(result);
   })
 );
 
@@ -47,8 +58,10 @@ router.post(
   requirePermission("fixed_assets.settings.upsert", {
     resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const payload = parseCategoryCreateInput(req);
+    const category = await createCategory({ payload });
+    return res.status(201).json(category);
   })
 );
 
@@ -57,8 +70,11 @@ router.patch(
   requirePermission("fixed_assets.settings.upsert", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const { tenantId, categoryId, updates } = parseCategoryUpdateInput(req);
+    const userId = req.user?.userId || null;
+    const category = await updateCategory({ tenantId, categoryId, updates, userId });
+    return res.json(category);
   })
 );
 
