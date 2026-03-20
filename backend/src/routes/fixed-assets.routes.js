@@ -24,6 +24,7 @@ import {
 } from "../services/fixed-assets.scope.service.js";
 import {
   parseRegisterListFilters,
+  parseAssetDetailParams,
   parseCategoryListFilters,
   parseCategoryCreateInput,
   parseCategoryUpdateInput,
@@ -36,6 +37,7 @@ import {
 } from "./fixed-assets.validators.js";
 import {
   listAssets,
+  getAssetDetail,
   listCategories,
   createCategory,
   updateCategory,
@@ -348,8 +350,10 @@ router.get(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const { tenantId, assetId } = parseAssetDetailParams(req);
+    const detail = await getAssetDetail({ tenantId, assetId });
+    return res.json(detail);
   })
 );
 

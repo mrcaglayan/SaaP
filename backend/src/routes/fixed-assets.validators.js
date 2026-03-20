@@ -41,6 +41,20 @@ export function parseFixedAssetsListFilters(req) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Asset detail validators
+// ═══════════════════════════════════════════════════════════════════
+
+export function parseAssetDetailParams(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  return { tenantId, assetId };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Asset register list validators
 // ═══════════════════════════════════════════════════════════════════
 

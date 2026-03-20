@@ -291,6 +291,182 @@ export async function listAssets(filters) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Asset detail
+// ═══════════════════════════════════════════════════════════════════
+
+export async function getAssetDetail({ tenantId, assetId }) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  // ── Main asset row with joined lookups ──────────────────────────
+  const result = await query(
+    `SELECT fa.*,
+            cat.code                  AS category_code,
+            cat.name                  AS category_name,
+            cust.display_name         AS custodian_display_name,
+            cust.employee_code        AS custodian_employee_code,
+            dp.code                   AS profile_code,
+            dp.name                   AS profile_name
+       FROM fixed_assets fa
+       LEFT JOIN fixed_asset_categories cat    ON cat.id  = fa.category_id
+       LEFT JOIN fixed_asset_custodian_employees cust ON cust.id = fa.custodian_employee_id
+       LEFT JOIN fixed_asset_depreciation_profiles dp ON dp.id = fa.depreciation_profile_id
+      WHERE fa.tenant_id = ? AND fa.id = ?
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+
+  const row = result.rows?.[0];
+  if (!row) {
+    throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+  }
+
+  // ── Transaction summary ─────────────────────────────────────────
+  const txnSummary = await query(
+    `SELECT COUNT(*)        AS total_count,
+            SUM(CASE WHEN status = 'POSTED' THEN 1 ELSE 0 END)   AS posted_count,
+            SUM(CASE WHEN status = 'REVERSED' THEN 1 ELSE 0 END) AS reversed_count,
+            MAX(effective_date) AS latest_effective_date,
+            MAX(posting_date)   AS latest_posting_date
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ? AND asset_id = ?`,
+    [tenantId, assetId]
+  );
+  const txnRow = txnSummary.rows?.[0];
+
+  // ── Build detail payload ────────────────────────────────────────
+  return {
+    // ── Identity ──────────────────────────────────────────────────
+    id: row.id,
+    tenantId: row.tenant_id,
+    legalEntityId: row.legal_entity_id,
+    assetNo: row.asset_no,
+    sequenceNo: row.sequence_no != null ? Number(row.sequence_no) : null,
+    assetTag: row.asset_tag || null,
+    name: row.name,
+    description: row.description || null,
+    serialNo: row.serial_no || null,
+
+    // ── Lifecycle status ──────────────────────────────────────────
+    status: row.status,
+
+    // ── Category (lineage) ────────────────────────────────────────
+    categoryId: row.category_id != null ? Number(row.category_id) : null,
+    categoryCode: row.category_code || null,
+    categoryName: row.category_name || null,
+
+    // ── Owner / Location / Custodian (separate & independent) ────
+    ownerOperatingUnitId: row.owner_operating_unit_id != null
+      ? Number(row.owner_operating_unit_id) : null,
+    locationOperatingUnitId: row.location_operating_unit_id != null
+      ? Number(row.location_operating_unit_id) : null,
+    departmentCode: row.department_code || null,
+    costCenterCode: row.cost_center_code || null,
+    custodianEmployeeId: row.custodian_employee_id != null
+      ? Number(row.custodian_employee_id) : null,
+    custodianEmployeeCode: row.custodian_employee_code || null,
+    custodianDisplayName: row.custodian_display_name || null,
+    counterpartyId: row.counterparty_id != null
+      ? Number(row.counterparty_id) : null,
+
+    // ── Source CARI linkage ───────────────────────────────────────
+    sourceCariDocumentId: row.source_cari_document_id != null
+      ? Number(row.source_cari_document_id) : null,
+    sourceCariDocumentLineId: row.source_cari_document_line_id != null
+      ? Number(row.source_cari_document_line_id) : null,
+    sourceCariDocumentLineUnitNo: row.source_cari_document_line_unit_no != null
+      ? Number(row.source_cari_document_line_unit_no) : null,
+
+    // ── Key dates ─────────────────────────────────────────────────
+    acquisitionDate: row.acquisition_date,
+    capitalizationDate: row.capitalization_date || null,
+    inServiceDate: row.in_service_date || null,
+    disposalDate: row.disposal_date || null,
+
+    // ── Cost ──────────────────────────────────────────────────────
+    currencyCode: row.currency_code,
+    originalCostTxn: row.original_cost_txn != null
+      ? Number(row.original_cost_txn) : 0,
+    originalCostBase: row.original_cost_base != null
+      ? Number(row.original_cost_base) : 0,
+
+    // ── Salvage snapshot inputs (frozen at asset level) ───────────
+    salvageRuleType: row.salvage_rule_type,
+    salvagePercent: row.salvage_percent != null
+      ? Number(row.salvage_percent) : null,
+    salvageAmountBaseRule: row.salvage_amount_base_rule != null
+      ? Number(row.salvage_amount_base_rule) : null,
+
+    // ── Resolved salvage values ──────────────────────────────────
+    salvageValueTxn: row.salvage_value_txn != null
+      ? Number(row.salvage_value_txn) : 0,
+    salvageValueBase: row.salvage_value_base != null
+      ? Number(row.salvage_value_base) : 0,
+
+    // ── Depreciation profile linkage (lineage) ───────────────────
+    depreciationProfileId: row.depreciation_profile_id != null
+      ? Number(row.depreciation_profile_id) : null,
+    profileCode: row.profile_code || null,
+    profileName: row.profile_name || null,
+
+    // ── Snapped depreciation runtime fields (frozen at asset) ────
+    depreciationMethod: row.depreciation_method || null,
+    decliningBalanceRatePercent: row.declining_balance_rate_percent != null
+      ? Number(row.declining_balance_rate_percent) : null,
+    switchToStraightLine: row.switch_to_straight_line === 1
+      || row.switch_to_straight_line === true
+      || row.switch_to_straight_line === "1",
+    usefulLifeMonths: row.useful_life_months != null
+      ? Number(row.useful_life_months) : null,
+    remainingUsefulLifeMonths: row.remaining_useful_life_months != null
+      ? Number(row.remaining_useful_life_months) : null,
+    lastDepreciationPeriod: row.last_depreciation_period || null,
+
+    // ── Account mappings ─────────────────────────────────────────
+    assetAccountId: row.asset_account_id != null
+      ? Number(row.asset_account_id) : null,
+    accumDeprAccountId: row.accum_depr_account_id != null
+      ? Number(row.accum_depr_account_id) : null,
+    deprExpenseAccountId: row.depr_expense_account_id != null
+      ? Number(row.depr_expense_account_id) : null,
+    disposalGainAccountId: row.disposal_gain_account_id != null
+      ? Number(row.disposal_gain_account_id) : null,
+    disposalLossAccountId: row.disposal_loss_account_id != null
+      ? Number(row.disposal_loss_account_id) : null,
+
+    // ── Legacy onboarding fields ─────────────────────────────────
+    legacyAccumDeprTxn: row.legacy_accum_depr_txn != null
+      ? Number(row.legacy_accum_depr_txn) : null,
+    legacyAccumDeprBase: row.legacy_accum_depr_base != null
+      ? Number(row.legacy_accum_depr_base) : null,
+    legacyNbvTxn: row.legacy_nbv_txn != null
+      ? Number(row.legacy_nbv_txn) : null,
+    legacyNbvBase: row.legacy_nbv_base != null
+      ? Number(row.legacy_nbv_base) : null,
+
+    // ── Transaction history summary (foundation) ─────────────────
+    transactionSummary: {
+      totalCount: Number(txnRow?.total_count ?? 0),
+      postedCount: Number(txnRow?.posted_count ?? 0),
+      reversedCount: Number(txnRow?.reversed_count ?? 0),
+      latestEffectiveDate: txnRow?.latest_effective_date || null,
+      latestPostingDate: txnRow?.latest_posting_date || null,
+    },
+
+    // ── Evidence summary (foundation — table not yet created) ────
+    evidenceSummary: {
+      totalCount: 0,
+    },
+
+    // ── Audit trail ──────────────────────────────────────────────
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Category CRUD
 // ═══════════════════════════════════════════════════════════════════
 
