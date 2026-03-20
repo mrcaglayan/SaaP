@@ -26,11 +26,17 @@ import {
   parseCategoryListFilters,
   parseCategoryCreateInput,
   parseCategoryUpdateInput,
+  parseProfileListFilters,
+  parseProfileCreateInput,
+  parseProfileUpdateInput,
 } from "./fixed-assets.validators.js";
 import {
   listCategories,
   createCategory,
   updateCategory,
+  listProfiles,
+  createProfile,
+  updateProfile,
 } from "../services/fixed-assets.service.js";
 
 const router = express.Router();
@@ -79,14 +85,15 @@ router.patch(
 );
 
 // ── Depreciation Profiles ─────────────────────────────────────────
-// STEP-FA15 lands real handlers here.
 router.get(
   "/depreciation-profiles",
   requirePermission("fixed_assets.settings.read", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.json({ rows: [], total: 0 });
+  asyncHandler(async (req, res) => {
+    const filters = parseProfileListFilters(req);
+    const result = await listProfiles(filters);
+    return res.json(result);
   })
 );
 
@@ -95,8 +102,10 @@ router.post(
   requirePermission("fixed_assets.settings.upsert", {
     resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const payload = parseProfileCreateInput(req);
+    const profile = await createProfile({ payload });
+    return res.status(201).json(profile);
   })
 );
 
@@ -105,8 +114,11 @@ router.patch(
   requirePermission("fixed_assets.settings.upsert", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const { tenantId, profileId, updates } = parseProfileUpdateInput(req);
+    const userId = req.user?.userId || null;
+    const profile = await updateProfile({ tenantId, profileId, updates, userId });
+    return res.json(profile);
   })
 );
 

@@ -16,6 +16,14 @@ const VALID_SALVAGE_RULE_TYPES = new Set([
 
 const VALID_CATEGORY_STATUSES = new Set(["ACTIVE", "INACTIVE"]);
 
+const VALID_PROFILE_STATUSES = new Set(["ACTIVE", "INACTIVE"]);
+
+const VALID_DEPRECIATION_METHODS = new Set([
+  "STRAIGHT_LINE",
+  "DECLINING_BALANCE",
+  "NONE",
+]);
+
 function normalizeUpperText(value) {
   if (value === undefined || value === null) return null;
   return String(value).trim().toUpperCase();
@@ -258,4 +266,138 @@ export function parseCategoryUpdateInput(req) {
   }
 
   return { tenantId, categoryId, updates };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Depreciation profile validators
+// ═══════════════════════════════════════════════════════════════════
+
+export function parseProfileListFilters(req) {
+  const tenantId = resolveTenantId(req);
+  const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+  const status = normalizeUpperText(req.query?.status);
+  return { tenantId, legalEntityId, status };
+}
+
+export function parseProfileCreateInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  if (!legalEntityId) throw badRequest("legalEntityId is required");
+
+  const code = String(req.body?.code ?? "").trim();
+  if (!code) throw badRequest("code is required");
+
+  const name = String(req.body?.name ?? "").trim();
+  if (!name) throw badRequest("name is required");
+
+  const status = normalizeUpperText(req.body?.status) || "ACTIVE";
+  if (!VALID_PROFILE_STATUSES.has(status)) {
+    throw badRequest(`status must be one of: ${[...VALID_PROFILE_STATUSES].join(", ")}`);
+  }
+
+  const method = normalizeUpperText(req.body?.method);
+  if (!method) throw badRequest("method is required");
+  if (!VALID_DEPRECIATION_METHODS.has(method)) {
+    throw badRequest(`method must be one of: ${[...VALID_DEPRECIATION_METHODS].join(", ")}`);
+  }
+
+  const decliningBalanceRatePercent = req.body?.decliningBalanceRatePercent != null
+    ? Number(req.body.decliningBalanceRatePercent)
+    : null;
+  if (decliningBalanceRatePercent !== null && (isNaN(decliningBalanceRatePercent) || decliningBalanceRatePercent <= 0 || decliningBalanceRatePercent > 100)) {
+    throw badRequest("decliningBalanceRatePercent must be between 0 (exclusive) and 100");
+  }
+
+  // Method/rate compatibility
+  if (method === "DECLINING_BALANCE" && decliningBalanceRatePercent === null) {
+    throw badRequest("decliningBalanceRatePercent is required when method is DECLINING_BALANCE");
+  }
+  if (method !== "DECLINING_BALANCE" && decliningBalanceRatePercent !== null) {
+    throw badRequest("decliningBalanceRatePercent must be null when method is not DECLINING_BALANCE");
+  }
+
+  const switchToStraightLine = req.body?.switchToStraightLine === true
+    || req.body?.switchToStraightLine === 1
+    || req.body?.switchToStraightLine === "1";
+
+  const description = req.body?.description != null
+    ? String(req.body.description).trim() || null
+    : null;
+
+  return {
+    tenantId,
+    legalEntityId,
+    code,
+    name,
+    status,
+    method,
+    decliningBalanceRatePercent,
+    switchToStraightLine,
+    description,
+  };
+}
+
+export function parseProfileUpdateInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const profileId = parsePositiveInt(req.params?.profileId);
+  if (!profileId) throw badRequest("profileId is required");
+
+  const updates = {};
+  const body = req.body || {};
+
+  if (body.code !== undefined) {
+    const code = String(body.code).trim();
+    if (!code) throw badRequest("code cannot be empty");
+    updates.code = code;
+  }
+
+  if (body.name !== undefined) {
+    const name = String(body.name).trim();
+    if (!name) throw badRequest("name cannot be empty");
+    updates.name = name;
+  }
+
+  if (body.status !== undefined) {
+    const status = normalizeUpperText(body.status);
+    if (!VALID_PROFILE_STATUSES.has(status)) {
+      throw badRequest(`status must be one of: ${[...VALID_PROFILE_STATUSES].join(", ")}`);
+    }
+    updates.status = status;
+  }
+
+  if (body.method !== undefined) {
+    const method = normalizeUpperText(body.method);
+    if (!VALID_DEPRECIATION_METHODS.has(method)) {
+      throw badRequest(`method must be one of: ${[...VALID_DEPRECIATION_METHODS].join(", ")}`);
+    }
+    updates.method = method;
+  }
+
+  if (body.decliningBalanceRatePercent !== undefined) {
+    const v = body.decliningBalanceRatePercent != null
+      ? Number(body.decliningBalanceRatePercent)
+      : null;
+    if (v !== null && (isNaN(v) || v <= 0 || v > 100)) {
+      throw badRequest("decliningBalanceRatePercent must be between 0 (exclusive) and 100");
+    }
+    updates.decliningBalanceRatePercent = v;
+  }
+
+  if (body.switchToStraightLine !== undefined) {
+    updates.switchToStraightLine = body.switchToStraightLine === true
+      || body.switchToStraightLine === 1
+      || body.switchToStraightLine === "1";
+  }
+
+  if (body.description !== undefined) {
+    updates.description = body.description != null
+      ? String(body.description).trim() || null
+      : null;
+  }
+
+  return { tenantId, profileId, updates };
 }

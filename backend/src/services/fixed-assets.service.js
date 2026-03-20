@@ -415,3 +415,207 @@ export async function updateCategory({ tenantId, categoryId, updates, userId }) 
 
   return mapCategoryRow(readResult.rows[0]);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Depreciation Profile CRUD
+// ═══════════════════════════════════════════════════════════════════
+
+function mapProfileRow(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    legalEntityId: row.legal_entity_id,
+    code: row.code,
+    name: row.name,
+    status: row.status,
+    method: row.method,
+    decliningBalanceRatePercent: row.declining_balance_rate_percent != null
+      ? Number(row.declining_balance_rate_percent)
+      : null,
+    switchToStraightLine: row.switch_to_straight_line === 1
+      || row.switch_to_straight_line === true
+      || row.switch_to_straight_line === "1",
+    description: row.description || null,
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Enforce method/rate compatibility after merging updates.
+ */
+function enforceMethodRateCompatibility(method, decliningBalanceRatePercent) {
+  if (method === "DECLINING_BALANCE") {
+    if (decliningBalanceRatePercent === null || decliningBalanceRatePercent === undefined) {
+      throw badRequest("decliningBalanceRatePercent is required when method is DECLINING_BALANCE");
+    }
+  } else {
+    if (decliningBalanceRatePercent !== null && decliningBalanceRatePercent !== undefined) {
+      throw badRequest("decliningBalanceRatePercent must be null when method is not DECLINING_BALANCE");
+    }
+  }
+}
+
+export async function listProfiles({ tenantId, legalEntityId, status }) {
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const conditions = ["tenant_id = ?"];
+  const params = [tenantId];
+
+  if (legalEntityId) {
+    conditions.push("legal_entity_id = ?");
+    params.push(legalEntityId);
+  }
+  if (status) {
+    conditions.push("status = ?");
+    params.push(status);
+  }
+
+  const result = await query(
+    `SELECT * FROM fixed_asset_depreciation_profiles
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY code ASC`,
+    params
+  );
+
+  return {
+    rows: (result.rows || []).map(mapProfileRow),
+    total: result.rows?.length || 0,
+  };
+}
+
+export async function createProfile({ payload }) {
+  const {
+    tenantId, legalEntityId, code, name, status, method,
+    decliningBalanceRatePercent, switchToStraightLine, description,
+  } = payload;
+
+  // Code uniqueness within (tenant_id, legal_entity_id)
+  const existing = await query(
+    `SELECT id FROM fixed_asset_depreciation_profiles
+      WHERE tenant_id = ? AND legal_entity_id = ? AND code = ?
+      LIMIT 1`,
+    [tenantId, legalEntityId, code]
+  );
+  if (existing.rows?.length > 0) {
+    throw badRequest(`A depreciation profile with code '${code}' already exists in this legal entity`);
+  }
+
+  const userId = payload.userId || null;
+
+  const insertResult = await query(
+    `INSERT INTO fixed_asset_depreciation_profiles (
+       tenant_id, legal_entity_id, code, name, status, method,
+       declining_balance_rate_percent, switch_to_straight_line, description,
+       created_by_user_id, updated_by_user_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      tenantId, legalEntityId, code, name, status, method,
+      decliningBalanceRatePercent, switchToStraightLine ? 1 : 0, description,
+      userId, userId,
+    ]
+  );
+
+  const newId = insertResult.rows?.insertId;
+
+  const readResult = await query(
+    `SELECT * FROM fixed_asset_depreciation_profiles WHERE id = ? AND tenant_id = ? LIMIT 1`,
+    [newId, tenantId]
+  );
+
+  return mapProfileRow(readResult.rows[0]);
+}
+
+export async function updateProfile({ tenantId, profileId, updates, userId }) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!profileId) throw badRequest("profileId is required");
+
+  // Load existing
+  const existingResult = await query(
+    `SELECT * FROM fixed_asset_depreciation_profiles WHERE id = ? AND tenant_id = ? LIMIT 1`,
+    [profileId, tenantId]
+  );
+  const existing = existingResult.rows?.[0];
+  if (!existing) {
+    throw badRequest(`Depreciation profile (id=${profileId}) not found for tenant`);
+  }
+
+  const legalEntityId = existing.legal_entity_id;
+
+  // Code uniqueness check if code is being changed
+  if (updates.code !== undefined && updates.code !== existing.code) {
+    const dup = await query(
+      `SELECT id FROM fixed_asset_depreciation_profiles
+        WHERE tenant_id = ? AND legal_entity_id = ? AND code = ? AND id != ?
+        LIMIT 1`,
+      [tenantId, legalEntityId, updates.code, profileId]
+    );
+    if (dup.rows?.length > 0) {
+      throw badRequest(`A depreciation profile with code '${updates.code}' already exists in this legal entity`);
+    }
+  }
+
+  // Method/rate compatibility check when either field changes
+  if (updates.method !== undefined || updates.decliningBalanceRatePercent !== undefined) {
+    const mergedMethod = updates.method !== undefined
+      ? updates.method
+      : existing.method;
+    const mergedRate = updates.decliningBalanceRatePercent !== undefined
+      ? updates.decliningBalanceRatePercent
+      : (existing.declining_balance_rate_percent != null ? Number(existing.declining_balance_rate_percent) : null);
+
+    enforceMethodRateCompatibility(mergedMethod, mergedRate);
+  }
+
+  // Build SET clause
+  const setClauses = [];
+  const setParams = [];
+
+  const columnMap = {
+    code: "code",
+    name: "name",
+    status: "status",
+    method: "method",
+    decliningBalanceRatePercent: "declining_balance_rate_percent",
+    switchToStraightLine: "switch_to_straight_line",
+    description: "description",
+  };
+
+  for (const [jsField, dbColumn] of Object.entries(columnMap)) {
+    if (updates[jsField] !== undefined) {
+      let value = updates[jsField];
+      if (jsField === "switchToStraightLine") {
+        value = value ? 1 : 0;
+      }
+      setClauses.push(`${dbColumn} = ?`);
+      setParams.push(value);
+    }
+  }
+
+  if (userId) {
+    setClauses.push("updated_by_user_id = ?");
+    setParams.push(userId);
+  }
+
+  if (setClauses.length === 0) {
+    return mapProfileRow(existing);
+  }
+
+  setParams.push(profileId, tenantId);
+
+  await query(
+    `UPDATE fixed_asset_depreciation_profiles
+        SET ${setClauses.join(", ")}
+      WHERE id = ? AND tenant_id = ?`,
+    setParams
+  );
+
+  const readResult = await query(
+    `SELECT * FROM fixed_asset_depreciation_profiles WHERE id = ? AND tenant_id = ? LIMIT 1`,
+    [profileId, tenantId]
+  );
+
+  return mapProfileRow(readResult.rows[0]);
+}
