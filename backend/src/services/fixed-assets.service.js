@@ -619,3 +619,172 @@ export async function updateProfile({ tenantId, profileId, updates, userId }) {
 
   return mapProfileRow(readResult.rows[0]);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Custodian CRUD
+// ═══════════════════════════════════════════════════════════════════
+
+function mapCustodianRow(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    legalEntityId: row.legal_entity_id,
+    employeeCode: row.employee_code,
+    displayName: row.display_name,
+    operatingUnitId: row.operating_unit_id != null
+      ? Number(row.operating_unit_id)
+      : null,
+    status: row.status,
+    notes: row.notes || null,
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function listCustodians({ tenantId, legalEntityId, operatingUnitId, status }) {
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const conditions = ["tenant_id = ?"];
+  const params = [tenantId];
+
+  if (legalEntityId) {
+    conditions.push("legal_entity_id = ?");
+    params.push(legalEntityId);
+  }
+  if (operatingUnitId) {
+    conditions.push("operating_unit_id = ?");
+    params.push(operatingUnitId);
+  }
+  if (status) {
+    conditions.push("status = ?");
+    params.push(status);
+  }
+
+  const result = await query(
+    `SELECT * FROM fixed_asset_custodian_employees
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY employee_code ASC`,
+    params
+  );
+
+  return {
+    rows: (result.rows || []).map(mapCustodianRow),
+    total: result.rows?.length || 0,
+  };
+}
+
+export async function createCustodian({ payload }) {
+  const {
+    tenantId, legalEntityId, employeeCode, displayName,
+    operatingUnitId, status, notes,
+  } = payload;
+
+  // employee_code uniqueness within (tenant_id, legal_entity_id)
+  const existing = await query(
+    `SELECT id FROM fixed_asset_custodian_employees
+      WHERE tenant_id = ? AND legal_entity_id = ? AND employee_code = ?
+      LIMIT 1`,
+    [tenantId, legalEntityId, employeeCode]
+  );
+  if (existing.rows?.length > 0) {
+    throw badRequest(`A custodian with employee code '${employeeCode}' already exists in this legal entity`);
+  }
+
+  const userId = payload.userId || null;
+
+  const insertResult = await query(
+    `INSERT INTO fixed_asset_custodian_employees (
+       tenant_id, legal_entity_id, employee_code, display_name,
+       operating_unit_id, status, notes,
+       created_by_user_id, updated_by_user_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      tenantId, legalEntityId, employeeCode, displayName,
+      operatingUnitId || null, status, notes,
+      userId, userId,
+    ]
+  );
+
+  const newId = insertResult.rows?.insertId;
+
+  const readResult = await query(
+    `SELECT * FROM fixed_asset_custodian_employees WHERE id = ? AND tenant_id = ? LIMIT 1`,
+    [newId, tenantId]
+  );
+
+  return mapCustodianRow(readResult.rows[0]);
+}
+
+export async function updateCustodian({ tenantId, custodianId, updates, userId }) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!custodianId) throw badRequest("custodianId is required");
+
+  const existingResult = await query(
+    `SELECT * FROM fixed_asset_custodian_employees WHERE id = ? AND tenant_id = ? LIMIT 1`,
+    [custodianId, tenantId]
+  );
+  const existing = existingResult.rows?.[0];
+  if (!existing) {
+    throw badRequest(`Custodian (id=${custodianId}) not found for tenant`);
+  }
+
+  const legalEntityId = existing.legal_entity_id;
+
+  // employee_code uniqueness check if being changed
+  if (updates.employeeCode !== undefined && updates.employeeCode !== existing.employee_code) {
+    const dup = await query(
+      `SELECT id FROM fixed_asset_custodian_employees
+        WHERE tenant_id = ? AND legal_entity_id = ? AND employee_code = ? AND id != ?
+        LIMIT 1`,
+      [tenantId, legalEntityId, updates.employeeCode, custodianId]
+    );
+    if (dup.rows?.length > 0) {
+      throw badRequest(`A custodian with employee code '${updates.employeeCode}' already exists in this legal entity`);
+    }
+  }
+
+  const setClauses = [];
+  const setParams = [];
+
+  const columnMap = {
+    employeeCode: "employee_code",
+    displayName: "display_name",
+    operatingUnitId: "operating_unit_id",
+    status: "status",
+    notes: "notes",
+  };
+
+  for (const [jsField, dbColumn] of Object.entries(columnMap)) {
+    if (updates[jsField] !== undefined) {
+      setClauses.push(`${dbColumn} = ?`);
+      setParams.push(updates[jsField]);
+    }
+  }
+
+  if (userId) {
+    setClauses.push("updated_by_user_id = ?");
+    setParams.push(userId);
+  }
+
+  if (setClauses.length === 0) {
+    return mapCustodianRow(existing);
+  }
+
+  setParams.push(custodianId, tenantId);
+
+  await query(
+    `UPDATE fixed_asset_custodian_employees
+        SET ${setClauses.join(", ")}
+      WHERE id = ? AND tenant_id = ?`,
+    setParams
+  );
+
+  const readResult = await query(
+    `SELECT * FROM fixed_asset_custodian_employees WHERE id = ? AND tenant_id = ? LIMIT 1`,
+    [custodianId, tenantId]
+  );
+
+  return mapCustodianRow(readResult.rows[0]);
+}

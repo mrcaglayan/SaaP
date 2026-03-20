@@ -29,6 +29,9 @@ import {
   parseProfileListFilters,
   parseProfileCreateInput,
   parseProfileUpdateInput,
+  parseCustodianListFilters,
+  parseCustodianCreateInput,
+  parseCustodianUpdateInput,
 } from "./fixed-assets.validators.js";
 import {
   listCategories,
@@ -37,6 +40,9 @@ import {
   listProfiles,
   createProfile,
   updateProfile,
+  listCustodians,
+  createCustodian,
+  updateCustodian,
 } from "../services/fixed-assets.service.js";
 
 const router = express.Router();
@@ -123,14 +129,15 @@ router.patch(
 );
 
 // ── Custodians ────────────────────────────────────────────────────
-// STEP-FA16 lands real handlers here.
 router.get(
   "/custodians",
   requirePermission("fixed_assets.custodian.read", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.json({ rows: [], total: 0 });
+  asyncHandler(async (req, res) => {
+    const filters = parseCustodianListFilters(req);
+    const result = await listCustodians(filters);
+    return res.json(result);
   })
 );
 
@@ -139,8 +146,10 @@ router.post(
   requirePermission("fixed_assets.custodian.write", {
     resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const payload = parseCustodianCreateInput(req);
+    const custodian = await createCustodian({ payload });
+    return res.status(201).json(custodian);
   })
 );
 
@@ -149,8 +158,11 @@ router.patch(
   requirePermission("fixed_assets.custodian.write", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const { tenantId, custodianId, updates } = parseCustodianUpdateInput(req);
+    const userId = req.user?.userId || null;
+    const custodian = await updateCustodian({ tenantId, custodianId, updates, userId });
+    return res.json(custodian);
   })
 );
 

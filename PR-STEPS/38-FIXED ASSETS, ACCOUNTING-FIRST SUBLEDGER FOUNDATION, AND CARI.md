@@ -1242,7 +1242,7 @@ Implementation notes:
 - [x] `STEP-FA13` - Fixed-assets module skeleton, scope service, route mount, and route ordering
 - [x] `STEP-FA14` - Categories CRUD and default-rule backend surface
 - [x] `STEP-FA15` - Depreciation profiles CRUD and snapshot-default backend surface
-- [ ] `STEP-FA16` - Custodian maintenance and fixed-assets settings UI/API integration
+- [x] `STEP-FA16` - Custodian maintenance and fixed-assets settings UI/API integration
 - [ ] `STEP-FA17` - Asset register backend read surface and filter contract
 - [ ] `STEP-FA18` - Asset detail backend read surface with tabs/foundations
 - [ ] `STEP-FA19` - Fixed-assets list/detail frontend pages and API integration

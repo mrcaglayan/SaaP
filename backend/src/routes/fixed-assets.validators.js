@@ -401,3 +401,97 @@ export function parseProfileUpdateInput(req) {
 
   return { tenantId, profileId, updates };
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Custodian validators
+// ═══════════════════════════════════════════════════════════════════
+
+const VALID_CUSTODIAN_STATUSES = new Set(["ACTIVE", "INACTIVE"]);
+
+export function parseCustodianListFilters(req) {
+  const tenantId = resolveTenantId(req);
+  const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+  const operatingUnitId = parsePositiveInt(req.query?.operatingUnitId);
+  const status = normalizeUpperText(req.query?.status);
+  return { tenantId, legalEntityId, operatingUnitId, status };
+}
+
+export function parseCustodianCreateInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  if (!legalEntityId) throw badRequest("legalEntityId is required");
+
+  const employeeCode = String(req.body?.employeeCode ?? "").trim();
+  if (!employeeCode) throw badRequest("employeeCode is required");
+
+  const displayName = String(req.body?.displayName ?? "").trim();
+  if (!displayName) throw badRequest("displayName is required");
+
+  const operatingUnitId = parsePositiveInt(req.body?.operatingUnitId);
+
+  const status = normalizeUpperText(req.body?.status) || "ACTIVE";
+  if (!VALID_CUSTODIAN_STATUSES.has(status)) {
+    throw badRequest(`status must be one of: ${[...VALID_CUSTODIAN_STATUSES].join(", ")}`);
+  }
+
+  const notes = req.body?.notes != null
+    ? String(req.body.notes).trim() || null
+    : null;
+
+  return {
+    tenantId,
+    legalEntityId,
+    employeeCode,
+    displayName,
+    operatingUnitId,
+    status,
+    notes,
+  };
+}
+
+export function parseCustodianUpdateInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const custodianId = parsePositiveInt(req.params?.custodianId);
+  if (!custodianId) throw badRequest("custodianId is required");
+
+  const updates = {};
+  const body = req.body || {};
+
+  if (body.employeeCode !== undefined) {
+    const employeeCode = String(body.employeeCode).trim();
+    if (!employeeCode) throw badRequest("employeeCode cannot be empty");
+    updates.employeeCode = employeeCode;
+  }
+
+  if (body.displayName !== undefined) {
+    const displayName = String(body.displayName).trim();
+    if (!displayName) throw badRequest("displayName cannot be empty");
+    updates.displayName = displayName;
+  }
+
+  if (body.operatingUnitId !== undefined) {
+    updates.operatingUnitId = body.operatingUnitId != null
+      ? parsePositiveInt(body.operatingUnitId)
+      : null;
+  }
+
+  if (body.status !== undefined) {
+    const status = normalizeUpperText(body.status);
+    if (!VALID_CUSTODIAN_STATUSES.has(status)) {
+      throw badRequest(`status must be one of: ${[...VALID_CUSTODIAN_STATUSES].join(", ")}`);
+    }
+    updates.status = status;
+  }
+
+  if (body.notes !== undefined) {
+    updates.notes = body.notes != null
+      ? String(body.notes).trim() || null
+      : null;
+  }
+
+  return { tenantId, custodianId, updates };
+}

@@ -49,6 +49,19 @@ export async function listFixedAssetCategories(params = {}) {
   return response.data;
 }
 
+export async function createFixedAssetCategory(payload = {}) {
+  const response = await api.post("/api/v1/fixed-assets/categories", payload);
+  return response.data;
+}
+
+export async function updateFixedAssetCategory(categoryId, payload = {}) {
+  const response = await api.patch(
+    `/api/v1/fixed-assets/categories/${categoryId}`,
+    payload
+  );
+  return response.data;
+}
+
 export async function listFixedAssetDepreciationProfiles(params = {}) {
   const response = await api.get(
     `/api/v1/fixed-assets/depreciation-profiles${toQueryString(params)}`
@@ -56,9 +69,38 @@ export async function listFixedAssetDepreciationProfiles(params = {}) {
   return response.data;
 }
 
+export async function createFixedAssetDepreciationProfile(payload = {}) {
+  const response = await api.post(
+    "/api/v1/fixed-assets/depreciation-profiles",
+    payload
+  );
+  return response.data;
+}
+
+export async function updateFixedAssetDepreciationProfile(profileId, payload = {}) {
+  const response = await api.patch(
+    `/api/v1/fixed-assets/depreciation-profiles/${profileId}`,
+    payload
+  );
+  return response.data;
+}
+
 export async function listFixedAssetCustodians(params = {}) {
   const response = await api.get(
     `/api/v1/fixed-assets/custodians${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function createFixedAssetCustodian(payload = {}) {
+  const response = await api.post("/api/v1/fixed-assets/custodians", payload);
+  return response.data;
+}
+
+export async function updateFixedAssetCustodian(custodianId, payload = {}) {
+  const response = await api.patch(
+    `/api/v1/fixed-assets/custodians/${custodianId}`,
+    payload
   );
   return response.data;
 }

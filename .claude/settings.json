@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"usePermission\\\\|requirePermission\" /c/Users/Maarif/Desktop/my-app/frontend/src --include=*.jsx)",
+      "Read(//c/Users/Maarif/Desktop/my-app/frontend/**)"
+    ]
+  }
+}
