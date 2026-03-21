@@ -16,21 +16,35 @@ import {
   CASH_TRANSACTION,
   CARI_DOCUMENT,
   CARI_SETTLEMENT_BATCH,
+  FIXED_ASSET_TRANSACTION,
+  FIXED_ASSET_DEPRECIATION_RUN,
   PAYMENT_BATCH,
   PAYROLL_RUN,
 } from "./sourceRefTypes.js";
 
 // ── local fallback registry (mirrors backend DESTINATION_REGISTRY) ───
+// Fixed-assets types have fallback routes but prefer backend-owned
+// dynamic destinations that include query parameters.
 const LOCAL_DESTINATION_REGISTRY = Object.freeze({
   [CARI_DOCUMENT]: "/app/cari-belgeler",
   [CARI_SETTLEMENT_BATCH]: "/app/cari-settlements",
   [CASH_TRANSACTION]: "/app/kasa-islemleri",
   [PAYMENT_BATCH]: "/app/odeme-batchleri",
   [PAYROLL_RUN]: "/app/payroll-runs",
+  [FIXED_ASSET_TRANSACTION]: "/app/demirbas",
+  [FIXED_ASSET_DEPRECIATION_RUN]: "/app/demirbas-amortisman-islemleri",
 });
 
 const LOCAL_REVERSE_BLOCK_SOURCE_TYPES = Object.freeze(
   new Set(Object.keys(LOCAL_DESTINATION_REGISTRY))
+);
+
+// Fixed-assets types provide fully-formed URLs from the backend
+// (including query params like ?transactionId=...&assetId=...).
+// When backend destination.route is present for these types,
+// use it directly without further type-specific URL construction.
+const BACKEND_OWNED_DESTINATION_TYPES = Object.freeze(
+  new Set([FIXED_ASSET_TRANSACTION, FIXED_ASSET_DEPRECIATION_RUN])
 );
 
 // ── internal helpers ─────────────────────────────────────────────────
@@ -75,6 +89,13 @@ export function resolveSourceLinkDestination(
     backendRoute || LOCAL_DESTINATION_REGISTRY[sourceRefType] || null;
   if (!baseRoute) {
     return null;
+  }
+
+  // Backend-owned destination types provide fully-formed URLs
+  // (e.g. /app/demirbas-karti-detayi/42?tab=transactions&transactionId=123).
+  // Use as-is when backend route is present.
+  if (backendRoute && BACKEND_OWNED_DESTINATION_TYPES.has(sourceRefType)) {
+    return backendRoute;
   }
 
   // Type-specific URL construction

@@ -13,6 +13,7 @@
  */
 
 import express from "express";
+import { query } from "../db.js";
 import { asyncHandler } from "./_utils.js";
 import {
   assertScopeAccess,
@@ -393,6 +394,17 @@ router.post(
 
 // ── Non-run transaction reversal ──────────────────────────────────
 // STEP-FA41 lands the real handler here.
+// Primary guard is fixed_assets.post (baseline mutation permission).
+// The handler additionally asserts the owning permission family for the
+// original transaction type so that e.g. reversing a TRANSFER requires
+// fixed_assets.transfer, and reversing a SALE requires fixed_assets.dispose.
+const REVERSAL_PERMISSION_BY_TX_TYPE = {
+  OWNERSHIP_TRANSFER: "fixed_assets.transfer",
+  PHYSICAL_MOVE: "fixed_assets.transfer",
+  SALE: "fixed_assets.dispose",
+  WRITEOFF: "fixed_assets.dispose",
+};
+
 router.post(
   "/transactions/:transactionId/reverse",
   requirePermission("fixed_assets.post", {
@@ -404,6 +416,20 @@ router.post(
   }),
   asyncHandler(async (req, res) => {
     const input = parseFixedAssetTransactionReverseInput(req);
+
+    // Look up the original transaction type and assert type-specific permission
+    if (input.transactionId) {
+      const txRow = await query(
+        `SELECT transaction_type FROM fixed_asset_transactions WHERE id = ? AND tenant_id = ? LIMIT 1`,
+        [input.transactionId, input.tenantId]
+      );
+      const txType = String(txRow.rows?.[0]?.transaction_type || "").toUpperCase();
+      const additionalPerm = REVERSAL_PERMISSION_BY_TX_TYPE[txType];
+      if (additionalPerm) {
+        await assertSecondaryPermission(req, additionalPerm);
+      }
+    }
+
     const result = await reverseFixedAssetTransaction(input);
     return res.json(result);
   })
@@ -484,8 +510,23 @@ router.get(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.json({ rows: [], total: 0 });
+  asyncHandler(async (req, res) => {
+    const { tenantId, assetId } = parseAssetDetailParams(req);
+    const result = await query(
+      `SELECT id, asset_id, legal_entity_id, transaction_type, status,
+              effective_date, posting_date, book_id, fiscal_period_id,
+              currency_code, depreciation_kind,
+              gross_amount_txn, gross_amount_base,
+              accum_depr_amount_txn, accum_depr_amount_base,
+              nbv_amount_txn, nbv_amount_base,
+              reversed_transaction_id, reversal_transaction_id,
+              journal_entry_id, note, created_at
+         FROM fixed_asset_transactions
+        WHERE tenant_id = ? AND asset_id = ?
+        ORDER BY effective_date DESC, id DESC`,
+      [tenantId, assetId]
+    );
+    return res.json({ rows: result.rows, total: result.rows.length });
   })
 );
 

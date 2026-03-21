@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
-import { getFixedAsset } from "../../api/fixedAssets.js";
+import { getFixedAsset, listFixedAssetTransactions } from "../../api/fixedAssets.js";
 
 function normalizeApiError(error, fallback) {
   const message = String(
@@ -51,16 +51,32 @@ function SectionCard({ title, children, cols = 4 }) {
   );
 }
 
+function parsePositiveInt(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 export default function FixedAssetDetailPage() {
   const { assetId } = useParams();
+  const [searchParams] = useSearchParams();
   const { l } = useI18n();
   const { hasPermission } = useAuth();
   const canRead = hasPermission("fixed_assets.read");
 
+  // Deep-link query params: tab and transactionId
+  const queryTab = searchParams.get("tab");
+  const queryTransactionId = parsePositiveInt(searchParams.get("transactionId"));
+
   const [asset, setAsset] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState("overview");
+  const initialTab = queryTab === "transactions" ? "transactions" : "overview";
+  const [activeTab, setActiveTab] = useState(initialTab);
+
+  // Transaction list state (loaded when transactions tab is active)
+  const [transactions, setTransactions] = useState([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [transactionsError, setTransactionsError] = useState("");
 
   useEffect(() => {
     if (!canRead || !assetId) { setAsset(null); return; }
@@ -82,6 +98,33 @@ export default function FixedAssetDetailPage() {
     })();
     return () => { active = false; };
   }, [canRead, assetId, l]);
+
+  // Load transactions when transactions tab is active
+  useEffect(() => {
+    if (!canRead || !assetId || activeTab !== "transactions") return;
+    let active = true;
+    (async () => {
+      setTransactionsLoading(true);
+      setTransactionsError("");
+      try {
+        const res = await listFixedAssetTransactions(assetId);
+        if (active) setTransactions(res.rows || []);
+      } catch (err) {
+        if (active) {
+          setTransactions([]);
+          setTransactionsError(
+            normalizeApiError(err, l("Failed to load transactions.", "Hareketler yuklenemedi."))
+          );
+        }
+      } finally {
+        if (active) setTransactionsLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [canRead, assetId, activeTab, l]);
+
+  // Focused transaction (highlighted from deep-link)
+  const focusedTransactionId = queryTransactionId;
 
   if (!canRead) {
     return (
@@ -291,12 +334,51 @@ export default function FixedAssetDetailPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">{l("Transaction List", "Hareket Listesi")}</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              {l(
-                "The transaction list will be loaded from a separate endpoint in a later step.",
-                "Hareket listesi ilerideki bir adimda ayri bir endpointten yuklenecektir."
-              )}
-            </p>
+            {transactionsLoading ? (
+              <p className="mt-2 text-sm text-slate-500">{l("Loading...", "Yukleniyor...")}</p>
+            ) : transactionsError ? (
+              <p className="mt-2 text-sm text-rose-600">{transactionsError}</p>
+            ) : transactions.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-500">
+                {l("No transactions found.", "Hareket bulunamadi.")}
+              </p>
+            ) : (
+              <div className="mt-3 overflow-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="px-2 py-2">{l("ID", "ID")}</th>
+                      <th className="px-2 py-2">{l("Type", "Tip")}</th>
+                      <th className="px-2 py-2">{l("Status", "Durum")}</th>
+                      <th className="px-2 py-2">{l("Effective Date", "Gecerlilik Tarihi")}</th>
+                      <th className="px-2 py-2">{l("Posting Date", "Kayit Tarihi")}</th>
+                      <th className="px-2 py-2 text-right">{l("Gross (Base)", "Brut (Baz)")}</th>
+                      <th className="px-2 py-2 text-right">{l("NBV (Base)", "NBV (Baz)")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map((tx) => {
+                      const txId = parsePositiveInt(tx.id);
+                      const isFocused = focusedTransactionId && txId === focusedTransactionId;
+                      return (
+                        <tr
+                          key={tx.id}
+                          className={`border-b border-slate-100 ${isFocused ? "bg-cyan-50 ring-1 ring-cyan-300" : "hover:bg-slate-50"}`}
+                        >
+                          <td className="px-2 py-1.5 font-mono text-xs">{tx.id}</td>
+                          <td className="px-2 py-1.5">{tx.transactionType || tx.transaction_type || "-"}</td>
+                          <td className="px-2 py-1.5">{tx.status || "-"}</td>
+                          <td className="px-2 py-1.5">{formatDate(tx.effectiveDate || tx.effective_date)}</td>
+                          <td className="px-2 py-1.5">{formatDate(tx.postingDate || tx.posting_date)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{formatNumber(tx.grossAmountBase || tx.gross_amount_base)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{formatNumber(tx.nbvAmountBase || tx.nbv_amount_base)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </div>
       ) : null}

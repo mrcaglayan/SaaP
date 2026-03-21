@@ -112,6 +112,12 @@ function formatJournalSourceLinkAction(sourceLink, l) {
   if (sourceRefType === "PAYMENT_BATCH") {
     return l("Open Payment Batch", "Odeme Batch'ini Ac");
   }
+  if (sourceRefType === "FIXED_ASSET_TRANSACTION") {
+    return l("Open Asset Transaction", "Demirbas Hareketini Ac");
+  }
+  if (sourceRefType === "FIXED_ASSET_DEPRECIATION_RUN") {
+    return l("Open Depreciation Run", "Amortisman Run'ini Ac");
+  }
   return l("Open Source", "Kaynagi Ac");
 }
 

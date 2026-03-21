@@ -129,3 +129,15 @@ export async function reverseFixedAssetRun(runId, payload = {}) {
   const response = await api.post(`/api/v1/fixed-assets/runs/${runId}/reverse`, payload);
   return response.data;
 }
+
+export async function getFixedAssetRun(runId) {
+  const response = await api.get(`/api/v1/fixed-assets/runs/${runId}`);
+  return response.data;
+}
+
+export async function listFixedAssetTransactions(assetId, params = {}) {
+  const response = await api.get(
+    `/api/v1/fixed-assets/${assetId}/transactions${toQueryString(params)}`
+  );
+  return response.data;
+}

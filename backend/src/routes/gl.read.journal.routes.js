@@ -17,8 +17,8 @@ import {
 import { listJournalSourceLinksByJournalIds } from "../services/journal.source-link.service.js";
 import { listCariSettlementDrilldownsByBatchIds } from "../services/cari.settlement.drilldown.service.js";
 import {
-  enrichSourceLinksWithDestinations,
-  resolveReverseBlock,
+  enrichSourceLinksWithDestinationsAsync,
+  resolveReverseBlockAsync,
 } from "../services/gl.reverse-block-destination.service.js";
 
 function normalizeUpperText(value) {
@@ -305,8 +305,9 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
 
       // Additive enrichment: destination metadata + reverse-block status.
       // Raw source_links fields are preserved; .destination is added per link.
-      const enrichedSourceLinks = enrichSourceLinksWithDestinations(sourceLinks);
-      const reverseBlock = resolveReverseBlock(sourceLinks);
+      // Async variant resolves dynamic FA destinations via DB lookup.
+      const enrichedSourceLinks = await enrichSourceLinksWithDestinationsAsync(sourceLinks);
+      const reverseBlock = await resolveReverseBlockAsync(sourceLinks);
 
       return res.json({
         tenantId,

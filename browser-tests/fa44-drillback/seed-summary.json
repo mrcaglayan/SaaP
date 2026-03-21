@@ -1,0 +1,25 @@
+{
+  "seededAt": "2026-03-21T11:34:10.538Z",
+  "tenantId": 1,
+  "legalEntityId": 1,
+  "userId": 1,
+  "assetId": 42,
+  "bookId": 1,
+  "fiscalPeriodId": 1,
+  "accountId": 610,
+  "acquisition": {
+    "transactionId": 255,
+    "journalId": 430,
+    "journalNo": "FA44ACQ1774092850470521"
+  },
+  "sale": {
+    "transactionId": 256,
+    "journalId": 431,
+    "journalNo": "FA44SAL1774092850497918"
+  },
+  "run": {
+    "runId": 28,
+    "journalId": 432,
+    "journalNo": "FA44RUN1774092850519616"
+  }
+}

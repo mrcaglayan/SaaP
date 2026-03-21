@@ -21,6 +21,7 @@ import {
 import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
+import { FIXED_ASSET_TRANSACTION } from "../utils/source-ref-types.js";
 
 // ── Local helpers ─────────────────────────────────────────────────
 
@@ -3259,7 +3260,7 @@ export async function createAssetsFromCariDocumentLineFa06(input) {
           tenantId,
           legalEntityId,
           journalEntryId: lowValueJournal.journalEntryId,
-          sourceRefType: "FIXED_ASSET_TRANSACTION",
+          sourceRefType: FIXED_ASSET_TRANSACTION,
           sourceRefId: depreciationTransactionId,
         });
       }
@@ -4130,7 +4131,7 @@ export async function ownershipTransferAsset(input) {
       tenantId,
       legalEntityId,
       journalEntryId: journalResult.journalEntryId,
-      sourceRefType: "FIXED_ASSET_TRANSACTION",
+      sourceRefType: FIXED_ASSET_TRANSACTION,
       sourceRefId: transactionId,
     });
 
@@ -5186,7 +5187,7 @@ export async function writeoffAsset(input) {
       tenantId,
       legalEntityId,
       journalEntryId: journalResult.journalEntryId,
-      sourceRefType: "FIXED_ASSET_TRANSACTION",
+      sourceRefType: FIXED_ASSET_TRANSACTION,
       sourceRefId: transactionId,
     });
 
@@ -5843,7 +5844,7 @@ export async function saleFinalizeAsset(input) {
         tenantId,
         legalEntityId,
         journalEntryId: depreciationJournal.journalEntryId,
-        sourceRefType: "FIXED_ASSET_TRANSACTION",
+        sourceRefType: FIXED_ASSET_TRANSACTION,
         sourceRefId: cutoffDepreciationTransactionId,
       });
 
@@ -6015,7 +6016,7 @@ export async function saleFinalizeAsset(input) {
       tenantId,
       legalEntityId,
       journalEntryId: saleJournal.journalEntryId,
-      sourceRefType: "FIXED_ASSET_TRANSACTION",
+      sourceRefType: FIXED_ASSET_TRANSACTION,
       sourceRefId: saleTransactionId,
     });
 
@@ -6133,7 +6134,7 @@ export async function reverseFixedAssetTransaction(input) {
         tenantId,
         legalEntityId: target.legalEntityId,
         journalEntryId: reversalJournalEntryId,
-        sourceRefType: "FIXED_ASSET_TRANSACTION",
+        sourceRefType: FIXED_ASSET_TRANSACTION,
         sourceRefId: reversalTransactionId,
         linkRole: "PRIMARY",
       });

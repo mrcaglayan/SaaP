@@ -1269,9 +1269,9 @@ Implementation notes:
 - [x] `STEP-FA40` - Sale finalize workflow
 - [x] `STEP-FA41` - Source-owned non-run reversal workflow
 - [x] `STEP-FA42` - Fixed-assets evidence service extension and nested evidence routes
-- [ ] `STEP-FA43` - Fixed-assets journal source-link writing and backend destination resolution support
-- [ ] `STEP-FA44` - Fixed-assets deep-link pages, Journal Workbench drillback, and query-contract completion
-- [ ] `STEP-FA45` - Fixed-assets permission seeding and backend authorization hardening
+- [x] `STEP-FA43` - Fixed-assets journal source-link writing and backend destination resolution support
+- [x] `STEP-FA44` - Fixed-assets deep-link pages, Journal Workbench drillback, and query-contract completion
+- [x] `STEP-FA45` - Fixed-assets permission seeding and backend authorization hardening
 - [ ] `STEP-FA46` - Frontend sidebar, route, and action gating
 - [ ] `STEP-FA47` - Fixed-assets reports and paired export endpoints
 - [ ] `STEP-FA48` - Release gates, smoke suite, and rollout readiness checks

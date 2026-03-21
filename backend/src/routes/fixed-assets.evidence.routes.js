@@ -14,6 +14,7 @@
 import express from "express";
 import {
   assertScopeAccess,
+  assertSecondaryPermission,
   requirePermission,
 } from "../middleware/rbac.js";
 import {
@@ -169,6 +170,7 @@ router.post(
     const tenantId = requireTenantId(req);
     const userId = requireUserId(req);
     const ctx = resolveEvidenceContext(req);
+    await assertSecondaryPermission(req, ctx.writePermission);
     const fileName = String(req.body?.fileName ?? req.body?.file_name ?? "").trim();
     if (!fileName) {
       throw badRequest("fileName is required");
@@ -237,6 +239,7 @@ router.put(
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
     const ctx = resolveEvidenceContext(req);
+    await assertSecondaryPermission(req, ctx.writePermission);
     const evidenceId = parseEvidenceIdParam(req);
     if (!(req.body instanceof Buffer)) {
       throw badRequest("Binary payload is required");
@@ -302,6 +305,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
     const ctx = resolveEvidenceContext(req);
+    await assertSecondaryPermission(req, ctx.writePermission);
     const evidenceId = parseEvidenceIdParam(req);
     const userId = requireUserId(req);
     const row = await deleteFixedAssetEvidenceByIdForTenant({
