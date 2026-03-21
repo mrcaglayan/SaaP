@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
-import { getFixedAsset, listFixedAssetTransactions } from "../../api/fixedAssets.js";
-import FixedAssetModulePage from "./FixedAssetModulePage.jsx";
+import { useWorkingContext } from "../../context/useWorkingContext.js";
+import { getFixedAsset, listFixedAssets, listFixedAssetTransactions } from "../../api/fixedAssets.js";
 
 function parsePositiveInt(value) {
   const parsed = Number(value);
@@ -34,26 +34,35 @@ function formatNumber(value) {
 export default function FixedAssetDisposalsPage() {
   const { l } = useI18n();
   const { hasPermission } = useAuth();
+  const { legalEntity } = useWorkingContext();
   const [searchParams] = useSearchParams();
   const canRead = hasPermission("fixed_assets.read");
+  const canDispose = hasPermission("fixed_assets.dispose");
 
   const queryTransactionId = parsePositiveInt(searchParams.get("transactionId"));
   const queryAssetId = parsePositiveInt(searchParams.get("assetId"));
 
+  // ── Deep-link state ──────────────────────────────────────────────
   const [asset, setAsset] = useState(null);
   const [transactions, setTransactions] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [deepLinkLoading, setDeepLinkLoading] = useState(false);
+  const [deepLinkError, setDeepLinkError] = useState("");
+
+  // ── List mode state ──────────────────────────────────────────────
+  const [disposedAssets, setDisposedAssets] = useState([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState("");
+
+  const legalEntityId = legalEntity?.id || "";
 
   // Load disposal context when deep-link params are present
   useEffect(() => {
     if (!canRead || !queryTransactionId) return;
     let active = true;
     (async () => {
-      setLoading(true);
-      setError("");
+      setDeepLinkLoading(true);
+      setDeepLinkError("");
       try {
-        // If assetId is provided, load asset context and its transactions
         if (queryAssetId) {
           const [assetRes, txRes] = await Promise.all([
             getFixedAsset(queryAssetId).catch(() => null),
@@ -66,64 +75,135 @@ export default function FixedAssetDisposalsPage() {
         }
       } catch (err) {
         if (active) {
-          setError(normalizeApiError(err, l("Failed to load disposal context.", "Satis bilgileri yuklenemedi.")));
+          setDeepLinkError(normalizeApiError(err, l("Failed to load disposal context.", "Satis bilgileri yuklenemedi.")));
         }
       } finally {
-        if (active) setLoading(false);
+        if (active) setDeepLinkLoading(false);
       }
     })();
     return () => { active = false; };
   }, [canRead, queryTransactionId, queryAssetId, l]);
 
-  // No deep-link: show the scaffold
-  if (!queryTransactionId) {
+  // Load disposed assets list when in list mode
+  useEffect(() => {
+    if (!canRead || queryTransactionId) return;
+    let active = true;
+    (async () => {
+      setListLoading(true);
+      setListError("");
+      try {
+        const res = await listFixedAssets({
+          legalEntityId: legalEntityId || undefined,
+          disposed: "true",
+        });
+        if (active) setDisposedAssets(Array.isArray(res?.rows) ? res.rows : []);
+      } catch (err) {
+        if (active) {
+          setDisposedAssets([]);
+          setListError(normalizeApiError(err, l("Failed to load disposals.", "Satis islemleri yuklenemedi.")));
+        }
+      } finally {
+        if (active) setListLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [canRead, queryTransactionId, legalEntityId, l]);
+
+  if (!canRead) {
     return (
-      <FixedAssetModulePage
-        route="/app/demirbas-satis-islemleri"
-        description={l(
-          "Disposal, sale, and write-off queue aligned to FA11, with explicit NBV, gain/loss, and schedule-cutoff behavior.",
-          "FA11 ile uyumlu satis, elden cikarma ve hurda kuyrugu; acik NBV, kar/zarar ve plan-kesme davranisini hedefler."
-        )}
-        currentScope={[
-          l(
-            "Keep disposal separate from physical move and ownership transfer.",
-            "Satis/elden cikarmayi fiziksel hareket ve ownership transfer akisindan ayir."
-          ),
-          l(
-            "Prepare queue columns for disposal date, proceeds, NBV, gain/loss, and journal traceability.",
-            "Kuyruk kolonlarini disposal tarihi, tahsilat, NBV, kar/zarar ve fis izlenebilirligi icin hazirla."
-          ),
-          l(
-            "Show period-open and posting prerequisites before allowing the disposal action.",
-            "Disposal aksiyonundan once donem-acik ve posting on kosullarini goster."
-          ),
-        ]}
-        nextSteps={[
-          l(
-            "Implement disposal and write-off endpoints with owner-OU posting validation.",
-            "Owner-OU posting kontrolu ile disposal ve write-off endpointlerini uygula."
-          ),
-          l(
-            "Stop future depreciation schedule lines after disposal posting.",
-            "Disposal posting sonrasinda gelecek amortisman plan satirlarini durdur."
-          ),
-          l(
-            "Surface reversal policy only after the source and disposal accounting rules are locked.",
-            "Ters kayit politikasini ancak kaynak ve disposal muhasebe kurallari kilitlendikten sonra ac."
-          ),
-        ]}
-        decisionItems={[
-          l(
-            "Every posting action must enforce book, fiscal-period-open, and posting-date legality checks.",
-            "Tum posting aksiyonlari defter, mali donem-acik ve posting tarihi uygunluk kontrollerini uygulamali."
-          ),
-        ]}
-      />
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p className="text-sm text-slate-600">
+          {l("Missing permission: fixed_assets.read", "Eksik yetki: fixed_assets.read")}
+        </p>
+      </div>
     );
   }
 
-  // Deep-link: show focused disposal transaction
-  if (loading) {
+  // ── List mode ──────────────────────────────────────────────────────
+  if (!queryTransactionId) {
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">
+            {l("Fixed Asset Disposals", "Demirbas Satis/Elden Cikarma")}
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {l(
+              "Sale, write-off, and disposal transactions. Assets that have been disposed are listed below.",
+              "Satis, hurda ve elden cikarma islemleri. Elden cikarilmis varliklar asagida listelenir."
+            )}
+          </p>
+          {!canDispose ? (
+            <p className="mt-2 text-xs text-amber-700">
+              {l(
+                "Read-only access — you do not have disposal permissions.",
+                "Salt okunur erisim — elden cikarma yetkiniz yok."
+              )}
+            </p>
+          ) : null}
+        </section>
+
+        {/* Results */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">
+            {l("Disposed Assets", "Elden Cikarilmis Varliklar")}
+            {!listLoading ? <span className="ml-2 text-sm font-normal text-slate-500">({disposedAssets.length})</span> : null}
+          </h2>
+          {listError ? <p className="mt-3 text-sm text-rose-700">{listError}</p> : null}
+          {listLoading ? <p className="mt-3 text-sm text-slate-600">{l("Loading...", "Yukleniyor...")}</p> : null}
+          {!listLoading && disposedAssets.length === 0 && !listError ? (
+            <p className="mt-3 text-sm text-slate-600">
+              {l("No sale or disposal transactions found.", "Satis veya elden cikarma islemi bulunamadi.")}
+            </p>
+          ) : null}
+          {!listLoading && disposedAssets.length > 0 ? (
+            <div className="mt-3 overflow-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-left text-slate-600">
+                  <tr>
+                    <th className="px-3 py-2">{l("Asset No", "Demirbas No")}</th>
+                    <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                    <th className="px-3 py-2">{l("Status", "Durum")}</th>
+                    <th className="px-3 py-2">{l("Disposal Date", "Elden Cikarma Tarihi")}</th>
+                    <th className="px-3 py-2 text-right">{l("Original Cost", "Orijinal Maliyet")}</th>
+                    <th className="px-3 py-2">{l("Currency", "Para Birimi")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {disposedAssets.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <td className="px-3 py-2">
+                        <Link
+                          to={`/app/demirbas-karti-detayi/${row.id}`}
+                          className="font-medium text-cyan-700 hover:underline"
+                        >
+                          {row.assetNo || "-"}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 max-w-[200px] truncate">{row.name || "-"}</td>
+                      <td className="px-3 py-2">
+                        <span className="inline-block rounded-full px-2 py-0.5 text-xs font-semibold bg-rose-100 text-rose-800">
+                          {row.status || "-"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">{formatDate(row.disposalDate)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatNumber(row.originalCostBase)}</td>
+                      <td className="px-3 py-2">{row.currencyCode || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </section>
+      </div>
+    );
+  }
+
+  // ── Deep-link mode ─────────────────────────────────────────────────
+
+  if (deepLinkLoading) {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <p className="text-sm text-slate-600">{l("Loading...", "Yukleniyor...")}</p>
@@ -131,21 +211,25 @@ export default function FixedAssetDisposalsPage() {
     );
   }
 
-  if (error) {
+  if (deepLinkError) {
     return (
       <div className="rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
-        <p className="text-sm text-rose-700">{error}</p>
+        <p className="text-sm text-rose-700">{deepLinkError}</p>
       </div>
     );
   }
 
-  // Find the focused transaction
   const focusedTx = transactions.find(
     (tx) => parsePositiveInt(tx.id) === queryTransactionId
   );
 
   return (
     <div className="space-y-4">
+      {/* Back link */}
+      <Link to="/app/demirbas-satis-islemleri" className="text-sm text-cyan-700 hover:underline">
+        {l("Back to disposals", "Satis listesine don")}
+      </Link>
+
       {/* Context banner */}
       <section className="rounded-xl border border-cyan-200 bg-cyan-50 p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">
@@ -221,7 +305,7 @@ export default function FixedAssetDisposalsPage() {
         </section>
       )}
 
-      {/* All disposal-type transactions for context */}
+      {/* All transactions for context */}
       {transactions.length > 0 ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h3 className="text-base font-semibold text-slate-900">

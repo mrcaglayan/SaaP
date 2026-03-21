@@ -1011,18 +1011,34 @@ export function assertScopeAccess(req, scopeKind, scopeId, label = "scope") {
 }
 
 /**
- * Assert that the authenticated user also holds `permissionCode` for the
- * current tenant, without replacing or overwriting the existing `req.rbac`
- * context that was set by `requirePermission(...)`.
+ * Assert that the authenticated user also holds `permissionCode` without
+ * replacing or overwriting the existing `req.rbac` context that was set by
+ * `requirePermission(...)`.
  *
  * Use this inside route handlers that already sit behind a primary
  * `requirePermission(...)` middleware but need to verify a secondary
  * cross-module permission (e.g. a fixed-assets route that also checks a
  * CARI permission).
  *
- * Throws 403 if the permission is missing. Does not mutate `req.rbac`.
+ * By default, secondary checks inherit the primary route's resolved scope.
+ * Callers may also provide `options.resolveScope(req, tenantId)` to resolve
+ * the secondary resource's own scope. When both primary and secondary scopes
+ * exist, the helper enforces exact same-scope matching unless
+ * `options.matchPrimaryScope === false`.
+ *
+ * Throws 403 if the permission or scope is missing. Does not mutate `req.rbac`.
  */
-export async function assertSecondaryPermission(req, permissionCode) {
+function scopesEqual(left, right) {
+  if (!left && !right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return left.scopeType === right.scopeType && left.scopeId === right.scopeId;
+}
+
+export async function assertSecondaryPermission(req, permissionCode, options = {}) {
   const normalizedCode = String(permissionCode || "").trim();
   if (!normalizedCode) {
     throw new Error("permissionCode is required for assertSecondaryPermission");
@@ -1048,8 +1064,39 @@ export async function assertSecondaryPermission(req, permissionCode) {
     throw forbidden(`Missing secondary permission: ${normalizedCode}`);
   }
 
-  if (!isScopeAllowed(bundle.permissionScopeContext, null)) {
+  const primaryRequestedScope = req.rbac?.requestedScope
+    ? normalizeScope(req.rbac.requestedScope, tenantId)
+    : null;
+  let requestedScope = primaryRequestedScope;
+
+  if (typeof options.resolveScope === "function") {
+    const rawSecondaryScope = await options.resolveScope(req, tenantId);
+    const secondaryRequestedScope = normalizeScope(rawSecondaryScope, tenantId);
+    const matchPrimaryScope = options.matchPrimaryScope !== false;
+
+    if (
+      matchPrimaryScope &&
+      primaryRequestedScope &&
+      secondaryRequestedScope &&
+      !scopesEqual(primaryRequestedScope, secondaryRequestedScope)
+    ) {
+      throw forbidden(`Secondary permission scope mismatch: ${normalizedCode}`);
+    }
+
+    if (secondaryRequestedScope) {
+      requestedScope = secondaryRequestedScope;
+    }
+  }
+
+  if (!isScopeAllowed(bundle.permissionScopeContext, requestedScope)) {
     throw forbidden(`Missing secondary permission: ${normalizedCode}`);
+  }
+
+  if (requestedScope && !isScopeAllowed(bundle.scopeContext, requestedScope)) {
+    throw forbidden(`Secondary data scope denied: ${normalizedCode}`);
+  }
+  if (!requestedScope && !isScopeAllowed(bundle.scopeContext, null)) {
+    throw forbidden(`Secondary data scope denied: ${normalizedCode}`);
   }
 }
 

@@ -3655,6 +3655,96 @@ export async function activateAssetStandard(input) {
   return activateAsset(input);
 }
 
+const SUSPEND_REQUIRED_CURRENT_STATUS = "ACTIVE";
+const REACTIVATE_REQUIRED_CURRENT_STATUS = "SUSPENDED";
+
+async function changeAssetLifecycleStatusWithoutJournal(input, options) {
+  const {
+    tenantId,
+    assetId,
+    effectiveDate,
+    note,
+    userId,
+  } = input;
+  const {
+    actionLabel,
+    fromStatus,
+    toStatus,
+    transactionType,
+  } = options;
+
+  return withTransaction(async (tx) => {
+    const existingResult = await tx.query(
+      `SELECT id, tenant_id, legal_entity_id, status, currency_code
+         FROM fixed_assets
+        WHERE id = ? AND tenant_id = ?
+        LIMIT 1
+        FOR UPDATE`,
+      [assetId, tenantId]
+    );
+    const asset = existingResult.rows?.[0];
+    if (!asset) {
+      throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+    }
+
+    const currentStatus = normalizeUpperText(asset.status);
+    if (currentStatus !== fromStatus) {
+      throw badRequest(
+        `${actionLabel} is only allowed for ${fromStatus} assets ` +
+        `(assetId=${assetId}, status=${currentStatus})`
+      );
+    }
+
+    await tx.query(
+      `UPDATE fixed_assets
+          SET status = ?,
+              updated_by_user_id = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [toStatus, userId, assetId, tenantId]
+    );
+
+    const transactionId = await insertFixedAssetTransaction(tx, {
+      tenantId,
+      legalEntityId: Number(asset.legal_entity_id),
+      assetId,
+      transactionType,
+      effectiveDate,
+      postingDate: effectiveDate,
+      bookId: null,
+      fiscalPeriodId: null,
+      currencyCode: asset.currency_code || null,
+      note,
+      createdByUserId: userId,
+    });
+
+    if (!transactionId) {
+      throw badRequest(`Failed to create ${transactionType} transaction`);
+    }
+
+    return assetId;
+  }).then(async (updatedAssetId) => {
+    return getAssetDetail({ tenantId, assetId: updatedAssetId });
+  });
+}
+
+export async function suspendAsset(input) {
+  return changeAssetLifecycleStatusWithoutJournal(input, {
+    actionLabel: "Suspend",
+    fromStatus: SUSPEND_REQUIRED_CURRENT_STATUS,
+    toStatus: "SUSPENDED",
+    transactionType: "SUSPEND",
+  });
+}
+
+export async function reactivateAsset(input) {
+  return changeAssetLifecycleStatusWithoutJournal(input, {
+    actionLabel: "Reactivate",
+    fromStatus: REACTIVATE_REQUIRED_CURRENT_STATUS,
+    toStatus: "ACTIVE",
+    transactionType: "REACTIVATE",
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Physical move workflow
 // ═══════════════════════════════════════════════════════════════════

@@ -14,7 +14,7 @@
 
 import express from "express";
 import { query } from "../db.js";
-import { asyncHandler } from "./_utils.js";
+import { asyncHandler, parsePositiveInt } from "./_utils.js";
 import {
   assertScopeAccess,
   assertSecondaryPermission,
@@ -42,6 +42,8 @@ import {
   parseCariEligibleApLineReadInput,
   parseCariDocumentLineCapitalizationInput,
   parseActivateAssetInput,
+  parseSuspendAssetInput,
+  parseReactivateAssetInput,
   parsePhysicalMoveInput,
   parseOwnershipTransferInput,
   parseWriteoffInput,
@@ -60,6 +62,7 @@ import {
   parseCustodianListFilters,
   parseCustodianCreateInput,
   parseCustodianUpdateInput,
+  parseReportFilters,
 } from "./fixed-assets.validators.js";
 import {
   listAssets,
@@ -67,6 +70,8 @@ import {
   listCariEligibleApLinesForFa06,
   createAssetsFromCariDocumentLineFa06,
   activateAsset,
+  suspendAsset,
+  reactivateAsset,
   physicalMoveAsset,
   ownershipTransferAsset,
   writeoffAsset,
@@ -97,6 +102,7 @@ import {
   previewDepreciationRun,
   createDepreciationRunDraft,
 } from "../services/fixed-assets.depreciation.service.js";
+import { getReportHandler } from "../services/fixed-assets.reporting.service.js";
 import fixedAssetsEvidenceRoutes from "./fixed-assets.evidence.routes.js";
 
 const router = express.Router();
@@ -115,6 +121,44 @@ function resolveSourceCariDocumentIdFromBody(req) {
     ?? req.body?.cariDocumentId
     ?? req.body?.documentId
     ?? null;
+}
+
+function resolveSaleLinkCariDocumentIdFromBody(req) {
+  return req.body?.cariDocumentId
+    ?? req.body?.cari_document_id
+    ?? null;
+}
+
+async function resolveSaleLinkCariDocumentScope(req, tenantId) {
+  const cariDocumentId = parsePositiveInt(resolveSaleLinkCariDocumentIdFromBody(req));
+  if (!cariDocumentId || !tenantId) {
+    return null;
+  }
+  return resolveCariDocumentScope(cariDocumentId, tenantId);
+}
+
+async function resolvePendingSaleCariDocumentScope(req, tenantId) {
+  const assetId = parsePositiveInt(req.params?.assetId);
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  if (!assetId || !normalizedTenantId) {
+    return null;
+  }
+
+  const result = await query(
+    `SELECT pending_sale_cari_document_id
+       FROM fixed_assets
+      WHERE tenant_id = ? AND id = ?
+      LIMIT 1`,
+    [normalizedTenantId, assetId]
+  );
+  const pendingCariDocumentId = parsePositiveInt(
+    result.rows?.[0]?.pending_sale_cari_document_id
+  );
+  if (!pendingCariDocumentId) {
+    return null;
+  }
+
+  return resolveCariDocumentScope(pendingCariDocumentId, normalizedTenantId);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -327,14 +371,16 @@ router.post(
 );
 
 // ── Reports (static /reports prefix) ─────────────────────────────
-// STEP-FA47 lands real handlers here.
 router.get(
   "/reports/:reportName",
   requirePermission("fixed_assets.report.read", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const filters = parseReportFilters(req);
+    const handler = getReportHandler(filters.reportName);
+    const result = await handler.report(filters);
+    return res.json(result);
   })
 );
 
@@ -343,8 +389,14 @@ router.get(
   requirePermission("fixed_assets.report.read", {
     resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const filters = parseReportFilters(req);
+    const handler = getReportHandler(filters.reportName);
+    const result = await handler.export(filters);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${result.fileName}"`);
+    res.setHeader("X-Export-Row-Count", String(result.rowCount));
+    return res.status(200).send(result.csv);
   })
 );
 
@@ -564,8 +616,10 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseSuspendAssetInput(req);
+    const asset = await suspendAsset(input);
+    return res.json(asset);
   })
 );
 
@@ -575,8 +629,10 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseReactivateAssetInput(req);
+    const asset = await reactivateAsset(input);
+    return res.json(asset);
   })
 );
 
@@ -641,7 +697,9 @@ router.post(
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
   asyncHandler(async (req, res) => {
-    await assertSecondaryPermission(req, "cari.doc.read");
+    await assertSecondaryPermission(req, "cari.doc.read", {
+      resolveScope: resolveSaleLinkCariDocumentScope,
+    });
     const input = parseSaleLinkArInput(req);
     const result = await saleLinkArDocument({ req, ...input, assertScopeAccess });
     return res.json(result);
@@ -655,7 +713,9 @@ router.patch(
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
   asyncHandler(async (req, res) => {
-    await assertSecondaryPermission(req, "cari.doc.update");
+    await assertSecondaryPermission(req, "cari.doc.update", {
+      resolveScope: resolvePendingSaleCariDocumentScope,
+    });
     const input = parseSaleUpdateDraftArInput(req);
     const result = await saleUpdateDraftArDocument({ req, ...input, assertScopeAccess });
     return res.json(result);
@@ -669,7 +729,9 @@ router.post(
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
   asyncHandler(async (req, res) => {
-    await assertSecondaryPermission(req, "cari.doc.post");
+    await assertSecondaryPermission(req, "cari.doc.post", {
+      resolveScope: resolvePendingSaleCariDocumentScope,
+    });
     const input = parseSaleFinalizeInput(req);
     const result = await saleFinalizeAsset({ req, ...input, assertScopeAccess });
     return res.json(result);

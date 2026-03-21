@@ -8,16 +8,10 @@ Scope: Full cross-reference of all implemented steps (FA01-FA45), remaining step
 ## PART 1: Implemented Steps — Status and Findings
 
 ### FA01 - Source-type registry and RBAC secondary helper
-- **Status**: GREEN
-- **Log carry-forward**: "secondary RBAC helper currently asserts permission presence without caller-supplied scope matching and may need scoped extension when FA06/FA11 consumers land"
-- **Current state**: `assertSecondaryPermission` is used by FA06 (cari.doc.read), FA11 sale (cari.doc.create/read/update/post), and FA45 evidence hardening. The helper validates permission existence tenant-wide without scope matching. No consumer has needed scope-matching extension yet.
-- **Risk**: LOW. The current behavior is sufficient for all implemented flows.
+- **Status**: GREEN. No open items.
 
 ### FA02 - PRIMARY journal-source-link preflight
-- **Status**: GREEN
-- **Log carry-forward**: "final smoke coverage still needs a non-empty seeded/fixture run"
-- **Current state**: The preflight surface works. FA05 added regression tests.
-- **Risk**: NONE remaining.
+- **Status**: GREEN. No open items.
 
 ### FA03 - CARI/cash writer PRIMARY audit
 - **Status**: GREEN. No open items.
@@ -35,9 +29,7 @@ Scope: Full cross-reference of all implemented steps (FA01-FA45), remaining step
 - **Status**: GREEN. No open items.
 
 ### FA08 - OpenAPI generator FixedAssets tag support
-- **Status**: GREEN
-- **Repo check**: `generate-openapi.js` has `FixedAssets` tag registered and `/api/v1/fixed-assets` path inference present. `openapi.yaml` lists the tag.
-- **Risk**: NONE.
+- **Status**: GREEN. No open items.
 
 ### FA09 - m138 foundation migration (base tables)
 - **Status**: GREEN. Tables created in dependency-safe order.
@@ -82,10 +74,7 @@ Scope: Full cross-reference of all implemented steps (FA01-FA45), remaining step
 - **Status**: GREEN. Forward-only remaining depreciation.
 
 ### FA23 - Low-value asset inline full-expense
-- **Status**: GREEN
-- **Log carry-forward**: "re-check low-value asset exclusion logic at FA30/FA31"
-- **Repo check**: `isLowValueFullyExpensedAsset()` in depreciation service correctly checks `FULLY_DEPRECIATED + NONE method + zero remaining months`. Re-checked and confirmed at FA31.
-- **Risk**: NONE remaining.
+- **Status**: GREEN. No open items.
 
 ### FA24 - FA06 eligible AP-line selection
 - **Status**: GREEN. Remaining-unit math, permission gating.

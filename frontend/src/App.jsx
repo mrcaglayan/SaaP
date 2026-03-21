@@ -67,8 +67,8 @@ import InventoryMovementsPage from "./pages/inventory/InventoryMovementsPage.jsx
 import InventoryTransfersPage from "./pages/inventory/InventoryTransfersPage.jsx";
 import ContractsPage from "./pages/contracts/ContractsPage.jsx";
 import FixedAssetsPage from "./pages/fixedAssets/FixedAssetsPage.jsx";
-import FixedAssetFormPage from "./pages/fixedAssets/FixedAssetFormPage.jsx";
 import FixedAssetDetailPage from "./pages/fixedAssets/FixedAssetDetailPage.jsx";
+import FixedAssetFormPage from "./pages/fixedAssets/FixedAssetFormPage.jsx";
 import FixedAssetAcquisitionsPage from "./pages/fixedAssets/FixedAssetAcquisitionsPage.jsx";
 import FixedAssetDisposalsPage from "./pages/fixedAssets/FixedAssetDisposalsPage.jsx";
 import FixedAssetDepreciationRunsPage from "./pages/fixedAssets/FixedAssetDepreciationRunsPage.jsx";
@@ -369,6 +369,7 @@ const implementedRoutes = [
   {
     appPath: "/app/demirbas-karti-olustur",
     childPath: "demirbas-karti-olustur",
+    permissionPath: "/app/demirbas-karti-listesi",
     element: <FixedAssetFormPage />,
   },
   {

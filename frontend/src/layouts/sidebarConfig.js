@@ -453,13 +453,13 @@ export const sidebarItems = [
       {
         label: "Demirbas Alim Islemleri",
         to: "/app/demirbas-alim-islemleri",
-        requiredPermissions: ["fixed_assets.upsert", "fixed_assets.post"],
+        requiredPermissions: ["fixed_assets.read"],
         implemented: true,
       },
       {
         label: "Demirbas Satis Islemleri",
         to: "/app/demirbas-satis-islemleri",
-        requiredPermissions: ["fixed_assets.dispose"],
+        requiredPermissions: ["fixed_assets.read"],
         implemented: true,
       },
       {
@@ -477,19 +477,13 @@ export const sidebarItems = [
       {
         label: "Demirbas Ayarlari",
         to: "/app/ayarlar/demirbas-ayarlari",
-        requiredPermissions: [
-          "fixed_assets.settings.read",
-          "fixed_assets.settings.upsert",
-        ],
+        requiredPermissions: ["fixed_assets.settings.read"],
         implemented: true,
       },
       {
         label: "Demirbas Zimmetlileri",
         to: "/app/ayarlar/demirbas-zimmetlileri",
-        requiredPermissions: [
-          "fixed_assets.custodian.read",
-          "fixed_assets.custodian.write",
-        ],
+        requiredPermissions: ["fixed_assets.custodian.read"],
         implemented: true,
       },
     ],

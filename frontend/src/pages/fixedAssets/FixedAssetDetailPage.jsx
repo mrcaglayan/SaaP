@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
-import { getFixedAsset, listFixedAssetTransactions } from "../../api/fixedAssets.js";
+import { getFixedAsset, getFixedAssetDepreciationSchedule, listFixedAssetTransactions } from "../../api/fixedAssets.js";
 
 function normalizeApiError(error, fallback) {
   const message = String(
@@ -62,6 +62,11 @@ export default function FixedAssetDetailPage() {
   const { l } = useI18n();
   const { hasPermission } = useAuth();
   const canRead = hasPermission("fixed_assets.read");
+  const canUpsert = hasPermission("fixed_assets.upsert");
+  const canPost = hasPermission("fixed_assets.post");
+  const canDispose = hasPermission("fixed_assets.dispose");
+  const canTransfer = hasPermission("fixed_assets.transfer");
+  const canOverrideAccounts = hasPermission("fixed_assets.account_override");
 
   // Deep-link query params: tab and transactionId
   const queryTab = searchParams.get("tab");
@@ -77,6 +82,11 @@ export default function FixedAssetDetailPage() {
   const [transactions, setTransactions] = useState([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [transactionsError, setTransactionsError] = useState("");
+
+  // Depreciation schedule state
+  const [schedule, setSchedule] = useState([]);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
 
   useEffect(() => {
     if (!canRead || !assetId) { setAsset(null); return; }
@@ -118,6 +128,30 @@ export default function FixedAssetDetailPage() {
         }
       } finally {
         if (active) setTransactionsLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [canRead, assetId, activeTab, l]);
+
+  // Load depreciation schedule when depreciation tab is active
+  useEffect(() => {
+    if (!canRead || !assetId || activeTab !== "depreciation") return;
+    let active = true;
+    (async () => {
+      setScheduleLoading(true);
+      setScheduleError("");
+      try {
+        const res = await getFixedAssetDepreciationSchedule(assetId);
+        if (active) setSchedule(res.rows || []);
+      } catch (err) {
+        if (active) {
+          setSchedule([]);
+          setScheduleError(
+            normalizeApiError(err, l("Failed to load schedule.", "Amortisman plani yuklenemedi."))
+          );
+        }
+      } finally {
+        if (active) setScheduleLoading(false);
       }
     })();
     return () => { active = false; };
@@ -166,11 +200,12 @@ export default function FixedAssetDetailPage() {
     { key: "audit", label: l("Audit Trail", "Denetim Izi") },
   ];
 
+  const status = String(asset.status || "").toUpperCase();
   const statusColor =
-    asset.status === "ACTIVE" ? "bg-emerald-100 text-emerald-800" :
-    asset.status === "DISPOSED" ? "bg-rose-100 text-rose-800" :
-    asset.status === "SUSPENDED" ? "bg-amber-100 text-amber-800" :
-    asset.status === "FULLY_DEPRECIATED" ? "bg-blue-100 text-blue-800" :
+    status === "ACTIVE" ? "bg-emerald-100 text-emerald-800" :
+    status === "DISPOSED" ? "bg-rose-100 text-rose-800" :
+    status === "SUSPENDED" ? "bg-amber-100 text-amber-800" :
+    status === "FULLY_DEPRECIATED" ? "bg-blue-100 text-blue-800" :
     "bg-slate-100 text-slate-700";
 
   return (
@@ -192,6 +227,71 @@ export default function FixedAssetDetailPage() {
         <p className="mt-1 text-sm text-slate-600">{asset.name || "-"}</p>
         {asset.description ? <p className="mt-1 text-xs text-slate-500">{asset.description}</p> : null}
       </section>
+
+      {/* Permission-gated actions */}
+      {(canUpsert || canPost || canDispose || canTransfer) ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {l("Available Actions", "Mevcut Aksiyonlar")}
+          </h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {canUpsert && status === "DRAFT" ? (
+              <span className="rounded-md bg-slate-50 px-3 py-1 text-xs font-medium text-slate-800 border border-slate-200">
+                {l("Edit Draft", "Taslak Duzenle")}
+              </span>
+            ) : null}
+            {canPost && status === "DRAFT" ? (
+              <span className="rounded-md bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 border border-emerald-200">
+                {l("Activate", "Aktiflestir")}
+              </span>
+            ) : null}
+            {canPost && status === "ACTIVE" ? (
+              <span className="rounded-md bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 border border-amber-200">
+                {l("Suspend", "Askiya Al")}
+              </span>
+            ) : null}
+            {canPost && status === "SUSPENDED" ? (
+              <span className="rounded-md bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 border border-emerald-200">
+                {l("Reactivate", "Yeniden Aktiflestir")}
+              </span>
+            ) : null}
+            {canTransfer && (status === "ACTIVE" || status === "SUSPENDED") ? (
+              <>
+                <span className="rounded-md bg-blue-50 px-3 py-1 text-xs font-medium text-blue-800 border border-blue-200">
+                  {l("Physical Move", "Fiziksel Hareket")}
+                </span>
+                <span className="rounded-md bg-blue-50 px-3 py-1 text-xs font-medium text-blue-800 border border-blue-200">
+                  {l("Ownership Transfer", "Sahiplik Transferi")}
+                </span>
+              </>
+            ) : null}
+            {canDispose && status === "ACTIVE" ? (
+              <>
+                <span className="rounded-md bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 border border-rose-200">
+                  {l("Write Off", "Hurda Islem")}
+                </span>
+                <span className="rounded-md bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 border border-rose-200">
+                  {l("Sale", "Satis")}
+                </span>
+              </>
+            ) : null}
+          </div>
+          {canOverrideAccounts ? (
+            <div className="mt-2 border-t border-slate-100 pt-2">
+              <span className="rounded-md bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 border border-violet-200">
+                {l("Override Account Mappings", "Hesap Eslemelerini Gecersiz Kil")}
+              </span>
+            </div>
+          ) : null}
+        </section>
+      ) : (
+        <p className="text-xs text-amber-700">
+          {l(
+            "Read-only access — you do not have edit permissions.",
+            "Salt okunur erisim — duzenleme yetkiniz yok."
+          )}
+        </p>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-1">
@@ -311,12 +411,40 @@ export default function FixedAssetDetailPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">{l("Depreciation Schedule", "Amortisman Plani")}</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              {l(
-                "The depreciation schedule will be loaded from a separate endpoint in a later step.",
-                "Amortisman plani ilerideki bir adimda ayri bir endpointten yuklenecektir."
-              )}
-            </p>
+            {scheduleLoading ? (
+              <p className="mt-2 text-sm text-slate-500">{l("Loading...", "Yukleniyor...")}</p>
+            ) : scheduleError ? (
+              <p className="mt-2 text-sm text-rose-600">{scheduleError}</p>
+            ) : schedule.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-500">
+                {l("No schedule lines found.", "Amortisman plan satiri bulunamadi.")}
+              </p>
+            ) : (
+              <div className="mt-3 overflow-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="px-2 py-2">{l("Period", "Donem")}</th>
+                      <th className="px-2 py-2">{l("Status", "Durum")}</th>
+                      <th className="px-2 py-2 text-right">{l("Depr Amount (Base)", "Amort Tutar (Baz)")}</th>
+                      <th className="px-2 py-2 text-right">{l("Accum Depr (Base)", "Birikm Amort (Baz)")}</th>
+                      <th className="px-2 py-2 text-right">{l("NBV (Base)", "NBV (Baz)")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {schedule.map((line, idx) => (
+                      <tr key={line.id || idx} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="px-2 py-1.5">{line.periodKey || line.period_key || "-"}</td>
+                        <td className="px-2 py-1.5">{line.status || "-"}</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{formatNumber(line.depreciationAmountBase || line.depreciation_amount_base)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{formatNumber(line.accumDepreciationBase || line.accum_depreciation_base)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{formatNumber(line.nbvBase || line.nbv_base)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </div>
       ) : null}
@@ -394,8 +522,8 @@ export default function FixedAssetDetailPage() {
             <h2 className="text-lg font-semibold text-slate-900">{l("Evidence", "Kanit")}</h2>
             <p className="mt-2 text-sm text-slate-500">
               {l(
-                "Evidence management will be available once the evidence endpoints are implemented.",
-                "Kanit yonetimi, kanit endpointleri tamamlandiginda kullanilabilir olacaktir."
+                "Evidence endpoints are available. Full evidence management UI will be delivered with the frontend completion pass.",
+                "Kanit endpointleri kullanilabilir. Tam kanit yonetimi arayuzu frontend tamamlama adiminda sunulacaktir."
               )}
             </p>
           </section>

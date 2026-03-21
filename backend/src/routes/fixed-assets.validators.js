@@ -420,6 +420,40 @@ export function parseActivateAssetInput(req) {
   return { tenantId, assetId, postingDate, capitalizationDate, inServiceDate, userId };
 }
 
+function parseAssetLifecycleNoteInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  const effectiveDate = normalizeDateOnlyRequired(
+    body.effectiveDate ?? body.effective_date,
+    "effectiveDate"
+  );
+
+  const note = body.note != null ? String(body.note).trim() || null : null;
+  const userId = req.user?.userId || null;
+
+  return {
+    tenantId,
+    assetId,
+    effectiveDate,
+    note,
+    userId,
+  };
+}
+
+export function parseSuspendAssetInput(req) {
+  return parseAssetLifecycleNoteInput(req);
+}
+
+export function parseReactivateAssetInput(req) {
+  return parseAssetLifecycleNoteInput(req);
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Physical move validators
 // ═══════════════════════════════════════════════════════════════════
@@ -1082,6 +1116,71 @@ export function parseRegisterListFilters(req) {
     departmentCode,
     costCenterCode,
     disposed,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Report validators
+// ═══════════════════════════════════════════════════════════════════
+
+export function parseReportFilters(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+  const ownerOperatingUnitId = parsePositiveInt(req.query?.ownerOperatingUnitId);
+  const locationOperatingUnitId = parsePositiveInt(req.query?.locationOperatingUnitId);
+  const categoryId = parsePositiveInt(req.query?.categoryId);
+  const custodianId = parsePositiveInt(req.query?.custodianId);
+  const assetId = parsePositiveInt(req.query?.assetId);
+  const fiscalPeriodId = parsePositiveInt(req.query?.fiscalPeriodId);
+
+  const status = normalizeUpperText(req.query?.status);
+  if (status && !VALID_ASSET_STATUSES.has(status)) {
+    throw badRequest(`status must be one of: ${[...VALID_ASSET_STATUSES].join(", ")}`);
+  }
+
+  const dateFrom = normalizeDateOnlyOptional(req.query?.dateFrom, "dateFrom");
+  const dateTo = normalizeDateOnlyOptional(req.query?.dateTo, "dateTo");
+
+  const periodKey = req.query?.periodKey
+    ? String(req.query.periodKey).trim() || null
+    : null;
+  const departmentCode = req.query?.departmentCode
+    ? String(req.query.departmentCode).trim() || null
+    : null;
+  const costCenterCode = req.query?.costCenterCode
+    ? String(req.query.costCenterCode).trim() || null
+    : null;
+
+  let disposed = undefined;
+  if (req.query?.disposed !== undefined && req.query.disposed !== "") {
+    const raw = String(req.query.disposed).toLowerCase();
+    if (raw === "true" || raw === "1") disposed = true;
+    else if (raw === "false" || raw === "0") disposed = false;
+  }
+
+  const reportName = req.params?.reportName
+    ? String(req.params.reportName).trim().toLowerCase()
+    : null;
+
+  return {
+    tenantId,
+    legalEntityId,
+    ownerOperatingUnitId,
+    locationOperatingUnitId,
+    categoryId,
+    custodianId,
+    assetId,
+    fiscalPeriodId,
+    status,
+    dateFrom,
+    dateTo,
+    periodKey,
+    departmentCode,
+    costCenterCode,
+    disposed,
+    reportName,
   };
 }
 

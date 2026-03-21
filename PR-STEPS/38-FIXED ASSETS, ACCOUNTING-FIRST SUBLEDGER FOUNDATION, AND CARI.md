@@ -21,7 +21,7 @@
 ## Execution Tracking
 - This file now has two layers:
   - feature-scope sections `FA01` to `FA14`, which define business and technical requirements
-  - serialized execution sections `STEP-FA01` to `STEP-FA48`, which define review-sized implementation steps
+  - serialized execution sections `STEP-FA01` to `STEP-FA50`, which define review-sized implementation steps
 - When using Codex for implementation, prompt against one `STEP-FA##` step at a time.
 - A Codex prompt should name:
   - the single `STEP-FA##` patch target
@@ -672,6 +672,8 @@ Implementation note:
 - locked repo-native approach for MVP:
   - use `requirePermission(...)` as the primary route guard for the owning fixed-assets action
   - add and use a secondary RBAC helper that asserts an additional permission code without replacing `req.rbac`
+  - the secondary helper should inherit the primary route's resolved scope by default so cross-module checks do not silently widen to tenant-wide permission presence
+  - when the route is acting on a secondary cross-module resource with its own resolvable scope, the secondary helper should accept that resolved scope and enforce exact same-scope matching against the primary route scope
   - use that secondary helper for cross-module `cari.doc.read/create/update/post` checks required by FA06 and FA11
 - do not move these cross-module permission checks into ad hoc service-local permission lookups that bypass the shared RBAC helper pattern unless a later repo-wide RBAC refactor changes the standard approach
 
@@ -1272,10 +1274,11 @@ Implementation notes:
 - [x] `STEP-FA43` - Fixed-assets journal source-link writing and backend destination resolution support
 - [x] `STEP-FA44` - Fixed-assets deep-link pages, Journal Workbench drillback, and query-contract completion
 - [x] `STEP-FA45` - Fixed-assets permission seeding and backend authorization hardening
-- [ ] `STEP-FA46` - Suspend and reactivate asset lifecycle endpoints
-- [ ] `STEP-FA47` - Frontend sidebar, route, action gating, and scaffold cleanup
-- [ ] `STEP-FA48` - Fixed-assets reports and paired export endpoints
-- [ ] `STEP-FA49` - Release gates, smoke suite, and rollout readiness checks
+- [x] `STEP-FA46` - Suspend and reactivate asset lifecycle endpoints
+- [x] `STEP-FA47` - Frontend sidebar, route, action gating, and scaffold cleanup
+- [x] `STEP-FA48` - Manual asset create and legacy-onboarding frontend form
+- [ ] `STEP-FA49` - Fixed-assets reports and paired export endpoints
+- [ ] `STEP-FA50` - Release gates, smoke suite, and rollout readiness checks
 
 ---
 
@@ -3074,7 +3077,53 @@ Wire the permission model into the frontend, replace remaining scaffold pages wi
 
 ---
 
-## `STEP-FA48` - Fixed-assets reports and paired export endpoints
+## `STEP-FA48` - Manual asset create and legacy-onboarding frontend form
+
+### Patch target
+Wire the real create/legacy-onboarding form into FixedAssetFormPage so users can create draft assets, enter legacy onboarding data, and activate assets from the frontend without ad hoc API calls.
+
+### In scope
+- full create-asset form collecting: category, owner OU, location OU, custodian, depreciation profile, acquisition date, original cost (txn/base), currency, description, asset tag, serial number
+- legacy onboarding fields: legacy accumulated depreciation (txn/base), legacy NBV (txn/base), in-service date
+- low-value full-expense path indication via category capitalization threshold
+- draft save via `createFixedAsset()` / `updateFixedAsset()` API helpers
+- activate button gated by `fixed_assets.post` permission, calling `activateFixedAsset()`
+- account-override fields gated separately by `fixed_assets.account_override` permission
+- category-driven default propagation for depreciation profile, useful life, salvage rule
+- validation aligned with backend `parseAssetCreateInput` and `parseActivateAssetInput` validators
+- navigation: after create → redirect to detail page; back link to register
+
+### Explicit non-goals
+- do not build the CARI-linked capitalization form here (FA25-FA27 cover that flow)
+- do not change backend validators or service logic
+- do not redesign the detail page
+- do not implement batch/bulk creation
+
+### Definition of done
+- a user with `fixed_assets.upsert` can create a draft asset from the form
+- a user can enter legacy onboarding fields for system migration
+- a user with `fixed_assets.post` can activate the draft from the form
+- account-override fields only appear when `fixed_assets.account_override` is present
+- category defaults propagate to the form on category selection
+- the form validates inputs before submission
+- `npm run build` passes
+
+### Smoke tests
+- create a draft asset via the form with standard acquisition fields, verify it appears in the register as DRAFT
+- create a legacy-onboarding asset with legacy accum depr and legacy NBV, activate it, verify schedule picks up from the legacy state
+- verify a user without `fixed_assets.account_override` does not see override fields
+- verify a user without `fixed_assets.post` sees the form but not the activate button
+- verify category selection propagates default depreciation profile and useful life
+
+### Acceptance
+- the create form is functional and permission-gated
+- legacy onboarding is a first-class creation path, not a hidden option
+- frontend form validation matches backend expectations
+- the standalone create page is no longer a placeholder
+
+---
+
+## `STEP-FA49` - Fixed-assets reports and paired export endpoints
 
 ### Patch target
 Implement the locked report set and its paired export contract.
@@ -3113,7 +3162,7 @@ Implement the locked report set and its paired export contract.
 
 ---
 
-## `STEP-FA49` - Release gates, smoke suite, and rollout readiness checks
+## `STEP-FA50` - Release gates, smoke suite, and rollout readiness checks
 
 ### Patch target
 Close the track with explicit release-readiness checks so the module is not considered done only because routes compile.
@@ -3538,13 +3587,29 @@ Use this matrix together with each serialized step body. `Allowed files` means t
 
 ### `STEP-FA46`
 - `AI size`: Small
+- `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: `STEP-FA30`, `STEP-FA45`
+- `Blocked by`: lifecycle cutoff eligibility or permission model not yet being stable
+- `Rollback risk`: Low
+- `Smoke command ideas`: local suspend/reactivate lifecycle smoke; verify schedule engine correctly prorates suspended periods
+
+### `STEP-FA47`
+- `AI size`: Small
 - `Allowed files`: `frontend/src/layouts/sidebarConfig.js`, `frontend/src/layouts/AppLayout.jsx`, `frontend/src/App.jsx`, `frontend/src/i18n/messages.js`, `frontend/src/pages/fixedAssets/*.jsx`, `frontend/src/api/fixedAssets.js`
 - `Dependencies`: `STEP-FA16`, `STEP-FA19`, `STEP-FA45`
 - `Blocked by`: backend permission surfaces not yet being stable enough to mirror in the UI
 - `Rollback risk`: Low
 - `Smoke command ideas`: `npm run build`; role-based sidebar and action-visibility smoke in the browser
 
-### `STEP-FA47`
+### `STEP-FA48`
+- `AI size`: Medium
+- `Allowed files`: `frontend/src/pages/fixedAssets/FixedAssetFormPage.jsx`, `frontend/src/api/fixedAssets.js`, `frontend/src/i18n/messages.js`
+- `Dependencies`: `STEP-FA20` to `STEP-FA23`, `STEP-FA47`
+- `Blocked by`: backend create/activate endpoints or frontend permission gating not yet being in place
+- `Rollback risk`: Low
+- `Smoke command ideas`: `npm run build`; manual create draft, legacy onboarding, and activate flow in the browser
+
+### `STEP-FA49`
 - `AI size`: Medium
 - `Allowed files`: `backend/src/routes/fixed-assets.routes.js`, `backend/src/routes/fixed-assets.validators.js`, `backend/src/services/fixed-assets.reporting.service.js`, `backend/src/services/fixed-assets.service.js`, `backend/src/services/fixed-assets.depreciation.service.js`, `frontend/src/pages/fixedAssets/FixedAssetReportsPage.jsx`, `frontend/src/api/fixedAssets.js`, `frontend/src/i18n/messages.js`
 - `Dependencies`: `STEP-FA17` to `STEP-FA19`, `STEP-FA28` to `STEP-FA40`
@@ -3552,10 +3617,10 @@ Use this matrix together with each serialized step body. `Allowed files` means t
 - `Rollback risk`: Medium
 - `Smoke command ideas`: local report and `/export` endpoint smoke plus `npm run build` for the reports page
 
-### `STEP-FA48`
+### `STEP-FA50`
 - `AI size`: Small
 - `Allowed files`: `backend/scripts/*`, `backend/package.json`, `frontend/package.json`, `backend/openapi.yaml`, this step-tracker document only if the release gate needs step-level wiring notes
-- `Dependencies`: `STEP-FA01` to `STEP-FA47`
+- `Dependencies`: `STEP-FA01` to `STEP-FA49`
 - `Blocked by`: any incomplete prerequisite slice in the fixed-assets track
 - `Rollback risk`: Low
 - `Smoke command ideas`: `npm run openapi:generate`; `npm run check:openapi`; `npm run build`; `npm run db:migrate:status`; the new fixed-assets smoke/release-gate runner when it exists
@@ -5230,5 +5295,4 @@ Require dedicated permission and, if later needed, approval-sensitive handling f
 - reports and exports are both contracted, with dedicated `/export` endpoints for fixed-assets reports
 - key uniqueness rules are DB-enforced
 - open decisions remain visible instead of being buried in implicit behavior
-
 

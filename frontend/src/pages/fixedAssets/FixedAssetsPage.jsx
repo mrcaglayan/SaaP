@@ -70,6 +70,7 @@ export default function FixedAssetsPage() {
   const { l } = useI18n();
   const { hasPermission } = useAuth();
   const canRead = hasPermission("fixed_assets.read");
+  const canUpsert = hasPermission("fixed_assets.upsert");
   const { legalEntity } = useWorkingContext();
 
   // ── Filters ───────────────────────────────────────────────────
@@ -207,15 +208,35 @@ export default function FixedAssetsPage() {
     <div className="space-y-6">
       {/* Header */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="text-xl font-semibold text-slate-900">
-          {l("Fixed Asset Register", "Demirbas Karti Listesi")}
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {l(
-            "Browse and filter the fixed-asset register. Click an asset to view its detail hub.",
-            "Demirbas kayit defterini goruntuleyin ve filtreleyin. Detay icin bir demirbasa tiklayin."
-          )}
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-slate-900">
+              {l("Fixed Asset Register", "Demirbas Karti Listesi")}
+            </h1>
+            <p className="mt-1 text-sm text-slate-600">
+              {l(
+                "Browse and filter the fixed-asset register. Click an asset to view its detail hub.",
+                "Demirbas kayit defterini goruntuleyin ve filtreleyin. Detay icin bir demirbasa tiklayin."
+              )}
+            </p>
+          </div>
+          {canUpsert ? (
+            <Link
+              to="/app/demirbas-karti-olustur"
+              className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-cyan-700"
+            >
+              {l("Create New Asset", "Yeni Demirbas Olustur")}
+            </Link>
+          ) : null}
+        </div>
+        {!canUpsert ? (
+          <p className="mt-2 text-xs text-amber-700">
+            {l(
+              "Read-only access — you do not have edit permissions.",
+              "Salt okunur erisim — duzenleme yetkiniz yok."
+            )}
+          </p>
+        ) : null}
       </section>
 
       {/* Filters */}
