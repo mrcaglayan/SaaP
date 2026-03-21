@@ -625,12 +625,20 @@ async function main() {
       `SMOKE3: Expected assetId=${assetId1}`);
     assert(updateResult?.pendingSaleCariDocumentId === docId1,
       `SMOKE3: Expected same docId=${docId1}`);
+    const updatedDraftLineId = Number((updateResult?.document?.lines || [])[0]?.id || 0);
+    assert(updatedDraftLineId > 0,
+      "SMOKE3: Updated draft document line ID missing");
+    assert(Number(updateResult?.pendingSaleCariDocumentLineId || 0) === updatedDraftLineId,
+      `SMOKE3: Expected pendingSaleCariDocumentLineId=${updatedDraftLineId}, got ${updateResult?.pendingSaleCariDocumentLineId}`);
 
     // Verify asset is still NOT disposed
     const assetCheck3 = await query(
-      `SELECT status FROM fixed_assets WHERE tenant_id=? AND id=?`, [TENANT_ID, assetId1]);
+      `SELECT status, pending_sale_cari_document_line_id
+         FROM fixed_assets WHERE tenant_id=? AND id=?`, [TENANT_ID, assetId1]);
     assert(assetCheck3.rows?.[0]?.status !== "DISPOSED",
       "SMOKE3: Asset should NOT be DISPOSED after update");
+    assert(toNumber(assetCheck3.rows?.[0]?.pending_sale_cari_document_line_id) === updatedDraftLineId,
+      `SMOKE3: Expected asset pending_sale_cari_document_line_id=${updatedDraftLineId}, got ${assetCheck3.rows?.[0]?.pending_sale_cari_document_line_id}`);
 
     // Verify no SALE transaction
     const saleTxn3 = await query(
@@ -641,6 +649,7 @@ async function main() {
 
     summary.smoke3_updateDraftAr = {
       assetId: assetId1, docId: docId1,
+      lineId: updatedDraftLineId,
       assetStatus: assetCheck3.rows?.[0]?.status, noSaleRow: true, PASS: true,
     };
     console.log("[fa39-smoke] SMOKE 3 PASSED ✓");

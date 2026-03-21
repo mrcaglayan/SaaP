@@ -596,11 +596,22 @@ async function loadSchedulePeriodsForRange({
   queryFn = query,
 }) {
   if (!monthCount || monthCount <= 0) {
-    return [];
+    return {
+      periods: [],
+      horizon: {
+        requestedMonthCount: 0,
+        resolvedMonthCount: 0,
+        isBounded: false,
+        firstMissingPeriodKey: null,
+        lastResolvedPeriodKey: null,
+        expectedLastPeriodKey: null,
+      },
+    };
   }
 
   const rangeStart = startOfMonth(parseDateOnly(startDate, "inServiceDate"));
   const rangeEnd = endOfMonth(addMonths(rangeStart, monthCount - 1));
+  const expectedLastPeriodKey = formatPeriodKey(addMonths(rangeStart, monthCount - 1));
   const periodRowsResult = await queryFn(
     `SELECT id,
             fiscal_year,
@@ -628,6 +639,7 @@ async function loadSchedulePeriodsForRange({
   }));
 
   const resolvedPeriods = [];
+  let firstMissingPeriodKey = null;
   for (let index = 0; index < monthCount; index += 1) {
     const expectedMonthStart = addMonths(rangeStart, index);
     const expectedMonthEnd = endOfMonth(expectedMonthStart);
@@ -640,9 +652,8 @@ async function loadSchedulePeriodsForRange({
     ));
 
     if (!overlappingRows.length) {
-      throw badRequest(
-        `No fiscal period found for supported fixed-assets month ${expectedPeriodKey}`
-      );
+      firstMissingPeriodKey = expectedPeriodKey;
+      break;
     }
 
     const alignedNonAdjustmentRow = overlappingRows.find((row) => (
@@ -671,7 +682,17 @@ async function loadSchedulePeriodsForRange({
     });
   }
 
-  return resolvedPeriods;
+  return {
+    periods: resolvedPeriods,
+    horizon: {
+      requestedMonthCount: Number(monthCount),
+      resolvedMonthCount: resolvedPeriods.length,
+      isBounded: Boolean(firstMissingPeriodKey),
+      firstMissingPeriodKey,
+      lastResolvedPeriodKey: resolvedPeriods.at(-1)?.periodKey || null,
+      expectedLastPeriodKey,
+    },
+  };
 }
 
 function buildDepreciationScheduleRows(asset, periods, lifecycleHistory) {
@@ -1021,6 +1042,33 @@ function summarizeRunRows(rows) {
   };
 }
 
+function isCalendarHorizonBoundedForPeriod(periodKey, scheduleHorizon) {
+  if (!scheduleHorizon?.isBounded || !scheduleHorizon?.firstMissingPeriodKey) {
+    return false;
+  }
+  if (!periodKey || periodKey < scheduleHorizon.firstMissingPeriodKey) {
+    return false;
+  }
+  if (
+    scheduleHorizon.expectedLastPeriodKey
+    && periodKey > scheduleHorizon.expectedLastPeriodKey
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function buildCalendarHorizonBoundedReasonText(periodKey, scheduleHorizon) {
+  const lastResolvedPeriodKey = scheduleHorizon?.lastResolvedPeriodKey || null;
+  if (lastResolvedPeriodKey) {
+    return (
+      `Fiscal periods are not defined yet beyond ${lastResolvedPeriodKey}; ` +
+      `schedule cannot reach period ${periodKey} yet`
+    );
+  }
+  return `Fiscal periods are not defined yet for period ${periodKey}; schedule cannot start yet`;
+}
+
 function evaluateLifecycleForPeriod(asset, lifecycleHistory, period) {
   const periodStart = parseDateOnly(period.startDate, "period.startDate");
   const periodEnd = parseDateOnly(period.endDate, "period.endDate");
@@ -1054,6 +1102,7 @@ function classifySkippedRunRow({
   remainingUsefulLifeMonths,
   scheduleRow,
   scheduleRows,
+  scheduleHorizon,
   lifecycleEvaluation,
 }) {
   const eligibleDays = Number(scheduleRow?.eligibleDays || lifecycleEvaluation?.periodEligibility?.eligibleDays || 0);
@@ -1144,6 +1193,24 @@ function classifySkippedRunRow({
   }
 
   if (
+    !scheduleRow
+    && isCalendarHorizonBoundedForPeriod(period.periodKey, scheduleHorizon)
+  ) {
+    return buildSkippedRunRow({
+      asset,
+      period,
+      daysInPeriod,
+      eligibleDays,
+      allocationSegments,
+      reasonCode: "CALENDAR_HORIZON_NOT_AVAILABLE",
+      reasonText: buildCalendarHorizonBoundedReasonText(
+        period.periodKey,
+        scheduleHorizon
+      ),
+    });
+  }
+
+  if (
     lastSchedulePeriodKey
     && period.periodKey > lastSchedulePeriodKey
   ) {
@@ -1207,6 +1274,7 @@ async function buildAssetDepreciationScheduleContext({
       remainingUsefulLifeMonths,
       lifecycleHistory,
       periods: [],
+      scheduleHorizon: null,
       rows: [],
       isExcludedLowValue: true,
     };
@@ -1214,16 +1282,19 @@ async function buildAssetDepreciationScheduleContext({
 
   let periods = [];
   let rows = [];
+  let scheduleHorizon = null;
   if (
     (depreciationMethod === "STRAIGHT_LINE" || depreciationMethod === "DECLINING_BALANCE")
     && remainingUsefulLifeMonths > 0
   ) {
-    periods = await loadSchedulePeriodsForRange({
+    const periodResolution = await loadSchedulePeriodsForRange({
       calendarId: book.calendar_id,
       startDate: asset.inServiceDate,
       monthCount: remainingUsefulLifeMonths,
       queryFn,
     });
+    periods = periodResolution.periods;
+    scheduleHorizon = periodResolution.horizon;
     rows = buildDepreciationScheduleRows(asset, periods, lifecycleHistory);
   }
 
@@ -1233,6 +1304,7 @@ async function buildAssetDepreciationScheduleContext({
     remainingUsefulLifeMonths,
     lifecycleHistory,
     periods,
+    scheduleHorizon,
     rows,
     isExcludedLowValue: false,
   };
@@ -1336,6 +1408,7 @@ async function buildDepreciationRunRowForAsset({
       remainingUsefulLifeMonths: scheduleContext.remainingUsefulLifeMonths,
       scheduleRow,
       scheduleRows: scheduleContext.rows,
+      scheduleHorizon: scheduleContext.scheduleHorizon,
       lifecycleEvaluation,
     });
   } catch (error) {
@@ -3172,6 +3245,7 @@ export async function getAssetDepreciationSchedule({ tenantId, assetId }) {
       salvageValueTxn: asset.salvageValueTxn,
       salvageValueBase: asset.salvageValueBase,
       remainingUsefulLifeMonths: scheduleContext.remainingUsefulLifeMonths,
+      scheduleHorizon: scheduleContext.scheduleHorizon,
       rows: [],
       total: 0,
     };
@@ -3195,6 +3269,7 @@ export async function getAssetDepreciationSchedule({ tenantId, assetId }) {
     salvageValueTxn: asset.salvageValueTxn,
     salvageValueBase: asset.salvageValueBase,
     remainingUsefulLifeMonths: scheduleContext.remainingUsefulLifeMonths,
+    scheduleHorizon: scheduleContext.scheduleHorizon,
     rows,
     total: rows.length,
   };

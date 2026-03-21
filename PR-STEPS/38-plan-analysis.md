@@ -1,7 +1,7 @@
 # 38 - Fixed Assets Plan Analysis
 
-Generated: 2026-03-21 (post-FA49)
-Scope: Full cross-reference of all implemented steps (FA01–FA49), remaining step (FA50), plan requirements, 38-logs carry-forwards, and current repo state.
+Generated: 2026-03-22 (post-FA52 implementation; FA53 remaining)
+Scope: Full cross-reference of implemented steps (FA01–FA52), remaining step (FA53), plan requirements, 38-logs carry-forwards, and current repo state.
 
 ---
 
@@ -158,13 +158,46 @@ Scope: Full cross-reference of all implemented steps (FA01–FA49), remaining st
 
 ---
 
-## PART 2: Remaining Step
+## PART 2: Resolved Gap — Schedule Horizon Hard-Fail
 
-### FA50 – Release gates, smoke suite, and rollout readiness checks
-- **Status**: PENDING. This is the only remaining step.
+### Implemented resolution: bounded calendar horizon and disposal cutoff narrowing
+
+**Prior severity**: HIGH — previously affected core schedule read, depreciation runs, and the asset detail tab.
+
+**Prior root cause**: `loadSchedulePeriodsForRange()` in `fixed-assets.depreciation.service.js` threw `badRequest("No fiscal period found for supported fixed-assets month ...")` when **any** future month in the asset's remaining useful life was missing from the fiscal calendar.
+
+**Implemented behavior**:
+- `loadSchedulePeriodsForRange()` now stops at the first missing future month and returns the resolved prefix plus `scheduleHorizon` metadata (`requestedMonthCount`, `resolvedMonthCount`, `isBounded`, `firstMissingPeriodKey`, `lastResolvedPeriodKey`, `expectedLastPeriodKey`)
+- `getAssetDepreciationSchedule()` now returns a bounded partial schedule instead of failing when far-future fiscal periods are not defined yet
+- `buildDepreciationRunRowForAsset()` now classifies periods beyond the available calendar horizon as `SKIPPED` with `reasonCode = CALENDAR_HORIZON_NOT_AVAILABLE` instead of turning the asset into an `ERROR` line
+- disposal cutoff economics in `fixed-assets.service.js` now resolve fiscal periods only through the disposal effective month, so write-off/sale flows do not depend on periods after disposal
+
+**Preserved rules**:
+- month-alignment validation remains enforced
+- adjustment-only period rejection remains enforced
+- schedule math and lifecycle proration rules are unchanged
+
+**Files changed**:
+- `backend/src/services/fixed-assets.depreciation.service.js`
+- `backend/src/services/fixed-assets.service.js`
+
+**Verification performed**:
+- targeted service-level check confirmed a 60-month asset with only 10 months of periods resolves 10 rows and reports `firstMissingPeriodKey = 2027-01`
+- targeted service-level check confirmed run-row classification becomes `SKIPPED` with `CALENDAR_HORIZON_NOT_AVAILABLE` beyond the bounded horizon instead of `ERROR`
+- targeted service-level check confirmed month-alignment validation still throws
+- targeted service-level check confirmed disposal cutoff period loading now counts only through the disposal month
+
+**Current assessment**: Resolved in code. Residual work is only broader smoke/release validation under FA53.
+
+---
+
+## PART 3: Final Remaining Step
+
+### FA53 – Release gates, smoke suite, and rollout readiness checks
+- **Status**: PENDING.
 - **AI size**: Small
 - **Allowed files**: `backend/scripts/*`, `package.json`, `frontend/package.json`, `openapi.yaml`, plan document
-- **Dependencies**: STEP-FA01 to STEP-FA49
+- **Dependencies**: STEP-FA01 to STEP-FA52
 
 **In scope:**
 - Cross-cutting smoke suite covering fixed-assets MVP
@@ -177,29 +210,29 @@ Scope: Full cross-reference of all implemented steps (FA01–FA49), remaining st
 
 ---
 
-## PART 3: Accepted Limitations and Guardrails
+## PART 4: Accepted Limitations and Guardrails
 
-### 3.1 Unsupported out-of-band SUSPENDED master edits (FA30 guardrail)
+### 4.1 Unsupported out-of-band SUSPENDED master edits (FA30 guardrail)
 - **Severity**: LOW — explicit data-integrity guard, not a normal rollout gap.
 - **Issue**: If an asset is flipped to `SUSPENDED` outside the supported activation/suspend workflows and no persisted `SUSPEND` transaction row exists, the schedule engine cannot infer the cutoff date and throws an explicit error.
 - **Resolution path**: No standard MVP remediation is required for supported flows. Imported `SUSPENDED` onboarding and normal suspend/reactivate actions now create the lifecycle row automatically. Only truly out-of-band bad data needs case-by-case cleanup if it exists.
 - **Impact if unresolved**: Only those unsupported rows error with a clear message; normal onboarding and lifecycle flows remain correct.
 
-### 3.2 FA41 cutoff depreciation companion reversal
+### 4.2 FA41 cutoff depreciation companion reversal
 - **Severity**: LOW — documented scope boundary.
 - **Issue**: FA41 reversal of a SALE transaction does not automatically reverse the separate FA40 cutoff depreciation transaction that may have been created alongside it.
 - **Resolution path**: If needed, cutoff depreciation can be reversed separately through the same reversal endpoint.
 - **Impact if unresolved**: Users must manually reverse cutoff depreciation if they reverse a sale that triggered it.
 
-### 3.3 OpenAPI FixedAssets routes absent from generated spec
+### 4.3 OpenAPI FixedAssets routes absent from generated spec
 - **Severity**: LOW — expected per FA08.
 - **Issue**: `generate-openapi.js` supports FixedAssets tag, but no fixed-assets routes are tagged yet in the generated spec.
-- **Resolution path**: Tag fixed-assets routes in OpenAPI as part of FA50 or a follow-up.
+- **Resolution path**: Tag fixed-assets routes in OpenAPI as part of FA53 or a follow-up.
 - **Impact if unresolved**: API documentation does not show fixed-assets endpoints. No functional impact.
 
 ---
 
-## PART 4: Cross-Cutting Verification
+## PART 5: Cross-Cutting Verification
 
 ### 4.1 One-PRIMARY constraint
 - **DB enforcement**: m140 generated column + unique constraint (`uk_jsl_one_primary_per_journal`)
@@ -234,7 +267,7 @@ Scope: Full cross-reference of all implemented steps (FA01–FA49), remaining st
 
 ---
 
-## PART 5: Test Coverage Analysis
+## PART 6: Test Coverage Analysis
 
 ### Standalone smoke test scripts (13 files):
 
@@ -265,84 +298,85 @@ Scope: Full cross-reference of all implemented steps (FA01–FA49), remaining st
 | FA46 (suspend/reactivate) | Acceptance tested, FA30 proration verified | LOW |
 | FA47–FA49 (frontend/reports) | `npm run build` passes, no backend smoke needed | LOW |
 
-### FA50 expected test additions:
-The plan calls for a named release-gate or smoke suite covering the full MVP. FA50 should either:
-- Create a comprehensive `test-fa50-release-gate.js` that exercises the critical path
+### FA53 expected test additions:
+The plan calls for a named release-gate or smoke suite covering the full MVP. FA53 should either:
+- Create a comprehensive `test-fa53-release-gate.js` that exercises the critical path
 - Or document which existing test scripts form the release gate suite
 
 ---
 
-## PART 6: Rollout Prerequisites and Blockers
+## PART 7: Rollout Prerequisites and Blockers
 
-### 6.1 CRITICAL: One-PRIMARY enforcement in production
+### 7.1 CRITICAL: One-PRIMARY enforcement in production
 - **What**: m140 adds a unique constraint that will fail if existing production data has duplicate PRIMARY rows on the same journal entry.
 - **Prerequisite**: Run `preflight-journal-source-link-primary.js` against production data before deploying m140.
 - **If violations found**: Normalize the data (remove extra PRIMARY rows) before applying the migration.
 - **Blocker**: YES — migration will fail if duplicates exist.
 
-### 6.2 CRITICAL: OU self-balancing setup for cross-OU flows
+### 7.2 CRITICAL: OU self-balancing setup for cross-OU flows
 - **What**: Cross-OU ownership transfer (FA37) and cross-OU CARI capitalization (FA26) require due-from/due-to intercompany accounts configured in the self-balancing setup.
 - **Prerequisite**: Configure self-balancing accounts for all OU pairs that may have cross-OU fixed-asset flows.
 - **If missing**: Operations will fail with "missing setup" error (tested and verified in FA26).
 - **Blocker**: YES for cross-OU operations. Same-OU operations unaffected.
 
-### 6.3 LOW: Unsupported out-of-band SUSPENDED master edits
+### 7.3 LOW: Unsupported out-of-band SUSPENDED master edits
 - **What**: Depreciation schedule generation requires a persisted `SUSPEND` transaction row. Supported imported-onboarding and suspend flows create it automatically; status-only master edits do not.
 - **Prerequisite**: None for normal rollout. Optionally scan and remediate only if tenant history may contain status-only `SUSPENDED` rows.
 - **If missing**: Only those unsupported rows will error with a clear message.
 - **Blocker**: NO for standard rollout. YES only if a tenant is known to contain those rows.
 
-### 6.4 LOW: Permission assignment
+### 7.4 LOW: Permission assignment
 - **What**: 13 fixed-assets permissions must be assigned to appropriate roles before users can access the module.
 - **Prerequisite**: Seed permissions (done by FA45), assign to roles in RBAC admin.
 - **If missing**: All fixed-assets operations return 403.
 - **Blocker**: YES for user access, but standard RBAC workflow — not a code issue.
 
-### 6.5 LOW: OpenAPI route tagging
+### 7.5 LOW: OpenAPI route tagging
 - **What**: Fixed-assets routes are not yet tagged in the generated OpenAPI spec.
-- **Prerequisite**: Tag routes in FA50 or separately.
+- **Prerequisite**: Tag routes in FA53 or separately.
 - **If missing**: No API documentation for fixed-assets endpoints.
 - **Blocker**: NO — functional operations unaffected.
 
 ---
 
-## PART 7: Potential Conflicts and Risks
+## PART 8: Potential Conflicts and Risks
 
-### 7.1 No conflicts detected between implemented steps
+### 8.1 No conflicts detected between implemented steps
 - Lifecycle rules are consistently applied across all steps.
 - SUSPEND/REACTIVATE/DISPOSED transitions are validated at both service and schedule-engine level.
 - One-PRIMARY constraint is enforced at DB + application level without conflicts.
 - Permission model is consistently applied with two-layer frontend gating.
 
-### 7.2 Cross-module dependency risks
+### 8.2 Cross-module dependency risks
 - **CARI module**: Fixed-assets depends on CARI for AP-line capitalization (FA24–FA27), sale AR creation (FA39), and secondary permission enforcement (`cari.doc.*`). Any CARI-breaking change could impact FA flows.
 - **Journal module**: Fixed-assets depends on journal posting (`insertPostedJournalWithLinesTx`) and source-link contract. Any journal schema change needs FA awareness.
 - **Fiscal periods**: Depreciation runs depend on fiscal period resolution. Closed periods block depreciation posting.
 
-### 7.3 Performance considerations for FA50 review
+### 8.3 Performance considerations for FA53 review
 - `fixed_asset_depreciation_run_line_allocations` table could grow large with many assets × periods × OU splits. The depreciation-by-owner-ou report joins and aggregates from this table.
 - Register report and by-owner-ou/by-location-ou/by-custodian reports query `fixed_assets` with GROUP BY — performance depends on index coverage.
 - Rollforward report executes 3 separate queries (opening balance, pre-period depreciation, period movements).
 
 ---
 
-## PART 8: Summary and Recommendation
+## PART 9: Summary and Recommendation
 
-### Overall module status: 49 of 50 steps complete. No blocking gaps in code.
+### Overall module status: 52 of 53 steps complete. Only FA53 release-gate and rollout validation remains.
 
-### What FA50 needs to deliver:
+### What FA53 needs to deliver:
 1. A named release-gate smoke suite (script or documented test list)
-2. Documented rollout prerequisites (6.1–6.5 above)
+2. Documented rollout prerequisites (7.1–7.5 above)
 3. OpenAPI route tagging verification
 4. Confirmation that all 13 existing smoke scripts pass
-5. Sign-off that Part 3 items (3.1–3.3) are acceptable for MVP
+5. Sign-off that Part 4 items (4.1–4.3) are acceptable for MVP
 
 ### Risk assessment:
 - **Code quality**: HIGH — no TODO/FIXME markers, consistent patterns, comprehensive acceptance
 - **Test coverage**: HIGH — 13 standalone smoke scripts + inline acceptance for remaining steps
-- **Data migration risk**: MEDIUM — one-PRIMARY preflight remains mandatory; if legacy data hygiene is uncertain, scan for unsupported status-only `SUSPENDED` rows before depreciation rollout
+- **Schedule horizon gap**: RESOLVED — bounded schedule generation is implemented; residual validation belongs in FA53 smoke/release checks
+- **Data migration risk**: MEDIUM — one-PRIMARY preflight remains mandatory; if legacy data hygiene is uncertain, scan for unsupported status-only `SUSPENDED` rows before depreciation rollout. FA52 landed as a low-risk additive disposal-metadata backfill.
 - **Cross-module risk**: LOW — dependencies are stable and tested
-- **Frontend completeness**: HIGH — all routes wired, all pages real, build clean
+- **Frontend completeness**: HIGH — all routes wired, all pages real, CARI capitalization form implemented, build clean
 
 ### Recommendation:
-Proceed with FA50 as the final validation step. The module is architecturally complete and functionally verified. The remaining work is operational (run smoke suite, document rollout blockers, tag OpenAPI) rather than implementation.
+Proceed with FA53 as the final validation step. Disposal reporting metadata is now in place for Track 39 SL06 and direct fixed-assets reads.

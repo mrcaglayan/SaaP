@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
-import { listFixedAssets } from "../../api/fixedAssets.js";
+import {
+  listFixedAssets,
+  listCariEligibleApLines,
+  createFixedAssetFromCariDocumentLine,
+  listFixedAssetCategories,
+} from "../../api/fixedAssets.js";
+import { listOperatingUnits } from "../../api/orgAdmin.js";
 
 function normalizeApiError(error, fallback) {
   const message = String(
@@ -26,21 +32,54 @@ function formatNumber(value) {
   });
 }
 
+function toPositiveInt(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 const ACQUISITION_STATUSES = ["DRAFT", "ACTIVE"];
 
 export default function FixedAssetAcquisitionsPage() {
-  const { l } = useI18n();
+  const { l, t } = useI18n();
   const { hasPermission } = useAuth();
   const { legalEntity } = useWorkingContext();
+  const navigate = useNavigate();
   const canRead = hasPermission("fixed_assets.read");
+  const canPost = hasPermission("fixed_assets.post");
 
+  const legalEntityId = legalEntity?.id || "";
+
+  // ── Acquisitions list state ──────────────────────────────────────
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
 
-  const legalEntityId = legalEntity?.id || "";
+  // ── CARI capitalization state ────────────────────────────────────
+  const [capOpen, setCapOpen] = useState(false);
+  const [docIdInput, setDocIdInput] = useState("");
+  const [eligibleLines, setEligibleLines] = useState([]);
+  const [searchingLines, setSearchingLines] = useState(false);
+  const [lineSearchError, setLineSearchError] = useState("");
+  const [selectedLine, setSelectedLine] = useState(null);
 
+  const [capForm, setCapForm] = useState({
+    unitCount: "1",
+    categoryId: "",
+    ownerOperatingUnitId: "",
+    locationOperatingUnitId: "",
+    capitalizationDate: "",
+    inServiceDate: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [submitSuccess, setSubmitSuccess] = useState("");
+
+  // ── Lookup data for capitalize form ──────────────────────────────
+  const [catOptions, setCatOptions] = useState([]);
+  const [ouOptions, setOuOptions] = useState([]);
+
+  // ── Load acquisitions list ───────────────────────────────────────
   useEffect(() => {
     if (!canRead) {
       setRows([]);
@@ -56,8 +95,6 @@ export default function FixedAssetAcquisitionsPage() {
           legalEntityId: legalEntityId || undefined,
           status: filterStatus || undefined,
         });
-        // Filter to show only assets that were acquired or capitalized
-        // (DRAFT and ACTIVE statuses are relevant for the acquisitions queue)
         const items = Array.isArray(res?.rows) ? res.rows : [];
         if (active) setRows(items);
       } catch (err) {
@@ -71,6 +108,112 @@ export default function FixedAssetAcquisitionsPage() {
     })();
     return () => { active = false; };
   }, [canRead, legalEntityId, filterStatus, l]);
+
+  // ── Load category + OU lookups when capitalize section opens ─────
+  useEffect(() => {
+    if (!capOpen || !canPost) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await listFixedAssetCategories({
+          legalEntityId: legalEntityId || undefined,
+          status: "ACTIVE",
+        });
+        const items = Array.isArray(res?.rows) ? res.rows : [];
+        if (active) setCatOptions(items);
+      } catch {
+        if (active) setCatOptions([]);
+      }
+    })();
+    return () => { active = false; };
+  }, [capOpen, canPost, legalEntityId]);
+
+  useEffect(() => {
+    if (!capOpen || !canPost) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await listOperatingUnits({ legalEntityId: legalEntityId || undefined });
+        const items = Array.isArray(res?.rows) ? res.rows : [];
+        if (active) setOuOptions(items);
+      } catch {
+        if (active) setOuOptions([]);
+      }
+    })();
+    return () => { active = false; };
+  }, [capOpen, canPost, legalEntityId]);
+
+  // ── Search eligible AP lines ─────────────────────────────────────
+  async function handleSearchLines() {
+    const docId = toPositiveInt(docIdInput);
+    if (!docId) {
+      setLineSearchError(t("fixedAssets.acquisitions.documentIdRequired"));
+      return;
+    }
+    setSearchingLines(true);
+    setLineSearchError("");
+    setEligibleLines([]);
+    setSelectedLine(null);
+    try {
+      const res = await listCariEligibleApLines({ sourceCariDocumentId: docId });
+      const items = (Array.isArray(res?.rows) ? res.rows : Array.isArray(res) ? res : [])
+        .filter((line) => line.eligibleForFa06 !== false);
+      setEligibleLines(items);
+      if (items.length === 0) {
+        setLineSearchError(t("fixedAssets.acquisitions.noEligibleLines"));
+      }
+    } catch (err) {
+      setLineSearchError(normalizeApiError(err, t("fixedAssets.acquisitions.submitFailed")));
+    } finally {
+      setSearchingLines(false);
+    }
+  }
+
+  // ── Submit capitalization ────────────────────────────────────────
+  async function handleCapitalize() {
+    if (!selectedLine) {
+      setSubmitError(t("fixedAssets.acquisitions.lineRequired"));
+      return;
+    }
+    const payload = {
+      sourceCariDocumentId: toPositiveInt(docIdInput),
+      sourceCariDocumentLineId: toPositiveInt(selectedLine.lineId),
+      unitCount: toPositiveInt(capForm.unitCount) || 1,
+      categoryId: toPositiveInt(capForm.categoryId),
+      ownerOperatingUnitId: toPositiveInt(capForm.ownerOperatingUnitId),
+      locationOperatingUnitId: toPositiveInt(capForm.locationOperatingUnitId),
+      capitalizationDate: capForm.capitalizationDate || undefined,
+      inServiceDate: capForm.inServiceDate || undefined,
+    };
+    if (!payload.categoryId || !payload.ownerOperatingUnitId || !payload.locationOperatingUnitId) {
+      setSubmitError(l("All fields are required.", "Tum alanlar zorunludur."));
+      return;
+    }
+    if (!payload.capitalizationDate || !payload.inServiceDate) {
+      setSubmitError(l("All fields are required.", "Tum alanlar zorunludur."));
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError("");
+    setSubmitSuccess("");
+    try {
+      const result = await createFixedAssetFromCariDocumentLine(payload);
+      setSubmitSuccess(t("fixedAssets.acquisitions.submitSuccess"));
+      // Navigate to the new asset's detail page
+      const newId = result?.asset?.id || result?.id;
+      if (newId) {
+        navigate(`/app/demirbas-karti-detayi/${newId}`);
+      }
+    } catch (err) {
+      setSubmitError(normalizeApiError(err, t("fixedAssets.acquisitions.submitFailed")));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function updateCapForm(field, value) {
+    setCapForm((prev) => ({ ...prev, [field]: value }));
+  }
 
   if (!canRead) {
     return (
@@ -96,6 +239,225 @@ export default function FixedAssetAcquisitionsPage() {
           )}
         </p>
       </section>
+
+      {/* CARI Capitalization Section — permission-gated */}
+      {canPost ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left"
+            onClick={() => setCapOpen((v) => !v)}
+          >
+            <h2 className="text-lg font-semibold text-slate-900">
+              {t("fixedAssets.acquisitions.capitalizeFromAp")}
+            </h2>
+            <span className="text-sm text-slate-400">{capOpen ? "\u25B2" : "\u25BC"}</span>
+          </button>
+          {capOpen ? (
+            <div className="mt-4 space-y-5">
+              <p className="text-sm text-slate-600">
+                {t("fixedAssets.acquisitions.capitalizeDescription")}
+              </p>
+
+              {/* Step 1: Enter document ID and search */}
+              <div className="flex items-end gap-3">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {t("fixedAssets.acquisitions.documentId")}
+                  <input
+                    type="number"
+                    min="1"
+                    className="mt-1 block w-48 rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={docIdInput}
+                    onChange={(e) => setDocIdInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSearchLines(); }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-50"
+                  onClick={handleSearchLines}
+                  disabled={searchingLines}
+                >
+                  {searchingLines
+                    ? t("fixedAssets.acquisitions.searching")
+                    : t("fixedAssets.acquisitions.searchLines")}
+                </button>
+              </div>
+              {lineSearchError ? <p className="text-sm text-rose-700">{lineSearchError}</p> : null}
+
+              {/* Step 2: Eligible lines table */}
+              {eligibleLines.length > 0 && !selectedLine ? (
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-700">
+                    {t("fixedAssets.acquisitions.eligibleLines")}
+                    <span className="ml-2 font-normal text-slate-500">({eligibleLines.length})</span>
+                  </h3>
+                  <div className="mt-2 overflow-auto rounded-lg border border-slate-200">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-50 text-left text-slate-600">
+                        <tr>
+                          <th className="px-3 py-2">#</th>
+                          <th className="px-3 py-2">{t("fixedAssets.acquisitions.lineDescription")}</th>
+                          <th className="px-3 py-2 text-right">{t("fixedAssets.acquisitions.lineAmount")}</th>
+                          <th className="px-3 py-2">{l("Qty", "Adet")}</th>
+                          <th className="px-3 py-2">{t("fixedAssets.acquisitions.lineAccount")}</th>
+                          <th className="px-3 py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {eligibleLines.map((line, idx) => (
+                          <tr key={line.lineId || idx} className="border-t border-slate-100 hover:bg-slate-50">
+                            <td className="px-3 py-2 text-slate-500">{idx + 1}</td>
+                            <td className="px-3 py-2 max-w-[250px] truncate">
+                              {line.description || "-"}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono">
+                              {formatNumber(line.lineNetAmountBase ?? line.lineNetAmountTxn)}
+                            </td>
+                            <td className="px-3 py-2">{line.quantity || "-"}</td>
+                            <td className="px-3 py-2">{line.postingAccountId || "-"}</td>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                className="rounded bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-100"
+                                onClick={() => setSelectedLine(line)}
+                              >
+                                {t("fixedAssets.acquisitions.selectLine")}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Step 3: Selected line + asset details form */}
+              {selectedLine ? (
+                <div className="space-y-4">
+                  {/* Selected line summary */}
+                  <div className="flex items-center justify-between rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-cyan-800">
+                        {t("fixedAssets.acquisitions.selectedLine")}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-700">
+                        {selectedLine.description || "-"}
+                        {" — "}
+                        <span className="font-mono">{formatNumber(selectedLine.lineNetAmountBase ?? selectedLine.lineNetAmountTxn)}</span>
+                        {" "}
+                        ({l("Qty", "Adet")}: {selectedLine.quantity || "-"})
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-xs text-cyan-700 underline hover:text-cyan-900"
+                      onClick={() => { setSelectedLine(null); setSubmitError(""); setSubmitSuccess(""); }}
+                    >
+                      {t("fixedAssets.acquisitions.clearSelection")}
+                    </button>
+                  </div>
+
+                  {/* Asset details form */}
+                  <h3 className="text-sm font-semibold text-slate-700">
+                    {t("fixedAssets.acquisitions.assetDetails")}
+                  </h3>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {t("fixedAssets.acquisitions.fieldUnitCount")}
+                      <input
+                        type="number"
+                        min="1"
+                        className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={capForm.unitCount}
+                        onChange={(e) => updateCapForm("unitCount", e.target.value)}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {t("fixedAssets.acquisitions.fieldCategory")}
+                      <select
+                        className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={capForm.categoryId}
+                        onChange={(e) => updateCapForm("categoryId", e.target.value)}
+                      >
+                        <option value="">{l("Select...", "Secin...")}</option>
+                        {catOptions.map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.code ? `${cat.code} - ${cat.name}` : cat.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {t("fixedAssets.acquisitions.fieldOwnerOu")}
+                      <select
+                        className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={capForm.ownerOperatingUnitId}
+                        onChange={(e) => updateCapForm("ownerOperatingUnitId", e.target.value)}
+                      >
+                        <option value="">{l("Select...", "Secin...")}</option>
+                        {ouOptions.map((ou) => (
+                          <option key={ou.id} value={ou.id}>
+                            {ou.code ? `${ou.code} - ${ou.name}` : ou.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {t("fixedAssets.acquisitions.fieldLocationOu")}
+                      <select
+                        className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={capForm.locationOperatingUnitId}
+                        onChange={(e) => updateCapForm("locationOperatingUnitId", e.target.value)}
+                      >
+                        <option value="">{l("Select...", "Secin...")}</option>
+                        {ouOptions.map((ou) => (
+                          <option key={ou.id} value={ou.id}>
+                            {ou.code ? `${ou.code} - ${ou.name}` : ou.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {t("fixedAssets.acquisitions.fieldCapitalizationDate")}
+                      <input
+                        type="date"
+                        className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={capForm.capitalizationDate}
+                        onChange={(e) => updateCapForm("capitalizationDate", e.target.value)}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {t("fixedAssets.acquisitions.fieldInServiceDate")}
+                      <input
+                        type="date"
+                        className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={capForm.inServiceDate}
+                        onChange={(e) => updateCapForm("inServiceDate", e.target.value)}
+                      />
+                    </label>
+                  </div>
+
+                  {submitError ? <p className="text-sm text-rose-700">{submitError}</p> : null}
+                  {submitSuccess ? <p className="text-sm text-emerald-700">{submitSuccess}</p> : null}
+
+                  <button
+                    type="button"
+                    className="rounded-md bg-cyan-700 px-5 py-2 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-50"
+                    onClick={handleCapitalize}
+                    disabled={submitting}
+                  >
+                    {submitting
+                      ? t("fixedAssets.acquisitions.submitting")
+                      : t("fixedAssets.acquisitions.submit")}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Filters */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

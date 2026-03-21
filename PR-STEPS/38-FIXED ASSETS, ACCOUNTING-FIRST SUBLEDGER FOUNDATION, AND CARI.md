@@ -21,7 +21,7 @@
 ## Execution Tracking
 - This file now has two layers:
   - feature-scope sections `FA01` to `FA14`, which define business and technical requirements
-  - serialized execution sections `STEP-FA01` to `STEP-FA50`, which define review-sized implementation steps
+  - serialized execution sections `STEP-FA01` to `STEP-FA53`, which define review-sized implementation steps
 - When using Codex for implementation, prompt against one `STEP-FA##` step at a time.
 - A Codex prompt should name:
   - the single `STEP-FA##` patch target
@@ -1282,7 +1282,10 @@ Implementation notes:
 - [x] `STEP-FA47` - Frontend sidebar, route, action gating, and scaffold cleanup
 - [x] `STEP-FA48` - Manual asset create and legacy-onboarding frontend form
 - [x] `STEP-FA49` - Fixed-assets reports and paired export endpoints
-- [ ] `STEP-FA50` - Release gates, smoke suite, and rollout readiness checks
+- [x] `STEP-FA50` - Bounded depreciation schedule horizon (lazy period resolution)
+- [x] `STEP-FA51` - CARI-to-FA capitalization frontend form
+- [x] `STEP-FA52` - Disposal metadata migration: `disposal_type`, `disposed_at`, `disposal_proceeds_base`, `disposal_gain_loss_base`
+- [ ] `STEP-FA53` - Release gates, smoke suite, and rollout readiness checks
 
 ---
 
@@ -3178,7 +3181,144 @@ Implement the locked report set and its paired export contract.
 
 ---
 
-## `STEP-FA50` - Release gates, smoke suite, and rollout readiness checks
+## `STEP-FA50` - Bounded depreciation schedule horizon (lazy period resolution)
+
+### Patch target
+Change the depreciation schedule engine to generate rows only up to the last available fiscal period instead of throwing a hard error when any future month in the remaining-life horizon is missing.
+
+### Context
+The current `loadSchedulePeriodsForRange()` function requires all fiscal periods for the entire remaining useful life to already exist. A 60-month asset activated in 2026-03 requires periods through 2031-02, and if any month is missing, the function throws `"No fiscal period found for supported fixed-assets month YYYY-MM"`. This blocks the asset detail depreciation tab, creates ERROR run lines that prevent run posting, and forces artificial pre-creation of years of fiscal periods before the FA module can operate normally.
+
+### In scope
+- change `loadSchedulePeriodsForRange()` to stop the resolution loop and return the bounded set of resolved periods when a missing period is encountered, instead of throwing
+- ensure the schedule response includes a marker or metadata indicating whether the schedule is bounded (truncated) versus complete (full horizon covered)
+- verify that `getAssetDepreciationSchedule` returns a partial schedule instead of erroring
+- verify that `buildDepreciationRunRowForAsset` correctly handles a bounded schedule — if the current run period is within the bounded range, the asset gets a normal READY/SKIPPED row; if the current run period is beyond the bounded range, the asset gets a SKIPPED row with a clear reason code
+- expose bounded-horizon metadata on the schedule/read-side contract so callers can distinguish "calendar not defined yet" from "asset life ended"
+- remove the equivalent far-future fiscal-period dependency from disposal cutoff economics by resolving disposal schedule periods only through the disposal effective month
+- keep the month-alignment and non-adjustment-period validation — those are data-quality rules, not horizon rules
+
+### Explicit non-goals
+- do not remove the month-alignment validation for fiscal periods
+- do not remove the non-adjustment-period validation
+- do not change the schedule math or proration logic
+- do not pre-create fiscal periods as a workaround
+- do not change the depreciation run post/reverse logic
+
+### Definition of done
+- an asset with 60-month useful life and only 10 months of fiscal periods available gets a 10-row schedule instead of an error
+- the depreciation schedule read endpoint returns successfully with the bounded schedule
+- a depreciation run for a period that is within the available range works normally for that asset
+- a depreciation run for a period that is beyond the available range produces a SKIPPED row (not ERROR) for that asset
+- write-off and sale cutoff calculations do not require fiscal periods beyond the disposal month
+- the schedule extends naturally when new fiscal periods are created (no cache/persistence issue)
+- existing behavior is preserved for assets whose full horizon is covered by available periods
+
+### Smoke tests
+- activate an asset with `usefulLifeMonths = 60` when only 10 fiscal periods exist; verify `GET /:assetId/depreciation-schedule` returns 10 rows instead of an error
+- run a depreciation preview for a period within the available range; verify the asset appears as READY, not ERROR
+- run a depreciation preview for a period beyond the available range; verify the asset is SKIPPED with a bounded-calendar reason, not ERROR
+- verify write-off/sale disposal cutoff logic does not request fiscal periods beyond the disposal month
+- add a new fiscal period for the 11th month; verify the schedule now returns 11 rows
+- verify month-alignment and non-adjustment validation still throw for misconfigured periods
+
+### Acceptance
+- schedule engine generates lazily up to the calendar horizon
+- no ERP-unreasonable prerequisite of pre-creating years of fiscal periods
+- run operations are not blocked by far-future missing periods
+- disposal cutoff economics are not blocked by periods that occur after the disposal month
+- existing schedule math and proration logic unchanged
+
+---
+
+## `STEP-FA51` - CARI-to-FA capitalization frontend form
+
+### Patch target
+Add a frontend UI flow on the Acquisitions page that lets users browse eligible CARI AP document lines, select one, fill in the required asset details (category, owner OU, location OU, dates), and submit to create a DRAFT fixed asset with a CAPITALIZATION transaction via the existing `POST /api/v1/fixed-assets/from-cari-document-line` endpoint.
+
+### Context
+The backend CARI-to-FA capitalization flow is fully implemented (FA24–FA27): the GET endpoint lists eligible AP lines for a given document, and the POST endpoint creates the asset with a CAPITALIZATION transaction and source link. The frontend API helpers already exist (`listCariEligibleApLines`, `createFixedAssetFromCariDocumentLine`). What is missing is the actual UI form that lets users invoke this flow from the Acquisitions page.
+
+### In scope
+- add a "Capitalize from AP" button/section on `FixedAssetAcquisitionsPage.jsx`
+- document ID input to query eligible AP lines via `listCariEligibleApLines({ sourceCariDocumentId })`
+- display eligible lines in a selectable table (line description, amount, currency, account)
+- after selecting a line, show a form with required fields: unitCount, categoryId, ownerOperatingUnitId, locationOperatingUnitId, capitalizationDate, inServiceDate
+- category and OU dropdowns load from existing API helpers (`listFixedAssetCategories`, `listOperatingUnits`)
+- submit calls `createFixedAssetFromCariDocumentLine(payload)` and redirects to the new asset detail page on success
+- i18n labels for all new UI elements in both TR and EN
+- permission gate: the button/form requires `fixed_assets.post` permission
+
+### Explicit non-goals
+- do not modify any backend endpoint or validator
+- do not change the manual asset creation form (`FixedAssetFormPage.jsx`)
+- do not add batch capitalization (one line at a time)
+- do not add CARI document creation — the AP document must already exist and be posted
+
+### Definition of done
+- the Acquisitions page has a "Capitalize from AP" section
+- entering a document ID and clicking search loads eligible AP lines
+- selecting a line and filling in asset details submits successfully
+- the created asset appears in the acquisitions list as DRAFT with source = CARI
+- users without `fixed_assets.post` do not see the capitalization form
+- `npm run build` passes
+
+### Smoke tests
+- enter a valid posted AP document ID; verify eligible lines load
+- select a line, fill in category + OU + dates, submit; verify asset created with CAPITALIZATION transaction
+- verify the new asset shows source = CARI in the acquisitions list
+- verify user without `fixed_assets.post` does not see the capitalize section
+- verify `npm run build` passes
+
+### Acceptance
+- the CARI-to-FA capitalization flow is end-to-end usable from the frontend
+- no backend changes required
+- the form follows existing page patterns and i18n conventions
+
+---
+
+## `STEP-FA52` - Disposal metadata migration
+
+### Patch target
+Add disposal metadata columns to `fixed_assets` so disposal type, timestamp, proceeds, and gain/loss are queryable without joining transaction history.
+
+### In scope
+- Add `disposal_type` ENUM('SALE', 'WRITEOFF', 'SCRAPPING', 'DONATION', 'THEFT_LOSS') NULL to `fixed_assets`
+- Add `disposed_at` DATETIME NULL to `fixed_assets` — system timestamp of when the disposal was recorded (vs `disposal_date` which is the accounting-effective date)
+- Add `disposal_proceeds_base` DECIMAL(18,4) NULL to `fixed_assets` — sale amount in base currency. NULL for write-offs/scrapping.
+- Add `disposal_gain_loss_base` DECIMAL(18,4) NULL to `fixed_assets` — gain/loss amount in base currency. Positive = gain, negative = loss.
+- Use the repo's idempotent migration pattern (safeExecute, addColumnIfMissing)
+- Update existing write-off flow (line ~5339) to set `disposal_type = 'WRITEOFF'`, `disposed_at = NOW()`, `disposal_gain_loss_base` (loss = NBV at write-off)
+- Update existing sale finalize flow (line ~6168) to set `disposal_type = 'SALE'`, `disposed_at = NOW()`, `disposal_proceeds_base`, `disposal_gain_loss_base`
+- Update asset detail read mapping to include the new fields
+- Backfill: UPDATE existing DISPOSED assets by joining `fixed_asset_transactions` — if last transaction is WRITEOFF → `disposal_type = 'WRITEOFF'`, if SALE → `disposal_type = 'SALE'`. Set `disposed_at = updated_at` for existing records (best approximation).
+
+### Explicit non-goals
+- Do not change disposal business logic
+- Do not add new disposal types beyond the ENUM (future types like INSURANCE_CLAIM can be added later)
+
+### Definition of done
+- New columns exist with correct types
+- Write-off flow sets `disposal_type = 'WRITEOFF'`, `disposed_at`, `disposal_gain_loss_base`
+- Sale finalize flow sets `disposal_type = 'SALE'`, `disposed_at`, `disposal_proceeds_base`, `disposal_gain_loss_base`
+- Existing DISPOSED assets are backfilled
+- Asset detail responses include the new fields
+
+### Smoke tests
+- run `npm run db:migrate`; verify the new disposal metadata columns exist on `fixed_assets`
+- execute a write-off; verify the asset row stores `disposal_type = 'WRITEOFF'`, `disposed_at`, and `disposal_gain_loss_base`
+- execute a sale finalize; verify the asset row stores `disposal_type = 'SALE'`, `disposed_at`, `disposal_proceeds_base`, and `disposal_gain_loss_base`
+- seed/backfill an existing `DISPOSED` asset whose latest retirement transaction is `WRITEOFF` or `SALE`; verify the backfill populates the matching `disposal_type`
+
+### Acceptance
+- disposal metadata is queryable directly from `fixed_assets` without reconstructing retirement type from transaction history
+- all current disposal paths populate the metadata consistently
+- downstream consumers such as Track 39 SL06 can rely on the columns being present
+- Smoke-verified: `npm run db:migrate`, `npm run test:fa38:writeoff-smoke`, rerunnable backfill recheck, and live HTTP sale finalize on a staged FA39 asset persisted `disposal_type = 'SALE'`, `disposed_at`, `disposal_proceeds_base`, and `disposal_gain_loss_base` on `fixed_assets`.
+
+---
+
+## `STEP-FA53` - Release gates, smoke suite, and rollout readiness checks
 
 ### Patch target
 Close the track with explicit release-readiness checks so the module is not considered done only because routes compile.
@@ -3635,8 +3775,32 @@ Use this matrix together with each serialized step body. `Allowed files` means t
 
 ### `STEP-FA50`
 - `AI size`: Small
+- `Allowed files`: `backend/src/services/fixed-assets.depreciation.service.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: `STEP-FA28` to `STEP-FA35`
+- `Blocked by`: none — this is a correctness fix to an existing function
+- `Rollback risk`: Low
+- `Smoke command ideas`: activate an asset with 60-month useful life and only 10 fiscal periods; verify schedule returns 10 rows instead of error; verify run preview beyond the available range becomes SKIPPED not ERROR; verify disposal cutoff only needs periods through the disposal month; verify month-alignment validation still enforced
+
+### `STEP-FA51`
+- `AI size`: Medium
+- `Allowed files`: `frontend/src/pages/fixedAssets/FixedAssetAcquisitionsPage.jsx`, `frontend/src/i18n/messages.js`
+- `Dependencies`: `STEP-FA24` to `STEP-FA27`, `STEP-FA47`, `STEP-FA48`
+- `Blocked by`: none — backend endpoints and API helpers already exist
+- `Rollback risk`: Low
+- `Smoke command ideas`: `npm run build`; manually enter a posted AP document ID on the Acquisitions page, verify eligible lines load, select a line and fill in asset details, submit and verify DRAFT asset created with CAPITALIZATION transaction
+
+### `STEP-FA52`
+- `AI size`: Small
+- `Allowed files`: `backend/src/migrations/m143_fixed_assets_disposal_metadata.js`, `backend/src/migrations/index.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: `STEP-FA09` to `STEP-FA12` (FA tables must exist), `STEP-FA36` to `STEP-FA38` (write-off flow), `STEP-FA39` (sale flow)
+- `Blocked by`: none
+- `Rollback risk`: Low — additive columns + backfill
+- `Smoke command ideas`: `npm run db:migrate`; check that a write-off sets `disposal_type = 'WRITEOFF'`; check that a sale finalize sets `disposal_type = 'SALE'` with proceeds
+
+### `STEP-FA53`
+- `AI size`: Small
 - `Allowed files`: `backend/scripts/*`, `backend/package.json`, `frontend/package.json`, `backend/openapi.yaml`, this step-tracker document only if the release gate needs step-level wiring notes
-- `Dependencies`: `STEP-FA01` to `STEP-FA49`
+- `Dependencies`: `STEP-FA01` to `STEP-FA52`
 - `Blocked by`: any incomplete prerequisite slice in the fixed-assets track
 - `Rollback risk`: Low
 - `Smoke command ideas`: `npm run openapi:generate`; `npm run check:openapi`; `npm run build`; `npm run db:migrate:status`; the new fixed-assets smoke/release-gate runner when it exists

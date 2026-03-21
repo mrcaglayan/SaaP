@@ -491,6 +491,12 @@ export async function getAssetDetail({ tenantId, assetId }) {
       ? Number(row.original_cost_base) : 0,
 
     // ── Salvage snapshot inputs (frozen at asset level) ───────────
+    disposalType: row.disposal_type || null,
+    disposedAt: row.disposed_at || null,
+    disposalProceedsBase: row.disposal_proceeds_base != null
+      ? Number(row.disposal_proceeds_base) : null,
+    disposalGainLossBase: row.disposal_gain_loss_base != null
+      ? Number(row.disposal_gain_loss_base) : null,
     salvageRuleType: row.salvage_rule_type,
     salvagePercent: row.salvage_percent != null
       ? Number(row.salvage_percent) : null,
@@ -2708,6 +2714,13 @@ async function restoreAssetStateAfterFixedAssetReversalTx(tx, {
     updateParams.push(transferDetail.fromLocationOperatingUnitId);
   }
 
+  if (restoredStatus !== "DISPOSED") {
+    updateClauses.push("disposal_type = NULL");
+    updateClauses.push("disposed_at = NULL");
+    updateClauses.push("disposal_proceeds_base = NULL");
+    updateClauses.push("disposal_gain_loss_base = NULL");
+  }
+
   updateParams.push(target.assetId, target.tenantId);
 
   await tx.query(
@@ -4368,6 +4381,16 @@ function addMonthsUtc(date, months) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
 }
 
+function countMonthBucketsInclusive(startDateText, endDateText) {
+  const startMonth = startOfMonthUtc(parseDateOnlyStrict(startDateText, "startDate"));
+  const endMonth = startOfMonthUtc(parseDateOnlyStrict(endDateText, "endDate"));
+  return (
+    (endMonth.getUTCFullYear() - startMonth.getUTCFullYear()) * 12
+    + (endMonth.getUTCMonth() - startMonth.getUTCMonth())
+    + 1
+  );
+}
+
 function countDaysInclusiveUtc(startDate, endDate) {
   const dayMs = 24 * 60 * 60 * 1000;
   return Math.floor((endDate.getTime() - startDate.getTime()) / dayMs) + 1;
@@ -5062,7 +5085,7 @@ async function resolveDisposalCutoffEconomics({
   const periods = await loadDisposalSchedulePeriods({
     calendarId,
     startDate: asset.in_service_date,
-    monthCount: Number(asset.remaining_useful_life_months),
+    monthCount: countMonthBucketsInclusive(asset.in_service_date, effectiveDate),
     queryFn,
   });
   const rows = buildDisposalScheduleRows(asset, periods, lifecycleHistory, effectiveDate);
@@ -5218,6 +5241,9 @@ export async function writeoffAsset(input) {
     const accumDeprBase = roundDisposalAmount(grossCostBase - currentNbv.nbvBase);
     const writeoffNbvTxn = currentNbv.nbvTxn;
     const writeoffNbvBase = currentNbv.nbvBase;
+    const writeoffGainLossBase = writeoffNbvBase > DISPOSAL_CUTOFF_EPSILON
+      ? roundDisposalAmount(-writeoffNbvBase)
+      : 0;
 
     // ── Resolve book & fiscal period ─────────────────────────────
     const book = await resolveBookForLegalEntity(tenantId, legalEntityId, tx.query);
@@ -5342,9 +5368,13 @@ export async function writeoffAsset(input) {
       `UPDATE fixed_assets
           SET status = 'DISPOSED',
               disposal_date = ?,
+              disposal_type = 'WRITEOFF',
+              disposed_at = CURRENT_TIMESTAMP,
+              disposal_proceeds_base = NULL,
+              disposal_gain_loss_base = ?,
               updated_by_user_id = ?
         WHERE id = ? AND tenant_id = ?`,
-      [effectiveDate, userId, assetId, tenantId]
+      [effectiveDate, writeoffGainLossBase, userId, assetId, tenantId]
     );
 
     return assetId;
@@ -5388,6 +5418,52 @@ async function loadAndLockAssetForSaleStaging(tx, tenantId, assetId) {
     );
   }
   return asset;
+}
+
+function lineMatchesUpdatedSaleDraft(line, updatedLineInput) {
+  if (!line || !updatedLineInput) return false;
+  const normalizedLineDescription = line.description != null
+    ? String(line.description).trim()
+    : null;
+  const normalizedInputDescription = updatedLineInput.description != null
+    ? String(updatedLineInput.description).trim()
+    : null;
+
+  return normalizedLineDescription === normalizedInputDescription
+    && Number(line.quantity || 0) === Number(updatedLineInput.quantity || 0)
+    && Number(line.unitPriceTxn || 0) === Number(updatedLineInput.unitPriceTxn || 0)
+    && Number(line.lineNetAmountTxn || 0) === Number(updatedLineInput.lineNetAmountTxn || 0)
+    && Number(line.lineTaxAmountTxn || 0) === Number(updatedLineInput.lineTaxAmountTxn || 0)
+    && Number(line.lineGrossAmountTxn || 0) === Number(updatedLineInput.lineGrossAmountTxn || 0);
+}
+
+function resolvePendingSaleLineIdFromUpdatedDocument({
+  updatedDocument,
+  previousPendingLineId,
+  updatedLineInput,
+}) {
+  const updatedLines = Array.isArray(updatedDocument?.lines) ? updatedDocument.lines : [];
+  const previousLineId = parsePositiveInt(previousPendingLineId);
+
+  if (previousLineId) {
+    const existingLine = updatedLines.find((line) => Number(line.id) === previousLineId);
+    if (existingLine) {
+      return previousLineId;
+    }
+  }
+
+  if (updatedLineInput) {
+    const matchedLine = updatedLines.find((line) => lineMatchesUpdatedSaleDraft(line, updatedLineInput));
+    if (matchedLine?.id) {
+      return Number(matchedLine.id);
+    }
+  }
+
+  if (updatedLines.length === 1 && updatedLines[0]?.id) {
+    return Number(updatedLines[0].id);
+  }
+
+  return previousLineId || null;
 }
 
 export async function saleCreateDraftArDocument(input) {
@@ -5630,6 +5706,7 @@ export async function saleUpdateDraftArDocument(input) {
     updatePayload.dueDate = dueDate;
   }
 
+  let updatedLineInput = null;
   // If sale amount or description changed, rebuild lines
   if (saleAmountTxn !== undefined || description !== undefined) {
     const existingLine = (existingDoc.lines || []).find(
@@ -5639,19 +5716,18 @@ export async function saleUpdateDraftArDocument(input) {
     const resolvedAmount = saleAmountTxn !== undefined
       ? saleAmountTxn
       : (existingLine?.unitPriceTxn ?? existingLine?.lineNetAmountTxn ?? 0);
-    updatePayload.lines = [
-      {
-        id: existingLine ? Number(existingLine.id) : undefined,
-        description: description !== undefined
-          ? description
-          : (existingLine?.description || null),
-        quantity: 1,
-        unitPriceTxn: resolvedAmount,
-        lineNetAmountTxn: resolvedAmount,
-        lineTaxAmountTxn: 0,
-        lineGrossAmountTxn: resolvedAmount,
-      },
-    ];
+    updatedLineInput = {
+      id: existingLine ? Number(existingLine.id) : undefined,
+      description: description !== undefined
+        ? description
+        : (existingLine?.description || null),
+      quantity: 1,
+      unitPriceTxn: resolvedAmount,
+      lineNetAmountTxn: resolvedAmount,
+      lineTaxAmountTxn: 0,
+      lineGrossAmountTxn: resolvedAmount,
+    };
+    updatePayload.lines = [updatedLineInput];
 
     if (saleAmountTxn !== undefined) {
       updatePayload.amountTxn = saleAmountTxn;
@@ -5664,12 +5740,29 @@ export async function saleUpdateDraftArDocument(input) {
     assertScopeAccess,
   });
 
+  const refreshedPendingLineId = resolvePendingSaleLineIdFromUpdatedDocument({
+    updatedDocument: updatedDoc,
+    previousPendingLineId: asset.pending_sale_cari_document_line_id,
+    updatedLineInput,
+  });
+
+  if (
+    refreshedPendingLineId
+    && refreshedPendingLineId !== Number(asset.pending_sale_cari_document_line_id || 0)
+  ) {
+    await query(
+      `UPDATE fixed_assets
+          SET pending_sale_cari_document_line_id = ?,
+              updated_by_user_id = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [refreshedPendingLineId, userId, assetId, tenantId]
+    );
+  }
+
   return {
     assetId,
     pendingSaleCariDocumentId: pendingDocId,
-    pendingSaleCariDocumentLineId: asset.pending_sale_cari_document_line_id
-      ? Number(asset.pending_sale_cari_document_line_id)
-      : null,
+    pendingSaleCariDocumentLineId: refreshedPendingLineId,
     document: updatedDoc,
   };
 }
@@ -5998,6 +6091,7 @@ export async function saleFinalizeAsset(input) {
 
     const saleNbvTxn = roundDisposalAmount(cutoffEconomics.cutoffNbvTxn);
     const saleNbvBase = roundDisposalAmount(cutoffEconomics.cutoffNbvBase);
+    const saleProceedsBase = roundDisposalAmount(saleCariContext.proceedsAmountBase);
     const gainOrLossTxn = roundDisposalAmount(saleCariContext.proceedsAmountTxn - saleNbvTxn);
     const gainOrLossBase = roundDisposalAmount(saleCariContext.proceedsAmountBase - saleNbvBase);
     const gainOrLossTxnSign = gainOrLossTxn > DISPOSAL_CUTOFF_EPSILON
@@ -6168,11 +6262,15 @@ export async function saleFinalizeAsset(input) {
     const assetUpdateClauses = [
       "status = 'DISPOSED'",
       "disposal_date = ?",
+      "disposal_type = 'SALE'",
+      "disposed_at = CURRENT_TIMESTAMP",
+      "disposal_proceeds_base = ?",
+      "disposal_gain_loss_base = ?",
       "pending_sale_cari_document_id = NULL",
       "pending_sale_cari_document_line_id = NULL",
       "updated_by_user_id = ?",
     ];
-    const assetUpdateParams = [effectiveDate, userId];
+    const assetUpdateParams = [effectiveDate, saleProceedsBase, gainOrLossBase, userId];
     if (cutoffEconomics.cutoffPeriodKey) {
       assetUpdateClauses.push("last_depreciation_period = ?");
       assetUpdateParams.push(cutoffEconomics.cutoffPeriodKey);
