@@ -3711,17 +3711,26 @@ export async function cancelCariDraftDocumentById({
   return updated;
 }
 
-export async function postCariDocumentById({
-  req,
-  payload,
-  assertScopeAccess,
-}) {
+async function postCariDocumentByIdTx(
+  tx,
+  {
+    req,
+    payload,
+    assertScopeAccess,
+    existingDocument = null,
+  }
+) {
+  if (!tx || typeof tx.query !== "function") {
+    throw new Error("postCariDocumentByIdTx requires a transaction object with query()");
+  }
+
   const tenantId = payload.tenantId;
   const documentId = payload.documentId;
 
-  const existing = await fetchDocumentRow({
+  const existing = existingDocument || await fetchDocumentRow({
     tenantId,
     documentId,
+    runQuery: tx.query,
   });
   if (!existing) {
     throw badRequest("Document not found");
@@ -3733,57 +3742,56 @@ export async function postCariDocumentById({
     throw badRequest("Only DRAFT documents can be posted");
   }
 
-  const posted = await withTransaction(async (tx) => {
-    const lockedDocument = await fetchDocumentRowForUpdate({
-      tenantId,
-      documentId,
-      runQuery: tx.query,
-    });
-    if (!lockedDocument) {
-      throw badRequest("Document not found");
-    }
+  const lockedDocument = await fetchDocumentRowForUpdate({
+    tenantId,
+    documentId,
+    runQuery: tx.query,
+  });
+  if (!lockedDocument) {
+    throw badRequest("Document not found");
+  }
 
-    const lockedLegalEntityId = parsePositiveInt(lockedDocument.legal_entity_id);
-    const documentOperatingUnitId = parsePositiveInt(lockedDocument.operating_unit_id) || null;
-    if (normalizeUpperText(lockedDocument.status) !== DRAFT_STATUS) {
-      throw badRequest("Only DRAFT documents can be posted");
-    }
+  const lockedLegalEntityId = parsePositiveInt(lockedDocument.legal_entity_id);
+  const documentOperatingUnitId = parsePositiveInt(lockedDocument.operating_unit_id) || null;
+  if (normalizeUpperText(lockedDocument.status) !== DRAFT_STATUS) {
+    throw badRequest("Only DRAFT documents can be posted");
+  }
 
-    await assertLegalEntityBelongsToTenant(
-      tenantId,
-      lockedLegalEntityId,
-      "legalEntityId"
-    );
+  await assertLegalEntityBelongsToTenant(
+    tenantId,
+    lockedLegalEntityId,
+    "legalEntityId"
+  );
 
-    const documentDate = normalizeDateInput(
-      lockedDocument.document_date,
-      "documentDate"
-    );
-    const direction = normalizeUpperText(lockedDocument.direction);
-    const documentType = normalizeUpperText(lockedDocument.document_type);
-    const currencyCode = normalizeUpperText(lockedDocument.currency_code);
-    const counterpartyId = parsePositiveInt(lockedDocument.counterparty_id);
-    const paymentTermId = parsePositiveInt(lockedDocument.payment_term_id);
+  const documentDate = normalizeDateInput(
+    lockedDocument.document_date,
+    "documentDate"
+  );
+  const direction = normalizeUpperText(lockedDocument.direction);
+  const documentType = normalizeUpperText(lockedDocument.document_type);
+  const currencyCode = normalizeUpperText(lockedDocument.currency_code);
+  const counterpartyId = parsePositiveInt(lockedDocument.counterparty_id);
+  const paymentTermId = parsePositiveInt(lockedDocument.payment_term_id);
 
-    const counterparty = await fetchCounterpartyRow({
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      counterpartyId,
-      runQuery: tx.query,
-    });
-    if (!counterparty) {
-      throw badRequest("counterpartyId must belong to legalEntityId");
-    }
+  const counterparty = await fetchCounterpartyRow({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    counterpartyId,
+    runQuery: tx.query,
+  });
+  if (!counterparty) {
+    throw badRequest("counterpartyId must belong to legalEntityId");
+  }
 
-    const paymentTerm = await fetchPaymentTermRow({
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      paymentTermId,
-      runQuery: tx.query,
-    });
-    if (paymentTermId && !paymentTerm) {
-      throw badRequest("paymentTermId must belong to legalEntityId");
-    }
+  const paymentTerm = await fetchPaymentTermRow({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    paymentTermId,
+    runQuery: tx.query,
+  });
+  if (paymentTermId && !paymentTerm) {
+    throw badRequest("paymentTermId must belong to legalEntityId");
+  }
 
     const resolvedDueDate = resolveDueDate({
       documentDate,
@@ -4371,9 +4379,185 @@ export async function postCariDocumentById({
         tax: taxAugmentation.summary,
       },
     };
-  });
+}
 
-  return posted;
+export async function postCariDocumentById({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  const tenantId = payload.tenantId;
+  const documentId = payload.documentId;
+
+  const existing = await fetchDocumentRow({
+    tenantId,
+    documentId,
+  });
+  if (!existing) {
+    throw badRequest("Document not found");
+  }
+
+  return withTransaction(async (tx) => (
+    postCariDocumentByIdTx(tx, {
+      req,
+      payload,
+      assertScopeAccess,
+      existingDocument: existing,
+    })
+  ));
+}
+
+export async function resolveCariSaleDocumentLineForFinalizeTx(
+  tx,
+  {
+    req,
+    tenantId,
+    documentId,
+    documentLineId,
+    userId = null,
+    assertScopeAccess,
+    postDraft = false,
+  }
+) {
+  if (!tx || typeof tx.query !== "function") {
+    throw new Error("resolveCariSaleDocumentLineForFinalizeTx requires a transaction object with query()");
+  }
+
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedDocumentId = parsePositiveInt(documentId);
+  const normalizedDocumentLineId = parsePositiveInt(documentLineId);
+  if (!normalizedTenantId) {
+    throw badRequest("tenantId is required");
+  }
+  if (!normalizedDocumentId) {
+    throw badRequest("documentId is required");
+  }
+  if (!normalizedDocumentLineId) {
+    throw badRequest("documentLineId is required");
+  }
+
+  const lockedDocument = await fetchDocumentRowForUpdate({
+    tenantId: normalizedTenantId,
+    documentId: normalizedDocumentId,
+    runQuery: tx.query,
+  });
+  if (!lockedDocument) {
+    throw badRequest("Document not found");
+  }
+
+  assertDocumentScopeAccess(req, assertScopeAccess, lockedDocument, "documentId");
+
+  const normalizedDirection = normalizeUpperText(lockedDocument.direction);
+  if (normalizedDirection !== "AR") {
+    throw badRequest(
+      `Linked document (id=${normalizedDocumentId}) must be AR-direction; got ${lockedDocument.direction}`
+    );
+  }
+
+  const normalizedDocumentType = normalizeUpperText(lockedDocument.document_type);
+  if (!POSITIVE_SIGN_DOCUMENT_TYPES.has(normalizedDocumentType)) {
+    throw badRequest(
+      `Linked document (id=${normalizedDocumentId}) must be an AR sale document type; got ${lockedDocument.document_type}`
+    );
+  }
+
+  let documentStatus = normalizeUpperText(lockedDocument.status);
+  if (documentStatus !== DRAFT_STATUS && documentStatus !== POSTED_STATUS) {
+    throw badRequest(
+      `Linked document (id=${normalizedDocumentId}) must be DRAFT or POSTED; got ${lockedDocument.status}`
+    );
+  }
+
+  const postedDuringFinalize = documentStatus === DRAFT_STATUS && postDraft;
+  let resolvedDocument;
+  if (postedDuringFinalize) {
+    const posted = await postCariDocumentByIdTx(tx, {
+      req,
+      payload: {
+        tenantId: normalizedTenantId,
+        documentId: normalizedDocumentId,
+        userId,
+      },
+      assertScopeAccess,
+      existingDocument: lockedDocument,
+    });
+    resolvedDocument = posted.row;
+    documentStatus = normalizeUpperText(resolvedDocument.status);
+  } else {
+    const lines = await loadDocumentLinesForDocument({
+      tenantId: normalizedTenantId,
+      legalEntityId: parsePositiveInt(lockedDocument.legal_entity_id),
+      documentId: normalizedDocumentId,
+      runQuery: tx.query,
+    });
+    resolvedDocument = mapDocumentRow(lockedDocument, { lines });
+  }
+
+  const line = (resolvedDocument.lines || []).find(
+    (candidate) => Number(candidate.id) === normalizedDocumentLineId
+  );
+  if (!line) {
+    throw badRequest(
+      `Line (id=${normalizedDocumentLineId}) not found on document (id=${normalizedDocumentId})`
+    );
+  }
+
+  const proceedsAmountTxn = normalizeAmount(
+    line.lineNetAmountTxn ?? 0,
+    "saleLine.lineNetAmountTxn"
+  );
+  const proceedsAmountBase = normalizeAmount(
+    line.lineNetAmountBase ?? 0,
+    "saleLine.lineNetAmountBase"
+  );
+
+  let proceedsAccount = null;
+  if (parsePositiveInt(line.postingAccountId)) {
+    proceedsAccount = await resolveCariLinePostingAccount({
+      tenantId: normalizedTenantId,
+      legalEntityId: resolvedDocument.legalEntityId,
+      accountId: line.postingAccountId,
+      fieldLabel: "saleLine.postingAccountId",
+      runQuery: tx.query,
+    });
+  } else if (documentStatus === DRAFT_STATUS || postedDuringFinalize) {
+    const counterparty = await fetchCounterpartyRow({
+      tenantId: normalizedTenantId,
+      legalEntityId: resolvedDocument.legalEntityId,
+      counterpartyId: resolvedDocument.counterpartyId,
+      runQuery: tx.query,
+    });
+    if (!counterparty) {
+      throw badRequest(
+        `Document counterparty (id=${resolvedDocument.counterpartyId}) must belong to legalEntityId=${resolvedDocument.legalEntityId}`
+      );
+    }
+    const postingAccounts = await resolveCariPostingAccounts({
+      tenantId: normalizedTenantId,
+      legalEntityId: resolvedDocument.legalEntityId,
+      direction: normalizedDirection,
+      counterpartyRow: counterparty,
+      runQuery: tx.query,
+    });
+    proceedsAccount = {
+      id: postingAccounts.offsetAccountId,
+      code: postingAccounts.offsetAccountCode || null,
+    };
+  } else {
+    throw badRequest(
+      `Posted AR line (id=${normalizedDocumentLineId}) must keep a dedicated postingAccountId for fixed-assets sale finalize`
+    );
+  }
+
+  return {
+    document: resolvedDocument,
+    line,
+    proceedsAccountId: parsePositiveInt(proceedsAccount?.id),
+    proceedsAccountCode: proceedsAccount?.code || null,
+    proceedsAmountTxn,
+    proceedsAmountBase,
+    postedDuringFinalize,
+  };
 }
 
 export async function reverseCariPostedDocumentById({

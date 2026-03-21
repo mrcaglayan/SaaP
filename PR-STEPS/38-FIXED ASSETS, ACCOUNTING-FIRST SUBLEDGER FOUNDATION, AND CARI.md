@@ -1266,8 +1266,8 @@ Implementation notes:
 - [x] `STEP-FA37` - Ownership transfer workflow and accounting
 - [x] `STEP-FA38` - Write-off workflow
 - [x] `STEP-FA39` - Sale staged draft/link/update workflow
-- [ ] `STEP-FA40` - Sale finalize workflow
-- [ ] `STEP-FA41` - Source-owned non-run reversal workflow
+- [x] `STEP-FA40` - Sale finalize workflow
+- [x] `STEP-FA41` - Source-owned non-run reversal workflow
 - [ ] `STEP-FA42` - Fixed-assets evidence service extension and nested evidence routes
 - [ ] `STEP-FA43` - Fixed-assets journal source-link writing and backend destination resolution support
 - [ ] `STEP-FA44` - Fixed-assets deep-link pages, Journal Workbench drillback, and query-contract completion
@@ -2691,7 +2691,7 @@ Implement the staged AR-side sale preparation flow without final disposal accoun
 ## `STEP-FA40` - Sale finalize workflow
 
 ### Patch target
-Implement the only sale step that may create the fixed-assets `SALE` row, disposal journal, and disposed asset state.
+Implement the only sale step that may create the fixed-assets `SALE` row, disposal journal, and disposed asset state.FA40 must enforce disposal cutoff economics through the day before effective disposal.
 
 ### In scope
 - `POST /api/v1/fixed-assets/:assetId/sale/finalize`

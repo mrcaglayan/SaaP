@@ -35,6 +35,7 @@ import {
   parseDepreciationRunParams,
   parseDepreciationRunPostInput,
   parseDepreciationRunReverseInput,
+  parseFixedAssetTransactionReverseInput,
   parseDepreciationRunPreviewInput,
   parseDepreciationRunCreateInput,
   parseCariEligibleApLineReadInput,
@@ -46,6 +47,7 @@ import {
   parseSaleCreateDraftArInput,
   parseSaleLinkArInput,
   parseSaleUpdateDraftArInput,
+  parseSaleFinalizeInput,
   parseAssetCreateInput,
   parseAssetDraftUpdateInput,
   parseCategoryListFilters,
@@ -70,6 +72,8 @@ import {
   saleCreateDraftArDocument,
   saleLinkArDocument,
   saleUpdateDraftArDocument,
+  saleFinalizeAsset,
+  reverseFixedAssetTransaction,
   createAssetDraft,
   updateAssetDraft,
   listCategories,
@@ -397,8 +401,10 @@ router.post(
         req.tenantId
       ),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    const input = parseFixedAssetTransactionReverseInput(req);
+    const result = await reverseFixedAssetTransaction(input);
+    return res.json(result);
   })
 );
 
@@ -622,8 +628,11 @@ router.post(
     resolveScope: async (req) =>
       resolveFixedAssetScope(req.params?.assetId, req.tenantId),
   }),
-  asyncHandler(async (_req, res) => {
-    return res.status(501).json({ message: "Not implemented" });
+  asyncHandler(async (req, res) => {
+    await assertSecondaryPermission(req, "cari.doc.post");
+    const input = parseSaleFinalizeInput(req);
+    const result = await saleFinalizeAsset({ req, ...input, assertScopeAccess });
+    return res.json(result);
   })
 );
 

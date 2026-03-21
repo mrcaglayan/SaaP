@@ -14,9 +14,11 @@ import {
   createCariDraftDocument,
   getCariDocumentByIdForTenant,
   insertPostedJournalWithLinesTx,
+  resolveCariSaleDocumentLineForFinalizeTx,
   resolveCariControlAccountTx,
   updateCariDraftDocumentById,
 } from "./cari.document.service.js";
+import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
 
@@ -2174,6 +2176,7 @@ async function insertFixedAssetTransaction(tx, {
   accumDeprAmountBase = null,
   nbvAmountTxn = null,
   nbvAmountBase = null,
+  reversedTransactionId = null,
   note = null,
   createdByUserId = null,
 }) {
@@ -2188,6 +2191,7 @@ async function insertFixedAssetTransaction(tx, {
        gross_amount_txn, gross_amount_base,
        accum_depr_amount_txn, accum_depr_amount_base,
        nbv_amount_txn, nbv_amount_base,
+       reversed_transaction_id,
        note, created_by_user_id
      ) VALUES (
        ?, ?, ?,
@@ -2199,6 +2203,7 @@ async function insertFixedAssetTransaction(tx, {
        ?, ?,
        ?, ?,
        ?, ?,
+       ?,
        ?, ?
      )`,
     [
@@ -2222,12 +2227,501 @@ async function insertFixedAssetTransaction(tx, {
       accumDeprAmountBase,
       nbvAmountTxn,
       nbvAmountBase,
+      reversedTransactionId,
       note,
       createdByUserId,
     ]
   );
 
   return parsePositiveInt(result.rows?.insertId) || null;
+}
+
+const NON_RUN_REVERSIBLE_TRANSACTION_TYPES = new Set([
+  "ACQUISITION",
+  "CAPITALIZATION",
+  "DEPRECIATION",
+  "OWNERSHIP_TRANSFER",
+  "WRITEOFF",
+  "SALE",
+]);
+
+const NON_RUN_REVERSAL_JOURNAL_REQUIRED_TYPES = new Set([
+  "CAPITALIZATION",
+  "OWNERSHIP_TRANSFER",
+  "WRITEOFF",
+  "SALE",
+]);
+
+const LOW_VALUE_INLINE_DEPRECIATION_KIND = "LOW_VALUE_FULL_EXPENSE";
+
+const SALE_REVERSAL_COMPATIBLE_CARI_STATUSES = new Set([
+  "DRAFT",
+  "CANCELLED",
+  "REVERSED",
+]);
+
+function isLaterFixedAssetTransaction(candidate, target) {
+  const candidateDate = String(candidate?.effectiveDate || "");
+  const targetDate = String(target?.effectiveDate || "");
+  const candidateId = Number(candidate?.id ?? candidate?.transactionId ?? 0);
+  const targetId = Number(target?.id ?? target?.transactionId ?? 0);
+  if (candidateDate > targetDate) return true;
+  if (candidateDate < targetDate) return false;
+  return candidateId > targetId;
+}
+
+function buildFixedAssetNonRunReversalJournalNo(transactionId) {
+  return `FA-TXN-REV-${parsePositiveInt(transactionId)}-${Date.now().toString(36).toUpperCase()}`
+    .slice(0, 40);
+}
+
+function derivePeriodKeyFromDate(dateText) {
+  const normalized = String(dateText || "").slice(0, 7);
+  return /^\d{4}-\d{2}$/.test(normalized) ? normalized : null;
+}
+
+function isAssetFullyDepreciatedAtCurrentNbv(asset, currentNbv) {
+  const currentNbvTxn = roundDisposalAmount(currentNbv?.nbvTxn || 0);
+  const currentNbvBase = roundDisposalAmount(currentNbv?.nbvBase || 0);
+  const salvageValueTxn = roundDisposalAmount(asset?.salvageValueTxn || 0);
+  const salvageValueBase = roundDisposalAmount(asset?.salvageValueBase || 0);
+
+  return currentNbvTxn <= salvageValueTxn + DISPOSAL_CUTOFF_EPSILON
+    && currentNbvBase <= salvageValueBase + DISPOSAL_CUTOFF_EPSILON;
+}
+
+async function loadAndLockFixedAssetTransactionForReverseTx(tx, tenantId, transactionId) {
+  const result = await tx.query(
+    `SELECT fat.id,
+            fat.tenant_id,
+            fat.legal_entity_id,
+            fat.asset_id,
+            fat.transaction_type,
+            fat.status,
+            fat.effective_date,
+            fat.posting_date,
+            fat.book_id,
+            fat.fiscal_period_id,
+            fat.currency_code,
+            fat.depreciation_kind,
+            fat.journal_entry_id,
+            fat.source_ref_type,
+            fat.source_ref_id,
+            fat.source_ref_line_id,
+            fat.gross_amount_txn,
+            fat.gross_amount_base,
+            fat.accum_depr_amount_txn,
+            fat.accum_depr_amount_base,
+            fat.nbv_amount_txn,
+            fat.nbv_amount_base,
+            fat.reversed_transaction_id,
+            fat.reversal_transaction_id,
+            fat.note,
+            fa.asset_no,
+            fa.status AS asset_status,
+            fa.owner_operating_unit_id,
+            fa.location_operating_unit_id,
+            fa.salvage_value_txn,
+            fa.salvage_value_base
+       FROM fixed_asset_transactions fat
+       JOIN fixed_assets fa
+         ON fa.id = fat.asset_id
+        AND fa.tenant_id = fat.tenant_id
+      WHERE fat.tenant_id = ?
+        AND fat.id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [tenantId, transactionId]
+  );
+
+  const row = result.rows?.[0];
+  if (!row) {
+    throw badRequest(`Fixed-asset transaction (id=${transactionId}) not found for tenant`);
+  }
+
+  return {
+    id: Number(row.id),
+    tenantId: Number(row.tenant_id),
+    legalEntityId: Number(row.legal_entity_id),
+    assetId: Number(row.asset_id),
+    transactionType: normalizeUpperText(row.transaction_type),
+    status: normalizeUpperText(row.status),
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    postingDate: row.posting_date ? String(row.posting_date).slice(0, 10) : null,
+    bookId: parsePositiveInt(row.book_id),
+    fiscalPeriodId: parsePositiveInt(row.fiscal_period_id),
+    currencyCode: row.currency_code || null,
+    depreciationKind: normalizeUpperText(row.depreciation_kind),
+    journalEntryId: parsePositiveInt(row.journal_entry_id),
+    sourceRefType: normalizeUpperText(row.source_ref_type),
+    sourceRefId: parsePositiveInt(row.source_ref_id),
+    sourceRefLineId: parsePositiveInt(row.source_ref_line_id),
+    grossAmountTxn: row.gross_amount_txn != null ? Number(row.gross_amount_txn) : null,
+    grossAmountBase: row.gross_amount_base != null ? Number(row.gross_amount_base) : null,
+    accumDeprAmountTxn: row.accum_depr_amount_txn != null ? Number(row.accum_depr_amount_txn) : null,
+    accumDeprAmountBase: row.accum_depr_amount_base != null ? Number(row.accum_depr_amount_base) : null,
+    nbvAmountTxn: row.nbv_amount_txn != null ? Number(row.nbv_amount_txn) : null,
+    nbvAmountBase: row.nbv_amount_base != null ? Number(row.nbv_amount_base) : null,
+    reversedTransactionId: parsePositiveInt(row.reversed_transaction_id),
+    reversalTransactionId: parsePositiveInt(row.reversal_transaction_id),
+    note: row.note || null,
+    assetNo: row.asset_no || `ID-${Number(row.asset_id)}`,
+    assetStatus: normalizeUpperText(row.asset_status),
+    ownerOperatingUnitId: parsePositiveInt(row.owner_operating_unit_id),
+    locationOperatingUnitId: parsePositiveInt(row.location_operating_unit_id),
+    salvageValueTxn: row.salvage_value_txn != null ? Number(row.salvage_value_txn) : null,
+    salvageValueBase: row.salvage_value_base != null ? Number(row.salvage_value_base) : null,
+  };
+}
+
+function assertSupportedFixedAssetReversalTarget(target) {
+  if (target.transactionType === "REVERSAL" || target.reversedTransactionId) {
+    throw badRequest("REVERSAL transactions cannot be reversed");
+  }
+
+  if (target.reversalTransactionId) {
+    throw badRequest(
+      `Fixed-asset transaction ${target.id} is already reversed ` +
+      `(reversalTransactionId=${target.reversalTransactionId})`
+    );
+  }
+
+  if (target.status !== "POSTED") {
+    throw badRequest(
+      `Only POSTED non-run fixed-asset transactions can be reversed ` +
+      `(transactionId=${target.id}, status=${target.status})`
+    );
+  }
+
+  if (!NON_RUN_REVERSIBLE_TRANSACTION_TYPES.has(target.transactionType)) {
+    throw badRequest(
+      `Transaction type ${target.transactionType || "UNKNOWN"} is not reversible through ` +
+      `the fixed-assets non-run reversal workflow`
+    );
+  }
+
+  if (
+    target.transactionType === "DEPRECIATION"
+    && target.depreciationKind !== LOW_VALUE_INLINE_DEPRECIATION_KIND
+  ) {
+    throw badRequest(
+      `Only inline low-value DEPRECIATION is reversible here ` +
+      `(transactionId=${target.id}, depreciationKind=${target.depreciationKind || "NULL"})`
+    );
+  }
+
+  if (
+    NON_RUN_REVERSAL_JOURNAL_REQUIRED_TYPES.has(target.transactionType)
+    && !target.journalEntryId
+  ) {
+    throw badRequest(
+      `Transaction ${target.id} is missing posted journal lineage and cannot be reversed safely`
+    );
+  }
+}
+
+async function assertFixedAssetTransactionNotAlreadyReversedTx(tx, target) {
+  if (target.reversalTransactionId) {
+    throw badRequest(
+      `Fixed-asset transaction ${target.id} is already reversed ` +
+      `(reversalTransactionId=${target.reversalTransactionId})`
+    );
+  }
+
+  const result = await tx.query(
+    `SELECT id
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND reversed_transaction_id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [target.tenantId, target.id]
+  );
+
+  const reversalRow = result.rows?.[0];
+  if (reversalRow) {
+    throw badRequest(
+      `Fixed-asset transaction ${target.id} is already reversed ` +
+      `(reversalTransactionId=${Number(reversalRow.id)})`
+    );
+  }
+}
+
+async function assertNoLaterFixedAssetLifecycleEventTx(tx, target) {
+  const result = await tx.query(
+    `SELECT id,
+            transaction_type,
+            status,
+            effective_date
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status NOT IN ('DRAFT', 'CANCELLED')
+        AND (
+          effective_date > ?
+          OR (effective_date = ? AND id > ?)
+        )
+      ORDER BY effective_date ASC, id ASC
+      LIMIT 1
+      FOR UPDATE`,
+    [target.tenantId, target.assetId, target.effectiveDate, target.effectiveDate, target.id]
+  );
+
+  const blocker = result.rows?.[0];
+  if (!blocker) {
+    return;
+  }
+
+  throw badRequest(
+    `Fixed-asset transaction ${target.id} cannot be reversed because asset ${target.assetId} ` +
+    `has a later ${String(blocker.transaction_type || "UNKNOWN").toUpperCase()} transaction ` +
+    `(transactionId=${Number(blocker.id)}, effectiveDate=${String(blocker.effective_date || "").slice(0, 10)}, status=${String(blocker.status || "").toUpperCase()})`
+  );
+}
+
+async function assertSaleReversalCariCompatibilityTx(tx, target) {
+  if (target.transactionType !== "SALE") {
+    return;
+  }
+
+  if (
+    target.sourceRefType !== "CARI_DOCUMENT"
+    || !target.sourceRefId
+    || !target.sourceRefLineId
+  ) {
+    throw badRequest(
+      `SALE reversal requires exact linked CARI document provenance ` +
+      `(transactionId=${target.id})`
+    );
+  }
+
+  const result = await tx.query(
+    `SELECT d.id,
+            d.direction,
+            d.status,
+            l.id AS line_id
+       FROM cari_documents d
+       LEFT JOIN cari_document_lines l
+         ON l.cari_document_id = d.id
+        AND l.id = ?
+      WHERE d.tenant_id = ?
+        AND d.id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [target.sourceRefLineId, target.tenantId, target.sourceRefId]
+  );
+
+  const row = result.rows?.[0];
+  if (!row) {
+    throw badRequest(
+      `Linked CARI document (id=${target.sourceRefId}) not found for SALE reversal`
+    );
+  }
+  if (!parsePositiveInt(row.line_id)) {
+    throw badRequest(
+      `Linked CARI sale line (id=${target.sourceRefLineId}) no longer exists on document ` +
+      `(id=${target.sourceRefId})`
+    );
+  }
+  if (normalizeUpperText(row.direction) !== "AR") {
+    throw badRequest(
+      `Linked CARI document (id=${target.sourceRefId}) must remain AR-direction for SALE reversal`
+    );
+  }
+
+  const documentStatus = normalizeUpperText(row.status);
+  if (!SALE_REVERSAL_COMPATIBLE_CARI_STATUSES.has(documentStatus)) {
+    throw badRequest(
+      `SALE reversal is blocked until the linked AR CARI document is reversed or returned to ` +
+      `a reversal-compatible non-posted state ` +
+      `(documentId=${target.sourceRefId}, status=${documentStatus})`
+    );
+  }
+}
+
+async function loadOwnershipTransferDetailForReversalTx(tx, tenantId, transactionId) {
+  const result = await tx.query(
+    `SELECT from_owner_operating_unit_id,
+            to_owner_operating_unit_id,
+            from_location_operating_unit_id,
+            to_location_operating_unit_id
+       FROM fixed_asset_ownership_transfer_details
+      WHERE tenant_id = ?
+        AND transaction_id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [tenantId, transactionId]
+  );
+
+  const row = result.rows?.[0];
+  if (!row) {
+    throw badRequest(
+      `Ownership transfer detail is missing for transaction ${transactionId}`
+    );
+  }
+
+  return {
+    fromOwnerOperatingUnitId: parsePositiveInt(row.from_owner_operating_unit_id),
+    toOwnerOperatingUnitId: parsePositiveInt(row.to_owner_operating_unit_id),
+    fromLocationOperatingUnitId: parsePositiveInt(row.from_location_operating_unit_id),
+    toLocationOperatingUnitId: parsePositiveInt(row.to_location_operating_unit_id),
+  };
+}
+
+async function loadLatestActivePostedFixedAssetTransactionTx(tx, tenantId, assetId) {
+  const result = await tx.query(
+    `SELECT id,
+            transaction_type,
+            effective_date,
+            depreciation_kind
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'
+        AND transaction_type <> 'REVERSAL'
+        AND reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fixed_asset_transactions.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY effective_date DESC, id DESC
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+
+  const row = result.rows?.[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    transactionType: normalizeUpperText(row.transaction_type),
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    depreciationKind: normalizeUpperText(row.depreciation_kind),
+  };
+}
+
+async function loadLatestActivePostedDepreciationPeriodTx(tx, tenantId, assetId) {
+  const result = await tx.query(
+    `SELECT effective_date
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'
+        AND transaction_type = 'DEPRECIATION'
+        AND reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fixed_asset_transactions.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY effective_date DESC, id DESC
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+
+  return derivePeriodKeyFromDate(result.rows?.[0]?.effective_date);
+}
+
+async function restoreAssetStateAfterFixedAssetReversalTx(tx, {
+  target,
+  userId,
+}) {
+  const latestActiveTransaction = await loadLatestActivePostedFixedAssetTransactionTx(
+    tx,
+    target.tenantId,
+    target.assetId
+  );
+
+  let restoredStatus = "DRAFT";
+  let restoredDisposalDate = null;
+
+  if (latestActiveTransaction) {
+    const lifecycleHistory = await loadAssetDepreciationLifecycleHistory({
+      tenantId: target.tenantId,
+      assetId: target.assetId,
+      queryFn: tx.query,
+    });
+
+    const latestLifecycleEvent = [...lifecycleHistory]
+      .filter((row) => (
+        row.transactionType === "SUSPEND"
+        || row.transactionType === "REACTIVATE"
+        || row.transactionType === "OWNERSHIP_TRANSFER"
+        || row.transactionType === "WRITEOFF"
+        || row.transactionType === "SALE"
+      ))
+      .sort((left, right) => (
+        isLaterFixedAssetTransaction(left, right) ? 1 : -1
+      ))
+      .at(-1) || null;
+
+    if (
+      latestLifecycleEvent
+      && (latestLifecycleEvent.transactionType === "WRITEOFF" || latestLifecycleEvent.transactionType === "SALE")
+    ) {
+      restoredStatus = "DISPOSED";
+      restoredDisposalDate = latestLifecycleEvent.effectiveDate;
+    } else if (latestLifecycleEvent?.transactionType === "SUSPEND") {
+      restoredStatus = "SUSPENDED";
+    } else {
+      const currentNbv = await resolveCurrentAssetNbv(target.tenantId, target.assetId, tx.query);
+      restoredStatus = isAssetFullyDepreciatedAtCurrentNbv(target, currentNbv)
+        ? "FULLY_DEPRECIATED"
+        : "ACTIVE";
+    }
+  }
+
+  const restoredLastDepreciationPeriod = await loadLatestActivePostedDepreciationPeriodTx(
+    tx,
+    target.tenantId,
+    target.assetId
+  );
+
+  const updateClauses = [
+    "status = ?",
+    "disposal_date = ?",
+    "last_depreciation_period = ?",
+    "updated_by_user_id = ?",
+  ];
+  const updateParams = [
+    restoredStatus,
+    restoredDisposalDate,
+    restoredLastDepreciationPeriod,
+    userId,
+  ];
+
+  if (target.transactionType === "OWNERSHIP_TRANSFER") {
+    const transferDetail = await loadOwnershipTransferDetailForReversalTx(
+      tx,
+      target.tenantId,
+      target.id
+    );
+    updateClauses.push("owner_operating_unit_id = ?");
+    updateParams.push(transferDetail.fromOwnerOperatingUnitId);
+    updateClauses.push("location_operating_unit_id = ?");
+    updateParams.push(transferDetail.fromLocationOperatingUnitId);
+  }
+
+  updateParams.push(target.assetId, target.tenantId);
+
+  await tx.query(
+    `UPDATE fixed_assets
+        SET ${updateClauses.join(", ")}
+      WHERE id = ?
+        AND tenant_id = ?`,
+    updateParams
+  );
+
+  return {
+    status: restoredStatus,
+    disposalDate: restoredDisposalDate,
+    lastDepreciationPeriod: restoredLastDepreciationPeriod,
+  };
 }
 
 export async function createAssetsFromCariDocumentLineFa06(input) {
@@ -3360,6 +3854,7 @@ async function resolveCurrentAssetNbv(tenantId, assetId, queryFn) {
       WHERE tenant_id = ?
         AND asset_id = ?
         AND status = 'POSTED'
+        AND transaction_type <> 'REVERSAL'
         AND reversal_transaction_id IS NULL
         AND NOT EXISTS (
           SELECT 1
@@ -3379,6 +3874,20 @@ async function resolveCurrentAssetNbv(tenantId, assetId, queryFn) {
     nbvTxn: roundTransferAmount(row.nbv_amount_txn),
     nbvBase: roundTransferAmount(row.nbv_amount_base),
   };
+}
+
+async function hasPostedDepreciationTransactions(tenantId, assetId, queryFn) {
+  const result = await queryFn(
+    `SELECT 1
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND transaction_type = 'DEPRECIATION'
+        AND status = 'POSTED'
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+  return Boolean(result.rows?.[0]);
 }
 
 export async function ownershipTransferAsset(input) {
@@ -3691,6 +4200,812 @@ function buildWriteoffJournalNo(assetId) {
 
 function roundDisposalAmount(value) {
   return Math.round(Number(value || 0) * 10000) / 10000;
+}
+
+const DISPOSAL_CUTOFF_EPSILON = 0.0001;
+
+function addDaysToDateText(dateText, days) {
+  const date = parseDateOnlyStrict(dateText, "date");
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return formatDateOnly(date);
+}
+
+function startOfMonthUtc(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function endOfMonthUtc(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
+}
+
+function addMonthsUtc(date, months) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+}
+
+function countDaysInclusiveUtc(startDate, endDate) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Math.floor((endDate.getTime() - startDate.getTime()) / dayMs) + 1;
+}
+
+function amountsMatchForDisposal(left, right, epsilon = DISPOSAL_CUTOFF_EPSILON) {
+  return Math.abs(Number(left || 0) - Number(right || 0)) <= epsilon;
+}
+
+function hasLegacyDepreciationOpeningValues(asset) {
+  return asset.legacy_nbv_txn != null
+    || asset.legacy_nbv_base != null
+    || asset.legacy_accum_depr_txn != null
+    || asset.legacy_accum_depr_base != null;
+}
+
+function getDisposalScheduleOpeningAmounts(asset) {
+  if (hasLegacyDepreciationOpeningValues(asset)) {
+    if (asset.legacy_nbv_txn == null || asset.legacy_nbv_base == null) {
+      throw badRequest(
+        "Legacy-onboarding disposal cutoff requires legacy NBV values to be persisted"
+      );
+    }
+    return {
+      openingNbvTxn: roundDisposalAmount(asset.legacy_nbv_txn),
+      openingNbvBase: roundDisposalAmount(asset.legacy_nbv_base),
+    };
+  }
+
+  return {
+    openingNbvTxn: roundDisposalAmount(asset.original_cost_txn),
+    openingNbvBase: roundDisposalAmount(asset.original_cost_base),
+  };
+}
+
+function normalizeCurrentNbvForFreshActivationDisposal(asset, currentNbv, {
+  hasPostedDepreciation = false,
+} = {}) {
+  if (hasPostedDepreciation || hasLegacyDepreciationOpeningValues(asset)) {
+    return currentNbv;
+  }
+
+  const grossCostTxn = roundDisposalAmount(asset.original_cost_txn);
+  const grossCostBase = roundDisposalAmount(asset.original_cost_base);
+  const salvageValueTxn = roundDisposalAmount(asset.salvage_value_txn || 0);
+  const salvageValueBase = roundDisposalAmount(asset.salvage_value_base || 0);
+
+  if (
+    salvageValueTxn <= DISPOSAL_CUTOFF_EPSILON
+    && salvageValueBase <= DISPOSAL_CUTOFF_EPSILON
+  ) {
+    return currentNbv;
+  }
+
+  if (
+    asset.last_depreciation_period != null
+    && String(asset.last_depreciation_period).trim() !== ""
+  ) {
+    return currentNbv;
+  }
+
+  const normalizedTxn = roundDisposalAmount(currentNbv.nbvTxn + salvageValueTxn);
+  const normalizedBase = roundDisposalAmount(currentNbv.nbvBase + salvageValueBase);
+  if (
+    !amountsMatchForDisposal(normalizedTxn, grossCostTxn)
+    || !amountsMatchForDisposal(normalizedBase, grossCostBase)
+  ) {
+    return currentNbv;
+  }
+
+  return {
+    nbvTxn: grossCostTxn,
+    nbvBase: grossCostBase,
+    normalizedFromFreshActivationSalvageState: true,
+  };
+}
+
+function getRemainingDepreciableAmountForDisposal(openingNbv, salvageValue) {
+  return roundDisposalAmount(
+    Math.max(0, Number(openingNbv || 0) - Number(salvageValue || 0))
+  );
+}
+
+function calculateDisposalStraightLineFullMonthAmount(remainingDepreciable, remainingPeriods) {
+  if (remainingPeriods <= 0 || remainingDepreciable <= 0) {
+    return 0;
+  }
+  return roundDisposalAmount(remainingDepreciable / remainingPeriods);
+}
+
+function calculateDisposalDecliningBalanceFullMonthAmount(remainingDepreciable, monthlyRate) {
+  if (remainingDepreciable <= 0 || monthlyRate <= 0) {
+    return 0;
+  }
+  return roundDisposalAmount(remainingDepreciable * monthlyRate);
+}
+
+function shouldSwitchDisposalDecliningBalanceToStraightLine({
+  switchToStraightLine,
+  remainingPeriods,
+  monthlyRate,
+}) {
+  if (!switchToStraightLine || remainingPeriods <= 0 || monthlyRate < 0) {
+    return false;
+  }
+  return (1 / remainingPeriods) >= monthlyRate;
+}
+
+function clampDisposalPlannedAmount({
+  openingNbv,
+  salvageValue,
+  plannedAmount,
+  absorbRoundingResidual = false,
+}) {
+  const remainingDepreciable = getRemainingDepreciableAmountForDisposal(
+    openingNbv,
+    salvageValue
+  );
+
+  let normalizedPlannedAmount = roundDisposalAmount(
+    Math.max(0, Number(plannedAmount || 0))
+  );
+  normalizedPlannedAmount = Math.min(normalizedPlannedAmount, remainingDepreciable);
+
+  let closingNbv = roundDisposalAmount(Number(openingNbv || 0) - normalizedPlannedAmount);
+  if (closingNbv < salvageValue) {
+    normalizedPlannedAmount = remainingDepreciable;
+    closingNbv = roundDisposalAmount(salvageValue);
+  }
+
+  if (absorbRoundingResidual && closingNbv > salvageValue) {
+    const residual = roundDisposalAmount(closingNbv - salvageValue);
+    if (residual > 0 && residual <= DISPOSAL_CUTOFF_EPSILON) {
+      normalizedPlannedAmount = roundDisposalAmount(normalizedPlannedAmount + residual);
+      closingNbv = roundDisposalAmount(salvageValue);
+    }
+  }
+
+  return {
+    plannedAmount: normalizedPlannedAmount,
+    closingNbv,
+  };
+}
+
+function compareDisposalLifecycleEvents(left, right) {
+  if (left.effectiveDate < right.effectiveDate) return -1;
+  if (left.effectiveDate > right.effectiveDate) return 1;
+  return Number(left.transactionId || 0) - Number(right.transactionId || 0);
+}
+
+function applyDisposalLifecycleEvent(state, event) {
+  if (!event) return;
+
+  if (event.kind === "SUSPEND") {
+    state.isActive = false;
+    return;
+  }
+  if (event.kind === "REACTIVATE") {
+    state.isActive = true;
+    return;
+  }
+  if (event.kind === "OWNERSHIP_TRANSFER") {
+    state.ownerOperatingUnitId = event.toOwnerOperatingUnitId;
+    return;
+  }
+  if (event.kind === "TERMINAL_DISPOSAL") {
+    state.isActive = false;
+    state.isDisposed = true;
+  }
+}
+
+function resolveDisposalInitialOwnerOperatingUnitId(
+  currentOwnerOperatingUnitId,
+  ownershipTransferEvents
+) {
+  if (!ownershipTransferEvents.length) {
+    return currentOwnerOperatingUnitId != null ? Number(currentOwnerOperatingUnitId) : null;
+  }
+
+  const reversedTransferEvents = [...ownershipTransferEvents].sort((left, right) => (
+    compareDisposalLifecycleEvents(right, left)
+  ));
+
+  let inferredOwnerOperatingUnitId = currentOwnerOperatingUnitId != null
+    ? Number(currentOwnerOperatingUnitId)
+    : (
+      ownershipTransferEvents.at(-1)?.toOwnerOperatingUnitId
+      ?? ownershipTransferEvents.at(-1)?.fromOwnerOperatingUnitId
+      ?? null
+    );
+
+  for (const transferEvent of reversedTransferEvents) {
+    if (transferEvent.fromOwnerOperatingUnitId == null || transferEvent.toOwnerOperatingUnitId == null) {
+      throw badRequest(
+        `Ownership transfer transaction ${transferEvent.transactionId} is missing persisted owner-OU detail`
+      );
+    }
+
+    inferredOwnerOperatingUnitId = Number(transferEvent.fromOwnerOperatingUnitId);
+  }
+
+  return inferredOwnerOperatingUnitId;
+}
+
+function buildDisposalLifecycleTimeline(
+  asset,
+  lifecycleHistory,
+  periods,
+  terminalDisposalDate
+) {
+  const lifecycleEvents = [];
+
+  for (const historyRow of lifecycleHistory || []) {
+    const transactionType = normalizeUpperText(historyRow.transactionType);
+    const effectiveDate = String(historyRow.effectiveDate || "").slice(0, 10);
+    if (!effectiveDate) {
+      throw badRequest("Lifecycle history row is missing effectiveDate");
+    }
+
+    if (transactionType === "SUSPEND") {
+      lifecycleEvents.push({
+        transactionId: historyRow.transactionId,
+        effectiveDate,
+        kind: "SUSPEND",
+      });
+      continue;
+    }
+
+    if (transactionType === "REACTIVATE") {
+      lifecycleEvents.push({
+        transactionId: historyRow.transactionId,
+        effectiveDate,
+        kind: "REACTIVATE",
+      });
+      continue;
+    }
+
+    if (transactionType === "OWNERSHIP_TRANSFER") {
+      lifecycleEvents.push({
+        transactionId: historyRow.transactionId,
+        effectiveDate,
+        kind: "OWNERSHIP_TRANSFER",
+        fromOwnerOperatingUnitId: historyRow.fromOwnerOperatingUnitId,
+        toOwnerOperatingUnitId: historyRow.toOwnerOperatingUnitId,
+      });
+      continue;
+    }
+
+    if (transactionType === "WRITEOFF" || transactionType === "SALE") {
+      lifecycleEvents.push({
+        transactionId: historyRow.transactionId,
+        effectiveDate,
+        kind: "TERMINAL_DISPOSAL",
+      });
+    }
+  }
+
+  if (
+    terminalDisposalDate
+    && !lifecycleEvents.some((event) => (
+      event.kind === "TERMINAL_DISPOSAL"
+      && event.effectiveDate === terminalDisposalDate
+    ))
+  ) {
+    lifecycleEvents.push({
+      transactionId: Number.MAX_SAFE_INTEGER,
+      effectiveDate: terminalDisposalDate,
+      kind: "TERMINAL_DISPOSAL",
+    });
+  }
+
+  lifecycleEvents.sort(compareDisposalLifecycleEvents);
+
+  const ownershipTransferEvents = lifecycleEvents.filter(
+    (event) => event.kind === "OWNERSHIP_TRANSFER"
+  );
+  const initialOwnerOperatingUnitId = resolveDisposalInitialOwnerOperatingUnitId(
+    asset.owner_operating_unit_id,
+    ownershipTransferEvents
+  );
+
+  const eventsByDate = new Map();
+  for (const event of lifecycleEvents) {
+    const existing = eventsByDate.get(event.effectiveDate) || [];
+    existing.push(event);
+    existing.sort((left, right) => Number(left.transactionId || 0) - Number(right.transactionId || 0));
+    eventsByDate.set(event.effectiveDate, existing);
+  }
+
+  const firstPeriodStart = parseDateOnlyStrict(periods[0]?.startDate, "period.startDate");
+  const initialState = {
+    isActive: true,
+    isDisposed: false,
+    ownerOperatingUnitId: initialOwnerOperatingUnitId,
+  };
+
+  for (const event of lifecycleEvents) {
+    if (event.effectiveDate >= formatDateOnly(firstPeriodStart)) {
+      break;
+    }
+    applyDisposalLifecycleEvent(initialState, event);
+  }
+
+  if (normalizeUpperText(asset.status) === "SUSPENDED") {
+    const hasSuspendHistory = lifecycleEvents.some((event) => event.kind === "SUSPEND");
+    if (!hasSuspendHistory) {
+      throw badRequest(
+        "SUSPENDED asset disposal cutoff requires persisted SUSPEND lifecycle history"
+      );
+    }
+  }
+
+  return {
+    eventsByDate,
+    initialState,
+  };
+}
+
+function buildDisposalPeriodEligibility(
+  periodStart,
+  periodEnd,
+  inServiceDate,
+  lifecycleTimeline,
+  lifecycleState
+) {
+  const allocationSegments = [];
+  let eligibleDays = 0;
+  let lifecycleExcludedDays = 0;
+  let cursor = new Date(periodStart.getTime());
+
+  while (cursor.getTime() <= periodEnd.getTime()) {
+    const cursorDateText = formatDateOnly(cursor);
+    const effectiveDateEvents = lifecycleTimeline.eventsByDate.get(cursorDateText) || [];
+    for (const event of effectiveDateEvents) {
+      applyDisposalLifecycleEvent(lifecycleState, event);
+    }
+
+    const isEligibleDay = cursor.getTime() >= inServiceDate.getTime()
+      && lifecycleState.isActive
+      && !lifecycleState.isDisposed;
+
+    if (isEligibleDay) {
+      eligibleDays += 1;
+      const previousSegment = allocationSegments.at(-1);
+      if (
+        previousSegment
+        && previousSegment.operatingUnitId === lifecycleState.ownerOperatingUnitId
+        && previousSegment.toDate === formatDateOnly(new Date(cursor.getTime() - 24 * 60 * 60 * 1000))
+      ) {
+        previousSegment.toDate = cursorDateText;
+        previousSegment.eligibleDays += 1;
+      } else {
+        allocationSegments.push({
+          allocationType: "OWNER_OU",
+          operatingUnitId: lifecycleState.ownerOperatingUnitId,
+          fromDate: cursorDateText,
+          toDate: cursorDateText,
+          eligibleDays: 1,
+        });
+      }
+    } else if (
+      cursor.getTime() >= inServiceDate.getTime()
+      && (!lifecycleState.isActive || lifecycleState.isDisposed)
+    ) {
+      lifecycleExcludedDays += 1;
+    }
+
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+
+  return {
+    eligibleDays,
+    lifecycleExcludedDays,
+    allocationSegments,
+  };
+}
+
+async function loadDisposalSchedulePeriods({
+  calendarId,
+  startDate,
+  monthCount,
+  queryFn,
+}) {
+  if (!monthCount || monthCount <= 0) {
+    return [];
+  }
+
+  const rangeStart = startOfMonthUtc(parseDateOnlyStrict(startDate, "inServiceDate"));
+  const rangeEnd = endOfMonthUtc(addMonthsUtc(rangeStart, monthCount - 1));
+  const periodRowsResult = await queryFn(
+    `SELECT id,
+            fiscal_year,
+            period_no,
+            period_name,
+            start_date,
+            end_date,
+            is_adjustment
+       FROM fiscal_periods
+      WHERE calendar_id = ?
+        AND end_date >= ?
+        AND start_date <= ?
+      ORDER BY start_date ASC, is_adjustment ASC, id ASC`,
+    [calendarId, formatDateOnly(rangeStart), formatDateOnly(rangeEnd)]
+  );
+
+  const periodRows = (periodRowsResult.rows || []).map((row) => ({
+    id: Number(row.id),
+    fiscalYear: row.fiscal_year != null ? Number(row.fiscal_year) : null,
+    periodNo: row.period_no != null ? Number(row.period_no) : null,
+    periodName: row.period_name || null,
+    startDate: String(row.start_date || "").slice(0, 10),
+    endDate: String(row.end_date || "").slice(0, 10),
+    isAdjustment: row.is_adjustment === 1 || row.is_adjustment === true || row.is_adjustment === "1",
+  }));
+
+  const resolvedPeriods = [];
+  for (let index = 0; index < monthCount; index += 1) {
+    const expectedMonthStart = addMonthsUtc(rangeStart, index);
+    const expectedMonthEnd = endOfMonthUtc(expectedMonthStart);
+    const expectedStartText = formatDateOnly(expectedMonthStart);
+    const expectedEndText = formatDateOnly(expectedMonthEnd);
+    const expectedPeriodKey = expectedStartText.slice(0, 7);
+
+    const overlappingRows = periodRows.filter((row) => (
+      row.startDate <= expectedEndText && row.endDate >= expectedStartText
+    ));
+    if (!overlappingRows.length) {
+      throw badRequest(
+        `No fiscal period found for supported fixed-assets month ${expectedPeriodKey}`
+      );
+    }
+
+    const alignedNonAdjustmentRow = overlappingRows.find((row) => (
+      !row.isAdjustment
+      && row.startDate === expectedStartText
+      && row.endDate === expectedEndText
+    ));
+    if (!alignedNonAdjustmentRow) {
+      const hasNonAdjustmentRow = overlappingRows.some((row) => !row.isAdjustment);
+      if (!hasNonAdjustmentRow) {
+        throw badRequest(
+          `Fixed-assets disposal cutoff does not support adjustment fiscal periods; ` +
+          `month ${expectedPeriodKey} resolves only to adjustment periods`
+        );
+      }
+      throw badRequest(
+        `Fixed-assets disposal cutoff requires month-aligned non-adjustment fiscal periods; ` +
+        `month ${expectedPeriodKey} is not aligned to a single calendar YYYY-MM bucket`
+      );
+    }
+
+    resolvedPeriods.push({
+      ...alignedNonAdjustmentRow,
+      periodKey: expectedPeriodKey,
+    });
+  }
+
+  return resolvedPeriods;
+}
+
+function buildDisposalScheduleRows(asset, periods, lifecycleHistory, terminalDisposalDate) {
+  if (!periods.length) {
+    return [];
+  }
+
+  const depreciationMethod = normalizeUpperText(asset.depreciation_method);
+  const inServiceDate = parseDateOnlyStrict(asset.in_service_date, "inServiceDate");
+  const { openingNbvTxn: initialOpeningNbvTxn, openingNbvBase: initialOpeningNbvBase } =
+    getDisposalScheduleOpeningAmounts(asset);
+  let openingNbvTxn = initialOpeningNbvTxn;
+  let openingNbvBase = initialOpeningNbvBase;
+  const salvageValueTxn = roundDisposalAmount(asset.salvage_value_txn || 0);
+  const salvageValueBase = roundDisposalAmount(asset.salvage_value_base || 0);
+  const monthlyDecliningBalanceRate = depreciationMethod === "DECLINING_BALANCE"
+    ? Number(asset.declining_balance_rate_percent || 0) / 12 / 100
+    : null;
+  let hasSwitchedToStraightLine = depreciationMethod === "STRAIGHT_LINE";
+  let hasLifecycleEligibilityCutoff = false;
+
+  const lifecycleTimeline = buildDisposalLifecycleTimeline(
+    asset,
+    lifecycleHistory,
+    periods,
+    terminalDisposalDate
+  );
+  const lifecycleState = {
+    ...lifecycleTimeline.initialState,
+  };
+
+  const rows = [];
+  for (let index = 0; index < periods.length; index += 1) {
+    const period = periods[index];
+    const periodStart = parseDateOnlyStrict(period.startDate, "period.startDate");
+    const periodEnd = parseDateOnlyStrict(period.endDate, "period.endDate");
+    const periodStartText = formatDateOnly(periodStart);
+
+    if (terminalDisposalDate && periodStartText >= terminalDisposalDate) {
+      break;
+    }
+
+    const daysInPeriod = countDaysInclusiveUtc(periodStart, periodEnd);
+    const periodEligibility = buildDisposalPeriodEligibility(
+      periodStart,
+      periodEnd,
+      inServiceDate,
+      lifecycleTimeline,
+      lifecycleState
+    );
+    const eligibleDays = periodEligibility.eligibleDays;
+    const remainingPeriods = periods.length - index;
+    const isFinalScheduleLine = index === periods.length - 1;
+
+    const remainingDepreciableTxn = getRemainingDepreciableAmountForDisposal(
+      openingNbvTxn,
+      salvageValueTxn
+    );
+    const remainingDepreciableBase = getRemainingDepreciableAmountForDisposal(
+      openingNbvBase,
+      salvageValueBase
+    );
+
+    let effectiveMethod = depreciationMethod;
+    if (
+      depreciationMethod === "DECLINING_BALANCE"
+      && (
+        hasSwitchedToStraightLine
+        || shouldSwitchDisposalDecliningBalanceToStraightLine({
+          switchToStraightLine: asset.switch_to_straight_line === 1
+            || asset.switch_to_straight_line === true
+            || asset.switch_to_straight_line === "1",
+          remainingPeriods,
+          monthlyRate: monthlyDecliningBalanceRate,
+        })
+      )
+    ) {
+      hasSwitchedToStraightLine = true;
+      effectiveMethod = "STRAIGHT_LINE";
+    }
+
+    let fullMonthAmountTxn = 0;
+    let fullMonthAmountBase = 0;
+    if (effectiveMethod === "STRAIGHT_LINE") {
+      fullMonthAmountTxn = calculateDisposalStraightLineFullMonthAmount(
+        remainingDepreciableTxn,
+        remainingPeriods
+      );
+      fullMonthAmountBase = calculateDisposalStraightLineFullMonthAmount(
+        remainingDepreciableBase,
+        remainingPeriods
+      );
+    } else if (effectiveMethod === "DECLINING_BALANCE") {
+      fullMonthAmountTxn = calculateDisposalDecliningBalanceFullMonthAmount(
+        remainingDepreciableTxn,
+        monthlyDecliningBalanceRate
+      );
+      fullMonthAmountBase = calculateDisposalDecliningBalanceFullMonthAmount(
+        remainingDepreciableBase,
+        monthlyDecliningBalanceRate
+      );
+    }
+
+    let plannedAmountTxn = roundDisposalAmount(
+      fullMonthAmountTxn * (eligibleDays / daysInPeriod)
+    );
+    let plannedAmountBase = roundDisposalAmount(
+      fullMonthAmountBase * (eligibleDays / daysInPeriod)
+    );
+
+    plannedAmountTxn = Math.min(plannedAmountTxn, remainingDepreciableTxn);
+    plannedAmountBase = Math.min(plannedAmountBase, remainingDepreciableBase);
+    hasLifecycleEligibilityCutoff = hasLifecycleEligibilityCutoff
+      || periodEligibility.lifecycleExcludedDays > 0;
+
+    if (
+      isFinalScheduleLine
+      && effectiveMethod === "STRAIGHT_LINE"
+      && !hasLifecycleEligibilityCutoff
+    ) {
+      plannedAmountTxn = remainingDepreciableTxn;
+      plannedAmountBase = remainingDepreciableBase;
+    }
+
+    const txnScheduleAmounts = clampDisposalPlannedAmount({
+      openingNbv: openingNbvTxn,
+      salvageValue: salvageValueTxn,
+      plannedAmount: plannedAmountTxn,
+      absorbRoundingResidual: isFinalScheduleLine && effectiveMethod !== "STRAIGHT_LINE",
+    });
+    const baseScheduleAmounts = clampDisposalPlannedAmount({
+      openingNbv: openingNbvBase,
+      salvageValue: salvageValueBase,
+      plannedAmount: plannedAmountBase,
+      absorbRoundingResidual: isFinalScheduleLine && effectiveMethod !== "STRAIGHT_LINE",
+    });
+
+    plannedAmountTxn = txnScheduleAmounts.plannedAmount;
+    plannedAmountBase = baseScheduleAmounts.plannedAmount;
+    const closingNbvTxn = txnScheduleAmounts.closingNbv;
+    const closingNbvBase = baseScheduleAmounts.closingNbv;
+
+    rows.push({
+      periodKey: period.periodKey,
+      periodStartDate: period.startDate,
+      periodEndDate: period.endDate,
+      daysInPeriod,
+      eligibleDays,
+      allocationSegments: periodEligibility.allocationSegments,
+      openingNbvTxn,
+      openingNbvBase,
+      plannedAmountTxn,
+      plannedAmountBase,
+      closingNbvTxn,
+      closingNbvBase,
+    });
+
+    openingNbvTxn = closingNbvTxn;
+    openingNbvBase = closingNbvBase;
+
+    if (lifecycleState.isDisposed) {
+      break;
+    }
+  }
+
+  return rows;
+}
+
+async function resolveDisposalCutoffEconomics({
+  tenantId,
+  asset,
+  calendarId,
+  effectiveDate,
+  queryFn,
+}) {
+  if (asset.in_service_date && effectiveDate < String(asset.in_service_date).slice(0, 10)) {
+    throw badRequest(
+      `effectiveDate (${effectiveDate}) cannot be before inServiceDate (${asset.in_service_date})`
+    );
+  }
+
+  const rawCurrentNbv = await resolveCurrentAssetNbv(tenantId, asset.id, queryFn);
+  const postedDepreciationExists = await hasPostedDepreciationTransactions(
+    tenantId,
+    asset.id,
+    queryFn
+  );
+  const currentNbv = normalizeCurrentNbvForFreshActivationDisposal(asset, rawCurrentNbv, {
+    hasPostedDepreciation: postedDepreciationExists,
+  });
+  const openingAmounts = getDisposalScheduleOpeningAmounts(asset);
+  const grossCostTxn = roundDisposalAmount(asset.original_cost_txn);
+  const grossCostBase = roundDisposalAmount(asset.original_cost_base);
+  const depreciationMethod = normalizeUpperText(asset.depreciation_method);
+  const cutoffDate = addDaysToDateText(effectiveDate, -1);
+  const cutoffPeriodKey = (
+    asset.in_service_date
+    && cutoffDate >= String(asset.in_service_date).slice(0, 10)
+  )
+    ? cutoffDate.slice(0, 7)
+    : null;
+
+  if (
+    depreciationMethod === "NONE"
+    || asset.remaining_useful_life_months == null
+    || Number(asset.remaining_useful_life_months) <= 0
+  ) {
+    return {
+      cutoffDate,
+      cutoffPeriodKey,
+      currentNbvTxn: currentNbv.nbvTxn,
+      currentNbvBase: currentNbv.nbvBase,
+      openingNbvTxn: currentNbv.nbvTxn,
+      openingNbvBase: currentNbv.nbvBase,
+      cutoffNbvTxn: currentNbv.nbvTxn,
+      cutoffNbvBase: currentNbv.nbvBase,
+      cutoffDepreciationTxn: 0,
+      cutoffDepreciationBase: 0,
+      accumDeprTxn: roundDisposalAmount(grossCostTxn - currentNbv.nbvTxn),
+      accumDeprBase: roundDisposalAmount(grossCostBase - currentNbv.nbvBase),
+      allocationSegments: [],
+    };
+  }
+
+  if (!asset.in_service_date) {
+    throw badRequest("inServiceDate is required to finalize sale for a depreciable asset");
+  }
+
+  const lifecycleHistory = await loadAssetDepreciationLifecycleHistory({
+    tenantId,
+    assetId: asset.id,
+    queryFn,
+  });
+  const periods = await loadDisposalSchedulePeriods({
+    calendarId,
+    startDate: asset.in_service_date,
+    monthCount: Number(asset.remaining_useful_life_months),
+    queryFn,
+  });
+  const rows = buildDisposalScheduleRows(asset, periods, lifecycleHistory, effectiveDate);
+  const disposalPeriodKey = effectiveDate.slice(0, 7);
+  const cutoffRow = rows.find((row) => row.periodKey === disposalPeriodKey) || null;
+  const lastPriorRow = rows
+    .filter((row) => row.periodKey < disposalPeriodKey)
+    .at(-1) || null;
+
+  const openingNbvTxn = cutoffRow
+    ? roundDisposalAmount(cutoffRow.openingNbvTxn)
+    : (
+      lastPriorRow
+        ? roundDisposalAmount(lastPriorRow.closingNbvTxn)
+        : openingAmounts.openingNbvTxn
+    );
+  const openingNbvBase = cutoffRow
+    ? roundDisposalAmount(cutoffRow.openingNbvBase)
+    : (
+      lastPriorRow
+        ? roundDisposalAmount(lastPriorRow.closingNbvBase)
+        : openingAmounts.openingNbvBase
+    );
+  const theoreticalCutoffNbvTxn = cutoffRow
+    ? roundDisposalAmount(cutoffRow.closingNbvTxn)
+    : openingNbvTxn;
+  const theoreticalCutoffNbvBase = cutoffRow
+    ? roundDisposalAmount(cutoffRow.closingNbvBase)
+    : openingNbvBase;
+
+  const currentMatchesOpening = amountsMatchForDisposal(currentNbv.nbvTxn, openingNbvTxn)
+    && amountsMatchForDisposal(currentNbv.nbvBase, openingNbvBase);
+  const currentMatchesCutoff = amountsMatchForDisposal(currentNbv.nbvTxn, theoreticalCutoffNbvTxn)
+    && amountsMatchForDisposal(currentNbv.nbvBase, theoreticalCutoffNbvBase);
+
+  if (
+    Number(currentNbv.nbvTxn) < Number(theoreticalCutoffNbvTxn) - DISPOSAL_CUTOFF_EPSILON
+    || Number(currentNbv.nbvBase) < Number(theoreticalCutoffNbvBase) - DISPOSAL_CUTOFF_EPSILON
+  ) {
+    throw badRequest(
+      "Asset carrying value is already below the locked disposal cutoff; finalize would recognize depreciation on or after the effective disposal date"
+    );
+  }
+
+  if (
+    Number(currentNbv.nbvTxn) > Number(openingNbvTxn) + DISPOSAL_CUTOFF_EPSILON
+    || Number(currentNbv.nbvBase) > Number(openingNbvBase) + DISPOSAL_CUTOFF_EPSILON
+  ) {
+    throw badRequest(
+      "Asset depreciation is not current through the start of the disposal month; finalize requires prior-period depreciation to be posted before sale cutoff is recognized"
+    );
+  }
+
+  if (!currentMatchesOpening && !currentMatchesCutoff) {
+    throw badRequest(
+      "Asset carrying value does not align to the disposal-period opening NBV or the day-before-disposal cutoff NBV; finalize cannot infer a partial-month depreciation state safely"
+    );
+  }
+
+  const cutoffDepreciationTxn = currentMatchesCutoff || !cutoffRow
+    ? 0
+    : roundDisposalAmount(openingNbvTxn - theoreticalCutoffNbvTxn);
+  const cutoffDepreciationBase = currentMatchesCutoff || !cutoffRow
+    ? 0
+    : roundDisposalAmount(openingNbvBase - theoreticalCutoffNbvBase);
+  const cutoffNbvTxn = currentMatchesCutoff
+    ? roundDisposalAmount(currentNbv.nbvTxn)
+    : theoreticalCutoffNbvTxn;
+  const cutoffNbvBase = currentMatchesCutoff
+    ? roundDisposalAmount(currentNbv.nbvBase)
+    : theoreticalCutoffNbvBase;
+
+  return {
+    cutoffDate,
+    cutoffPeriodKey,
+    currentNbvTxn: currentNbv.nbvTxn,
+    currentNbvBase: currentNbv.nbvBase,
+    openingNbvTxn,
+    openingNbvBase,
+    cutoffNbvTxn,
+    cutoffNbvBase,
+    cutoffDepreciationTxn,
+    cutoffDepreciationBase,
+    accumDeprTxn: roundDisposalAmount(grossCostTxn - cutoffNbvTxn),
+    accumDeprBase: roundDisposalAmount(grossCostBase - cutoffNbvBase),
+    allocationSegments: cutoffDepreciationTxn > 0 || cutoffDepreciationBase > 0
+      ? (cutoffRow?.allocationSegments || [])
+      : [],
+  };
 }
 
 export async function writeoffAsset(input) {
@@ -4213,9 +5528,659 @@ export async function saleUpdateDraftArDocument(input) {
   };
 }
 
+function buildSaleJournalNo(assetId) {
+  return `FA-TXN-SALE-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
+}
+
+function buildSaleCutoffDepreciationJournalNo(assetId) {
+  return `FA-TXN-SDEP-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
+}
+
+async function loadAndLockAssetForSaleFinalize(tx, tenantId, assetId) {
+  const result = await tx.query(
+    `SELECT id,
+            tenant_id,
+            legal_entity_id,
+            status,
+            asset_no,
+            name,
+            acquisition_date,
+            capitalization_date,
+            in_service_date,
+            owner_operating_unit_id,
+            currency_code,
+            original_cost_txn,
+            original_cost_base,
+            salvage_value_txn,
+            salvage_value_base,
+            depreciation_method,
+            declining_balance_rate_percent,
+            switch_to_straight_line,
+            remaining_useful_life_months,
+            legacy_accum_depr_txn,
+            legacy_accum_depr_base,
+            legacy_nbv_txn,
+            legacy_nbv_base,
+            last_depreciation_period,
+            asset_account_id,
+            accum_depr_account_id,
+            depr_expense_account_id,
+            disposal_gain_account_id,
+            disposal_loss_account_id,
+            pending_sale_cari_document_id,
+            pending_sale_cari_document_line_id
+       FROM fixed_assets
+      WHERE id = ? AND tenant_id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [assetId, tenantId]
+  );
+  const asset = result.rows?.[0];
+  if (!asset) {
+    throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+  }
+
+  const assetStatus = normalizeUpperText(asset.status);
+  if (!SALE_STAGING_ELIGIBLE_STATUSES.has(assetStatus)) {
+    throw badRequest(
+      `Sale finalize is only allowed for ACTIVE, SUSPENDED, or FULLY_DEPRECIATED assets ` +
+      `(assetId=${assetId}, status=${assetStatus})`
+    );
+  }
+
+  if (!asset.pending_sale_cari_document_id || !asset.pending_sale_cari_document_line_id) {
+    throw badRequest(
+      `Asset (id=${assetId}) has no exact pending sale AR document line to finalize. ` +
+      `Create or link a dedicated AR sale line first.`
+    );
+  }
+
+  return asset;
+}
+
+async function assertDedicatedSaleCariLineTx(tx, tenantId, assetId, documentLineId) {
+  const sharedPendingResult = await tx.query(
+    `SELECT id
+       FROM fixed_assets
+      WHERE tenant_id = ?
+        AND pending_sale_cari_document_line_id = ?
+        AND id != ?
+      LIMIT 1`,
+    [tenantId, documentLineId, assetId]
+  );
+  if (sharedPendingResult.rows?.length > 0) {
+    throw badRequest(
+      `AR line (id=${documentLineId}) is already linked to another asset sale ` +
+      `(assetId=${sharedPendingResult.rows[0].id}). One line per asset sale is enforced.`
+    );
+  }
+
+  const postedReuseResult = await tx.query(
+    `SELECT fat.asset_id
+       FROM fixed_asset_transactions fat
+      WHERE fat.tenant_id = ?
+        AND fat.transaction_type = 'SALE'
+        AND fat.status = 'POSTED'
+        AND fat.source_ref_type = 'CARI_DOCUMENT'
+        AND fat.source_ref_line_id = ?
+        AND fat.asset_id != ?
+        AND fat.reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      LIMIT 1`,
+    [tenantId, documentLineId, assetId]
+  );
+  if (postedReuseResult.rows?.length > 0) {
+    throw badRequest(
+      `AR line (id=${documentLineId}) is already used by posted asset sale ` +
+      `(assetId=${postedReuseResult.rows[0].asset_id}). One line per asset sale is enforced.`
+    );
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Category CRUD
 // ═══════════════════════════════════════════════════════════════════
+
+export async function saleFinalizeAsset(input) {
+  const {
+    req,
+    tenantId,
+    assetId,
+    effectiveDate,
+    postingDate,
+    note,
+    userId,
+    assertScopeAccess,
+  } = input;
+
+  return withTransaction(async (tx) => {
+    const asset = await loadAndLockAssetForSaleFinalize(tx, tenantId, assetId);
+    const legalEntityId = Number(asset.legal_entity_id);
+    const assetNo = asset.asset_no || `ID-${assetId}`;
+    const currencyCode = asset.currency_code || "USD";
+    const ownerOperatingUnitId = asset.owner_operating_unit_id != null
+      ? Number(asset.owner_operating_unit_id)
+      : null;
+    const grossCostTxn = roundDisposalAmount(asset.original_cost_txn);
+    const grossCostBase = roundDisposalAmount(asset.original_cost_base);
+    const assetAccountId = asset.asset_account_id != null ? Number(asset.asset_account_id) : null;
+    const accumDeprAccountId = asset.accum_depr_account_id != null
+      ? Number(asset.accum_depr_account_id)
+      : null;
+    const deprExpenseAccountId = asset.depr_expense_account_id != null
+      ? Number(asset.depr_expense_account_id)
+      : null;
+    const disposalGainAccountId = asset.disposal_gain_account_id != null
+      ? Number(asset.disposal_gain_account_id)
+      : null;
+    const disposalLossAccountId = asset.disposal_loss_account_id != null
+      ? Number(asset.disposal_loss_account_id)
+      : null;
+    const pendingCariDocumentId = Number(asset.pending_sale_cari_document_id);
+    const pendingCariDocumentLineId = Number(asset.pending_sale_cari_document_line_id);
+
+    if (asset.acquisition_date && effectiveDate < String(asset.acquisition_date).slice(0, 10)) {
+      throw badRequest(
+        `effectiveDate (${effectiveDate}) cannot be before acquisitionDate (${asset.acquisition_date})`
+      );
+    }
+    if (!assetAccountId) {
+      throw badRequest("Asset is missing assetAccountId; sale finalize requires an asset GL account");
+    }
+
+    await assertDedicatedSaleCariLineTx(tx, tenantId, assetId, pendingCariDocumentLineId);
+
+    const book = await resolveBookForLegalEntity(tenantId, legalEntityId, tx.query);
+    const period = await resolveFiscalPeriodForDate(book.calendar_id, postingDate, tx.query);
+    await ensurePeriodOpen(book.id, period.id, tx.query);
+
+    const saleCariContext = await resolveCariSaleDocumentLineForFinalizeTx(tx, {
+      req,
+      tenantId,
+      documentId: pendingCariDocumentId,
+      documentLineId: pendingCariDocumentLineId,
+      userId,
+      assertScopeAccess,
+      postDraft: true,
+    });
+
+    await assertDedicatedSaleCariLineTx(tx, tenantId, assetId, Number(saleCariContext.line.id));
+
+    const cutoffEconomics = await resolveDisposalCutoffEconomics({
+      tenantId,
+      asset,
+      calendarId: Number(book.calendar_id),
+      effectiveDate,
+      queryFn: tx.query,
+    });
+
+    let cutoffDepreciationTransactionId = null;
+    let cutoffDepreciationJournalEntryId = null;
+    if (
+      cutoffEconomics.cutoffDepreciationTxn > DISPOSAL_CUTOFF_EPSILON
+      || cutoffEconomics.cutoffDepreciationBase > DISPOSAL_CUTOFF_EPSILON
+    ) {
+      if (!deprExpenseAccountId || !accumDeprAccountId) {
+        throw badRequest(
+          "Asset is missing depreciation posting accounts; sale finalize cannot recognize cutoff depreciation"
+        );
+      }
+      if (!cutoffEconomics.allocationSegments.length) {
+        throw badRequest(
+          "Sale finalize requires allocation segments for cutoff depreciation through the day before disposal"
+        );
+      }
+
+      const totalEligibleDays = cutoffEconomics.allocationSegments.reduce(
+        (sum, segment) => sum + Number(segment.eligibleDays || 0),
+        0
+      );
+      const depreciationJournalLines = [];
+      let allocatedTxn = 0;
+      let allocatedBase = 0;
+
+      for (let index = 0; index < cutoffEconomics.allocationSegments.length; index += 1) {
+        const segment = cutoffEconomics.allocationSegments[index];
+        const isLastSegment = index === cutoffEconomics.allocationSegments.length - 1;
+        const segmentEligibleDays = Number(segment.eligibleDays || 0);
+        if (segmentEligibleDays <= 0 || totalEligibleDays <= 0) {
+          continue;
+        }
+
+        const amountTxn = isLastSegment
+          ? roundDisposalAmount(cutoffEconomics.cutoffDepreciationTxn - allocatedTxn)
+          : roundDisposalAmount(
+            cutoffEconomics.cutoffDepreciationTxn * (segmentEligibleDays / totalEligibleDays)
+          );
+        const amountBase = isLastSegment
+          ? roundDisposalAmount(cutoffEconomics.cutoffDepreciationBase - allocatedBase)
+          : roundDisposalAmount(
+            cutoffEconomics.cutoffDepreciationBase * (segmentEligibleDays / totalEligibleDays)
+          );
+        allocatedTxn = roundDisposalAmount(allocatedTxn + amountTxn);
+        allocatedBase = roundDisposalAmount(allocatedBase + amountBase);
+
+        if (amountTxn <= 0 && amountBase <= 0) {
+          continue;
+        }
+
+        const operatingUnitId = segment.operatingUnitId ?? ownerOperatingUnitId ?? null;
+        depreciationJournalLines.push(
+          buildCariDirectionalJournalLine({
+            accountId: deprExpenseAccountId,
+            side: "DEBIT",
+            amountTxn,
+            amountBase,
+            lineDescription: `FA sale cutoff depreciation ${assetNo} through ${cutoffEconomics.cutoffDate}`.slice(0, 255),
+            subledgerReferenceNo: assetNo,
+            currencyCode,
+            operatingUnitId,
+          })
+        );
+        depreciationJournalLines.push(
+          buildCariDirectionalJournalLine({
+            accountId: accumDeprAccountId,
+            side: "CREDIT",
+            amountTxn,
+            amountBase,
+            lineDescription: `FA accumulated depreciation ${assetNo} through ${cutoffEconomics.cutoffDate}`.slice(0, 255),
+            subledgerReferenceNo: assetNo,
+            currencyCode,
+            operatingUnitId,
+          })
+        );
+      }
+
+      if (!depreciationJournalLines.length) {
+        throw badRequest(
+          "Sale finalize cutoff depreciation resolved a positive amount but produced no journal lines"
+        );
+      }
+
+      const depreciationJournal = await insertPostedJournalWithLinesTx(tx, {
+        tenantId,
+        legalEntityId,
+        bookId: book.id,
+        fiscalPeriodId: period.id,
+        journalNo: buildSaleCutoffDepreciationJournalNo(assetId),
+        entryDate: postingDate,
+        documentDate: cutoffEconomics.cutoffDate,
+        currencyCode,
+        description: `FA sale cutoff depreciation ${assetNo}`.slice(0, 255),
+        referenceNo: assetNo,
+        userId,
+        operatingUnitId: ownerOperatingUnitId,
+        lines: depreciationJournalLines,
+      });
+
+      cutoffDepreciationTransactionId = await insertFixedAssetTransaction(tx, {
+        tenantId,
+        legalEntityId,
+        assetId,
+        transactionType: "DEPRECIATION",
+        effectiveDate: cutoffEconomics.cutoffDate,
+        postingDate,
+        bookId: book.id,
+        fiscalPeriodId: period.id,
+        currencyCode,
+        journalEntryId: depreciationJournal.journalEntryId,
+        grossAmountTxn: grossCostTxn,
+        grossAmountBase: grossCostBase,
+        accumDeprAmountTxn: cutoffEconomics.accumDeprTxn,
+        accumDeprAmountBase: cutoffEconomics.accumDeprBase,
+        nbvAmountTxn: cutoffEconomics.cutoffNbvTxn,
+        nbvAmountBase: cutoffEconomics.cutoffNbvBase,
+        note: `Sale disposal cutoff depreciation through ${cutoffEconomics.cutoffDate}`,
+        createdByUserId: userId,
+      });
+
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId,
+        journalEntryId: depreciationJournal.journalEntryId,
+        sourceRefType: "FIXED_ASSET_TRANSACTION",
+        sourceRefId: cutoffDepreciationTransactionId,
+      });
+
+      cutoffDepreciationJournalEntryId = depreciationJournal.journalEntryId;
+    }
+
+    const saleNbvTxn = roundDisposalAmount(cutoffEconomics.cutoffNbvTxn);
+    const saleNbvBase = roundDisposalAmount(cutoffEconomics.cutoffNbvBase);
+    const gainOrLossTxn = roundDisposalAmount(saleCariContext.proceedsAmountTxn - saleNbvTxn);
+    const gainOrLossBase = roundDisposalAmount(saleCariContext.proceedsAmountBase - saleNbvBase);
+    const gainOrLossTxnSign = gainOrLossTxn > DISPOSAL_CUTOFF_EPSILON
+      ? 1
+      : (gainOrLossTxn < -DISPOSAL_CUTOFF_EPSILON ? -1 : 0);
+    const gainOrLossBaseSign = gainOrLossBase > DISPOSAL_CUTOFF_EPSILON
+      ? 1
+      : (gainOrLossBase < -DISPOSAL_CUTOFF_EPSILON ? -1 : 0);
+    const hasGain = gainOrLossTxn > DISPOSAL_CUTOFF_EPSILON || gainOrLossBase > DISPOSAL_CUTOFF_EPSILON;
+    const hasLoss = gainOrLossTxn < -DISPOSAL_CUTOFF_EPSILON || gainOrLossBase < -DISPOSAL_CUTOFF_EPSILON;
+
+    if (
+      gainOrLossTxnSign !== 0
+      && gainOrLossBaseSign !== 0
+      && gainOrLossTxnSign !== gainOrLossBaseSign
+    ) {
+      throw badRequest(
+        "Sale finalize does not support mixed gain/loss sign between transaction and base currency amounts"
+      );
+    }
+
+    if (hasGain && !disposalGainAccountId) {
+      throw badRequest(
+        "Asset is missing disposalGainAccountId; sale finalize with gain requires a disposal gain GL account"
+      );
+    }
+    if (hasLoss && !disposalLossAccountId) {
+      throw badRequest(
+        "Asset is missing disposalLossAccountId; sale finalize with loss requires a disposal loss GL account"
+      );
+    }
+    if (
+      (cutoffEconomics.accumDeprTxn > DISPOSAL_CUTOFF_EPSILON
+      || cutoffEconomics.accumDeprBase > DISPOSAL_CUTOFF_EPSILON)
+      && !accumDeprAccountId
+    ) {
+      throw badRequest(
+        "Asset is missing accumDeprAccountId; sale finalize requires an accumulated depreciation GL account"
+      );
+    }
+    if (!saleCariContext.proceedsAccountId) {
+      throw badRequest(
+        "Linked AR sale line does not resolve a deterministic proceeds account for fixed-assets finalize"
+      );
+    }
+
+    const saleJournalLines = [];
+    if (cutoffEconomics.accumDeprTxn > 0 || cutoffEconomics.accumDeprBase > 0) {
+      saleJournalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: accumDeprAccountId,
+          side: "DEBIT",
+          amountTxn: cutoffEconomics.accumDeprTxn,
+          amountBase: cutoffEconomics.accumDeprBase,
+          lineDescription: `FA sale ${assetNo} clear accum depreciation`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: ownerOperatingUnitId,
+        })
+      );
+    }
+
+    saleJournalLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: saleCariContext.proceedsAccountId,
+        side: "DEBIT",
+        amountTxn: saleCariContext.proceedsAmountTxn,
+        amountBase: saleCariContext.proceedsAmountBase,
+        lineDescription: `FA sale ${assetNo} relieve AR sale proceeds`,
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: ownerOperatingUnitId,
+      })
+    );
+
+    saleJournalLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: assetAccountId,
+        side: "CREDIT",
+        amountTxn: grossCostTxn,
+        amountBase: grossCostBase,
+        lineDescription: `FA sale ${assetNo} remove asset`,
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: ownerOperatingUnitId,
+      })
+    );
+
+    if (hasGain) {
+      saleJournalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: disposalGainAccountId,
+          side: "CREDIT",
+          amountTxn: Math.max(0, gainOrLossTxn),
+          amountBase: Math.max(0, gainOrLossBase),
+          lineDescription: `FA sale ${assetNo} disposal gain`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: ownerOperatingUnitId,
+        })
+      );
+    } else if (hasLoss) {
+      saleJournalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: disposalLossAccountId,
+          side: "DEBIT",
+          amountTxn: Math.max(0, -gainOrLossTxn),
+          amountBase: Math.max(0, -gainOrLossBase),
+          lineDescription: `FA sale ${assetNo} disposal loss`,
+          subledgerReferenceNo: assetNo,
+          currencyCode,
+          operatingUnitId: ownerOperatingUnitId,
+        })
+      );
+    }
+
+    const saleJournal = await insertPostedJournalWithLinesTx(tx, {
+      tenantId,
+      legalEntityId,
+      bookId: book.id,
+      fiscalPeriodId: period.id,
+      journalNo: buildSaleJournalNo(assetId),
+      entryDate: postingDate,
+      documentDate: effectiveDate,
+      currencyCode,
+      description: `FA sale ${assetNo}`.slice(0, 255),
+      referenceNo: assetNo,
+      userId,
+      operatingUnitId: ownerOperatingUnitId,
+      lines: saleJournalLines,
+    });
+
+    const saleTransactionId = await insertFixedAssetTransaction(tx, {
+      tenantId,
+      legalEntityId,
+      assetId,
+      transactionType: "SALE",
+      effectiveDate,
+      postingDate,
+      bookId: book.id,
+      fiscalPeriodId: period.id,
+      currencyCode,
+      journalEntryId: saleJournal.journalEntryId,
+      sourceRefType: "CARI_DOCUMENT",
+      sourceRefId: Number(saleCariContext.document.id),
+      sourceRefLineId: Number(saleCariContext.line.id),
+      grossAmountTxn: grossCostTxn,
+      grossAmountBase: grossCostBase,
+      accumDeprAmountTxn: cutoffEconomics.accumDeprTxn,
+      accumDeprAmountBase: cutoffEconomics.accumDeprBase,
+      nbvAmountTxn: saleNbvTxn,
+      nbvAmountBase: saleNbvBase,
+      note: note || `Sale of asset ${assetNo}`,
+      createdByUserId: userId,
+    });
+    if (!saleTransactionId) {
+      throw badRequest("Failed to create SALE transaction");
+    }
+
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId,
+      journalEntryId: saleJournal.journalEntryId,
+      sourceRefType: "FIXED_ASSET_TRANSACTION",
+      sourceRefId: saleTransactionId,
+    });
+
+    const assetUpdateClauses = [
+      "status = 'DISPOSED'",
+      "disposal_date = ?",
+      "pending_sale_cari_document_id = NULL",
+      "pending_sale_cari_document_line_id = NULL",
+      "updated_by_user_id = ?",
+    ];
+    const assetUpdateParams = [effectiveDate, userId];
+    if (cutoffEconomics.cutoffPeriodKey) {
+      assetUpdateClauses.push("last_depreciation_period = ?");
+      assetUpdateParams.push(cutoffEconomics.cutoffPeriodKey);
+    }
+    assetUpdateParams.push(assetId, tenantId);
+
+    await tx.query(
+      `UPDATE fixed_assets
+          SET ${assetUpdateClauses.join(", ")}
+        WHERE id = ? AND tenant_id = ?`,
+      assetUpdateParams
+    );
+
+    return {
+      assetId,
+      saleTransactionId,
+      saleJournalEntryId: saleJournal.journalEntryId,
+      saleCariDocumentId: Number(saleCariContext.document.id),
+      saleCariDocumentLineId: Number(saleCariContext.line.id),
+      cutoffDepreciationTransactionId,
+      cutoffDepreciationJournalEntryId,
+    };
+  }).then(async (result) => {
+    const assetDetail = await getAssetDetail({ tenantId, assetId: result.assetId });
+    return {
+      ...assetDetail,
+      saleFinalize: {
+        saleTransactionId: result.saleTransactionId,
+        saleJournalEntryId: result.saleJournalEntryId,
+        saleCariDocumentId: result.saleCariDocumentId,
+        saleCariDocumentLineId: result.saleCariDocumentLineId,
+        cutoffDepreciationTransactionId: result.cutoffDepreciationTransactionId,
+        cutoffDepreciationJournalEntryId: result.cutoffDepreciationJournalEntryId,
+      },
+    };
+  });
+}
+
+export async function reverseFixedAssetTransaction(input) {
+  const {
+    tenantId,
+    transactionId,
+    note,
+    userId,
+  } = input;
+
+  return withTransaction(async (tx) => {
+    const target = await loadAndLockFixedAssetTransactionForReverseTx(
+      tx,
+      tenantId,
+      transactionId
+    );
+
+    assertSupportedFixedAssetReversalTarget(target);
+    await assertFixedAssetTransactionNotAlreadyReversedTx(tx, target);
+    await assertNoLaterFixedAssetLifecycleEventTx(tx, target);
+    await assertSaleReversalCariCompatibilityTx(tx, target);
+
+    const reversalNote = note || `Reversal of ${target.transactionType} transaction ${target.id}`;
+
+    let reversalJournalEntryId = null;
+    if (target.journalEntryId) {
+      const reversalJournal = await reverseJournalEntryTx(tx, {
+        tenantId,
+        journalId: target.journalEntryId,
+        userId,
+        reason: reversalNote.slice(0, 255),
+        journalNo: buildFixedAssetNonRunReversalJournalNo(target.id),
+        autoPost: true,
+      });
+      reversalJournalEntryId = reversalJournal.reversalJournalId;
+    }
+
+    const reversalTransactionId = await insertFixedAssetTransaction(tx, {
+      tenantId,
+      legalEntityId: target.legalEntityId,
+      assetId: target.assetId,
+      transactionType: "REVERSAL",
+      effectiveDate: target.effectiveDate,
+      postingDate: target.postingDate,
+      bookId: target.bookId,
+      fiscalPeriodId: target.fiscalPeriodId,
+      currencyCode: target.currencyCode || "USD",
+      journalEntryId: reversalJournalEntryId,
+      grossAmountTxn: target.grossAmountTxn,
+      grossAmountBase: target.grossAmountBase,
+      accumDeprAmountTxn: target.accumDeprAmountTxn,
+      accumDeprAmountBase: target.accumDeprAmountBase,
+      nbvAmountTxn: target.nbvAmountTxn,
+      nbvAmountBase: target.nbvAmountBase,
+      reversedTransactionId: target.id,
+      note: reversalNote,
+      createdByUserId: userId,
+    });
+
+    if (!reversalTransactionId) {
+      throw badRequest(
+        `Failed to create REVERSAL transaction for fixed-asset transaction ${target.id}`
+      );
+    }
+
+    if (reversalJournalEntryId) {
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: target.legalEntityId,
+        journalEntryId: reversalJournalEntryId,
+        sourceRefType: "FIXED_ASSET_TRANSACTION",
+        sourceRefId: reversalTransactionId,
+        linkRole: "PRIMARY",
+      });
+    }
+
+    const updateOriginalResult = await tx.query(
+      `UPDATE fixed_asset_transactions
+          SET status = 'REVERSED',
+              reversal_transaction_id = ?
+        WHERE tenant_id = ?
+          AND id = ?
+          AND status = 'POSTED'
+          AND reversal_transaction_id IS NULL`,
+      [reversalTransactionId, tenantId, target.id]
+    );
+
+    if (Number(updateOriginalResult.rows?.affectedRows || 0) === 0) {
+      throw badRequest(
+        `Fixed-asset transaction ${target.id} is already reversed`
+      );
+    }
+
+    const restoredAssetState = await restoreAssetStateAfterFixedAssetReversalTx(tx, {
+      target,
+      userId,
+    });
+
+    return {
+      assetId: target.assetId,
+      originalTransactionId: target.id,
+      reversalTransactionId,
+      reversalJournalEntryId,
+      restoredAssetState,
+    };
+  }).then(async (result) => {
+    const assetDetail = await getAssetDetail({ tenantId, assetId: result.assetId });
+    return {
+      ...assetDetail,
+      reversal: {
+        originalTransactionId: result.originalTransactionId,
+        reversalTransactionId: result.reversalTransactionId,
+        reversalJournalEntryId: result.reversalJournalEntryId,
+        restoredAssetState: result.restoredAssetState,
+      },
+    };
+  });
+}
 
 function mapCategoryRow(row) {
   return {

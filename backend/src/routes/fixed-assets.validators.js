@@ -263,6 +263,25 @@ export function parseDepreciationRunReverseInput(req) {
 // FA06 eligible CARI AP-line read validators
 // ═══════════════════════════════════════════════════════════════════
 
+export function parseFixedAssetTransactionReverseInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const transactionId = parsePositiveInt(req.params?.transactionId);
+  if (!transactionId) throw badRequest("transactionId is required");
+
+  const body = req.body || {};
+  const noteValue = body.note ?? body.reason;
+  const note = noteValue != null ? String(noteValue).trim() || null : null;
+
+  return {
+    tenantId,
+    transactionId,
+    note,
+    userId: req.user?.userId || null,
+  };
+}
+
 export function parseCariEligibleApLineReadInput(req) {
   const tenantId = resolveTenantId(req);
   if (!tenantId) throw badRequest("tenantId is required");
@@ -645,6 +664,38 @@ export function parseSaleUpdateDraftArInput(req) {
   const userId = req.user?.userId || null;
 
   return { tenantId, assetId, saleAmountTxn, description, dueDate, userId };
+}
+
+export function parseSaleFinalizeInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  const effectiveDate = normalizeDateOnlyRequired(
+    body.effectiveDate ?? body.effective_date,
+    "effectiveDate"
+  );
+
+  const postingDate = normalizeDateOnlyRequired(
+    body.postingDate ?? body.posting_date,
+    "postingDate"
+  );
+
+  const note = body.note != null ? String(body.note).trim() || null : null;
+  const userId = req.user?.userId || null;
+
+  return {
+    tenantId,
+    assetId,
+    effectiveDate,
+    postingDate,
+    note,
+    userId,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════
