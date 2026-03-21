@@ -1273,7 +1273,10 @@ async function resolveDepreciationRunScope({
     fiscalPeriodId,
     queryFn
   );
-  const resolvedPostingDate = resolveRunPostingDate(postingDate, period);
+  const resolvedPostingDate = resolveRunPostingDate(
+    postingDate || run.postingDate || null,
+    period
+  );
   await ensurePeriodOpenForFixedAssets(
     resolvedOperationalBookId,
     period.id,
@@ -1476,6 +1479,7 @@ async function insertDepreciationRunHeaderTx({ tx, snapshot, userId }) {
        legal_entity_id,
        book_id,
        fiscal_period_id,
+       posting_date,
        period_key,
        status,
        asset_count,
@@ -1488,13 +1492,14 @@ async function insertDepreciationRunHeaderTx({ tx, snapshot, userId }) {
        total_posted_amount_base,
        created_by_user_id
      ) VALUES (
-       ?, ?, ?, ?, ?, 'DRAFT', ?, 0, ?, ?, ?, ?, 0, 0, ?
+        ?, ?, ?, ?, ?, ?, 'DRAFT', ?, 0, ?, ?, ?, ?, 0, 0, ?
      )`,
     [
       snapshot.tenantId,
       snapshot.legalEntityId,
       snapshot.bookId,
       snapshot.fiscalPeriodId,
+      snapshot.postingDate,
       snapshot.periodKey,
       snapshot.summary.assetCount,
       snapshot.summary.skippedAssetCount,
@@ -1693,6 +1698,7 @@ async function insertDepreciationRunRowsTx({ tx, snapshot, runId }) {
 }
 
 function mapPersistedDepreciationRunHeaderRow(row) {
+  const resolvedPostingDate = row.posting_date || row.journal_entry_date || null;
   return {
     id: Number(row.id),
     tenantId: Number(row.tenant_id),
@@ -1715,8 +1721,8 @@ function mapPersistedDepreciationRunHeaderRow(row) {
     totalPlannedAmountBase: roundAmount(row.total_planned_amount_base || 0),
     totalPostedAmountTxn: roundAmount(row.total_posted_amount_txn || 0),
     totalPostedAmountBase: roundAmount(row.total_posted_amount_base || 0),
-    postingDate: row.journal_entry_date
-      ? String(row.journal_entry_date).slice(0, 10)
+    postingDate: resolvedPostingDate
+      ? String(resolvedPostingDate).slice(0, 10)
       : null,
     postedJournalEntryId: row.posted_journal_entry_id != null
       ? Number(row.posted_journal_entry_id)
@@ -2461,7 +2467,10 @@ async function resolveDepreciationRunPostScope({
     run.fiscalPeriodId,
     queryFn
   );
-  const resolvedPostingDate = resolveRunPostingDate(postingDate, period);
+  const resolvedPostingDate = resolveRunPostingDate(
+    postingDate || run.postingDate || null,
+    period
+  );
   await ensurePeriodOpenForFixedAssets(
     operationalBookId,
     period.id,
@@ -2853,6 +2862,7 @@ export async function postDepreciationRun({
     await tx.query(
       `UPDATE fixed_asset_depreciation_runs
           SET status = 'POSTED',
+              posting_date = ?,
               posted_asset_count = ?,
               total_posted_amount_txn = ?,
               total_posted_amount_base = ?,
@@ -2862,6 +2872,7 @@ export async function postDepreciationRun({
         WHERE tenant_id = ?
           AND id = ?`,
       [
+        scope.postingDate,
         readyLines.length,
         totalPostedAmountTxn,
         totalPostedAmountBase,

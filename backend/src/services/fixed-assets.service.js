@@ -3293,7 +3293,16 @@ export async function createAssetsFromCariDocumentLineFa06(input) {
 }
 
 export async function activateAsset(input) {
-  const { tenantId, assetId, postingDate, capitalizationDate: inputCapDate, inServiceDate: inputInServiceDate, userId } = input;
+  const {
+    tenantId,
+    assetId,
+    postingDate,
+    capitalizationDate: inputCapDate,
+    inServiceDate: inputInServiceDate,
+    legacyOnboardingStatus = null,
+    legacySuspendEffectiveDate = null,
+    userId,
+  } = input;
 
   return withTransaction(async (tx) => {
     // ── Load existing draft ──────────────────────────────────────
@@ -3365,6 +3374,11 @@ export async function activateAsset(input) {
     if (!costTxn || costTxn <= 0) throw badRequest("originalCostTxn must be > 0 for activation");
     if (!costBase || costBase <= 0) throw badRequest("originalCostBase must be > 0 for activation");
     const isLegacyOnboarding = hasLegacyOnboardingValues(asset);
+    if (!isLegacyOnboarding && (legacyOnboardingStatus || legacySuspendEffectiveDate)) {
+      throw badRequest(
+        "legacyOnboardingStatus and legacySuspendEffectiveDate are supported only for legacy onboarding activation"
+      );
+    }
     const capitalizationThresholdBase = category.capitalization_threshold_base != null
       ? Number(category.capitalization_threshold_base)
       : null;
@@ -3461,6 +3475,8 @@ export async function activateAsset(input) {
     let lowValueDepreciationAccumDeprAmountBase = null;
     let lowValueDepreciationNbvAmountTxn = null;
     let lowValueDepreciationNbvAmountBase = null;
+    let createImportedSuspendTransaction = false;
+    let importedSuspendEffectiveDate = null;
 
     if (isLegacyOnboarding) {
       const legacyActivation = validateLegacyOnboardingForActivation({
@@ -3503,6 +3519,29 @@ export async function activateAsset(input) {
       acquisitionNbvAmountTxn = legacyActivation.legacyNbvTxn;
       acquisitionNbvAmountBase = legacyActivation.legacyNbvBase;
       acquisitionTransactionNote = "Legacy onboarding activation";
+
+      if (legacyOnboardingStatus === "SUSPENDED") {
+        if (!legacyActivation.hasRemainingDepreciableAmount) {
+          throw badRequest(
+            "legacyOnboardingStatus=SUSPENDED is allowed only when legacy onboarding state has remaining depreciable amount"
+          );
+        }
+        if (legacySuspendEffectiveDate < isd) {
+          throw badRequest(
+            `legacySuspendEffectiveDate (${legacySuspendEffectiveDate}) cannot be before inServiceDate (${isd})`
+          );
+        }
+        if (legacySuspendEffectiveDate > postingDate) {
+          throw badRequest(
+            `legacySuspendEffectiveDate (${legacySuspendEffectiveDate}) cannot be after postingDate (${postingDate}) for imported SUSPENDED onboarding`
+          );
+        }
+
+        activatedStatus = "SUSPENDED";
+        createImportedSuspendTransaction = true;
+        importedSuspendEffectiveDate = legacySuspendEffectiveDate;
+        acquisitionTransactionNote = "Legacy onboarding activation (imported suspended state)";
+      }
     } else if (useLowValueSamePeriodPath) {
       activatedStatus = "FULLY_DEPRECIATED";
       remainingUsefulLifeMonths = 0;
@@ -3621,6 +3660,22 @@ export async function activateAsset(input) {
       note: acquisitionTransactionNote,
       createdByUserId: userId,
     });
+
+    if (createImportedSuspendTransaction) {
+      await insertFixedAssetTransaction(tx, {
+        tenantId,
+        legalEntityId,
+        assetId,
+        transactionType: "SUSPEND",
+        effectiveDate: importedSuspendEffectiveDate,
+        postingDate: importedSuspendEffectiveDate,
+        bookId: null,
+        fiscalPeriodId: null,
+        currencyCode: asset.currency_code,
+        note: "Imported suspended onboarding state",
+        createdByUserId: userId,
+      });
+    }
 
     if (createLowValueFullExpenseTransaction) {
       await insertFixedAssetTransaction(tx, {

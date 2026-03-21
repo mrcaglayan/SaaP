@@ -99,6 +99,8 @@ function createEmptyForm() {
     legacyNbvTxn: "",
     legacyNbvBase: "",
     inServiceDate: "",
+    legacyOnboardingStatus: "ACTIVE",
+    legacySuspendEffectiveDate: "",
     // Account override fields
     assetAccountId: "",
     accumDeprAccountId: "",
@@ -397,6 +399,15 @@ export default function FixedAssetFormPage() {
   const capThreshold = selectedCategory?.capitalizationThresholdBase;
   const costBase = toNonNegativeNumber(form.originalCostBase);
   const isBelowThreshold = capThreshold != null && capThreshold > 0 && costBase != null && costBase < capThreshold;
+  const hasLegacyOnboardingDraftValues = [
+    form.legacyAccumDeprTxn,
+    form.legacyAccumDeprBase,
+    form.legacyNbvTxn,
+    form.legacyNbvBase,
+  ].some((value) => normalizeText(value) !== "");
+  const isLegacySuspendActivation =
+    hasLegacyOnboardingDraftValues
+    && normalizeText(form.legacyOnboardingStatus).toUpperCase() === "SUSPENDED";
 
   // ── Handlers ────────────────────────────────────────────────────
 
@@ -419,8 +430,9 @@ export default function FixedAssetFormPage() {
       if (newId) {
         setCreatedAssetId(newId);
         setFormSuccess(cf("createSuccess"));
-        // Redirect to detail page after a brief moment
-        setTimeout(() => navigate(`/app/demirbas-karti-detayi/${newId}`), 800);
+        if (!canPost) {
+          setTimeout(() => navigate(`/app/demirbas-karti-detayi/${newId}`), 800);
+        }
       }
     } catch (err) {
       setFormError(normalizeApiError(err, cf("createFailed")));
@@ -431,15 +443,29 @@ export default function FixedAssetFormPage() {
 
   async function handleActivate() {
     if (!createdAssetId || !canPost) return;
+    if (isLegacySuspendActivation && !normalizeText(form.legacySuspendEffectiveDate)) {
+      setFormError(
+        l(
+          "Suspend effective date is required when imported lifecycle status is Suspended.",
+          "Ice aktarilan yasam dongusu durumu Askida iken aski gecerlilik tarihi zorunludur."
+        )
+      );
+      return;
+    }
     setFormError("");
     setFormSuccess("");
     setActivating(true);
     try {
-      await activateFixedAsset(createdAssetId, {
+      const activationPayload = {
         postingDate: normalizeText(form.acquisitionDate),
         capitalizationDate: normalizeText(form.acquisitionDate) || undefined,
         inServiceDate: normalizeText(form.inServiceDate) || undefined,
-      });
+      };
+      if (isLegacySuspendActivation) {
+        activationPayload.legacyOnboardingStatus = "SUSPENDED";
+        activationPayload.legacySuspendEffectiveDate = normalizeText(form.legacySuspendEffectiveDate);
+      }
+      await activateFixedAsset(createdAssetId, activationPayload);
       setFormSuccess(cf("activateSuccess"));
       setTimeout(() => navigate(`/app/demirbas-karti-detayi/${createdAssetId}`), 800);
     } catch (err) {
@@ -729,6 +755,40 @@ export default function FixedAssetFormPage() {
 
       {/* Bottom action bar */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        {canPost && createdAssetId && hasLegacyOnboardingDraftValues ? (
+          <div className="mb-4 grid gap-3 md:grid-cols-2">
+            <FormField label={l("Imported Lifecycle Status", "Ice Aktarilan Yasam Dongusu Durumu")}>
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={form.legacyOnboardingStatus}
+                onChange={(e) => setField("legacyOnboardingStatus", e.target.value)}
+                disabled={activating}
+              >
+                <option value="ACTIVE">{l("Active", "Aktif")}</option>
+                <option value="SUSPENDED">{l("Suspended", "Askida")}</option>
+              </select>
+            </FormField>
+            {isLegacySuspendActivation ? (
+              <FormField label={l("Suspend Effective Date", "Aski Gecerlilik Tarihi")}>
+                <input
+                  type="date"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={form.legacySuspendEffectiveDate}
+                  onChange={(e) => setField("legacySuspendEffectiveDate", e.target.value)}
+                  disabled={activating}
+                />
+              </FormField>
+            ) : (
+              <div />
+            )}
+            <p className="md:col-span-2 text-xs text-amber-700">
+              {l(
+                "These legacy lifecycle options are used only during activation and are not saved on the draft.",
+                "Bu eski yasam dongusu secenekleri yalnizca aktiflestirme sirasinda kullanilir ve taslakta saklanmaz."
+              )}
+            </p>
+          </div>
+        ) : null}
         <div className="flex items-center justify-between">
           <Link to="/app/demirbas-karti-listesi" className="text-sm text-cyan-700 hover:underline">
             {cf("backToRegister")}

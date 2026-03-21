@@ -754,8 +754,10 @@ async function ensurePostedApFixture({
     assertScopeAccess: allowAllScopes,
   });
 
+  const postedDocument = posted?.row || posted;
+
   const line =
-    findLineByDescription(posted, SOURCE_LINE_DESCRIPTION) ||
+    findLineByDescription(postedDocument, SOURCE_LINE_DESCRIPTION) ||
     (
       await query(
         `SELECT id
@@ -765,13 +767,13 @@ async function ensurePostedApFixture({
             AND description = ?
           ORDER BY id ASC
           LIMIT 1`,
-        [tenantId, Number(posted.id), SOURCE_LINE_DESCRIPTION]
+        [tenantId, Number(postedDocument.id), SOURCE_LINE_DESCRIPTION]
       )
     ).rows?.[0];
   assert(line?.id, "Posted FA22 smoke document missing source line");
 
   return {
-    documentId: Number(posted.id),
+    documentId: Number(postedDocument.id),
     lineId: Number(line.id),
     createdFixture: true,
   };
@@ -836,6 +838,8 @@ async function activateAsset({
   postingDate,
   capitalizationDate,
   inServiceDate,
+  legacyOnboardingStatus,
+  legacySuspendEffectiveDate,
   expectedStatus = 200,
 }) {
   return apiRequest({
@@ -847,6 +851,8 @@ async function activateAsset({
       postingDate,
       capitalizationDate,
       inServiceDate,
+      legacyOnboardingStatus,
+      legacySuspendEffectiveDate,
     },
   });
 }
@@ -887,7 +893,8 @@ async function getAssetDbState({ tenantId, assetId }) {
     `SELECT COUNT(*) AS total_count,
             SUM(CASE WHEN transaction_type = 'ACQUISITION' THEN 1 ELSE 0 END) AS acquisition_count,
             SUM(CASE WHEN transaction_type = 'CAPITALIZATION' THEN 1 ELSE 0 END) AS capitalization_count,
-            SUM(CASE WHEN transaction_type = 'DEPRECIATION' THEN 1 ELSE 0 END) AS depreciation_count
+            SUM(CASE WHEN transaction_type = 'DEPRECIATION' THEN 1 ELSE 0 END) AS depreciation_count,
+            SUM(CASE WHEN transaction_type = 'SUSPEND' THEN 1 ELSE 0 END) AS suspend_count
        FROM fixed_asset_transactions
       WHERE tenant_id = ?
         AND asset_id = ?`,
@@ -907,11 +914,24 @@ async function getAssetDbState({ tenantId, assetId }) {
       LIMIT 1`,
     [tenantId, assetId]
   );
+  const suspend = await query(
+    `SELECT transaction_type,
+            status,
+            effective_date,
+            journal_entry_id
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND transaction_type = 'SUSPEND'
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
 
   return {
     asset: assetResult.rows?.[0] || null,
     txnCounts: txnCounts.rows?.[0] || null,
     acquisition: acquisition.rows?.[0] || null,
+    suspend: suspend.rows?.[0] || null,
   };
 }
 
@@ -922,6 +942,8 @@ async function expectActivationFailure({
   postingDate,
   capitalizationDate,
   inServiceDate,
+  legacyOnboardingStatus,
+  legacySuspendEffectiveDate,
   expectedMessagePart,
 }) {
   const { payload } = await activateAsset({
@@ -930,6 +952,8 @@ async function expectActivationFailure({
     postingDate,
     capitalizationDate,
     inServiceDate,
+    legacyOnboardingStatus,
+    legacySuspendEffectiveDate,
     expectedStatus: 400,
   });
 
@@ -964,6 +988,7 @@ async function main() {
     fixtureIds: {},
     period: null,
     validRemainingActivation: null,
+    validSuspendedActivation: null,
     validZeroRemainingActivation: null,
     invalidActivations: [],
     cleanup: "skipped",
@@ -1117,6 +1142,91 @@ async function main() {
       acquisitionJournalEntryId: activeDbState.acquisition?.journal_entry_id ?? null,
     };
 
+    const importedSuspendEffectiveDate = minDate(
+      addDays(postingWindow.inServiceDate, 5),
+      postingWindow.postingDate
+    );
+    assert(
+      importedSuspendEffectiveDate >= postingWindow.inServiceDate,
+      "Imported suspend effective date must not precede in-service date in FA22 smoke context"
+    );
+
+    const suspendedDraft = await createLegacyDraftAsset({
+      cookie,
+      legalEntityId: context.legalEntityId,
+      categoryId: category.categoryId,
+      profileId: profile.profileId,
+      currencyCode: context.currencyCode,
+      ownerOperatingUnitId: operatingUnits.ownerOperatingUnitId,
+      locationOperatingUnitId: operatingUnits.locationOperatingUnitId,
+      acquisitionDate: postingWindow.acquisitionDate,
+      uniqueSuffix,
+      nameSuffix: "legacy-suspended",
+      originalCostBase: 500,
+      legacyAccumDeprBase: 200,
+      legacyNbvBase: 300,
+      remainingUsefulLifeMonths: 12,
+    });
+
+    const { payload: suspendedAsset } = await activateAsset({
+      cookie,
+      assetId: Number(suspendedDraft.id),
+      postingDate: postingWindow.postingDate,
+      capitalizationDate: postingWindow.capitalizationDate,
+      inServiceDate: postingWindow.inServiceDate,
+      legacyOnboardingStatus: "SUSPENDED",
+      legacySuspendEffectiveDate: importedSuspendEffectiveDate,
+    });
+    const suspendedDbState = await getAssetDbState({
+      tenantId: context.tenantId,
+      assetId: Number(suspendedDraft.id),
+    });
+
+    assert(
+      suspendedAsset.status === "SUSPENDED",
+      "Legacy asset imported as suspended must activate to SUSPENDED"
+    );
+    assert(
+      Number(suspendedDbState.txnCounts?.acquisition_count || 0) === 1,
+      "Legacy SUSPENDED asset must create exactly one ACQUISITION transaction"
+    );
+    assert(
+      Number(suspendedDbState.txnCounts?.suspend_count || 0) === 1,
+      "Legacy SUSPENDED asset must create exactly one SUSPEND transaction"
+    );
+    assert(
+      Number(suspendedDbState.txnCounts?.depreciation_count || 0) === 0,
+      "Legacy SUSPENDED asset must not create inline DEPRECIATION"
+    );
+    assert(
+      suspendedDbState.acquisition?.journal_entry_id == null,
+      "Legacy SUSPENDED onboarding ACQUISITION must keep journal_entry_id null"
+    );
+    assert(
+      suspendedDbState.suspend?.journal_entry_id == null,
+      "Imported SUSPEND onboarding row must keep journal_entry_id null"
+    );
+    assert(
+      String(suspendedDbState.suspend?.effective_date || "").slice(0, 10) === importedSuspendEffectiveDate,
+      "Imported SUSPEND transaction must keep the requested effective date"
+    );
+
+    summary.validSuspendedActivation = {
+      assetId: Number(suspendedDraft.id),
+      status: suspendedAsset.status,
+      acquisitionTransactionCount: Number(
+        suspendedDbState.txnCounts?.acquisition_count || 0
+      ),
+      suspendTransactionCount: Number(
+        suspendedDbState.txnCounts?.suspend_count || 0
+      ),
+      suspendEffectiveDate: String(
+        suspendedDbState.suspend?.effective_date || ""
+      ).slice(0, 10) || null,
+      acquisitionJournalEntryId: suspendedDbState.acquisition?.journal_entry_id ?? null,
+      suspendJournalEntryId: suspendedDbState.suspend?.journal_entry_id ?? null,
+    };
+
     const fullyDraft = await createLegacyDraftAsset({
       cookie,
       legalEntityId: context.legalEntityId,
@@ -1181,6 +1291,40 @@ async function main() {
       ),
       acquisitionJournalEntryId: fullyDbState.acquisition?.journal_entry_id ?? null,
     };
+
+    const invalidSuspendedFullyDeprDraft = await createLegacyDraftAsset({
+      cookie,
+      legalEntityId: context.legalEntityId,
+      categoryId: category.categoryId,
+      profileId: profile.profileId,
+      currencyCode: context.currencyCode,
+      ownerOperatingUnitId: operatingUnits.ownerOperatingUnitId,
+      locationOperatingUnitId: operatingUnits.locationOperatingUnitId,
+      acquisitionDate: postingWindow.acquisitionDate,
+      uniqueSuffix,
+      nameSuffix: "legacy-suspended-zero",
+      originalCostBase: 500,
+      legacyAccumDeprBase: 500,
+      legacyNbvBase: 0,
+      remainingUsefulLifeMonths: 0,
+    });
+
+    summary.invalidActivations.push({
+      assetId: Number(invalidSuspendedFullyDeprDraft.id),
+      case: "legacy suspended onboarding requires remaining depreciable amount",
+      ...(await expectActivationFailure({
+        tenantId: context.tenantId,
+        cookie,
+        assetId: Number(invalidSuspendedFullyDeprDraft.id),
+        postingDate: postingWindow.postingDate,
+        capitalizationDate: postingWindow.capitalizationDate,
+        inServiceDate: postingWindow.inServiceDate,
+        legacyOnboardingStatus: "SUSPENDED",
+        legacySuspendEffectiveDate: importedSuspendEffectiveDate,
+        expectedMessagePart:
+          "legacyOnboardingStatus=SUSPENDED is allowed only when legacy onboarding state has remaining depreciable amount",
+      })),
+    });
 
     const invalidMathDraft = await createLegacyDraftAsset({
       cookie,

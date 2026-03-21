@@ -30,6 +30,11 @@ const VALID_DEPRECIATION_RUN_STATUSES = new Set([
   "REVERSED",
 ]);
 
+const VALID_LEGACY_ONBOARDING_ACTIVATION_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+]);
+
 function normalizeUpperText(value) {
   if (value === undefined || value === null) return null;
   return String(value).trim().toUpperCase();
@@ -415,9 +420,44 @@ export function parseActivateAssetInput(req) {
     "inServiceDate"
   );
 
+  const legacyOnboardingStatusInput = pickBodyValue(
+    body,
+    "legacyOnboardingStatus",
+    "legacy_onboarding_status"
+  );
+  let legacyOnboardingStatus = null;
+  if (legacyOnboardingStatusInput.present) {
+    legacyOnboardingStatus = normalizeUpperText(legacyOnboardingStatusInput.value);
+    if (!legacyOnboardingStatus || !VALID_LEGACY_ONBOARDING_ACTIVATION_STATUSES.has(legacyOnboardingStatus)) {
+      throw badRequest(
+        `legacyOnboardingStatus must be one of: ${[...VALID_LEGACY_ONBOARDING_ACTIVATION_STATUSES].join(", ")}`
+      );
+    }
+  }
+
+  const legacySuspendEffectiveDate = normalizeDateOnlyOptional(
+    body.legacySuspendEffectiveDate ?? body.legacy_suspend_effective_date,
+    "legacySuspendEffectiveDate"
+  );
+  if (legacySuspendEffectiveDate && legacyOnboardingStatus !== "SUSPENDED") {
+    throw badRequest("legacySuspendEffectiveDate is allowed only when legacyOnboardingStatus is SUSPENDED");
+  }
+  if (legacyOnboardingStatus === "SUSPENDED" && !legacySuspendEffectiveDate) {
+    throw badRequest("legacySuspendEffectiveDate is required when legacyOnboardingStatus is SUSPENDED");
+  }
+
   const userId = req.user?.userId || null;
 
-  return { tenantId, assetId, postingDate, capitalizationDate, inServiceDate, userId };
+  return {
+    tenantId,
+    assetId,
+    postingDate,
+    capitalizationDate,
+    inServiceDate,
+    legacyOnboardingStatus,
+    legacySuspendEffectiveDate,
+    userId,
+  };
 }
 
 function parseAssetLifecycleNoteInput(req) {

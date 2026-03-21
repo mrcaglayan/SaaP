@@ -712,6 +712,9 @@ Locked decision:
 - activation of a manual legacy onboarding asset still creates one `ACQUISITION` transaction row for fixed-assets auditability
 - for manual legacy onboarding / go-live assets, that `ACQUISITION` row must not post a new acquisition journal in MVP
 - `fixed_asset_transactions.journal_entry_id` remains null for that onboarding `ACQUISITION` row unless a later documented migration-posting flow is introduced
+- manual legacy onboarding activation may optionally import an initial `SUSPENDED` lifecycle state when the imported onboarding state still has remaining depreciable amount
+- imported `SUSPENDED` onboarding requires `legacySuspendEffectiveDate` at activation time and must create one `SUSPEND` transaction row with that effective date
+- imported `SUSPENDED` onboarding is not allowed when the imported onboarding state already has zero remaining depreciable amount; those assets stay on the existing `FULLY_DEPRECIATED` path
 - legacy onboarding values seed forward depreciation scheduling from the activation state
 - legacy onboarding values do not generate historical or backfilled schedule lines in MVP
 - lock Option B for below-threshold manual legacy onboarding imports:
@@ -724,6 +727,7 @@ Locked decision:
 Implementation note:
 - treat legacy onboarding values as go-live setup for pre-existing manually registered assets already in use before this module
 - treat the onboarding `ACQUISITION` row as subledger history for module entry, not proof that a fresh GL acquisition was booked on the activation date
+- imported suspended lifecycle state is captured at activation time only in MVP; it is not separately persisted on the `DRAFT` asset before activation
 - schedule generation should start from the seeded carrying amount and remaining life at activation time
 - treat the category capitalization threshold as prospective for new activation/capitalization events, not as a retroactive migration-policy override for legacy onboarding imports
 
@@ -1277,7 +1281,7 @@ Implementation notes:
 - [x] `STEP-FA46` - Suspend and reactivate asset lifecycle endpoints
 - [x] `STEP-FA47` - Frontend sidebar, route, action gating, and scaffold cleanup
 - [x] `STEP-FA48` - Manual asset create and legacy-onboarding frontend form
-- [ ] `STEP-FA49` - Fixed-assets reports and paired export endpoints
+- [x] `STEP-FA49` - Fixed-assets reports and paired export endpoints
 - [ ] `STEP-FA50` - Release gates, smoke suite, and rollout readiness checks
 
 ---
@@ -1973,12 +1977,13 @@ Implement activation for normal manual assets that are not legacy-onboarding imp
 ## `STEP-FA22` - Manual legacy-onboarding activation path
 
 ### Patch target
-Implement the go-live/manual legacy-onboarding activation path without double-booking current-period acquisition accounting.
+Implement the go-live/manual legacy-onboarding activation path without double-booking current-period acquisition accounting, including optional imported `SUSPENDED` lifecycle onboarding.
 
 ### In scope
 - activation of manually created assets with legacy onboarding fields
 - validation of legacy accumulated depreciation, legacy NBV, remaining useful life, and salvage floor compatibility
 - creation of one onboarding `ACQUISITION` transaction row with no new acquisition journal
+- optional imported `SUSPENDED` activation with required suspend effective date and one non-journal `SUSPEND` lifecycle row
 - correct post-activation status for remaining depreciable amount exists and already fully depreciated at onboarding
 
 ### Explicit non-goals
@@ -1991,16 +1996,20 @@ Implement the go-live/manual legacy-onboarding activation path without double-bo
 - validation enforces `legacy_accum_depr <= original_cost`, `legacy_nbv = original_cost - legacy_accum_depr`, legacy NBV not below salvage, and `remaining_useful_life_months` when remaining depreciation exists
 - activation creates one `ACQUISITION` transaction row
 - that onboarding `ACQUISITION` row does not create a fresh acquisition journal
+- imported `SUSPENDED` onboarding is allowed only when remaining depreciable amount still exists, requires `legacySuspendEffectiveDate`, and creates one `SUSPEND` row with no journal
 - assets with zero remaining depreciable amount can land in `FULLY_DEPRECIATED` without low-value auto-expense logic being applied just because they are below threshold
 
 ### Smoke tests
 - activate a valid legacy-onboarding asset with remaining depreciation and verify one `ACQUISITION` row exists, `journal_entry_id` is null, and the asset is not treated as a new current-period purchase
+- activate a valid imported-`SUSPENDED` legacy-onboarding asset with remaining depreciation and verify final status `SUSPENDED`, one `ACQUISITION` row, one `SUSPEND` row, and persisted suspend effective date
 - activate a valid legacy-onboarding asset with zero remaining depreciable amount and verify status may become `FULLY_DEPRECIATED` and no same-period low-value `DEPRECIATION` is auto-created solely from threshold
+- attempt imported `SUSPENDED` legacy onboarding with zero remaining depreciable amount and verify rejection
 - attempt activation with inconsistent legacy NBV math and verify rejection
 - attempt legacy onboarding on a source-linked/CARI-linked draft and verify rejection
 
 ### Acceptance
 - legacy onboarding is supported without double-booking
+- legacy onboarding can begin in either imported `ACTIVE` or imported `SUSPENDED` state when the activation payload carries the required lifecycle date
 - imported carrying values are validated and frozen properly
 - below-threshold legacy imports follow Option B exactly
 - go-live onboarding semantics are distinct from fresh acquisition semantics
@@ -2351,6 +2360,7 @@ Deliver preview and frozen `DRAFT` run creation before posting or reversal are a
 ### Definition of done
 - preview is transient only
 - persisted run creation writes a frozen `DRAFT` snapshot
+- persisted run header retains the resolved `posting_date` used for the draft snapshot
 - only one persisted `DRAFT` run can exist for the same scope
 - run lines retain `eligible_days` and `days_in_period`
 - ownership-transfer month allocation segments persist in allocation rows where applicable
@@ -2430,6 +2440,7 @@ Implement posting of frozen `DRAFT` runs without recomputation.
 - one normal posted depreciation result exists per asset-period in the effective/current sense
 - schedule lines move from `PLANNED` to `POSTED` with current posted links set
 - run status becomes `POSTED`
+- the final posting date is persisted on the run header as well as the posted depreciation transactions
 - if post fails, the run remains `DRAFT`
 
 ### Smoke tests
@@ -3085,17 +3096,19 @@ Wire the real create/legacy-onboarding form into FixedAssetFormPage so users can
 ### In scope
 - full create-asset form collecting: category, owner OU, location OU, custodian, depreciation profile, acquisition date, original cost (txn/base), currency, description, asset tag, serial number
 - legacy onboarding fields: legacy accumulated depreciation (txn/base), legacy NBV (txn/base), in-service date
+- activation-time-only imported lifecycle controls for legacy onboarding: imported status (`ACTIVE` or `SUSPENDED`) and required suspend effective date when `SUSPENDED`
 - low-value full-expense path indication via category capitalization threshold
 - draft save via `createFixedAsset()` / `updateFixedAsset()` API helpers
 - activate button gated by `fixed_assets.post` permission, calling `activateFixedAsset()`
 - account-override fields gated separately by `fixed_assets.account_override` permission
 - category-driven default propagation for depreciation profile, useful life, salvage rule
 - validation aligned with backend `parseAssetCreateInput` and `parseActivateAssetInput` validators
-- navigation: after create → redirect to detail page; back link to register
+- navigation: after first create, keep post-capable users on the form for activation-time choices; otherwise redirect to detail page; back link to register
 
 ### Explicit non-goals
 - do not build the CARI-linked capitalization form here (FA25-FA27 cover that flow)
 - do not change backend validators or service logic
+- do not persist imported suspended lifecycle choice on the draft itself in MVP
 - do not redesign the detail page
 - do not implement batch/bulk creation
 
@@ -3103,6 +3116,7 @@ Wire the real create/legacy-onboarding form into FixedAssetFormPage so users can
 - a user with `fixed_assets.upsert` can create a draft asset from the form
 - a user can enter legacy onboarding fields for system migration
 - a user with `fixed_assets.post` can activate the draft from the form
+- a legacy-onboarding user can choose activation-time imported lifecycle status, and if `SUSPENDED`, must enter suspend effective date before activation
 - account-override fields only appear when `fixed_assets.account_override` is present
 - category defaults propagate to the form on category selection
 - the form validates inputs before submission
@@ -3111,6 +3125,7 @@ Wire the real create/legacy-onboarding form into FixedAssetFormPage so users can
 ### Smoke tests
 - create a draft asset via the form with standard acquisition fields, verify it appears in the register as DRAFT
 - create a legacy-onboarding asset with legacy accum depr and legacy NBV, activate it, verify schedule picks up from the legacy state
+- create a legacy-onboarding asset with imported lifecycle status `SUSPENDED`, enter suspend effective date at activation time, and verify activation succeeds without leaving the form
 - verify a user without `fixed_assets.account_override` does not see override fields
 - verify a user without `fixed_assets.post` sees the form but not the activate button
 - verify category selection propagates default depreciation profile and useful life
@@ -3118,6 +3133,7 @@ Wire the real create/legacy-onboarding form into FixedAssetFormPage so users can
 ### Acceptance
 - the create form is functional and permission-gated
 - legacy onboarding is a first-class creation path, not a hidden option
+- imported suspended onboarding is explicit at activation time without requiring draft persistence
 - frontend form validation matches backend expectations
 - the standalone create page is no longer a placeholder
 
@@ -3171,7 +3187,7 @@ Close the track with explicit release-readiness checks so the module is not cons
 - cross-cutting smoke suite for the fixed-assets track
 - release-readiness checks covering OpenAPI generation, source-link ownership contract, reverse-block contract, permissions, reports/export, and key workflows
 - rollout/readiness documentation for one-`PRIMARY` source-link enforcement dependency, fixed-assets route availability, fixed-assets page readiness, and required OU self-balancing setup for cross-OU flows
-- rollout documentation for legacy SUSPENDED asset data backfill requirement (assets with SUSPENDED status must have persisted SUSPEND transaction rows before depreciation runs can process them)
+- rollout note for unsupported out-of-band `SUSPENDED` status-only edits: supported onboarding/suspend flows persist lifecycle rows automatically, but manual master-status edits still fail explicitly during schedule generation
 
 ### Explicit non-goals
 - do not add new business scope here
@@ -3928,7 +3944,7 @@ Locked transaction-type semantics:
 - `depreciation_kind` must not be left implicit or inferred only from surrounding workflow context
 - the conditional `transaction_type <-> depreciation_kind` rule is validator/service-SQL enforced in MVP: `depreciation_kind` is required on `DEPRECIATION` rows and must be null on non-`DEPRECIATION` rows
 - do not introduce a DB-level `CHECK` constraint for the `transaction_type <-> depreciation_kind` rule in MVP unless the repo's broader database-constraint strategy changes
-- `SUSPEND` = explicit lifecycle-history event that moves an asset into `SUSPENDED`
+- `SUSPEND` = explicit lifecycle-history event that moves an asset into `SUSPENDED`, whether that happens through the suspend endpoint or imported suspended onboarding activation
 - `REACTIVATE` = explicit lifecycle-history event that returns a suspended asset to active depreciation eligibility from the reactivation-effective period
 - `SUSPEND` and `REACTIVATE` are transaction-backed audit events even when they do not create journals in MVP
 - `PHYSICAL_MOVE` = explicit non-accounting placement/responsibility change event and must have one `fixed_asset_physical_move_details` row capturing from/to location, custodian, department-code, and cost-center-code snapshots
@@ -4008,6 +4024,7 @@ Minimum columns:
 - `legal_entity_id`
 - `book_id`
 - `fiscal_period_id`
+- `posting_date` nullable
 - `period_key`
 - `status`
 - `asset_count`
@@ -4460,7 +4477,8 @@ Allow finance/admin users to create, edit, and activate assets manually.
 - that inline low-value `DEPRECIATION` row must carry `depreciation_kind = LOW_VALUE_FULL_EXPENSE`
 - below-threshold low-value assets without legacy onboarding values must resolve `salvage_rule_type = NONE`, `salvage_percent = null`, `salvage_amount_base_rule = null`, `salvage_value_txn = 0`, and `salvage_value_base = 0` before activation
 - below-threshold low-value assets without legacy onboarding values do not require normal depreciation profile/life inputs for activation because they do not enter the normal schedule/run path
-- below-threshold manual legacy onboarding imports follow the legacy onboarding carry-forward path instead; if imported legacy onboarding state retains remaining depreciable amount, they still require the forward-depreciation inputs needed for onboarding continuity
+- below-threshold manual legacy onboarding imports follow the same imported-onboarding rule instead; if imported legacy onboarding state retains remaining depreciable amount, they still require the forward-depreciation inputs needed for onboarding continuity
+- if imported legacy onboarding activation requests `legacyOnboardingStatus = SUSPENDED`, remaining depreciable amount must still exist and `legacySuspendEffectiveDate` must fall on/after `inServiceDate` and on/before `postingDate`
 - while status = `DRAFT`, source CARI linkage may be changed or cleared; switching from one source line/unit to another must release the old link before activation
 - before activation of a source-linked `DRAFT` asset, fixed-assets must reload the current linked CARI document/line and revalidate current document status, quantity, currency, txn/base amounts, linked unit-slot availability, and any per-unit threshold-path implications from the current source line
 - when that activation-time revalidation detects drift on source-derived CARI fields for a still-`DRAFT` linked asset, activation preflight must auto-refresh those source-derived values before final validation
@@ -4498,8 +4516,10 @@ Draft-link mutability note:
 - manual legacy onboarding assets must capture `remaining_useful_life_months` before activation
 - activation of a manual legacy onboarding / go-live asset still creates one `ACQUISITION` transaction row for asset history
 - that onboarding `ACQUISITION` row does not post a new acquisition journal in MVP and `journal_entry_id` remains null
+- manual legacy onboarding activation may optionally resolve into imported `SUSPENDED` state when remaining depreciable amount still exists
+- imported `SUSPENDED` onboarding requires activation-time `legacySuspendEffectiveDate` and creates one `SUSPEND` row with no journal
 - legacy onboarding values seed forward depreciation scheduling from the activation state rather than generating historical schedule lines
-- below-threshold manual legacy onboarding imports use the same carry-forward onboarding rule; they do not auto-create same-period full-expense `DEPRECIATION` solely because of the current threshold
+- below-threshold manual legacy onboarding imports use the same imported-onboarding rule; they do not auto-create same-period full-expense `DEPRECIATION` solely because of the current threshold
 - if a below-threshold manual legacy onboarding import already has zero remaining depreciable amount at activation, it may enter `FULLY_DEPRECIATED` without any new onboarding journal beyond the non-posting onboarding `ACQUISITION` row
 
 ### Acceptance
@@ -4662,7 +4682,7 @@ Generate deterministic period-based schedules for active depreciable assets.
 - legacy onboarding assets generate forward schedule lines only; they do not backfill historical periods
 - below-threshold new assets without legacy onboarding values are excluded from the normal depreciation schedule path and instead follow the dedicated low-value same-period full-expense treatment
 - low-value same-period full-expense is executed as a one-time `DEPRECIATION` posting during activation/capitalization for that new-asset low-value path, not as part of the normal future schedule path
-- below-threshold manual legacy onboarding imports follow the legacy onboarding carry-forward path and are not auto-expensed solely because they fall below the current threshold
+- below-threshold manual legacy onboarding imports follow the same imported-onboarding rule and are not auto-expensed solely because they fall below the current threshold
 - prevent NBV from falling below salvage value
 - respect disposal and fully-depreciated states
 
@@ -5295,4 +5315,3 @@ Require dedicated permission and, if later needed, approval-sensitive handling f
 - reports and exports are both contracted, with dedicated `/export` endpoints for fixed-assets reports
 - key uniqueness rules are DB-enforced
 - open decisions remain visible instead of being buried in implicit behavior
-
