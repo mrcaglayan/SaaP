@@ -142,7 +142,7 @@ Scope: Full cross-reference of all implemented steps (FA01–FA49), remaining st
 - **Status**: GREEN. Test: `test-fa44-drillback-smoke.js`. All 19 smoke tests pass.
 
 ### FA45 – Permissions seed, RBAC scope, secondary permission enforcement
-- **Status**: GREEN. `req.tenantId` call-shape inconsistency is cleanup debt only.
+- **Status**: GREEN. Route-level fixed-assets scope resolution is standardized on middleware-resolved `tenantId`.
 
 ### FA46 – Suspend/reactivate lifecycle endpoints
 - **Status**: GREEN. POSTED SUSPEND and REACTIVATE rows, FA30 proration verified end to end.
@@ -185,19 +185,13 @@ Scope: Full cross-reference of all implemented steps (FA01–FA49), remaining st
 - **Resolution path**: No standard MVP remediation is required for supported flows. Imported `SUSPENDED` onboarding and normal suspend/reactivate actions now create the lifecycle row automatically. Only truly out-of-band bad data needs case-by-case cleanup if it exists.
 - **Impact if unresolved**: Only those unsupported rows error with a clear message; normal onboarding and lifecycle flows remain correct.
 
-### 3.2 req.tenantId call-shape inconsistency (from FA45)
-- **Severity**: LOW — cleanup debt.
-- **Issue**: Some service functions receive `req.tenantId` while others receive `tenantId` directly. Both work correctly.
-- **Resolution path**: Standardize to `tenantId` parameter in a future cleanup pass.
-- **Impact if unresolved**: No functional impact. Code style inconsistency only.
-
-### 3.3 FA41 cutoff depreciation companion reversal
+### 3.2 FA41 cutoff depreciation companion reversal
 - **Severity**: LOW — documented scope boundary.
 - **Issue**: FA41 reversal of a SALE transaction does not automatically reverse the separate FA40 cutoff depreciation transaction that may have been created alongside it.
 - **Resolution path**: If needed, cutoff depreciation can be reversed separately through the same reversal endpoint.
 - **Impact if unresolved**: Users must manually reverse cutoff depreciation if they reverse a sale that triggered it.
 
-### 3.4 OpenAPI FixedAssets routes absent from generated spec
+### 3.3 OpenAPI FixedAssets routes absent from generated spec
 - **Severity**: LOW — expected per FA08.
 - **Issue**: `generate-openapi.js` supports FixedAssets tag, but no fixed-assets routes are tagged yet in the generated spec.
 - **Resolution path**: Tag fixed-assets routes in OpenAPI as part of FA50 or a follow-up.
@@ -341,7 +335,7 @@ The plan calls for a named release-gate or smoke suite covering the full MVP. FA
 2. Documented rollout prerequisites (6.1–6.5 above)
 3. OpenAPI route tagging verification
 4. Confirmation that all 13 existing smoke scripts pass
-5. Sign-off that Part 3 items (3.1–3.4) are acceptable for MVP
+5. Sign-off that Part 3 items (3.1–3.3) are acceptable for MVP
 
 ### Risk assessment:
 - **Code quality**: HIGH — no TODO/FIXME markers, consistent patterns, comprehensive acceptance

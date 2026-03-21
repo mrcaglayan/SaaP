@@ -161,6 +161,18 @@ async function resolvePendingSaleCariDocumentScope(req, tenantId) {
   return resolveCariDocumentScope(pendingCariDocumentId, normalizedTenantId);
 }
 
+async function resolveFixedAssetRouteScope(req, tenantId) {
+  return resolveFixedAssetScope(req.params?.assetId, tenantId);
+}
+
+async function resolveFixedAssetTransactionRouteScope(req, tenantId) {
+  return resolveFixedAssetTransactionScope(req.params?.transactionId, tenantId);
+}
+
+async function resolveFixedAssetRunRouteScope(req, tenantId) {
+  return resolveFixedAssetRunScope(req.params?.runId, tenantId);
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // 1. STATIC PREFIXED ROUTES
 //    Declared first so they are never captured by /:assetId.
@@ -321,8 +333,7 @@ router.post(
 router.get(
   "/runs/:runId",
   requirePermission("fixed_assets.depreciation.run", {
-    resolveScope: async (req) =>
-      resolveFixedAssetRunScope(req.params?.runId, req.tenantId),
+    resolveScope: resolveFixedAssetRunRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseDepreciationRunParams(req);
@@ -334,8 +345,7 @@ router.get(
 router.delete(
   "/runs/:runId",
   requirePermission("fixed_assets.depreciation.run", {
-    resolveScope: async (req) =>
-      resolveFixedAssetRunScope(req.params?.runId, req.tenantId),
+    resolveScope: resolveFixedAssetRunRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseDepreciationRunParams(req);
@@ -347,8 +357,7 @@ router.delete(
 router.post(
   "/runs/:runId/post",
   requirePermission("fixed_assets.depreciation.run", {
-    resolveScope: async (req) =>
-      resolveFixedAssetRunScope(req.params?.runId, req.tenantId),
+    resolveScope: resolveFixedAssetRunRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseDepreciationRunPostInput(req);
@@ -360,8 +369,7 @@ router.post(
 router.post(
   "/runs/:runId/reverse",
   requirePermission("fixed_assets.depreciation.reverse", {
-    resolveScope: async (req) =>
-      resolveFixedAssetRunScope(req.params?.runId, req.tenantId),
+    resolveScope: resolveFixedAssetRunRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseDepreciationRunReverseInput(req);
@@ -460,11 +468,7 @@ const REVERSAL_PERMISSION_BY_TX_TYPE = {
 router.post(
   "/transactions/:transactionId/reverse",
   requirePermission("fixed_assets.post", {
-    resolveScope: async (req) =>
-      resolveFixedAssetTransactionScope(
-        req.params?.transactionId,
-        req.tenantId
-      ),
+    resolveScope: resolveFixedAssetTransactionRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseFixedAssetTransactionReverseInput(req);
@@ -531,8 +535,7 @@ router.post(
 router.get(
   "/:assetId",
   requirePermission("fixed_assets.read", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const { tenantId, assetId } = parseAssetDetailParams(req);
@@ -545,8 +548,7 @@ router.get(
 router.patch(
   "/:assetId",
   requirePermission("fixed_assets.upsert", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const { tenantId, assetId, updates, userId } = parseAssetDraftUpdateInput(req);
@@ -559,8 +561,7 @@ router.patch(
 router.get(
   "/:assetId/transactions",
   requirePermission("fixed_assets.read", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const { tenantId, assetId } = parseAssetDetailParams(req);
@@ -586,8 +587,7 @@ router.get(
 router.get(
   "/:assetId/depreciation-schedule",
   requirePermission("fixed_assets.read", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseAssetDepreciationScheduleInput(req);
@@ -600,8 +600,7 @@ router.get(
 router.post(
   "/:assetId/activate",
   requirePermission("fixed_assets.post", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseActivateAssetInput(req);
@@ -613,8 +612,7 @@ router.post(
 router.post(
   "/:assetId/suspend",
   requirePermission("fixed_assets.post", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseSuspendAssetInput(req);
@@ -626,8 +624,7 @@ router.post(
 router.post(
   "/:assetId/reactivate",
   requirePermission("fixed_assets.post", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseReactivateAssetInput(req);
@@ -639,8 +636,7 @@ router.post(
 router.post(
   "/:assetId/physical-move",
   requirePermission("fixed_assets.transfer", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parsePhysicalMoveInput(req);
@@ -652,8 +648,7 @@ router.post(
 router.post(
   "/:assetId/ownership-transfer",
   requirePermission("fixed_assets.transfer", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseOwnershipTransferInput(req);
@@ -665,8 +660,7 @@ router.post(
 router.post(
   "/:assetId/writeoff",
   requirePermission("fixed_assets.dispose", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseWriteoffInput(req);
@@ -679,8 +673,7 @@ router.post(
 router.post(
   "/:assetId/sale/create-draft-ar-document",
   requirePermission("fixed_assets.dispose", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     await assertSecondaryPermission(req, "cari.doc.create");
@@ -693,12 +686,12 @@ router.post(
 router.post(
   "/:assetId/sale/link-ar-document",
   requirePermission("fixed_assets.dispose", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     await assertSecondaryPermission(req, "cari.doc.read", {
       resolveScope: resolveSaleLinkCariDocumentScope,
+      matchPrimaryScope: false,
     });
     const input = parseSaleLinkArInput(req);
     const result = await saleLinkArDocument({ req, ...input, assertScopeAccess });
@@ -709,12 +702,12 @@ router.post(
 router.patch(
   "/:assetId/sale/draft-ar-document",
   requirePermission("fixed_assets.dispose", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     await assertSecondaryPermission(req, "cari.doc.update", {
       resolveScope: resolvePendingSaleCariDocumentScope,
+      matchPrimaryScope: false,
     });
     const input = parseSaleUpdateDraftArInput(req);
     const result = await saleUpdateDraftArDocument({ req, ...input, assertScopeAccess });
@@ -725,12 +718,12 @@ router.patch(
 router.post(
   "/:assetId/sale/finalize",
   requirePermission("fixed_assets.dispose", {
-    resolveScope: async (req) =>
-      resolveFixedAssetScope(req.params?.assetId, req.tenantId),
+    resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     await assertSecondaryPermission(req, "cari.doc.post", {
       resolveScope: resolvePendingSaleCariDocumentScope,
+      matchPrimaryScope: false,
     });
     const input = parseSaleFinalizeInput(req);
     const result = await saleFinalizeAsset({ req, ...input, assertScopeAccess });
