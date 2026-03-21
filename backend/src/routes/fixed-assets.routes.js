@@ -96,6 +96,7 @@ import {
   previewDepreciationRun,
   createDepreciationRunDraft,
 } from "../services/fixed-assets.depreciation.service.js";
+import fixedAssetsEvidenceRoutes from "./fixed-assets.evidence.routes.js";
 
 const router = express.Router();
 
@@ -409,12 +410,10 @@ router.post(
 );
 
 // ── Evidence: transaction-level ───────────────────────────────────
-// STEP-FA42 mounts the real nested evidence router here.
-// Placeholder ensures route ordering is locked now.
+router.use("/transactions/:transactionId/evidence", fixedAssetsEvidenceRoutes);
 
 // ── Evidence: run-level ───────────────────────────────────────────
-// STEP-FA42 mounts the real nested evidence router here.
-// Placeholder ensures route ordering is locked now.
+router.use("/runs/:runId/evidence", fixedAssetsEvidenceRoutes);
 
 // ═══════════════════════════════════════════════════════════════════
 // 3. ASSET REGISTER LIST (before /:assetId so GET / is not captured)
@@ -637,7 +636,6 @@ router.post(
 );
 
 // ── Evidence: asset-level ─────────────────────────────────────────
-// STEP-FA42 mounts the real nested evidence router here.
-// Placeholder ensures route ordering is locked now.
+router.use("/:assetId/evidence", fixedAssetsEvidenceRoutes);
 
 export default router;

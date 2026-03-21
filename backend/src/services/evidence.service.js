@@ -12,6 +12,9 @@ import {
 
 const SOURCE_REF_TYPE_CARI_DOCUMENT = "CARI_DOCUMENT";
 const SOURCE_REF_TYPE_INVENTORY_TRANSFER = "INVENTORY_TRANSFER";
+const SOURCE_REF_TYPE_FIXED_ASSET = "FIXED_ASSET";
+const SOURCE_REF_TYPE_FIXED_ASSET_TRANSACTION = "FIXED_ASSET_TRANSACTION";
+const SOURCE_REF_TYPE_FIXED_ASSET_DEPRECIATION_RUN = "FIXED_ASSET_DEPRECIATION_RUN";
 const STATUS_PENDING_UPLOAD = "PENDING_UPLOAD";
 const STATUS_ACTIVE = "ACTIVE";
 const STATUS_DELETED = "DELETED";
@@ -1107,6 +1110,587 @@ export async function deleteInventoryTransferEvidenceByIdForTenant({
       tenantId: scope.tenantId,
       legalEntityId: scope.legalEntityId,
       transferId: scope.transferId,
+      evidenceId,
+      runQuery: tx.query,
+    });
+  });
+
+  if (storagePathToDelete) {
+    await deleteEvidenceBinary({ storagePath: storagePathToDelete }).catch(() => {});
+  }
+
+  return mapEvidenceRow(nextRow);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Fixed-assets evidence (FIXED_ASSET, FIXED_ASSET_TRANSACTION,
+// FIXED_ASSET_DEPRECIATION_RUN)
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Scope assertion helpers ──────────────────────────────────────
+
+async function findFixedAssetRow({ tenantId, assetId, runQuery = query }) {
+  const result = await runQuery(
+    `SELECT id, legal_entity_id
+       FROM fixed_assets
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function assertFixedAssetEvidenceScope({
+  req,
+  tenantId,
+  sourceRefId,
+  assertScopeAccess,
+  runQuery = query,
+}) {
+  const tenant = parsePositiveInt(tenantId);
+  const assetId = parsePositiveInt(sourceRefId);
+  if (!tenant) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const row = await findFixedAssetRow({ tenantId: tenant, assetId, runQuery });
+  if (!row) throw badRequest("Fixed asset not found");
+
+  const legalEntityId = parsePositiveInt(row.legal_entity_id);
+  if (!legalEntityId) throw badRequest("Fixed asset scope is invalid");
+
+  if (typeof assertScopeAccess === "function") {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "assetId");
+  }
+
+  return { tenantId: tenant, sourceRefId: assetId, legalEntityId };
+}
+
+async function findFixedAssetTransactionRow({ tenantId, transactionId, runQuery = query }) {
+  const result = await runQuery(
+    `SELECT fat.id, fa.legal_entity_id
+       FROM fixed_asset_transactions fat
+       JOIN fixed_assets fa ON fa.id = fat.asset_id
+      WHERE fat.tenant_id = ?
+        AND fat.id = ?
+      LIMIT 1`,
+    [tenantId, transactionId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function assertFixedAssetTransactionEvidenceScope({
+  req,
+  tenantId,
+  sourceRefId,
+  assertScopeAccess,
+  runQuery = query,
+}) {
+  const tenant = parsePositiveInt(tenantId);
+  const transactionId = parsePositiveInt(sourceRefId);
+  if (!tenant) throw badRequest("tenantId is required");
+  if (!transactionId) throw badRequest("transactionId is required");
+
+  const row = await findFixedAssetTransactionRow({
+    tenantId: tenant,
+    transactionId,
+    runQuery,
+  });
+  if (!row) throw badRequest("Fixed asset transaction not found");
+
+  const legalEntityId = parsePositiveInt(row.legal_entity_id);
+  if (!legalEntityId) throw badRequest("Fixed asset transaction scope is invalid");
+
+  if (typeof assertScopeAccess === "function") {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "transactionId");
+  }
+
+  return { tenantId: tenant, sourceRefId: transactionId, legalEntityId };
+}
+
+async function findFixedAssetRunRow({ tenantId, runId, runQuery = query }) {
+  const result = await runQuery(
+    `SELECT id, legal_entity_id
+       FROM fixed_asset_depreciation_runs
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [tenantId, runId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function assertFixedAssetRunEvidenceScope({
+  req,
+  tenantId,
+  sourceRefId,
+  assertScopeAccess,
+  runQuery = query,
+}) {
+  const tenant = parsePositiveInt(tenantId);
+  const runId = parsePositiveInt(sourceRefId);
+  if (!tenant) throw badRequest("tenantId is required");
+  if (!runId) throw badRequest("runId is required");
+
+  const row = await findFixedAssetRunRow({ tenantId: tenant, runId, runQuery });
+  if (!row) throw badRequest("Fixed asset depreciation run not found");
+
+  const legalEntityId = parsePositiveInt(row.legal_entity_id);
+  if (!legalEntityId) throw badRequest("Fixed asset depreciation run scope is invalid");
+
+  if (typeof assertScopeAccess === "function") {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "runId");
+  }
+
+  return { tenantId: tenant, sourceRefId: runId, legalEntityId };
+}
+
+// ── Generic fixed-assets evidence row helpers ────────────────────
+
+const FA_SCOPE_RESOLVERS = {
+  [SOURCE_REF_TYPE_FIXED_ASSET]: assertFixedAssetEvidenceScope,
+  [SOURCE_REF_TYPE_FIXED_ASSET_TRANSACTION]: assertFixedAssetTransactionEvidenceScope,
+  [SOURCE_REF_TYPE_FIXED_ASSET_DEPRECIATION_RUN]: assertFixedAssetRunEvidenceScope,
+};
+
+async function findFixedAssetEvidenceRow({
+  tenantId,
+  legalEntityId,
+  sourceRefType,
+  sourceRefId,
+  evidenceId,
+  runQuery: runQ = query,
+  forUpdate = false,
+}) {
+  const suffix = forUpdate ? " FOR UPDATE" : "";
+  const result = await runQ(
+    `SELECT *
+       FROM evidence_objects
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+        AND source_ref_type = ?
+        AND source_ref_id = ?
+        AND id = ?
+      LIMIT 1${suffix}`,
+    [tenantId, legalEntityId, sourceRefType, sourceRefId, evidenceId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function loadFixedAssetEvidenceRow({
+  req,
+  tenantId,
+  sourceRefType,
+  sourceRefId,
+  evidenceId,
+  assertScopeAccess,
+  runQuery: runQ = query,
+  forUpdate = false,
+}) {
+  const resolveFn = FA_SCOPE_RESOLVERS[sourceRefType];
+  if (!resolveFn) throw badRequest(`Unsupported fixed-assets evidence source type: ${sourceRefType}`);
+
+  const scope = await resolveFn({
+    req,
+    tenantId,
+    sourceRefId,
+    assertScopeAccess,
+    runQuery: runQ,
+  });
+  const row = await findFixedAssetEvidenceRow({
+    tenantId: scope.tenantId,
+    legalEntityId: scope.legalEntityId,
+    sourceRefType,
+    sourceRefId: scope.sourceRefId,
+    evidenceId: parsePositiveInt(evidenceId),
+    runQuery: runQ,
+    forUpdate,
+  });
+  return { scope, row };
+}
+
+// ── Exported CRUD + file operations ──────────────────────────────
+
+export async function createFixedAssetEvidenceDraft({
+  req,
+  input,
+  assertScopeAccess,
+}) {
+  const tenantId = parsePositiveInt(input?.tenantId);
+  const sourceRefType = input?.sourceRefType;
+  const sourceRefId = parsePositiveInt(input?.sourceRefId);
+  const userId = parsePositiveInt(input?.userId ?? req?.user?.userId) || null;
+  const fileName = normalizeFileName(input?.fileName);
+  const fileExtension = normalizeFileExtension(fileName);
+  const contentType = normalizeContentType(input?.contentType);
+  const displayName = normalizeText(input?.displayName, "displayName", 190);
+  const note = normalizeText(input?.note, "note", 500);
+
+  const resolveFn = FA_SCOPE_RESOLVERS[sourceRefType];
+  if (!resolveFn) throw badRequest(`Unsupported fixed-assets evidence source type: ${sourceRefType}`);
+
+  const scope = await resolveFn({
+    req,
+    tenantId,
+    sourceRefId,
+    assertScopeAccess,
+  });
+
+  const insertResult = await query(
+    `INSERT INTO evidence_objects (
+       tenant_id,
+       legal_entity_id,
+       source_ref_type,
+       source_ref_id,
+       status,
+       display_name,
+       note,
+       file_name,
+       file_extension,
+       content_type,
+       created_by_user_id
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      scope.tenantId,
+      scope.legalEntityId,
+      sourceRefType,
+      scope.sourceRefId,
+      STATUS_PENDING_UPLOAD,
+      displayName,
+      note,
+      fileName,
+      fileExtension,
+      contentType,
+      userId,
+    ]
+  );
+
+  const evidenceId = parsePositiveInt(insertResult.rows?.insertId);
+  if (!evidenceId) {
+    throw new Error("Evidence record could not be created");
+  }
+
+  const created = await findFixedAssetEvidenceRow({
+    tenantId: scope.tenantId,
+    legalEntityId: scope.legalEntityId,
+    sourceRefType,
+    sourceRefId: scope.sourceRefId,
+    evidenceId,
+  });
+  if (!created) {
+    throw new Error("Evidence record readback failed");
+  }
+  return mapEvidenceRow(created);
+}
+
+export async function listFixedAssetEvidenceForTenant({
+  req,
+  tenantId,
+  sourceRefType,
+  sourceRefId,
+  assertScopeAccess,
+}) {
+  const resolveFn = FA_SCOPE_RESOLVERS[sourceRefType];
+  if (!resolveFn) throw badRequest(`Unsupported fixed-assets evidence source type: ${sourceRefType}`);
+
+  const scope = await resolveFn({
+    req,
+    tenantId,
+    sourceRefId,
+    assertScopeAccess,
+  });
+  const result = await query(
+    `SELECT *
+       FROM evidence_objects
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+        AND source_ref_type = ?
+        AND source_ref_id = ?
+        AND status <> ?
+      ORDER BY created_at DESC, id DESC`,
+    [
+      scope.tenantId,
+      scope.legalEntityId,
+      sourceRefType,
+      scope.sourceRefId,
+      STATUS_DELETED,
+    ]
+  );
+  return (result.rows || []).map(mapEvidenceRow);
+}
+
+export async function getFixedAssetEvidenceByIdForTenant({
+  req,
+  tenantId,
+  sourceRefType,
+  sourceRefId,
+  evidenceId,
+  assertScopeAccess,
+}) {
+  const { row } = await loadFixedAssetEvidenceRow({
+    req,
+    tenantId,
+    sourceRefType,
+    sourceRefId,
+    evidenceId,
+    assertScopeAccess,
+  });
+  if (!row || normalizeStatus(row.status) === STATUS_DELETED) {
+    throw badRequest("Evidence object not found");
+  }
+  return mapEvidenceRow(row);
+}
+
+export async function uploadFixedAssetEvidenceContent({
+  req,
+  input,
+  binaryData,
+  assertScopeAccess,
+}) {
+  if (!(binaryData instanceof Buffer)) {
+    throw badRequest("Evidence upload payload must be binary");
+  }
+  if (binaryData.length <= 0) {
+    throw badRequest("Evidence upload payload is empty");
+  }
+
+  const tenantId = parsePositiveInt(input?.tenantId);
+  const sourceRefType = input?.sourceRefType;
+  const sourceRefId = parsePositiveInt(input?.sourceRefId);
+  const evidenceId = parsePositiveInt(input?.evidenceId);
+  const overrideContentType = normalizeText(input?.contentType, "contentType", 120);
+  const fileSha256 = crypto.createHash("sha256").update(binaryData).digest("hex");
+  const fileSizeBytes = binaryData.length;
+  const storedPayload = await buildStoredEvidencePayload(binaryData);
+  const storedSizeBytes = storedPayload.storedData.length;
+  const compressionCodec = storedPayload.compressionCodec;
+
+  const resolveFn = FA_SCOPE_RESOLVERS[sourceRefType];
+  if (!resolveFn) throw badRequest(`Unsupported fixed-assets evidence source type: ${sourceRefType}`);
+
+  const scope = await resolveFn({
+    req,
+    tenantId,
+    sourceRefId,
+    assertScopeAccess,
+  });
+  const existing = await findFixedAssetEvidenceRow({
+    tenantId: scope.tenantId,
+    legalEntityId: scope.legalEntityId,
+    sourceRefType,
+    sourceRefId: scope.sourceRefId,
+    evidenceId,
+  });
+  if (!existing || normalizeStatus(existing.status) === STATUS_DELETED) {
+    throw badRequest("Evidence object not found");
+  }
+
+  const fileExtension =
+    normalizeText(existing.file_extension, "fileExtension", 16) ||
+    normalizeFileExtension(existing.file_name);
+  const storagePath = buildEvidenceStoragePath({
+    tenantId: scope.tenantId,
+    legalEntityId: scope.legalEntityId,
+    sourceRefType,
+    sourceRefId: scope.sourceRefId,
+    evidenceId,
+    fileExtension,
+  });
+  const finalStoragePath =
+    compressionCodec === COMPRESSION_CODEC_GZIP ? `${storagePath}.gz` : storagePath;
+
+  await writeEvidenceBinary({
+    storagePath: finalStoragePath,
+    data: storedPayload.storedData,
+  });
+
+  let previousStoragePath = null;
+  let updatedRow = null;
+
+  try {
+    updatedRow = await withTransaction(async (tx) => {
+      const locked = await findFixedAssetEvidenceRow({
+        tenantId: scope.tenantId,
+        legalEntityId: scope.legalEntityId,
+        sourceRefType,
+        sourceRefId: scope.sourceRefId,
+        evidenceId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (!locked || normalizeStatus(locked.status) === STATUS_DELETED) {
+        throw badRequest("Evidence object not found");
+      }
+      previousStoragePath = locked.storage_path || null;
+
+      const nextContentType = normalizeContentType(
+        overrideContentType || locked.content_type || DEFAULT_CONTENT_TYPE
+      );
+
+      await tx.query(
+        `UPDATE evidence_objects
+            SET status = ?,
+                content_type = ?,
+                compression_codec = ?,
+                file_size_bytes = ?,
+                stored_size_bytes = ?,
+                file_sha256 = ?,
+                storage_driver = 'LOCAL_FS',
+                storage_path = ?,
+                uploaded_at = CURRENT_TIMESTAMP
+          WHERE tenant_id = ?
+            AND legal_entity_id = ?
+            AND id = ?`,
+        [
+          STATUS_ACTIVE,
+          nextContentType,
+          compressionCodec,
+          fileSizeBytes,
+          storedSizeBytes,
+          fileSha256,
+          finalStoragePath,
+          scope.tenantId,
+          scope.legalEntityId,
+          evidenceId,
+        ]
+      );
+
+      const fresh = await findFixedAssetEvidenceRow({
+        tenantId: scope.tenantId,
+        legalEntityId: scope.legalEntityId,
+        sourceRefType,
+        sourceRefId: scope.sourceRefId,
+        evidenceId,
+        runQuery: tx.query,
+      });
+      if (!fresh) {
+        throw new Error("Evidence update readback failed");
+      }
+      return fresh;
+    });
+  } catch (err) {
+    await deleteEvidenceBinary({ storagePath: finalStoragePath }).catch(() => {});
+    throw err;
+  }
+
+  if (previousStoragePath && previousStoragePath !== storagePath) {
+    await deleteEvidenceBinary({ storagePath: previousStoragePath }).catch(() => {});
+  }
+
+  return mapEvidenceRow(updatedRow);
+}
+
+export async function getFixedAssetEvidenceContentForTenant({
+  req,
+  tenantId,
+  sourceRefType,
+  sourceRefId,
+  evidenceId,
+  assertScopeAccess,
+}) {
+  const { row } = await loadFixedAssetEvidenceRow({
+    req,
+    tenantId,
+    sourceRefType,
+    sourceRefId,
+    evidenceId,
+    assertScopeAccess,
+  });
+  if (!row || normalizeStatus(row.status) === STATUS_DELETED) {
+    throw badRequest("Evidence object not found");
+  }
+  if (normalizeStatus(row.status) !== STATUS_ACTIVE || !row.storage_path) {
+    throw badRequest("Evidence content is not uploaded yet");
+  }
+
+  let data;
+  try {
+    const readResult = await readEvidenceBinary({ storagePath: row.storage_path });
+    data = readResult.data;
+  } catch (err) {
+    if (err?.code === "ENOENT") {
+      throw badRequest("Evidence content file is missing");
+    }
+    throw err;
+  }
+
+  const compressionCodec = normalizeCompressionCodec(row.compression_codec);
+  if (compressionCodec === COMPRESSION_CODEC_GZIP) {
+    try {
+      data = await gunzip(data);
+    } catch {
+      throw badRequest("Evidence content could not be decompressed");
+    }
+  }
+
+  const expectedSha = String(row.file_sha256 || "").trim().toLowerCase();
+  if (expectedSha) {
+    const actualSha = crypto.createHash("sha256").update(data).digest("hex");
+    if (actualSha !== expectedSha) {
+      throw badRequest("Evidence content integrity check failed");
+    }
+  }
+
+  return {
+    row: mapEvidenceRow(row),
+    data,
+  };
+}
+
+export async function deleteFixedAssetEvidenceByIdForTenant({
+  req,
+  input,
+  assertScopeAccess,
+}) {
+  const tenantId = parsePositiveInt(input?.tenantId);
+  const sourceRefType = input?.sourceRefType;
+  const sourceRefId = parsePositiveInt(input?.sourceRefId);
+  const evidenceId = parsePositiveInt(input?.evidenceId);
+  const userId = parsePositiveInt(input?.userId ?? req?.user?.userId) || null;
+
+  const resolveFn = FA_SCOPE_RESOLVERS[sourceRefType];
+  if (!resolveFn) throw badRequest(`Unsupported fixed-assets evidence source type: ${sourceRefType}`);
+
+  const scope = await resolveFn({
+    req,
+    tenantId,
+    sourceRefId,
+    assertScopeAccess,
+  });
+
+  let storagePathToDelete = null;
+  const nextRow = await withTransaction(async (tx) => {
+    const current = await findFixedAssetEvidenceRow({
+      tenantId: scope.tenantId,
+      legalEntityId: scope.legalEntityId,
+      sourceRefType,
+      sourceRefId: scope.sourceRefId,
+      evidenceId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!current) {
+      throw badRequest("Evidence object not found");
+    }
+    storagePathToDelete = current.storage_path || null;
+    if (normalizeStatus(current.status) !== STATUS_DELETED) {
+      await tx.query(
+        `UPDATE evidence_objects
+            SET status = ?,
+                deleted_at = CURRENT_TIMESTAMP,
+                deleted_by_user_id = ?
+          WHERE tenant_id = ?
+            AND legal_entity_id = ?
+            AND id = ?`,
+        [STATUS_DELETED, userId, scope.tenantId, scope.legalEntityId, evidenceId]
+      );
+    }
+    return findFixedAssetEvidenceRow({
+      tenantId: scope.tenantId,
+      legalEntityId: scope.legalEntityId,
+      sourceRefType,
+      sourceRefId: scope.sourceRefId,
       evidenceId,
       runQuery: tx.query,
     });
