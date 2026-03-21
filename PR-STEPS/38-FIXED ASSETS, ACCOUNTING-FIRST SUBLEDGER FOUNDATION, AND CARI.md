@@ -1272,9 +1272,10 @@ Implementation notes:
 - [x] `STEP-FA43` - Fixed-assets journal source-link writing and backend destination resolution support
 - [x] `STEP-FA44` - Fixed-assets deep-link pages, Journal Workbench drillback, and query-contract completion
 - [x] `STEP-FA45` - Fixed-assets permission seeding and backend authorization hardening
-- [ ] `STEP-FA46` - Frontend sidebar, route, and action gating
-- [ ] `STEP-FA47` - Fixed-assets reports and paired export endpoints
-- [ ] `STEP-FA48` - Release gates, smoke suite, and rollout readiness checks
+- [ ] `STEP-FA46` - Suspend and reactivate asset lifecycle endpoints
+- [ ] `STEP-FA47` - Frontend sidebar, route, action gating, and scaffold cleanup
+- [ ] `STEP-FA48` - Fixed-assets reports and paired export endpoints
+- [ ] `STEP-FA49` - Release gates, smoke suite, and rollout readiness checks
 
 ---
 
@@ -2944,44 +2945,136 @@ Finish the backend permission model and route-level enforcement before UI gating
 
 ---
 
-## `STEP-FA46` - Frontend sidebar, route, and action gating
+## `STEP-FA46` - Suspend and reactivate asset lifecycle endpoints
 
 ### Patch target
-Wire the permission model into the frontend without changing backend security assumptions.
+Implement the two missing lifecycle mutation endpoints so that assets can be temporarily taken out of service and brought back, completing the lifecycle state machine that the schedule engine (FA30) already supports.
+
+### Locked decisions (2026-03-21)
+- Suspend creates exactly one SUSPEND transaction row with POSTED status
+- Reactivate creates exactly one REACTIVATE transaction row with POSTED status
+- Neither suspend nor reactivate generates a journal entry (no accounting movement — same as physical move)
+- Status-gated eligibility:
+  - Suspend: only ACTIVE assets (not DRAFT, SUSPENDED, FULLY_DEPRECIATED, DISPOSED)
+  - Reactivate: only SUSPENDED assets
+- The schedule engine (FA30) already reads SUSPEND/REACTIVATE transaction history for lifecycle proration — these endpoints supply the transaction rows it depends on
+- No new migration required; `fixed_asset_transactions.transaction_type` enum already includes SUSPEND and REACTIVATE
+
+### Allowed files
+- `backend/src/routes/fixed-assets.routes.js`
+- `backend/src/routes/fixed-assets.validators.js`
+- `backend/src/services/fixed-assets.service.js`
+- `frontend/src/api/fixedAssets.js`
+
+### Dependencies
+- STEP-FA13 (route skeleton)
+- STEP-FA30 (lifecycle proration)
+- STEP-FA45 (permission guards)
 
 ### In scope
-- sidebar visibility
+- replace the 501 stub for `POST /:assetId/suspend` with a real handler
+- replace the 501 stub for `POST /:assetId/reactivate` with a real handler
+- each handler: validate asset status, create one transaction row, update asset master status
+- add `suspendFixedAsset` and `reactivateFixedAsset` to the frontend API helper
+- add validators for suspend/reactivate input if needed
+
+### Explicit non-goals
+- do not create journals for suspend/reactivate (no accounting movement)
+- do not change the schedule engine — it already handles SUSPEND/REACTIVATE history
+- do not implement frontend UI for suspend/reactivate here; that belongs to FA47 action gating
+
+### Definition of done
+- POST /:assetId/suspend transitions an ACTIVE asset to SUSPENDED with one SUSPEND transaction
+- POST /:assetId/reactivate transitions a SUSPENDED asset to ACTIVE with one REACTIVATE transaction
+- non-eligible status is rejected with 400
+- the schedule engine can now find real SUSPEND/REACTIVATE transaction rows to drive proration
+- frontend API helpers exist for both endpoints
+
+### Smoke tests
+- suspend an ACTIVE asset → verify status becomes SUSPENDED, one SUSPEND transaction created
+- reactivate a SUSPENDED asset → verify status becomes ACTIVE, one REACTIVATE transaction created
+- attempt to suspend a SUSPENDED asset → 400
+- attempt to suspend a DRAFT asset → 400
+- attempt to reactivate an ACTIVE asset → 400
+- verify depreciation schedule for a suspend-then-reactivate asset correctly zeroes out the suspended period
+
+### Acceptance
+- the lifecycle state machine is now complete: DRAFT → ACTIVE ↔ SUSPENDED → DISPOSED / FULLY_DEPRECIATED
+- suspend/reactivate is backend-tested with real transaction rows
+- the schedule engine’s lifecycle proration works end to end with the new endpoints
+
+---
+
+## `STEP-FA47` - Frontend sidebar, route, action gating, and scaffold cleanup
+
+### Patch target
+Wire the permission model into the frontend, replace remaining scaffold pages with real content, and clean up placeholder-era navigation assumptions.
+
+### Locked decisions (2026-03-21)
+- `FixedAssetAcquisitionsPage` (`/app/demirbas-alim-islemleri`): Replace with a filtered register view showing recent ACQUISITION and CAPITALIZATION transactions. No new backend work — frontend filter preset on the existing list endpoint.
+- `FixedAssetFormPage` (`/app/demirbas-karti-olustur`): Remove as a dedicated page. The “create asset” action lives as a button on the asset register page that navigates to the detail page in create mode. The standalone form page route becomes unnecessary.
+- `FixedAssetDepreciationRunsPage`: Remove the `FixedAssetModulePage` scaffold banner from list mode. Keep the real API-backed run list and run detail content.
+- `FixedAssetDisposalsPage`: Remove the `FixedAssetModulePage` scaffold banner from non-deep-link mode if present. Keep real deep-link content.
+
+### Allowed files
+- `frontend/src/layouts/sidebarConfig.js`
+- `frontend/src/layouts/AppLayout.jsx`
+- `frontend/src/App.jsx`
+- `frontend/src/i18n/messages.js`
+- `frontend/src/pages/fixedAssets/*.jsx`
+- `frontend/src/api/fixedAssets.js`
+
+### Dependencies
+- STEP-FA16 (settings pages)
+- STEP-FA19 (list/detail pages)
+- STEP-FA45 (permission seeding)
+- STEP-FA46 (suspend/reactivate endpoints)
+
+### In scope
+- sidebar visibility gated by user permission set
 - shared app-chrome demirbas navigation/icon heuristic cleanup where needed for canonical routes and aliases
-- page-level action visibility
+- page-level action visibility (activate, suspend, reactivate, dispose, transfer, depreciation actions)
 - route-level UX gating for canonical fixed-assets routes
 - action gating for settings, custodians, disposal, transfer, depreciation actions, and account overrides
 - cleanup of remaining placeholder-era demirbas navigation assumptions
+- replace `FixedAssetAcquisitionsPage` with filtered register view
+- remove `FixedAssetFormPage` as standalone route; add create button to register page
+- remove `FixedAssetModulePage` scaffold banners from DepreciationRunsPage and DisposalsPage list modes
+- add missing frontend API helpers: deleteFixedAssetRun, getFixedAssetDepreciationSchedule, suspendFixedAsset, reactivateFixedAsset, physicalMoveAsset, ownershipTransferAsset, writeoffAsset, saleCreateDraftAr, saleLinkAr, saleUpdateDraftAr, saleFinalizeAsset, reverseFixedAssetTransaction, evidence helpers
 
 ### Explicit non-goals
 - do not rely on frontend gating as the security boundary
-- do not build reports here
+- do not build reports here (FA48)
 - do not change backend permission semantics
 
 ### Definition of done
 - fixed-assets sidebar entries reflect the user’s permission set
 - fixed-assets actions only appear when the relevant permissions exist
 - account-override actions are separately gated from broad upsert/post actions
-- canonical routes are now backed by real pages, not generic placeholders
+- canonical routes are backed by real pages, not generic placeholders
+- acquisitions page shows filtered register view
+- create-asset flow starts from register page, not standalone form page
+- scaffold banners removed from production-facing pages
+- frontend API helper is complete for all implemented backend endpoints
 
 ### Smoke tests
 - log in as users with different permission bundles and verify sidebar/page/action visibility changes correctly
 - verify a read-only user can view but not see mutation actions
 - verify a user with broad fixed-assets access but no account-override permission cannot see override actions
 - verify a user with missing disposal/transfer permissions cannot see those actions even if they can open detail pages
+- verify acquisitions page shows filtered list of ACQUISITION and CAPITALIZATION transactions
+- verify create-asset button on register page navigates to create flow
+- verify no FixedAssetModulePage scaffold banners appear in normal end-user navigation
 
 ### Acceptance
 - frontend gating now mirrors backend authorization
 - sensitive actions are visibly explicit
 - placeholder-driven demirbas navigation is gone
+- all scaffold pages are replaced with real content or removed
 
 ---
 
-## `STEP-FA47` - Fixed-assets reports and paired export endpoints
+## `STEP-FA48` - Fixed-assets reports and paired export endpoints
 
 ### Patch target
 Implement the locked report set and its paired export contract.
@@ -3020,7 +3113,7 @@ Implement the locked report set and its paired export contract.
 
 ---
 
-## `STEP-FA48` - Release gates, smoke suite, and rollout readiness checks
+## `STEP-FA49` - Release gates, smoke suite, and rollout readiness checks
 
 ### Patch target
 Close the track with explicit release-readiness checks so the module is not considered done only because routes compile.
@@ -3029,6 +3122,7 @@ Close the track with explicit release-readiness checks so the module is not cons
 - cross-cutting smoke suite for the fixed-assets track
 - release-readiness checks covering OpenAPI generation, source-link ownership contract, reverse-block contract, permissions, reports/export, and key workflows
 - rollout/readiness documentation for one-`PRIMARY` source-link enforcement dependency, fixed-assets route availability, fixed-assets page readiness, and required OU self-balancing setup for cross-OU flows
+- rollout documentation for legacy SUSPENDED asset data backfill requirement (assets with SUSPENDED status must have persisted SUSPEND transaction rows before depreciation runs can process them)
 
 ### Explicit non-goals
 - do not add new business scope here
@@ -3047,6 +3141,7 @@ Close the track with explicit release-readiness checks so the module is not cons
 - the smoke suite verifies same-OU AP-line capitalization, cross-OU AP-line capitalization with configured self-balancing, missing-setup blocking, and stale source-linked activation blocking
 - the smoke suite verifies preview run, create draft run, post run, reverse run, delete stale draft run, and low-value exclusion from run eligibility
 - the smoke suite verifies physical move, ownership transfer, write-off, staged sale create/link/update without final disposal, sale finalize, and source-owned non-run reversal
+- the smoke suite verifies suspend and reactivate lifecycle transitions, and that the schedule engine correctly prorates suspended periods using the persisted transaction history
 - the smoke suite verifies asset/transaction/run evidence CRUD plus one report read and one paired export per report family
 - the smoke suite verifies missing `cari.doc.*` permission blocks FA06/FA11 correctly, missing `fixed_assets.account_override` blocks account override correctly, and non-run reversal permission mapping follows transaction type
 
@@ -3054,7 +3149,7 @@ Close the track with explicit release-readiness checks so the module is not cons
 - the track has an explicit release bar
 - smoke coverage proves the critical contracts actually work together
 - rollout prerequisites are visible and testable
-- "done" now means operationally ready, not only implemented
+- “done” now means operationally ready, not only implemented
 
 ---
 
