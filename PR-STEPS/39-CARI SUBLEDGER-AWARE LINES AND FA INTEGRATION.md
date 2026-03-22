@@ -342,7 +342,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [ ] `STEP-SL20` — Frontend routing: AP-filtered and AR-filtered views for CARI documents, cards, settlements
 - [ ] `STEP-SL21` — Frontend pages: direction-aware wrappers for bills (AP), invoices (AR), vendor cards, customer cards
 - [ ] `STEP-SL22` — i18n: AP/AR-specific labels (Vendor Bills, Sales Invoices, AP Payments, AR Receipts)
-- [ ] `STEP-SL23` — Frontend: remove old "Cari Islemler" routes and redirect legacy URLs
+- [ ] `STEP-SL23` — Remove old "Cari Islemler" routes, redirect legacy URLs, and make drillbacks direction-aware
 
 **Phase 5: Testing & Release**
 - [ ] `STEP-SL24` — Smoke suite: subledger lines + immediate settlement + AP/AR navigation + mixed flows + reversals
@@ -1206,12 +1206,14 @@ Add i18n labels for the new AP/AR-specific navigation and page titles.
 
 ---
 
-## `STEP-SL23` — Frontend: remove old "Cari Islemler" routes and redirect legacy URLs
+## `STEP-SL23` — Remove old "Cari Islemler" routes, redirect legacy URLs, and make drillbacks direction-aware
 
 ### Patch target
-Clean up old routes and add redirects so bookmarks and links don't break.
+Clean up old routes, add redirects so bookmarks and links don't break, and make GL journal drillback / reverse-block links resolve to the correct AP or AR page instead of the old undirected routes.
 
 ### In scope
+
+**Route redirects:**
 - Add redirects from old routes to new routes:
   - `/app/cari-belgeler` → `/app/alis-faturalari` (or a smart redirect based on user's last direction)
   - `/app/alici-kart-listesi` → `/app/musteri-kartlari`
@@ -1224,15 +1226,43 @@ Clean up old routes and add redirects so bookmarks and links don't break.
 - Remove old sidebar entries (already done in SL19, this step cleans up route registrations)
 - Remove or mark as deprecated any unused page wrappers
 
+**Direction-aware drillback resolution:**
+
+The following files reference old `/app/cari-belgeler` and `/app/cari-settlements` routes for GL journal drillback (source link → clickable path) and reverse-block messaging. Without this fix, an AR document drillback would redirect to the AP-filtered page after the route redirects above are applied.
+
+- **`backend/src/services/gl.reverse-block-destination.service.js`**:
+  - Move `CARI_DOCUMENT` and `CARI_SETTLEMENT_BATCH` from static `DESTINATION_REGISTRY` to dynamic resolution (same pattern FA types already use)
+  - Add `CARI_DOCUMENT` and `CARI_SETTLEMENT_BATCH` to `DYNAMIC_DESTINATION_TYPES`
+  - Add async resolver for `CARI_DOCUMENT`: look up the document's `direction` from DB → return `/app/alis-faturalari?documentId=X` (AP) or `/app/satis-faturalari?documentId=X` (AR)
+  - Add async resolver for `CARI_SETTLEMENT_BATCH`: look up the settlement batch's direction from DB → return `/app/tedarikci-odemeler?settlementBatchId=X&...` (AP) or `/app/musteri-tahsilatlar?settlementBatchId=X&...` (AR)
+
+- **`frontend/src/utils/journalSourceLinkDestinations.js`**:
+  - Add `CARI_DOCUMENT` and `CARI_SETTLEMENT_BATCH` to `BACKEND_OWNED_DESTINATION_TYPES` so when backend-enriched destination is present, the frontend uses the direction-aware URL as-is (no type-specific URL construction)
+  - `LOCAL_DESTINATION_REGISTRY` fallback stays as-is — old routes still redirect via the route redirects above
+
+- **`frontend/src/pages/Dashboard.jsx`** (line 63):
+  - Currently hardcodes `` `/app/cari-belgeler?documentId=${sourceRefId}` ``
+  - Must use `resolveSourceLinkDestination()` helper (which prefers backend-enriched destination) instead of hardcoded route
+
+- **`frontend/src/pages/JournalWorkbenchPage.jsx`** (line 4148):
+  - Currently hardcodes `` `/app/cari-belgeler?documentId=${documentId}` ``
+  - Must use the enriched `destination.route` from the backend response, or call `resolveSourceLinkDestination()` helper
+
 ### Explicit non-goals
 - Do not remove the underlying CariDocumentsPage component — it's still used by the new routes
-- Do not change any API endpoint
+- Do not change any HTTP API endpoint — the drillback changes are internal destination resolution only
 
 ### Definition of done
 - All old CARI URLs redirect to their new equivalents
 - No 404s for bookmarked old URLs
 - Old sidebar entries are gone
 - No unused route registrations remain
+- GL journal drillback to an AP CARI document lands on `/app/alis-faturalari`
+- GL journal drillback to an AR CARI document lands on `/app/satis-faturalari`
+- GL journal drillback to an AP settlement batch lands on `/app/tedarikci-odemeler`
+- GL journal drillback to an AR settlement batch lands on `/app/musteri-tahsilatlar`
+- Reverse-block messages show the correct direction-aware route
+- Dashboard source links resolve direction-correctly
 
 ---
 
@@ -1409,6 +1439,9 @@ Final validation that all new flows work alongside existing flows without regres
 - Account auto-resolves from target asset's category
 - Posting is rejected if target is DRAFT, DISPOSED, or SUSPENDED
 - IMPROVE_EXISTING on AR is rejected
+
+**Note: IMPROVEMENT transactions and the FA Additions report**
+The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `transaction_type IN ('ACQUISITION', 'CAPITALIZATION')` and does not include `IMPROVEMENT`. This is intentional for Track 39 — improvements are cost augmentations on existing assets, not new asset additions. If a dedicated "Improvements report" or inclusion in the Additions report is needed later, scope it as a future Track 38 reporting enhancement (not Track 39).
 
 ---
 
@@ -1717,11 +1750,11 @@ Final validation that all new flows work alongside existing flows without regres
 - `Rollback risk`: Low — i18n only
 
 ### `STEP-SL23`
-- `AI size`: Small
-- `Allowed files`: `frontend/src/App.jsx`, `frontend/src/layouts/sidebarConfig.js`
+- `AI size`: Medium
+- `Allowed files`: `frontend/src/App.jsx`, `frontend/src/layouts/sidebarConfig.js`, `backend/src/services/gl.reverse-block-destination.service.js`, `frontend/src/utils/journalSourceLinkDestinations.js`, `frontend/src/pages/Dashboard.jsx`, `frontend/src/pages/JournalWorkbenchPage.jsx`
 - `Dependencies`: SL20, SL21
 - `Blocked by`: none
-- `Rollback risk`: Medium — removing old routes, must ensure redirects work
+- `Rollback risk`: Medium — removing old routes + changing drillback resolution; must ensure redirects work and drillbacks land on correct AP/AR page
 
 ### `STEP-SL24`
 - `AI size`: Large

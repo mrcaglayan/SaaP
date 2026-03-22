@@ -131,6 +131,7 @@ import migration140FixedAssetCariCapitalizationAndTraceability from "./m140_fixe
 import migration141FixedAssetSaleStaging from "./m141_fixed_asset_sale_staging.js";
 import migration142FixedAssetRunHeaderPostingDate from "./m142_fixed_asset_run_header_posting_date.js";
 import migration143FixedAssetsDisposalMetadata from "./m143_fixed_assets_disposal_metadata.js";
+import migration144CariDocumentLinesSubledgerType from "./m144_cari_document_lines_subledger_type.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -266,6 +267,7 @@ const migrations = [
   migration141FixedAssetSaleStaging,
   migration142FixedAssetRunHeaderPostingDate,
   migration143FixedAssetsDisposalMetadata,
+  migration144CariDocumentLinesSubledgerType,
 ];
 
 export default migrations;
