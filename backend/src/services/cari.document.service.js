@@ -758,7 +758,7 @@ async function fetchFixedAssetRow({
     return null;
   }
   const result = await runQuery(
-    `SELECT id, tenant_id, legal_entity_id, status, asset_no, name
+    `SELECT id, tenant_id, legal_entity_id, category_id, status, asset_no, name
      FROM fixed_assets
      WHERE tenant_id = ?
        AND id = ?
@@ -778,7 +778,7 @@ async function fetchFixedAssetCategoryRow({
     return null;
   }
   const result = await runQuery(
-    `SELECT id, tenant_id, legal_entity_id, status
+    `SELECT id, tenant_id, legal_entity_id, code, name, status, default_asset_account_id
      FROM fixed_asset_categories
      WHERE tenant_id = ?
        AND id = ?
@@ -1806,6 +1806,189 @@ async function resolveCariLinePostingAccount({
   return {
     id: normalizedAccountId,
     code: String(account.code || ""),
+  };
+}
+
+function didClientProvidePostingAccountId(rawLine) {
+  if (!rawLine || typeof rawLine !== "object" || Array.isArray(rawLine)) {
+    return false;
+  }
+  return (
+    rawLine.postingAccountId !== undefined ||
+    rawLine.posting_account_id !== undefined
+  );
+}
+
+function assertNoExplicitApFixedAssetPostingAccounts({
+  direction,
+  rawLinesInput,
+  normalizedLines,
+  fieldCollectionLabel = "lines",
+}) {
+  if (normalizeUpperText(direction) !== "AP" || !Array.isArray(rawLinesInput)) {
+    return;
+  }
+
+  for (let index = 0; index < normalizedLines.length; index += 1) {
+    const normalizedLine = normalizedLines[index] || {};
+    if (normalizeUpperText(normalizedLine.subledgerType || "NONE") !== "FIXED_ASSET") {
+      continue;
+    }
+    if (didClientProvidePostingAccountId(rawLinesInput[index])) {
+      throw badRequest(
+        `${fieldCollectionLabel}[${index + 1}].postingAccountId is not allowed when subledgerType=FIXED_ASSET on AP documents`
+      );
+    }
+  }
+}
+
+async function applyFixedAssetAccountResolutionToLines({
+  tenantId,
+  legalEntityId,
+  direction,
+  lines,
+  fieldCollectionLabel = "lines",
+  runQuery = query,
+}) {
+  const normalizedDirection = normalizeUpperText(direction);
+  if (!["AP", "AR"].includes(normalizedDirection)) {
+    throw badRequest("direction must be AR or AP");
+  }
+
+  const assetCache = new Map();
+  const categoryCache = new Map();
+  let mutated = false;
+
+  async function getAssetRow(assetId) {
+    const normalizedAssetId = parsePositiveInt(assetId);
+    if (!normalizedAssetId) {
+      return null;
+    }
+    if (!assetCache.has(normalizedAssetId)) {
+      assetCache.set(
+        normalizedAssetId,
+        await fetchFixedAssetRow({
+          tenantId,
+          assetId: normalizedAssetId,
+          runQuery,
+        })
+      );
+    }
+    return assetCache.get(normalizedAssetId);
+  }
+
+  async function getCategoryRow(categoryId) {
+    const normalizedCategoryId = parsePositiveInt(categoryId);
+    if (!normalizedCategoryId) {
+      return null;
+    }
+    if (!categoryCache.has(normalizedCategoryId)) {
+      categoryCache.set(
+        normalizedCategoryId,
+        await fetchFixedAssetCategoryRow({
+          tenantId,
+          categoryId: normalizedCategoryId,
+          runQuery,
+        })
+      );
+    }
+    return categoryCache.get(normalizedCategoryId);
+  }
+
+  async function resolveDefaultAssetAccountFromCategory({
+    fieldPrefix,
+    categoryId,
+    categorySourceLabel,
+  }) {
+    const normalizedCategoryId = parsePositiveInt(categoryId);
+    const categoryRow = await getCategoryRow(normalizedCategoryId);
+    if (!categoryRow) {
+      throw badRequest(
+        `${fieldPrefix}${categorySourceLabel} must reference an existing fixed asset category`
+      );
+    }
+    if (parsePositiveInt(categoryRow.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+      throw badRequest(
+        `${fieldPrefix}${categorySourceLabel} must belong to legalEntityId`
+      );
+    }
+    const defaultAssetAccountId = parsePositiveInt(categoryRow.default_asset_account_id);
+    if (!defaultAssetAccountId) {
+      throw badRequest(
+        `${fieldPrefix}${categorySourceLabel} is missing default_asset_account_id`
+      );
+    }
+    return resolveCariLinePostingAccount({
+      tenantId,
+      legalEntityId,
+      accountId: defaultAssetAccountId,
+      fieldLabel: `${fieldPrefix}${categorySourceLabel}.defaultAssetAccountId`,
+      runQuery,
+    });
+  }
+
+  for (let index = 0; index < (lines || []).length; index += 1) {
+    const line = lines[index] || {};
+    if (normalizeUpperText(line.subledgerType || "NONE") !== "FIXED_ASSET") {
+      continue;
+    }
+
+    const fieldPrefix = `${fieldCollectionLabel}[${index + 1}].`;
+    if (normalizedDirection === "AR") {
+      if (!parsePositiveInt(line.postingAccountId)) {
+        throw badRequest(
+          `${fieldPrefix}postingAccountId is required when subledgerType=FIXED_ASSET on AR documents`
+        );
+      }
+      const resolvedPostingAccount = await resolveCariLinePostingAccount({
+        tenantId,
+        legalEntityId,
+        accountId: line.postingAccountId,
+        fieldLabel: `${fieldPrefix}postingAccountId`,
+        runQuery,
+      });
+      if (parsePositiveInt(line.postingAccountId) !== resolvedPostingAccount.id) {
+        line.postingAccountId = resolvedPostingAccount.id;
+        mutated = true;
+      }
+      continue;
+    }
+
+    let resolvedPostingAccount = null;
+    const normalizedFixedAssetMode = normalizeUpperText(line.fixedAssetMode);
+    if (normalizedFixedAssetMode === "AUTO_CREATE") {
+      resolvedPostingAccount = await resolveDefaultAssetAccountFromCategory({
+        fieldPrefix,
+        categoryId: line.fixedAssetCategoryId,
+        categorySourceLabel: "fixedAssetCategoryId",
+      });
+    } else {
+      const targetFixedAssetId = parsePositiveInt(line.targetFixedAssetId);
+      const assetRow = await getAssetRow(targetFixedAssetId);
+      if (!assetRow) {
+        throw badRequest(
+          `${fieldPrefix}targetFixedAssetId must reference an existing fixed asset`
+        );
+      }
+      if (parsePositiveInt(assetRow.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+        throw badRequest(`${fieldPrefix}targetFixedAssetId must belong to legalEntityId`);
+      }
+      resolvedPostingAccount = await resolveDefaultAssetAccountFromCategory({
+        fieldPrefix,
+        categoryId: assetRow.category_id,
+        categorySourceLabel: "targetFixedAssetId.categoryId",
+      });
+    }
+
+    if (parsePositiveInt(line.postingAccountId) !== resolvedPostingAccount.id) {
+      line.postingAccountId = resolvedPostingAccount.id;
+      mutated = true;
+    }
+  }
+
+  return {
+    lines,
+    mutated,
   };
 }
 
@@ -2924,7 +3107,7 @@ async function syncStoredDocumentLinesForPostingTx({
     ...line,
     taxes: Array.isArray(line?.taxes) ? line.taxes.map((tax) => ({ ...tax })) : [],
   }));
-  const { mutated } = await applyItemCardDefaultsToLines({
+  const { mutated: itemCardMutated } = await applyItemCardDefaultsToLines({
     tenantId,
     legalEntityId,
     direction,
@@ -2933,7 +3116,15 @@ async function syncStoredDocumentLinesForPostingTx({
     applyTaxCategoryDefaults: false,
     fieldCollectionLabel: "storedLines",
   });
-  if (!mutated) {
+  const { mutated: fixedAssetAccountMutated } = await applyFixedAssetAccountResolutionToLines({
+    tenantId,
+    legalEntityId,
+    direction,
+    lines: workingLines,
+    runQuery: tx.query,
+    fieldCollectionLabel: "storedLines",
+  });
+  if (!itemCardMutated && !fixedAssetAccountMutated) {
     return workingLines;
   }
 
@@ -3048,12 +3239,25 @@ async function resolveDraftDocumentWriteModel({
   currencyCode,
   fxRate,
   functionalCurrencyCode,
+  rawLinesInput = null,
   existingLineRows = [],
   runQuery = query,
 }) {
   if (Array.isArray(linesInput) && linesInput.length > 0) {
     const normalizedLines = normalizeExplicitDraftLines(linesInput);
+    assertNoExplicitApFixedAssetPostingAccounts({
+      direction,
+      rawLinesInput,
+      normalizedLines,
+    });
     await validateFixedAssetDraftLineBindings({
+      tenantId,
+      legalEntityId,
+      direction,
+      lines: normalizedLines,
+      runQuery,
+    });
+    await applyFixedAssetAccountResolutionToLines({
       tenantId,
       legalEntityId,
       direction,
@@ -3128,6 +3332,13 @@ async function resolveDraftDocumentWriteModel({
     existingLineRows,
   });
   await validateFixedAssetDraftLineBindings({
+    tenantId,
+    legalEntityId,
+    direction,
+    lines: syntheticWriteModel.lines,
+    runQuery,
+  });
+  await applyFixedAssetAccountResolutionToLines({
     tenantId,
     legalEntityId,
     direction,
@@ -3525,6 +3736,7 @@ export async function createCariDraftDocument({
       currencyCode: payload.currencyCode,
       fxRate: payload.fxRate,
       functionalCurrencyCode: legalEntity.functional_currency_code,
+      rawLinesInput: Array.isArray(req?.body?.lines) ? req.body.lines : null,
       runQuery: tx.query,
     });
     const { resolvedAmounts, headerTotals } = draftWriteModel;
@@ -3808,6 +4020,9 @@ export async function updateCariDraftDocumentById({
           currencyCode: nextCurrencyCode,
           fxRate: nextFxRate,
           functionalCurrencyCode: legalEntity.functional_currency_code,
+          rawLinesInput: hasExplicitLines && Array.isArray(req?.body?.lines)
+            ? req.body.lines
+            : null,
           existingLineRows,
           runQuery: tx.query,
         })

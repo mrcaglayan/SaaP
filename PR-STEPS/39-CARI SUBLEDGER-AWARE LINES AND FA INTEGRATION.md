@@ -317,7 +317,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL01` — Migration: add `subledger_type`, fixed-asset target, and fixed-asset generation fields to `cari_document_lines`
 - [x] `STEP-SL02` — Backend validators: parse `subledgerType` with conditional required fields
 - [x] `STEP-SL03` — Backend CARI service: create/update document lines with subledger_type awareness
-- [ ] `STEP-SL04` — Backend CARI service: auto-resolve posting account based on subledger_type + target entity
+- [x] `STEP-SL04` — Backend CARI service: auto-resolve posting account based on subledger_type + target entity
 - [ ] `STEP-SL05` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AP line → auto-create or capitalize assets from the bill line
 - [ ] `STEP-SL06` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AR line → trigger disposal flow on target eligible asset
 - [ ] `STEP-SL07` — 🔥 HOT — Backend CARI reversal: reverse CAPITALIZATION / disposal when CARI document is reversed
@@ -499,6 +499,7 @@ For FIXED_ASSET lines, keep AP account resolution category-driven, but keep AR s
 - For AP + FIXED_ASSET: reject explicit `postingAccountId` (account is category-driven, not user-selected)
 - For AR + FIXED_ASSET: validate `postingAccountId` as a postable legal-entity account, but do **not** reinterpret it as disposal gain/loss account
 - Store the resolved account on the line so it's visible before posting
+- Implementation note: the same AP FIXED_ASSET account resolver may also be reused for `IMPROVE_EXISTING` so all AP fixed-asset modes derive the asset account consistently. This does **not** pull improvement posting behavior into SL04; only account resolution is in scope here. Improvement posting/life-change logic remains in SL27.
 - **NULL account guard**:
   - AP path: if `default_asset_account_id` is NULL when resolving, throw a clear 400 error
   - AR path: keep sale proceeds account manual, but still require the asset/category disposal gain/loss accounts to be configured by the time SL06 posts the disposal entries
