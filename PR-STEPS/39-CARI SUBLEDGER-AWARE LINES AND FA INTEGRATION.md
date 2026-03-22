@@ -1612,7 +1612,7 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 
 ### `STEP-SL03`
 - `AI size`: Medium
-- `Allowed files`: `backend/src/services/cari.document.service.js`
+- `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/routes/cari.document.validators.js`
 - `Dependencies`: SL01, SL02
 - `Blocked by`: none
 - `Rollback risk`: Medium
