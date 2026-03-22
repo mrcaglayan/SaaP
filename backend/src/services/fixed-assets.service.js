@@ -434,6 +434,30 @@ export async function getAssetDetail({ tenantId, assetId }) {
   );
   const txnRow = txnSummary.rows?.[0];
 
+  const cariCapitalizationResult = await query(
+    `SELECT 1
+       FROM fixed_asset_transactions fat
+       JOIN cari_documents cd
+         ON cd.id = fat.source_ref_id
+        AND cd.tenant_id = fat.tenant_id
+      WHERE fat.tenant_id = ?
+        AND fat.asset_id = ?
+        AND fat.transaction_type = 'CAPITALIZATION'
+        AND fat.status = 'POSTED'
+        AND fat.source_ref_type = 'CARI_DOCUMENT'
+        AND cd.posted_journal_entry_id = fat.journal_entry_id
+        AND fat.reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+  const hasCariCapitalization = Boolean(cariCapitalizationResult.rows?.[0]);
+
   // ── Build detail payload ────────────────────────────────────────
   return {
     // ── Identity ──────────────────────────────────────────────────
@@ -476,6 +500,7 @@ export async function getAssetDetail({ tenantId, assetId }) {
       ? Number(row.source_cari_document_line_id) : null,
     sourceCariDocumentLineUnitNo: row.source_cari_document_line_unit_no != null
       ? Number(row.source_cari_document_line_unit_no) : null,
+    hasCariCapitalization,
 
     // ── Key dates ─────────────────────────────────────────────────
     acquisitionDate: row.acquisition_date,
@@ -1644,6 +1669,201 @@ function hasSourceLinkage(asset) {
     || asset.source_cari_document_line_unit_no != null;
 }
 
+async function loadCariCapitalizationTransactionForActivation({
+  tenantId,
+  assetId,
+  sourceCariDocumentId,
+  sourceCariDocumentLineId,
+  queryFn = query,
+}) {
+  const result = await queryFn(
+    `SELECT id, journal_entry_id
+       FROM fixed_asset_transactions fat
+      WHERE fat.tenant_id = ?
+        AND fat.asset_id = ?
+        AND fat.transaction_type = 'CAPITALIZATION'
+        AND fat.status = 'POSTED'
+        AND fat.source_ref_type = 'CARI_DOCUMENT'
+        AND fat.source_ref_id = ?
+        AND fat.source_ref_line_id = ?
+        AND fat.reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY fat.effective_date DESC, fat.id DESC
+      LIMIT 1`,
+    [tenantId, assetId, sourceCariDocumentId, sourceCariDocumentLineId]
+  );
+
+  const row = result.rows?.[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    transactionId: parsePositiveInt(row.id),
+    journalEntryId: parsePositiveInt(row.journal_entry_id),
+  };
+}
+
+async function assertReservedSourceUnitSlotValidForActivation({
+  tenantId,
+  assetId,
+  sourceCariDocumentId,
+  sourceCariDocumentLineId,
+  reservedUnitNo,
+  totalUnitQuantity,
+  queryFn,
+}) {
+  if (reservedUnitNo > totalUnitQuantity) {
+    throw badRequest(
+      `Reserved unit slot ${reservedUnitNo} exceeds current source line quantity (${totalUnitQuantity}). ` +
+      "Source quantity may have decreased. Cannot proceed with activation."
+    );
+  }
+
+  const slotOwnerResult = await queryFn(
+    `SELECT id FROM fixed_assets
+      WHERE tenant_id = ?
+        AND source_cari_document_id = ?
+        AND source_cari_document_line_id = ?
+        AND source_cari_document_line_unit_no = ?
+        AND id != ?
+      LIMIT 1`,
+    [tenantId, sourceCariDocumentId, sourceCariDocumentLineId, reservedUnitNo, assetId]
+  );
+  if (slotOwnerResult.rows?.[0]) {
+    throw badRequest(
+      `Reserved unit slot ${reservedUnitNo} on source line (id=${sourceCariDocumentLineId}) ` +
+      `is now held by another asset (id=${slotOwnerResult.rows[0].id}). ` +
+      "Cannot proceed with activation."
+    );
+  }
+}
+
+function computeCariAutoCreatePerUnitAmounts(line, totalUnitQuantity, reservedUnitNo) {
+  if (!Number.isInteger(totalUnitQuantity) || totalUnitQuantity <= 0) {
+    throw badRequest("Source line quantity must be positive whole units for CARI activation");
+  }
+  if (!Number.isInteger(reservedUnitNo) || reservedUnitNo <= 0 || reservedUnitNo > totalUnitQuantity) {
+    throw badRequest(
+      `Reserved unit slot ${reservedUnitNo || "null"} is invalid for source line quantity ${totalUnitQuantity}`
+    );
+  }
+
+  const sourceCostTxn = Number(line?.lineNetAmountTxn);
+  const sourceCostBase = Number(line?.lineNetAmountBase);
+  if (!Number.isFinite(sourceCostTxn) || !Number.isFinite(sourceCostBase)) {
+    throw badRequest("Source line net amounts must be present for CARI activation");
+  }
+
+  const provisionalTxn = roundActivationAmount(sourceCostTxn / totalUnitQuantity);
+  const provisionalBase = roundActivationAmount(sourceCostBase / totalUnitQuantity);
+  const isFinalUnit = reservedUnitNo === totalUnitQuantity;
+  const originalCostTxn = isFinalUnit
+    ? roundActivationAmount(sourceCostTxn - (provisionalTxn * (totalUnitQuantity - 1)))
+    : provisionalTxn;
+  const originalCostBase = isFinalUnit
+    ? roundActivationAmount(sourceCostBase - (provisionalBase * (totalUnitQuantity - 1)))
+    : provisionalBase;
+
+  if (originalCostTxn <= 0 || originalCostBase <= 0) {
+    throw badRequest("Per-unit source amounts must be greater than 0 for CARI activation");
+  }
+
+  return {
+    originalCostTxn,
+    originalCostBase,
+  };
+}
+
+function computeCariLinkExistingLineAmounts(line) {
+  const originalCostTxn = roundActivationAmount(Number(line?.lineNetAmountTxn));
+  const originalCostBase = roundActivationAmount(Number(line?.lineNetAmountBase));
+  if (!Number.isFinite(originalCostTxn) || !Number.isFinite(originalCostBase)) {
+    throw badRequest("Source line net amounts must be present for LINK_EXISTING activation");
+  }
+  if (originalCostTxn <= 0 || originalCostBase <= 0) {
+    throw badRequest("Source line net amounts must be greater than 0 for LINK_EXISTING activation");
+  }
+
+  return {
+    originalCostTxn,
+    originalCostBase,
+  };
+}
+
+function buildActivationSourceRevalidationOutcome({
+  asset,
+  category,
+  document,
+  line,
+  totalUnitQuantity,
+  currentCostTxn,
+  currentCostBase,
+  hasCariCapitalization,
+}) {
+  const currentCurrencyCode = document.currencyCode || null;
+  const draftCostTxn = Number(asset.original_cost_txn);
+  const draftCostBase = Number(asset.original_cost_base);
+  const draftCurrencyCode = asset.currency_code || null;
+
+  const capitalizationThresholdBase = category.capitalization_threshold_base != null
+    ? Number(category.capitalization_threshold_base)
+    : null;
+
+  const draftWasLowValue = capitalizationThresholdBase != null && draftCostBase < capitalizationThresholdBase;
+  const currentIsLowValue = capitalizationThresholdBase != null && currentCostBase < capitalizationThresholdBase;
+
+  if (draftWasLowValue !== currentIsLowValue) {
+    const draftPath = draftWasLowValue ? "low-value full-expense" : "standard depreciable";
+    const currentPath = currentIsLowValue ? "low-value full-expense" : "standard depreciable";
+    throw badRequest(
+      `Source amount drift changed the activation path from "${draftPath}" to "${currentPath}". ` +
+      `Draft cost base was ${draftCostBase}, current per-unit cost base is ${currentCostBase}, ` +
+      `threshold is ${capitalizationThresholdBase}. ` +
+      "This requires user review - delete the draft and re-create from the current source."
+    );
+  }
+
+  if (currentCurrencyCode && draftCurrencyCode && currentCurrencyCode !== draftCurrencyCode) {
+    throw badRequest(
+      `Source document currency changed from ${draftCurrencyCode} to ${currentCurrencyCode}. ` +
+      "Cannot auto-refresh - delete the draft and re-create from the current source."
+    );
+  }
+
+  const refreshedFields = {};
+  let costDrifted = false;
+
+  if (!amountsEqualForActivation(draftCostTxn, currentCostTxn)
+      || !amountsEqualForActivation(draftCostBase, currentCostBase)) {
+    costDrifted = true;
+    refreshedFields.original_cost_txn = currentCostTxn;
+    refreshedFields.original_cost_base = currentCostBase;
+  }
+
+  if (currentCurrencyCode && currentCurrencyCode !== draftCurrencyCode) {
+    refreshedFields.currency_code = currentCurrencyCode;
+  }
+
+  return {
+    document,
+    line,
+    totalUnitQuantity,
+    currentCostTxn,
+    currentCostBase,
+    costDrifted,
+    refreshedFields,
+    useLowValueSamePeriodPath: currentIsLowValue,
+    hasCariCapitalization,
+    skipActivationAcquisitionTransaction: hasCariCapitalization,
+  };
+}
+
 /**
  * FA27 — Revalidate a source-linked (CARI) draft asset's source document/line
  * at activation time. Detects source drift, auto-refreshes safe source-derived
@@ -1721,7 +1941,19 @@ async function revalidateSourceLinkageForActivation({
     );
   }
 
-  // ── Validate quantity/equal-split assumptions ─────────────────
+  const cariCapitalization = await loadCariCapitalizationTransactionForActivation({
+    tenantId,
+    assetId: parsePositiveInt(asset.id),
+    sourceCariDocumentId,
+    sourceCariDocumentLineId,
+    queryFn,
+  });
+  const isCariCapitalizationPath = Boolean(
+    parsePositiveInt(document?.postedJournalEntryId)
+      && parsePositiveInt(cariCapitalization?.journalEntryId)
+      && parsePositiveInt(document?.postedJournalEntryId) === parsePositiveInt(cariCapitalization?.journalEntryId)
+  );
+
   if (!isPositiveWholeUnitQuantity(line.quantity)) {
     throw badRequest(
       `Source line (id=${sourceCariDocumentLineId}) quantity is no longer positive whole units ` +
@@ -1730,6 +1962,64 @@ async function revalidateSourceLinkageForActivation({
   }
   const totalUnitQuantity = Number(line.quantity);
 
+  await assertReservedSourceUnitSlotValidForActivation({
+    tenantId,
+    assetId: parsePositiveInt(asset.id),
+    sourceCariDocumentId,
+    sourceCariDocumentLineId,
+    reservedUnitNo,
+    totalUnitQuantity,
+    queryFn,
+  });
+
+  if (isCariCapitalizationPath) {
+    const fixedAssetMode = normalizeUpperText(line?.fixedAssetMode);
+
+    if (fixedAssetMode === "AUTO_CREATE") {
+      const { originalCostTxn: currentCostTxn, originalCostBase: currentCostBase } =
+        computeCariAutoCreatePerUnitAmounts(line, totalUnitQuantity, reservedUnitNo);
+
+      return buildActivationSourceRevalidationOutcome({
+        asset,
+        category,
+        document,
+        line,
+        totalUnitQuantity,
+        currentCostTxn,
+        currentCostBase,
+        hasCariCapitalization: true,
+      });
+    }
+
+    if (fixedAssetMode === "LINK_EXISTING") {
+      if (totalUnitQuantity !== 1) {
+        throw badRequest(
+          `Source line (id=${sourceCariDocumentLineId}) quantity must remain 1 for LINK_EXISTING activation ` +
+          `(quantity=${totalUnitQuantity}). Cannot proceed with activation.`
+        );
+      }
+
+      const { originalCostTxn: currentCostTxn, originalCostBase: currentCostBase } =
+        computeCariLinkExistingLineAmounts(line);
+
+      return buildActivationSourceRevalidationOutcome({
+        asset,
+        category,
+        document,
+        line,
+        totalUnitQuantity,
+        currentCostTxn,
+        currentCostBase,
+        hasCariCapitalization: true,
+      });
+    }
+
+    throw badRequest(
+      `Source line (id=${sourceCariDocumentLineId}) fixedAssetMode=${fixedAssetMode || "null"} ` +
+      "is not activatable through the CARI capitalization path."
+    );
+  }
+
   if (!isEqualPerUnitSplitValidForMvp(line, totalUnitQuantity)) {
     throw badRequest(
       `Source line (id=${sourceCariDocumentLineId}) amounts no longer support equal per-unit split. ` +
@@ -1737,95 +2027,19 @@ async function revalidateSourceLinkageForActivation({
     );
   }
 
-  // ── Validate reserved unit slot is still valid ────────────────
-  if (reservedUnitNo > totalUnitQuantity) {
-    throw badRequest(
-      `Reserved unit slot ${reservedUnitNo} exceeds current source line quantity (${totalUnitQuantity}). ` +
-      "Source quantity may have decreased. Cannot proceed with activation."
-    );
-  }
-
-  // The slot must either belong to this asset or be free.
-  // Check if another asset holds the same slot:
-  const slotOwnerResult = await queryFn(
-    `SELECT id FROM fixed_assets
-      WHERE tenant_id = ?
-        AND source_cari_document_id = ?
-        AND source_cari_document_line_id = ?
-        AND source_cari_document_line_unit_no = ?
-        AND id != ?
-      LIMIT 1`,
-    [tenantId, sourceCariDocumentId, sourceCariDocumentLineId, reservedUnitNo, asset.id]
-  );
-  if (slotOwnerResult.rows?.[0]) {
-    throw badRequest(
-      `Reserved unit slot ${reservedUnitNo} on source line (id=${sourceCariDocumentLineId}) ` +
-      `is now held by another asset (id=${slotOwnerResult.rows[0].id}). ` +
-      "Cannot proceed with activation."
-    );
-  }
-
-  // ── Recompute per-unit amounts from current source ────────────
   const { originalCostTxn: currentCostTxn, originalCostBase: currentCostBase } =
     computeFa06PerUnitAmounts(line, totalUnitQuantity);
 
-  const currentCurrencyCode = document.currencyCode || null;
-  const draftCostTxn = Number(asset.original_cost_txn);
-  const draftCostBase = Number(asset.original_cost_base);
-  const draftCurrencyCode = asset.currency_code || null;
-
-  // ── Detect threshold-path change ──────────────────────────────
-  const capitalizationThresholdBase = category.capitalization_threshold_base != null
-    ? Number(category.capitalization_threshold_base)
-    : null;
-
-  const draftWasLowValue = capitalizationThresholdBase != null && draftCostBase < capitalizationThresholdBase;
-  const currentIsLowValue = capitalizationThresholdBase != null && currentCostBase < capitalizationThresholdBase;
-
-  if (draftWasLowValue !== currentIsLowValue) {
-    const draftPath = draftWasLowValue ? "low-value full-expense" : "standard depreciable";
-    const currentPath = currentIsLowValue ? "low-value full-expense" : "standard depreciable";
-    throw badRequest(
-      `Source amount drift changed the activation path from "${draftPath}" to "${currentPath}". ` +
-      `Draft cost base was ${draftCostBase}, current per-unit cost base is ${currentCostBase}, ` +
-      `threshold is ${capitalizationThresholdBase}. ` +
-      "This requires user review — delete the draft and re-create from the current source."
-    );
-  }
-
-  // ── Currency drift check ──────────────────────────────────────
-  if (currentCurrencyCode && draftCurrencyCode && currentCurrencyCode !== draftCurrencyCode) {
-    throw badRequest(
-      `Source document currency changed from ${draftCurrencyCode} to ${currentCurrencyCode}. ` +
-      "Cannot auto-refresh — delete the draft and re-create from the current source."
-    );
-  }
-
-  // ── Build auto-refresh set ────────────────────────────────────
-  const refreshedFields = {};
-  let costDrifted = false;
-
-  if (!amountsEqualForActivation(draftCostTxn, currentCostTxn)
-      || !amountsEqualForActivation(draftCostBase, currentCostBase)) {
-    costDrifted = true;
-    refreshedFields.original_cost_txn = currentCostTxn;
-    refreshedFields.original_cost_base = currentCostBase;
-  }
-
-  if (currentCurrencyCode && currentCurrencyCode !== draftCurrencyCode) {
-    refreshedFields.currency_code = currentCurrencyCode;
-  }
-
-  return {
+  return buildActivationSourceRevalidationOutcome({
+    asset,
+    category,
     document,
     line,
     totalUnitQuantity,
     currentCostTxn,
     currentCostBase,
-    costDrifted,
-    refreshedFields,
-    useLowValueSamePeriodPath: currentIsLowValue,
-  };
+    hasCariCapitalization: false,
+  });
 }
 
 function validateSalvageSnapshotForActivation({
@@ -3407,6 +3621,8 @@ export async function activateAsset(input) {
         );
       }
     }
+    const skipActivationAcquisitionTransaction =
+      isSourceLinked && Boolean(sourceRevalidation?.skipActivationAcquisitionTransaction);
 
     // ── Apply capitalization/in-service dates from input or existing ─
     const capitalizationDate = inputCapDate || asset.capitalization_date;
@@ -3688,25 +3904,27 @@ export async function activateAsset(input) {
     );
 
     // ── Create ACQUISITION transaction ──────────────────────────
-    await insertFixedAssetTransaction(tx, {
-      tenantId,
-      legalEntityId,
-      assetId,
-      transactionType: "ACQUISITION",
-      effectiveDate: capitalizationDate,
-      postingDate,
-      bookId: book.id,
-      fiscalPeriodId: period.id,
-      currencyCode: asset.currency_code,
-      grossAmountTxn: costTxn,
-      grossAmountBase: costBase,
-      accumDeprAmountTxn: acquisitionAccumDeprAmountTxn,
-      accumDeprAmountBase: acquisitionAccumDeprAmountBase,
-      nbvAmountTxn: acquisitionNbvAmountTxn,
-      nbvAmountBase: acquisitionNbvAmountBase,
-      note: acquisitionTransactionNote,
-      createdByUserId: userId,
-    });
+    if (!skipActivationAcquisitionTransaction) {
+      await insertFixedAssetTransaction(tx, {
+        tenantId,
+        legalEntityId,
+        assetId,
+        transactionType: "ACQUISITION",
+        effectiveDate: capitalizationDate,
+        postingDate,
+        bookId: book.id,
+        fiscalPeriodId: period.id,
+        currencyCode: asset.currency_code,
+        grossAmountTxn: costTxn,
+        grossAmountBase: costBase,
+        accumDeprAmountTxn: acquisitionAccumDeprAmountTxn,
+        accumDeprAmountBase: acquisitionAccumDeprAmountBase,
+        nbvAmountTxn: acquisitionNbvAmountTxn,
+        nbvAmountBase: acquisitionNbvAmountBase,
+        note: acquisitionTransactionNote,
+        createdByUserId: userId,
+      });
+    }
 
     if (createImportedSuspendTransaction) {
       await insertFixedAssetTransaction(tx, {

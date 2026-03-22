@@ -321,8 +321,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL05` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AP line → auto-create or capitalize assets from the bill line
 - [x] `STEP-SL06` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AR line → trigger disposal flow on target eligible asset
 - [x] `STEP-SL07` — 🔥 HOT — Backend CARI reversal: reverse CAPITALIZATION / disposal when CARI document is reversed
-- [ ] `STEP-SL08` — Backend FA service: adapt activation for assets already cost-posted via CARI
-- [ ] `STEP-SL09` — Backend: backfill migration for existing stock-affecting lines (`subledger_type = 'STOCK'`)
+- [x] `STEP-SL08` — Backend FA service: adapt activation for assets already cost-posted via CARI
 
 **Phase 2: Subledger-Aware Lines (Frontend)**
 - [ ] `STEP-SL10` — Frontend CARI form: add subledger_type selector to line entry
@@ -387,7 +386,7 @@ Add the schema foundation for subledger-aware lines.
 - Use the repo's idempotent migration pattern (safeExecute, addColumnIfMissing)
 
 ### Explicit non-goals
-- Do not backfill existing rows yet (SL09 handles that)
+- Do not backfill existing rows (not needed — DB starts clean with no legacy rows; SL02 validator inference ensures every new row gets the correct `subledger_type` at insertion time)
 - Do not modify any service or validator code
 - Do not change the ENUM values of `line_kind` or `stock_impact_mode`
 
@@ -755,26 +754,6 @@ The revalidation must detect which path created the asset and behave accordingly
 - Asset without any CAPITALIZATION (manual path) activates with the normal `ACQUISITION` transaction path
 - Depreciation schedule generation works identically in all cases
 - `hasCariCapitalization` field is exposed on asset detail responses
-
----
-
-## `STEP-SL09` — Backend: backfill migration for existing stock-affecting lines
-
-### Patch target
-Set `subledger_type = 'STOCK'` on existing lines that have `stock_impact_mode != 'NONE'` so the data is consistent with the new schema.
-
-### In scope
-- UPDATE `cari_document_lines` SET `subledger_type = 'STOCK'` WHERE `stock_impact_mode != 'NONE'`
-- Idempotent — safe to run multiple times
-- All other rows remain `subledger_type = 'NONE'`
-
-### Explicit non-goals
-- Do not change any behavior — this is a data alignment migration only
-
-### Definition of done
-- All existing stock-affecting lines have `subledger_type = 'STOCK'`
-- All other lines have `subledger_type = 'NONE'`
-- Migration is idempotent
 
 ---
 
@@ -1672,13 +1651,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Dependencies`: SL05
 - `Blocked by`: none
 - `Rollback risk`: Medium — must not break manual activation
-
-### `STEP-SL09`
-- `AI size`: Small
-- `Allowed files`: `backend/src/migrations/m145_cari_document_lines_subledger_backfill.js`, `backend/src/migrations/index.js`
-- `Dependencies`: SL01
-- `Blocked by`: none
-- `Rollback risk`: Low — data-only, idempotent
 
 ### `STEP-SL10`
 - `AI size`: Small
