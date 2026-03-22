@@ -353,6 +353,46 @@ function toPositiveDecimal(value) {
   return Number(parsed.toFixed(6));
 }
 
+function buildFixedAssetSaleCreatePrefill(searchParams) {
+  if (!(searchParams instanceof URLSearchParams)) {
+    return null;
+  }
+  const prefillMode = normalizeText(searchParams.get("prefillMode")).toUpperCase();
+  if (prefillMode !== "FA_SALE") {
+    return null;
+  }
+  const targetFixedAssetId = normalizePositiveIntText(
+    searchParams.get("prefillTargetFixedAssetId")
+  );
+  if (!targetFixedAssetId) {
+    return null;
+  }
+  const direction = normalizeText(searchParams.get("prefillDirection")).toUpperCase();
+  return {
+    mode: prefillMode,
+    direction: direction === "AP" || direction === "AR" ? direction : "AR",
+    targetFixedAssetId,
+    legalEntityId: normalizePositiveIntText(searchParams.get("prefillLegalEntityId")),
+    operatingUnitId: normalizePositiveIntText(searchParams.get("prefillOperatingUnitId")),
+    assetNo: normalizeText(searchParams.get("prefillSourceAssetNo")),
+    assetName: normalizeText(searchParams.get("prefillSourceAssetName")),
+  };
+}
+
+function clearFixedAssetSaleCreatePrefill(searchParams) {
+  const nextParams = new URLSearchParams(searchParams);
+  [
+    "prefillMode",
+    "prefillDirection",
+    "prefillTargetFixedAssetId",
+    "prefillLegalEntityId",
+    "prefillOperatingUnitId",
+    "prefillSourceAssetNo",
+    "prefillSourceAssetName",
+  ].forEach((key) => nextParams.delete(key));
+  return nextParams;
+}
+
 const POSTING_LINE_AMOUNT_EPSILON = 0.000001;
 
 function amountsMatch(left, right) {
@@ -3369,6 +3409,7 @@ export default function CariDocumentsPage() {
   const [detailError, setDetailError] = useState("");
   const lastObservedUrlDocumentIdRef = useRef(null);
   const pendingUrlSelectionDocumentIdRef = useRef(null);
+  const appliedCreatePrefillSignatureRef = useRef("");
   const internalCommentTextareaRef = useRef(null);
   const internalCommentMentionRequestRef = useRef(0);
 
@@ -4003,6 +4044,24 @@ export default function CariDocumentsPage() {
     searchParams.get("documentId") || searchParams.get("document_id") || ""
   ).trim();
   const deepLinkedDocumentId = toPositiveInt(deepLinkedDocumentIdRaw);
+  const fixedAssetSaleCreatePrefill = useMemo(
+    () => buildFixedAssetSaleCreatePrefill(searchParams),
+    [searchParams]
+  );
+  const fixedAssetSaleCreatePrefillSignature = useMemo(() => {
+    if (!fixedAssetSaleCreatePrefill) {
+      return "";
+    }
+    return [
+      fixedAssetSaleCreatePrefill.mode,
+      fixedAssetSaleCreatePrefill.direction,
+      fixedAssetSaleCreatePrefill.targetFixedAssetId,
+      fixedAssetSaleCreatePrefill.legalEntityId,
+      fixedAssetSaleCreatePrefill.operatingUnitId,
+      fixedAssetSaleCreatePrefill.assetNo,
+      fixedAssetSaleCreatePrefill.assetName,
+    ].join("|");
+  }, [fixedAssetSaleCreatePrefill]);
   const filterCounterpartyLookupOptions = useMemo(
     () => (filterCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [filterCounterpartyOptions]
@@ -5835,6 +5894,67 @@ export default function CariDocumentsPage() {
     defaultDraftTemplateHydrated,
     draftTemplates,
     draftTemplatesLoading,
+  ]);
+
+  useEffect(() => {
+    if (
+      !canCreate ||
+      !defaultDraftTemplateHydrated ||
+      !fixedAssetSaleCreatePrefill ||
+      !fixedAssetSaleCreatePrefillSignature
+    ) {
+      return;
+    }
+    if (
+      appliedCreatePrefillSignatureRef.current ===
+      fixedAssetSaleCreatePrefillSignature
+    ) {
+      return;
+    }
+
+    const assetLabel =
+      fixedAssetSaleCreatePrefill.assetNo ||
+      fixedAssetSaleCreatePrefill.assetName ||
+      `#${fixedAssetSaleCreatePrefill.targetFixedAssetId}`;
+
+    applyCreateDraftFormSnapshot({
+      legalEntityId: fixedAssetSaleCreatePrefill.legalEntityId,
+      operatingUnitId: fixedAssetSaleCreatePrefill.operatingUnitId,
+      direction: fixedAssetSaleCreatePrefill.direction || "AR",
+      documentType: "INVOICE",
+      documentDate: todayIsoDate(),
+      lines: [
+        {
+          subledgerType: "FIXED_ASSET",
+          targetFixedAssetId: fixedAssetSaleCreatePrefill.targetFixedAssetId,
+          quantity: "1",
+          description: l(
+            `Sale of fixed asset ${assetLabel}`,
+            `${assetLabel} duran varlik satisi`
+          ),
+        },
+      ],
+    });
+    setCreateError("");
+    setCreateMessage(
+      l(
+        `Sale draft was prefilled from fixed asset detail for ${assetLabel}. Complete counterparty, sale proceeds account, and amount before saving.`,
+        `${assetLabel} icin satis taslagi duran varlik detayindan hazirlandi. Kaydetmeden once cari, satis hasilat hesabi ve tutari tamamlayin.`
+      )
+    );
+    appliedCreatePrefillSignatureRef.current =
+      fixedAssetSaleCreatePrefillSignature;
+    setSearchParams(clearFixedAssetSaleCreatePrefill(searchParams), {
+      replace: true,
+    });
+  }, [
+    canCreate,
+    defaultDraftTemplateHydrated,
+    fixedAssetSaleCreatePrefill,
+    fixedAssetSaleCreatePrefillSignature,
+    l,
+    searchParams,
+    setSearchParams,
   ]);
 
   useEffect(() => {
@@ -8850,7 +8970,10 @@ export default function CariDocumentsPage() {
       </section>
 
       {canCreate ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section
+          id="create-draft-document"
+          className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+        >
           <h2 className="text-lg font-semibold text-slate-900">
             {l("Create Draft Document", "Belge Taslagi Olustur")}
           </h2>

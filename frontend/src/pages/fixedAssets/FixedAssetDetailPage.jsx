@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
-import { getFixedAsset, getFixedAssetDepreciationSchedule, listFixedAssetTransactions } from "../../api/fixedAssets.js";
+import {
+  getFixedAsset,
+  getFixedAssetDepreciationSchedule,
+  listFixedAssetTransactions,
+  saleCreateDraftAr,
+} from "../../api/fixedAssets.js";
 
 function normalizeApiError(error, fallback) {
   const message = String(
@@ -56,10 +61,63 @@ function parsePositiveInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const CARI_DOCUMENTS_ROUTE = "/app/cari-belgeler";
+const SALE_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+]);
+
+function buildCariDocumentPath(documentId) {
+  const normalizedDocumentId = parsePositiveInt(documentId);
+  if (!normalizedDocumentId) {
+    return CARI_DOCUMENTS_ROUTE;
+  }
+  const params = new URLSearchParams();
+  params.set("documentId", String(normalizedDocumentId));
+  return `${CARI_DOCUMENTS_ROUTE}?${params.toString()}`;
+}
+
+function buildCariSalePrefillPath(asset) {
+  const assetId = parsePositiveInt(asset?.id);
+  if (!assetId) {
+    return `${CARI_DOCUMENTS_ROUTE}#create-draft-document`;
+  }
+  const params = new URLSearchParams();
+  params.set("prefillMode", "FA_SALE");
+  params.set("prefillDirection", "AR");
+  params.set("prefillTargetFixedAssetId", String(assetId));
+  if (parsePositiveInt(asset?.legalEntityId)) {
+    params.set("prefillLegalEntityId", String(asset.legalEntityId));
+  }
+  if (parsePositiveInt(asset?.ownerOperatingUnitId)) {
+    params.set("prefillOperatingUnitId", String(asset.ownerOperatingUnitId));
+  }
+  if (asset?.assetNo) {
+    params.set("prefillSourceAssetNo", String(asset.assetNo));
+  }
+  if (asset?.name) {
+    params.set("prefillSourceAssetName", String(asset.name));
+  }
+  return `${CARI_DOCUMENTS_ROUTE}?${params.toString()}#create-draft-document`;
+}
+
+function createInitialLegacySaleFallbackForm() {
+  return {
+    counterpartyId: "",
+    documentDate: todayIsoDate(),
+    saleAmountTxn: "",
+  };
+}
+
 export default function FixedAssetDetailPage() {
   const { assetId } = useParams();
   const [searchParams] = useSearchParams();
-  const { l } = useI18n();
+  const { l, t } = useI18n();
   const { hasPermission } = useAuth();
   const canRead = hasPermission("fixed_assets.read");
   const canUpsert = hasPermission("fixed_assets.upsert");
@@ -67,6 +125,8 @@ export default function FixedAssetDetailPage() {
   const canDispose = hasPermission("fixed_assets.dispose");
   const canTransfer = hasPermission("fixed_assets.transfer");
   const canOverrideAccounts = hasPermission("fixed_assets.account_override");
+  const canReadCariDocuments = hasPermission("cari.doc.read");
+  const canCreateCariDocuments = hasPermission("cari.doc.create");
 
   // Deep-link query params: tab and transactionId
   const queryTab = searchParams.get("tab");
@@ -87,6 +147,13 @@ export default function FixedAssetDetailPage() {
   const [schedule, setSchedule] = useState([]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState("");
+  const [legacySaleFallbackOpen, setLegacySaleFallbackOpen] = useState(false);
+  const [legacySaleFallbackForm, setLegacySaleFallbackForm] = useState(
+    createInitialLegacySaleFallbackForm()
+  );
+  const [legacySaleFallbackSaving, setLegacySaleFallbackSaving] = useState(false);
+  const [legacySaleFallbackError, setLegacySaleFallbackError] = useState("");
+  const [legacySaleFallbackResult, setLegacySaleFallbackResult] = useState(null);
 
   useEffect(() => {
     if (!canRead || !assetId) { setAsset(null); return; }
@@ -157,6 +224,13 @@ export default function FixedAssetDetailPage() {
     return () => { active = false; };
   }, [canRead, assetId, activeTab, l]);
 
+  useEffect(() => {
+    setLegacySaleFallbackOpen(false);
+    setLegacySaleFallbackError("");
+    setLegacySaleFallbackResult(null);
+    setLegacySaleFallbackForm(createInitialLegacySaleFallbackForm());
+  }, [asset?.id]);
+
   // Focused transaction (highlighted from deep-link)
   const focusedTransactionId = queryTransactionId;
 
@@ -207,6 +281,72 @@ export default function FixedAssetDetailPage() {
     status === "SUSPENDED" ? "bg-amber-100 text-amber-800" :
     status === "FULLY_DEPRECIATED" ? "bg-blue-100 text-blue-800" :
     "bg-slate-100 text-slate-700";
+  const isSaleEligibleStatus = SALE_ELIGIBLE_STATUSES.has(status);
+  const canOpenCariSaleFlow = canReadCariDocuments && canCreateCariDocuments;
+  const canUseLegacySaleFallback = canDispose && canCreateCariDocuments;
+
+  async function handleCreateLegacySaleFallbackDraft() {
+    const normalizedAssetId = parsePositiveInt(asset?.id);
+    const counterpartyId = parsePositiveInt(legacySaleFallbackForm.counterpartyId);
+    const saleAmountTxn = Number(legacySaleFallbackForm.saleAmountTxn);
+    const documentDate = String(legacySaleFallbackForm.documentDate || "").trim();
+
+    if (!normalizedAssetId) {
+      setLegacySaleFallbackError(
+        t("fixedAssets.detail.legacySaleFallbackMissingAsset")
+      );
+      return;
+    }
+    if (!counterpartyId) {
+      setLegacySaleFallbackError(
+        t("fixedAssets.detail.legacySaleFallbackCounterpartyRequired")
+      );
+      return;
+    }
+    if (!documentDate) {
+      setLegacySaleFallbackError(
+        t("fixedAssets.detail.legacySaleFallbackDocumentDateRequired")
+      );
+      return;
+    }
+    if (!Number.isFinite(saleAmountTxn) || saleAmountTxn <= 0) {
+      setLegacySaleFallbackError(
+        t("fixedAssets.detail.legacySaleFallbackAmountRequired")
+      );
+      return;
+    }
+
+    setLegacySaleFallbackSaving(true);
+    setLegacySaleFallbackError("");
+    setLegacySaleFallbackResult(null);
+    try {
+      const response = await saleCreateDraftAr(normalizedAssetId, {
+        counterpartyId,
+        documentDate,
+        saleAmountTxn,
+      });
+      const pendingSaleCariDocumentId = parsePositiveInt(
+        response?.pendingSaleCariDocumentId
+      );
+      const pendingSaleCariDocumentLineId = parsePositiveInt(
+        response?.pendingSaleCariDocumentLineId
+      );
+      setLegacySaleFallbackResult({
+        pendingSaleCariDocumentId,
+        pendingSaleCariDocumentLineId,
+      });
+      setLegacySaleFallbackOpen(false);
+    } catch (err) {
+      setLegacySaleFallbackError(
+        normalizeApiError(
+          err,
+          t("fixedAssets.detail.legacySaleFallbackCreateFailed")
+        )
+      );
+    } finally {
+      setLegacySaleFallbackSaving(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -266,14 +406,14 @@ export default function FixedAssetDetailPage() {
               </>
             ) : null}
             {canDispose && status === "ACTIVE" ? (
-              <>
-                <span className="rounded-md bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 border border-rose-200">
-                  {l("Write Off", "Hurda Islem")}
-                </span>
-                <span className="rounded-md bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 border border-rose-200">
-                  {l("Sale", "Satis")}
-                </span>
-              </>
+              <span className="rounded-md bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 border border-rose-200">
+                {l("Write Off", "Hurda Islem")}
+              </span>
+            ) : null}
+            {canDispose && isSaleEligibleStatus ? (
+              <span className="rounded-md bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 border border-rose-200">
+                {l("Sale", "Satis")}
+              </span>
             ) : null}
           </div>
           {canOverrideAccounts ? (
@@ -281,6 +421,175 @@ export default function FixedAssetDetailPage() {
               <span className="rounded-md bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 border border-violet-200">
                 {l("Override Account Mappings", "Hesap Eslemelerini Gecersiz Kil")}
               </span>
+            </div>
+          ) : null}
+          {canDispose && isSaleEligibleStatus ? (
+            <div className="mt-4 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-cyan-900">
+                {t("fixedAssets.detail.preferredSaleFlowTitle")}
+              </p>
+              <p className="mt-2 text-sm text-cyan-950">
+                {t("fixedAssets.detail.preferredSaleFlowDescription")}
+              </p>
+              <div className="mt-3 rounded-lg border border-cyan-200 bg-white/70 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-900">
+                  {t("fixedAssets.detail.preferredSaleFlowTargetLabel")}
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {asset.assetNo || `#${asset.id}`}
+                </p>
+                <p className="text-xs text-slate-600">
+                  {asset.name || "-"}
+                </p>
+              </div>
+              <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-cyan-950">
+                <li>{t("fixedAssets.detail.preferredSaleFlowStepOne")}</li>
+                <li>{t("fixedAssets.detail.preferredSaleFlowStepTwo")}</li>
+                <li>{t("fixedAssets.detail.preferredSaleFlowStepThree")}</li>
+              </ol>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                {canOpenCariSaleFlow ? (
+                  <Link
+                    to={buildCariSalePrefillPath(asset)}
+                    className="inline-flex rounded-md border border-cyan-300 bg-white px-3 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-100"
+                  >
+                    {t("fixedAssets.detail.openCariSaleFlow")}
+                  </Link>
+                ) : (
+                  <p className="text-xs text-amber-800">
+                    {t("fixedAssets.detail.missingCariSalePermissions")}
+                  </p>
+                )}
+              </div>
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                  {t("fixedAssets.detail.legacySaleFallbackTitle")}
+                </p>
+                <p className="mt-1 text-sm text-amber-900">
+                  {t("fixedAssets.detail.legacySaleFallbackDescription")}
+                </p>
+                {legacySaleFallbackResult?.pendingSaleCariDocumentId ? (
+                  <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    <p>
+                      {t("fixedAssets.detail.legacySaleFallbackCreateSuccess")}
+                    </p>
+                    {canReadCariDocuments ? (
+                      <Link
+                        to={buildCariDocumentPath(
+                          legacySaleFallbackResult.pendingSaleCariDocumentId
+                        )}
+                        className="mt-1 inline-flex font-semibold text-emerald-800 underline"
+                      >
+                        {t("fixedAssets.detail.openLegacySaleFallbackDraft")}
+                      </Link>
+                    ) : null}
+                  </div>
+                ) : null}
+                {legacySaleFallbackOpen ? (
+                  <div className="mt-3 rounded-md border border-amber-200 bg-white/70 p-3">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                        {t("fixedAssets.detail.legacySaleFallbackCounterpartyId")}
+                        <input
+                          type="number"
+                          min="1"
+                          className="mt-1 w-full rounded-md border border-amber-200 px-3 py-2 text-sm font-normal text-slate-900"
+                          value={legacySaleFallbackForm.counterpartyId}
+                          onChange={(event) =>
+                            setLegacySaleFallbackForm((prev) => ({
+                              ...prev,
+                              counterpartyId: event.target.value,
+                            }))
+                          }
+                          disabled={legacySaleFallbackSaving}
+                        />
+                      </label>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                        {t("fixedAssets.detail.legacySaleFallbackDocumentDate")}
+                        <input
+                          type="date"
+                          className="mt-1 w-full rounded-md border border-amber-200 px-3 py-2 text-sm font-normal text-slate-900"
+                          value={legacySaleFallbackForm.documentDate}
+                          onChange={(event) =>
+                            setLegacySaleFallbackForm((prev) => ({
+                              ...prev,
+                              documentDate: event.target.value,
+                            }))
+                          }
+                          disabled={legacySaleFallbackSaving}
+                        />
+                      </label>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                        {t("fixedAssets.detail.legacySaleFallbackAmount")}
+                        <input
+                          type="number"
+                          min="0.000001"
+                          step="0.000001"
+                          className="mt-1 w-full rounded-md border border-amber-200 px-3 py-2 text-sm font-normal text-slate-900"
+                          value={legacySaleFallbackForm.saleAmountTxn}
+                          onChange={(event) =>
+                            setLegacySaleFallbackForm((prev) => ({
+                              ...prev,
+                              saleAmountTxn: event.target.value,
+                            }))
+                          }
+                          disabled={legacySaleFallbackSaving}
+                        />
+                      </label>
+                    </div>
+                    <p className="mt-2 text-xs text-amber-900">
+                      {t("fixedAssets.detail.legacySaleFallbackHelper")}
+                    </p>
+                    {legacySaleFallbackError ? (
+                      <p className="mt-2 text-sm text-rose-700">
+                        {legacySaleFallbackError}
+                      </p>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900"
+                        onClick={handleCreateLegacySaleFallbackDraft}
+                        disabled={legacySaleFallbackSaving}
+                      >
+                        {legacySaleFallbackSaving
+                          ? t("fixedAssets.detail.creatingLegacySaleFallbackDraft")
+                          : t("fixedAssets.detail.createLegacySaleFallbackDraft")}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+                        onClick={() => {
+                          setLegacySaleFallbackOpen(false);
+                          setLegacySaleFallbackError("");
+                        }}
+                        disabled={legacySaleFallbackSaving}
+                      >
+                        {l("Cancel", "Iptal")}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    {canUseLegacySaleFallback ? (
+                      <button
+                        type="button"
+                        className="inline-flex rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+                        onClick={() => {
+                          setLegacySaleFallbackOpen(true);
+                          setLegacySaleFallbackError("");
+                        }}
+                      >
+                        {t("fixedAssets.detail.createLegacySaleFallbackDraft")}
+                      </button>
+                    ) : (
+                      <p className="text-xs text-amber-900">
+                        {t("fixedAssets.detail.missingLegacySaleFallbackPermissions")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           ) : null}
         </section>

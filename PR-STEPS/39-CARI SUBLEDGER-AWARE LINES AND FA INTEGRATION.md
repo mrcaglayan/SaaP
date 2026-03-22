@@ -328,7 +328,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL11` — Frontend CARI form: FIXED_ASSET conditional fields (auto-create defaults, link-existing picker, preview)
 - [x] `STEP-SL12` — Frontend CARI form: validation rules per subledger_type
 - [x] `STEP-SL13` — Frontend FA acquisitions page: show "linked from CARI" indicator, simplify capitalize section
-- [ ] `STEP-SL14` — Frontend FA sale flow: simplify to "create AR doc with FIXED_ASSET line" guidance
+- [x] `STEP-SL14` — Frontend FA sale flow: simplify to "create AR doc with FIXED_ASSET line" guidance
 
 **Phase 3: Immediate Cash/Bank Settlement**
 - [ ] `STEP-SL15` — Migration: add `settlement_mode`, `settlement_cash_register_id`, and auto-settlement tracking to `cari_documents`
@@ -907,14 +907,16 @@ Update the FA sale UI to guide users toward the new CARI-integrated sale flow.
 
 ### In scope
 - On the asset detail page sale action: instead of (or in addition to) the multi-step staging flow, show guidance: "Create a CARI AR document with a Fixed Asset line type pointing to this asset"
-- Optionally: add a "Create Sale Invoice" shortcut button that navigates to the CARI document form pre-populated with `direction = 'AR'`, `subledgerType = 'FIXED_ASSET'`, `targetFixedAssetId = {currentAssetId}`
+- Add a "Create Sale Invoice" shortcut button that navigates to the current CARI document page and pre-populates the create form with `direction = 'AR'`, `subledgerType = 'FIXED_ASSET'`, and `targetFixedAssetId = {currentAssetId}`. Repo-specific execution note: this requires `CariDocumentsPage.jsx` to consume the prefill payload even though the initiating UX lives on the FA detail page. This is an intentionally narrow widening for SL14 only; AP/AR route split work still belongs to SL20-SL23.
 - Keep the existing multi-step sale staging API as a fallback
+- If the repo does not already expose a usable legacy fallback entry on the detail page, add a lightweight fallback starter there (no redesign of sale posting logic)
 
 ### Explicit non-goals
 - Do not remove the existing sale staging API endpoints (FA39)
 
 ### Definition of done
 - Users can reach the CARI AR document form from the asset detail page
+- The shortcut lands on the current CARI page with the AR FIXED_ASSET sale draft prefilled for the current asset
 - The new flow works end-to-end (create AR doc → FIXED_ASSET line → post → asset disposed)
 - Existing sale staging flow still works as fallback
 
@@ -1684,7 +1686,7 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 
 ### `STEP-SL14`
 - `AI size`: Small
-- `Allowed files`: `frontend/src/pages/fixedAssets/FixedAssetDetailPage.jsx`, `frontend/src/i18n/messages.js`
+- `Allowed files`: `frontend/src/pages/fixedAssets/FixedAssetDetailPage.jsx`, `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/i18n/messages.js`
 - `Dependencies`: SL06
 - `Blocked by`: none
 - `Rollback risk`: Low

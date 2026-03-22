@@ -492,6 +492,44 @@ export const messages = {
         linkedFromCari: "CARI'ye Bagli",
         cariCapitalization: "CARI Kapitalizasyonu",
       },
+      detail: {
+        preferredSaleFlowTitle: "Tercih Edilen Satis Akisi",
+        preferredSaleFlowDescription:
+          "Yeni satislarda tercih edilen akis, bu varligi hedefleyen FIXED_ASSET satirli bir CARI AR belge taslagi olusturmaktir.",
+        preferredSaleFlowTargetLabel: "Hedef Varlik",
+        preferredSaleFlowStepOne:
+          "Kisayol, CARI Belgeler sayfasinda AR yonlu bir belge taslagini bu varlik icin hazirlar.",
+        preferredSaleFlowStepTwo:
+          "Satir Tipi olarak Duran Varlik secin, bu varligi hedef olarak baglayin, satis hesabi ve tutari girin.",
+        preferredSaleFlowStepThree:
+          "Belgeyi kaydedip kayda alin; satis ve elden cikarma akisi tek posting icinde tamamlanir.",
+        openCariSaleFlow: "Satis Faturasi Taslagi Ac",
+        missingCariSalePermissions:
+          "Bu ekrandan tercih edilen satis akisina gitmek icin cari.doc.read ve cari.doc.create yetkileri gerekir.",
+        legacySaleFallbackTitle: "Legacy Fallback",
+        legacySaleFallbackDescription:
+          "Eski cok adimli satis staging akisi kaldirilmaz; yalnizca onceki staged/legacy vakalar icin fallback olarak kalir. Yeni satislarda tercih edilen akis CARI AR FIXED_ASSET belgesidir.",
+        createLegacySaleFallbackDraft: "Legacy Satis Taslagi Olustur",
+        creatingLegacySaleFallbackDraft: "Legacy satis taslagi olusturuluyor...",
+        openLegacySaleFallbackDraft: "Legacy taslagi ac",
+        legacySaleFallbackCreateSuccess:
+          "Legacy satis fallback taslagi olusturuldu. Kalan duzenleme ve posting adimlarini taslak belge uzerinden tamamlayin.",
+        legacySaleFallbackCounterpartyId: "Cari ID",
+        legacySaleFallbackDocumentDate: "Belge Tarihi",
+        legacySaleFallbackAmount: "Satis Tutari",
+        legacySaleFallbackHelper:
+          "Bu fallback yalnizca eski staged akislar icindir. Kisa yol kullanmadan once cari ve satis tutarini girin.",
+        missingLegacySaleFallbackPermissions:
+          "Legacy fallback taslagi olusturmak icin fixed_assets.dispose ve cari.doc.create yetkileri gerekir.",
+        legacySaleFallbackMissingAsset:
+          "Legacy satis fallback taslagi icin gecerli bir varlik bulunamadi.",
+        legacySaleFallbackCounterpartyRequired: "Cari ID zorunludur.",
+        legacySaleFallbackDocumentDateRequired: "Belge tarihi zorunludur.",
+        legacySaleFallbackAmountRequired:
+          "Satis tutari 0'dan buyuk bir sayi olmalidir.",
+        legacySaleFallbackCreateFailed:
+          "Legacy satis fallback taslagi olusturulamadi.",
+      },
       disposals: {
         title: "Demirbas Satis/Elden Cikarma",
         description: "Satis, elden cikarma ve hurda islemleri.",
@@ -2581,6 +2619,45 @@ export const messages = {
         lineRequired: "You must select an AP line.",
         linkedFromCari: "Linked from CARI",
         cariCapitalization: "CARI Capitalization",
+      },
+      detail: {
+        preferredSaleFlowTitle: "Preferred Sale Flow",
+        preferredSaleFlowDescription:
+          "For new sales, the preferred flow is to create a CARI AR draft with a FIXED_ASSET line targeting this asset.",
+        preferredSaleFlowTargetLabel: "Target Asset",
+        preferredSaleFlowStepOne:
+          "The shortcut opens CARI Documents with an AR draft prefilled for this asset.",
+        preferredSaleFlowStepTwo:
+          "Choose Fixed Asset as the line type, target this asset, then enter the sale proceeds account and amount.",
+        preferredSaleFlowStepThree:
+          "Save and post the document; the sale and disposal flow completes in the same posting.",
+        openCariSaleFlow: "Open Sale Invoice Draft",
+        missingCariSalePermissions:
+          "You need cari.doc.read and cari.doc.create permissions to open the preferred sale flow from this page.",
+        legacySaleFallbackTitle: "Legacy Fallback",
+        legacySaleFallbackDescription:
+          "The older multi-step sale staging flow is not removed; it remains only as a fallback for already-staged or legacy cases. For new sales, the preferred flow is the CARI AR FIXED_ASSET document.",
+        createLegacySaleFallbackDraft: "Create Legacy Sale Draft",
+        creatingLegacySaleFallbackDraft: "Creating legacy sale draft...",
+        openLegacySaleFallbackDraft: "Open legacy draft",
+        legacySaleFallbackCreateSuccess:
+          "Legacy sale fallback draft created. Finish the remaining editing and posting steps from the draft document.",
+        legacySaleFallbackCounterpartyId: "Counterparty ID",
+        legacySaleFallbackDocumentDate: "Document Date",
+        legacySaleFallbackAmount: "Sale Amount",
+        legacySaleFallbackHelper:
+          "Use this fallback only for the older staged flow. Enter the counterparty and sale amount before creating the draft.",
+        missingLegacySaleFallbackPermissions:
+          "You need fixed_assets.dispose and cari.doc.create permissions to create a legacy fallback draft.",
+        legacySaleFallbackMissingAsset:
+          "A valid asset is required to create a legacy sale fallback draft.",
+        legacySaleFallbackCounterpartyRequired: "Counterparty ID is required.",
+        legacySaleFallbackDocumentDateRequired:
+          "Document date is required.",
+        legacySaleFallbackAmountRequired:
+          "Sale amount must be a positive number.",
+        legacySaleFallbackCreateFailed:
+          "Failed to create legacy sale fallback draft.",
       },
       disposals: {
         title: "Fixed Asset Disposals",
