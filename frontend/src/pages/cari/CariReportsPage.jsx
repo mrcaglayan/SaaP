@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
 import {
@@ -50,6 +51,14 @@ function normalizeCurrencyCode(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function normalizeDirection(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "AP" || normalized === "AR") {
+    return normalized;
+  }
+  return "";
 }
 
 function resolveReportCurrencyCode(row) {
@@ -128,6 +137,44 @@ const DEFAULT_FILTERS = {
   offset: 0,
 };
 
+function resolveRoleFromDirection(direction) {
+  const normalizedDirection = normalizeDirection(direction);
+  if (normalizedDirection === "AP") {
+    return "VENDOR";
+  }
+  if (normalizedDirection === "AR") {
+    return "CUSTOMER";
+  }
+  return "";
+}
+
+function resolveDefaultTabForDirection(direction) {
+  const normalizedDirection = normalizeDirection(direction);
+  if (normalizedDirection === "AP") {
+    return REPORT_TABS.AP_AGING;
+  }
+  if (normalizedDirection === "AR") {
+    return REPORT_TABS.AR_AGING;
+  }
+  return REPORT_TABS.AR_AGING;
+}
+
+function buildDefaultFilters(direction = "") {
+  const fixedRole = resolveRoleFromDirection(direction);
+  return fixedRole ? { ...DEFAULT_FILTERS, role: fixedRole } : { ...DEFAULT_FILTERS };
+}
+
+function resolveRouteFixedDirection(directionProp, searchParams) {
+  const propDirection = normalizeDirection(directionProp);
+  if (propDirection) {
+    return propDirection;
+  }
+  if (!(searchParams instanceof URLSearchParams)) {
+    return "";
+  }
+  return normalizeDirection(searchParams.get("direction"));
+}
+
 function renderSummaryCards(summary, { txnMoneyMeta, baseMoneyMeta }) {
   if (!summary) {
     return null;
@@ -198,14 +245,26 @@ function renderSettlementRealizedFxSummaryCards(summary, reconcile, { baseMoneyM
   );
 }
 
-export default function CariReportsPage() {
+export default function CariReportsPage({ direction = "" }) {
+  const [searchParams] = useSearchParams();
+  const fixedRouteDirection = useMemo(
+    () => resolveRouteFixedDirection(direction, searchParams),
+    [direction, searchParams]
+  );
+  const fixedRole = useMemo(
+    () => resolveRoleFromDirection(fixedRouteDirection),
+    [fixedRouteDirection]
+  );
+  const hasFixedRouteDirection = Boolean(fixedRouteDirection);
   const { hasPermission } = useAuth();
   const canReadReports = hasPermission("cari.report.read");
   const canReadCards = hasPermission("cari.card.read");
   const canReadOrg = hasPermission("org.tree.read");
 
-  const [activeTab, setActiveTab] = useState(REPORT_TABS.AR_AGING);
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [activeTab, setActiveTab] = useState(() =>
+    resolveDefaultTabForDirection(fixedRouteDirection)
+  );
+  const [filters, setFilters] = useState(() => buildDefaultFilters(fixedRouteDirection));
   const [reportData, setReportData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -308,10 +367,17 @@ export default function CariReportsPage() {
       return;
     }
 
+    const resolvedFilters = fixedRole
+      ? {
+          ...(nextFilters && typeof nextFilters === "object" ? nextFilters : {}),
+          role: fixedRole,
+        }
+      : nextFilters;
+
     setLoading(true);
     setError("");
     try {
-      const queryParams = buildCariReportQuery(nextFilters, nextTab);
+      const queryParams = buildCariReportQuery(resolvedFilters, nextTab);
       let payload = null;
       if (nextTab === REPORT_TABS.AR_AGING) {
         payload = await getCariArAgingReport(queryParams);
@@ -339,9 +405,26 @@ export default function CariReportsPage() {
   }, [canReadCards, canReadOrg]);
 
   useEffect(() => {
+    if (!hasFixedRouteDirection) {
+      return;
+    }
+    const defaultTab = resolveDefaultTabForDirection(fixedRouteDirection);
+    setActiveTab((prev) => (prev === defaultTab ? prev : defaultTab));
+    setFilters((prev) => {
+      if (prev.role === fixedRole) {
+        return prev;
+      }
+      return {
+        ...prev,
+        role: fixedRole,
+      };
+    });
+  }, [fixedRole, fixedRouteDirection, hasFixedRouteDirection]);
+
+  useEffect(() => {
     loadReport(activeTab, filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, canReadReports]);
+  }, [activeTab, canReadReports, fixedRole]);
 
   if (!canReadReports) {
     return (
@@ -489,22 +572,24 @@ export default function CariReportsPage() {
             </>
           ) : (
             <>
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Customer / Vendor
-                <select
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
-                  value={filters.role}
-                  onChange={(event) =>
-                    setFilters((prev) => ({ ...prev, role: event.target.value }))
-                  }
-                >
-                  {ROLE_FILTER_OPTIONS.map((option) => (
-                    <option key={`cari-reports-role-${option || "ALL"}`} value={option}>
-                      {option || "ALL"}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {!hasFixedRouteDirection ? (
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Customer / Vendor
+                  <select
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={filters.role}
+                    onChange={(event) =>
+                      setFilters((prev) => ({ ...prev, role: event.target.value }))
+                    }
+                  >
+                    {ROLE_FILTER_OPTIONS.map((option) => (
+                      <option key={`cari-reports-role-${option || "ALL"}`} value={option}>
+                        {option || "ALL"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
 
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 Status
@@ -538,8 +623,9 @@ export default function CariReportsPage() {
               type="button"
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700"
               onClick={() => {
-                setFilters(DEFAULT_FILTERS);
-                loadReport(activeTab, DEFAULT_FILTERS);
+                const nextFilters = buildDefaultFilters(fixedRouteDirection);
+                setFilters(nextFilters);
+                loadReport(activeTab, nextFilters);
               }}
               disabled={loading}
             >

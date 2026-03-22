@@ -338,7 +338,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 
 **Phase 4: AP/AR Navigation Split**
 - [x] `STEP-SL19` — Sidebar restructure: replace "Cari Islemler" with "Satinalma" and "Satis" sections
-- [ ] `STEP-SL20` — Frontend routing: AP-filtered and AR-filtered views for CARI documents, cards, settlements
+- [x] `STEP-SL20` — Frontend routing: AP-filtered and AR-filtered views for CARI documents, cards, settlements
 - [ ] `STEP-SL21` — Frontend pages: direction-aware wrappers for bills (AP), invoices (AR), vendor cards, customer cards
 - [ ] `STEP-SL22` — i18n: AP/AR-specific labels (Vendor Bills, Sales Invoices, AP Payments, AR Receipts)
 - [ ] `STEP-SL23` — Remove old "Cari Islemler" routes, redirect legacy URLs, and make drillbacks direction-aware

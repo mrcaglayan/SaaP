@@ -72,6 +72,14 @@ function toUpper(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function normalizeDirection(value) {
+  const normalized = toUpper(value);
+  if (normalized === "AR" || normalized === "AP") {
+    return normalized;
+  }
+  return "";
+}
+
 function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -391,11 +399,12 @@ function hasMixedDirections(openItems = []) {
   return directions.size > 1;
 }
 
-function buildApplyDefaultForm() {
+function buildApplyDefaultForm(direction = "") {
+  const defaultDirection = normalizeDirection(direction);
   return {
     legalEntityId: "",
     counterpartyId: "",
-    direction: "",
+    direction: defaultDirection,
     settlementDate: todayIsoDate(),
     currencyCode: "USD",
     incomingAmountTxn: "",
@@ -436,11 +445,12 @@ function buildBankAttachDefaultForm() {
   };
 }
 
-function buildBankApplyDefaultForm() {
+function buildBankApplyDefaultForm(direction = "") {
+  const defaultDirection = normalizeDirection(direction);
   return {
     legalEntityId: "",
     counterpartyId: "",
-    direction: "",
+    direction: defaultDirection,
     settlementDate: todayIsoDate(),
     currencyCode: "USD",
     incomingAmountTxn: "",
@@ -470,13 +480,25 @@ function buildReverseLookupDefaultFilters() {
   };
 }
 
-function buildPreviewDefaultFilters() {
+function buildPreviewDefaultFilters(direction = "") {
+  const defaultDirection = normalizeDirection(direction);
   return {
     legalEntityId: "",
     counterpartyId: "",
     asOfDate: todayIsoDate(),
-    direction: "",
+    direction: defaultDirection,
   };
+}
+
+function resolveRouteFixedDirection(directionProp, searchParams) {
+  const propDirection = normalizeDirection(directionProp);
+  if (propDirection) {
+    return propDirection;
+  }
+  if (!(searchParams instanceof URLSearchParams)) {
+    return "";
+  }
+  return normalizeDirection(searchParams.get("direction"));
 }
 
 const SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS = [
@@ -501,8 +523,13 @@ const LINKED_CASH_SESSION_REQUIRED_ERROR =
 const LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR =
   "Selected cash register requires an OPEN cash session. Open one from Cash Sessions first.";
 
-export default function CariSettlementsPage() {
+export default function CariSettlementsPage({ direction = "" }) {
   const [searchParams] = useSearchParams();
+  const fixedRouteDirection = useMemo(
+    () => resolveRouteFixedDirection(direction, searchParams),
+    [direction, searchParams]
+  );
+  const hasFixedRouteDirection = Boolean(fixedRouteDirection);
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
@@ -593,7 +620,7 @@ export default function CariSettlementsPage() {
 
   const [previewFilters, setPreviewFilters] = usePersistedFilters(
     SETTLEMENT_PREVIEW_FILTERS_STORAGE_SCOPE,
-    () => buildPreviewDefaultFilters()
+    () => buildPreviewDefaultFilters(fixedRouteDirection)
   );
   const [openItems, setOpenItems] = useState([]);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -603,7 +630,7 @@ export default function CariSettlementsPage() {
   const [previewFxError, setPreviewFxError] = useState("");
   const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
 
-  const [applyForm, setApplyForm] = useState(() => buildApplyDefaultForm());
+  const [applyForm, setApplyForm] = useState(() => buildApplyDefaultForm(fixedRouteDirection));
   const [applyCurrencyManuallyEdited, setApplyCurrencyManuallyEdited] = useState(false);
   const [manualAllocationDraft, setManualAllocationDraft] = useState({});
   const [applySubmitting, setApplySubmitting] = useState(false);
@@ -662,7 +689,9 @@ export default function CariSettlementsPage() {
   const [bankAttachMessage, setBankAttachMessage] = useState("");
   const [bankAttachResult, setBankAttachResult] = useState(null);
 
-  const [bankApplyForm, setBankApplyForm] = useState(() => buildBankApplyDefaultForm());
+  const [bankApplyForm, setBankApplyForm] = useState(() =>
+    buildBankApplyDefaultForm(fixedRouteDirection)
+  );
   const [bankApplyCurrencyManuallyEdited, setBankApplyCurrencyManuallyEdited] =
     useState(false);
   const [bankApplySubmitting, setBankApplySubmitting] = useState(false);
@@ -699,6 +728,55 @@ export default function CariSettlementsPage() {
   useWorkingContextDefaults(setReverseForm, SETTLEMENT_REVERSE_CONTEXT_MAPPINGS, [
     reverseForm.reversalDate,
   ]);
+
+  useEffect(() => {
+    if (!hasFixedRouteDirection) {
+      return;
+    }
+    setPreviewFilters((prev) => {
+      if (normalizeDirection(prev?.direction) === fixedRouteDirection) {
+        return prev;
+      }
+      return {
+        ...prev,
+        direction: fixedRouteDirection,
+        counterpartyId: "",
+      };
+    });
+  }, [fixedRouteDirection, hasFixedRouteDirection, setPreviewFilters]);
+
+  useEffect(() => {
+    if (!hasFixedRouteDirection) {
+      return;
+    }
+    setApplyForm((prev) => {
+      if (normalizeDirection(prev?.direction) === fixedRouteDirection) {
+        return prev;
+      }
+      return {
+        ...prev,
+        direction: fixedRouteDirection,
+        counterpartyId: "",
+        offsetAccountId: "",
+      };
+    });
+  }, [fixedRouteDirection, hasFixedRouteDirection]);
+
+  useEffect(() => {
+    if (!hasFixedRouteDirection) {
+      return;
+    }
+    setBankApplyForm((prev) => {
+      if (normalizeDirection(prev?.direction) === fixedRouteDirection) {
+        return prev;
+      }
+      return {
+        ...prev,
+        direction: fixedRouteDirection,
+        counterpartyId: "",
+      };
+    });
+  }, [fixedRouteDirection, hasFixedRouteDirection]);
 
   useEffect(() => {
     if (!deepLinkedSettlementBatchId) {
@@ -1226,7 +1304,7 @@ export default function CariSettlementsPage() {
   const previewLegalEntityId = previewFilters.legalEntityId;
   const previewCounterpartyId = previewFilters.counterpartyId;
   const previewAsOfDate = previewFilters.asOfDate;
-  const previewDirection = previewFilters.direction;
+  const previewDirection = fixedRouteDirection || previewFilters.direction;
   const previewDocumentCurrencies = useMemo(() => {
     const currencies = new Set();
     for (const row of openItems || []) {
@@ -2770,19 +2848,21 @@ export default function CariSettlementsPage() {
               ) : null}
             </div>
           ) : null}
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("Direction", "Yon")}
-            <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={applyForm.direction}
-              onChange={(event) => updateApplyForm("direction", event.target.value)}
-              disabled={!canApply}
-            >
-              <option value="">{l("Select", "Secin")}</option>
-              <option value="AR">AR</option>
-              <option value="AP">AP</option>
-            </select>
-          </label>
+          {!hasFixedRouteDirection ? (
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {l("Direction", "Yon")}
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={applyForm.direction}
+                onChange={(event) => updateApplyForm("direction", event.target.value)}
+                disabled={!canApply}
+              >
+                <option value="">{l("Select", "Secin")}</option>
+                <option value="AR">AR</option>
+                <option value="AP">AP</option>
+              </select>
+            </label>
+          ) : null}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             {l("As-Of Date (Preview)", "Tarih Itibariyla (Onizleme)")}
             <input
@@ -3386,7 +3466,7 @@ export default function CariSettlementsPage() {
               className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
               onClick={() => {
                 setApplyCurrencyManuallyEdited(false);
-                setApplyForm(buildApplyDefaultForm());
+                setApplyForm(buildApplyDefaultForm(fixedRouteDirection));
                 setManualAllocationDraft({});
                 setApplyError("");
                 setApplyMessage("");
@@ -3404,7 +3484,7 @@ export default function CariSettlementsPage() {
                   ...prev,
                   legalEntityId: "",
                   counterpartyId: "",
-                  direction: "",
+                  direction: fixedRouteDirection,
                 }));
               }}
               disabled={applySubmitting}
@@ -4336,21 +4416,23 @@ export default function CariSettlementsPage() {
               ) : null}
             </div>
           ) : null}
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("direction", "yon")}
-            <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={bankApplyForm.direction}
-              onChange={(event) =>
-                setBankApplyForm((prev) => ({ ...prev, direction: event.target.value }))
-              }
-              disabled={!canBankApply || bankApplySubmitting}
-            >
-              <option value="">{l("Select", "Secin")}</option>
-              <option value="AR">AR</option>
-              <option value="AP">AP</option>
-            </select>
-          </label>
+          {!hasFixedRouteDirection ? (
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {l("direction", "yon")}
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={bankApplyForm.direction}
+                onChange={(event) =>
+                  setBankApplyForm((prev) => ({ ...prev, direction: event.target.value }))
+                }
+                disabled={!canBankApply || bankApplySubmitting}
+              >
+                <option value="">{l("Select", "Secin")}</option>
+                <option value="AR">AR</option>
+                <option value="AP">AP</option>
+              </select>
+            </label>
+          ) : null}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             {l("settlementDate", "mahsuplastirmaTarihi")}
             <input

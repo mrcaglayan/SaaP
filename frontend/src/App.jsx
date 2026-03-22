@@ -301,8 +301,20 @@ const implementedRoutes = [
     element: <CariCounterpartyPage pageKey="buyerCreate" />,
   },
   {
+    appPath: "/app/musteri-kartlari/olustur",
+    childPath: "musteri-kartlari/olustur",
+    permissionPath: "/app/alici-kart-listesi",
+    element: <CariCounterpartyPage pageKey="buyerCreate" />,
+  },
+  {
     appPath: "/app/alici-kart-listesi",
     childPath: "alici-kart-listesi",
+    element: <CariCounterpartyPage pageKey="buyerList" />,
+  },
+  {
+    appPath: "/app/musteri-kartlari",
+    childPath: "musteri-kartlari",
+    permissionPath: "/app/alici-kart-listesi",
     element: <CariCounterpartyPage pageKey="buyerList" />,
   },
   {
@@ -311,8 +323,20 @@ const implementedRoutes = [
     element: <CariCounterpartyPage pageKey="vendorCreate" />,
   },
   {
+    appPath: "/app/tedarikci-kartlari/olustur",
+    childPath: "tedarikci-kartlari/olustur",
+    permissionPath: "/app/satici-kart-listesi",
+    element: <CariCounterpartyPage pageKey="vendorCreate" />,
+  },
+  {
     appPath: "/app/satici-kart-listesi",
     childPath: "satici-kart-listesi",
+    element: <CariCounterpartyPage pageKey="vendorList" />,
+  },
+  {
+    appPath: "/app/tedarikci-kartlari",
+    childPath: "tedarikci-kartlari",
+    permissionPath: "/app/satici-kart-listesi",
     element: <CariCounterpartyPage pageKey="vendorList" />,
   },
   {
@@ -321,9 +345,33 @@ const implementedRoutes = [
     element: <CariReportsPage />,
   },
   {
+    appPath: "/app/tedarikci-raporlari",
+    childPath: "tedarikci-raporlari",
+    permissionPath: "/app/cari-raporlari",
+    element: <CariReportsPage direction="AP" />,
+  },
+  {
+    appPath: "/app/musteri-raporlari",
+    childPath: "musteri-raporlari",
+    permissionPath: "/app/cari-raporlari",
+    element: <CariReportsPage direction="AR" />,
+  },
+  {
     appPath: "/app/cari-belgeler",
     childPath: "cari-belgeler",
     element: <CariDocumentsPage />,
+  },
+  {
+    appPath: "/app/alis-faturalari",
+    childPath: "alis-faturalari",
+    permissionPath: "/app/cari-belgeler",
+    element: <CariDocumentsPage direction="AP" />,
+  },
+  {
+    appPath: "/app/satis-faturalari",
+    childPath: "satis-faturalari",
+    permissionPath: "/app/cari-belgeler",
+    element: <CariDocumentsPage direction="AR" />,
   },
   {
     appPath: "/app/cari-settlements",
@@ -331,8 +379,26 @@ const implementedRoutes = [
     element: <CariSettlementsPage />,
   },
   {
+    appPath: "/app/tedarikci-odemeler",
+    childPath: "tedarikci-odemeler",
+    permissionPath: "/app/cari-settlements",
+    element: <CariSettlementsPage direction="AP" />,
+  },
+  {
+    appPath: "/app/musteri-tahsilatlar",
+    childPath: "musteri-tahsilatlar",
+    permissionPath: "/app/cari-settlements",
+    element: <CariSettlementsPage direction="AR" />,
+  },
+  {
     appPath: "/app/cari-audit",
     childPath: "cari-audit",
+    element: <CariAuditPage />,
+  },
+  {
+    appPath: "/app/ayarlar/cari-denetim",
+    childPath: "ayarlar/cari-denetim",
+    permissionPath: "/app/cari-audit",
     element: <CariAuditPage />,
   },
   {

@@ -2953,6 +2953,17 @@ function normalizeDirection(value) {
   return "";
 }
 
+function resolveRouteFixedDirection(directionProp, searchParams) {
+  const propDirection = normalizeDirection(directionProp);
+  if (propDirection) {
+    return propDirection;
+  }
+  if (!(searchParams instanceof URLSearchParams)) {
+    return "";
+  }
+  return normalizeDirection(searchParams.get("direction"));
+}
+
 function resolveOffsetAccountTypeByDirection(direction) {
   const normalized = normalizeDirection(direction);
   if (normalized === "AR") {
@@ -3218,8 +3229,13 @@ function formatReadinessReason(reason, translate = (en) => en) {
   }
 }
 
-export default function CariDocumentsPage() {
+export default function CariDocumentsPage({ direction = "" }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const fixedRouteDirection = useMemo(
+    () => resolveRouteFixedDirection(direction, searchParams),
+    [direction, searchParams]
+  );
+  const hasFixedRouteDirection = Boolean(fixedRouteDirection);
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
@@ -3504,7 +3520,12 @@ export default function CariDocumentsPage() {
   const [filterCounterpartyOptions, setFilterCounterpartyOptions] = useState([]);
   const [filterCounterpartyLoading, setFilterCounterpartyLoading] = useState(false);
 
-  const [createForm, setCreateForm] = useState(() => createInitialDraftForm());
+  const [createForm, setCreateForm] = useState(() => {
+    const initialForm = createInitialDraftForm();
+    return fixedRouteDirection
+      ? { ...initialForm, direction: fixedRouteDirection }
+      : initialForm;
+  });
   const [createContextDefaultsSuspended, setCreateContextDefaultsSuspended] = useState(false);
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -5910,10 +5931,16 @@ export default function CariDocumentsPage() {
       setListError(l("Missing permission: cari.doc.read", "Eksik yetki: cari.doc.read"));
       return;
     }
+    const resolvedFilters = hasFixedRouteDirection
+      ? {
+          ...(nextFilters && typeof nextFilters === "object" ? nextFilters : {}),
+          direction: fixedRouteDirection,
+        }
+      : nextFilters;
     setListLoading(true);
     setListError("");
     try {
-      const response = await listCariDocuments(buildDocumentListQuery(nextFilters));
+      const response = await listCariDocuments(buildDocumentListQuery(resolvedFilters));
       setRows(Array.isArray(response?.rows) ? response.rows : []);
       setTotalRows(Number(response?.total || 0));
     } catch (error) {
@@ -6023,6 +6050,36 @@ export default function CariDocumentsPage() {
     searchParams,
     selectedDocumentId,
     setSearchParams,
+  ]);
+
+  useEffect(() => {
+    if (!hasFixedRouteDirection) {
+      return;
+    }
+    setFilters((previous) => {
+      if (normalizeDirection(previous?.direction) === fixedRouteDirection) {
+        return previous;
+      }
+      return {
+        ...previous,
+        direction: fixedRouteDirection,
+        counterpartyId: "",
+      };
+    });
+  }, [fixedRouteDirection, hasFixedRouteDirection, setFilters]);
+
+  useEffect(() => {
+    if (
+      !hasFixedRouteDirection ||
+      normalizeDirection(createForm.direction) === fixedRouteDirection
+    ) {
+      return;
+    }
+    handleCreateDirectionChange(fixedRouteDirection);
+  }, [
+    createForm.direction,
+    fixedRouteDirection,
+    hasFixedRouteDirection,
   ]);
 
   useEffect(() => {
@@ -9130,7 +9187,23 @@ export default function CariDocumentsPage() {
               </p>
             ) : null}
           </div>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Direction", "Yon")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.direction} onChange={(event) => handleFilterDirectionChange(event.target.value)}><option value="">{l("ALL", "TUMU")}</option>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`filter-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
+          {!hasFixedRouteDirection ? (
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {l("Direction", "Yon")}
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={filters.direction}
+                onChange={(event) => handleFilterDirectionChange(event.target.value)}
+              >
+                <option value="">{l("ALL", "TUMU")}</option>
+                {DOCUMENT_DIRECTIONS.map((entryDirection) => (
+                  <option key={`filter-direction-${entryDirection}`} value={entryDirection}>
+                    {entryDirection}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {canReadOrgTree ? (
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
               <label className="block">
@@ -9525,7 +9598,23 @@ export default function CariDocumentsPage() {
                 />
               </label>
             )}
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Direction", "Yon")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.direction} onChange={(event) => handleCreateDirectionChange(event.target.value)} required>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`create-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
+            {!hasFixedRouteDirection ? (
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {l("Direction", "Yon")}
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={createForm.direction}
+                  onChange={(event) => handleCreateDirectionChange(event.target.value)}
+                  required
+                >
+                  {DOCUMENT_DIRECTIONS.map((entryDirection) => (
+                    <option key={`create-direction-${entryDirection}`} value={entryDirection}>
+                      {entryDirection}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {canReadCards ? (
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <label className="block">

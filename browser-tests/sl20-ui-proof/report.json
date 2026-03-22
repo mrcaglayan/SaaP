@@ -1,0 +1,50 @@
+{
+  "loginEmail": "test@example.com",
+  "results": [
+    {
+      "step": "alis-faturalari",
+      "status": "ok"
+    },
+    {
+      "step": "satis-faturalari",
+      "status": "ok"
+    },
+    {
+      "step": "tedarikci-kartlari",
+      "status": "ok"
+    },
+    {
+      "step": "musteri-kartlari-olustur",
+      "status": "ok"
+    },
+    {
+      "step": "tedarikci-odemeler",
+      "status": "ok"
+    },
+    {
+      "step": "tedarikci-raporlari",
+      "status": "ok"
+    },
+    {
+      "step": "musteri-raporlari",
+      "status": "ok"
+    },
+    {
+      "step": "ayarlar-cari-denetim",
+      "status": "ok"
+    },
+    {
+      "step": "cari-belgeler-legacy",
+      "status": "ok"
+    },
+    {
+      "step": "cari-audit-legacy",
+      "status": "ok"
+    }
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "pageErrors": []
+}
