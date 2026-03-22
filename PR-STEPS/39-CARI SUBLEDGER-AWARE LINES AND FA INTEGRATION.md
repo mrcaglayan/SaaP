@@ -324,7 +324,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL08` — Backend FA service: adapt activation for assets already cost-posted via CARI
 
 **Phase 2: Subledger-Aware Lines (Frontend)**
-- [ ] `STEP-SL10` — Frontend CARI form: add subledger_type selector to line entry
+- [x] `STEP-SL10` — Frontend CARI form: add subledger_type selector to line entry
 - [ ] `STEP-SL11` — Frontend CARI form: FIXED_ASSET conditional fields (auto-create defaults, link-existing picker, preview)
 - [ ] `STEP-SL12` — Frontend CARI form: validation rules per subledger_type
 - [ ] `STEP-SL13` — Frontend FA acquisitions page: show "linked from CARI" indicator, simplify capitalize section
@@ -775,6 +775,8 @@ Add a subledger type dropdown to each line in the CARI document entry form.
 ### Explicit non-goals
 - Do not implement conditional field rendering yet (SL11)
 - Do not add validation (SL12)
+
+Repo-specific i18n note: SL10 may use the existing inline `l(EN, TR)` pattern already used throughout `CariDocumentsPage` for the new selector label/options. Moving these labels into `frontend/src/i18n/messages.js` is optional at this step and is not required for SL10 completion.
 
 ### Definition of done
 - Subledger type dropdown appears on each line

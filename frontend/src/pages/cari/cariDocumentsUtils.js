@@ -28,6 +28,12 @@ export const DOCUMENT_LINE_STOCK_IMPACT_MODES = [
   "RECEIPT_PENDING",
   "ISSUE_PENDING",
 ];
+export const DOCUMENT_LINE_SUBLEDGER_TYPES = ["NONE", "STOCK", "FIXED_ASSET"];
+export const DOCUMENT_LINE_FIXED_ASSET_MODES = [
+  "AUTO_CREATE",
+  "LINK_EXISTING",
+  "IMPROVE_EXISTING",
+];
 const DOCUMENT_LINE_STOCK_AFFECTING_MODES = new Set(
   DOCUMENT_LINE_STOCK_IMPACT_MODES.filter((value) => value !== "NONE")
 );
@@ -63,6 +69,21 @@ function isStockAffectingLineMode(value) {
   return DOCUMENT_LINE_STOCK_AFFECTING_MODES.has(
     normalizeEnum(value, DOCUMENT_LINE_STOCK_IMPACT_MODES, "NONE")
   );
+}
+
+function inferDocumentLineSubledgerType(seed, stockImpactMode) {
+  const explicitSubledgerType = normalizeEnum(
+    seed?.subledgerType ?? seed?.subledger_type ?? "",
+    DOCUMENT_LINE_SUBLEDGER_TYPES,
+    ""
+  );
+  if (explicitSubledgerType) {
+    return explicitSubledgerType;
+  }
+  if (toPositiveInt(seed?.targetFixedAssetId ?? seed?.target_fixed_asset_id)) {
+    return "FIXED_ASSET";
+  }
+  return isStockAffectingLineMode(stockImpactMode) ? "STOCK" : "NONE";
 }
 
 function mapDocumentLineTaxRow(row, fallbackIndex = 0) {
@@ -141,6 +162,12 @@ export function computeDocumentLineAmounts(line) {
 
 export function createDocumentLineDraft(seed = {}) {
   const amounts = computeDocumentLineAmounts(seed);
+  const stockImpactMode = normalizeEnum(
+    seed?.stockImpactMode ?? seed?.stock_impact_mode ?? "NONE",
+    DOCUMENT_LINE_STOCK_IMPACT_MODES,
+    "NONE"
+  );
+  const subledgerType = inferDocumentLineSubledgerType(seed, stockImpactMode);
   return {
     rowId: String(seed?.rowId || createDocumentLineRowId()),
     lineKind: normalizeEnum(
@@ -173,11 +200,48 @@ export function createDocumentLineDraft(seed = {}) {
     )
       .trim()
       .toUpperCase(),
-    stockImpactMode: normalizeEnum(
-      seed?.stockImpactMode ?? seed?.stock_impact_mode ?? "NONE",
-      DOCUMENT_LINE_STOCK_IMPACT_MODES,
-      "NONE"
+    stockImpactMode,
+    subledgerType,
+    fixedAssetMode: normalizeEnum(
+      seed?.fixedAssetMode ?? seed?.fixed_asset_mode ?? "",
+      DOCUMENT_LINE_FIXED_ASSET_MODES,
+      ""
     ),
+    targetFixedAssetId: String(
+      seed?.targetFixedAssetId ?? seed?.target_fixed_asset_id ?? ""
+    ).trim(),
+    fixedAssetCategoryId: String(
+      seed?.fixedAssetCategoryId ?? seed?.fixed_asset_category_id ?? ""
+    ).trim(),
+    fixedAssetOwnerOperatingUnitId: String(
+      seed?.fixedAssetOwnerOperatingUnitId ??
+        seed?.fixed_asset_owner_operating_unit_id ??
+        ""
+    ).trim(),
+    fixedAssetLocationOperatingUnitId: String(
+      seed?.fixedAssetLocationOperatingUnitId ??
+        seed?.fixed_asset_location_operating_unit_id ??
+        ""
+    ).trim(),
+    fixedAssetNameOverride: String(
+      seed?.fixedAssetNameOverride ?? seed?.fixed_asset_name_override ?? ""
+    ).trim(),
+    fixedAssetSerialNo: String(
+      seed?.fixedAssetSerialNo ?? seed?.fixed_asset_serial_no ?? ""
+    ).trim(),
+    fixedAssetTag: String(seed?.fixedAssetTag ?? seed?.fixed_asset_tag ?? "").trim(),
+    revisedUsefulLifeMonths: String(
+      seed?.revisedUsefulLifeMonths ??
+        seed?.improvementRevisedUsefulLifeMonths ??
+        seed?.improvement_revised_useful_life_months ??
+        ""
+    ).trim(),
+    lifeExtensionMonths: String(
+      seed?.lifeExtensionMonths ??
+        seed?.improvementLifeExtensionMonths ??
+        seed?.improvement_life_extension_months ??
+        ""
+    ).trim(),
     taxes: amounts.taxes,
     previewStatus: String(seed?.previewStatus || "").trim().toUpperCase(),
     previewError: String(seed?.previewError || "").trim(),
@@ -377,6 +441,8 @@ export function buildDocumentMutationPayload(form, options = {}) {
           lineNo: index + 1,
           lineKind: normalizedLine.lineKind,
           description: normalizedLine.description || undefined,
+          subledgerType: normalizedLine.subledgerType || undefined,
+          fixedAssetMode: normalizedLine.fixedAssetMode || undefined,
           itemCardId: toPositiveInt(normalizedLine.itemCardId) || undefined,
           quantity: toOptionalNumber(normalizedLine.quantity) ?? 1,
           unitPriceTxn: toOptionalNumber(normalizedLine.unitPriceTxn),
@@ -385,6 +451,21 @@ export function buildDocumentMutationPayload(form, options = {}) {
           lineGrossAmountTxn: toOptionalNumber(normalizedLine.lineGrossAmountTxn) ?? 0,
           postingAccountId: toPositiveInt(normalizedLine.postingAccountId) || undefined,
           warehouseId: toPositiveInt(normalizedLine.warehouseId) || undefined,
+          targetFixedAssetId:
+            toPositiveInt(normalizedLine.targetFixedAssetId) || undefined,
+          fixedAssetCategoryId:
+            toPositiveInt(normalizedLine.fixedAssetCategoryId) || undefined,
+          fixedAssetOwnerOperatingUnitId:
+            toPositiveInt(normalizedLine.fixedAssetOwnerOperatingUnitId) || undefined,
+          fixedAssetLocationOperatingUnitId:
+            toPositiveInt(normalizedLine.fixedAssetLocationOperatingUnitId) || undefined,
+          fixedAssetNameOverride: normalizedLine.fixedAssetNameOverride || undefined,
+          fixedAssetSerialNo: normalizedLine.fixedAssetSerialNo || undefined,
+          fixedAssetTag: normalizedLine.fixedAssetTag || undefined,
+          revisedUsefulLifeMonths:
+            toPositiveInt(normalizedLine.revisedUsefulLifeMonths) || undefined,
+          lifeExtensionMonths:
+            toPositiveInt(normalizedLine.lifeExtensionMonths) || undefined,
           taxCategoryCode: normalizedLine.taxCategoryCode || undefined,
           stockImpactMode: normalizedLine.stockImpactMode || undefined,
         };

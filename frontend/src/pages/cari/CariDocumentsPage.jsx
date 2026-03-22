@@ -63,6 +63,7 @@ import {
   buildDocumentMutationPayload,
   createDocumentLineDraft,
   DOCUMENT_LINE_KINDS,
+  DOCUMENT_LINE_SUBLEDGER_TYPES,
   DOCUMENT_DIRECTIONS,
   getDocumentLineTotals,
   DOCUMENT_STATUSES,
@@ -622,6 +623,72 @@ function resolveLineDefaultsFromItemCard(itemCard, direction) {
   };
 }
 
+function getDefaultStockImpactModeForDirection(direction) {
+  const normalizedDirection = normalizeDirection(direction);
+  if (normalizedDirection === "AP") {
+    return "RECEIPT_PENDING";
+  }
+  if (normalizedDirection === "AR") {
+    return "ISSUE_PENDING";
+  }
+  return "NONE";
+}
+
+function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
+  const currentLine = createDocumentLineDraft(line);
+  const normalizedNextSubledgerType = DOCUMENT_LINE_SUBLEDGER_TYPES.includes(
+    String(nextSubledgerType || "").trim().toUpperCase()
+  )
+    ? String(nextSubledgerType || "").trim().toUpperCase()
+    : "NONE";
+  const fixedAssetResetPatch = {
+    targetFixedAssetId: "",
+    fixedAssetMode: "",
+    fixedAssetCategoryId: "",
+    fixedAssetOwnerOperatingUnitId: "",
+    fixedAssetLocationOperatingUnitId: "",
+    fixedAssetNameOverride: "",
+    fixedAssetSerialNo: "",
+    fixedAssetTag: "",
+    revisedUsefulLifeMonths: "",
+    lifeExtensionMonths: "",
+  };
+  if (normalizedNextSubledgerType === "FIXED_ASSET") {
+    return {
+      ...fixedAssetResetPatch,
+      subledgerType: "FIXED_ASSET",
+      itemCardId: "",
+      warehouseId: "",
+      warehouseCode: "",
+      warehouseName: "",
+      stockImpactMode: "NONE",
+      fixedAssetMode: normalizeDirection(direction) === "AP" ? "AUTO_CREATE" : "",
+    };
+  }
+  if (normalizedNextSubledgerType === "STOCK") {
+    return {
+      ...fixedAssetResetPatch,
+      subledgerType: "STOCK",
+      ...(currentLine.subledgerType === "FIXED_ASSET"
+        ? {
+            warehouseId: "",
+            warehouseCode: "",
+            warehouseName: "",
+          }
+        : {}),
+      stockImpactMode: getDefaultStockImpactModeForDirection(direction),
+    };
+  }
+  return {
+    ...fixedAssetResetPatch,
+    subledgerType: "NONE",
+    warehouseId: "",
+    warehouseCode: "",
+    warehouseName: "",
+    stockImpactMode: "NONE",
+  };
+}
+
 function resetDocumentLineTaxPreview(seed = {}) {
   return createDocumentLineDraft({
     ...seed,
@@ -1008,6 +1075,7 @@ function DocumentLineWorkbench({
   onMoveLine,
   onPatchLine,
   onPatchTaxSensitiveLine,
+  onChangeSubledgerType,
   onSelectItemCard,
   onSelectWarehouse,
   onPreviewAll,
@@ -1166,6 +1234,30 @@ function DocumentLineWorkbench({
               </div>
 
               <div className="mt-3 grid gap-3 md:grid-cols-4">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {l("Line Type", "Satir Tipi")}
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={line.subledgerType}
+                    onChange={(event) =>
+                      onChangeSubledgerType(line.rowId, event.target.value)
+                    }
+                    disabled={saving}
+                  >
+                    {DOCUMENT_LINE_SUBLEDGER_TYPES.map((subledgerType) => (
+                      <option
+                        key={`line-subledger-${line.rowId}-${subledgerType}`}
+                        value={subledgerType}
+                      >
+                        {subledgerType === "NONE"
+                          ? l("General", "Genel")
+                          : subledgerType === "STOCK"
+                            ? l("Stock", "Stok")
+                            : l("Fixed Asset", "Duran Varlik")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
                   {l("Description", "Aciklama")}
                   <input
@@ -3031,9 +3123,33 @@ export default function CariDocumentsPage() {
     patchDraftFormLine(setCreateForm, rowId, patch, { resetTaxPreview: true });
   }
 
+  function changeCreateDocumentLineSubledgerType(rowId, nextSubledgerType) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    const currentLine = normalizeDocumentFormLines(createForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
+    if (!currentLine) {
+      return;
+    }
+    patchDraftFormLine(
+      setCreateForm,
+      rowId,
+      buildSubledgerTypeTransitionPatch(
+        currentLine,
+        nextSubledgerType,
+        createForm.direction
+      ),
+      { resetTaxPreview: true }
+    );
+  }
+
   function selectCreateDocumentLineItemCard(rowId, itemCardId) {
     setCreateLinePreviewError("");
     setCreateLinePreviewMessage("");
+    const currentLine = normalizeDocumentFormLines(createForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
     const selectedItemCard = createItemCardRowsById.get(Number(itemCardId || 0)) || null;
     if (!selectedItemCard) {
       patchDraftFormLine(setCreateForm, rowId, {
@@ -3048,17 +3164,30 @@ export default function CariDocumentsPage() {
       selectedItemCard,
       createForm.direction
     );
+    if (createDocumentLineDraft(currentLine).subledgerType === "FIXED_ASSET") {
+      return;
+    }
+    const nextSubledgerType =
+      createDocumentLineDraft(currentLine).subledgerType === "FIXED_ASSET"
+        ? "FIXED_ASSET"
+        : lineDefaults.stockImpactMode === "NONE"
+          ? "NONE"
+          : "STOCK";
     patchDraftFormLine(
       setCreateForm,
       rowId,
       lineDefaults.stockImpactMode === "NONE"
         ? {
             ...lineDefaults,
+            subledgerType: nextSubledgerType,
             warehouseId: "",
             warehouseCode: "",
             warehouseName: "",
           }
-        : lineDefaults,
+        : {
+            ...lineDefaults,
+            subledgerType: nextSubledgerType,
+          },
       { resetTaxPreview: true }
     );
   }
@@ -3113,9 +3242,29 @@ export default function CariDocumentsPage() {
     patchDraftFormLine(setEditForm, rowId, patch, { resetTaxPreview: true });
   }
 
+  function changeEditDocumentLineSubledgerType(rowId, nextSubledgerType) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    const currentLine = normalizeDocumentFormLines(editForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
+    if (!currentLine) {
+      return;
+    }
+    patchDraftFormLine(
+      setEditForm,
+      rowId,
+      buildSubledgerTypeTransitionPatch(currentLine, nextSubledgerType, editForm.direction),
+      { resetTaxPreview: true }
+    );
+  }
+
   function selectEditDocumentLineItemCard(rowId, itemCardId) {
     setEditLinePreviewError("");
     setEditLinePreviewMessage("");
+    const currentLine = normalizeDocumentFormLines(editForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
     const selectedItemCard = editItemCardRowsById.get(Number(itemCardId || 0)) || null;
     if (!selectedItemCard) {
       patchDraftFormLine(setEditForm, rowId, {
@@ -3130,17 +3279,30 @@ export default function CariDocumentsPage() {
       selectedItemCard,
       editForm.direction
     );
+    if (createDocumentLineDraft(currentLine).subledgerType === "FIXED_ASSET") {
+      return;
+    }
+    const nextSubledgerType =
+      createDocumentLineDraft(currentLine).subledgerType === "FIXED_ASSET"
+        ? "FIXED_ASSET"
+        : lineDefaults.stockImpactMode === "NONE"
+          ? "NONE"
+          : "STOCK";
     patchDraftFormLine(
       setEditForm,
       rowId,
       lineDefaults.stockImpactMode === "NONE"
         ? {
             ...lineDefaults,
+            subledgerType: nextSubledgerType,
             warehouseId: "",
             warehouseCode: "",
             warehouseName: "",
           }
-        : lineDefaults,
+        : {
+            ...lineDefaults,
+            subledgerType: nextSubledgerType,
+          },
       { resetTaxPreview: true }
     );
   }
@@ -6883,6 +7045,7 @@ export default function CariDocumentsPage() {
               onMoveLine={moveCreateDocumentLine}
               onPatchLine={patchCreateDocumentLine}
               onPatchTaxSensitiveLine={patchCreateDocumentLineWithTaxReset}
+              onChangeSubledgerType={changeCreateDocumentLineSubledgerType}
               onSelectItemCard={selectCreateDocumentLineItemCard}
               onSelectWarehouse={selectCreateDocumentLineWarehouse}
               onPreviewAll={() => handleCreateDocumentLineTaxPreview()}
@@ -7984,6 +8147,7 @@ export default function CariDocumentsPage() {
                     onMoveLine={moveEditDocumentLine}
                     onPatchLine={patchEditDocumentLine}
                     onPatchTaxSensitiveLine={patchEditDocumentLineWithTaxReset}
+                    onChangeSubledgerType={changeEditDocumentLineSubledgerType}
                     onSelectItemCard={selectEditDocumentLineItemCard}
                     onSelectWarehouse={selectEditDocumentLineWarehouse}
                     onPreviewAll={() => handleEditDocumentLineTaxPreview()}
