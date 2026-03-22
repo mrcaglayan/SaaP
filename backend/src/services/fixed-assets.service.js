@@ -2546,6 +2546,40 @@ async function assertSaleReversalCariCompatibilityTx(tx, target) {
   }
 }
 
+async function assertNotSharedCariJournalReversalTargetTx(tx, target) {
+  if (
+    target.sourceRefType !== "CARI_DOCUMENT"
+    || !target.sourceRefId
+    || !target.sourceRefLineId
+    || !target.journalEntryId
+  ) {
+    return;
+  }
+
+  const result = await tx.query(
+    `SELECT posted_journal_entry_id
+       FROM cari_documents
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [target.tenantId, target.sourceRefId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return;
+  }
+
+  if (parsePositiveInt(row.posted_journal_entry_id) !== target.journalEntryId) {
+    return;
+  }
+
+  throw badRequest(
+    `Fixed-asset transaction ${target.id} is linked to a shared posted CARI journal and must ` +
+    "be reversed through CARI document reversal, not the standalone fixed-assets reversal flow"
+  );
+}
+
 async function loadOwnershipTransferDetailForReversalTx(tx, tenantId, transactionId) {
   const result = await tx.query(
     `SELECT from_owner_operating_unit_id,
@@ -4014,6 +4048,7 @@ async function resolveCurrentAssetNbv(tenantId, assetId, queryFn) {
         AND asset_id = ?
         AND status = 'POSTED'
         AND transaction_type <> 'REVERSAL'
+        AND (nbv_amount_txn IS NOT NULL OR nbv_amount_base IS NOT NULL)
         AND reversal_transaction_id IS NULL
         AND NOT EXISTS (
           SELECT 1
@@ -5017,7 +5052,7 @@ function buildDisposalScheduleRows(asset, periods, lifecycleHistory, terminalDis
   return rows;
 }
 
-async function resolveDisposalCutoffEconomics({
+export async function resolveDisposalCutoffEconomics({
   tenantId,
   asset,
   calendarId,
@@ -5387,7 +5422,7 @@ export async function writeoffAsset(input) {
 // Sale staged draft/link/update (FA39)
 // ═══════════════════════════════════════════════════════════════════
 
-const SALE_STAGING_ELIGIBLE_STATUSES = new Set([
+export const SALE_STAGING_ELIGIBLE_STATUSES = new Set([
   "ACTIVE",
   "SUSPENDED",
   "FULLY_DEPRECIATED",
@@ -6328,6 +6363,7 @@ export async function reverseFixedAssetTransaction(input) {
     await assertFixedAssetTransactionNotAlreadyReversedTx(tx, target);
     await assertNoLaterFixedAssetLifecycleEventTx(tx, target);
     await assertSaleReversalCariCompatibilityTx(tx, target);
+    await assertNotSharedCariJournalReversalTargetTx(tx, target);
 
     const reversalNote = note || `Reversal of ${target.transactionType} transaction ${target.id}`;
 

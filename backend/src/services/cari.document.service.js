@@ -29,6 +29,7 @@ import {
   normalizeStockImpactMode,
 } from "./ownership.context.policy.service.js";
 import { deriveStockLinkReadState } from "./stock.link.read-state.service.js";
+import { FIXED_ASSET_TRANSACTION } from "../utils/source-ref-types.js";
 
 const DRAFT_STATUS = "DRAFT";
 const CANCELLED_STATUS = "CANCELLED";
@@ -40,6 +41,7 @@ const DRAFT_SEQUENCE_NAMESPACE = "DRAFT";
 const FX_RATE_TYPE_SPOT = "SPOT";
 const AMOUNT_PRECISION_SCALE = 6;
 const AMOUNT_BALANCE_EPSILON = 0.000001;
+const FIXED_ASSET_DISPOSAL_EPSILON = 0.0001;
 const CARI_SUBLEDGER_REFERENCE_PREFIX = "CARI_DOC:";
 const CARI_SUBLEDGER_REVERSE_REFERENCE_PREFIX = "CARI_DOC_REV:";
 const CARI_POSTING_PURPOSES = Object.freeze({
@@ -788,6 +790,432 @@ async function fetchFixedAssetCategoryRow({
   return result.rows?.[0] || null;
 }
 
+async function fetchFixedAssetCategoryPostingDefaultsRow({
+  tenantId,
+  legalEntityId,
+  categoryId,
+  runQuery = query,
+}) {
+  const normalizedCategoryId = parsePositiveInt(categoryId);
+  if (!normalizedCategoryId) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT
+        id,
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        status,
+        default_depreciation_profile_id,
+        default_useful_life_months,
+        default_salvage_rule_type,
+        default_salvage_percent,
+        default_salvage_amount_base,
+        default_asset_account_id,
+        default_accum_depr_account_id,
+        default_depr_expense_account_id,
+        default_disposal_gain_account_id,
+        default_disposal_loss_account_id
+     FROM fixed_asset_categories
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedCategoryId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+  if (normalizeUpperText(row.status) !== "ACTIVE") {
+    throw badRequest(
+      `fixedAssetCategoryId=${normalizedCategoryId} must reference an ACTIVE fixed asset category`
+    );
+  }
+  return row;
+}
+
+async function fetchFixedAssetDepreciationProfileSnapshotRow({
+  tenantId,
+  legalEntityId,
+  profileId,
+  runQuery = query,
+}) {
+  const normalizedProfileId = parsePositiveInt(profileId);
+  if (!normalizedProfileId) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT
+        id,
+        tenant_id,
+        legal_entity_id,
+        method,
+        declining_balance_rate_percent,
+        switch_to_straight_line,
+        status
+     FROM fixed_asset_depreciation_profiles
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedProfileId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    throw badRequest(
+      `Depreciation profile (id=${normalizedProfileId}) not found for legalEntityId=${legalEntityId}`
+    );
+  }
+  return {
+    id: normalizedProfileId,
+    status: normalizeUpperText(row.status),
+    depreciationMethod: normalizeUpperText(row.method) || null,
+    decliningBalanceRatePercent:
+      row.declining_balance_rate_percent != null
+        ? Number(row.declining_balance_rate_percent)
+        : null,
+    switchToStraightLine:
+      row.switch_to_straight_line === 1 ||
+      row.switch_to_straight_line === true ||
+      row.switch_to_straight_line === "1",
+  };
+}
+
+async function fetchFixedAssetRowForPostingLock({
+  tx,
+  tenantId,
+  assetId,
+}) {
+  const normalizedAssetId = parsePositiveInt(assetId);
+  if (!normalizedAssetId) {
+    return null;
+  }
+
+  const result = await tx.query(
+    `SELECT
+        id,
+        tenant_id,
+        legal_entity_id,
+        category_id,
+        status,
+        asset_no,
+        name
+     FROM fixed_assets
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, normalizedAssetId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function fetchFixedAssetDisposalRowForPostingLock({
+  tx,
+  tenantId,
+  assetId,
+}) {
+  const normalizedAssetId = parsePositiveInt(assetId);
+  if (!normalizedAssetId) {
+    return null;
+  }
+
+  const result = await tx.query(
+    `SELECT
+        id,
+        tenant_id,
+        legal_entity_id,
+        category_id,
+        status,
+        asset_no,
+        name,
+        acquisition_date,
+        capitalization_date,
+        in_service_date,
+        owner_operating_unit_id,
+        currency_code,
+        original_cost_txn,
+        original_cost_base,
+        salvage_value_txn,
+        salvage_value_base,
+        depreciation_method,
+        declining_balance_rate_percent,
+        switch_to_straight_line,
+        remaining_useful_life_months,
+        legacy_accum_depr_txn,
+        legacy_accum_depr_base,
+        legacy_nbv_txn,
+        legacy_nbv_base,
+        last_depreciation_period,
+        asset_account_id,
+        accum_depr_account_id,
+        depr_expense_account_id,
+        disposal_gain_account_id,
+        disposal_loss_account_id,
+        pending_sale_cari_document_id,
+        pending_sale_cari_document_line_id
+     FROM fixed_assets
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, normalizedAssetId]
+  );
+  return result.rows?.[0] || null;
+}
+
+function roundFixedAssetPostingAmount(value) {
+  return Math.round(Number(value || 0) * 10000) / 10000;
+}
+
+function roundFixedAssetDisposalAmount(value) {
+  return Math.round(Number(value || 0) * 10000) / 10000;
+}
+
+function formatAutoCreatedFixedAssetNo(sequenceNo) {
+  return `FA-${String(sequenceNo).padStart(6, "0")}`;
+}
+
+function computeFixedAssetDraftSalvageValues({
+  salvageRuleType,
+  salvagePercent,
+  salvageAmountBaseRule,
+  originalCostTxn,
+  originalCostBase,
+}) {
+  const normalizedRuleType = normalizeUpperText(salvageRuleType || "NONE");
+  if (normalizedRuleType === "PERCENT_OF_COST" && salvagePercent != null) {
+    const pct = Number(salvagePercent) / 100;
+    return {
+      salvageValueTxn: Math.round(Number(originalCostTxn) * pct * 10000) / 10000,
+      salvageValueBase: Math.round(Number(originalCostBase) * pct * 10000) / 10000,
+    };
+  }
+  if (normalizedRuleType === "FIXED_BASE_AMOUNT" && salvageAmountBaseRule != null) {
+    return {
+      salvageValueTxn: Number(salvageAmountBaseRule),
+      salvageValueBase: Number(salvageAmountBaseRule),
+    };
+  }
+  return {
+    salvageValueTxn: 0,
+    salvageValueBase: 0,
+  };
+}
+
+function allocateFixedAssetAutoCreateUnitAmounts({
+  line,
+  fieldPrefix,
+}) {
+  const totalUnitQuantity = Number(line?.quantity);
+  if (!Number.isInteger(totalUnitQuantity) || totalUnitQuantity <= 0) {
+    throw badRequest(
+      `${fieldPrefix}quantity must be a positive whole integer for fixed-asset auto-create posting`
+    );
+  }
+
+  const totalAmountTxn = normalizeAmount(
+    line?.lineNetAmountTxn,
+    `${fieldPrefix}lineNetAmountTxn`
+  );
+  const totalAmountBase = normalizeAmount(
+    line?.lineNetAmountBase,
+    `${fieldPrefix}lineNetAmountBase`
+  );
+
+  const sharedAmountTxn = roundFixedAssetPostingAmount(totalAmountTxn / totalUnitQuantity);
+  const sharedAmountBase = roundFixedAssetPostingAmount(totalAmountBase / totalUnitQuantity);
+  const allocations = [];
+
+  for (let unitNo = 1; unitNo <= totalUnitQuantity; unitNo += 1) {
+    const isFinalUnit = unitNo === totalUnitQuantity;
+    const originalCostTxn = isFinalUnit
+      ? roundFixedAssetPostingAmount(
+          totalAmountTxn - sharedAmountTxn * (totalUnitQuantity - 1)
+        )
+      : sharedAmountTxn;
+    const originalCostBase = isFinalUnit
+      ? roundFixedAssetPostingAmount(
+          totalAmountBase - sharedAmountBase * (totalUnitQuantity - 1)
+        )
+      : sharedAmountBase;
+
+    if (
+      originalCostTxn <= AMOUNT_BALANCE_EPSILON ||
+      originalCostBase <= AMOUNT_BALANCE_EPSILON
+    ) {
+      throw badRequest(
+        `${fieldPrefix}line amounts do not support positive per-unit fixed-asset allocation for quantity=${totalUnitQuantity}`
+      );
+    }
+
+    allocations.push({
+      unitNo,
+      originalCostTxn,
+      originalCostBase,
+    });
+  }
+
+  return allocations;
+}
+
+function buildAutoCreatedFixedAssetName({
+  line,
+  categoryRow,
+  unitNo,
+  totalUnitQuantity,
+}) {
+  const fallbackBaseName = `CARI line ${Number(line?.lineNo || 0) || 0}`;
+  const baseName = String(
+    line?.fixedAssetNameOverride ||
+      line?.description ||
+      categoryRow?.name ||
+      fallbackBaseName
+  ).trim() || fallbackBaseName;
+
+  if (Number(totalUnitQuantity || 0) > 1) {
+    return `${baseName} #${unitNo}`.slice(0, 255);
+  }
+  return baseName.slice(0, 255);
+}
+
+function buildAutoCreatedFixedAssetDescription({
+  line,
+  documentNo,
+  documentId,
+  unitNo,
+  totalUnitQuantity,
+}) {
+  const baseDescription = String(
+    line?.description ||
+      `Auto-created from CARI document ${documentNo || documentId}`
+  ).trim();
+  const suffix = Number(totalUnitQuantity || 0) > 1
+    ? ` | Unit ${unitNo}`
+    : "";
+  return `${baseDescription}${suffix}`.slice(0, 255);
+}
+
+async function reserveNextFixedAssetSequenceNoTx(tx, {
+  tenantId,
+  legalEntityId,
+  state,
+}) {
+  if (!state || typeof state !== "object") {
+    throw new Error("reserveNextFixedAssetSequenceNoTx requires a mutable state object");
+  }
+
+  if (!Number.isInteger(state.nextSequenceNo) || state.nextSequenceNo <= 0) {
+    const result = await tx.query(
+      `SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_seq
+         FROM fixed_assets
+        WHERE tenant_id = ?
+          AND legal_entity_id = ?
+        FOR UPDATE`,
+      [tenantId, legalEntityId]
+    );
+    state.nextSequenceNo = Number(result.rows?.[0]?.next_seq || 1);
+  }
+
+  const sequenceNo = state.nextSequenceNo;
+  state.nextSequenceNo += 1;
+  return sequenceNo;
+}
+
+async function insertFixedAssetTransactionTx(tx, {
+  tenantId,
+  legalEntityId,
+  assetId,
+  transactionType,
+  effectiveDate,
+  postingDate,
+  bookId,
+  fiscalPeriodId,
+  currencyCode,
+  depreciationKind = null,
+  journalEntryId = null,
+  sourceRefType = null,
+  sourceRefId = null,
+  sourceRefLineId = null,
+  grossAmountTxn = null,
+  grossAmountBase = null,
+  accumDeprAmountTxn = null,
+  accumDeprAmountBase = null,
+  nbvAmountTxn = null,
+  nbvAmountBase = null,
+  proceedsAmountTxn = null,
+  proceedsAmountBase = null,
+  preDisposalStatus = null,
+  note = null,
+  createdByUserId = null,
+}) {
+  const result = await tx.query(
+    `INSERT INTO fixed_asset_transactions (
+       tenant_id, legal_entity_id, asset_id,
+       transaction_type, status, effective_date, posting_date,
+       book_id, fiscal_period_id, currency_code,
+       depreciation_kind,
+       gross_amount_txn, gross_amount_base,
+       accum_depr_amount_txn, accum_depr_amount_base,
+       nbv_amount_txn, nbv_amount_base,
+       proceeds_amount_txn, proceeds_amount_base,
+       pre_disposal_status,
+       journal_entry_id,
+       source_ref_type, source_ref_id, source_ref_line_id,
+       reversed_transaction_id,
+       note, created_by_user_id
+     ) VALUES (
+       ?, ?, ?,
+       ?, 'POSTED', ?, ?,
+       ?, ?, ?,
+       ?,
+       ?, ?,
+       ?, ?,
+       ?, ?,
+       ?, ?,
+       ?,
+       ?,
+       ?, ?, ?,
+       NULL,
+       ?, ?
+     )`,
+    [
+      tenantId,
+      legalEntityId,
+      assetId,
+      transactionType,
+      effectiveDate,
+      postingDate,
+      bookId,
+      fiscalPeriodId,
+      currencyCode,
+      depreciationKind,
+      grossAmountTxn,
+      grossAmountBase,
+      accumDeprAmountTxn,
+      accumDeprAmountBase,
+      nbvAmountTxn,
+      nbvAmountBase,
+      proceedsAmountTxn,
+      proceedsAmountBase,
+      preDisposalStatus,
+      journalEntryId,
+      sourceRefType,
+      sourceRefId,
+      sourceRefLineId,
+      note,
+      createdByUserId,
+    ]
+  );
+
+  return parsePositiveInt(result.rows?.insertId) || null;
+}
+
 async function fetchDocumentRow({
   tenantId,
   documentId,
@@ -1269,6 +1697,7 @@ async function resolveBookAndOpenPeriodForDate({
 
   return {
     bookId,
+    calendarId,
     fiscalPeriodId,
     fiscalYear: Number(period.fiscal_year),
     baseCurrencyCode: normalizeUpperText(book.base_currency_code),
@@ -2344,7 +2773,8 @@ function sumAmountRows(rows, fieldName) {
   return total;
 }
 
-function normalizeExplicitDraftLines(linesInput) {
+function normalizeExplicitDraftLines(linesInput, options = {}) {
+  const normalizedDirection = normalizeUpperText(options.direction);
   return (linesInput || []).map((line, index) => {
     const quantity = normalizeAmount(
       line.quantity ?? 1,
@@ -2384,6 +2814,31 @@ function normalizeExplicitDraftLines(linesInput) {
             allowZero: true,
           });
 
+    const stockImpactMode = normalizeStockImpactMode(line.stockImpactMode);
+    const explicitSubledgerType = normalizeUpperText(
+      line.subledgerType ?? line.subledger_type
+    );
+    const targetFixedAssetId = parsePositiveInt(line.targetFixedAssetId);
+    const subledgerType =
+      explicitSubledgerType ||
+      (targetFixedAssetId
+        ? "FIXED_ASSET"
+        : stockImpactMode !== "NONE"
+          ? "STOCK"
+          : "NONE");
+    const explicitFixedAssetMode = line.fixedAssetMode
+      ? normalizeUpperText(line.fixedAssetMode)
+      : (line.fixed_asset_mode ? normalizeUpperText(line.fixed_asset_mode) : null);
+    let fixedAssetMode = explicitFixedAssetMode;
+    if (subledgerType === "FIXED_ASSET") {
+      if (normalizedDirection === "AR") {
+        fixedAssetMode = fixedAssetMode || "LINK_EXISTING";
+      } else {
+        fixedAssetMode =
+          fixedAssetMode || (targetFixedAssetId ? "LINK_EXISTING" : "AUTO_CREATE");
+      }
+    }
+
     return {
       lineNo: Number(line.lineNo || index + 1),
       lineKind: normalizeUpperText(line.lineKind || "STANDARD"),
@@ -2401,13 +2856,11 @@ function normalizeExplicitDraftLines(linesInput) {
       taxCodeId: parsePositiveInt(line.taxCodeId),
       taxCode: toNullableString(line.taxCode, 40),
       taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
-      stockImpactMode: normalizeStockImpactMode(line.stockImpactMode),
+      stockImpactMode,
       warehouseId: parsePositiveInt(line.warehouseId),
-      subledgerType: normalizeUpperText(line.subledgerType || "NONE"),
-      fixedAssetMode: line.fixedAssetMode
-        ? normalizeUpperText(line.fixedAssetMode)
-        : null,
-      targetFixedAssetId: parsePositiveInt(line.targetFixedAssetId),
+      subledgerType,
+      fixedAssetMode,
+      targetFixedAssetId,
       fixedAssetCategoryId: parsePositiveInt(line.fixedAssetCategoryId),
       fixedAssetOwnerOperatingUnitId: parsePositiveInt(
         line.fixedAssetOwnerOperatingUnitId
@@ -3226,6 +3679,960 @@ async function voidPendingDocumentLineStockLinksTx(
   );
 }
 
+function buildFixedAssetSaleCutoffPostingLines({
+  cutoffEconomics,
+  deprExpenseAccountId,
+  accumDeprAccountId,
+  assetNo,
+  currencyCode,
+  ownerOperatingUnitId,
+}) {
+  if (
+    cutoffEconomics.cutoffDepreciationTxn <= FIXED_ASSET_DISPOSAL_EPSILON &&
+    cutoffEconomics.cutoffDepreciationBase <= FIXED_ASSET_DISPOSAL_EPSILON
+  ) {
+    return [];
+  }
+
+  if (!Array.isArray(cutoffEconomics.allocationSegments) || !cutoffEconomics.allocationSegments.length) {
+    throw badRequest(
+      "Fixed-asset disposal cutoff resolved a positive depreciation amount but produced no allocation segments"
+    );
+  }
+
+  const totalEligibleDays = cutoffEconomics.allocationSegments.reduce(
+    (sum, segment) => sum + Number(segment?.eligibleDays || 0),
+    0
+  );
+  if (totalEligibleDays <= 0) {
+    throw badRequest(
+      "Fixed-asset disposal cutoff allocation segments must contain eligibleDays"
+    );
+  }
+
+  const lines = [];
+  let allocatedTxn = 0;
+  let allocatedBase = 0;
+
+  for (let index = 0; index < cutoffEconomics.allocationSegments.length; index += 1) {
+    const segment = cutoffEconomics.allocationSegments[index];
+    const segmentEligibleDays = Number(segment?.eligibleDays || 0);
+    if (segmentEligibleDays <= 0) {
+      continue;
+    }
+
+    const isLastSegment = index === cutoffEconomics.allocationSegments.length - 1;
+    const amountTxn = isLastSegment
+      ? roundFixedAssetDisposalAmount(cutoffEconomics.cutoffDepreciationTxn - allocatedTxn)
+      : roundFixedAssetDisposalAmount(
+          cutoffEconomics.cutoffDepreciationTxn * (segmentEligibleDays / totalEligibleDays)
+        );
+    const amountBase = isLastSegment
+      ? roundFixedAssetDisposalAmount(cutoffEconomics.cutoffDepreciationBase - allocatedBase)
+      : roundFixedAssetDisposalAmount(
+          cutoffEconomics.cutoffDepreciationBase * (segmentEligibleDays / totalEligibleDays)
+        );
+    allocatedTxn = roundFixedAssetDisposalAmount(allocatedTxn + amountTxn);
+    allocatedBase = roundFixedAssetDisposalAmount(allocatedBase + amountBase);
+
+    if (amountTxn <= 0 && amountBase <= 0) {
+      continue;
+    }
+
+    const operatingUnitId =
+      parsePositiveInt(segment?.operatingUnitId) || ownerOperatingUnitId || null;
+    lines.push(
+      buildCariDirectionalJournalLine({
+        accountId: deprExpenseAccountId,
+        side: "DEBIT",
+        amountTxn,
+        amountBase,
+        lineDescription: `FA sale cutoff depreciation ${assetNo} through ${cutoffEconomics.cutoffDate}`.slice(
+          0,
+          255
+        ),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId,
+      })
+    );
+    lines.push(
+      buildCariDirectionalJournalLine({
+        accountId: accumDeprAccountId,
+        side: "CREDIT",
+        amountTxn,
+        amountBase,
+        lineDescription: `FA accumulated depreciation ${assetNo} through ${cutoffEconomics.cutoffDate}`.slice(
+          0,
+          255
+        ),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId,
+      })
+    );
+  }
+
+  if (!lines.length) {
+    throw badRequest(
+      "Fixed-asset disposal cutoff resolved a positive depreciation amount but produced no journal lines"
+    );
+  }
+
+  return lines;
+}
+
+function buildFixedAssetSaleDisposalPostingLines({
+  proceedsAccountId,
+  assetAccountId,
+  accumDeprAccountId,
+  disposalGainAccountId,
+  disposalLossAccountId,
+  proceedsAmountTxn,
+  proceedsAmountBase,
+  grossCostTxn,
+  grossCostBase,
+  accumDeprTxn,
+  accumDeprBase,
+  gainOrLossTxn,
+  gainOrLossBase,
+  assetNo,
+  currencyCode,
+  ownerOperatingUnitId,
+}) {
+  const lines = [];
+
+  if (accumDeprTxn > 0 || accumDeprBase > 0) {
+    lines.push(
+      buildCariDirectionalJournalLine({
+        accountId: accumDeprAccountId,
+        side: "DEBIT",
+        amountTxn: accumDeprTxn,
+        amountBase: accumDeprBase,
+        lineDescription: `FA sale ${assetNo} clear accum depreciation`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: ownerOperatingUnitId,
+      })
+    );
+  }
+
+  lines.push(
+    buildCariDirectionalJournalLine({
+      accountId: proceedsAccountId,
+      side: "DEBIT",
+      amountTxn: proceedsAmountTxn,
+      amountBase: proceedsAmountBase,
+      lineDescription: `FA sale ${assetNo} relieve AR sale proceeds`.slice(0, 255),
+      subledgerReferenceNo: assetNo,
+      currencyCode,
+      operatingUnitId: ownerOperatingUnitId,
+    })
+  );
+  lines.push(
+    buildCariDirectionalJournalLine({
+      accountId: assetAccountId,
+      side: "CREDIT",
+      amountTxn: grossCostTxn,
+      amountBase: grossCostBase,
+      lineDescription: `FA sale ${assetNo} remove asset`.slice(0, 255),
+      subledgerReferenceNo: assetNo,
+      currencyCode,
+      operatingUnitId: ownerOperatingUnitId,
+    })
+  );
+
+  if (
+    gainOrLossTxn > FIXED_ASSET_DISPOSAL_EPSILON
+    || gainOrLossBase > FIXED_ASSET_DISPOSAL_EPSILON
+  ) {
+    lines.push(
+      buildCariDirectionalJournalLine({
+        accountId: disposalGainAccountId,
+        side: "CREDIT",
+        amountTxn: Math.max(0, gainOrLossTxn),
+        amountBase: Math.max(0, gainOrLossBase),
+        lineDescription: `FA sale ${assetNo} disposal gain`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: ownerOperatingUnitId,
+      })
+    );
+  } else if (
+    gainOrLossTxn < -FIXED_ASSET_DISPOSAL_EPSILON
+    || gainOrLossBase < -FIXED_ASSET_DISPOSAL_EPSILON
+  ) {
+    lines.push(
+      buildCariDirectionalJournalLine({
+        accountId: disposalLossAccountId,
+        side: "DEBIT",
+        amountTxn: Math.max(0, -gainOrLossTxn),
+        amountBase: Math.max(0, -gainOrLossBase),
+        lineDescription: `FA sale ${assetNo} disposal loss`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: ownerOperatingUnitId,
+      })
+    );
+  }
+
+  return lines;
+}
+
+async function prepareFixedAssetPostingAugmentationsTx({
+  tx,
+  tenantId,
+  legalEntityId,
+  documentId,
+  direction,
+  documentType,
+  documentDate,
+  currencyCode,
+  counterpartyId,
+  documentLines,
+  postingLines,
+  journalContext,
+}) {
+  void currencyCode;
+  void counterpartyId;
+  const preparedFixedAssetLines = new Map();
+
+  if (normalizeUpperText(direction) !== "AR") {
+    return { preparedFixedAssetLines };
+  }
+
+  const arFixedAssetLines = (documentLines || []).filter(
+    (line) => normalizeUpperText(line?.subledgerType || "NONE") === "FIXED_ASSET"
+  );
+  if (!arFixedAssetLines.length) {
+    return { preparedFixedAssetLines };
+  }
+  if (!POSITIVE_SIGN_DOCUMENT_TYPES.has(normalizeUpperText(documentType))) {
+    throw badRequest(
+      "AR FIXED_ASSET posting requires a positive sale document type"
+    );
+  }
+
+  const {
+    SALE_STAGING_ELIGIBLE_STATUSES: saleEligibleStatuses,
+    resolveDisposalCutoffEconomics,
+  } = await import("./fixed-assets.service.js");
+
+  const seenTargetAssetIds = new Set();
+
+  for (let index = 0; index < (documentLines || []).length; index += 1) {
+    const line = documentLines[index] || {};
+    if (normalizeUpperText(line.subledgerType || "NONE") !== "FIXED_ASSET") {
+      continue;
+    }
+
+    const fieldPrefix = `storedLines[${index + 1}].`;
+    const targetFixedAssetId = parsePositiveInt(line.targetFixedAssetId);
+    if (!targetFixedAssetId) {
+      throw badRequest(`${fieldPrefix}targetFixedAssetId is required for AR fixed-asset posting`);
+    }
+    if (seenTargetAssetIds.has(targetFixedAssetId)) {
+      throw badRequest(
+        `${fieldPrefix}targetFixedAssetId duplicates another FIXED_ASSET sale line on the same document`
+      );
+    }
+    seenTargetAssetIds.add(targetFixedAssetId);
+
+    const asset = await fetchFixedAssetDisposalRowForPostingLock({
+      tx,
+      tenantId,
+      assetId: targetFixedAssetId,
+    });
+    if (!asset) {
+      throw badRequest(`${fieldPrefix}targetFixedAssetId must reference an existing fixed asset`);
+    }
+    if (parsePositiveInt(asset.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+      throw badRequest(`${fieldPrefix}targetFixedAssetId must belong to legalEntityId`);
+    }
+    const assetStatus = normalizeUpperText(asset.status);
+    if (!saleEligibleStatuses.has(assetStatus)) {
+      throw badRequest(
+        `${fieldPrefix}targetFixedAssetId must reference an ACTIVE, SUSPENDED, or FULLY_DEPRECIATED asset for AR posting`
+      );
+    }
+
+    const proceedsAccount = await resolveCariLinePostingAccount({
+      tenantId,
+      legalEntityId,
+      accountId: line.postingAccountId,
+      fieldLabel: `${fieldPrefix}postingAccountId`,
+      runQuery: tx.query,
+    });
+
+    const grossCostTxn = roundFixedAssetDisposalAmount(asset.original_cost_txn);
+    const grossCostBase = roundFixedAssetDisposalAmount(asset.original_cost_base);
+    const assetAccountId = parsePositiveInt(asset.asset_account_id);
+    const accumDeprAccountId = parsePositiveInt(asset.accum_depr_account_id);
+    const deprExpenseAccountId = parsePositiveInt(asset.depr_expense_account_id);
+    const disposalGainAccountId = parsePositiveInt(asset.disposal_gain_account_id);
+    const disposalLossAccountId = parsePositiveInt(asset.disposal_loss_account_id);
+    const ownerOperatingUnitId = parsePositiveInt(asset.owner_operating_unit_id) || null;
+    const assetNo = String(asset.asset_no || `ID-${targetFixedAssetId}`);
+    if (!assetAccountId) {
+      throw badRequest(
+        `${fieldPrefix}targetFixedAssetId is missing assetAccountId; AR fixed-asset posting requires an asset GL account`
+      );
+    }
+
+    const cutoffEconomics = await resolveDisposalCutoffEconomics({
+      tenantId,
+      asset,
+      calendarId: journalContext.calendarId,
+      effectiveDate: documentDate,
+      queryFn: tx.query,
+    });
+
+    if (
+      cutoffEconomics.cutoffDepreciationTxn > FIXED_ASSET_DISPOSAL_EPSILON
+      || cutoffEconomics.cutoffDepreciationBase > FIXED_ASSET_DISPOSAL_EPSILON
+    ) {
+      if (!deprExpenseAccountId || !accumDeprAccountId) {
+        throw badRequest(
+          `${fieldPrefix}targetFixedAssetId is missing depreciation posting accounts required for cutoff depreciation`
+        );
+      }
+      postingLines.push(
+        ...buildFixedAssetSaleCutoffPostingLines({
+          cutoffEconomics,
+          deprExpenseAccountId,
+          accumDeprAccountId,
+          assetNo,
+          currencyCode: asset.currency_code || currencyCode,
+          ownerOperatingUnitId,
+        })
+      );
+    }
+
+    const proceedsAmountTxn = normalizeAmount(
+      line?.lineNetAmountTxn,
+      `${fieldPrefix}lineNetAmountTxn`
+    );
+    const proceedsAmountBase = normalizeAmount(
+      line?.lineNetAmountBase,
+      `${fieldPrefix}lineNetAmountBase`
+    );
+    const saleNbvTxn = roundFixedAssetDisposalAmount(cutoffEconomics.cutoffNbvTxn);
+    const saleNbvBase = roundFixedAssetDisposalAmount(cutoffEconomics.cutoffNbvBase);
+    const gainOrLossTxn = roundFixedAssetDisposalAmount(proceedsAmountTxn - saleNbvTxn);
+    const gainOrLossBase = roundFixedAssetDisposalAmount(proceedsAmountBase - saleNbvBase);
+    const gainOrLossTxnSign = gainOrLossTxn > FIXED_ASSET_DISPOSAL_EPSILON
+      ? 1
+      : (gainOrLossTxn < -FIXED_ASSET_DISPOSAL_EPSILON ? -1 : 0);
+    const gainOrLossBaseSign = gainOrLossBase > FIXED_ASSET_DISPOSAL_EPSILON
+      ? 1
+      : (gainOrLossBase < -FIXED_ASSET_DISPOSAL_EPSILON ? -1 : 0);
+    const hasGain =
+      gainOrLossTxn > FIXED_ASSET_DISPOSAL_EPSILON
+      || gainOrLossBase > FIXED_ASSET_DISPOSAL_EPSILON;
+    const hasLoss =
+      gainOrLossTxn < -FIXED_ASSET_DISPOSAL_EPSILON
+      || gainOrLossBase < -FIXED_ASSET_DISPOSAL_EPSILON;
+
+    if (
+      gainOrLossTxnSign !== 0
+      && gainOrLossBaseSign !== 0
+      && gainOrLossTxnSign !== gainOrLossBaseSign
+    ) {
+      throw badRequest(
+        `${fieldPrefix}disposal gain/loss sign differs between transaction and base currency amounts`
+      );
+    }
+    if (
+      (cutoffEconomics.accumDeprTxn > FIXED_ASSET_DISPOSAL_EPSILON
+      || cutoffEconomics.accumDeprBase > FIXED_ASSET_DISPOSAL_EPSILON)
+      && !accumDeprAccountId
+    ) {
+      throw badRequest(
+        `${fieldPrefix}targetFixedAssetId is missing accumDeprAccountId required for disposal posting`
+      );
+    }
+    if (hasGain && !disposalGainAccountId) {
+      throw badRequest(
+        `${fieldPrefix}targetFixedAssetId is missing disposalGainAccountId required for disposal gain posting`
+      );
+    }
+    if (hasLoss && !disposalLossAccountId) {
+      throw badRequest(
+        `${fieldPrefix}targetFixedAssetId is missing disposalLossAccountId required for disposal loss posting`
+      );
+    }
+
+    postingLines.push(
+      ...buildFixedAssetSaleDisposalPostingLines({
+        proceedsAccountId: proceedsAccount.id,
+        assetAccountId,
+        accumDeprAccountId,
+        disposalGainAccountId,
+        disposalLossAccountId,
+        proceedsAmountTxn,
+        proceedsAmountBase,
+        grossCostTxn,
+        grossCostBase,
+        accumDeprTxn: roundFixedAssetDisposalAmount(cutoffEconomics.accumDeprTxn),
+        accumDeprBase: roundFixedAssetDisposalAmount(cutoffEconomics.accumDeprBase),
+        gainOrLossTxn,
+        gainOrLossBase,
+        assetNo,
+        currencyCode: asset.currency_code || currencyCode,
+        ownerOperatingUnitId,
+      })
+    );
+
+    preparedFixedAssetLines.set(parsePositiveInt(line.id), {
+      type: "AR_SALE",
+      assetId: targetFixedAssetId,
+      assetNo,
+      preDisposalStatus: assetStatus,
+      currencyCode: asset.currency_code || currencyCode,
+      grossCostTxn,
+      grossCostBase,
+      proceedsAmountTxn,
+      proceedsAmountBase,
+      saleNbvTxn,
+      saleNbvBase,
+      gainOrLossTxn,
+      gainOrLossBase,
+      cutoffEconomics,
+    });
+  }
+
+  return {
+    preparedFixedAssetLines,
+  };
+}
+
+async function applyApFixedAssetAutoCreatePostingLineTx(tx, {
+  tenantId,
+  legalEntityId,
+  documentId,
+  documentNo,
+  documentDate,
+  currencyCode,
+  counterpartyId,
+  journalEntryId,
+  bookId,
+  fiscalPeriodId,
+  line,
+  lineIndex,
+  sequenceState,
+  categoryCache,
+  profileCache,
+  userId,
+}) {
+  const fieldPrefix = `storedLines[${lineIndex + 1}].`;
+  const normalizedCategoryId = parsePositiveInt(line.fixedAssetCategoryId);
+  if (!normalizedCategoryId) {
+    throw badRequest(`${fieldPrefix}fixedAssetCategoryId is required for AUTO_CREATE posting`);
+  }
+
+  if (!categoryCache.has(normalizedCategoryId)) {
+    categoryCache.set(
+      normalizedCategoryId,
+      await fetchFixedAssetCategoryPostingDefaultsRow({
+        tenantId,
+        legalEntityId,
+        categoryId: normalizedCategoryId,
+        runQuery: tx.query,
+      })
+    );
+  }
+  const categoryRow = categoryCache.get(normalizedCategoryId);
+  if (!categoryRow) {
+    throw badRequest(
+      `${fieldPrefix}fixedAssetCategoryId must reference an existing fixed asset category`
+    );
+  }
+
+  const normalizedProfileId = parsePositiveInt(
+    categoryRow.default_depreciation_profile_id
+  );
+  if (normalizedProfileId && !profileCache.has(normalizedProfileId)) {
+    profileCache.set(
+      normalizedProfileId,
+      await fetchFixedAssetDepreciationProfileSnapshotRow({
+        tenantId,
+        legalEntityId,
+        profileId: normalizedProfileId,
+        runQuery: tx.query,
+      })
+    );
+  }
+  const profileSnapshot = normalizedProfileId
+    ? profileCache.get(normalizedProfileId) || null
+    : null;
+
+  const allocations = allocateFixedAssetAutoCreateUnitAmounts({
+    line,
+    fieldPrefix,
+  });
+  const totalUnitQuantity = allocations.length;
+
+  for (const allocation of allocations) {
+    const sequenceNo = await reserveNextFixedAssetSequenceNoTx(tx, {
+      tenantId,
+      legalEntityId,
+      state: sequenceState,
+    });
+    const assetNo = formatAutoCreatedFixedAssetNo(sequenceNo);
+    const salvageRuleType =
+      normalizeUpperText(categoryRow.default_salvage_rule_type || "NONE") || "NONE";
+    const salvagePercent =
+      categoryRow.default_salvage_percent != null
+        ? Number(categoryRow.default_salvage_percent)
+        : null;
+    const salvageAmountBaseRule =
+      categoryRow.default_salvage_amount_base != null
+        ? Number(categoryRow.default_salvage_amount_base)
+        : null;
+    const salvageValues = computeFixedAssetDraftSalvageValues({
+      salvageRuleType,
+      salvagePercent,
+      salvageAmountBaseRule,
+      originalCostTxn: allocation.originalCostTxn,
+      originalCostBase: allocation.originalCostBase,
+    });
+    const usefulLifeMonths =
+      categoryRow.default_useful_life_months != null
+        ? Number(categoryRow.default_useful_life_months)
+        : null;
+    const remainingUsefulLifeMonths = usefulLifeMonths;
+
+    const insertAssetResult = await tx.query(
+      `INSERT INTO fixed_assets (
+         tenant_id, legal_entity_id, asset_no, sequence_no,
+         asset_tag, name, description, category_id, status,
+         owner_operating_unit_id, location_operating_unit_id,
+         department_code, cost_center_code,
+         custodian_employee_id, counterparty_id,
+         serial_no, acquisition_date, currency_code,
+         original_cost_txn, original_cost_base,
+         salvage_rule_type, salvage_percent, salvage_amount_base_rule,
+         salvage_value_txn, salvage_value_base,
+         useful_life_months, remaining_useful_life_months,
+         legacy_accum_depr_txn, legacy_accum_depr_base,
+         legacy_nbv_txn, legacy_nbv_base,
+         depreciation_profile_id, depreciation_method,
+         declining_balance_rate_percent, switch_to_straight_line,
+         asset_account_id, accum_depr_account_id,
+         depr_expense_account_id, disposal_gain_account_id,
+         disposal_loss_account_id,
+         source_cari_document_id, source_cari_document_line_id, source_cari_document_line_unit_no,
+         created_by_user_id, updated_by_user_id
+       ) VALUES (
+         ?, ?, ?, ?,
+         ?, ?, ?, ?, 'DRAFT',
+         ?, ?,
+         NULL, NULL,
+         NULL, ?,
+         ?, ?, ?,
+         ?, ?,
+         ?, ?, ?,
+         ?, ?,
+         ?, ?,
+         NULL, NULL,
+         NULL, NULL,
+         ?, ?,
+         ?, ?,
+         ?, ?,
+         ?, ?, ?,
+         ?, ?, ?,
+         ?, ?
+       )`,
+      [
+        tenantId,
+        legalEntityId,
+        assetNo,
+        sequenceNo,
+        totalUnitQuantity === 1 ? toNullableString(line.fixedAssetTag, 100) : null,
+        buildAutoCreatedFixedAssetName({
+          line,
+          categoryRow,
+          unitNo: allocation.unitNo,
+          totalUnitQuantity,
+        }),
+        buildAutoCreatedFixedAssetDescription({
+          line,
+          documentNo,
+          documentId,
+          unitNo: allocation.unitNo,
+          totalUnitQuantity,
+        }),
+        normalizedCategoryId,
+        parsePositiveInt(line.fixedAssetOwnerOperatingUnitId),
+        parsePositiveInt(line.fixedAssetLocationOperatingUnitId),
+        counterpartyId,
+        totalUnitQuantity === 1 ? toNullableString(line.fixedAssetSerialNo, 100) : null,
+        documentDate,
+        currencyCode,
+        allocation.originalCostTxn,
+        allocation.originalCostBase,
+        salvageRuleType,
+        salvagePercent,
+        salvageAmountBaseRule,
+        salvageValues.salvageValueTxn,
+        salvageValues.salvageValueBase,
+        usefulLifeMonths,
+        remainingUsefulLifeMonths,
+        normalizedProfileId || null,
+        profileSnapshot?.depreciationMethod || null,
+        profileSnapshot?.decliningBalanceRatePercent ?? null,
+        profileSnapshot?.switchToStraightLine ? 1 : 0,
+        parsePositiveInt(categoryRow.default_asset_account_id),
+        parsePositiveInt(categoryRow.default_accum_depr_account_id),
+        parsePositiveInt(categoryRow.default_depr_expense_account_id),
+        parsePositiveInt(categoryRow.default_disposal_gain_account_id),
+        parsePositiveInt(categoryRow.default_disposal_loss_account_id),
+        documentId,
+        parsePositiveInt(line.id),
+        allocation.unitNo,
+        userId,
+        userId,
+      ]
+    );
+    const assetId = parsePositiveInt(insertAssetResult.rows?.insertId);
+    if (!assetId) {
+      throw new Error("Failed to create fixed asset draft during CARI posting");
+    }
+
+    const transactionId = await insertFixedAssetTransactionTx(tx, {
+      tenantId,
+      legalEntityId,
+      assetId,
+      transactionType: "CAPITALIZATION",
+      effectiveDate: documentDate,
+      postingDate: documentDate,
+      bookId,
+      fiscalPeriodId,
+      currencyCode,
+      journalEntryId,
+      sourceRefType: "CARI_DOCUMENT",
+      sourceRefId: documentId,
+      sourceRefLineId: parsePositiveInt(line.id),
+      grossAmountTxn: allocation.originalCostTxn,
+      grossAmountBase: allocation.originalCostBase,
+      accumDeprAmountTxn: 0,
+      accumDeprAmountBase: 0,
+      nbvAmountTxn: allocation.originalCostTxn,
+      nbvAmountBase: allocation.originalCostBase,
+      note: "CARI AP FIXED_ASSET auto-create capitalization",
+      createdByUserId: userId,
+    });
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId,
+      journalEntryId,
+      sourceRefType: FIXED_ASSET_TRANSACTION,
+      sourceRefId: transactionId,
+      linkRole: "SUPPORTING",
+    });
+  }
+}
+
+async function applyApFixedAssetLinkExistingPostingLineTx(tx, {
+  tenantId,
+  legalEntityId,
+  documentId,
+  documentDate,
+  currencyCode,
+  counterpartyId,
+  journalEntryId,
+  bookId,
+  fiscalPeriodId,
+  line,
+  lineIndex,
+  userId,
+}) {
+  const fieldPrefix = `storedLines[${lineIndex + 1}].`;
+  const targetFixedAssetId = parsePositiveInt(line.targetFixedAssetId);
+  if (!targetFixedAssetId) {
+    throw badRequest(`${fieldPrefix}targetFixedAssetId is required for LINK_EXISTING posting`);
+  }
+
+  const assetRow = await fetchFixedAssetRowForPostingLock({
+    tx,
+    tenantId,
+    assetId: targetFixedAssetId,
+  });
+  if (!assetRow) {
+    throw badRequest(`${fieldPrefix}targetFixedAssetId must reference an existing fixed asset`);
+  }
+  if (parsePositiveInt(assetRow.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest(`${fieldPrefix}targetFixedAssetId must belong to legalEntityId`);
+  }
+  if (normalizeUpperText(assetRow.status) !== "DRAFT") {
+    throw badRequest(
+      `${fieldPrefix}targetFixedAssetId must still reference a DRAFT asset when posting LINK_EXISTING`
+    );
+  }
+
+  const originalCostTxn = normalizeAmount(
+    line?.lineNetAmountTxn,
+    `${fieldPrefix}lineNetAmountTxn`
+  );
+  const originalCostBase = normalizeAmount(
+    line?.lineNetAmountBase,
+    `${fieldPrefix}lineNetAmountBase`
+  );
+
+  await tx.query(
+    `UPDATE fixed_assets
+        SET original_cost_txn = ?,
+            original_cost_base = ?,
+            acquisition_date = ?,
+            currency_code = ?,
+            counterparty_id = ?,
+            source_cari_document_id = ?,
+            source_cari_document_line_id = ?,
+            source_cari_document_line_unit_no = 1,
+            updated_by_user_id = ?
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [
+      originalCostTxn,
+      originalCostBase,
+      documentDate,
+      currencyCode,
+      counterpartyId,
+      documentId,
+      parsePositiveInt(line.id),
+      userId,
+      tenantId,
+      targetFixedAssetId,
+    ]
+  );
+
+  const transactionId = await insertFixedAssetTransactionTx(tx, {
+    tenantId,
+    legalEntityId,
+    assetId: targetFixedAssetId,
+    transactionType: "CAPITALIZATION",
+    effectiveDate: documentDate,
+    postingDate: documentDate,
+    bookId,
+    fiscalPeriodId,
+    currencyCode,
+    journalEntryId,
+    sourceRefType: "CARI_DOCUMENT",
+    sourceRefId: documentId,
+    sourceRefLineId: parsePositiveInt(line.id),
+    grossAmountTxn: originalCostTxn,
+    grossAmountBase: originalCostBase,
+    accumDeprAmountTxn: 0,
+    accumDeprAmountBase: 0,
+    nbvAmountTxn: originalCostTxn,
+    nbvAmountBase: originalCostBase,
+    note: "CARI AP FIXED_ASSET link-existing capitalization",
+    createdByUserId: userId,
+  });
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId,
+    journalEntryId,
+    sourceRefType: FIXED_ASSET_TRANSACTION,
+    sourceRefId: transactionId,
+    linkRole: "SUPPORTING",
+  });
+}
+
+async function applyFixedAssetPostingSideEffectsTx({
+  tx,
+  tenantId,
+  legalEntityId,
+  documentId,
+  documentNo,
+  documentDate,
+  direction,
+  currencyCode,
+  counterpartyId,
+  documentLines,
+  journalEntryId,
+  journalContext,
+  userId,
+  fixedAssetPostingState,
+}) {
+  const normalizedDirection = normalizeUpperText(direction);
+  if (normalizedDirection === "AR") {
+    const preparedFixedAssetLines =
+      fixedAssetPostingState?.preparedFixedAssetLines instanceof Map
+        ? fixedAssetPostingState.preparedFixedAssetLines
+        : new Map();
+    for (let index = 0; index < (documentLines || []).length; index += 1) {
+      const line = documentLines[index] || {};
+      if (normalizeUpperText(line.subledgerType || "NONE") !== "FIXED_ASSET") {
+        continue;
+      }
+
+      const prepared = preparedFixedAssetLines.get(parsePositiveInt(line.id));
+      if (!prepared || prepared.type !== "AR_SALE") {
+        continue;
+      }
+
+      if (
+        prepared.cutoffEconomics.cutoffDepreciationTxn > FIXED_ASSET_DISPOSAL_EPSILON
+        || prepared.cutoffEconomics.cutoffDepreciationBase > FIXED_ASSET_DISPOSAL_EPSILON
+      ) {
+        const depreciationTransactionId = await insertFixedAssetTransactionTx(tx, {
+          tenantId,
+          legalEntityId,
+          assetId: prepared.assetId,
+          transactionType: "DEPRECIATION",
+          effectiveDate: prepared.cutoffEconomics.cutoffDate,
+          postingDate: documentDate,
+          bookId: journalContext.bookId,
+          fiscalPeriodId: journalContext.fiscalPeriodId,
+          currencyCode: prepared.currencyCode,
+          journalEntryId,
+          sourceRefType: "CARI_DOCUMENT",
+          sourceRefId: documentId,
+          sourceRefLineId: parsePositiveInt(line.id),
+          grossAmountTxn: prepared.grossCostTxn,
+          grossAmountBase: prepared.grossCostBase,
+          accumDeprAmountTxn: roundFixedAssetDisposalAmount(prepared.cutoffEconomics.accumDeprTxn),
+          accumDeprAmountBase: roundFixedAssetDisposalAmount(prepared.cutoffEconomics.accumDeprBase),
+          nbvAmountTxn: prepared.saleNbvTxn,
+          nbvAmountBase: prepared.saleNbvBase,
+          note: `CARI sale cutoff depreciation through ${prepared.cutoffEconomics.cutoffDate}`,
+          createdByUserId: userId,
+        });
+        await upsertJournalSourceLinkTx(tx, {
+          tenantId,
+          legalEntityId,
+          journalEntryId,
+          sourceRefType: FIXED_ASSET_TRANSACTION,
+          sourceRefId: depreciationTransactionId,
+          linkRole: "SUPPORTING",
+        });
+      }
+
+      const saleTransactionId = await insertFixedAssetTransactionTx(tx, {
+        tenantId,
+        legalEntityId,
+        assetId: prepared.assetId,
+        transactionType: "SALE",
+        effectiveDate: documentDate,
+        postingDate: documentDate,
+        bookId: journalContext.bookId,
+        fiscalPeriodId: journalContext.fiscalPeriodId,
+        currencyCode: prepared.currencyCode,
+        journalEntryId,
+        sourceRefType: "CARI_DOCUMENT",
+        sourceRefId: documentId,
+        sourceRefLineId: parsePositiveInt(line.id),
+        grossAmountTxn: prepared.grossCostTxn,
+        grossAmountBase: prepared.grossCostBase,
+        accumDeprAmountTxn: roundFixedAssetDisposalAmount(prepared.cutoffEconomics.accumDeprTxn),
+        accumDeprAmountBase: roundFixedAssetDisposalAmount(prepared.cutoffEconomics.accumDeprBase),
+        nbvAmountTxn: prepared.saleNbvTxn,
+        nbvAmountBase: prepared.saleNbvBase,
+        proceedsAmountTxn: prepared.proceedsAmountTxn,
+        proceedsAmountBase: prepared.proceedsAmountBase,
+        preDisposalStatus: prepared.preDisposalStatus,
+        note: `CARI sale of asset ${prepared.assetNo}`,
+        createdByUserId: userId,
+      });
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId,
+        journalEntryId,
+        sourceRefType: FIXED_ASSET_TRANSACTION,
+        sourceRefId: saleTransactionId,
+        linkRole: "SUPPORTING",
+      });
+
+      const updateClauses = [
+        "status = 'DISPOSED'",
+        "disposal_date = ?",
+        "disposal_type = 'SALE'",
+        "disposed_at = CURRENT_TIMESTAMP",
+        "disposal_proceeds_base = ?",
+        "disposal_gain_loss_base = ?",
+        "pending_sale_cari_document_id = NULL",
+        "pending_sale_cari_document_line_id = NULL",
+        "updated_by_user_id = ?",
+      ];
+      const updateParams = [
+        documentDate,
+        prepared.proceedsAmountBase,
+        prepared.gainOrLossBase,
+        userId,
+      ];
+      if (prepared.cutoffEconomics.cutoffPeriodKey) {
+        updateClauses.push("last_depreciation_period = ?");
+        updateParams.push(prepared.cutoffEconomics.cutoffPeriodKey);
+      }
+      updateParams.push(prepared.assetId, tenantId);
+
+      await tx.query(
+        `UPDATE fixed_assets
+            SET ${updateClauses.join(", ")}
+          WHERE id = ?
+            AND tenant_id = ?`,
+        updateParams
+      );
+    }
+    return;
+  }
+  if (normalizedDirection !== "AP") {
+    return;
+  }
+
+  const sequenceState = { nextSequenceNo: null };
+  const categoryCache = new Map();
+  const profileCache = new Map();
+
+  for (let index = 0; index < (documentLines || []).length; index += 1) {
+    const line = documentLines[index] || {};
+    if (normalizeUpperText(line.subledgerType || "NONE") !== "FIXED_ASSET") {
+      continue;
+    }
+
+    const fixedAssetMode = normalizeUpperText(line.fixedAssetMode);
+    if (fixedAssetMode === "AUTO_CREATE") {
+      await applyApFixedAssetAutoCreatePostingLineTx(tx, {
+        tenantId,
+        legalEntityId,
+        documentId,
+        documentNo,
+        documentDate,
+        currencyCode,
+        counterpartyId,
+        journalEntryId,
+        bookId: journalContext.bookId,
+        fiscalPeriodId: journalContext.fiscalPeriodId,
+        line,
+        lineIndex: index,
+        sequenceState,
+        categoryCache,
+        profileCache,
+        userId,
+      });
+      continue;
+    }
+
+    if (fixedAssetMode === "LINK_EXISTING") {
+      await applyApFixedAssetLinkExistingPostingLineTx(tx, {
+        tenantId,
+        legalEntityId,
+        documentId,
+        documentDate,
+        currencyCode,
+        counterpartyId,
+        journalEntryId,
+        bookId: journalContext.bookId,
+        fiscalPeriodId: journalContext.fiscalPeriodId,
+        line,
+        lineIndex: index,
+        userId,
+      });
+    }
+  }
+}
+
 async function resolveDraftDocumentWriteModel({
   tenantId,
   legalEntityId,
@@ -3244,7 +4651,9 @@ async function resolveDraftDocumentWriteModel({
   runQuery = query,
 }) {
   if (Array.isArray(linesInput) && linesInput.length > 0) {
-    const normalizedLines = normalizeExplicitDraftLines(linesInput);
+    const normalizedLines = normalizeExplicitDraftLines(linesInput, {
+      direction,
+    });
     assertNoExplicitApFixedAssetPostingAccounts({
       direction,
       rawLinesInput,
@@ -3364,6 +4773,414 @@ async function resolveDraftDocumentWriteModel({
     resolvedAmounts,
     ...syntheticWriteModel,
   };
+}
+
+function deriveCariReversalPeriodKeyFromDate(dateText) {
+  const normalizedDate = toDateOnlyString(dateText, "date");
+  if (!normalizedDate) {
+    return null;
+  }
+  return normalizedDate.slice(0, 7);
+}
+
+async function listCariFixedAssetReverseTransactionsTx(tx, {
+  tenantId,
+  documentId,
+  documentLineId,
+  transactionTypes = [],
+}) {
+  const normalizedTypes = Array.from(
+    new Set(
+      (Array.isArray(transactionTypes) ? transactionTypes : [])
+        .map((value) => normalizeUpperText(value))
+        .filter(Boolean)
+    )
+  );
+  const params = [tenantId, documentId, documentLineId];
+  let transactionTypeSql = "";
+  if (normalizedTypes.length > 0) {
+    transactionTypeSql = `AND fat.transaction_type IN (${normalizedTypes.map(() => "?").join(", ")})`;
+    params.push(...normalizedTypes);
+  }
+
+  const result = await tx.query(
+    `SELECT
+        fat.id,
+        fat.asset_id,
+        fat.transaction_type,
+        fat.status,
+        fat.effective_date,
+        fat.posting_date,
+        fat.book_id,
+        fat.fiscal_period_id,
+        fat.currency_code,
+        fat.journal_entry_id,
+        fat.pre_disposal_status,
+        fa.asset_no,
+        fa.status AS asset_status,
+        fa.source_cari_document_id,
+        fa.source_cari_document_line_id,
+        fa.source_cari_document_line_unit_no
+     FROM fixed_asset_transactions fat
+     JOIN fixed_assets fa
+       ON fa.id = fat.asset_id
+      AND fa.tenant_id = fat.tenant_id
+     WHERE fat.tenant_id = ?
+       AND fat.source_ref_type = 'CARI_DOCUMENT'
+       AND fat.source_ref_id = ?
+       AND fat.source_ref_line_id = ?
+       AND fat.status = 'POSTED'
+       AND fat.reversal_transaction_id IS NULL
+       AND NOT EXISTS (
+         SELECT 1
+           FROM fixed_asset_transactions rev
+          WHERE rev.reversed_transaction_id = fat.id
+            AND rev.status = 'POSTED'
+       )
+       ${transactionTypeSql}
+     ORDER BY fat.effective_date ASC, fat.id ASC
+     FOR UPDATE`,
+    params
+  );
+
+  return (result.rows || []).map((row) => ({
+    id: parsePositiveInt(row.id),
+    assetId: parsePositiveInt(row.asset_id),
+    transactionType: normalizeUpperText(row.transaction_type),
+    status: normalizeUpperText(row.status),
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    postingDate: row.posting_date ? String(row.posting_date).slice(0, 10) : null,
+    bookId: parsePositiveInt(row.book_id),
+    fiscalPeriodId: parsePositiveInt(row.fiscal_period_id),
+    currencyCode: normalizeUpperText(row.currency_code || null),
+    journalEntryId: parsePositiveInt(row.journal_entry_id),
+    preDisposalStatus: normalizeUpperText(row.pre_disposal_status),
+    assetNo: row.asset_no || `ID-${Number(row.asset_id)}`,
+    assetStatus: normalizeUpperText(row.asset_status),
+    sourceCariDocumentId: parsePositiveInt(row.source_cari_document_id),
+    sourceCariDocumentLineId: parsePositiveInt(row.source_cari_document_line_id),
+    sourceCariDocumentLineUnitNo: parsePositiveInt(row.source_cari_document_line_unit_no),
+  }));
+}
+
+async function loadLatestPostedDepreciationPeriodForCariReverseTx(tx, {
+  tenantId,
+  assetId,
+}) {
+  const result = await tx.query(
+    `SELECT effective_date
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'
+        AND transaction_type = 'DEPRECIATION'
+        AND reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fixed_asset_transactions.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY effective_date DESC, id DESC
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+
+  return deriveCariReversalPeriodKeyFromDate(result.rows?.[0]?.effective_date);
+}
+
+async function findLaterPostedFixedAssetTransactionBlockerTx(tx, {
+  tenantId,
+  assetId,
+  effectiveDate,
+  transactionId,
+}) {
+  const result = await tx.query(
+    `SELECT id,
+            transaction_type,
+            status,
+            effective_date
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'
+        AND (
+          effective_date > ?
+          OR (effective_date = ? AND id > ?)
+        )
+      ORDER BY effective_date ASC, id ASC
+      LIMIT 1
+      FOR UPDATE`,
+    [tenantId, assetId, effectiveDate, effectiveDate, transactionId]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: parsePositiveInt(row.id),
+    transactionType: normalizeUpperText(row.transaction_type),
+    status: normalizeUpperText(row.status),
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+  };
+}
+
+async function deleteJournalSourceLinksForFixedAssetTransactionsTx(tx, {
+  tenantId,
+  transactionIds,
+}) {
+  const normalizedIds = Array.from(
+    new Set((Array.isArray(transactionIds) ? transactionIds : []).map((value) => parsePositiveInt(value)).filter(Boolean))
+  );
+  if (normalizedIds.length === 0) {
+    return;
+  }
+  await tx.query(
+    `DELETE FROM journal_source_links
+      WHERE tenant_id = ?
+        AND source_ref_type = ?
+        AND source_ref_id IN (${normalizedIds.map(() => "?").join(", ")})`,
+    [tenantId, FIXED_ASSET_TRANSACTION, ...normalizedIds]
+  );
+}
+
+async function markFixedAssetTransactionsReversedTx(tx, {
+  tenantId,
+  transactionIds,
+}) {
+  const normalizedIds = Array.from(
+    new Set((Array.isArray(transactionIds) ? transactionIds : []).map((value) => parsePositiveInt(value)).filter(Boolean))
+  );
+  if (normalizedIds.length === 0) {
+    return;
+  }
+  await tx.query(
+    `UPDATE fixed_asset_transactions
+        SET status = 'REVERSED'
+      WHERE tenant_id = ?
+        AND status = 'POSTED'
+        AND id IN (${normalizedIds.map(() => "?").join(", ")})`,
+    [tenantId, ...normalizedIds]
+  );
+}
+
+async function prepareFixedAssetReverseSideEffectsTx(tx, {
+  tenantId,
+  direction,
+  documentId,
+  documentLines,
+}) {
+  const normalizedDirection = normalizeUpperText(direction);
+  const linePlans = new Map();
+
+  for (const line of Array.isArray(documentLines) ? documentLines : []) {
+    if (normalizeUpperText(line?.subledgerType || "NONE") !== "FIXED_ASSET") {
+      continue;
+    }
+
+    const lineId = parsePositiveInt(line?.id);
+    if (!lineId) {
+      continue;
+    }
+
+    if (normalizedDirection === "AP") {
+      const capitalizationTransactions = await listCariFixedAssetReverseTransactionsTx(tx, {
+        tenantId,
+        documentId,
+        documentLineId: lineId,
+        transactionTypes: ["CAPITALIZATION"],
+      });
+      if (capitalizationTransactions.length === 0) {
+        continue;
+      }
+
+      const nonDraftAsset = capitalizationTransactions.find(
+        (transaction) => normalizeUpperText(transaction.assetStatus) !== "DRAFT"
+      );
+      if (nonDraftAsset) {
+        throw badRequest(
+          `Asset ${nonDraftAsset.assetNo} has been activated since capitalization. ` +
+          "Reverse the activation first before reversing the source CARI document."
+        );
+      }
+
+      linePlans.set(lineId, {
+        direction: "AP",
+        fixedAssetMode: normalizeUpperText(line.fixedAssetMode),
+        capitalizationTransactions,
+      });
+      continue;
+    }
+
+    if (normalizedDirection === "AR") {
+      const lineTransactions = await listCariFixedAssetReverseTransactionsTx(tx, {
+        tenantId,
+        documentId,
+        documentLineId: lineId,
+        transactionTypes: ["SALE", "DEPRECIATION"],
+      });
+      const saleTransaction = lineTransactions.find(
+        (transaction) => transaction.transactionType === "SALE"
+      );
+      if (!saleTransaction) {
+        continue;
+      }
+      if (!saleTransaction.preDisposalStatus) {
+        throw badRequest(
+          `Fixed-asset SALE transaction ${saleTransaction.id} is missing pre_disposal_status and ` +
+          "cannot be reversed safely through CARI document reversal"
+        );
+      }
+
+      const laterBlocker = await findLaterPostedFixedAssetTransactionBlockerTx(tx, {
+        tenantId,
+        assetId: saleTransaction.assetId,
+        effectiveDate: saleTransaction.effectiveDate,
+        transactionId: saleTransaction.id,
+      });
+      if (laterBlocker) {
+        throw badRequest(
+          `Asset ${saleTransaction.assetNo} has had subsequent transactions since disposal. ` +
+          `Reverse the later ${laterBlocker.transactionType || "UNKNOWN"} transaction first ` +
+          `(transactionId=${laterBlocker.id}).`
+        );
+      }
+
+      linePlans.set(lineId, {
+        direction: "AR",
+        saleTransaction,
+        cutoffTransactions: lineTransactions.filter(
+          (transaction) => transaction.transactionType === "DEPRECIATION"
+        ),
+      });
+    }
+  }
+
+  return linePlans;
+}
+
+async function applyFixedAssetReverseSideEffectsTx(tx, {
+  tenantId,
+  userId,
+  linePlans,
+}) {
+  if (!(linePlans instanceof Map) || linePlans.size === 0) {
+    return;
+  }
+
+  for (const linePlan of linePlans.values()) {
+    if (linePlan?.direction === "AP") {
+      const capitalizationTransactions = Array.isArray(linePlan.capitalizationTransactions)
+        ? linePlan.capitalizationTransactions
+        : [];
+      if (capitalizationTransactions.length === 0) {
+        continue;
+      }
+
+      if (linePlan.fixedAssetMode === "AUTO_CREATE") {
+        const transactionIds = capitalizationTransactions
+          .map((transaction) => transaction.id)
+          .filter(Boolean);
+        const assetIds = Array.from(
+          new Set(
+            capitalizationTransactions
+              .map((transaction) => transaction.assetId)
+              .filter(Boolean)
+          )
+        );
+
+        await deleteJournalSourceLinksForFixedAssetTransactionsTx(tx, {
+          tenantId,
+          transactionIds,
+        });
+        await tx.query(
+          `DELETE FROM fixed_asset_transactions
+            WHERE tenant_id = ?
+              AND id IN (${transactionIds.map(() => "?").join(", ")})`,
+          [tenantId, ...transactionIds]
+        );
+        await tx.query(
+          `DELETE FROM fixed_assets
+            WHERE tenant_id = ?
+              AND status = 'DRAFT'
+              AND id IN (${assetIds.map(() => "?").join(", ")})`,
+          [tenantId, ...assetIds]
+        );
+        continue;
+      }
+
+      if (linePlan.fixedAssetMode === "LINK_EXISTING") {
+        const transaction = capitalizationTransactions[0];
+        await markFixedAssetTransactionsReversedTx(tx, {
+          tenantId,
+          transactionIds: capitalizationTransactions.map((entry) => entry.id),
+        });
+        await tx.query(
+          `UPDATE fixed_assets
+              SET original_cost_txn = 0,
+                  original_cost_base = 0,
+                  source_cari_document_id = NULL,
+                  source_cari_document_line_id = NULL,
+                  source_cari_document_line_unit_no = NULL,
+                  updated_by_user_id = ?
+            WHERE tenant_id = ?
+              AND id = ?
+              AND status = 'DRAFT'`,
+          [userId, tenantId, transaction.assetId]
+        );
+      }
+      continue;
+    }
+
+    if (linePlan?.direction === "AR") {
+      const saleTransaction = linePlan.saleTransaction;
+      if (!saleTransaction) {
+        continue;
+      }
+
+      const allTransactionIds = [
+        saleTransaction.id,
+        ...(Array.isArray(linePlan.cutoffTransactions)
+          ? linePlan.cutoffTransactions.map((transaction) => transaction.id)
+          : []),
+      ].filter(Boolean);
+      await markFixedAssetTransactionsReversedTx(tx, {
+        tenantId,
+        transactionIds: allTransactionIds,
+      });
+
+      const restoredLastDepreciationPeriod = await loadLatestPostedDepreciationPeriodForCariReverseTx(
+        tx,
+        {
+          tenantId,
+          assetId: saleTransaction.assetId,
+        }
+      );
+
+      await tx.query(
+        `UPDATE fixed_assets
+            SET status = ?,
+                disposal_date = NULL,
+                disposal_type = NULL,
+                disposed_at = NULL,
+                disposal_proceeds_base = NULL,
+                disposal_gain_loss_base = NULL,
+                last_depreciation_period = ?,
+                updated_by_user_id = ?
+          WHERE tenant_id = ?
+            AND id = ?`,
+        [
+          saleTransaction.preDisposalStatus,
+          restoredLastDepreciationPeriod,
+          userId,
+          tenantId,
+          saleTransaction.assetId,
+        ]
+      );
+    }
+  }
 }
 
 async function findReversalDocumentByOriginalId({
@@ -4720,14 +6537,27 @@ async function postCariDocumentByIdTx(
         currencyCode,
       })
     );
-    ensureBalancedJournalLines(postingLines);
-
     const journalContext = await resolveBookAndOpenPeriodForDate({
       tenantId,
       legalEntityId: lockedLegalEntityId,
       targetDate: documentDate,
       runQuery: tx.query,
     });
+    const fixedAssetPostingState = await prepareFixedAssetPostingAugmentationsTx({
+      tx,
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      documentId,
+      direction,
+      documentType,
+      documentDate,
+      currencyCode,
+      counterpartyId,
+      documentLines,
+      postingLines,
+      journalContext,
+    });
+    ensureBalancedJournalLines(postingLines);
 
     const journalResult = await insertPostedJournalWithLinesTx(tx, {
       tenantId,
@@ -4858,6 +6688,22 @@ async function postCariDocumentByIdTx(
       documentId,
       direction,
       lines: documentLines,
+    });
+    await applyFixedAssetPostingSideEffectsTx({
+      tx,
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      documentId,
+      documentNo: postedNumbering.documentNo,
+      documentDate,
+      direction,
+      currencyCode,
+      counterpartyId,
+      documentLines,
+      journalEntryId: journalResult.journalEntryId,
+      journalContext,
+      userId: payload.userId,
+      fixedAssetPostingState,
     });
 
     const row = await fetchDocumentRow({
@@ -5211,6 +7057,12 @@ export async function reverseCariPostedDocumentById({
           inventoryReverseBlocks
         );
       }
+      const fixedAssetReversePlans = await prepareFixedAssetReverseSideEffectsTx(tx, {
+        tenantId,
+        direction: original.direction,
+        documentId,
+        documentLines: originalDocumentLines,
+      });
 
       const reversalDate =
         payload.reversalDate || toDateOnlyString(new Date(), "reversalDate");
@@ -5445,6 +7297,21 @@ export async function reverseCariPostedDocumentById({
             taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
             stockImpactMode: normalizeStockImpactMode(line.stockImpactMode),
             warehouseId: parsePositiveInt(line.warehouseId),
+            subledgerType: normalizeUpperText(line.subledgerType || "NONE") || "NONE",
+            fixedAssetMode: normalizeUpperText(line.fixedAssetMode),
+            targetFixedAssetId: parsePositiveInt(line.targetFixedAssetId),
+            fixedAssetCategoryId: parsePositiveInt(line.fixedAssetCategoryId),
+            fixedAssetOwnerOperatingUnitId: parsePositiveInt(
+              line.fixedAssetOwnerOperatingUnitId
+            ),
+            fixedAssetLocationOperatingUnitId: parsePositiveInt(
+              line.fixedAssetLocationOperatingUnitId
+            ),
+            fixedAssetNameOverride: toNullableString(line.fixedAssetNameOverride, 255),
+            fixedAssetSerialNo: toNullableString(line.fixedAssetSerialNo, 100),
+            fixedAssetTag: toNullableString(line.fixedAssetTag, 100),
+            revisedUsefulLifeMonths: parsePositiveInt(line.revisedUsefulLifeMonths),
+            lifeExtensionMonths: parsePositiveInt(line.lifeExtensionMonths),
             taxes: (line.taxes || []).map((tax) => ({
               componentNo: Number(tax.componentNo || 0),
               taxCode: toNullableString(tax.taxCode, 40),
@@ -5522,6 +7389,11 @@ export async function reverseCariPostedDocumentById({
         legalEntityId: lockedLegalEntityId,
         documentId,
         resolutionNote: `Voided by reversal document ${reversalDocumentId}`,
+      });
+      await applyFixedAssetReverseSideEffectsTx(tx, {
+        tenantId,
+        userId: payload.userId,
+        linePlans: fixedAssetReversePlans,
       });
 
       const reversalRow = await fetchDocumentRow({

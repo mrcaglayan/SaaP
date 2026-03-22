@@ -318,9 +318,9 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL02` — Backend validators: parse `subledgerType` with conditional required fields
 - [x] `STEP-SL03` — Backend CARI service: create/update document lines with subledger_type awareness
 - [x] `STEP-SL04` — Backend CARI service: auto-resolve posting account based on subledger_type + target entity
-- [ ] `STEP-SL05` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AP line → auto-create or capitalize assets from the bill line
-- [ ] `STEP-SL06` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AR line → trigger disposal flow on target eligible asset
-- [ ] `STEP-SL07` — 🔥 HOT — Backend CARI reversal: reverse CAPITALIZATION / disposal when CARI document is reversed
+- [x] `STEP-SL05` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AP line → auto-create or capitalize assets from the bill line
+- [x] `STEP-SL06` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AR line → trigger disposal flow on target eligible asset
+- [x] `STEP-SL07` — 🔥 HOT — Backend CARI reversal: reverse CAPITALIZATION / disposal when CARI document is reversed
 - [ ] `STEP-SL08` — Backend FA service: adapt activation for assets already cost-posted via CARI
 - [ ] `STEP-SL09` — Backend: backfill migration for existing stock-affecting lines (`subledger_type = 'STOCK'`)
 
@@ -573,6 +573,7 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
     - Update the asset's cost fields: `original_cost_txn`, `original_cost_base`, `acquisition_date` (from document date), `currency_code`, `source_cari_document_id`, `source_cari_document_line_id`, `source_cari_document_line_unit_no = 1`
     - Add a `upsertJournalSourceLinkTx` linking the CARI journal to the FA transaction
 - **Why reuse the CARI journal**: The existing FA06 flow (`createAssetsFromCariDocumentLineFa06`, line ~2728) creates its OWN separate journal via `insertPostedJournalWithLinesTx`. The new flow is different — the CARI posting already created the correct journal lines (asset account debit from SL04's auto-resolution + AP control credit). The FA transaction just needs to reference that journal ID, not create a duplicate.
+- **SL08 boundary note**: suppressing any extra activation-time `ACQUISITION` lifecycle transaction for these CARI-capitalized assets is intentionally deferred to SL08 and is not part of SL05 capitalization posting scope.
 - If a link-existing target asset is no longer DRAFT at posting time, reject the posting with a clear error
 
 ### Explicit non-goals
@@ -616,6 +617,7 @@ When posting a CARI AR document, lines with `subledger_type = 'FIXED_ASSET'` tri
     - **Lock the asset row** (`SELECT ... FOR UPDATE`) to prevent concurrent modifications
     - Resolve and validate the AR line's explicit `postingAccountId` as the **sale proceeds account** for that line
     - Calculate cutoff depreciation through the day before disposal (reuse existing `resolveDisposalCutoffEconomics`), using the CARI posting's resolved `bookId` and `calendarId` for fiscal period context
+    - Repo-specific portability note: NBV resolution used for disposal economics must ignore lifecycle-only transactions that do not carry NBV amounts (for example `SUSPEND` / `REACTIVATE`), so suspended assets do not incorrectly appear to have zero carrying value. This is a supporting correctness fix, not a separate SL06 blocker.
     - **Append disposal journal lines to the CARI `postingLines` array BEFORE `ensureBalancedJournalLines` is called**. The disposal creates balanced debit/credit pairs (asset credit + accum depr debit + gain/loss), so total journal balance is preserved. Cutoff depreciation lines (depr expense debit + accum depr credit) are also balanced pairs. Do NOT create a separate journal.
     - Post disposal journal lines: debit the AR-line sale proceeds account, credit asset account (remove cost), debit accum depr (remove accumulated), recognize gain/loss via the asset/category disposal gain/loss accounts
   - **Post-journal FA side effects** in `applyFixedAssetPostingSideEffectsTx()`:
