@@ -314,9 +314,9 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 ### Master Tracker
 
 **Phase 1: Subledger-Aware Lines (Schema + Backend)**
-- [ ] `STEP-SL01` — Migration: add `subledger_type`, fixed-asset target, and fixed-asset generation fields to `cari_document_lines`
-- [ ] `STEP-SL02` — Backend validators: parse `subledgerType` with conditional required fields
-- [ ] `STEP-SL03` — Backend CARI service: create/update document lines with subledger_type awareness
+- [x] `STEP-SL01` — Migration: add `subledger_type`, fixed-asset target, and fixed-asset generation fields to `cari_document_lines`
+- [x] `STEP-SL02` — Backend validators: parse `subledgerType` with conditional required fields
+- [x] `STEP-SL03` — Backend CARI service: create/update document lines with subledger_type awareness
 - [ ] `STEP-SL04` — Backend CARI service: auto-resolve posting account based on subledger_type + target entity
 - [ ] `STEP-SL05` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AP line → auto-create or capitalize assets from the bill line
 - [ ] `STEP-SL06` — 🔥 HOT — Backend CARI posting: FIXED_ASSET AR line → trigger disposal flow on target eligible asset
@@ -426,7 +426,7 @@ Extend the CARI document line validator to accept and validate `subledgerType`, 
     - otherwise default to `AUTO_CREATE`
   - `fixedAssetMode = 'AUTO_CREATE'`: require `targetFixedAssetId` to be empty, require `quantity` to be a whole positive integer, and require `fixedAssetCategoryId`, `fixedAssetOwnerOperatingUnitId`, and `fixedAssetLocationOperatingUnitId`
   - `fixedAssetMode = 'LINK_EXISTING'`: require `targetFixedAssetId` and require `quantity = 1`
-  - `fixedAssetMode = 'IMPROVE_EXISTING'`: require `targetFixedAssetId`, require `quantity = 1`, accept optional `revisedUsefulLifeMonths` or `lifeExtensionMonths` (but not both). Generated-asset defaults (`fixedAssetCategoryId`, owner/location OUs) are NOT required — the target asset already has these. Reject if target asset is not ACTIVE or FULLY_DEPRECIATED. **FULLY_DEPRECIATED hard rule**: if target asset status is `FULLY_DEPRECIATED`, at least one of `revisedUsefulLifeMonths` or `lifeExtensionMonths` MUST be provided, and the resulting `remaining_useful_life_months` must be `> 0` — otherwise cost increases with no future depreciation periods. (Full posting logic in SL27)
+  - `fixedAssetMode = 'IMPROVE_EXISTING'`: require `targetFixedAssetId`, require `quantity = 1`, accept optional `revisedUsefulLifeMonths` or `lifeExtensionMonths` (but not both). Generated-asset defaults (`fixedAssetCategoryId`, owner/location OUs) are NOT required — the target asset already has these. **Scope boundary note**: The following semantics are documented here for context but are NOT implemented in SL02 (validator-only, no DB access): (a) Reject if target asset is not ACTIVE or FULLY_DEPRECIATED → implemented in SL03 (service-level existence/status validation). (b) FULLY_DEPRECIATED hard rule: if target asset status is `FULLY_DEPRECIATED`, at least one of `revisedUsefulLifeMonths` or `lifeExtensionMonths` MUST be provided, and the resulting `remaining_useful_life_months` must be `> 0` → implemented in SL27 (posting-level life-extension rules). SL02 only validates the request shape (field presence, mutual exclusion, types). (Full posting logic in SL27)
   - In all three modes: reject `itemCardId` and `stockImpactMode != 'NONE'`
 - When `subledgerType = 'FIXED_ASSET'` on **AR**: require `targetFixedAssetId` and require `quantity = 1`. **Internal mode normalization**: the client does not send `fixedAssetMode` for AR lines (SL11 does not expose it), but the SL01 CHECK constraint requires `fixed_asset_mode IS NOT NULL` for every FIXED_ASSET line. The validator must normalize AR FIXED_ASSET lines to `fixedAssetMode = 'LINK_EXISTING'` internally — AR always references one specific existing asset for disposal. Reject any explicitly sent `fixedAssetMode` on AR FIXED_ASSET lines (the mode is server-determined, not client-chosen).
 - When `subledgerType = 'STOCK'` (explicit or inferred): require `itemCardId` and `stockImpactMode != 'NONE'`, reject `targetFixedAssetId`

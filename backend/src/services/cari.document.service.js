@@ -68,6 +68,15 @@ const FROZEN_TRANSACTION_KEYS = new Set([
 ]);
 const STOCK_LINK_STATUS_PENDING = "PENDING";
 const STOCK_LINK_STATUS_VOID = "VOID";
+const FIXED_ASSET_AR_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+]);
+const FIXED_ASSET_AP_IMPROVEMENT_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "FULLY_DEPRECIATED",
+]);
 
 function toDecimalNumber(value) {
   if (value === null || value === undefined) {
@@ -549,6 +558,23 @@ function mapDocumentLineRow(row, taxes = [], stockLinks = []) {
     warehouseId: parsePositiveInt(row.warehouse_id),
     warehouseCode: row.warehouse_code || null,
     warehouseName: row.warehouse_name || null,
+    subledgerType: row.subledger_type || "NONE",
+    fixedAssetMode: row.fixed_asset_mode || null,
+    targetFixedAssetId: parsePositiveInt(row.target_fixed_asset_id),
+    fixedAssetCategoryId: parsePositiveInt(row.fixed_asset_category_id),
+    fixedAssetOwnerOperatingUnitId: parsePositiveInt(
+      row.fixed_asset_owner_operating_unit_id
+    ),
+    fixedAssetLocationOperatingUnitId: parsePositiveInt(
+      row.fixed_asset_location_operating_unit_id
+    ),
+    fixedAssetNameOverride: row.fixed_asset_name_override || null,
+    fixedAssetSerialNo: row.fixed_asset_serial_no || null,
+    fixedAssetTag: row.fixed_asset_tag || null,
+    revisedUsefulLifeMonths: parsePositiveInt(
+      row.improvement_revised_useful_life_months
+    ),
+    lifeExtensionMonths: parsePositiveInt(row.improvement_life_extension_months),
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
     taxes: Array.isArray(taxes) ? taxes : [],
@@ -722,6 +748,46 @@ async function fetchPaymentTermRow({
   return result.rows?.[0] || null;
 }
 
+async function fetchFixedAssetRow({
+  tenantId,
+  assetId,
+  runQuery = query,
+}) {
+  const normalizedAssetId = parsePositiveInt(assetId);
+  if (!normalizedAssetId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT id, tenant_id, legal_entity_id, status, asset_no, name
+     FROM fixed_assets
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, normalizedAssetId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function fetchFixedAssetCategoryRow({
+  tenantId,
+  categoryId,
+  runQuery = query,
+}) {
+  const normalizedCategoryId = parsePositiveInt(categoryId);
+  if (!normalizedCategoryId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT id, tenant_id, legal_entity_id, status
+     FROM fixed_asset_categories
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, normalizedCategoryId]
+  );
+  return result.rows?.[0] || null;
+}
+
 async function fetchDocumentRow({
   tenantId,
   documentId,
@@ -777,6 +843,17 @@ async function listDocumentLineRows({
         l.tax_category_code,
         l.stock_impact_mode,
         l.warehouse_id,
+        l.subledger_type,
+        l.fixed_asset_mode,
+        l.target_fixed_asset_id,
+        l.fixed_asset_category_id,
+        l.fixed_asset_owner_operating_unit_id,
+        l.fixed_asset_location_operating_unit_id,
+        l.fixed_asset_name_override,
+        l.fixed_asset_serial_no,
+        l.fixed_asset_tag,
+        l.improvement_revised_useful_life_months,
+        l.improvement_life_extension_months,
         w.code AS warehouse_code,
         w.name AS warehouse_name,
         l.created_at,
@@ -2143,6 +2220,42 @@ function normalizeExplicitDraftLines(linesInput) {
       taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
       stockImpactMode: normalizeStockImpactMode(line.stockImpactMode),
       warehouseId: parsePositiveInt(line.warehouseId),
+      subledgerType: normalizeUpperText(line.subledgerType || "NONE"),
+      fixedAssetMode: line.fixedAssetMode
+        ? normalizeUpperText(line.fixedAssetMode)
+        : null,
+      targetFixedAssetId: parsePositiveInt(line.targetFixedAssetId),
+      fixedAssetCategoryId: parsePositiveInt(line.fixedAssetCategoryId),
+      fixedAssetOwnerOperatingUnitId: parsePositiveInt(
+        line.fixedAssetOwnerOperatingUnitId
+      ),
+      fixedAssetLocationOperatingUnitId: parsePositiveInt(
+        line.fixedAssetLocationOperatingUnitId
+      ),
+      fixedAssetNameOverride: toNullableString(
+        line.fixedAssetNameOverride ?? line.fixed_asset_name_override,
+        255
+      ),
+      fixedAssetSerialNo: toNullableString(
+        line.fixedAssetSerialNo ?? line.fixed_asset_serial_no,
+        100
+      ),
+      fixedAssetTag: toNullableString(
+        line.fixedAssetTag ?? line.fixed_asset_tag,
+        100
+      ),
+      revisedUsefulLifeMonths: parsePositiveInt(
+        line.revisedUsefulLifeMonths ??
+          line.revised_useful_life_months ??
+          line.improvementRevisedUsefulLifeMonths ??
+          line.improvement_revised_useful_life_months
+      ),
+      lifeExtensionMonths: parsePositiveInt(
+        line.lifeExtensionMonths ??
+          line.life_extension_months ??
+          line.improvementLifeExtensionMonths ??
+          line.improvement_life_extension_months
+      ),
       taxes: [],
     };
   });
@@ -2454,6 +2567,37 @@ function buildSyntheticDraftLines({
           existingSingleLine?.stock_impact_mode
         ),
         warehouseId: parsePositiveInt(existingSingleLine?.warehouse_id),
+        subledgerType: normalizeUpperText(existingSingleLine?.subledger_type || "NONE"),
+        fixedAssetMode: existingSingleLine?.fixed_asset_mode
+          ? normalizeUpperText(existingSingleLine.fixed_asset_mode)
+          : null,
+        targetFixedAssetId: parsePositiveInt(
+          existingSingleLine?.target_fixed_asset_id
+        ),
+        fixedAssetCategoryId: parsePositiveInt(
+          existingSingleLine?.fixed_asset_category_id
+        ),
+        fixedAssetOwnerOperatingUnitId: parsePositiveInt(
+          existingSingleLine?.fixed_asset_owner_operating_unit_id
+        ),
+        fixedAssetLocationOperatingUnitId: parsePositiveInt(
+          existingSingleLine?.fixed_asset_location_operating_unit_id
+        ),
+        fixedAssetNameOverride: toNullableString(
+          existingSingleLine?.fixed_asset_name_override,
+          255
+        ),
+        fixedAssetSerialNo: toNullableString(
+          existingSingleLine?.fixed_asset_serial_no,
+          100
+        ),
+        fixedAssetTag: toNullableString(existingSingleLine?.fixed_asset_tag, 100),
+        revisedUsefulLifeMonths: parsePositiveInt(
+          existingSingleLine?.improvement_revised_useful_life_months
+        ),
+        lifeExtensionMonths: parsePositiveInt(
+          existingSingleLine?.improvement_life_extension_months
+        ),
         taxes: [],
       },
     ],
@@ -2467,6 +2611,173 @@ function buildSyntheticDraftLines({
     },
     isSynthetic: true,
   };
+}
+
+async function validateOperatingUnitReference({
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  fieldLabel,
+  runQuery = query,
+}) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (!normalizedOperatingUnitId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT id, legal_entity_id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, normalizedOperatingUnitId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    throw badRequest(`${fieldLabel} must belong to tenant`);
+  }
+  if (parsePositiveInt(row.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest(`${fieldLabel} must belong to legalEntityId`);
+  }
+  return normalizedOperatingUnitId;
+}
+
+async function validateFixedAssetDraftLineBindings({
+  tenantId,
+  legalEntityId,
+  direction,
+  lines,
+  fieldCollectionLabel = "lines",
+  runQuery = query,
+}) {
+  const assetCache = new Map();
+  const categoryCache = new Map();
+  const operatingUnitCache = new Map();
+
+  async function getAssetRow(assetId) {
+    const normalizedAssetId = parsePositiveInt(assetId);
+    if (!normalizedAssetId) {
+      return null;
+    }
+    if (!assetCache.has(normalizedAssetId)) {
+      assetCache.set(
+        normalizedAssetId,
+        await fetchFixedAssetRow({
+          tenantId,
+          assetId: normalizedAssetId,
+          runQuery,
+        })
+      );
+    }
+    return assetCache.get(normalizedAssetId);
+  }
+
+  async function getCategoryRow(categoryId) {
+    const normalizedCategoryId = parsePositiveInt(categoryId);
+    if (!normalizedCategoryId) {
+      return null;
+    }
+    if (!categoryCache.has(normalizedCategoryId)) {
+      categoryCache.set(
+        normalizedCategoryId,
+        await fetchFixedAssetCategoryRow({
+          tenantId,
+          categoryId: normalizedCategoryId,
+          runQuery,
+        })
+      );
+    }
+    return categoryCache.get(normalizedCategoryId);
+  }
+
+  async function assertOperatingUnit(fieldLabel, operatingUnitId) {
+    const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+    if (!normalizedOperatingUnitId) {
+      return null;
+    }
+    const cacheKey = `${legalEntityId}:${normalizedOperatingUnitId}`;
+    if (!operatingUnitCache.has(cacheKey)) {
+      operatingUnitCache.set(
+        cacheKey,
+        await validateOperatingUnitReference({
+          tenantId,
+          legalEntityId,
+          operatingUnitId: normalizedOperatingUnitId,
+          fieldLabel,
+          runQuery,
+        })
+      );
+    }
+    return operatingUnitCache.get(cacheKey);
+  }
+
+  for (let index = 0; index < (lines || []).length; index += 1) {
+    const line = lines[index] || {};
+    if (normalizeUpperText(line.subledgerType || "NONE") !== "FIXED_ASSET") {
+      continue;
+    }
+
+    const fieldPrefix = `${fieldCollectionLabel}[${index + 1}].`;
+    const targetFixedAssetId = parsePositiveInt(line.targetFixedAssetId);
+    if (targetFixedAssetId) {
+      const assetRow = await getAssetRow(targetFixedAssetId);
+      if (!assetRow) {
+        throw badRequest(
+          `${fieldPrefix}targetFixedAssetId must reference an existing fixed asset`
+        );
+      }
+      if (parsePositiveInt(assetRow.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+        throw badRequest(`${fieldPrefix}targetFixedAssetId must belong to legalEntityId`);
+      }
+
+      const assetStatus = normalizeUpperText(assetRow.status);
+      if (direction === "AR") {
+        if (!FIXED_ASSET_AR_ELIGIBLE_STATUSES.has(assetStatus)) {
+          throw badRequest(
+            `${fieldPrefix}targetFixedAssetId must reference an ACTIVE, SUSPENDED, or FULLY_DEPRECIATED asset for AR documents`
+          );
+        }
+      } else if (normalizeUpperText(line.fixedAssetMode) === "LINK_EXISTING") {
+        if (assetStatus !== "DRAFT") {
+          throw badRequest(
+            `${fieldPrefix}targetFixedAssetId must reference a DRAFT asset when fixedAssetMode=LINK_EXISTING`
+          );
+        }
+      } else if (normalizeUpperText(line.fixedAssetMode) === "IMPROVE_EXISTING") {
+        if (!FIXED_ASSET_AP_IMPROVEMENT_ELIGIBLE_STATUSES.has(assetStatus)) {
+          throw badRequest(
+            `${fieldPrefix}targetFixedAssetId must reference an ACTIVE or FULLY_DEPRECIATED asset when fixedAssetMode=IMPROVE_EXISTING`
+          );
+        }
+      }
+    }
+
+    if (
+      direction === "AP" &&
+      normalizeUpperText(line.fixedAssetMode) === "AUTO_CREATE"
+    ) {
+      const fixedAssetCategoryId = parsePositiveInt(line.fixedAssetCategoryId);
+      const categoryRow = await getCategoryRow(fixedAssetCategoryId);
+      if (!categoryRow) {
+        throw badRequest(
+          `${fieldPrefix}fixedAssetCategoryId must reference an existing fixed asset category`
+        );
+      }
+      if (
+        parsePositiveInt(categoryRow.legal_entity_id) !== parsePositiveInt(legalEntityId)
+      ) {
+        throw badRequest(`${fieldPrefix}fixedAssetCategoryId must belong to legalEntityId`);
+      }
+      await assertOperatingUnit(
+        `${fieldPrefix}fixedAssetOwnerOperatingUnitId`,
+        line.fixedAssetOwnerOperatingUnitId
+      );
+      await assertOperatingUnit(
+        `${fieldPrefix}fixedAssetLocationOperatingUnitId`,
+        line.fixedAssetLocationOperatingUnitId
+      );
+    }
+  }
 }
 
 async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId, lines }) {
@@ -2513,9 +2824,20 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
           posting_account_id,
           tax_category_code,
           stock_impact_mode,
-          warehouse_id
+          warehouse_id,
+          subledger_type,
+          fixed_asset_mode,
+          target_fixed_asset_id,
+          fixed_asset_category_id,
+          fixed_asset_owner_operating_unit_id,
+          fixed_asset_location_operating_unit_id,
+          fixed_asset_name_override,
+          fixed_asset_serial_no,
+          fixed_asset_tag,
+          improvement_revised_useful_life_months,
+          improvement_life_extension_months
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
       [
         tenantId,
         legalEntityId,
@@ -2536,6 +2858,17 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
         line.taxCategoryCode,
         line.stockImpactMode,
         line.warehouseId || null,
+        line.subledgerType || "NONE",
+        line.fixedAssetMode || null,
+        line.targetFixedAssetId || null,
+        line.fixedAssetCategoryId || null,
+        line.fixedAssetOwnerOperatingUnitId || null,
+        line.fixedAssetLocationOperatingUnitId || null,
+        line.fixedAssetNameOverride || null,
+        line.fixedAssetSerialNo || null,
+        line.fixedAssetTag || null,
+        line.revisedUsefulLifeMonths || null,
+        line.lifeExtensionMonths || null,
       ]
     );
     const insertedLineId = parsePositiveInt(insertResult.rows?.insertId);
@@ -2720,6 +3053,13 @@ async function resolveDraftDocumentWriteModel({
 }) {
   if (Array.isArray(linesInput) && linesInput.length > 0) {
     const normalizedLines = normalizeExplicitDraftLines(linesInput);
+    await validateFixedAssetDraftLineBindings({
+      tenantId,
+      legalEntityId,
+      direction,
+      lines: normalizedLines,
+      runQuery,
+    });
     await applyItemCardDefaultsToLines({
       tenantId,
       legalEntityId,
@@ -2786,6 +3126,13 @@ async function resolveDraftDocumentWriteModel({
   const syntheticWriteModel = buildSyntheticDraftLines({
     resolvedAmounts,
     existingLineRows,
+  });
+  await validateFixedAssetDraftLineBindings({
+    tenantId,
+    legalEntityId,
+    direction,
+    lines: syntheticWriteModel.lines,
+    runQuery,
   });
   await applyItemCardDefaultsToLines({
     tenantId,

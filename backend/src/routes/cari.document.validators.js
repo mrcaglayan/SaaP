@@ -320,6 +320,24 @@ function parseDocumentLines(value, options = {}) {
       `lines[${index}].fixedAssetMode`,
       FIXED_ASSET_MODE_VALUES
     );
+    const fixedAssetNameOverride =
+      parseOptionalShortText(
+        row.fixedAssetNameOverride ?? row.fixed_asset_name_override,
+        `lines[${index}].fixedAssetNameOverride`,
+        255
+      ) || null;
+    const fixedAssetSerialNo =
+      parseOptionalShortText(
+        row.fixedAssetSerialNo ?? row.fixed_asset_serial_no,
+        `lines[${index}].fixedAssetSerialNo`,
+        100
+      ) || null;
+    const fixedAssetTag =
+      parseOptionalShortText(
+        row.fixedAssetTag ?? row.fixed_asset_tag,
+        `lines[${index}].fixedAssetTag`,
+        100
+      ) || null;
     const revisedUsefulLifeMonths =
       parseOptionalPositiveIntField(
         row.revisedUsefulLifeMonths ??
@@ -380,11 +398,6 @@ function parseDocumentLines(value, options = {}) {
     let fixedAssetMode = explicitFixedAssetMode || null;
 
     if (subledgerType === "FIXED_ASSET") {
-      if (!direction) {
-        throw badRequest(
-          `direction is required when lines[${index}].subledgerType resolves to FIXED_ASSET`
-        );
-      }
       if (itemCardId) {
         throw badRequest(
           `lines[${index}].itemCardId is not allowed when subledgerType=FIXED_ASSET`
@@ -396,7 +409,24 @@ function parseDocumentLines(value, options = {}) {
         );
       }
 
-      if (direction === "AP") {
+      if (direction === "AR") {
+        if (!targetFixedAssetId) {
+          throw badRequest(
+            `lines[${index}].targetFixedAssetId is required when subledgerType=FIXED_ASSET on AR documents`
+          );
+        }
+        if (!isUnitQuantity(quantity)) {
+          throw badRequest(
+            `lines[${index}].quantity must equal 1 when subledgerType=FIXED_ASSET on AR documents`
+          );
+        }
+        if (explicitFixedAssetMode) {
+          throw badRequest(
+            `lines[${index}].fixedAssetMode is not allowed when subledgerType=FIXED_ASSET on AR documents`
+          );
+        }
+        fixedAssetMode = "LINK_EXISTING";
+      } else {
         fixedAssetMode =
           fixedAssetMode || (targetFixedAssetId ? "LINK_EXISTING" : "AUTO_CREATE");
 
@@ -458,45 +488,12 @@ function parseDocumentLines(value, options = {}) {
               `lines[${index}].quantity must equal 1 when fixedAssetMode=IMPROVE_EXISTING`
             );
           }
-          if (fixedAssetCategoryId || fixedAssetOwnerOperatingUnitId || fixedAssetLocationOperatingUnitId) {
-            throw badRequest(
-              `lines[${index}] generated-asset defaults (fixedAssetCategoryId, owner/location OUs) are not allowed when fixedAssetMode=IMPROVE_EXISTING — target asset already has these`
-            );
-          }
           if (revisedUsefulLifeMonths && lifeExtensionMonths) {
             throw badRequest(
               `lines[${index}].revisedUsefulLifeMonths and lifeExtensionMonths cannot both be provided`
             );
           }
         }
-      } else if (direction === "AR") {
-        if (!targetFixedAssetId) {
-          throw badRequest(
-            `lines[${index}].targetFixedAssetId is required when subledgerType=FIXED_ASSET on AR documents`
-          );
-        }
-        if (!isUnitQuantity(quantity)) {
-          throw badRequest(
-            `lines[${index}].quantity must equal 1 when subledgerType=FIXED_ASSET on AR documents`
-          );
-        }
-        if (explicitFixedAssetMode) {
-          throw badRequest(
-            `lines[${index}].fixedAssetMode is not allowed when subledgerType=FIXED_ASSET on AR documents`
-          );
-        }
-        if (
-          fixedAssetCategoryId ||
-          fixedAssetOwnerOperatingUnitId ||
-          fixedAssetLocationOperatingUnitId ||
-          revisedUsefulLifeMonths ||
-          lifeExtensionMonths
-        ) {
-          throw badRequest(
-            `lines[${index}] contains AP-only fixed-asset fields that are not allowed on AR documents`
-          );
-        }
-        fixedAssetMode = "LINK_EXISTING";
       }
     } else if (subledgerType === "STOCK") {
       if (!itemCardId) {
@@ -549,6 +546,9 @@ function parseDocumentLines(value, options = {}) {
       fixedAssetCategoryId,
       fixedAssetOwnerOperatingUnitId,
       fixedAssetLocationOperatingUnitId,
+      fixedAssetNameOverride,
+      fixedAssetSerialNo,
+      fixedAssetTag,
       revisedUsefulLifeMonths,
       lifeExtensionMonths,
     });
