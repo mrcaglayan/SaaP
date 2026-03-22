@@ -31,6 +31,11 @@ import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { getJournal, listAccounts } from "../../api/glAdmin.js";
 import { listItemCards } from "../../api/itemCards.js";
 import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
+import {
+  createFixedAsset,
+  listFixedAssetCategories,
+  listFixedAssets,
+} from "../../api/fixedAssets.js";
 import { listOperatingUnits } from "../../api/orgAdmin.js";
 import { listCariAudit } from "../../api/cariAudit.js";
 import { listTaxRules, previewTaxComputation } from "../../api/taxAdmin.js";
@@ -61,8 +66,11 @@ import { exportRowsAsCsv } from "../../utils/csvExport.js";
 import {
   buildDocumentListQuery,
   buildDocumentMutationPayload,
+  computeDocumentLineAmounts,
   createDocumentLineDraft,
+  DOCUMENT_LINE_FIXED_ASSET_MODES,
   DOCUMENT_LINE_KINDS,
+  DOCUMENT_LINE_STOCK_IMPACT_MODES,
   DOCUMENT_LINE_SUBLEDGER_TYPES,
   DOCUMENT_DIRECTIONS,
   getDocumentLineTotals,
@@ -119,6 +127,15 @@ const DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE = 50;
 const DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
 const INVENTORY_MOVEMENTS_ROUTE = "/app/stok-yansitma-islemleri";
 const INVENTORY_TRANSFERS_ROUTE = "/app/stok-transferleri";
+const DOCUMENT_LINE_EXPANSION_LIMIT = 500;
+const FIXED_ASSET_AR_ELIGIBLE_STATUSES = [
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+];
+const FIXED_ASSET_AP_MODE_OPTIONS = DOCUMENT_LINE_FIXED_ASSET_MODES.filter(
+  (value) => value === "AUTO_CREATE" || value === "LINK_EXISTING"
+);
 const DOCUMENT_RECURRING_TEMPLATE_CADENCES = [
   "NONE",
   "WEEKLY",
@@ -518,6 +535,198 @@ function buildRowsById(rows = []) {
   );
 }
 
+function formatPostableAccountDisplay(account, accountId = null) {
+  if (account?.code && account?.name) {
+    return `${account.code} - ${account.name}`;
+  }
+  if (account?.code) {
+    return account.code;
+  }
+  if (toPositiveInt(accountId)) {
+    return `#${accountId}`;
+  }
+  return "-";
+}
+
+function getFixedAssetCategoryDefaultAssetAccountId(categoryRow) {
+  return toPositiveInt(
+    categoryRow?.defaultAssetAccountId ?? categoryRow?.default_asset_account_id
+  );
+}
+
+function mapFixedAssetCategoryLookupOptions(rows = [], accountRowsById = new Map()) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      const id = toPositiveInt(row?.id);
+      if (!id) {
+        return null;
+      }
+      const code = normalizeText(row?.code);
+      const name = normalizeText(row?.name);
+      const accountId = getFixedAssetCategoryDefaultAssetAccountId(row);
+      const account = accountRowsById.get(accountId) || null;
+      return {
+        value: String(id),
+        label: code && name ? `${code} - ${name}` : code || name || `#${id}`,
+        description: accountId
+          ? `Asset account: ${formatPostableAccountDisplay(account, accountId)}`
+          : "Asset account is not configured.",
+      };
+    })
+    .filter(Boolean);
+}
+
+function extendFixedAssetCategoryOptionsForSelectedLines(options, lines) {
+  const normalizedOptions = Array.isArray(options) ? [...options] : [];
+  const knownValues = new Set(
+    normalizedOptions.map((row) => String(row?.value || "").trim()).filter(Boolean)
+  );
+  const selectedIds = (Array.isArray(lines) ? lines : [])
+    .map((line) => normalizeText(line?.fixedAssetCategoryId))
+    .filter(Boolean);
+  selectedIds.forEach((value) => {
+    if (!knownValues.has(value)) {
+      normalizedOptions.unshift({
+        value,
+        label: `Category #${value}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+      knownValues.add(value);
+    }
+  });
+  return normalizedOptions;
+}
+
+function mapFixedAssetLookupOptions(
+  rows = [],
+  operatingUnitsById = new Map(),
+  eligibleStatuses = null
+) {
+  const allowedStatuses = Array.isArray(eligibleStatuses)
+    ? new Set(eligibleStatuses.map((value) => String(value || "").trim().toUpperCase()))
+    : null;
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => {
+      if (!allowedStatuses) {
+        return true;
+      }
+      return allowedStatuses.has(normalizeText(row?.status).toUpperCase());
+    })
+    .map((row) => {
+      const id = toPositiveInt(row?.id);
+      if (!id) {
+        return null;
+      }
+      const assetNo = normalizeText(row?.assetNo || row?.asset_no);
+      const name = normalizeText(row?.name);
+      const categoryCode = normalizeText(row?.categoryCode || row?.category_code);
+      const categoryName = normalizeText(row?.categoryName || row?.category_name);
+      const ownerOperatingUnitId = toPositiveInt(
+        row?.ownerOperatingUnitId ?? row?.owner_operating_unit_id
+      );
+      const ownerOperatingUnit = operatingUnitsById.get(ownerOperatingUnitId) || null;
+      const ownerLabel = ownerOperatingUnitId
+        ? formatOperatingUnitDisplay(
+            ownerOperatingUnitId,
+            ownerOperatingUnit?.code,
+            ownerOperatingUnit?.name
+          )
+        : "-";
+      const categoryLabel =
+        categoryCode && categoryName
+          ? `${categoryCode} - ${categoryName}`
+          : categoryCode || categoryName || "-";
+      const status = normalizeText(row?.status).toUpperCase();
+      return {
+        value: String(id),
+        label:
+          assetNo && name ? `${assetNo} - ${name}` : assetNo || name || `Asset #${id}`,
+        description: [categoryLabel, `Owner: ${ownerLabel}`, status || "-"]
+          .filter(Boolean)
+          .join(" | "),
+      };
+    })
+    .filter(Boolean);
+}
+
+function extendFixedAssetOptionsForSelectedLines(options, lines) {
+  const normalizedOptions = Array.isArray(options) ? [...options] : [];
+  const knownValues = new Set(
+    normalizedOptions.map((row) => String(row?.value || "").trim()).filter(Boolean)
+  );
+  const selectedIds = (Array.isArray(lines) ? lines : [])
+    .map((line) => normalizeText(line?.targetFixedAssetId))
+    .filter(Boolean);
+  selectedIds.forEach((value) => {
+    if (!knownValues.has(value)) {
+      normalizedOptions.unshift({
+        value,
+        label: `Asset #${value}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+      knownValues.add(value);
+    }
+  });
+  return normalizedOptions;
+}
+
+function roundDocumentUiAmount(value) {
+  if (!Number.isFinite(Number(value))) {
+    return 0;
+  }
+  return Number(Number(value).toFixed(6));
+}
+
+function allocateAmountAcrossUnits(amount, unitCount) {
+  const totalUnits = toPositiveInt(unitCount);
+  if (!totalUnits) {
+    return [];
+  }
+  if (totalUnits === 1) {
+    return [roundDocumentUiAmount(amount)];
+  }
+  const normalizedTotal = roundDocumentUiAmount(amount);
+  const scaledTotal = Math.round(normalizedTotal * 1_000_000);
+  const scaledBase = Math.floor(scaledTotal / totalUnits);
+  const results = [];
+  let allocated = 0;
+  for (let index = 0; index < totalUnits; index += 1) {
+    if (index === totalUnits - 1) {
+      results.push((scaledTotal - allocated) / 1_000_000);
+    } else {
+      results.push(scaledBase / 1_000_000);
+      allocated += scaledBase;
+    }
+  }
+  return results.map((value) => roundDocumentUiAmount(value));
+}
+
+function resolveFixedAssetDisplayAccountId(
+  line,
+  categoriesById = new Map(),
+  fixedAssetsById = new Map()
+) {
+  const normalizedLine = createDocumentLineDraft(line);
+  if (normalizedLine.subledgerType !== "FIXED_ASSET") {
+    return null;
+  }
+  const categoryId = toPositiveInt(normalizedLine.fixedAssetCategoryId);
+  if (categoryId) {
+    return getFixedAssetCategoryDefaultAssetAccountId(categoriesById.get(categoryId));
+  }
+  const targetAssetId = toPositiveInt(normalizedLine.targetFixedAssetId);
+  if (targetAssetId) {
+    const assetRow = fixedAssetsById.get(targetAssetId) || null;
+    const assetCategoryId = toPositiveInt(
+      assetRow?.categoryId ?? assetRow?.category_id
+    );
+    if (assetCategoryId) {
+      return getFixedAssetCategoryDefaultAssetAccountId(categoriesById.get(assetCategoryId));
+    }
+  }
+  return toPositiveInt(normalizedLine.postingAccountId);
+}
+
 function analyzeDocumentWarehouseBindings(
   form,
   {
@@ -663,6 +872,7 @@ function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
       warehouseName: "",
       stockImpactMode: "NONE",
       fixedAssetMode: normalizeDirection(direction) === "AP" ? "AUTO_CREATE" : "",
+      quantity: normalizeDirection(direction) === "AR" ? "1" : currentLine.quantity,
     };
   }
   if (normalizedNextSubledgerType === "STOCK") {
@@ -698,6 +908,66 @@ function resetDocumentLineTaxPreview(seed = {}) {
     previewError: "",
     previewUpdatedAt: "",
   });
+}
+
+function buildFixedAssetModeTransitionPatch(line, nextMode) {
+  const currentLine = createDocumentLineDraft(line);
+  const normalizedMode =
+    String(nextMode || "").trim().toUpperCase() === "LINK_EXISTING"
+      ? "LINK_EXISTING"
+      : "AUTO_CREATE";
+  if (normalizedMode === "LINK_EXISTING") {
+    return {
+      fixedAssetMode: "LINK_EXISTING",
+      targetFixedAssetId: currentLine.targetFixedAssetId,
+      fixedAssetCategoryId: "",
+      fixedAssetOwnerOperatingUnitId: "",
+      fixedAssetLocationOperatingUnitId: "",
+      fixedAssetNameOverride: "",
+      fixedAssetSerialNo: "",
+      fixedAssetTag: "",
+      revisedUsefulLifeMonths: "",
+      lifeExtensionMonths: "",
+      quantity: "1",
+    };
+  }
+  return {
+    fixedAssetMode: "AUTO_CREATE",
+    targetFixedAssetId: "",
+    revisedUsefulLifeMonths: "",
+    lifeExtensionMonths: "",
+  };
+}
+
+function expandAutoCreateFixedAssetLine(line) {
+  const normalizedLine = createDocumentLineDraft(line);
+  const unitCount = toPositiveInt(normalizedLine.quantity);
+  if (!unitCount || unitCount <= 1) {
+    return [normalizedLine];
+  }
+  const amounts = computeDocumentLineAmounts(normalizedLine);
+  const netAmounts = allocateAmountAcrossUnits(amounts.lineNetAmountTxn, unitCount);
+  const taxAmounts = allocateAmountAcrossUnits(amounts.lineTaxAmountTxn, unitCount);
+  return Array.from({ length: unitCount }, (_, index) =>
+    createDocumentLineDraft({
+      ...normalizedLine,
+      rowId: index === 0 ? normalizedLine.rowId : undefined,
+      quantity: "1",
+      unitPriceTxn: String(netAmounts[index] ?? 0),
+      lineNetAmountTxn: String(netAmounts[index] ?? 0),
+      lineTaxAmountTxn: String(taxAmounts[index] ?? 0),
+      lineGrossAmountTxn: String(
+        roundDocumentUiAmount((netAmounts[index] ?? 0) + (taxAmounts[index] ?? 0))
+      ),
+      fixedAssetNameOverride: "",
+      fixedAssetSerialNo: "",
+      fixedAssetTag: "",
+      taxes: [],
+      previewStatus: normalizedLine.taxCategoryCode ? "STALE" : "",
+      previewError: "",
+      previewUpdatedAt: "",
+    })
+  );
 }
 
 function buildInitialPostForm(snapshot = null) {
@@ -927,6 +1197,17 @@ function createInitialDraftForm() {
   };
 }
 
+function createInitialQuickCreateFixedAssetForm() {
+  return {
+    scope: "",
+    lineRowId: "",
+    name: "",
+    categoryId: "",
+    ownerOperatingUnitId: "",
+    locationOperatingUnitId: "",
+  };
+}
+
 function normalizeApiError(error, fallback = "Operation failed.") {
   const message = String(error?.response?.data?.message || error?.message || fallback).trim();
   const requestId = String(error?.response?.data?.requestId || "").trim();
@@ -1043,6 +1324,191 @@ function resolveCounterpartyRoleFromDirection(direction) {
   return undefined;
 }
 
+function FixedAssetQuickCreateModal({
+  open,
+  l,
+  form,
+  saving,
+  error,
+  legalEntityId,
+  acquisitionDate,
+  currencyCode,
+  categoryOptions,
+  operatingUnitOptions,
+  categoriesById,
+  onChange,
+  onClose,
+  onSave,
+}) {
+  if (!open) {
+    return null;
+  }
+  const normalizedForm = createInitialQuickCreateFixedAssetForm();
+  const activeForm = {
+    ...normalizedForm,
+    ...(form || {}),
+  };
+  const selectedCategory = categoriesById.get(toPositiveInt(activeForm.categoryId)) || null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
+      <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">
+              {l("Create Draft Asset", "Taslak Varlik Olustur")}
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              {l(
+                "Create a lightweight draft asset and link it back to this CARI line.",
+                "Hafif bir taslak varlik olusturun ve bu CARI satirina geri baglayin."
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
+            onClick={onClose}
+            disabled={saving}
+          >
+            {l("Close", "Kapat")}
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              {l("Legal Entity", "Tuzel Kisilik")}
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">
+              {legalEntityId || "-"}
+            </p>
+          </div>
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              {l("Acquisition Date", "Edinim Tarihi")}
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">
+              {acquisitionDate || "-"}
+            </p>
+          </div>
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              {l("Currency", "Para Birimi")}
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">
+              {normalizeCurrencyCode(currencyCode) || "-"}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+            {l("Asset Name", "Varlik Adi")}
+            <input
+              type="text"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={activeForm.name}
+              onChange={(event) => onChange({ name: event.target.value })}
+              disabled={saving}
+            />
+          </label>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            <label className="block">
+              {l("Category", "Kategori")}
+              <Combobox
+                className="mt-1"
+                value={activeForm.categoryId}
+                options={categoryOptions}
+                disabled={saving}
+                placeholder={l("Search category", "Kategori ara")}
+                noOptionsText={l("No categories found.", "Kategori bulunamadi.")}
+                onChange={(nextValue) =>
+                  onChange({ categoryId: nextValue ? String(nextValue) : "" })
+                }
+              />
+            </label>
+          </div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            <label className="block">
+              {l("Owner OU", "Sahip OB")}
+              <Combobox
+                className="mt-1"
+                value={activeForm.ownerOperatingUnitId}
+                options={operatingUnitOptions}
+                disabled={saving}
+                placeholder={l("Search operating unit", "Operasyon birimi ara")}
+                noOptionsText={l("No operating units found.", "Operasyon birimi bulunamadi.")}
+                onChange={(nextValue) =>
+                  onChange({
+                    ownerOperatingUnitId: nextValue ? String(nextValue) : "",
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            <label className="block">
+              {l("Location OU", "Konum OB")}
+              <Combobox
+                className="mt-1"
+                value={activeForm.locationOperatingUnitId}
+                options={operatingUnitOptions}
+                disabled={saving}
+                placeholder={l("Search operating unit", "Operasyon birimi ara")}
+                noOptionsText={l("No operating units found.", "Operasyon birimi bulunamadi.")}
+                onChange={(nextValue) =>
+                  onChange({
+                    locationOperatingUnitId: nextValue ? String(nextValue) : "",
+                  })
+                }
+              />
+            </label>
+          </div>
+        </div>
+
+        {selectedCategory ? (
+          <p className="mt-3 text-xs text-slate-500">
+            {l(
+              `Category defaults will be applied automatically: useful life ${
+                selectedCategory.defaultUsefulLifeMonths || "-"
+              } months, profile #${
+                selectedCategory.defaultDepreciationProfileId || "-"
+              }, salvage rule ${selectedCategory.defaultSalvageRuleType || "NONE"}.`,
+              `Kategori varsayilanlari otomatik uygulanir: faydali omur ${
+                selectedCategory.defaultUsefulLifeMonths || "-"
+              } ay, profil #${
+                selectedCategory.defaultDepreciationProfileId || "-"
+              }, hurda kurali ${selectedCategory.defaultSalvageRuleType || "NONE"}.`
+            )}
+          </p>
+        ) : null}
+        {error ? <p className="mt-3 text-sm text-rose-700">{error}</p> : null}
+
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+            onClick={onClose}
+            disabled={saving}
+          >
+            {l("Cancel", "Iptal")}
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            onClick={onSave}
+            disabled={saving}
+          >
+            {saving
+              ? l("Creating draft asset...", "Taslak varlik olusturuluyor...")
+              : l("Create + Select", "Olustur + Sec")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DocumentLineWorkbench({
   l,
   title,
@@ -1070,24 +1536,66 @@ function DocumentLineWorkbench({
   previewLoading,
   previewError,
   previewMessage,
+  fixedAssetCategoryOptions,
+  fixedAssetCategoriesLoading,
+  fixedAssetCategoriesError,
+  fixedAssetCategoriesById,
+  fixedAssetDraftOptions,
+  fixedAssetDraftLoading,
+  fixedAssetDraftError,
+  fixedAssetDraftRowsById,
+  fixedAssetSaleOptions,
+  fixedAssetSaleLoading,
+  fixedAssetSaleError,
+  fixedAssetSaleRowsById,
+  fixedAssetOperatingUnitOptions,
+  canQuickCreateFixedAsset,
   onAddLine,
   onRemoveLine,
   onMoveLine,
   onPatchLine,
   onPatchTaxSensitiveLine,
   onChangeSubledgerType,
+  onChangeFixedAssetMode,
+  onSelectFixedAssetCategory,
+  onSelectTargetFixedAsset,
   onSelectItemCard,
+  onChangeStockImpactMode,
   onSelectWarehouse,
+  onExpandFixedAssetLine,
+  onOpenQuickCreateFixedAsset,
   onPreviewAll,
   onPreviewRow,
 }) {
   const lines = Array.isArray(form?.lines) ? form.lines.map((row) => createDocumentLineDraft(row)) : [];
+  const documentDirection = normalizeDirection(form?.direction);
   const totals = fxComputation?.lineTotals || getDocumentLineTotals(lines);
   const resolvedAmountBaseText = normalizeOptionalDecimalText(
     fxComputation?.resolvedAmountBase
   );
   const resolvedAmountTxnText = normalizeOptionalDecimalText(
     fxComputation?.resolvedAmountTxn
+  );
+  const lineAccountsById = useMemo(
+    () =>
+      new Map(
+        (Array.isArray(lineAccountOptions) ? lineAccountOptions : [])
+          .map((row) => [Number(row?.id || 0), row])
+          .filter(([id]) => id > 0)
+      ),
+    [lineAccountOptions]
+  );
+  const fixedAssetRowsById = useMemo(
+    () =>
+      new Map([
+        ...(fixedAssetDraftRowsById instanceof Map
+          ? [...fixedAssetDraftRowsById.entries()]
+          : []),
+        ...(fixedAssetSaleRowsById instanceof Map
+          ? [...fixedAssetSaleRowsById.entries()]
+          : []),
+      ]),
+    [fixedAssetDraftRowsById, fixedAssetSaleRowsById]
   );
 
   return (
@@ -1162,6 +1670,33 @@ function DocumentLineWorkbench({
       {taxCategoryError ? (
         <p className="mt-2 text-xs text-amber-700">{taxCategoryError}</p>
       ) : null}
+      {fixedAssetCategoriesLoading ? (
+        <p className="mt-2 text-xs text-slate-600">
+          {l("Loading fixed asset categories...", "Duran varlik kategorileri yukleniyor...")}
+        </p>
+      ) : null}
+      {fixedAssetCategoriesError ? (
+        <p className="mt-2 text-xs text-amber-700">{fixedAssetCategoriesError}</p>
+      ) : null}
+      {fixedAssetDraftLoading ? (
+        <p className="mt-2 text-xs text-slate-600">
+          {l("Loading draft fixed assets...", "Taslak duran varliklar yukleniyor...")}
+        </p>
+      ) : null}
+      {fixedAssetDraftError ? (
+        <p className="mt-2 text-xs text-amber-700">{fixedAssetDraftError}</p>
+      ) : null}
+      {fixedAssetSaleLoading ? (
+        <p className="mt-2 text-xs text-slate-600">
+          {l(
+            "Loading eligible sale assets...",
+            "Uygun satis varliklari yukleniyor..."
+          )}
+        </p>
+      ) : null}
+      {fixedAssetSaleError ? (
+        <p className="mt-2 text-xs text-amber-700">{fixedAssetSaleError}</p>
+      ) : null}
       {previewError ? <p className="mt-2 text-xs text-rose-700">{previewError}</p> : null}
       {previewMessage ? (
         <p className="mt-2 text-xs text-emerald-700">{previewMessage}</p>
@@ -1173,6 +1708,50 @@ function DocumentLineWorkbench({
           const hasTaxCategory = Boolean(normalizeText(line.taxCategoryCode));
           const isStockAffectingLine =
             normalizeText(line.stockImpactMode).toUpperCase() !== "NONE";
+          const isFixedAssetLine = line.subledgerType === "FIXED_ASSET";
+          const isStockLine = line.subledgerType === "STOCK";
+          const isNoneLine = !isFixedAssetLine && !isStockLine;
+          const isApDocument = documentDirection === "AP";
+          const isArDocument = documentDirection === "AR";
+          const activeFixedAssetMode =
+            isFixedAssetLine && isApDocument
+              ? line.fixedAssetMode || "AUTO_CREATE"
+              : "LINK_EXISTING";
+          const isAutoCreateMode =
+            isFixedAssetLine && isApDocument && activeFixedAssetMode === "AUTO_CREATE";
+          const isLinkExistingMode =
+            isFixedAssetLine &&
+            ((isApDocument && activeFixedAssetMode === "LINK_EXISTING") || isArDocument);
+          const lockedQuantity = Boolean(
+            (isApDocument && activeFixedAssetMode === "LINK_EXISTING") || isArDocument
+          );
+          const unitCount = toPositiveInt(line.quantity);
+          const canExpandAutoCreate = Boolean(
+            isAutoCreateMode && unitCount && unitCount > 1
+          );
+          const expansionWouldExceedLimit = Boolean(
+            canExpandAutoCreate && lines.length + unitCount - 1 > DOCUMENT_LINE_EXPANSION_LIMIT
+          );
+          const selectedCategory = fixedAssetCategoriesById.get(
+            toPositiveInt(line.fixedAssetCategoryId)
+          ) || null;
+          const selectedTargetAsset = fixedAssetRowsById.get(
+            toPositiveInt(line.targetFixedAssetId)
+          ) || null;
+          const fixedAssetAccountId = resolveFixedAssetDisplayAccountId(
+            line,
+            fixedAssetCategoriesById,
+            fixedAssetRowsById
+          );
+          const fixedAssetAccount = lineAccountsById.get(fixedAssetAccountId) || null;
+          const fixedAssetPreviewAmounts = computeDocumentLineAmounts(line);
+          const perUnitAmount =
+            isAutoCreateMode && unitCount
+              ? roundDocumentUiAmount(
+                  Number(fixedAssetPreviewAmounts.lineNetAmountTxn || 0) / unitCount
+                )
+              : null;
+          const showPerUnitMetadata = Boolean(isAutoCreateMode && unitCount === 1);
           const previewStatus = normalizeText(line.previewStatus).toUpperCase();
           const previewReady =
             previewStatus === "READY" ||
@@ -1289,173 +1868,712 @@ function DocumentLineWorkbench({
                     ))}
                   </select>
                 </label>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  <label className="block">
-                    {l("Item Card (optional)", "Urun Karti (opsiyonel)")}
-                    <Combobox
-                      className="mt-1"
-                      value={line.itemCardId}
-                      options={itemCardOptions}
-                      loading={itemCardsLoading}
-                      disabled={saving}
-                      placeholder={l("Search item card", "Urun karti ara")}
-                      noOptionsText={l("No item cards found.", "Urun karti bulunamadi.")}
-                      onChange={(nextValue) => onSelectItemCard(line.rowId, nextValue)}
-                    />
-                  </label>
-                </div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  {isStockAffectingLine
-                    ? l("Warehouse (required)", "Depo (zorunlu)")
-                    : l("Warehouse", "Depo")}
-                  <Combobox
-                    className="mt-1"
-                    value={line.warehouseId}
-                    options={warehouseOptions}
-                    loading={warehouseLoading}
-                    disabled={saving || !isStockAffectingLine}
-                    clearable
-                    placeholder={
-                      isStockAffectingLine
-                        ? l("Search warehouse", "Depo ara")
-                        : l("Not used for non-stock lines", "Stok disi satirlarda kullanilmaz")
-                    }
-                    noOptionsText={l("No warehouses found.", "Depo bulunamadi.")}
-                    onChange={(nextValue) => onSelectWarehouse(line.rowId, nextValue)}
-                  />
-                  {lineWarehouseError ? (
-                    <span className="mt-1 block normal-case tracking-normal text-[11px] text-amber-700">
-                      {lineWarehouseError}
-                    </span>
-                  ) : null}
-                  {!lineWarehouseError && warehouseLabel !== "-" ? (
-                    <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
-                      {l("Current binding", "Mevcut bag")}: {warehouseLabel}
-                    </span>
-                  ) : null}
-                  {!lineWarehouseError && isStockAffectingLine && warehouseLabel === "-" ? (
-                    <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
-                      {l(
-                        "Choose a warehouse in the current ownership context before saving or posting.",
-                        "Kaydetmeden veya kayda almadan once mevcut sahiplik baglaminda bir depo secin."
-                      )}
-                    </span>
-                  ) : null}
-                </label>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  {l("Quantity", "Miktar")}
-                  <input
-                    type="number"
-                    min="0.000001"
-                    step="0.000001"
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                    value={line.quantity}
-                    onChange={(event) =>
-                      onPatchTaxSensitiveLine(line.rowId, {
-                        quantity: event.target.value,
-                      })
-                    }
-                    disabled={saving}
-                  />
-                </label>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  {l("Unit Price", "Birim Fiyat")}
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.000001"
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                    value={line.unitPriceTxn}
-                    onChange={(event) =>
-                      onPatchTaxSensitiveLine(line.rowId, {
-                        unitPriceTxn: event.target.value,
-                      })
-                    }
-                    disabled={saving}
-                  />
-                </label>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  {l("Tax Category", "Vergi Kategorisi")}
-                  {taxCategoryOptions.length > 0 ? (
+
+                {isFixedAssetLine && isApDocument ? (
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    {l("Asset Mode", "Varlik Modu")}
                     <select
                       className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                      value={line.taxCategoryCode}
+                      value={activeFixedAssetMode}
                       onChange={(event) =>
-                        onPatchTaxSensitiveLine(line.rowId, {
-                          taxCategoryCode: event.target.value,
-                        })
+                        onChangeFixedAssetMode(line.rowId, event.target.value)
                       }
-                      disabled={saving || taxCategoryLoading}
+                      disabled={saving}
                     >
-                      <option value="">{l("Optional", "Opsiyonel")}</option>
-                      {taxCategoryOptions.map((option) => (
-                        <option
-                          key={`line-tax-category-${line.rowId}-${option.value}`}
-                          value={option.value}
+                      {FIXED_ASSET_AP_MODE_OPTIONS.map((mode) => (
+                        <option key={`fa-mode-${line.rowId}-${mode}`} value={mode}>
+                          {mode === "AUTO_CREATE"
+                            ? l("Auto-Create", "Otomatik Olustur")
+                            : l("Link Existing", "Mevcut Taslagi Bagla")}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+
+                {(isNoneLine || isStockLine) ? (
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    <label className="block">
+                      {isStockLine
+                        ? l("Item Card", "Urun Karti")
+                        : l("Item Card (optional)", "Urun Karti (opsiyonel)")}
+                      <Combobox
+                        className="mt-1"
+                        value={line.itemCardId}
+                        options={itemCardOptions}
+                        loading={itemCardsLoading}
+                        disabled={saving}
+                        placeholder={l("Search item card", "Urun karti ara")}
+                        noOptionsText={l("No item cards found.", "Urun karti bulunamadi.")}
+                        onChange={(nextValue) => onSelectItemCard(line.rowId, nextValue)}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+
+                {isFixedAssetLine && isAutoCreateMode ? (
+                  <>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      <label className="block">
+                        {l("Asset Category", "Varlik Kategorisi")}
+                        <Combobox
+                          className="mt-1"
+                          value={line.fixedAssetCategoryId}
+                          options={fixedAssetCategoryOptions}
+                          loading={fixedAssetCategoriesLoading}
+                          disabled={saving}
+                          placeholder={l("Search category", "Kategori ara")}
+                          noOptionsText={l("No categories found.", "Kategori bulunamadi.")}
+                          onChange={(nextValue) =>
+                            onSelectFixedAssetCategory(line.rowId, nextValue)
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      <label className="block">
+                        {l("Owner OU", "Sahip OB")}
+                        <Combobox
+                          className="mt-1"
+                          value={line.fixedAssetOwnerOperatingUnitId}
+                          options={fixedAssetOperatingUnitOptions}
+                          disabled={saving}
+                          placeholder={l("Search operating unit", "Operasyon birimi ara")}
+                          noOptionsText={l("No operating units found.", "Operasyon birimi bulunamadi.")}
+                          onChange={(nextValue) =>
+                            onPatchLine(line.rowId, {
+                              fixedAssetOwnerOperatingUnitId: nextValue ? String(nextValue) : "",
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      <label className="block">
+                        {l("Location OU", "Konum OB")}
+                        <Combobox
+                          className="mt-1"
+                          value={line.fixedAssetLocationOperatingUnitId}
+                          options={fixedAssetOperatingUnitOptions}
+                          disabled={saving}
+                          placeholder={l("Search operating unit", "Operasyon birimi ara")}
+                          noOptionsText={l("No operating units found.", "Operasyon birimi bulunamadi.")}
+                          onChange={(nextValue) =>
+                            onPatchLine(line.rowId, {
+                              fixedAssetLocationOperatingUnitId: nextValue
+                                ? String(nextValue)
+                                : "",
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Quantity", "Miktar")}
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.quantity}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            quantity: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Unit Price", "Birim Fiyat")}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.unitPriceTxn}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            unitPriceTxn: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Tax Category", "Vergi Kategorisi")}
+                      {taxCategoryOptions.length > 0 ? (
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving || taxCategoryLoading}
                         >
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      maxLength={60}
-                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
-                      value={line.taxCategoryCode}
-                      onChange={(event) =>
-                        onPatchTaxSensitiveLine(line.rowId, {
-                          taxCategoryCode: event.target.value,
-                        })
-                      }
-                      disabled={saving}
-                      placeholder={l("Optional", "Opsiyonel")}
-                    />
-                  )}
-                </label>
-                {canReadGlAccounts ? (
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                    {l("Posting Account (optional)", "Kayit Hesabi (opsiyonel)")}
-                    <select
-                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                      value={line.postingAccountId}
-                      onChange={(event) =>
-                        onPatchLine(line.rowId, {
-                          postingAccountId: event.target.value,
-                        })
-                      }
-                      disabled={saving || lineAccountsLoading}
-                    >
-                      <option value="">
-                        {l(
-                          "Use purpose/default mapping",
-                          "Amac/varsayilan eslemeyi kullan"
-                        )}
-                      </option>
-                      {lineAccountOptions.map((row) => (
-                        <option key={`line-account-${line.rowId}-${row.id}`} value={String(row.id)}>
-                          {row.code} - {row.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : (
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                    {l("Posting Account ID (optional)", "Kayit Hesabi ID (opsiyonel)")}
-                    <input
-                      type="number"
-                      min="1"
-                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                      value={line.postingAccountId}
-                      onChange={(event) =>
-                        onPatchLine(line.rowId, {
-                          postingAccountId: event.target.value,
-                        })
-                      }
-                      disabled={saving}
-                    />
-                  </label>
-                )}
+                          <option value="">{l("Optional", "Opsiyonel")}</option>
+                          {taxCategoryOptions.map((option) => (
+                            <option
+                              key={`line-tax-category-${line.rowId}-${option.value}`}
+                              value={option.value}
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          maxLength={60}
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving}
+                          placeholder={l("Optional", "Opsiyonel")}
+                        />
+                      )}
+                    </label>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                      <p>{l("Resolved Asset Account", "Cozumlenen Varlik Hesabi")}</p>
+                      <div className="mt-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700">
+                        {formatPostableAccountDisplay(fixedAssetAccount, fixedAssetAccountId)}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-3 text-sm text-cyan-950 md:col-span-4">
+                      <p className="font-medium">
+                        {l("Posting this line will create", "Bu satir kayda alindiginda")}{" "}
+                        <span className="font-semibold">{unitCount || line.quantity || 0}</span>{" "}
+                        {l("assets at", "adet varlik olusturur, birim basina")}{" "}
+                        <MoneyText
+                          amount={perUnitAmount}
+                          currencyCode={lineCurrencyCode}
+                          className="inline font-semibold"
+                        />{" "}
+                        {l("each.", "olacak.")}
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-md border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-800 disabled:opacity-60"
+                          onClick={() => onExpandFixedAssetLine(line.rowId)}
+                          disabled={saving || !canExpandAutoCreate || expansionWouldExceedLimit}
+                        >
+                          {l(
+                            "Expand into individual asset lines",
+                            "Tekil varlik satirlarina genislet"
+                          )}
+                        </button>
+                        {expansionWouldExceedLimit ? (
+                          <span className="text-xs text-amber-800">
+                            {l(
+                              `Expanding ${unitCount} units would exceed the 500-line document limit. Reduce quantity or split into separate documents.`,
+                              `${unitCount} adetlik genisletme 500 satir belge sinirini asar. Miktari azaltin veya ayri belgelere bolun.`
+                            )}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    {showPerUnitMetadata ? (
+                      <>
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                          {l("Asset Name Override", "Varlik Adi Gecersiz Kilma")}
+                          <input
+                            type="text"
+                            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                            value={line.fixedAssetNameOverride}
+                            onChange={(event) =>
+                              onPatchLine(line.rowId, {
+                                fixedAssetNameOverride: event.target.value,
+                              })
+                            }
+                            disabled={saving}
+                          />
+                        </label>
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                          {l("Serial No", "Seri No")}
+                          <input
+                            type="text"
+                            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                            value={line.fixedAssetSerialNo}
+                            onChange={(event) =>
+                              onPatchLine(line.rowId, {
+                                fixedAssetSerialNo: event.target.value,
+                              })
+                            }
+                            disabled={saving}
+                          />
+                        </label>
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                          {l("Asset Tag", "Varlik Etiketi")}
+                          <input
+                            type="text"
+                            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                            value={line.fixedAssetTag}
+                            onChange={(event) =>
+                              onPatchLine(line.rowId, {
+                                fixedAssetTag: event.target.value,
+                              })
+                            }
+                            disabled={saving}
+                          />
+                        </label>
+                      </>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {isFixedAssetLine && isLinkExistingMode ? (
+                  <>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                      <label className="block">
+                        {isApDocument
+                          ? l("Draft Asset", "Taslak Varlik")
+                          : l("Asset", "Varlik")}
+                        <Combobox
+                          className="mt-1"
+                          value={line.targetFixedAssetId}
+                          options={isApDocument ? fixedAssetDraftOptions : fixedAssetSaleOptions}
+                          loading={isApDocument ? fixedAssetDraftLoading : fixedAssetSaleLoading}
+                          disabled={saving}
+                          placeholder={
+                            isApDocument
+                              ? l("Search draft asset", "Taslak varlik ara")
+                              : l("Search eligible asset", "Uygun varlik ara")
+                          }
+                          noOptionsText={
+                            isApDocument
+                              ? l("No draft assets found.", "Taslak varlik bulunamadi.")
+                              : l("No eligible assets found.", "Uygun varlik bulunamadi.")
+                          }
+                          onChange={(nextValue) =>
+                            onSelectTargetFixedAsset(line.rowId, nextValue)
+                          }
+                        />
+                      </label>
+                    </div>
+                    {isApDocument ? (
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+                          onClick={() => onOpenQuickCreateFixedAsset(line.rowId)}
+                          disabled={saving || !canQuickCreateFixedAsset}
+                        >
+                          {l("+ New Asset", "+ Yeni Varlik")}
+                        </button>
+                      </div>
+                    ) : null}
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Quantity", "Miktar")}
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700"
+                        value={lockedQuantity ? "1" : line.quantity}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            quantity: event.target.value,
+                          })
+                        }
+                        disabled={saving || lockedQuantity}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Unit Price", "Birim Fiyat")}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.unitPriceTxn}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            unitPriceTxn: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Tax Category", "Vergi Kategorisi")}
+                      {taxCategoryOptions.length > 0 ? (
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving || taxCategoryLoading}
+                        >
+                          <option value="">{l("Optional", "Opsiyonel")}</option>
+                          {taxCategoryOptions.map((option) => (
+                            <option
+                              key={`line-tax-category-${line.rowId}-${option.value}`}
+                              value={option.value}
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          maxLength={60}
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving}
+                          placeholder={l("Optional", "Opsiyonel")}
+                        />
+                      )}
+                    </label>
+                    {isApDocument ? (
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                        <p>{l("Resolved Asset Account", "Cozumlenen Varlik Hesabi")}</p>
+                        <div className="mt-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700">
+                          {formatPostableAccountDisplay(fixedAssetAccount, fixedAssetAccountId)}
+                        </div>
+                      </div>
+                    ) : canReadGlAccounts ? (
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                        {l("Sale Proceeds Account", "Satis Hasilat Hesabi")}
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.postingAccountId}
+                          onChange={(event) =>
+                            onPatchLine(line.rowId, {
+                              postingAccountId: event.target.value,
+                            })
+                          }
+                          disabled={saving || lineAccountsLoading}
+                        >
+                          <option value="">
+                            {l("Select account", "Hesap secin")}
+                          </option>
+                          {lineAccountOptions.map((row) => (
+                            <option key={`line-account-${line.rowId}-${row.id}`} value={String(row.id)}>
+                              {row.code} - {row.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                        {l("Sale Proceeds Account ID", "Satis Hasilat Hesabi ID")}
+                        <input
+                          type="number"
+                          min="1"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.postingAccountId}
+                          onChange={(event) =>
+                            onPatchLine(line.rowId, {
+                              postingAccountId: event.target.value,
+                            })
+                          }
+                          disabled={saving}
+                        />
+                      </label>
+                    )}
+                  </>
+                ) : null}
+
+                {isStockLine ? (
+                  <>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {isStockAffectingLine
+                        ? l("Warehouse (required)", "Depo (zorunlu)")
+                        : l("Warehouse", "Depo")}
+                      <Combobox
+                        className="mt-1"
+                        value={line.warehouseId}
+                        options={warehouseOptions}
+                        loading={warehouseLoading}
+                        disabled={saving || !isStockAffectingLine}
+                        clearable
+                        placeholder={
+                          isStockAffectingLine
+                            ? l("Search warehouse", "Depo ara")
+                            : l("Select stock impact first", "Once stok etkisini secin")
+                        }
+                        noOptionsText={l("No warehouses found.", "Depo bulunamadi.")}
+                        onChange={(nextValue) => onSelectWarehouse(line.rowId, nextValue)}
+                      />
+                      {lineWarehouseError ? (
+                        <span className="mt-1 block normal-case tracking-normal text-[11px] text-amber-700">
+                          {lineWarehouseError}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Stock Impact", "Stok Etkisi")}
+                      <select
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.stockImpactMode}
+                        onChange={(event) =>
+                          onChangeStockImpactMode(line.rowId, event.target.value)
+                        }
+                        disabled={saving}
+                      >
+                        {DOCUMENT_LINE_STOCK_IMPACT_MODES.map((mode) => (
+                          <option key={`stock-impact-${line.rowId}-${mode}`} value={mode}>
+                            {mode === "NONE"
+                              ? l("None", "Yok")
+                              : mode === "RECEIPT_PENDING"
+                                ? l("Receipt Pending", "Giris Bekliyor")
+                                : l("Issue Pending", "Cikis Bekliyor")}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Quantity", "Miktar")}
+                      <input
+                        type="number"
+                        min="0.000001"
+                        step="0.000001"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.quantity}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            quantity: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Unit Price", "Birim Fiyat")}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.unitPriceTxn}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            unitPriceTxn: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Tax Category", "Vergi Kategorisi")}
+                      {taxCategoryOptions.length > 0 ? (
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving || taxCategoryLoading}
+                        >
+                          <option value="">{l("Optional", "Opsiyonel")}</option>
+                          {taxCategoryOptions.map((option) => (
+                            <option
+                              key={`line-tax-category-${line.rowId}-${option.value}`}
+                              value={option.value}
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          maxLength={60}
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving}
+                          placeholder={l("Optional", "Opsiyonel")}
+                        />
+                      )}
+                    </label>
+                    {canReadGlAccounts ? (
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                        {l("Posting Account (optional)", "Kayit Hesabi (opsiyonel)")}
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.postingAccountId}
+                          onChange={(event) =>
+                            onPatchLine(line.rowId, {
+                              postingAccountId: event.target.value,
+                            })
+                          }
+                          disabled={saving || lineAccountsLoading}
+                        >
+                          <option value="">
+                            {l(
+                              "Use purpose/default mapping",
+                              "Amac/varsayilan eslemeyi kullan"
+                            )}
+                          </option>
+                          {lineAccountOptions.map((row) => (
+                            <option key={`line-account-${line.rowId}-${row.id}`} value={String(row.id)}>
+                              {row.code} - {row.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                        {l("Posting Account ID (optional)", "Kayit Hesabi ID (opsiyonel)")}
+                        <input
+                          type="number"
+                          min="1"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.postingAccountId}
+                          onChange={(event) =>
+                            onPatchLine(line.rowId, {
+                              postingAccountId: event.target.value,
+                            })
+                          }
+                          disabled={saving}
+                        />
+                      </label>
+                    )}
+                  </>
+                ) : null}
+
+                {isNoneLine ? (
+                  <>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Quantity", "Miktar")}
+                      <input
+                        type="number"
+                        min="0.000001"
+                        step="0.000001"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.quantity}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            quantity: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Unit Price", "Birim Fiyat")}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.unitPriceTxn}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            unitPriceTxn: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Tax Category", "Vergi Kategorisi")}
+                      {taxCategoryOptions.length > 0 ? (
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving || taxCategoryLoading}
+                        >
+                          <option value="">{l("Optional", "Opsiyonel")}</option>
+                          {taxCategoryOptions.map((option) => (
+                            <option
+                              key={`line-tax-category-${line.rowId}-${option.value}`}
+                              value={option.value}
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          maxLength={60}
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving}
+                          placeholder={l("Optional", "Opsiyonel")}
+                        />
+                      )}
+                    </label>
+                    {canReadGlAccounts ? (
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                        {l("Posting Account (optional)", "Kayit Hesabi (opsiyonel)")}
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.postingAccountId}
+                          onChange={(event) =>
+                            onPatchLine(line.rowId, {
+                              postingAccountId: event.target.value,
+                            })
+                          }
+                          disabled={saving || lineAccountsLoading}
+                        >
+                          <option value="">
+                            {l(
+                              "Use purpose/default mapping",
+                              "Amac/varsayilan eslemeyi kullan"
+                            )}
+                          </option>
+                          {lineAccountOptions.map((row) => (
+                            <option key={`line-account-${line.rowId}-${row.id}`} value={String(row.id)}>
+                              {row.code} - {row.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                        {l("Posting Account ID (optional)", "Kayit Hesabi ID (opsiyonel)")}
+                        <input
+                          type="number"
+                          min="1"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.postingAccountId}
+                          onChange={(event) =>
+                            onPatchLine(line.rowId, {
+                              postingAccountId: event.target.value,
+                            })
+                          }
+                          disabled={saving}
+                        />
+                      </label>
+                    )}
+                  </>
+                ) : null}
+
               </div>
 
               <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -1491,15 +2609,44 @@ function DocumentLineWorkbench({
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-500">
-                <span>
-                  {l("Stock impact", "Stok etkisi")}: {line.stockImpactMode || "NONE"}
-                </span>
-                <span>
-                  {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
-                </span>
-                <span>
-                  {l("Warehouse", "Depo")}: {warehouseLabel}
-                </span>
+                {isFixedAssetLine ? (
+                  <>
+                    <span>
+                      {l("Asset mode", "Varlik modu")}:{" "}
+                      {isApDocument
+                        ? activeFixedAssetMode || "-"
+                        : l("Existing asset", "Mevcut varlik")}
+                    </span>
+                    <span>
+                      {l("Target asset", "Hedef varlik")}:{" "}
+                      {selectedTargetAsset?.assetNo ||
+                        selectedTargetAsset?.name ||
+                        line.targetFixedAssetId ||
+                        "-"}
+                    </span>
+                    <span>
+                      {l("Category", "Kategori")}:{" "}
+                      {selectedCategory?.code ||
+                        selectedCategory?.name ||
+                        line.fixedAssetCategoryId ||
+                        selectedTargetAsset?.categoryCode ||
+                        selectedTargetAsset?.categoryName ||
+                        "-"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      {l("Stock impact", "Stok etkisi")}: {line.stockImpactMode || "NONE"}
+                    </span>
+                    <span>
+                      {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
+                    </span>
+                    <span>
+                      {l("Warehouse", "Depo")}: {warehouseLabel}
+                    </span>
+                  </>
+                )}
               </div>
 
               {line.previewError ? (
@@ -2023,6 +3170,8 @@ export default function CariDocumentsPage() {
   const canReadExceptions = hasPermission("ops.exceptions.read");
   const canReadCariAudit = hasPermission("cari.audit.read");
   const canReadOrgTree = hasPermission("org.tree.read");
+  const canReadFixedAssets = hasPermission("fixed_assets.read");
+  const canUpsertFixedAssets = hasPermission("fixed_assets.upsert");
 
   const [filters, setFilters, resetFilters] = usePersistedFilters(
     DOCUMENT_FILTERS_STORAGE_SCOPE,
@@ -2061,6 +3210,15 @@ export default function CariDocumentsPage() {
   const [createItemCardRows, setCreateItemCardRows] = useState([]);
   const [createItemCardsLoading, setCreateItemCardsLoading] = useState(false);
   const [createItemCardsError, setCreateItemCardsError] = useState("");
+  const [createFixedAssetCategoryRows, setCreateFixedAssetCategoryRows] = useState([]);
+  const [createFixedAssetCategoriesLoading, setCreateFixedAssetCategoriesLoading] = useState(false);
+  const [createFixedAssetCategoriesError, setCreateFixedAssetCategoriesError] = useState("");
+  const [createFixedAssetDraftRows, setCreateFixedAssetDraftRows] = useState([]);
+  const [createFixedAssetDraftLoading, setCreateFixedAssetDraftLoading] = useState(false);
+  const [createFixedAssetDraftError, setCreateFixedAssetDraftError] = useState("");
+  const [createFixedAssetSaleRows, setCreateFixedAssetSaleRows] = useState([]);
+  const [createFixedAssetSaleLoading, setCreateFixedAssetSaleLoading] = useState(false);
+  const [createFixedAssetSaleError, setCreateFixedAssetSaleError] = useState("");
   const [createWarehouseRows, setCreateWarehouseRows] = useState([]);
   const [createWarehousesLoading, setCreateWarehousesLoading] = useState(false);
   const [createWarehousesError, setCreateWarehousesError] = useState("");
@@ -2108,6 +3266,15 @@ export default function CariDocumentsPage() {
   const [editItemCardRows, setEditItemCardRows] = useState([]);
   const [editItemCardsLoading, setEditItemCardsLoading] = useState(false);
   const [editItemCardsError, setEditItemCardsError] = useState("");
+  const [editFixedAssetCategoryRows, setEditFixedAssetCategoryRows] = useState([]);
+  const [editFixedAssetCategoriesLoading, setEditFixedAssetCategoriesLoading] = useState(false);
+  const [editFixedAssetCategoriesError, setEditFixedAssetCategoriesError] = useState("");
+  const [editFixedAssetDraftRows, setEditFixedAssetDraftRows] = useState([]);
+  const [editFixedAssetDraftLoading, setEditFixedAssetDraftLoading] = useState(false);
+  const [editFixedAssetDraftError, setEditFixedAssetDraftError] = useState("");
+  const [editFixedAssetSaleRows, setEditFixedAssetSaleRows] = useState([]);
+  const [editFixedAssetSaleLoading, setEditFixedAssetSaleLoading] = useState(false);
+  const [editFixedAssetSaleError, setEditFixedAssetSaleError] = useState("");
   const [editWarehouseRows, setEditWarehouseRows] = useState([]);
   const [editWarehousesLoading, setEditWarehousesLoading] = useState(false);
   const [editWarehousesError, setEditWarehousesError] = useState("");
@@ -2119,6 +3286,12 @@ export default function CariDocumentsPage() {
   const [editInlineCounterpartyMessage, setEditInlineCounterpartyMessage] = useState("");
   const [cancelSaving, setCancelSaving] = useState(false);
   const [cancelError, setCancelError] = useState("");
+  const [quickCreateFixedAssetOpen, setQuickCreateFixedAssetOpen] = useState(false);
+  const [quickCreateFixedAssetForm, setQuickCreateFixedAssetForm] = useState(() =>
+    createInitialQuickCreateFixedAssetForm()
+  );
+  const [quickCreateFixedAssetSaving, setQuickCreateFixedAssetSaving] = useState(false);
+  const [quickCreateFixedAssetError, setQuickCreateFixedAssetError] = useState("");
 
   const [postForm, setPostForm] = useState(() => buildInitialPostForm());
   const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
@@ -2946,6 +4119,118 @@ export default function CariDocumentsPage() {
       ),
     [editItemCardRows]
   );
+  const createLineAccountsById = useMemo(
+    () => buildRowsById(createLineAccountOptions),
+    [createLineAccountOptions]
+  );
+  const editLineAccountsById = useMemo(
+    () => buildRowsById(editLineAccountOptions),
+    [editLineAccountOptions]
+  );
+  const createFixedAssetCategoriesById = useMemo(
+    () => buildRowsById(createFixedAssetCategoryRows),
+    [createFixedAssetCategoryRows]
+  );
+  const editFixedAssetCategoriesById = useMemo(
+    () => buildRowsById(editFixedAssetCategoryRows),
+    [editFixedAssetCategoryRows]
+  );
+  const createFixedAssetDraftRowsById = useMemo(
+    () => buildRowsById(createFixedAssetDraftRows),
+    [createFixedAssetDraftRows]
+  );
+  const editFixedAssetDraftRowsById = useMemo(
+    () => buildRowsById(editFixedAssetDraftRows),
+    [editFixedAssetDraftRows]
+  );
+  const createFixedAssetSaleRowsById = useMemo(
+    () => buildRowsById(createFixedAssetSaleRows),
+    [createFixedAssetSaleRows]
+  );
+  const editFixedAssetSaleRowsById = useMemo(
+    () => buildRowsById(editFixedAssetSaleRows),
+    [editFixedAssetSaleRows]
+  );
+  const createFixedAssetOperatingUnitOptions = useMemo(
+    () =>
+      (createOperatingUnitOptions || [])
+        .map(mapOperatingUnitLookupOption)
+        .filter((row) => row.value),
+    [createOperatingUnitOptions]
+  );
+  const editFixedAssetOperatingUnitOptions = useMemo(
+    () =>
+      (editOperatingUnitOptions || [])
+        .map(mapOperatingUnitLookupOption)
+        .filter((row) => row.value),
+    [editOperatingUnitOptions]
+  );
+  const createFixedAssetCategoryOptions = useMemo(
+    () =>
+      extendFixedAssetCategoryOptionsForSelectedLines(
+        mapFixedAssetCategoryLookupOptions(
+          createFixedAssetCategoryRows,
+          createLineAccountsById
+        ),
+        createForm.lines
+      ),
+    [createFixedAssetCategoryRows, createForm.lines, createLineAccountsById]
+  );
+  const editFixedAssetCategoryOptions = useMemo(
+    () =>
+      extendFixedAssetCategoryOptionsForSelectedLines(
+        mapFixedAssetCategoryLookupOptions(
+          editFixedAssetCategoryRows,
+          editLineAccountsById
+        ),
+        editForm.lines
+      ),
+    [editFixedAssetCategoryRows, editForm.lines, editLineAccountsById]
+  );
+  const createFixedAssetDraftOptions = useMemo(
+    () =>
+      extendFixedAssetOptionsForSelectedLines(
+        mapFixedAssetLookupOptions(createFixedAssetDraftRows, operatingUnitsById, [
+          "DRAFT",
+        ]),
+        createForm.lines
+      ),
+    [createFixedAssetDraftRows, createForm.lines, operatingUnitsById]
+  );
+  const editFixedAssetDraftOptions = useMemo(
+    () =>
+      extendFixedAssetOptionsForSelectedLines(
+        mapFixedAssetLookupOptions(editFixedAssetDraftRows, operatingUnitsById, [
+          "DRAFT",
+        ]),
+        editForm.lines
+      ),
+    [editFixedAssetDraftRows, editForm.lines, operatingUnitsById]
+  );
+  const createFixedAssetSaleOptions = useMemo(
+    () =>
+      extendFixedAssetOptionsForSelectedLines(
+        mapFixedAssetLookupOptions(
+          createFixedAssetSaleRows,
+          operatingUnitsById,
+          FIXED_ASSET_AR_ELIGIBLE_STATUSES
+        ),
+        createForm.lines
+      ),
+    [createFixedAssetSaleRows, createForm.lines, operatingUnitsById]
+  );
+  const editFixedAssetSaleOptions = useMemo(
+    () =>
+      extendFixedAssetOptionsForSelectedLines(
+        mapFixedAssetLookupOptions(
+          editFixedAssetSaleRows,
+          operatingUnitsById,
+          FIXED_ASSET_AR_ELIGIBLE_STATUSES
+        ),
+        editForm.lines
+      ),
+    [editFixedAssetSaleRows, editForm.lines, operatingUnitsById]
+  );
   const createCounterpartyLookupOptions = useMemo(
     () => {
       const selectedCounterpartyId = normalizeText(createForm.counterpartyId);
@@ -3212,6 +4497,103 @@ export default function CariDocumentsPage() {
     });
   }
 
+  function changeCreateDocumentLineFixedAssetMode(rowId, nextMode) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    const currentLine = normalizeDocumentFormLines(createForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
+    if (!currentLine) {
+      return;
+    }
+    patchDraftFormLine(
+      setCreateForm,
+      rowId,
+      buildFixedAssetModeTransitionPatch(currentLine, nextMode),
+      { resetTaxPreview: true }
+    );
+  }
+
+  function selectCreateDocumentLineFixedAssetCategory(rowId, categoryId) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    patchDraftFormLine(setCreateForm, rowId, {
+      fixedAssetCategoryId: categoryId ? String(categoryId) : "",
+    });
+  }
+
+  function selectCreateDocumentLineTargetFixedAsset(rowId, assetId) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    patchDraftFormLine(
+      setCreateForm,
+      rowId,
+      {
+        targetFixedAssetId: assetId ? String(assetId) : "",
+        quantity: "1",
+      },
+      { resetTaxPreview: true }
+    );
+  }
+
+  function changeCreateDocumentLineStockImpactMode(rowId, nextMode) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    patchDraftFormLine(
+      setCreateForm,
+      rowId,
+      {
+        stockImpactMode: nextMode,
+        ...(String(nextMode || "").trim().toUpperCase() === "NONE"
+          ? {
+              warehouseId: "",
+              warehouseCode: "",
+              warehouseName: "",
+            }
+          : {}),
+      },
+      { resetTaxPreview: true }
+    );
+  }
+
+  function expandCreateDocumentLineFixedAsset(rowId) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    replaceDraftFormLines(setCreateForm, (currentLines) => {
+      const currentIndex = currentLines.findIndex((row) => row?.rowId === rowId);
+      if (currentIndex < 0) {
+        return currentLines;
+      }
+      const currentLine = createDocumentLineDraft(currentLines[currentIndex]);
+      const expandedRows = expandAutoCreateFixedAssetLine(currentLine);
+      if (expandedRows.length <= 1) {
+        return currentLines;
+      }
+      return [
+        ...currentLines.slice(0, currentIndex),
+        ...expandedRows,
+        ...currentLines.slice(currentIndex + 1),
+      ];
+    });
+  }
+
+  function openCreateQuickCreateFixedAsset(rowId) {
+    const currentLine = normalizeDocumentFormLines(createForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
+    setQuickCreateFixedAssetError("");
+    setQuickCreateFixedAssetForm({
+      ...createInitialQuickCreateFixedAssetForm(),
+      scope: "create",
+      lineRowId: rowId,
+      name: normalizeText(currentLine?.description),
+      categoryId: normalizeText(currentLine?.fixedAssetCategoryId),
+      ownerOperatingUnitId: normalizeText(currentLine?.fixedAssetOwnerOperatingUnitId),
+      locationOperatingUnitId: normalizeText(currentLine?.fixedAssetLocationOperatingUnitId),
+    });
+    setQuickCreateFixedAssetOpen(true);
+  }
+
   function addEditDocumentLine() {
     setEditLinePreviewError("");
     setEditLinePreviewMessage("");
@@ -3327,6 +4709,283 @@ export default function CariDocumentsPage() {
     });
   }
 
+  function changeEditDocumentLineFixedAssetMode(rowId, nextMode) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    const currentLine = normalizeDocumentFormLines(editForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
+    if (!currentLine) {
+      return;
+    }
+    patchDraftFormLine(
+      setEditForm,
+      rowId,
+      buildFixedAssetModeTransitionPatch(currentLine, nextMode),
+      { resetTaxPreview: true }
+    );
+  }
+
+  function selectEditDocumentLineFixedAssetCategory(rowId, categoryId) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    patchDraftFormLine(setEditForm, rowId, {
+      fixedAssetCategoryId: categoryId ? String(categoryId) : "",
+    });
+  }
+
+  function selectEditDocumentLineTargetFixedAsset(rowId, assetId) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    patchDraftFormLine(
+      setEditForm,
+      rowId,
+      {
+        targetFixedAssetId: assetId ? String(assetId) : "",
+        quantity: "1",
+      },
+      { resetTaxPreview: true }
+    );
+  }
+
+  function changeEditDocumentLineStockImpactMode(rowId, nextMode) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    patchDraftFormLine(
+      setEditForm,
+      rowId,
+      {
+        stockImpactMode: nextMode,
+        ...(String(nextMode || "").trim().toUpperCase() === "NONE"
+          ? {
+              warehouseId: "",
+              warehouseCode: "",
+              warehouseName: "",
+            }
+          : {}),
+      },
+      { resetTaxPreview: true }
+    );
+  }
+
+  function expandEditDocumentLineFixedAsset(rowId) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    replaceDraftFormLines(setEditForm, (currentLines) => {
+      const currentIndex = currentLines.findIndex((row) => row?.rowId === rowId);
+      if (currentIndex < 0) {
+        return currentLines;
+      }
+      const currentLine = createDocumentLineDraft(currentLines[currentIndex]);
+      const expandedRows = expandAutoCreateFixedAssetLine(currentLine);
+      if (expandedRows.length <= 1) {
+        return currentLines;
+      }
+      return [
+        ...currentLines.slice(0, currentIndex),
+        ...expandedRows,
+        ...currentLines.slice(currentIndex + 1),
+      ];
+    });
+  }
+
+  function openEditQuickCreateFixedAsset(rowId) {
+    const currentLine = normalizeDocumentFormLines(editForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
+    setQuickCreateFixedAssetError("");
+    setQuickCreateFixedAssetForm({
+      ...createInitialQuickCreateFixedAssetForm(),
+      scope: "edit",
+      lineRowId: rowId,
+      name: normalizeText(currentLine?.description),
+      categoryId: normalizeText(currentLine?.fixedAssetCategoryId),
+      ownerOperatingUnitId: normalizeText(currentLine?.fixedAssetOwnerOperatingUnitId),
+      locationOperatingUnitId: normalizeText(currentLine?.fixedAssetLocationOperatingUnitId),
+    });
+    setQuickCreateFixedAssetOpen(true);
+  }
+
+  function closeQuickCreateFixedAssetModal() {
+    if (quickCreateFixedAssetSaving) {
+      return;
+    }
+    setQuickCreateFixedAssetOpen(false);
+    setQuickCreateFixedAssetError("");
+    setQuickCreateFixedAssetForm(createInitialQuickCreateFixedAssetForm());
+  }
+
+  function patchQuickCreateFixedAssetForm(patch) {
+    setQuickCreateFixedAssetError("");
+    setQuickCreateFixedAssetForm((previous) => ({
+      ...previous,
+      ...patch,
+    }));
+  }
+
+  async function handleQuickCreateFixedAssetSave() {
+    const scope = normalizeText(quickCreateFixedAssetForm.scope).toLowerCase();
+    const sourceForm = scope === "edit" ? editForm : createForm;
+    const sourceCategoryRows = scope === "edit"
+      ? editFixedAssetCategoryRows
+      : createFixedAssetCategoryRows;
+    const selectedCategory =
+      sourceCategoryRows.find(
+        (row) => toPositiveInt(row?.id) === toPositiveInt(quickCreateFixedAssetForm.categoryId)
+      ) || null;
+    const legalEntityId = toPositiveInt(sourceForm.legalEntityId);
+    const categoryId = toPositiveInt(quickCreateFixedAssetForm.categoryId);
+    const ownerOperatingUnitId = toPositiveInt(
+      quickCreateFixedAssetForm.ownerOperatingUnitId
+    );
+    const locationOperatingUnitId = toPositiveInt(
+      quickCreateFixedAssetForm.locationOperatingUnitId
+    );
+    const payload = {
+      legalEntityId,
+      name: normalizeText(quickCreateFixedAssetForm.name),
+      categoryId,
+      acquisitionDate: normalizeText(sourceForm.documentDate) || undefined,
+      currencyCode: normalizeCurrencyCode(sourceForm.currencyCode) || undefined,
+      originalCostTxn: 0,
+      originalCostBase: 0,
+      ownerOperatingUnitId: ownerOperatingUnitId || undefined,
+      locationOperatingUnitId: locationOperatingUnitId || undefined,
+      depreciationProfileId: toPositiveInt(
+        selectedCategory?.defaultDepreciationProfileId ??
+          selectedCategory?.default_depreciation_profile_id
+      ) || undefined,
+      usefulLifeMonths: toPositiveInt(
+        selectedCategory?.defaultUsefulLifeMonths ??
+          selectedCategory?.default_useful_life_months
+      ) || undefined,
+    };
+    const salvageRuleType = normalizeText(
+      selectedCategory?.defaultSalvageRuleType ??
+        selectedCategory?.default_salvage_rule_type
+    ).toUpperCase();
+    if (payload.name.length === 0) {
+      setQuickCreateFixedAssetError(
+        l("Asset name is required.", "Varlik adi zorunludur.")
+      );
+      return;
+    }
+    if (!legalEntityId || !normalizeText(sourceForm.documentDate) || !payload.currencyCode) {
+      setQuickCreateFixedAssetError(
+        l(
+          "Set legal entity, document date, and currency on the document first.",
+          "Once belgede tuzel kisilik, belge tarihi ve para birimini doldurun."
+        )
+      );
+      return;
+    }
+    if (!categoryId) {
+      setQuickCreateFixedAssetError(
+        l("Category is required.", "Kategori zorunludur.")
+      );
+      return;
+    }
+    if (salvageRuleType && salvageRuleType !== "NONE") {
+      payload.salvageRuleType = salvageRuleType;
+      if (salvageRuleType === "PERCENT_OF_COST") {
+        const salvagePercent = Number(
+          selectedCategory?.defaultSalvagePercent ??
+            selectedCategory?.default_salvage_percent ??
+            0
+        );
+        if (Number.isFinite(salvagePercent)) {
+          payload.salvagePercent = salvagePercent;
+        }
+      }
+      if (salvageRuleType === "FIXED_BASE_AMOUNT") {
+        const salvageAmountBase = Number(
+          selectedCategory?.defaultSalvageAmountBase ??
+            selectedCategory?.default_salvage_amount_base ??
+            0
+        );
+        if (Number.isFinite(salvageAmountBase)) {
+          payload.salvageAmountBaseRule = salvageAmountBase;
+        }
+      }
+    }
+
+    setQuickCreateFixedAssetSaving(true);
+    setQuickCreateFixedAssetError("");
+    try {
+      const result = await createFixedAsset(payload);
+      const createdAssetId = toPositiveInt(result?.id ?? result?.row?.id);
+      if (!createdAssetId) {
+        throw new Error(
+          l("Asset creation did not return an id.", "Varlik olusturma bir kimlik donmedi.")
+        );
+      }
+      const createdAssetRow = {
+        ...(result?.row || result || {}),
+        id: createdAssetId,
+        status: "DRAFT",
+        categoryId,
+        categoryCode:
+          selectedCategory?.code || selectedCategory?.categoryCode || selectedCategory?.category_code || null,
+        categoryName:
+          selectedCategory?.name || selectedCategory?.categoryName || selectedCategory?.category_name || null,
+        ownerOperatingUnitId: ownerOperatingUnitId || null,
+        locationOperatingUnitId: locationOperatingUnitId || null,
+        legalEntityId,
+        currencyCode: payload.currencyCode,
+        assetNo: result?.assetNo || result?.row?.assetNo || result?.row?.asset_no || null,
+        name: payload.name,
+      };
+      const patchLine = {
+        subledgerType: "FIXED_ASSET",
+        fixedAssetMode: "LINK_EXISTING",
+        targetFixedAssetId: String(createdAssetId),
+        quantity: "1",
+      };
+      if (scope === "edit") {
+        setEditFixedAssetDraftRows((previous) => {
+          const nextRows = Array.isArray(previous) ? [...previous] : [];
+          const existingIndex = nextRows.findIndex(
+            (row) => toPositiveInt(row?.id) === createdAssetId
+          );
+          if (existingIndex >= 0) {
+            nextRows[existingIndex] = createdAssetRow;
+            return nextRows;
+          }
+          return [createdAssetRow, ...nextRows];
+        });
+        patchDraftFormLine(setEditForm, quickCreateFixedAssetForm.lineRowId, patchLine, {
+          resetTaxPreview: true,
+        });
+      } else {
+        setCreateFixedAssetDraftRows((previous) => {
+          const nextRows = Array.isArray(previous) ? [...previous] : [];
+          const existingIndex = nextRows.findIndex(
+            (row) => toPositiveInt(row?.id) === createdAssetId
+          );
+          if (existingIndex >= 0) {
+            nextRows[existingIndex] = createdAssetRow;
+            return nextRows;
+          }
+          return [createdAssetRow, ...nextRows];
+        });
+        patchDraftFormLine(setCreateForm, quickCreateFixedAssetForm.lineRowId, patchLine, {
+          resetTaxPreview: true,
+        });
+      }
+      setQuickCreateFixedAssetOpen(false);
+      setQuickCreateFixedAssetForm(createInitialQuickCreateFixedAssetForm());
+    } catch (error) {
+      setQuickCreateFixedAssetError(
+        normalizeApiError(
+          error,
+          l("Failed to create draft asset.", "Taslak varlik olusturulamadi.")
+        )
+      );
+    } finally {
+      setQuickCreateFixedAssetSaving(false);
+    }
+  }
+
   async function handleCreateDocumentLineTaxPreview(rowId = null) {
     await runDocumentLineTaxPreview({
       form: createForm,
@@ -3385,10 +5044,36 @@ export default function CariDocumentsPage() {
       if (safeDirection === previous.direction && !normalizeText(previous.counterpartyId)) {
         return previous;
       }
+      const normalizedLines = normalizeDocumentFormLines(previous?.lines).map((row) => {
+        const currentLine = createDocumentLineDraft(row);
+        if (currentLine.subledgerType !== "FIXED_ASSET") {
+          return currentLine;
+        }
+        if (safeDirection === "AR") {
+          return createDocumentLineDraft({
+            ...currentLine,
+            fixedAssetMode: "",
+            quantity: "1",
+            fixedAssetCategoryId: "",
+            fixedAssetOwnerOperatingUnitId: "",
+            fixedAssetLocationOperatingUnitId: "",
+            fixedAssetNameOverride: "",
+            fixedAssetSerialNo: "",
+            fixedAssetTag: "",
+            revisedUsefulLifeMonths: "",
+            lifeExtensionMonths: "",
+          });
+        }
+        return createDocumentLineDraft({
+          ...currentLine,
+          fixedAssetMode: currentLine.targetFixedAssetId ? "LINK_EXISTING" : "AUTO_CREATE",
+        });
+      });
       return {
         ...previous,
         direction: safeDirection,
         counterpartyId: "",
+        lines: normalizedLines,
       };
     });
     setCreateCounterpartyLookupQuery("");
@@ -4690,6 +6375,161 @@ export default function CariDocumentsPage() {
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    setCreateFixedAssetCategoriesError("");
+    if (!canReadFixedAssets || !legalEntityId) {
+      setCreateFixedAssetCategoryRows([]);
+      setCreateFixedAssetCategoriesLoading(false);
+      return;
+    }
+    let active = true;
+    async function loadCreateFixedAssetCategories() {
+      setCreateFixedAssetCategoriesLoading(true);
+      try {
+        const response = await listFixedAssetCategories({
+          legalEntityId,
+          status: "ACTIVE",
+        });
+        if (!active) {
+          return;
+        }
+        setCreateFixedAssetCategoryRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCreateFixedAssetCategoryRows([]);
+        setCreateFixedAssetCategoriesError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load fixed asset categories.",
+              "Duran varlik kategorileri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setCreateFixedAssetCategoriesLoading(false);
+        }
+      }
+    }
+    loadCreateFixedAssetCategories();
+    return () => {
+      active = false;
+    };
+  }, [canReadFixedAssets, createForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    setCreateFixedAssetDraftError("");
+    if (!canReadFixedAssets || !legalEntityId) {
+      setCreateFixedAssetDraftRows([]);
+      setCreateFixedAssetDraftLoading(false);
+      return;
+    }
+    let active = true;
+    async function loadCreateFixedAssetDrafts() {
+      setCreateFixedAssetDraftLoading(true);
+      try {
+        const response = await listFixedAssets({
+          legalEntityId,
+          status: "DRAFT",
+          limit: 500,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setCreateFixedAssetDraftRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCreateFixedAssetDraftRows([]);
+        setCreateFixedAssetDraftError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load draft fixed assets.",
+              "Taslak duran varliklar yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setCreateFixedAssetDraftLoading(false);
+        }
+      }
+    }
+    loadCreateFixedAssetDrafts();
+    return () => {
+      active = false;
+    };
+  }, [canReadFixedAssets, createForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    setCreateFixedAssetSaleError("");
+    if (!canReadFixedAssets || !legalEntityId) {
+      setCreateFixedAssetSaleRows([]);
+      setCreateFixedAssetSaleLoading(false);
+      return;
+    }
+    let active = true;
+    async function loadCreateFixedAssetSaleRows() {
+      setCreateFixedAssetSaleLoading(true);
+      try {
+        const responses = await Promise.all(
+          FIXED_ASSET_AR_ELIGIBLE_STATUSES.map((status) =>
+            listFixedAssets({
+              legalEntityId,
+              status,
+              limit: 500,
+              offset: 0,
+            })
+          )
+        );
+        if (!active) {
+          return;
+        }
+        const merged = new Map();
+        responses.forEach((response) => {
+          (Array.isArray(response?.rows) ? response.rows : []).forEach((row) => {
+            const id = toPositiveInt(row?.id);
+            if (id && !merged.has(id)) {
+              merged.set(id, row);
+            }
+          });
+        });
+        setCreateFixedAssetSaleRows([...merged.values()]);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCreateFixedAssetSaleRows([]);
+        setCreateFixedAssetSaleError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load eligible sale assets.",
+              "Uygun satis varliklari yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setCreateFixedAssetSaleLoading(false);
+        }
+      }
+    }
+    loadCreateFixedAssetSaleRows();
+    return () => {
+      active = false;
+    };
+  }, [canReadFixedAssets, createForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
     const operatingUnitId = toPositiveInt(createForm.operatingUnitId);
     setCreateWarehousesError("");
     if (!canRead || !legalEntityId) {
@@ -4836,6 +6676,161 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canReadItemCards, editForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    setEditFixedAssetCategoriesError("");
+    if (!canReadFixedAssets || !legalEntityId) {
+      setEditFixedAssetCategoryRows([]);
+      setEditFixedAssetCategoriesLoading(false);
+      return;
+    }
+    let active = true;
+    async function loadEditFixedAssetCategories() {
+      setEditFixedAssetCategoriesLoading(true);
+      try {
+        const response = await listFixedAssetCategories({
+          legalEntityId,
+          status: "ACTIVE",
+        });
+        if (!active) {
+          return;
+        }
+        setEditFixedAssetCategoryRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEditFixedAssetCategoryRows([]);
+        setEditFixedAssetCategoriesError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load fixed asset categories.",
+              "Duran varlik kategorileri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setEditFixedAssetCategoriesLoading(false);
+        }
+      }
+    }
+    loadEditFixedAssetCategories();
+    return () => {
+      active = false;
+    };
+  }, [canReadFixedAssets, editForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    setEditFixedAssetDraftError("");
+    if (!canReadFixedAssets || !legalEntityId) {
+      setEditFixedAssetDraftRows([]);
+      setEditFixedAssetDraftLoading(false);
+      return;
+    }
+    let active = true;
+    async function loadEditFixedAssetDraftRows() {
+      setEditFixedAssetDraftLoading(true);
+      try {
+        const response = await listFixedAssets({
+          legalEntityId,
+          status: "DRAFT",
+          limit: 500,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setEditFixedAssetDraftRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEditFixedAssetDraftRows([]);
+        setEditFixedAssetDraftError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load draft fixed assets.",
+              "Taslak duran varliklar yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setEditFixedAssetDraftLoading(false);
+        }
+      }
+    }
+    loadEditFixedAssetDraftRows();
+    return () => {
+      active = false;
+    };
+  }, [canReadFixedAssets, editForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    setEditFixedAssetSaleError("");
+    if (!canReadFixedAssets || !legalEntityId) {
+      setEditFixedAssetSaleRows([]);
+      setEditFixedAssetSaleLoading(false);
+      return;
+    }
+    let active = true;
+    async function loadEditFixedAssetSaleRows() {
+      setEditFixedAssetSaleLoading(true);
+      try {
+        const responses = await Promise.all(
+          FIXED_ASSET_AR_ELIGIBLE_STATUSES.map((status) =>
+            listFixedAssets({
+              legalEntityId,
+              status,
+              limit: 500,
+              offset: 0,
+            })
+          )
+        );
+        if (!active) {
+          return;
+        }
+        const merged = new Map();
+        responses.forEach((response) => {
+          (Array.isArray(response?.rows) ? response.rows : []).forEach((row) => {
+            const id = toPositiveInt(row?.id);
+            if (id && !merged.has(id)) {
+              merged.set(id, row);
+            }
+          });
+        });
+        setEditFixedAssetSaleRows([...merged.values()]);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEditFixedAssetSaleRows([]);
+        setEditFixedAssetSaleError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load eligible sale assets.",
+              "Uygun satis varliklari yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setEditFixedAssetSaleLoading(false);
+        }
+      }
+    }
+    loadEditFixedAssetSaleRows();
+    return () => {
+      active = false;
+    };
+  }, [canReadFixedAssets, editForm.legalEntityId, l]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
@@ -6444,6 +8439,21 @@ export default function CariDocumentsPage() {
     );
   }
 
+  const quickCreateScope = normalizeText(quickCreateFixedAssetForm.scope).toLowerCase();
+  const quickCreateSourceForm = quickCreateScope === "edit" ? editForm : createForm;
+  const quickCreateCategoryOptions =
+    quickCreateScope === "edit"
+      ? editFixedAssetCategoryOptions
+      : createFixedAssetCategoryOptions;
+  const quickCreateCategoriesById =
+    quickCreateScope === "edit"
+      ? editFixedAssetCategoriesById
+      : createFixedAssetCategoriesById;
+  const quickCreateOperatingUnitOptions =
+    quickCreateScope === "edit"
+      ? editFixedAssetOperatingUnitOptions
+      : createFixedAssetOperatingUnitOptions;
+
   return (
     <div className="space-y-5">
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -7040,14 +9050,34 @@ export default function CariDocumentsPage() {
               previewLoading={createLinePreviewLoading}
               previewError={createLinePreviewError}
               previewMessage={createLinePreviewMessage}
+              fixedAssetCategoryOptions={createFixedAssetCategoryOptions}
+              fixedAssetCategoriesLoading={createFixedAssetCategoriesLoading}
+              fixedAssetCategoriesError={createFixedAssetCategoriesError}
+              fixedAssetCategoriesById={createFixedAssetCategoriesById}
+              fixedAssetDraftOptions={createFixedAssetDraftOptions}
+              fixedAssetDraftLoading={createFixedAssetDraftLoading}
+              fixedAssetDraftError={createFixedAssetDraftError}
+              fixedAssetDraftRowsById={createFixedAssetDraftRowsById}
+              fixedAssetSaleOptions={createFixedAssetSaleOptions}
+              fixedAssetSaleLoading={createFixedAssetSaleLoading}
+              fixedAssetSaleError={createFixedAssetSaleError}
+              fixedAssetSaleRowsById={createFixedAssetSaleRowsById}
+              fixedAssetOperatingUnitOptions={createFixedAssetOperatingUnitOptions}
               onAddLine={addCreateDocumentLine}
               onRemoveLine={removeCreateDocumentLine}
               onMoveLine={moveCreateDocumentLine}
               onPatchLine={patchCreateDocumentLine}
               onPatchTaxSensitiveLine={patchCreateDocumentLineWithTaxReset}
               onChangeSubledgerType={changeCreateDocumentLineSubledgerType}
+              onChangeFixedAssetMode={changeCreateDocumentLineFixedAssetMode}
+              onSelectFixedAssetCategory={selectCreateDocumentLineFixedAssetCategory}
+              onSelectTargetFixedAsset={selectCreateDocumentLineTargetFixedAsset}
               onSelectItemCard={selectCreateDocumentLineItemCard}
+              onChangeStockImpactMode={changeCreateDocumentLineStockImpactMode}
               onSelectWarehouse={selectCreateDocumentLineWarehouse}
+              onExpandFixedAssetLine={expandCreateDocumentLineFixedAsset}
+              onOpenQuickCreateFixedAsset={openCreateQuickCreateFixedAsset}
+              canQuickCreateFixedAsset={canUpsertFixedAssets}
               onPreviewAll={() => handleCreateDocumentLineTaxPreview()}
               onPreviewRow={(rowId) => handleCreateDocumentLineTaxPreview(rowId)}
             />
@@ -8142,14 +10172,34 @@ export default function CariDocumentsPage() {
                     previewLoading={editLinePreviewLoading}
                     previewError={editLinePreviewError}
                     previewMessage={editLinePreviewMessage}
+                    fixedAssetCategoryOptions={editFixedAssetCategoryOptions}
+                    fixedAssetCategoriesLoading={editFixedAssetCategoriesLoading}
+                    fixedAssetCategoriesError={editFixedAssetCategoriesError}
+                    fixedAssetCategoriesById={editFixedAssetCategoriesById}
+                    fixedAssetDraftOptions={editFixedAssetDraftOptions}
+                    fixedAssetDraftLoading={editFixedAssetDraftLoading}
+                    fixedAssetDraftError={editFixedAssetDraftError}
+                    fixedAssetDraftRowsById={editFixedAssetDraftRowsById}
+                    fixedAssetSaleOptions={editFixedAssetSaleOptions}
+                    fixedAssetSaleLoading={editFixedAssetSaleLoading}
+                    fixedAssetSaleError={editFixedAssetSaleError}
+                    fixedAssetSaleRowsById={editFixedAssetSaleRowsById}
+                    fixedAssetOperatingUnitOptions={editFixedAssetOperatingUnitOptions}
                     onAddLine={addEditDocumentLine}
                     onRemoveLine={removeEditDocumentLine}
                     onMoveLine={moveEditDocumentLine}
                     onPatchLine={patchEditDocumentLine}
                     onPatchTaxSensitiveLine={patchEditDocumentLineWithTaxReset}
                     onChangeSubledgerType={changeEditDocumentLineSubledgerType}
+                    onChangeFixedAssetMode={changeEditDocumentLineFixedAssetMode}
+                    onSelectFixedAssetCategory={selectEditDocumentLineFixedAssetCategory}
+                    onSelectTargetFixedAsset={selectEditDocumentLineTargetFixedAsset}
                     onSelectItemCard={selectEditDocumentLineItemCard}
+                    onChangeStockImpactMode={changeEditDocumentLineStockImpactMode}
                     onSelectWarehouse={selectEditDocumentLineWarehouse}
+                    onExpandFixedAssetLine={expandEditDocumentLineFixedAsset}
+                    onOpenQuickCreateFixedAsset={openEditQuickCreateFixedAsset}
+                    canQuickCreateFixedAsset={canUpsertFixedAssets}
                     onPreviewAll={() => handleEditDocumentLineTaxPreview()}
                     onPreviewRow={(rowId) => handleEditDocumentLineTaxPreview(rowId)}
                   />
@@ -8621,6 +10671,22 @@ export default function CariDocumentsPage() {
           </div>
         ) : null}
       </section>
+      <FixedAssetQuickCreateModal
+        open={quickCreateFixedAssetOpen}
+        l={l}
+        form={quickCreateFixedAssetForm}
+        saving={quickCreateFixedAssetSaving}
+        error={quickCreateFixedAssetError}
+        legalEntityId={quickCreateSourceForm.legalEntityId}
+        acquisitionDate={quickCreateSourceForm.documentDate}
+        currencyCode={quickCreateSourceForm.currencyCode}
+        categoryOptions={quickCreateCategoryOptions}
+        operatingUnitOptions={quickCreateOperatingUnitOptions}
+        categoriesById={quickCreateCategoriesById}
+        onChange={patchQuickCreateFixedAssetForm}
+        onClose={closeQuickCreateFixedAssetModal}
+        onSave={handleQuickCreateFixedAssetSave}
+      />
     </div>
   );
 }

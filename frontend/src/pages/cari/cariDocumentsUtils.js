@@ -437,19 +437,27 @@ export function buildDocumentMutationPayload(form, options = {}) {
   const lines = Array.isArray(form?.lines)
     ? form.lines.map((row, index) => {
         const normalizedLine = createDocumentLineDraft(row);
+        const isFixedAssetLine = normalizedLine.subledgerType === "FIXED_ASSET";
+        const isApFixedAssetLine = isFixedAssetLine && direction === "AP";
         return {
           lineNo: index + 1,
           lineKind: normalizedLine.lineKind,
           description: normalizedLine.description || undefined,
           subledgerType: normalizedLine.subledgerType || undefined,
-          fixedAssetMode: normalizedLine.fixedAssetMode || undefined,
+          fixedAssetMode:
+            isApFixedAssetLine && normalizedLine.fixedAssetMode
+              ? normalizedLine.fixedAssetMode
+              : undefined,
           itemCardId: toPositiveInt(normalizedLine.itemCardId) || undefined,
           quantity: toOptionalNumber(normalizedLine.quantity) ?? 1,
           unitPriceTxn: toOptionalNumber(normalizedLine.unitPriceTxn),
           lineNetAmountTxn: toOptionalNumber(normalizedLine.lineNetAmountTxn) ?? 0,
           lineTaxAmountTxn: toOptionalNumber(normalizedLine.lineTaxAmountTxn) ?? 0,
           lineGrossAmountTxn: toOptionalNumber(normalizedLine.lineGrossAmountTxn) ?? 0,
-          postingAccountId: toPositiveInt(normalizedLine.postingAccountId) || undefined,
+          postingAccountId:
+            isApFixedAssetLine || !toPositiveInt(normalizedLine.postingAccountId)
+              ? undefined
+              : toPositiveInt(normalizedLine.postingAccountId),
           warehouseId: toPositiveInt(normalizedLine.warehouseId) || undefined,
           targetFixedAssetId:
             toPositiveInt(normalizedLine.targetFixedAssetId) || undefined,
