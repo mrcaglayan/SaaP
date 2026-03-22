@@ -2,7 +2,7 @@
 
 ## Status
 - Planned
-- Depends on Track 38 (Fixed Assets foundation) being complete through at least STEP-FA48
+- Depends on Track 38 (Fixed Assets foundation) being complete through at least STEP-FA52
 
 ## Purpose
 Make CARI document lines **subledger-aware** so that the document knows at entry time whether a line is a plain GL expense, an inventory receipt, or a fixed asset purchase/sale — exactly how SAP, Oracle, and Dynamics handle it.
@@ -14,7 +14,7 @@ This plan makes the CARI document line the **single entry surface** that dynamic
 ## Why a Separate Track
 
 1. This is a **CARI module change**, not a fixed-assets-only change
-2. Track 38 is 50/52 steps complete — bolting a CARI redesign onto it would dilute the near-complete status
+2. Track 38 is 51/53 steps complete — bolting a CARI redesign onto it would dilute the near-complete status. Track 39 is now 30 steps across 6 phases.
 3. The subledger-aware line concept is reusable beyond FA (inventory already has a parallel pattern via `stock_impact_mode` + `item_card_id`)
 4. Track 38's existing capitalization flow (FA24–FA27, FA51) works as-is for MVP — this track is the evolution toward proper ERP behavior
 
@@ -49,7 +49,7 @@ A single bill can have mixed lines:
 3. User enters the supplier-style line normally: example `Table`, `qty = 10`, `unit price = 100`
 4. User keeps the default **auto-create mode** and fills the generated-asset setup: asset category, owner OU, location OU
 5. UI shows a preview message: **"Posting this line will create 10 assets at 100 each."**
-6. User optionally clicks **"Expand into individual asset lines"** / **"Customize generated assets"** when the units are not identical
+6. User optionally clicks **"Expand into individual asset lines"** when the units are not identical and needs per-unit destination/metadata overrides before posting
 7. Posting account **auto-resolves** to the selected asset category's asset account (no manual account selection needed)
 8. User **posts the bill**
 9. Posting logic sees FIXED_ASSET line → creates 10 draft asset units/cards, creates one CAPITALIZATION transaction per unit, updates cost fields and CARI provenance (`source document`, `line`, `unit no 1..10`)
@@ -69,13 +69,13 @@ A single bill can have mixed lines:
 2. On a line, user selects `subledger_type = FIXED_ASSET`
 3. User picks the **eligible existing asset** being sold (`ACTIVE`, `SUSPENDED`, or `FULLY_DEPRECIATED`)
 4. Sale amount set on the line
-5. Posting account **auto-resolves** to the disposal gain/loss account from the asset's category
+5. User selects the **sale proceeds / revenue account** on the AR line (manual in V1)
 6. User **posts the AR document**
 7. Posting logic sees FIXED_ASSET line on AR → triggers the disposal flow:
    - Cutoff depreciation calculated and posted (if applicable)
    - Asset account credited (remove gross cost)
    - Accum depreciation account debited (remove accumulated depr)
-   - Gain/loss recognized (sale proceeds vs NBV)
+   - Gain/loss recognized (sale proceeds vs NBV) using the asset/category disposal gain/loss accounts
    - Asset status → DISPOSED
 8. Single posting event handles everything — no separate multi-step FA sale staging API needed
 
@@ -110,7 +110,6 @@ This plan uses **Pattern A as the primary AP UX** and keeps **Pattern B** as the
 
 **Escape hatches**:
 
-- **Customize generated assets** when units are not identical
 - **Expand into individual asset lines**
 - **Link existing draft asset** when one specific draft asset already exists (`fixedAssetMode = LINK_EXISTING`, `targetFixedAssetId`, `quantity = 1`)
 
@@ -118,12 +117,35 @@ This plan uses **Pattern A as the primary AP UX** and keeps **Pattern B** as the
 
 For AP `subledgerType = FIXED_ASSET`, the plan now makes the mode explicit in the request/UI contract:
 
-- `fixedAssetMode = AUTO_CREATE`
-- `fixedAssetMode = LINK_EXISTING`
+- `fixedAssetMode = AUTO_CREATE` — bulk create new draft assets from line quantity (primary AP path)
+- `fixedAssetMode = LINK_EXISTING` — capitalize one specific pre-existing draft asset (advanced path)
+- `fixedAssetMode = IMPROVE_EXISTING` — add cost to an already-active asset (post-activation improvement, Phase 6)
 
-This is an **API/UI field**, not a new persisted DB column. Draft lines continue to persist the underlying fields (`targetFixedAssetId` vs generated-asset defaults), and read responses may compute `fixedAssetMode` from those persisted values when needed.
+This is a **persisted DB column** on `cari_document_lines`: `fixed_asset_mode ENUM('AUTO_CREATE', 'LINK_EXISTING', 'IMPROVE_EXISTING') NULL`. It must be persisted because LINK_EXISTING and IMPROVE_EXISTING both use `target_fixed_asset_id` — without the stored mode, a saved draft line with a target asset would be ambiguous on reload (the read path could not distinguish "capitalize this draft asset" from "improve this active asset"). The improvement payload fields (`improvement_revised_useful_life_months`, `improvement_life_extension_months`) are also persisted on the line so they survive draft save/reload cycles.
 
-This keeps the AP document close to the supplier invoice while letting the fixed-asset system do the per-unit explosion underneath. The full asset detail (serial number, legacy onboarding, account overrides) can be edited on the asset detail page after posting or through the optional customize flow.
+This keeps the AP document close to the supplier invoice while letting the fixed-asset system do the per-unit explosion underneath. The full asset detail (serial number, legacy onboarding, account overrides) can be edited on the asset detail page after posting or, before posting, through the optional line-expansion helper.
+
+### In-Scope Customization Rule
+
+`Customize generated assets` in this track means a **pre-post expansion helper**, not pre-creating real asset rows before posting.
+
+- The user starts from one AP FIXED_ASSET bulk line (`qty = N`)
+- Clicking **Expand into individual asset lines** converts that one bulk line into `N` FIXED_ASSET `AUTO_CREATE` lines with `quantity = 1`
+- The user can then set per-unit **operational** fields on those expanded lines before posting:
+  - asset name / label (persisted as `fixed_asset_name_override` on the line — SL01)
+  - serial no (persisted as `fixed_asset_serial_no` on the line — SL01)
+  - asset tag (persisted as `fixed_asset_tag` on the line — SL01)
+  - owner OU (persisted as `fixed_asset_owner_operating_unit_id` — already in SL01)
+  - location OU (persisted as `fixed_asset_location_operating_unit_id` — already in SL01)
+- The expanded lines still follow the same accounting basis as the original purchase intent
+
+This solves real cases like:
+- `Laptop x 10`, but 6 go to HQ and 4 go to Branch
+- `Scanner x 5`, where finance wants serial numbers captured before posting
+
+Out of scope for this track:
+- per-unit category/accounting divergence inside one bulk-generated purchase flow
+- if different units need different categories or different accounting treatment, the user must split them into separate CARI lines before posting
 
 ### Immediate Cash Settlement (Cash Purchase in One Step)
 
@@ -208,18 +230,86 @@ Satis (Sales / Accounts Receivable)
 
 **The old "Cari Islemler" menu is removed entirely** — its contents are distributed to Satinalma and Satis.
 
+### Subsequent Acquisition / Improvement Flow (Post-Activation Cost Addition)
+
+**Problem**: After an asset is activated and in service, the business may incur additional capital expenditure that should be added to the asset's cost basis — not expensed. Examples:
+
+| Scenario | Accounting treatment | Subledger behavior |
+|---|---|---|
+| Building renovation that extends useful life | Capitalize → increase asset cost + revise remaining life | IMPROVE_EXISTING |
+| Engine replacement on a vehicle | Capitalize → increase asset cost | IMPROVE_EXISTING |
+| Server memory upgrade | Capitalize → increase asset cost | IMPROVE_EXISTING |
+| Routine cleaning / oil change | Expense → NONE line | Not an improvement |
+| Paint touch-up (no life extension) | Expense → NONE line | Not an improvement |
+
+**How real ERP systems handle it**: SAP, Oracle, and Dynamics all support "subsequent acquisition" or "post-capitalization" transactions on active assets. The asset account is debited, the cost basis increases, and depreciation is **recalculated prospectively** from the improvement date without touching closed-period depreciation.
+
+**The business rule** (clean product guidance):
+
+```
+Repair / maintenance          → expense (NONE line)
+Improvement that extends life → add to existing asset (IMPROVE_EXISTING)
+Completely separate new unit  → new asset (AUTO_CREATE or LINK_EXISTING)
+```
+
+**This plan adds a third AP `fixedAssetMode`**: `IMPROVE_EXISTING`
+
+```
+subledgerType = FIXED_ASSET
+fixedAssetMode = IMPROVE_EXISTING
+targetFixedAssetId → must point to an ACTIVE or FULLY_DEPRECIATED asset
+quantity = 1
+```
+
+**Improvement life revision payload**:
+- `revisedUsefulLifeMonths` — absolute new total useful life (e.g., change from 60 to 84 months)
+- `lifeExtensionMonths` — relative extension (e.g., add 24 months to remaining life)
+- Only one of these may be provided; if neither is given, useful life stays unchanged
+- **FULLY_DEPRECIATED hard rule**: If the target asset is `FULLY_DEPRECIATED`, at least one of `revisedUsefulLifeMonths` or `lifeExtensionMonths` **MUST** be provided, and the resulting `remaining_useful_life_months` must be `> 0`. Rationale: a fully-depreciated asset has `remaining_useful_life_months = 0`; adding cost without extending life would leave undepreciated cost with no future depreciation periods — the schedule engine would have nowhere to allocate the new depreciable base.
+
+**On posting**:
+1. Debit the asset account (same account as original acquisition — resolved from category)
+2. Credit AP payable (normal AP posting)
+3. Create an `IMPROVEMENT` transaction on `fixed_asset_transactions` referencing the shared CARI `journal_entry_id`
+4. Increase `original_cost_txn/base` on the asset by the improvement amount
+5. If useful life revision is provided: update `useful_life_months` and `remaining_useful_life_months`
+6. **Status transition rule**: If the resulting `remaining_useful_life_months > 0` and the asset was `FULLY_DEPRECIATED`, transition status to `ACTIVE`. The check is on resulting remaining life, not on whether `lifeExtensionMonths` was specifically used — this covers both `revisedUsefulLifeMonths` and `lifeExtensionMonths` paths uniformly.
+7. Depreciation schedule **automatically regenerates prospectively** — the existing schedule engine (`buildAssetDepreciationScheduleContext`) always rebuilds from current asset state, so the new cost basis and revised useful life are picked up on the next schedule read/depreciation run
+8. No past closed-period depreciation is rewritten — prospective only
+
+**Why no separate "recalculate" step**: The repo's depreciation schedule is **dynamically computed** from the asset's current cost, useful life, and lifecycle timeline. It is not a pre-computed stored schedule that needs manual recalculation. After the IMPROVEMENT transaction updates the cost/life fields, the next call to `getAssetDepreciationSchedule()` or the next depreciation run automatically uses the new values.
+
+**Multi-improvement support**: An asset can receive multiple improvements over its life. Each creates a separate IMPROVEMENT transaction. The cost basis accumulates. The depreciation schedule always reflects the latest cost.
+
+**Example**:
+```
+Asset: Server Rack (original cost 50,000 TL, 60 months useful life)
+Year 1: Depreciation runs normally → 10,000 TL/year
+
+Year 2: Memory upgrade bill posted (IMPROVE_EXISTING, 10,000 TL)
+  → original_cost_txn becomes 60,000 TL
+  → 48 months remaining, NBV = 40,000 + 10,000 = 50,000
+  → new annual depreciation = 50,000 / 48 months × 12 = 12,500 TL/year
+
+Year 3: Rack extension + 12 months life (IMPROVE_EXISTING, 5,000 TL, lifeExtensionMonths=12)
+  → original_cost_txn becomes 65,000 TL
+  → remaining life now 48 months (36 original + 12 extension)
+  → depreciation recalculated again prospectively
+```
+
 ### What Stays the Same
 
 - The manual acquisition flow (FA20–FA23) for assets not purchased through a vendor bill
 - The existing CARI document structure (header, lines, taxes)
 - The existing inventory `stock_impact_mode` pattern (formalized as `subledger_type = 'STOCK'`)
 - All existing FA lifecycle operations (depreciation, transfer, writeoff, suspend/reactivate)
+- Routine maintenance/repair remains a plain expense (NONE line) — only capital improvements use IMPROVE_EXISTING
 
 ---
 
 ## Execution Tracking
 
-Serialized steps `STEP-SL01` to `STEP-SL25`.
+Serialized steps `STEP-SL01` to `STEP-SL30`.
 
 ### Master Tracker
 
@@ -258,6 +348,13 @@ Serialized steps `STEP-SL01` to `STEP-SL25`.
 - [ ] `STEP-SL24` — Smoke suite: subledger lines + immediate settlement + AP/AR navigation + mixed flows + reversals
 - [ ] `STEP-SL25` — Release gates and backward-compatibility verification
 
+**Phase 6: Subsequent Acquisition / Improvement**
+- [ ] `STEP-SL26` — Migration: add IMPROVEMENT transaction type and improvement metadata columns
+- [ ] `STEP-SL27` — 🔥 HOT — Backend: IMPROVE_EXISTING mode — validators, posting, and prospective depreciation
+- [ ] `STEP-SL28` — Backend: reversal of improvement capitalization on active assets
+- [ ] `STEP-SL29` — Frontend: IMPROVE_EXISTING mode UI on CARI document form
+- [ ] `STEP-SL30` — Smoke suite: improvement flows, multi-improvement, life revision, reversal guards
+
 ---
 
 ## `STEP-SL01` — Migration: add `subledger_type`, fixed-asset target, and fixed-asset generation fields to `cari_document_lines`
@@ -274,7 +371,17 @@ Add the schema foundation for subledger-aware lines.
 - Add FK constraint: `target_fixed_asset_id` → `fixed_assets(id)` (nullable, only set when `subledger_type = 'FIXED_ASSET'`)
 - Add FK constraint: `fixed_asset_category_id` → `fixed_asset_categories(id)` (nullable, only set for AP FIXED_ASSET auto-create mode)
 - Add FK constraints: `fixed_asset_owner_operating_unit_id` and `fixed_asset_location_operating_unit_id` → `operating_units(id)` (nullable, only set for AP FIXED_ASSET auto-create mode)
-- Add CHECK constraint: `CHECK (subledger_type != 'FIXED_ASSET' OR target_fixed_asset_id IS NOT NULL OR fixed_asset_category_id IS NOT NULL)` — prevents persisting a FIXED_ASSET line without either a linked asset or generated-asset setup
+- Add `fixed_asset_mode` ENUM('AUTO_CREATE', 'LINK_EXISTING', 'IMPROVE_EXISTING') NULL to `cari_document_lines` — persisted because LINK_EXISTING and IMPROVE_EXISTING both use `target_fixed_asset_id` and cannot be distinguished on read without the stored mode
+- Add `fixed_asset_name_override` VARCHAR(255) NULL to `cari_document_lines` — per-unit asset name set during line expansion (only meaningful for AUTO_CREATE lines with `quantity = 1` after expansion)
+- Add `fixed_asset_serial_no` VARCHAR(100) NULL to `cari_document_lines` — per-unit serial number set during line expansion
+- Add `fixed_asset_tag` VARCHAR(100) NULL to `cari_document_lines` — per-unit asset tag set during line expansion
+- Add `improvement_revised_useful_life_months` INT UNSIGNED NULL to `cari_document_lines` — only set when `fixed_asset_mode = 'IMPROVE_EXISTING'` and user provides absolute life revision
+- Add `improvement_life_extension_months` INT UNSIGNED NULL to `cari_document_lines` — only set when `fixed_asset_mode = 'IMPROVE_EXISTING'` and user provides relative life extension
+- Add CHECK constraint: `CHECK (subledger_type != 'FIXED_ASSET' OR fixed_asset_mode IS NOT NULL)` — every FIXED_ASSET line must have an explicit mode
+- Add CHECK constraint: `CHECK (fixed_asset_mode != 'AUTO_CREATE' OR fixed_asset_category_id IS NOT NULL)` — AUTO_CREATE requires category
+- Add CHECK constraint: `CHECK (fixed_asset_mode IS NULL OR fixed_asset_mode = 'AUTO_CREATE' OR target_fixed_asset_id IS NOT NULL)` — LINK_EXISTING and IMPROVE_EXISTING require a target asset
+- Add CHECK constraint: `CHECK (improvement_revised_useful_life_months IS NULL OR improvement_life_extension_months IS NULL)` — cannot set both life revision fields
+- Add `pre_disposal_status` ENUM('ACTIVE', 'SUSPENDED', 'FULLY_DEPRECIATED') NULL to `fixed_asset_transactions` — snapshot of the asset's status before a SALE transaction, used by SL07 reversal to deterministically restore the correct pre-disposal status (SUSPENDED vs ACTIVE vs FULLY_DEPRECIATED cannot be reliably derived after disposal)
 - Add index: `ix_cari_doc_lines_tenant_target_fa (tenant_id, target_fixed_asset_id)` for reverse lookups
 - Add index: `ix_cari_doc_lines_tenant_fa_category (tenant_id, fixed_asset_category_id)` for AP auto-create queries/reporting
 - Use the repo's idempotent migration pattern (safeExecute, addColumnIfMissing)
@@ -283,14 +390,17 @@ Add the schema foundation for subledger-aware lines.
 - Do not backfill existing rows yet (SL09 handles that)
 - Do not modify any service or validator code
 - Do not change the ENUM values of `line_kind` or `stock_impact_mode`
-- Do not add a persisted `fixed_asset_mode` database column in this step; mode stays in the API/UI contract only
 
 ### Definition of done
 - Migration runs without error on a fresh database and on an existing database
 - New columns exist with correct types and defaults
+- `fixed_asset_mode` column exists with correct ENUM values
+- `fixed_asset_name_override`, `fixed_asset_serial_no`, and `fixed_asset_tag` columns exist for expanded-line per-unit metadata
+- `improvement_revised_useful_life_months` and `improvement_life_extension_months` columns exist
 - FK constraints enforce referential integrity
-- CHECK constraint prevents orphan FIXED_ASSET rows
-- Existing data is untouched (all existing rows get `subledger_type = 'NONE'` from the DEFAULT)
+- CHECK constraints prevent: FIXED_ASSET without mode, AUTO_CREATE without category, LINK_EXISTING/IMPROVE_EXISTING without target asset, both life revision fields set simultaneously
+- `pre_disposal_status` column exists on `fixed_asset_transactions` for SALE transaction reversal
+- Existing data is untouched (all existing rows get `subledger_type = 'NONE'` and `fixed_asset_mode = NULL` from defaults)
 
 ---
 
@@ -310,13 +420,14 @@ Extend the CARI document line validator to accept and validate `subledgerType`, 
   - `itemCardId` by itself does **not** imply `STOCK`; it remains valid under `NONE` for `SERVICE` / `NON_STOCK_GOOD` lines
   - **Why**: Existing clients send `{ itemCardId, stockImpactMode, warehouseId }` without any `subledgerType` field for stock-affecting rows, and they also send `{ itemCardId, stockImpactMode: 'NONE' }` for service / non-stock rows. Without this rule, stock requests would be misclassified as `NONE`, while a naive `itemCardId => STOCK` rule would incorrectly reclassify current non-stock/service usage.
 - When `subledgerType = 'FIXED_ASSET'` on **AP**:
-  - Accept `fixedAssetMode = 'AUTO_CREATE' | 'LINK_EXISTING'`
+  - Accept `fixedAssetMode = 'AUTO_CREATE' | 'LINK_EXISTING' | 'IMPROVE_EXISTING'` (IMPROVE_EXISTING detailed in SL27)
   - If `fixedAssetMode` is omitted for backward compatibility:
     - infer `LINK_EXISTING` when `targetFixedAssetId` is present
     - otherwise default to `AUTO_CREATE`
   - `fixedAssetMode = 'AUTO_CREATE'`: require `targetFixedAssetId` to be empty, require `quantity` to be a whole positive integer, and require `fixedAssetCategoryId`, `fixedAssetOwnerOperatingUnitId`, and `fixedAssetLocationOperatingUnitId`
   - `fixedAssetMode = 'LINK_EXISTING'`: require `targetFixedAssetId` and require `quantity = 1`
-  - In both modes: reject `itemCardId` and `stockImpactMode != 'NONE'`
+  - `fixedAssetMode = 'IMPROVE_EXISTING'`: require `targetFixedAssetId`, require `quantity = 1`, accept optional `revisedUsefulLifeMonths` or `lifeExtensionMonths` (but not both). Generated-asset defaults (`fixedAssetCategoryId`, owner/location OUs) are NOT required — the target asset already has these. Reject if target asset is not ACTIVE or FULLY_DEPRECIATED. **FULLY_DEPRECIATED hard rule**: if target asset status is `FULLY_DEPRECIATED`, at least one of `revisedUsefulLifeMonths` or `lifeExtensionMonths` MUST be provided, and the resulting `remaining_useful_life_months` must be `> 0` — otherwise cost increases with no future depreciation periods. (Full posting logic in SL27)
+  - In all three modes: reject `itemCardId` and `stockImpactMode != 'NONE'`
 - When `subledgerType = 'FIXED_ASSET'` on **AR**: require `targetFixedAssetId` and require `quantity = 1`
 - When `subledgerType = 'STOCK'` (explicit or inferred): require `itemCardId` and `stockImpactMode != 'NONE'`, reject `targetFixedAssetId`
 - When `subledgerType = 'NONE'`: reject `targetFixedAssetId`, reject fixed-asset generation fields, allow normal fields including `itemCardId` so long as `stockImpactMode = 'NONE'`
@@ -325,7 +436,6 @@ Extend the CARI document line validator to accept and validate `subledgerType`, 
 - Do not change existing validation logic for non-subledger fields
 - Do not validate whether the target asset exists (SL03/SL04 handle that)
 - Do not validate account resolution yet (SL04 handles that)
-- Do not persist `fixedAssetMode` as a DB column in this step
 
 ### Definition of done
 - Existing create/update document requests without subledgerType continue to work unchanged (inference rule auto-promotes to STOCK only when stock fields are present)
@@ -343,27 +453,24 @@ Extend the CARI document line validator to accept and validate `subledgerType`, 
 ## `STEP-SL03` — Backend CARI service: create/update document lines with subledger_type awareness
 
 ### Patch target
-Persist `subledger_type`, `target_fixed_asset_id`, and FIXED_ASSET auto-create metadata when creating or updating CARI document lines, while exposing `fixedAssetMode` as an explicit API/UI contract field.
+Persist `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, improvement life fields, and FIXED_ASSET auto-create metadata when creating or updating CARI document lines.
 
 ### In scope
-- **Update `replaceDocumentLinesTx`** (currently at line ~2497 in `cari.document.service.js`): add `subledger_type`, `target_fixed_asset_id`, `fixed_asset_category_id`, `fixed_asset_owner_operating_unit_id`, and `fixed_asset_location_operating_unit_id` to the hardcoded INSERT statement
-- **Update line normalization** (currently at line ~2128): parse and pass through `subledgerType`, `fixedAssetMode`, `targetFixedAssetId`, and generated-asset metadata from the validated input
-- **Update `loadDocumentLinesForDocument`** SELECT queries (around line ~775-855): add the new fixed-asset columns to the SELECT list and include them in the response mapping
+- **Update `replaceDocumentLinesTx`** (currently at line ~2497 in `cari.document.service.js`): add `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, `fixed_asset_category_id`, `fixed_asset_owner_operating_unit_id`, `fixed_asset_location_operating_unit_id`, `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`, `improvement_revised_useful_life_months`, and `improvement_life_extension_months` to the hardcoded INSERT statement
+- **Update line normalization** (currently at line ~2128): parse and pass through `subledgerType`, `fixedAssetMode`, `targetFixedAssetId`, `fixedAssetNameOverride`, `fixedAssetSerialNo`, `fixedAssetTag`, and generated-asset metadata from the validated input
+- **Update `loadDocumentLinesForDocument`** SELECT queries (around line ~775-855): add all new fixed-asset columns (including `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`) to the SELECT list and include them in the response mapping
 - Preserve current repo behavior where `itemCardId` may remain populated on `subledger_type = 'NONE'` lines for `SERVICE` / `NON_STOCK_GOOD` items; only stock-affecting lines (`stockImpactMode != 'NONE'`) are `STOCK`
 - When `subledger_type = 'FIXED_ASSET'` and `target_fixed_asset_id` is present: validate that it references an existing asset in the same tenant/legal entity
 - For AP documents in link-existing mode: validate target asset is in `DRAFT` status
 - For AP documents in auto-create mode: validate `fixed_asset_category_id` exists in the same tenant/legal entity and that the chosen owner/location OUs are valid
 - For AR documents: validate target asset is in `ACTIVE`, `SUSPENDED`, or `FULLY_DEPRECIATED` status — **not just ACTIVE**. The existing `SALE_STAGING_ELIGIBLE_STATUSES` (line ~5360 in `fixed-assets.service.js`) allows all three. Fully-depreciated assets being sold is a common real-world scenario.
-- Return `subledgerType`, `fixedAssetMode`, `targetFixedAssetId`, and generated-asset metadata in document line read responses
-- Compute `fixedAssetMode` on reads instead of persisting it:
-  - AP + `target_fixed_asset_id` present => `LINK_EXISTING`
-  - AP + `subledger_type = 'FIXED_ASSET'` and no `target_fixed_asset_id` => `AUTO_CREATE`
-  - AR => omit or return `null`
+- **Persist `fixed_asset_mode`** on the line — read responses return the stored value directly, no inference needed
+- Return `subledgerType`, `fixedAssetMode`, `targetFixedAssetId`, `fixedAssetNameOverride`, `fixedAssetSerialNo`, `fixedAssetTag`, improvement life fields, and generated-asset metadata in document line read responses
+- For AP IMPROVE_EXISTING: validate target asset is ACTIVE or FULLY_DEPRECIATED (not DRAFT, not DISPOSED, not SUSPENDED)
 
 ### Explicit non-goals
 - Do not change posting logic yet (SL05/SL06)
 - Do not auto-resolve accounts yet (SL04)
-- Do not add a `fixed_asset_mode` DB column
 
 ### Definition of done
 - Creating a CARI AP document with a FIXED_ASSET auto-create line and valid generated-asset metadata succeeds
@@ -371,23 +478,28 @@ Persist `subledger_type`, `target_fixed_asset_id`, and FIXED_ASSET auto-create m
 - Creating a CARI AR document with a FIXED_ASSET line and valid active/suspended/fully-depreciated asset ID succeeds
 - Creating a CARI line with `itemCardId` + `stockImpactMode = 'NONE'` persists `subledger_type = 'NONE'` without stock side effects
 - Target asset validation rejects wrong status, wrong tenant, wrong legal entity
-- Document read responses include the new fields, including computed `fixedAssetMode`
-- `replaceDocumentLinesTx` persists all new fixed-asset line fields correctly
+- Document read responses include the new fields, including persisted `fixedAssetMode`
+- `replaceDocumentLinesTx` persists all new fixed-asset line fields correctly (including `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`)
+- Expanded-line per-unit metadata survives draft save/reload cycles (round-trip verified)
 
 ---
 
-## `STEP-SL04` — Backend CARI service: auto-resolve posting account based on subledger_type + target entity
+## `STEP-SL04` — Backend CARI service: AP auto-resolve + AR proceeds-account rules for FIXED_ASSET lines
 
 ### Patch target
-When a line has `subledger_type = 'FIXED_ASSET'`, automatically resolve the `posting_account_id` from the target asset's category instead of requiring manual selection.
+For FIXED_ASSET lines, keep AP account resolution category-driven, but keep AR sale proceeds account explicit/manual in V1.
 
 ### In scope
 - For AP + FIXED_ASSET link-existing mode: resolve `posting_account_id` to the target asset's `default_asset_account_id` (from its category)
 - For AP + FIXED_ASSET auto-create mode: resolve `posting_account_id` to the selected `fixed_asset_category_id`'s `default_asset_account_id`
-- For AR + FIXED_ASSET: resolve `posting_account_id` to the target asset's `default_disposal_gain_account_id` (from its category)
-- If user provides an explicit `postingAccountId` on a FIXED_ASSET line, reject it (account is category-driven, not user-selected)
+- For AR + FIXED_ASSET: require an explicit/manual `postingAccountId` on the CARI line and treat it as the **sale proceeds account**
+- For AP + FIXED_ASSET: reject explicit `postingAccountId` (account is category-driven, not user-selected)
+- For AR + FIXED_ASSET: validate `postingAccountId` as a postable legal-entity account, but do **not** reinterpret it as disposal gain/loss account
 - Store the resolved account on the line so it's visible before posting
-- **NULL account guard**: All five category account columns (`default_asset_account_id`, `default_accum_depr_account_id`, `default_depr_expense_account_id`, `default_disposal_gain_account_id`, `default_disposal_loss_account_id`) are nullable in `fixed_asset_categories`. If the required account is NULL when resolving, throw a clear 400 error: "Asset category '{name}' does not have a configured {account type} account. Configure the category's accounts before using it on a CARI document." — This prevents a confusing deferred error at posting time. The existing FA06 flow (line ~2859-2878 in `fixed-assets.service.js`) validates all five accounts are non-null and throws `badRequest` if any is missing; this step applies the same guard earlier.
+- **NULL account guard**:
+  - AP path: if `default_asset_account_id` is NULL when resolving, throw a clear 400 error
+  - AR path: keep sale proceeds account manual, but still require the asset/category disposal gain/loss accounts to be configured by the time SL06 posts the disposal entries
+  - This matches the current repo split where the AR line carries proceeds account, while FA disposal gain/loss uses asset/category disposal accounts
 
 ### Explicit non-goals
 - Do not change account resolution for STOCK or NONE lines
@@ -395,10 +507,10 @@ When a line has `subledger_type = 'FIXED_ASSET'`, automatically resolve the `pos
 
 ### Definition of done
 - FIXED_ASSET AP auto-create and link-existing modes auto-resolve to the correct asset account
-- FIXED_ASSET AR line auto-resolves to disposal gain account
-- Explicit postingAccountId on FIXED_ASSET line is rejected
+- FIXED_ASSET AR line requires an explicit/manual sale proceeds account
+- Explicit postingAccountId on AP FIXED_ASSET line is rejected
 - Account change on asset category before posting is reflected (re-resolved on post, not cached)
-- Category with NULL required account returns a clear 400 error at draft save time (not at posting time)
+- AP category with NULL required asset account returns a clear 400 error at draft save time (not at posting time)
 
 ---
 
@@ -408,15 +520,22 @@ When a line has `subledger_type = 'FIXED_ASSET'`, automatically resolve the `pos
 When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` trigger the fixed-asset capitalization flow. The primary mode is quantity-based asset creation from one commercial bill line; linking one pre-existing draft asset remains the constrained advanced mode.
 
 ### In scope
-- During `postCariDocumentByIdTx()`, **after** the CARI journal is created via `insertPostedJournalWithLinesTx` (and after stock links at line ~4293), add a new `processFixedAssetLineSideEffectsTx()` call — analogous to the existing `replaceDocumentLineStockLinksTx` pattern. For each FIXED_ASSET line:
-  - Determine mode:
-    - Prefer explicit `fixedAssetMode` from the validated AP payload
-    - Backward-compatible fallback if `fixedAssetMode` is omitted:
-      - `target_fixed_asset_id IS NOT NULL` => `LINK_EXISTING`
-      - otherwise => `AUTO_CREATE`
-    - `AUTO_CREATE` and `LINK_EXISTING` are AP-only mode concepts; AR continues to use direct existing-asset selection
-  - In both modes, reuse the already-created CARI posting journal's `journal_entry_id` — **do NOT create a separate acquisition journal**
-  - In both modes, create CAPITALIZATION `fixed_asset_transaction` rows with:
+- Split FIXED_ASSET handling inside `postCariDocumentByIdTx()` into **two explicit phases**:
+  - **Pre-journal FA augmentation** via `prepareFixedAssetPostingAugmentationsTx()`:
+    - runs after normal CARI line/account resolution but **before** `ensureBalancedJournalLines()` and `insertPostedJournalWithLinesTx()`
+    - used for FIXED_ASSET cases that must mutate the journal line set before insert
+    - in this track, that primarily means the AR disposal path in SL06: validate/lock assets, compute cutoff disposal economics, and append the extra balanced disposal/cutoff journal lines into `postingLines`
+  - **Post-journal FA side effects** via `applyFixedAssetPostingSideEffectsTx()`:
+    - runs **after** `insertPostedJournalWithLinesTx()` creates the shared CARI journal (and after stock links at line ~4293)
+    - used for FA rows/state changes that need the created `journal_entry_id`
+    - in this track, that includes all AP capitalization work in SL05 and the AR SALE transaction/state updates in SL06
+- For AP FIXED_ASSET lines, SL05 uses the **post-journal** phase only. Inside `applyFixedAssetPostingSideEffectsTx()`, for each FIXED_ASSET AP line:
+  - Determine mode from the **persisted `fixed_asset_mode`** column on the line (no inference needed — the column is always set for FIXED_ASSET lines since SL01/SL03)
+    - `AUTO_CREATE`: bulk asset creation from line quantity
+    - `LINK_EXISTING`: capitalize one specific draft asset
+    - `IMPROVE_EXISTING`: handled by SL27 (Phase 6) — SL05 skips these lines
+  - In AUTO_CREATE and LINK_EXISTING modes, reuse the already-created CARI posting journal's `journal_entry_id` — **do NOT create a separate acquisition journal**
+  - In AUTO_CREATE and LINK_EXISTING modes, create CAPITALIZATION `fixed_asset_transaction` rows with:
     - `transactionType`: `'CAPITALIZATION'`
     - `effectiveDate`: document date
     - `postingDate`: document date
@@ -426,11 +545,13 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
     - `sourceRefId`: document ID
     - `sourceRefLineId`: line ID
     - `currencyCode`: document currency
-  - **Auto-create mode**:
+- **Auto-create mode**:
     - Treat one supplier line with `quantity = N` as **N asset units/cards**
-    - Reuse the FA06 per-unit split logic (`computeFa06PerUnitAmounts` / equivalent) so `line net / quantity` is allocated consistently in txn and base currency, with normal rounding handling on the final unit
+    - Use an **SL05-specific quantity allocator** (new helper, not raw `computeFa06PerUnitAmounts()`) so `line net` / `line base` are allocated across `N` units and any rounding residual is assigned to the final unit
+    - Do **not** rely on the current FA06 equal-split helper alone; the current FA06 path separately requires source amounts to be evenly splittable and does not implement final-unit residual allocation
     - Create `quantity` new DRAFT fixed-asset rows using:
-      - line description as the base asset name
+      - `fixed_asset_name_override` if set (from expanded lines), otherwise line `description` as the base asset name
+      - `fixed_asset_serial_no` and `fixed_asset_tag` if set (from expanded lines)
       - `fixed_asset_category_id`
       - `fixed_asset_owner_operating_unit_id`
       - `fixed_asset_location_operating_unit_id`
@@ -441,6 +562,7 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
       - `source_cari_document_line_id`
       - `source_cari_document_line_unit_no = 1..N`
     - Add `upsertJournalSourceLinkTx` links from the shared CARI journal to each generated FA transaction
+    - If the user used **Expand into individual asset lines** before posting, the backend does **not** need a special per-unit customization payload; it simply processes the resulting `quantity = 1` AUTO_CREATE lines independently
   - **Link-existing mode**:
     - Re-validate target asset is still DRAFT and in the same tenant/legal entity (`SELECT ... FOR UPDATE`)
     - Create one CAPITALIZATION transaction on the referenced draft asset
@@ -454,6 +576,7 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
 - Do not change the activation flow (SL08 handles that)
 - Do not create a separate journal — the CARI posting journal already has the correct debit/credit lines
 - Do not force users to enter repeated manual lines for identical units
+- Do not support per-unit category/accounting divergence inside one unexpanded bulk AUTO_CREATE line; split into separate CARI lines instead
 
 ### Definition of done
 - Posting an AP doc with a FIXED_ASSET auto-create line and `quantity = N` creates `N` draft assets/cards and `N` CAPITALIZATION transactions
@@ -462,6 +585,8 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
 - Per-unit asset cost is allocated from the line amounts using quantity-based split logic
 - `source_cari_document_line_unit_no` is `1..N` for auto-create mode and `1` for link-existing mode
 - Journal entry debits asset account, credits AP control account (normal AP posting)
+- AP capitalization runs in the **post-journal** phase only; it does not mutate `postingLines`
+- Quantity-based auto-create supports non-evenly-splittable totals by allocating the residual to the final unit instead of hard-failing on FA06 equal-split rules
 - Asset can subsequently be activated without posting an additional journal
 - Posting is rejected if a link-existing target asset is not DRAFT
 
@@ -481,15 +606,20 @@ When posting a CARI AR document, lines with `subledger_type = 'FIXED_ASSET'` tri
     - gain/loss math
     - disposal account validation rules
   - SL06 should **not** be framed as adapting `saleFinalizeAsset()` directly, because the new path posts from the CARI document itself and appends disposal effects into the same posting event.
-- During `postCariDocumentByIdTx()`, within the same `processFixedAssetLineSideEffectsTx()` hook (created in SL05), for each FIXED_ASSET line on AR:
-  - Re-validate target asset is in `ACTIVE`, `SUSPENDED`, or `FULLY_DEPRECIATED` status (matching existing `SALE_STAGING_ELIGIBLE_STATUSES` at line ~5360 in `fixed-assets.service.js`) and in the same tenant/legal entity
-  - **Lock the asset row** (`SELECT ... FOR UPDATE`) to prevent concurrent modifications
-  - Calculate cutoff depreciation through the day before disposal (reuse existing `resolveDisposalCutoffEconomics`), using the CARI posting's resolved `bookId` and `calendarId` for fiscal period context
-  - **Append disposal journal lines to the CARI `postingLines` array BEFORE `ensureBalancedJournalLines` is called** — not after. The disposal creates balanced debit/credit pairs (asset credit + accum depr debit + gain/loss), so total journal balance is preserved. Cutoff depreciation lines (depr expense debit + accum depr credit) are also balanced pairs. Do NOT create a separate journal.
-  - Create SALE transaction on the asset (same pattern as SL05: reference the CARI posting journal's `journal_entry_id`)
-  - Post disposal journal lines: credit asset account (remove cost), debit accum depr (remove accumulated), recognize gain/loss (sale proceeds vs NBV)
-  - Update asset status → DISPOSED
-  - Set disposal metadata on `fixed_assets` using Track 38 FA52 schema: `disposal_date` (from document date), `disposal_type = 'SALE'`, `disposed_at = NOW()`, `disposal_proceeds_base`, and `disposal_gain_loss_base`
+- During `postCariDocumentByIdTx()`, FIXED_ASSET AR handling is split across the two SL05 phases:
+  - **Pre-journal FA augmentation** in `prepareFixedAssetPostingAugmentationsTx()`:
+    - Re-validate target asset is in `ACTIVE`, `SUSPENDED`, or `FULLY_DEPRECIATED` status (matching existing `SALE_STAGING_ELIGIBLE_STATUSES` at line ~5360 in `fixed-assets.service.js`) and in the same tenant/legal entity
+    - **Lock the asset row** (`SELECT ... FOR UPDATE`) to prevent concurrent modifications
+    - Resolve and validate the AR line's explicit `postingAccountId` as the **sale proceeds account** for that line
+    - Calculate cutoff depreciation through the day before disposal (reuse existing `resolveDisposalCutoffEconomics`), using the CARI posting's resolved `bookId` and `calendarId` for fiscal period context
+    - **Append disposal journal lines to the CARI `postingLines` array BEFORE `ensureBalancedJournalLines` is called**. The disposal creates balanced debit/credit pairs (asset credit + accum depr debit + gain/loss), so total journal balance is preserved. Cutoff depreciation lines (depr expense debit + accum depr credit) are also balanced pairs. Do NOT create a separate journal.
+    - Post disposal journal lines: debit the AR-line sale proceeds account, credit asset account (remove cost), debit accum depr (remove accumulated), recognize gain/loss via the asset/category disposal gain/loss accounts
+  - **Post-journal FA side effects** in `applyFixedAssetPostingSideEffectsTx()`:
+    - **Snapshot pre-disposal status**: store the asset's current `status` (ACTIVE, SUSPENDED, or FULLY_DEPRECIATED) as `pre_disposal_status` on the SALE transaction row — needed by SL07 reversal to deterministically restore the correct status
+    - Create SALE transaction on the asset referencing the shared CARI `journal_entry_id`, including `pre_disposal_status`
+    - Update asset status → DISPOSED
+    - Set disposal metadata on `fixed_assets` using Track 38 FA52 schema: `disposal_date` (from document date), `disposal_type = 'SALE'`, `disposed_at = NOW()`, `disposal_proceeds_base`, and `disposal_gain_loss_base`
+    - Add FA `upsertJournalSourceLinkTx` linkage from the shared CARI journal to the created SALE transaction row
 - Sale proceeds are the AR line amount; NBV is computed from asset records
 
 ### Explicit non-goals
@@ -500,7 +630,9 @@ When posting a CARI AR document, lines with `subledger_type = 'FIXED_ASSET'` tri
 - Posting an AR doc with a FIXED_ASSET line disposes the asset in a single posting
 - Cutoff depreciation is calculated and posted
 - Gain/loss is correctly recognized
+- Manual AR line proceeds account is honored, while disposal gain/loss still uses the asset/category disposal accounts
 - Asset status changes to DISPOSED
+- AR disposal journal augmentation happens in the **pre-journal** phase before balancing/journal insert; AR SALE transaction/state updates happen in the **post-journal** phase against the created shared journal
 - Single journal entry covers AR + disposal + cutoff depreciation (all lines in one `postingLines` array)
 - Sale of fully-depreciated and suspended assets works correctly (not just ACTIVE)
 
@@ -514,8 +646,8 @@ When a CARI document containing FIXED_ASSET lines is reversed, undo the fixed-as
 ### In scope
 
 **Prerequisite — reversal line copy must include new columns**:
-- The existing `reverseCariPostedDocumentById` (line ~4563 in `cari.document.service.js`) creates a reversal document by copying lines via `replaceDocumentLinesTx` (line ~2472). The current INSERT at line ~2497-2539 does NOT include `subledger_type` or `target_fixed_asset_id`. The line copy mapping at line ~4839-4916 also doesn't map these fields.
-- **Both must be updated**: add `subledger_type` and `target_fixed_asset_id` to the INSERT columns and the line-copy field mapping. Without this, the reversal document's lines lose their subledger context and the FA reversal hooks below can't determine which lines to process.
+- The existing `reverseCariPostedDocumentById` (line ~4563 in `cari.document.service.js`) creates a reversal document by copying lines via `replaceDocumentLinesTx` (line ~2472). The current INSERT at line ~2497-2539 does NOT include the new FIXED_ASSET subledger fields. The line copy mapping at line ~4839-4916 also doesn't map them.
+- **Both must be updated**: add `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, `fixed_asset_category_id`, `fixed_asset_owner_operating_unit_id`, `fixed_asset_location_operating_unit_id`, `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`, `improvement_revised_useful_life_months`, and `improvement_life_extension_months` to the INSERT columns and the line-copy field mapping. Without this, the reversal document's lines lose their subledger context, mode, expanded-line per-unit metadata, and improvement payload, and the FA reversal hooks below can't determine which lines to process or what kind of reversal to perform.
 
 **Shared-journal constraint — do not call the generic FA reversal helper here**:
 - The existing `reverseFixedAssetTransaction()` in `fixed-assets.service.js` directly calls `reverseJournalEntryTx()` on `target.journalEntryId` when the target transaction has a journal.
@@ -532,22 +664,26 @@ When a CARI document containing FIXED_ASSET lines is reversed, undo the fixed-as
   - Find all CAPITALIZATION transactions on `fixed_asset_transactions` where `source_ref_type = 'CARI_DOCUMENT'`, `source_ref_id = documentId`, `source_ref_line_id = lineId`, `reversal_transaction_id IS NULL`
   - If none are found (already reversed independently), skip this line's FA side-effects
   - If any linked asset status != DRAFT, **block the CARI reversal** with error: "Asset {assetNo} has been activated since capitalization. Reverse the activation first before reversing the source CARI document."
-  - If the line used **auto-create mode** and the generated assets are still untouched DRAFT assets: mark the CAPITALIZATION rows reversed, then remove or archive the generated draft assets so the bill reversal leaves no orphan empty asset shells
+  - If the line used **auto-create mode** and the generated assets are still untouched DRAFT assets: perform a controlled hard-delete reversal path:
+    - delete journal/source-link records tied only to those generated CAPITALIZATION rows as needed
+    - delete the generated CAPITALIZATION transaction rows in FK-safe order
+    - then hard-delete the generated DRAFT asset rows
+    - do **not** keep empty cancelled/archived shells for auto-created assets that never progressed beyond untouched DRAFT state
   - If the line used **link-existing mode** and the linked asset is still DRAFT: mark the CAPITALIZATION transaction reversed, restore cost fields to zero, clear `source_cari_document_id/line_id/unit_no`, and do **not** independently reverse the shared journal through `reverseFixedAssetTransaction()`
 - For AR reversal with FIXED_ASSET lines:
   - Find the SALE transaction on `fixed_asset_transactions` with the same lookup pattern
   - If the asset has had subsequent transactions since disposal, block the reversal
   - Reverse the SALE transaction + cutoff depreciation transaction through CARI-owned reversal orchestration (not via generic `reverseFixedAssetTransaction()` on the shared-journal SALE row)
-  - Restore the asset to its pre-disposal status (ACTIVE, SUSPENDED, or FULLY_DEPRECIATED — stored on the SALE transaction or derived from the asset's depreciation state)
+  - Restore the asset to its pre-disposal status using the SALE transaction's `pre_disposal_status` column (ACTIVE, SUSPENDED, or FULLY_DEPRECIATED — deterministic, no derivation needed)
 
 ### Explicit non-goals
 - Do not handle partial reversals (all-or-nothing document reversal is the existing pattern)
 
 ### Definition of done
-- Reversal document lines include `subledger_type`, `target_fixed_asset_id`, and generated-asset metadata (copied from original)
-- Reversing an AP doc with FIXED_ASSET auto-create lines removes or archives untouched generated draft assets and clears their capitalization effects
+- Reversal document lines include `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`, improvement life fields, and generated-asset metadata (copied from original)
+- Reversing an AP doc with FIXED_ASSET auto-create lines hard-deletes untouched generated draft assets and their generated capitalization rows in the correct FK-safe order
 - Reversing an AP doc with FIXED_ASSET link-existing lines restores the linked draft asset to pre-capitalization state
-- Reversing an AR doc with FIXED_ASSET lines restores the asset to pre-disposal status
+- Reversing an AR doc with FIXED_ASSET lines restores the asset to pre-disposal status (read from SALE transaction's `pre_disposal_status` column)
 - Reversal is blocked if asset state has progressed beyond what can be safely reversed
 - Already-reversed FA transactions are skipped gracefully (no double-reversal)
 - Shared-journal SL05 / SL06 transactions are never reversed through the generic non-run FA reversal helper
@@ -587,8 +723,9 @@ The revalidation must detect which path created the asset and behave accordingly
 - **SL05 path (CARI-capitalized asset)**:
   - Validate source CARI document is still POSTED and direction = AP
   - Validate source line still exists
-  - If the asset came from **auto-create mode**: validate the asset's `source_cari_document_line_unit_no` is within the source line quantity and validate cost against the expected per-unit split for that slot
-  - If the asset came from **link-existing mode**: validate asset cost matches the full line amount (`quantity = 1`)
+  - Read the source line's persisted `fixed_asset_mode` to determine which sub-path:
+    - If `AUTO_CREATE`: validate the asset's `source_cari_document_line_unit_no` is within the source line quantity and validate cost against the SL05 quantity allocator's expected per-unit amount for that slot (including final-unit residual handling when the line total is not evenly splittable)
+    - If `LINK_EXISTING`: validate asset cost matches the full line amount (`quantity = 1`)
   - Skip creating any new acquisition-cost journal logic (cost already journaled via CARI posting)
   - Skip inserting the activation-time `ACQUISITION` transaction (the existing lifecycle history already contains the SL05 `CAPITALIZATION` row)
   - Generate depreciation schedule as normal
@@ -645,7 +782,8 @@ Add a subledger type dropdown to each line in the CARI document entry form.
 - Label: "Line Type" / "Satir Tipi" (or "Subledger" / "Alt Defter")
 - When changed, clear only fields that are incompatible with the new type:
   - switching from STOCK to FIXED_ASSET clears `itemCardId`, `warehouseId`, resets `stockImpactMode` to `NONE`, and initializes AP `fixedAssetMode` to `AUTO_CREATE`
-  - switching from FIXED_ASSET to NONE clears `targetFixedAssetId`, `fixedAssetMode`, and generated-asset defaults (`fixedAssetCategoryId`, owner/location OUs)
+  - switching from FIXED_ASSET to NONE clears `targetFixedAssetId`, `fixedAssetMode`, generated-asset defaults (`fixedAssetCategoryId`, owner/location OUs), expanded-line metadata (`fixedAssetNameOverride`, `fixedAssetSerialNo`, `fixedAssetTag`), and improvement life fields (`revisedUsefulLifeMonths`, `lifeExtensionMonths`)
+  - switching from FIXED_ASSET to STOCK clears `targetFixedAssetId`, `fixedAssetMode`, generated-asset defaults, expanded-line metadata, and improvement life fields (same as FIXED_ASSET→NONE), then initializes stock fields
   - switching from STOCK to NONE clears stock-only fields (`warehouseId`, non-`NONE` stockImpactMode) but may retain `itemCardId`
 - Position: first field on each line row (before description)
 
@@ -674,7 +812,10 @@ When `subledgerType = 'FIXED_ASSET'` is selected on a line, show the correct pur
 - **AP `fixedAssetMode = AUTO_CREATE`** shows:
   - generated asset defaults: category, owner OU, location OU
   - quantity-aware preview text: **"Posting this line will create {quantity} assets at {perUnitAmount} each."**
-  - optional action: **"Expand into individual asset lines"** or **"Customize generated assets"** for non-identical units
+  - optional action: **"Expand into individual asset lines"** for non-identical units
+  - **500-line cap guard**: before expanding, check if the current document line count + (`quantity - 1`) would exceed the validator's 500-line cap. If it would, block expansion with an inline warning: "Expanding {quantity} units would exceed the 500-line document limit. Reduce quantity or split into separate documents." The expansion button is disabled when the cap would be exceeded.
+  - expanding converts one bulk line into multiple `quantity = 1` AUTO_CREATE lines before posting
+  - after expansion, the user can set per-line operational fields — all persisted on the line via SL01 columns: `fixed_asset_name_override` (name/label), `fixed_asset_serial_no`, `fixed_asset_tag`, plus the existing `fixed_asset_owner_operating_unit_id` and `fixed_asset_location_operating_unit_id`
   - auto-resolved account (read-only, from selected category)
 - **AP `fixedAssetMode = LINK_EXISTING`** shows:
   - a **draft asset picker** (search/select from existing DRAFT assets)
@@ -683,28 +824,36 @@ When `subledgerType = 'FIXED_ASSET'` is selected on a line, show the correct pur
   - optional **"+ New Asset"** shortcut that opens a lightweight draft-asset modal and auto-selects the new draft asset on the line
 - For **AR documents**, show an **active asset picker** (search/select from existing eligible sale assets) and keep quantity locked to `1`
 - Asset picker shows: asset no, name, category, owner OU
-- Hide the manual `postingAccountId` field when subledger_type is FIXED_ASSET
+- For **AP FIXED_ASSET**, hide the manual `postingAccountId` field (category-driven)
+- For **AR FIXED_ASSET**, keep the manual `postingAccountId` field visible and label it clearly as **sale proceeds account**
 - When `subledgerType = 'STOCK'`: show existing stock-specific fields: `itemCardId`, `warehouseId`, `stockImpactMode`
 - When `subledgerType = 'NONE'`: keep existing manual fields and continue allowing `itemCardId` for `SERVICE` / `NON_STOCK_GOOD` lines with `stockImpactMode = 'NONE'`
 - **Inline "Create Asset" shortcut** remains available only for the AP link-existing path:
   - Clicking it opens a **modal/dialog** with the essential draft asset fields: name, category, owner OU, location OU
+  - **Header-derived fields** (auto-filled from the current CARI document, not user-entered in the modal):
+    - `legalEntityId` — from the document header's legal entity
+    - `acquisitionDate` — from the document's `documentDate`
+    - `currencyCode` — from the document's currency
+    - These are required by the `createFixedAsset()` validator/service but are redundant for the user to re-enter since the CARI header already has them
   - Category selection auto-fills depreciation profile, useful life, salvage rule from category defaults (same behavior as the existing create form)
   - On save, the draft asset is created via the existing `createFixedAsset()` API and auto-selected on the bill line
   - The user never leaves the CARI document page — the modal closes and the line is populated
 
 ### Explicit non-goals
-- Do not replicate the full FixedAssetFormPage inside the modal — only essential fields (name, category, owner OU, location OU); advanced fields like serial number, legacy onboarding, account overrides are edited on the asset detail page after creation
+- Do not replicate the full FixedAssetFormPage inside the modal — only essential fields (name, category, owner OU, location OU) plus header-derived fields (legalEntityId, acquisitionDate, currencyCode auto-filled from the CARI document); advanced fields like serial number, legacy onboarding, account overrides are edited on the asset detail page after creation
 - Do not force users into link-existing mode when the commercial bill is naturally one line with `quantity > 1`
 - Do not expose `fixedAssetMode` on AR lines; AR always selects an existing asset directly
+- Do not allow per-unit category/accounting divergence through the expand helper; users must split into separate CARI lines if accounting differs
 
 ### Definition of done
 - AP FIXED_ASSET line exposes explicit `fixedAssetMode`
 - AP FIXED_ASSET line defaults to `fixedAssetMode = AUTO_CREATE` and shows generated-asset defaults
 - AP `fixedAssetMode = AUTO_CREATE` shows preview text: **"Posting this line will create {quantity} assets at {perUnitAmount} each."**
 - AP FIXED_ASSET line can switch to `fixedAssetMode = LINK_EXISTING`, which shows the draft asset picker
+- AP `fixedAssetMode = AUTO_CREATE` can expand one bulk line into multiple `quantity = 1` AUTO_CREATE lines for per-unit destination/metadata editing before posting
 - AP `fixedAssetMode = LINK_EXISTING` includes a "+ New Asset" button that opens a quick-create modal
 - Modal creates a draft asset and auto-selects it on the line without navigating away
-- AR FIXED_ASSET line shows the active-asset picker and keeps quantity = 1
+- AR FIXED_ASSET line shows the active-asset picker, keeps quantity = 1, and keeps manual sale proceeds account entry visible
 - STOCK line shows existing inventory fields
 - NONE line shows existing manual fields and preserves current service/non-stock item-card behavior
 - All three types can coexist on the same document
@@ -720,9 +869,10 @@ Enforce form-level validation rules based on the selected subledger type and AP 
 - FIXED_ASSET AP requires explicit `fixedAssetMode`
 - FIXED_ASSET AP `fixedAssetMode = AUTO_CREATE`: `targetFixedAssetId` must be empty, `quantity` must be a whole positive integer, and generated-asset defaults (`fixedAssetCategoryId`, `fixedAssetOwnerOperatingUnitId`, `fixedAssetLocationOperatingUnitId`) are required
 - FIXED_ASSET AP `fixedAssetMode = LINK_EXISTING`: `targetFixedAssetId` required and `quantity = 1`
-- FIXED_ASSET AR mode: `targetFixedAssetId` required and `quantity = 1`
+- FIXED_ASSET AR mode: `targetFixedAssetId` required, `quantity = 1`, and manual `postingAccountId` required as sale proceeds account
 - STOCK: `itemCardId` required, `stockImpactMode` required, `targetFixedAssetId` must be empty
 - NONE: standard existing validation; `targetFixedAssetId` must be empty, and `itemCardId` remains allowed when `stockImpactMode = 'NONE'`
+- **500-line cap**: total document line count must not exceed 500 (the existing validator cap). After line expansion, re-validate this cap and block submission if exceeded.
 - Prevent document submission if validation fails
 - Show inline validation messages per line
 
@@ -734,6 +884,7 @@ Enforce form-level validation rules based on the selected subledger type and AP 
 - Cannot submit an AP FIXED_ASSET `AUTO_CREATE` line without generated-asset defaults
 - Cannot submit an AP FIXED_ASSET `LINK_EXISTING` line without selecting an asset
 - Cannot submit an AP FIXED_ASSET `LINK_EXISTING` line or AR FIXED_ASSET line with `quantity != 1`
+- Cannot submit an AR FIXED_ASSET line without manual sale proceeds `postingAccountId`
 - Cannot submit a STOCK line without item card
 - Can submit a NONE line with `itemCardId` when it is a non-stock/service line and `stockImpactMode = 'NONE'`
 - Validation messages are visible inline
@@ -748,6 +899,7 @@ Update the acquisitions page to reflect the new CARI-integrated flow.
 ### In scope
 - Show a "Linked from CARI" indicator on assets that have `source_cari_document_id` set
 - Add a note: "Preferred flow: enter one vendor bill line with `FIXED_ASSET` and quantity, let posting create the asset units automatically. Use link-existing mode only when you already prepared a specific draft asset."
+- Add a second note: "If units need different owner/location or serial metadata before posting, use 'Expand into individual asset lines'. If accounting/category differs, split into separate CARI lines."
 - Keep the existing "Capitalize from AP" section as a **fallback** (for bills already posted without subledger_type), but add guidance that the preferred flow is through the CARI form
 - When an asset has a CAPITALIZATION transaction from CARI posting, show the source document link
 
@@ -855,28 +1007,29 @@ The existing `applyCariSettlement()` (line ~4349 in `cari.settlement.service.js`
 
 ---
 
-## `STEP-SL17` — Frontend CARI form: settlement mode selector (Accrual / Cash Purchase)
+## `STEP-SL17` — Frontend CARI form: settlement mode selector (Accrual / Cash Purchase / Cash Sale)
 
 ### Patch target
-Add a settlement mode selector to the CARI document form header.
+Add a settlement mode selector to the CARI document form header for both AP and AR documents.
 
 ### In scope
-- Add a **"Payment"** section to the document header form:
-  - Radio or dropdown: `On Credit (Accrual)` | `Cash Purchase`
+- Add a **"Payment"** section to the document header form (both AP and AR):
+  - Radio or dropdown: `On Credit (Accrual)` | `Cash Purchase` (AP) / `Cash Sale` (AR)
   - Default: `On Credit (Accrual)` — current behavior
-- When `Cash Purchase` is selected: show a **cash register picker** (dropdown of active cash registers)
+  - Label adapts to direction: AP shows "Cash Purchase" / "Nakit Alis", AR shows "Cash Sale" / "Nakit Satis"
+- When `Cash Purchase` or `Cash Sale` is selected: show a **cash register picker** (dropdown of active cash registers)
 - When `On Credit` is selected: hide payment source fields
 - i18n labels for all new UI elements in both TR and EN
 - The settlement mode and payment source are sent as part of the document create/update payload
 
 ### Explicit non-goals
 - Do not implement split payment (part cash, part credit)
-- Do not show settlement mode on AR documents initially (start with AP only; AR can be added later)
 - Do not expose `IMMEDIATE_BANK` in the UI in this step
 
 ### Definition of done
-- AP document form has a payment mode selector
-- Cash Purchase shows cash register dropdown
+- AP document form has a payment mode selector (label: "Cash Purchase" / "Nakit Alis")
+- AR document form has a payment mode selector (label: "Cash Sale" / "Nakit Satis")
+- Cash Purchase/Sale shows cash register dropdown
 - On Credit hides payment source fields
 - Payload includes `settlementMode` and `settlementCashRegisterId` when needed
 
@@ -890,20 +1043,26 @@ When reversing a CARI document that was immediately settled, also reverse the au
 ### In scope
 - During CARI document reversal (within `reverseCariPostedDocumentById`), if the document has `settlement_mode != 'ACCRUAL'`:
   - **Lookup the auto-created settlement and cash transaction** using `auto_settlement_batch_id` and `auto_settlement_cash_transaction_id` stored on the document by SL16. These columns provide a reliable, direct FK-based lookup — no guessing or convention-based search needed.
-  - Reverse the CARI settlement via `reverseCariSettlementTx(tx, ...)` (transaction-aware variant, same pattern as SL16)
-  - Reverse the auto-created cash payout/receipt via `reverseCashTransactionTx(tx, ...)`
-  - All reversal operations happen in the same transaction (using `*Tx` variants, not nested `withTransaction`)
+  - **Do not call the current public reversal endpoints as-is**. The current standalone settlement reversal blocks while the linked cash transaction is still `POSTED`, so SL18 must use a **coordinated internal pair-reversal path** instead of naive sequential public calls.
+  - Add a purpose-built helper such as `reverseImmediateCashSettlementPairTx(tx, ...)` that:
+    - locks the document, linked settlement batch, and linked cash transaction together
+    - reverses the auto-linked cash + settlement pair inside **one** transaction
+    - calls pair-aware internal `reverseCariSettlementTx(tx, ...)` / `reverseCashTransactionTx(tx, ...)` helpers rather than public endpoint wrappers
+    - coordinates or bypasses the standalone linked-state guards **only for this exact SL16-created auto-linked pair**
+  - The coordinated pair reversal must ensure the cash side and settlement side are reversed as one atomic unit; it must not leave “cash reversed / settlement still posted” or “settlement reversed / cash still posted” intermediate outcomes on commit
 - The reversed cash transaction should reference the original as its reversal source
 - If the cash register session has been closed since posting, the reversal creates a new cash transaction in the current active session (or fails if no session is active)
 
 ### Explicit non-goals
 - Do not handle partial reversal
 - Do not reverse if the settlement has been partially cleared by other transactions (block with error)
+- Do not rely on public standalone cash/settlement reversal ordering quirks for the immediate-settlement pair; SL18 must define its own coordinated internal path
 
 ### Definition of done
 - Reversing an immediately settled AP doc restores: AP open item cleared, cash payout reversed, settlement reversed
 - Reversing an immediately settled AR doc restores: AR open item cleared, cash receipt reversed, settlement reversed
 - Reversal finds the settlement/cash transaction via `auto_settlement_batch_id` / `auto_settlement_cash_transaction_id` (not by convention or search)
+- Reversal uses a coordinated internal pair-reversal path for the SL16-linked cash + settlement pair, not naive sequential calls to public reversal endpoints
 - Reversal fails gracefully if cash session is unavailable
 - All operations are atomic (verified via `*Tx` variants)
 
@@ -969,9 +1128,13 @@ Create new frontend routes that present the existing CARI pages pre-filtered by 
 - `/app/musteri-kartlari/olustur` → CariCounterpartyPage with `pageKey="buyerCreate"`
 - `/app/tedarikci-odemeler` → CariSettlementsPage with `direction="AP"` prop
 - `/app/musteri-tahsilatlar` → CariSettlementsPage with `direction="AR"` prop
+- `/app/tedarikci-raporlari` → CariReportsPage with `direction="AP"` prop (AP-filtered reports — matches SL19 sidebar and SL23 redirect target)
+- `/app/musteri-raporlari` → CariReportsPage with `direction="AR"` prop (AR-filtered reports)
+- `/app/ayarlar/cari-denetim` → CariAuditPage (moved to Settings & Admin — matches SL19 sidebar and SL23 redirect target)
 - Register these routes in `App.jsx`
 - The existing CariDocumentsPage should accept an optional `direction` prop to pre-filter and hide the direction selector when pre-set
 - CariSettlementsPage should accept an optional `direction` prop to pre-filter
+- CariReportsPage (existing reports page at `/app/cari-raporlari`) should accept an optional `direction` prop to pre-filter by AP/AR
 
 ### Explicit non-goals
 - Do not create entirely new page components — reuse existing pages with existing props
@@ -983,6 +1146,9 @@ Create new frontend routes that present the existing CARI pages pre-filtered by 
 - `/app/satis-faturalari` shows only AR documents
 - `/app/tedarikci-kartlari` shows only vendors (via existing `pageKey="vendorList"`)
 - `/app/musteri-kartlari` shows only customers (via existing `pageKey="buyerList"`)
+- `/app/tedarikci-raporlari` shows AP-filtered reports
+- `/app/musteri-raporlari` shows AR-filtered reports
+- `/app/ayarlar/cari-denetim` shows audit trail page under Settings & Admin
 - Direction filter is hidden when pre-set via prop
 - Old routes still work (not removed yet)
 
@@ -1081,15 +1247,17 @@ Verify the complete subledger-aware line and immediate settlement flows end to e
 - **Purchase link-existing smoke**: create one draft asset → create AP doc with FIXED_ASSET link-existing line (`qty = 1`) → post → verify referenced asset has CAPITALIZATION transaction
 - **Sale smoke**: create and activate asset → create AR doc with FIXED_ASSET line → post → verify asset is DISPOSED with correct gain/loss
 - **Mixed-line smoke**: create AP doc with one NONE line, one STOCK line, one FIXED_ASSET line → post → verify each line posted correctly
-- **Reversal smoke**: post AP doc with FIXED_ASSET auto-create line → reverse → verify generated draft assets are removed/archived and no orphan capitalization remains
+- **Reversal smoke**: post AP doc with FIXED_ASSET auto-create line → reverse → verify untouched generated draft assets and their generated capitalization rows are hard-deleted and no orphan capitalization remains
 - **Reversal guard smoke**: post AP doc with FIXED_ASSET line → activate asset → attempt to reverse CARI doc → verify reversal is blocked
 - **Link-existing quick-create smoke**: on CARI form, switch AP FIXED_ASSET line to link-existing mode → use "+ New Asset" modal → verify draft created and auto-selected on line
-- **Preview/customize smoke**: on CARI form, select FIXED_ASSET with `qty > 1` → verify preview text shows "Posting this line will create N assets at X each" and customize/expand action is visible
+- **Preview/expand smoke**: on CARI form, select FIXED_ASSET with `qty > 1` → verify preview text shows "Posting this line will create N assets at X each", expand action is visible, and expanded `quantity = 1` lines allow different owner/location assignments before posting
 
 **Immediate settlement smokes:**
-- **Cash purchase smoke**: create AP doc with `settlement_mode = IMMEDIATE_CASH` → post → verify cash payout created + settlement applied + AP open item balance = 0
+- **Cash purchase smoke (AP)**: create AP doc with `settlement_mode = IMMEDIATE_CASH` → post → verify cash payout created + settlement applied + AP open item balance = 0
+- **Cash sale smoke (AR)**: create AR doc with `settlement_mode = IMMEDIATE_CASH` → post → verify cash receipt created + settlement applied + AR open item balance = 0
 - **Cash + FA combined smoke**: create AP doc with `settlement_mode = IMMEDIATE_CASH` + FIXED_ASSET line → post → verify asset capitalized AND cash settled in one operation
-- **Cash reversal smoke**: post immediately settled AP doc → reverse → verify cash payout reversed + settlement reversed + AP open item cleared
+- **Cash reversal smoke (AP)**: post immediately settled AP doc → reverse → verify cash payout reversed + settlement reversed + AP open item cleared
+- **Cash reversal smoke (AR)**: post immediately settled AR doc → reverse → verify cash receipt reversed + settlement reversed + AR open item cleared
 - **Accrual default smoke**: create AP doc without settlement_mode → post → verify no auto-settlement (current behavior unchanged)
 
 **Frontend build:** `npm run build` passes
@@ -1118,7 +1286,8 @@ Final validation that all new flows work alongside existing flows without regres
 - Verify existing CARI → cash manual settlement flow works unchanged (ACCRUAL mode)
 - Verify existing cash transaction creation without CARI works unchanged
 - Document: which flow is recommended vs. which is fallback
-- Verify OpenAPI spec includes new fields (subledger_type, target_fixed_asset_id, settlement_mode, settlement_cash_register_id)
+- Verify the OpenAPI generator contract is updated in `backend/scripts/generate-openapi.js`, then regenerate `backend/openapi.yaml`
+- Verify regenerated OpenAPI spec includes new fields (subledger_type, target_fixed_asset_id, settlement_mode, settlement_cash_register_id)
 
 ### Explicit non-goals
 - Do not deprecate or remove any existing endpoint
@@ -1131,6 +1300,262 @@ Final validation that all new flows work alongside existing flows without regres
 - `IMMEDIATE_BANK` explicitly documented as deferred until a bank-side immediate-posting primitive exists
 - Existing flows documented as fallback
 - All smoke tests pass
+
+---
+
+## `STEP-SL26` — Migration: add IMPROVEMENT transaction type and improvement metadata columns
+
+### Patch target
+`backend/src/migrations/` — new migration file
+
+### In scope
+1. ALTER the `fixed_asset_transactions.transaction_type` ENUM to add `'IMPROVEMENT'` after `'SALE'`
+   - Current values: ACQUISITION, CAPITALIZATION, DEPRECIATION, SUSPEND, REACTIVATE, PHYSICAL_MOVE, OWNERSHIP_TRANSFER, WRITEOFF, SALE, REVERSAL
+   - New value: IMPROVEMENT (between SALE and REVERSAL or at end — order doesn't matter for ENUMs)
+2. Add improvement-specific metadata columns to `fixed_asset_transactions`:
+   - `improvement_revised_useful_life_months` INT UNSIGNED NULL — the new total useful life set by this improvement (NULL = no change)
+   - `improvement_life_extension_months` INT UNSIGNED NULL — months added to remaining life by this improvement (NULL = no change)
+   - `improvement_pre_cost_txn` DECIMAL(20,6) NULL — asset's `original_cost_txn` before this improvement (for reversal restoration)
+   - `improvement_pre_cost_base` DECIMAL(20,6) NULL — asset's `original_cost_base` before this improvement
+   - `improvement_pre_useful_life_months` INT UNSIGNED NULL — asset's `useful_life_months` before this improvement (for reversal restoration)
+   - `improvement_pre_remaining_life_months` INT UNSIGNED NULL — asset's `remaining_useful_life_months` before this improvement
+3. Use the repo's idempotent migration pattern (safeExecute, addColumnIfMissing)
+
+### Explicit non-goals
+- Do not change any service logic — migration only
+- Do not add columns to `fixed_assets` table (improvement updates existing cost/life columns in place)
+
+### Definition of done
+- Migration runs without error on fresh and existing databases
+- `IMPROVEMENT` is a valid transaction type
+- Pre-state columns exist for reversal restoration
+- Existing transactions are unaffected (new columns are NULL)
+
+---
+
+## `STEP-SL27` — Backend: IMPROVE_EXISTING mode — validators, posting, and prospective depreciation
+
+### Patch target
+`backend/src/routes/cari.document.validators.js`, `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
+
+### In scope
+
+**Validator additions** (extending SL02):
+- Accept `fixedAssetMode = 'IMPROVE_EXISTING'` on AP FIXED_ASSET lines
+- When `IMPROVE_EXISTING`:
+  - Require `targetFixedAssetId`
+  - Require `quantity = 1`
+  - Reject generated-asset defaults (`fixedAssetCategoryId`, owner/location OUs) — target asset already has these
+  - Accept optional `revisedUsefulLifeMonths` (positive integer) OR `lifeExtensionMonths` (positive integer), but not both
+  - **FULLY_DEPRECIATED hard rule**: if the target asset is `FULLY_DEPRECIATED`, at least one of `revisedUsefulLifeMonths` or `lifeExtensionMonths` is **required**, and the resulting `remaining_useful_life_months` must be `> 0`. Reject with 400 and message: "Improving a fully-depreciated asset requires life extension — remaining useful life would be 0 with no future depreciation periods."
+  - Reject `itemCardId` and `stockImpactMode != 'NONE'`
+
+**Service additions** (extending SL03):
+- When `fixedAssetMode = 'IMPROVE_EXISTING'` on AP:
+  - Validate target asset is ACTIVE or FULLY_DEPRECIATED (not DRAFT, not DISPOSED, not SUSPENDED)
+  - **FULLY_DEPRECIATED hard rule**: if target asset status is `FULLY_DEPRECIATED`, validate that life revision payload is present and produces `remaining_useful_life_months > 0`
+  - Validate target asset is in the same tenant/legal entity
+  - Store `target_fixed_asset_id` on the line (same column as LINK_EXISTING)
+
+**Account resolution** (extending SL04):
+- For `IMPROVE_EXISTING`: auto-resolve `posting_account_id` from the target asset's category `default_asset_account_id` (same asset account as original acquisition)
+- Reject explicit `postingAccountId` (category-driven, same as AUTO_CREATE/LINK_EXISTING)
+
+**Posting logic** (extending SL05's `applyFixedAssetPostingSideEffectsTx`):
+- For AP FIXED_ASSET lines with `fixedAssetMode = 'IMPROVE_EXISTING'`:
+  - **Lock the target asset** (`SELECT ... FOR UPDATE`)
+  - Re-validate target asset is still ACTIVE or FULLY_DEPRECIATED at posting time
+  - **Snapshot pre-improvement state** on the IMPROVEMENT transaction row:
+    - `improvement_pre_cost_txn` = asset's current `original_cost_txn`
+    - `improvement_pre_cost_base` = asset's current `original_cost_base`
+    - `improvement_pre_useful_life_months` = asset's current `useful_life_months`
+    - `improvement_pre_remaining_life_months` = asset's current `remaining_useful_life_months`
+  - **Create IMPROVEMENT transaction** on `fixed_asset_transactions`:
+    - `transactionType`: `'IMPROVEMENT'`
+    - `grossAmountTxn/Base`: the improvement line's net amount
+    - `journalEntryId`: the shared CARI posting journal's `journal_entry_id`
+    - `sourceRefType`: `'CARI_DOCUMENT'`
+    - `sourceRefId`: document ID
+    - `sourceRefLineId`: line ID
+    - Read `improvement_revised_useful_life_months` and `improvement_life_extension_months` from the **persisted line columns** (set during draft save in SL03, not transient payload)
+    - Copy these values to the IMPROVEMENT transaction row for audit/reversal reference
+  - **Update asset cost fields**:
+    - `original_cost_txn += improvement_amount_txn`
+    - `original_cost_base += improvement_amount_base`
+  - **Update asset life fields** (read from persisted line columns):
+    - If line's `improvement_revised_useful_life_months` is set: set `useful_life_months = revisedUsefulLifeMonths`, compute new `remaining_useful_life_months` using a dedicated helper that derives elapsed depreciation months from the asset's lifecycle history and posted depreciation state (the repo does not keep a simple `elapsed_months` scalar — it must be computed from activation date, suspension periods, and posted depreciation runs). Reject if the computed remaining life is `<= 0`.
+    - If line's `improvement_life_extension_months` is set: set `remaining_useful_life_months += lifeExtensionMonths`, set `useful_life_months += lifeExtensionMonths`
+    - If neither: no life change (this path is blocked for FULLY_DEPRECIATED assets by the validator — see FULLY_DEPRECIATED hard rule)
+  - **Status transition rule**: If after applying cost and life changes the asset's resulting `remaining_useful_life_months > 0` AND the asset was `FULLY_DEPRECIATED`: transition status to `ACTIVE` (it now has remaining depreciable base and remaining life). The check is on **resulting remaining life**, not on whether `lifeExtensionMonths` was specifically used — this covers both the `revisedUsefulLifeMonths` path and the `lifeExtensionMonths` path uniformly
+  - Add `upsertJournalSourceLinkTx` from the shared CARI journal to the IMPROVEMENT transaction
+- **No separate depreciation recalculation step needed**: The existing depreciation schedule engine (`buildAssetDepreciationScheduleContext` / `getAssetDepreciationSchedule`) dynamically rebuilds from the asset's current `original_cost_txn`, `useful_life_months`, `remaining_useful_life_months`, and lifecycle timeline. After SL27 updates these fields, the next schedule read or depreciation run automatically uses the new values. Past posted depreciation is never rewritten — the schedule is inherently prospective.
+
+### Explicit non-goals
+- Do not allow IMPROVE_EXISTING on DRAFT assets (use LINK_EXISTING or AUTO_CREATE for initial capitalization)
+- Do not allow IMPROVE_EXISTING on DISPOSED assets
+- Do not allow IMPROVE_EXISTING on SUSPENDED assets (resume first, then improve)
+- Do not rewrite past closed-period depreciation — prospective only
+- Do not change the depreciation service — it already works prospectively
+- Do not allow IMPROVE_EXISTING on AR documents (improvements are purchases, not sales)
+
+### Definition of done
+- AP FIXED_ASSET `IMPROVE_EXISTING` line with valid active/fully-depreciated target asset passes validation
+- Posting creates IMPROVEMENT transaction with correct amounts and pre-state snapshot
+- Asset's `original_cost_txn/base` increases by the improvement amount
+- Useful life revision (absolute or relative) updates asset fields correctly
+- FULLY_DEPRECIATED asset receiving life extension transitions to ACTIVE (checked via `resulting remaining_life > 0`, not via `lifeExtensionMonths` presence)
+- FULLY_DEPRECIATED asset WITHOUT life extension is rejected at validation (400 error)
+- Depreciation schedule reflects new cost/life on next read (no manual recalc step)
+- Account auto-resolves from target asset's category
+- Posting is rejected if target is DRAFT, DISPOSED, or SUSPENDED
+- IMPROVE_EXISTING on AR is rejected
+
+---
+
+## `STEP-SL28` — Backend: reversal of improvement capitalization on active assets
+
+### Patch target
+`backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
+
+### In scope
+
+**Extending SL07's reversal logic** for IMPROVEMENT transactions:
+
+1. During CARI document reversal, for AP lines with `fixedAssetMode = 'IMPROVE_EXISTING'`:
+   - Find the IMPROVEMENT transaction on `fixed_asset_transactions` where `source_ref_type = 'CARI_DOCUMENT'`, `source_ref_id = documentId`, `source_ref_line_id = lineId`, `reversal_transaction_id IS NULL`
+   - If not found (already reversed), skip
+2. **Reversal guard — block if post-improvement depreciation exists**:
+   - Check if any DEPRECIATION transactions exist on the asset with `effective_date > improvement.effective_date` that have been posted (i.e., included in a depreciation run)
+   - If yes: **block the CARI reversal** with error: "Asset {assetNo} has posted depreciation since improvement on {date}. Reverse the post-improvement depreciation runs first before reversing the improvement source document."
+   - **Why**: Post-improvement depreciation amounts were calculated using the improved cost basis. Reversing the improvement without reversing those depreciation entries would leave the books with depreciation amounts that don't match the (restored) cost basis.
+3. **Reversal guard — block if subsequent improvements exist**:
+   - Check if any later IMPROVEMENT transactions exist on the asset (LIFO reversal — can only reverse the most recent unblocked improvement first)
+   - If yes: block with error: "Asset {assetNo} has a subsequent improvement. Reverse the later improvement first."
+4. **Restore pre-improvement state** using the snapshot columns:
+   - `original_cost_txn = improvement_pre_cost_txn`
+   - `original_cost_base = improvement_pre_cost_base`
+   - `useful_life_months = improvement_pre_useful_life_months`
+   - `remaining_useful_life_months = improvement_pre_remaining_life_months`
+5. **Status restoration**: If the improvement had transitioned the asset from FULLY_DEPRECIATED to ACTIVE (because resulting `remaining_useful_life_months` became `> 0`), restore to FULLY_DEPRECIATED
+6. Mark the IMPROVEMENT transaction as reversed
+7. **Shared-journal constraint**: Same rule as SL07 — do NOT call the generic `reverseFixedAssetTransaction()` on the shared CARI journal. The CARI document reversal handles the journal reversal.
+
+### Explicit non-goals
+- Do not allow partial improvement reversal
+- Do not rewrite past depreciation — if depreciation was posted using the improved cost, those runs must be reversed first through the depreciation reversal flow
+- Do not allow out-of-order improvement reversal (must reverse most recent first)
+
+### Definition of done
+- Reversing a CARI document with IMPROVE_EXISTING line restores asset cost and life to pre-improvement values
+- Reversal is blocked if post-improvement depreciation has been posted
+- Reversal is blocked if subsequent improvements exist (LIFO order)
+- FULLY_DEPRECIATED → ACTIVE status transition is correctly unwound
+- Pre-state snapshot columns are used (not recomputed) for restoration
+- Shared-journal constraint is respected
+- Already-reversed improvements are skipped gracefully
+
+---
+
+## `STEP-SL29` — Frontend: IMPROVE_EXISTING mode UI on CARI document form
+
+### Patch target
+`frontend/src/pages/cari/` — document form components, `frontend/src/i18n/messages.js`
+
+### In scope
+
+**Extending SL11's FIXED_ASSET conditional fields**:
+
+1. Add `IMPROVE_EXISTING` as a third option in the AP `fixedAssetMode` selector:
+   - Label: "Improve Existing Asset" / "Mevcut Varliga Iyilestirme"
+   - Position: after LINK_EXISTING (the three modes are: Auto-Create → Link Existing → Improve Existing)
+2. When `IMPROVE_EXISTING` is selected:
+   - Show an **active asset picker** (search/select from ACTIVE or FULLY_DEPRECIATED assets — NOT draft assets)
+   - Asset picker shows: asset no, name, category, current cost, current useful life, status
+   - Quantity locked to `1`
+   - Hide generated-asset defaults (category, owner OU, location OU) — target asset already has these
+   - Auto-resolved account shown read-only (from target asset's category)
+3. **Optional life revision section** (collapsible/expandable):
+   - Label: "Revise Useful Life" / "Faydali Omru Guncelle"
+   - Toggle: "No change" (default) | "Set new total life" | "Extend remaining life"
+   - If "Set new total life": show `revisedUsefulLifeMonths` input (positive integer)
+   - If "Extend remaining life": show `lifeExtensionMonths` input (positive integer)
+   - Show current useful life and remaining life as context (read-only)
+4. **Preview text**: "Posting will add {amount} to asset {assetNo} cost (current: {currentCost} → new: {newCost})."
+   - If life revision: "+ useful life changes from {currentLife} to {newLife} months"
+5. **Validation** (extending SL12):
+   - `targetFixedAssetId` required
+   - `quantity = 1`
+   - Cannot provide both `revisedUsefulLifeMonths` and `lifeExtensionMonths`
+   - Life values must be positive integers
+   - Target asset must be ACTIVE or FULLY_DEPRECIATED (frontend-side guard)
+   - **FULLY_DEPRECIATED hard rule (frontend guard)**: If the selected target asset's status is `FULLY_DEPRECIATED`, the life revision section becomes **required** (not collapsible/optional). Show inline warning: "This asset is fully depreciated. Life extension is required so future depreciation can absorb the added cost." Disable the "No change" toggle option — user must choose either "Set new total life" or "Extend remaining life" with a value that produces `remaining_useful_life_months > 0`
+
+### Explicit non-goals
+- Do not show IMPROVE_EXISTING on AR documents
+- Do not replicate the full asset detail page — just enough context to confirm the right asset
+- Do not allow per-unit cost splitting (improvement is always `quantity = 1` to one asset)
+
+### Definition of done
+- AP FIXED_ASSET mode selector shows three options: Auto-Create, Link Existing, Improve Existing
+- IMPROVE_EXISTING shows active/fully-depreciated asset picker
+- Life revision section is optional and collapsible
+- Preview text shows cost impact and optional life change
+- Validation prevents invalid combinations
+- IMPROVE_EXISTING hidden on AR documents
+- i18n labels in TR and EN
+
+---
+
+## `STEP-SL30` — Smoke suite: improvement flows, multi-improvement, life revision, reversal guards
+
+### Patch target
+`backend/src/tests/` or manual smoke scripts
+
+### In scope
+1. **Basic improvement smoke**: Create and activate asset (cost=50,000, life=60m) → create AP bill with IMPROVE_EXISTING line (10,000 TL) → post → verify:
+   - IMPROVEMENT transaction created
+   - Asset cost = 60,000
+   - Useful life unchanged
+   - Depreciation schedule reflects new cost prospectively
+2. **Improvement with life revision smoke**: Same setup → IMPROVE_EXISTING with `revisedUsefulLifeMonths=84` → verify:
+   - Asset useful life = 84 months
+   - Remaining life recalculated correctly
+   - Depreciation schedule reflects new cost AND new life
+3. **Improvement with life extension smoke**: Same setup → IMPROVE_EXISTING with `lifeExtensionMonths=24` → verify:
+   - Remaining life increased by 24
+   - Total useful life increased by 24
+4. **Multi-improvement smoke**: Two sequential improvements on same asset → verify:
+   - Cost accumulates correctly
+   - Each IMPROVEMENT transaction has correct pre-state snapshot
+   - Depreciation recalculates after each
+5. **FULLY_DEPRECIATED reactivation smoke**: Fully depreciate asset → improve with life extension → verify:
+   - Status changes from FULLY_DEPRECIATED to ACTIVE
+   - Depreciation schedule shows new future periods
+6. **Reversal smoke**: Post improvement → reverse CARI doc → verify:
+   - Cost restored to pre-improvement value
+   - Life restored if it was revised
+   - IMPROVEMENT transaction marked reversed
+7. **Reversal guard — post-improvement depreciation**: Post improvement → run depreciation → attempt reverse CARI doc → verify blocked with clear error
+8. **Reversal guard — subsequent improvement**: Post improvement A → post improvement B → attempt reverse improvement A's CARI doc → verify blocked (must reverse B first)
+9. **Validation smokes**:
+   - IMPROVE_EXISTING targeting DRAFT asset → rejected
+   - IMPROVE_EXISTING targeting DISPOSED asset → rejected
+   - IMPROVE_EXISTING targeting SUSPENDED asset → rejected
+   - IMPROVE_EXISTING on AR document → rejected
+   - Both `revisedUsefulLifeMonths` AND `lifeExtensionMonths` → rejected
+   - **FULLY_DEPRECIATED without life extension** → rejected (400: "Improving a fully-depreciated asset requires life extension")
+   - **FULLY_DEPRECIATED with life extension that produces remaining_life = 0** → rejected (e.g., `revisedUsefulLifeMonths` set to a value ≤ elapsed months)
+
+### Explicit non-goals
+- No performance/load testing
+- No E2E browser tests
+
+### Definition of done
+- All improvement scenario smokes pass
+- Multi-improvement accumulation verified
+- All reversal guard scenarios verified
+- Depreciation prospective recalculation confirmed via schedule reads
+- No regression in existing FA flows
 
 ---
 
@@ -1271,11 +1696,11 @@ Final validation that all new flows work alongside existing flows without regres
 
 ### `STEP-SL20`
 - `AI size`: Medium
-- `Allowed files`: `frontend/src/App.jsx`, `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/CariCounterpartyPage.jsx`, `frontend/src/pages/cari/CariSettlementsPage.jsx`
+- `Allowed files`: `frontend/src/App.jsx`, `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/CariCounterpartyPage.jsx`, `frontend/src/pages/cari/CariSettlementsPage.jsx`, `frontend/src/pages/cari/CariReportsPage.jsx`
 - `Dependencies`: SL19
 - `Blocked by`: none
 - `Rollback risk`: Low — additive routes only
-- `Note`: Card pages use existing `pageKey` prop (not a new `cardType` prop) — no `CariCardsPage` exists
+- `Note`: Card pages use existing `pageKey` prop (not a new `cardType` prop) — no `CariCardsPage` exists. CariReportsPage needs `direction` prop for AP/AR pre-filtering.
 
 ### `STEP-SL21`
 - `AI size`: Medium
@@ -1307,10 +1732,45 @@ Final validation that all new flows work alongside existing flows without regres
 
 ### `STEP-SL25`
 - `AI size`: Small
-- `Allowed files`: plan documents, `backend/openapi.yaml`
+- `Allowed files`: plan documents, `backend/scripts/generate-openapi.js`, `backend/openapi.yaml`
 - `Dependencies`: SL24
 - `Blocked by`: any failing smoke test
 - `Rollback risk`: Low
+
+### `STEP-SL26`
+- `AI size`: Small
+- `Allowed files`: `backend/src/migrations/m147_fixed_asset_improvement_transaction_type.js`, `backend/src/migrations/index.js`
+- `Dependencies`: Track 38 STEP-FA09 (FA transaction table exists)
+- `Blocked by`: none
+- `Rollback risk`: Low — additive schema change
+
+### `STEP-SL27`
+- `AI size`: Large
+- `Allowed files`: `backend/src/routes/cari.document.validators.js`, `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: SL26, SL02, SL03, SL04, SL05
+- `Blocked by`: none
+- `Rollback risk`: High — extends posting logic for active asset modification
+
+### `STEP-SL28`
+- `AI size`: Medium
+- `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
+- `Dependencies`: SL27, SL07
+- `Blocked by`: none
+- `Rollback risk`: High — reversal must correctly restore pre-improvement state
+
+### `STEP-SL29`
+- `AI size`: Medium
+- `Allowed files`: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/cariDocumentsUtils.js`, `frontend/src/api/fixedAssets.js`, `frontend/src/i18n/messages.js`
+- `Dependencies`: SL27, SL11
+- `Blocked by`: none
+- `Rollback risk`: Low — frontend-only
+
+### `STEP-SL30`
+- `AI size`: Medium
+- `Allowed files`: smoke test scripts, plan documents
+- `Dependencies`: SL26–SL29
+- `Blocked by`: any incomplete prerequisite step
+- `Rollback risk`: Low — test-only
 
 ---
 
