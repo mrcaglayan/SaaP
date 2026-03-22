@@ -326,7 +326,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 **Phase 2: Subledger-Aware Lines (Frontend)**
 - [x] `STEP-SL10` — Frontend CARI form: add subledger_type selector to line entry
 - [x] `STEP-SL11` — Frontend CARI form: FIXED_ASSET conditional fields (auto-create defaults, link-existing picker, preview)
-- [ ] `STEP-SL12` — Frontend CARI form: validation rules per subledger_type
+- [x] `STEP-SL12` — Frontend CARI form: validation rules per subledger_type
 - [ ] `STEP-SL13` — Frontend FA acquisitions page: show "linked from CARI" indicator, simplify capitalize section
 - [ ] `STEP-SL14` — Frontend FA sale flow: simplify to "create AR doc with FIXED_ASSET line" guidance
 

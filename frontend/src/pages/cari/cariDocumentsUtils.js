@@ -37,6 +37,7 @@ export const DOCUMENT_LINE_FIXED_ASSET_MODES = [
 const DOCUMENT_LINE_STOCK_AFFECTING_MODES = new Set(
   DOCUMENT_LINE_STOCK_IMPACT_MODES.filter((value) => value !== "NONE")
 );
+const DOCUMENT_LINE_SUBMISSION_LIMIT = 500;
 
 export const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 const DOCUMENT_AMOUNT_PRECISION = 6;
@@ -330,6 +331,11 @@ export function toOptionalNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isWholePositiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0;
+}
+
 export function mapDocumentRowToForm(row) {
   const amountTxnValue =
     row?.amountTxn === null || row?.amountTxn === undefined
@@ -501,61 +507,176 @@ export function buildDocumentMutationPayload(form, options = {}) {
 export function validateDocumentMutationForm(form, options = {}) {
   const payload = buildDocumentMutationPayload(form, options);
   const fxComputation = getDocumentFxComputation(form, options);
+  const normalizedLines = normalizeDocumentFormLines(form?.lines);
   const rawFxRate = toOptionalNumber(form.fxRate);
   const errors = [];
+  const generalErrors = [];
+  const lineErrors = new Map();
+
+  function pushGeneralError(message) {
+    if (!message || generalErrors.includes(message)) {
+      return;
+    }
+    generalErrors.push(message);
+    errors.push(message);
+  }
+
+  function pushLineError(lineIndex, rowId, message) {
+    const normalizedMessage = String(message || "").trim();
+    if (!normalizedMessage) {
+      return;
+    }
+    const key = String(rowId || `line-${lineIndex + 1}`);
+    const existingMessages = lineErrors.get(key) || [];
+    if (!existingMessages.includes(normalizedMessage)) {
+      lineErrors.set(key, [...existingMessages, normalizedMessage]);
+    }
+    errors.push(`lines[${lineIndex}].${normalizedMessage}`);
+  }
+
   if (!payload.legalEntityId) {
-    errors.push("legalEntityId is required.");
+    pushGeneralError("legalEntityId is required.");
   }
   if (!payload.counterpartyId) {
-    errors.push("counterpartyId is required.");
+    pushGeneralError("counterpartyId is required.");
   }
   if (!DOCUMENT_DIRECTIONS.includes(payload.direction)) {
-    errors.push("direction must be AR or AP.");
+    pushGeneralError("direction must be AR or AP.");
   }
   if (!DOCUMENT_TYPES.includes(payload.documentType)) {
-    errors.push("documentType is invalid.");
+    pushGeneralError("documentType is invalid.");
   }
   if (!payload.documentDate) {
-    errors.push("documentDate is required.");
+    pushGeneralError("documentDate is required.");
   }
   if (requiresDueDate(payload.documentType) && !payload.dueDate) {
-    errors.push(`dueDate is required for documentType=${payload.documentType}.`);
+    pushGeneralError(`dueDate is required for documentType=${payload.documentType}.`);
+  }
+  if (Array.isArray(payload.lines) && payload.lines.length > DOCUMENT_LINE_SUBMISSION_LIMIT) {
+    pushGeneralError("Document cannot exceed 500 lines.");
   }
   if (payload.lines && payload.lines.length > 0) {
     payload.lines.forEach((line, index) => {
+      const sourceLine = normalizedLines[index] || createDocumentLineDraft();
+      const rowId = sourceLine.rowId;
+      const subledgerType = sourceLine.subledgerType;
+      const fixedAssetMode = sourceLine.fixedAssetMode;
+
       if ((line.quantity ?? 0) <= 0) {
-        errors.push(`lines[${index}].quantity must be > 0.`);
+        pushLineError(index, rowId, "quantity must be > 0.");
       }
       if ((line.lineNetAmountTxn ?? 0) <= 0) {
-        errors.push(`lines[${index}].lineNetAmountTxn must be > 0.`);
+        pushLineError(index, rowId, "lineNetAmountTxn must be > 0.");
       }
       if ((line.lineGrossAmountTxn ?? 0) <= 0) {
-        errors.push(`lines[${index}].lineGrossAmountTxn must be > 0.`);
+        pushLineError(index, rowId, "lineGrossAmountTxn must be > 0.");
       }
       if ((line.lineTaxAmountTxn ?? 0) > 0 && !line.taxCategoryCode) {
-        errors.push(
-          `lines[${index}].taxCategoryCode is required when lineTaxAmountTxn > 0.`
-        );
+        pushLineError(index, rowId, "taxCategoryCode is required when lineTaxAmountTxn > 0.");
       }
-      if (isStockAffectingLineMode(line.stockImpactMode) && !line.warehouseId) {
-        errors.push(`lines[${index}].warehouseId is required for stock-affecting lines.`);
+      if (subledgerType === "FIXED_ASSET") {
+        if (payload.direction === "AP") {
+          if (!fixedAssetMode) {
+            pushLineError(index, rowId, "fixedAssetMode is required for AP FIXED_ASSET lines.");
+          } else if (fixedAssetMode === "AUTO_CREATE") {
+            if (line.targetFixedAssetId) {
+              pushLineError(
+                index,
+                rowId,
+                "targetFixedAssetId must be empty for AP FIXED_ASSET AUTO_CREATE lines."
+              );
+            }
+            if (!isWholePositiveInteger(line.quantity)) {
+              pushLineError(
+                index,
+                rowId,
+                "quantity must be a whole positive integer for AP FIXED_ASSET AUTO_CREATE lines."
+              );
+            }
+            if (!line.fixedAssetCategoryId) {
+              pushLineError(
+                index,
+                rowId,
+                "fixedAssetCategoryId is required for AP FIXED_ASSET AUTO_CREATE lines."
+              );
+            }
+            if (!line.fixedAssetOwnerOperatingUnitId) {
+              pushLineError(
+                index,
+                rowId,
+                "fixedAssetOwnerOperatingUnitId is required for AP FIXED_ASSET AUTO_CREATE lines."
+              );
+            }
+            if (!line.fixedAssetLocationOperatingUnitId) {
+              pushLineError(
+                index,
+                rowId,
+                "fixedAssetLocationOperatingUnitId is required for AP FIXED_ASSET AUTO_CREATE lines."
+              );
+            }
+          } else if (fixedAssetMode === "LINK_EXISTING") {
+            if (!line.targetFixedAssetId) {
+              pushLineError(
+                index,
+                rowId,
+                "targetFixedAssetId is required for AP FIXED_ASSET LINK_EXISTING lines."
+              );
+            }
+            if (Number(line.quantity ?? 0) !== 1) {
+              pushLineError(
+                index,
+                rowId,
+                "quantity must equal 1 for AP FIXED_ASSET LINK_EXISTING lines."
+              );
+            }
+          }
+        } else if (payload.direction === "AR") {
+          if (!line.targetFixedAssetId) {
+            pushLineError(index, rowId, "targetFixedAssetId is required for AR FIXED_ASSET lines.");
+          }
+          if (Number(line.quantity ?? 0) !== 1) {
+            pushLineError(index, rowId, "quantity must equal 1 for AR FIXED_ASSET lines.");
+          }
+          if (!line.postingAccountId) {
+            pushLineError(index, rowId, "postingAccountId is required for AR FIXED_ASSET lines.");
+          }
+        }
+      } else if (subledgerType === "STOCK") {
+        if (!line.itemCardId) {
+          pushLineError(index, rowId, "itemCardId is required for STOCK lines.");
+        }
+        if (!line.stockImpactMode) {
+          pushLineError(index, rowId, "stockImpactMode is required for STOCK lines.");
+        }
+        if (line.targetFixedAssetId) {
+          pushLineError(index, rowId, "targetFixedAssetId must be empty for STOCK lines.");
+        }
+      } else {
+        if (line.targetFixedAssetId) {
+          pushLineError(index, rowId, "targetFixedAssetId must be empty for NONE lines.");
+        }
       }
+
     });
   }
   if (payload.amountTxn === null || payload.amountTxn <= 0) {
-    errors.push("amountTxn must be > 0.");
+    pushGeneralError("amountTxn must be > 0.");
   }
   if (!/^[A-Z]{3}$/.test(payload.currencyCode)) {
-    errors.push("currencyCode must be a 3-letter code.");
+    pushGeneralError("currencyCode must be a 3-letter code.");
   }
   if (fxComputation.fxRateRequired && (payload.fxRate === null || payload.fxRate <= 0)) {
-    errors.push("fxRate is required when currencyCode differs from legal entity functional currency.");
+    pushGeneralError(
+      "fxRate is required when currencyCode differs from legal entity functional currency."
+    );
   } else if (String(form.fxRate || "").trim() && (rawFxRate === null || rawFxRate <= 0)) {
-    errors.push("fxRate must be > 0 when provided.");
+    pushGeneralError("fxRate must be > 0 when provided.");
   }
 
   return {
     payload,
     errors,
+    generalErrors,
+    lineErrors,
   };
 }

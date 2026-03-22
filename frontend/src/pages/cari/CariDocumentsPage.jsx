@@ -1324,6 +1324,22 @@ function resolveCounterpartyRoleFromDirection(direction) {
   return undefined;
 }
 
+function translateDocumentMutationLineErrorMap(lineErrors, translateMessage) {
+  if (!(lineErrors instanceof Map) || typeof translateMessage !== "function") {
+    return new Map();
+  }
+  const translated = new Map();
+  for (const [rowId, messages] of lineErrors.entries()) {
+    const translatedMessages = (Array.isArray(messages) ? messages : [])
+      .map((message) => translateMessage(message))
+      .filter(Boolean);
+    if (translatedMessages.length > 0) {
+      translated.set(String(rowId || ""), translatedMessages);
+    }
+  }
+  return translated;
+}
+
 function FixedAssetQuickCreateModal({
   open,
   l,
@@ -1530,6 +1546,7 @@ function DocumentLineWorkbench({
   warehouseError,
   warehouseInfoMessage,
   warehouseLineErrors,
+  lineValidationMessages,
   taxCategoryOptions,
   taxCategoryLoading,
   taxCategoryError,
@@ -1766,6 +1783,10 @@ function DocumentLineWorkbench({
             warehouseLineErrors instanceof Map
               ? warehouseLineErrors.get(String(line.rowId || `line-${index}`)) || ""
               : "";
+          const lineValidationRows =
+            lineValidationMessages instanceof Map
+              ? lineValidationMessages.get(String(line.rowId || `line-${index}`)) || []
+              : [];
 
           return (
             <div
@@ -1811,6 +1832,16 @@ function DocumentLineWorkbench({
                   </button>
                 </div>
               </div>
+
+              {lineValidationRows.length > 0 ? (
+                <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  <ul className="space-y-1">
+                    {lineValidationRows.map((message, messageIndex) => (
+                      <li key={`${line.rowId}-validation-${messageIndex}`}>{message}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
 
               <div className="mt-3 grid gap-3 md:grid-cols-4">
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -3015,7 +3046,9 @@ export default function CariDocumentsPage() {
   const { getModuleRow } = useModuleReadiness();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
   const translateDocumentMutationError = (message) => {
-    switch (String(message || "").trim()) {
+    const trimmedMessage = String(message || "").trim();
+    const coreMessage = trimmedMessage.replace(/^lines\[\d+\]\./, "");
+    switch (trimmedMessage) {
       case "legalEntityId is required.":
         return l("legalEntityId is required.", "legalEntityId zorunludur.");
       case "counterpartyId is required.":
@@ -3081,9 +3114,104 @@ export default function CariDocumentsPage() {
           "fxRate girildiginde 0'dan buyuk olmali."
         );
       default: {
+        switch (coreMessage) {
+          case "quantity must be > 0.":
+            return l("Quantity must be greater than 0.", "Miktar 0'dan buyuk olmali.");
+          case "lineNetAmountTxn must be > 0.":
+            return l("Net amount must be greater than 0.", "Net tutar 0'dan buyuk olmali.");
+          case "lineGrossAmountTxn must be > 0.":
+            return l("Gross amount must be greater than 0.", "Brut tutar 0'dan buyuk olmali.");
+          case "taxCategoryCode is required when lineTaxAmountTxn > 0.":
+            return l(
+              "Tax category is required when tax amount is greater than 0.",
+              "Vergi tutari 0'dan buyukse vergi kategorisi zorunludur."
+            );
+          case "fixedAssetMode is required for AP FIXED_ASSET lines.":
+            return l(
+              "Choose an asset mode for AP fixed-asset lines.",
+              "AP duran varlik satirlari icin bir varlik modu secin."
+            );
+          case "targetFixedAssetId must be empty for AP FIXED_ASSET AUTO_CREATE lines.":
+            return l(
+              "Auto-create fixed-asset lines cannot target an existing asset.",
+              "Otomatik olusturma duran varlik satirlari mevcut bir varligi hedefleyemez."
+            );
+          case "quantity must be a whole positive integer for AP FIXED_ASSET AUTO_CREATE lines.":
+            return l(
+              "Auto-create fixed-asset quantity must be a whole positive number.",
+              "Otomatik olusturma duran varlik miktari pozitif tam sayi olmalidir."
+            );
+          case "fixedAssetCategoryId is required for AP FIXED_ASSET AUTO_CREATE lines.":
+            return l(
+              "Asset category is required for auto-create fixed-asset lines.",
+              "Otomatik olusturma duran varlik satirlari icin varlik kategorisi zorunludur."
+            );
+          case "fixedAssetOwnerOperatingUnitId is required for AP FIXED_ASSET AUTO_CREATE lines.":
+            return l(
+              "Owner OU is required for auto-create fixed-asset lines.",
+              "Otomatik olusturma duran varlik satirlari icin sahip OB zorunludur."
+            );
+          case "fixedAssetLocationOperatingUnitId is required for AP FIXED_ASSET AUTO_CREATE lines.":
+            return l(
+              "Location OU is required for auto-create fixed-asset lines.",
+              "Otomatik olusturma duran varlik satirlari icin konum OB zorunludur."
+            );
+          case "targetFixedAssetId is required for AP FIXED_ASSET LINK_EXISTING lines.":
+            return l(
+              "Select the draft asset to link on this AP fixed-asset line.",
+              "Bu AP duran varlik satirinda baglanacak taslak varligi secin."
+            );
+          case "quantity must equal 1 for AP FIXED_ASSET LINK_EXISTING lines.":
+            return l(
+              "Link-existing AP fixed-asset lines must use quantity 1.",
+              "Mevcut taslaga baglanan AP duran varlik satirlari miktar 1 kullanmalidir."
+            );
+          case "targetFixedAssetId is required for AR FIXED_ASSET lines.":
+            return l(
+              "Select the asset being sold on this AR fixed-asset line.",
+              "Bu AR duran varlik satirinda satilan varligi secin."
+            );
+          case "quantity must equal 1 for AR FIXED_ASSET lines.":
+            return l(
+              "AR fixed-asset lines must use quantity 1.",
+              "AR duran varlik satirlari miktar 1 kullanmalidir."
+            );
+          case "postingAccountId is required for AR FIXED_ASSET lines.":
+            return l(
+              "Sale proceeds account is required for AR fixed-asset lines.",
+              "AR duran varlik satirlari icin satis hasilat hesabi zorunludur."
+            );
+          case "itemCardId is required for STOCK lines.":
+            return l(
+              "Item card is required for stock lines.",
+              "Stok satirlari icin urun karti zorunludur."
+            );
+          case "stockImpactMode is required for STOCK lines.":
+            return l(
+              "Stock impact is required for stock lines.",
+              "Stok satirlari icin stok etkisi zorunludur."
+            );
+          case "targetFixedAssetId must be empty for STOCK lines.":
+            return l(
+              "Stock lines cannot target a fixed asset.",
+              "Stok satirlari bir duran varligi hedefleyemez."
+            );
+          case "targetFixedAssetId must be empty for NONE lines.":
+            return l(
+              "General lines cannot target a fixed asset.",
+              "Genel satirlar bir duran varligi hedefleyemez."
+            );
+          case "Document cannot exceed 500 lines.":
+            return l(
+              "Document cannot exceed 500 lines.",
+              "Belge 500 satiri asamaz."
+            );
+          default:
+            break;
+        }
         const stockLineWarehousePattern =
           /^lines\[\d+\]\.warehouseId is required for stock-affecting lines\.?$/;
-        if (stockLineWarehousePattern.test(String(message || "").trim())) {
+        if (stockLineWarehousePattern.test(trimmedMessage)) {
           return l(
             "warehouseId is required for stock-affecting lines.",
             "Stok etkileyen satirlarda warehouseId zorunludur."
@@ -3091,7 +3219,7 @@ export default function CariDocumentsPage() {
         }
         const warehouseCodeReadOnlyPattern =
           /^lines\[\d+\]\.warehouseCode is read-only; send warehouseId only$/;
-        if (warehouseCodeReadOnlyPattern.test(String(message || "").trim())) {
+        if (warehouseCodeReadOnlyPattern.test(trimmedMessage)) {
           return l(
             "warehouseCode is read-only; send warehouseId only.",
             "warehouseCode salt okunurdur; yalnizca warehouseId gonderin."
@@ -3099,7 +3227,7 @@ export default function CariDocumentsPage() {
         }
         const warehouseNameReadOnlyPattern =
           /^lines\[\d+\]\.warehouseName is read-only; send warehouseId only$/;
-        if (warehouseNameReadOnlyPattern.test(String(message || "").trim())) {
+        if (warehouseNameReadOnlyPattern.test(trimmedMessage)) {
           return l(
             "warehouseName is read-only; send warehouseId only.",
             "warehouseName salt okunurdur; yalnizca warehouseId gonderin."
@@ -3107,7 +3235,7 @@ export default function CariDocumentsPage() {
         }
         const warehouseLegalEntityPattern =
           /^lines\[\d+\]\.warehouseId must belong to legalEntityId$/;
-        if (warehouseLegalEntityPattern.test(String(message || "").trim())) {
+        if (warehouseLegalEntityPattern.test(trimmedMessage)) {
           return l(
             "Selected warehouse must belong to the same legal entity.",
             "Secili depo ayni tuzel kisilige ait olmalidir."
@@ -3115,16 +3243,14 @@ export default function CariDocumentsPage() {
         }
         const activeWarehousePattern =
           /^lines\[\d+\]\.warehouseId must reference an ACTIVE warehouse$/;
-        if (activeWarehousePattern.test(String(message || "").trim())) {
+        if (activeWarehousePattern.test(trimmedMessage)) {
           return l(
             "Selected warehouse must be active.",
             "Secili depo aktif olmalidir."
           );
         }
         if (
-          /^Warehouse does not belong to ownership context /i.test(
-            String(message || "").trim()
-          )
+          /^Warehouse does not belong to ownership context /i.test(trimmedMessage)
         ) {
           return l(
             "Selected warehouse belongs to another ownership context.",
@@ -3132,8 +3258,8 @@ export default function CariDocumentsPage() {
           );
         }
         const dueDatePrefix = "dueDate is required for documentType=";
-        if (String(message || "").startsWith(dueDatePrefix)) {
-          const documentType = String(message || "")
+        if (trimmedMessage.startsWith(dueDatePrefix)) {
+          const documentType = trimmedMessage
             .slice(dueDatePrefix.length)
             .replace(/\.$/, "");
           return l(
@@ -3141,15 +3267,10 @@ export default function CariDocumentsPage() {
             `documentType=${documentType} icin dueDate zorunludur.`
           );
         }
-        return String(message || "");
+        return trimmedMessage;
       }
     }
   };
-  const translateDocumentMutationErrors = (errors = []) =>
-    (Array.isArray(errors) ? errors : [])
-      .map((message) => translateDocumentMutationError(message))
-      .filter(Boolean)
-      .join(" ");
   const {
     legalEntities: workingContextLegalEntities,
     loadingBase: workingContextBaseLoading,
@@ -3193,6 +3314,7 @@ export default function CariDocumentsPage() {
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createMessage, setCreateMessage] = useState("");
+  const [createValidationVisible, setCreateValidationVisible] = useState(false);
   const [createPaymentTermTouched, setCreatePaymentTermTouched] = useState(false);
   const [createCurrencyTouched, setCreateCurrencyTouched] = useState(false);
   const [createCounterpartyOptions, setCreateCounterpartyOptions] = useState([]);
@@ -3254,6 +3376,7 @@ export default function CariDocumentsPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const [editMessage, setEditMessage] = useState("");
+  const [editValidationVisible, setEditValidationVisible] = useState(false);
   const [editCounterpartyOptions, setEditCounterpartyOptions] = useState([]);
   const [editCounterpartyLoading, setEditCounterpartyLoading] = useState(false);
   const [editCounterpartyLookupQuery, setEditCounterpartyLookupQuery] = useState("");
@@ -4101,6 +4224,88 @@ export default function CariDocumentsPage() {
       }),
     [editForm, editWarehouseRowsById, editWarehousesLoading, editWarehousesError, l]
   );
+  const createValidationResult = useMemo(
+    () => validateDocumentMutationForm(createForm, createDocumentMutationOptions),
+    [createDocumentMutationOptions, createForm]
+  );
+  const editValidationResult = useMemo(
+    () => validateDocumentMutationForm(editForm, editDocumentMutationOptions),
+    [editDocumentMutationOptions, editForm]
+  );
+  const createLineValidationMessages = useMemo(
+    () =>
+      createValidationVisible
+        ? translateDocumentMutationLineErrorMap(
+            createValidationResult.lineErrors,
+            translateDocumentMutationError
+          )
+        : new Map(),
+    [
+      createValidationResult.lineErrors,
+      createValidationVisible,
+      translateDocumentMutationError,
+    ]
+  );
+  const editLineValidationMessages = useMemo(
+    () =>
+      editValidationVisible
+        ? translateDocumentMutationLineErrorMap(
+            editValidationResult.lineErrors,
+            translateDocumentMutationError
+          )
+        : new Map(),
+    [editValidationResult.lineErrors, editValidationVisible, translateDocumentMutationError]
+  );
+  const createValidationSummary = useMemo(() => {
+    if (!createValidationVisible) {
+      return "";
+    }
+    const messages = [
+      ...createValidationResult.generalErrors.map((message) =>
+        translateDocumentMutationError(message)
+      ),
+    ];
+    if (createValidationResult.lineErrors.size > 0) {
+      messages.push(
+        l(
+          "Fix the highlighted line validation errors.",
+          "Vurgulanan satir dogrulama hatalarini duzeltin."
+        )
+      );
+    }
+    return [...new Set(messages.filter(Boolean))].join(" ");
+  }, [
+    createValidationResult.generalErrors,
+    createValidationResult.lineErrors,
+    createValidationVisible,
+    l,
+    translateDocumentMutationError,
+  ]);
+  const editValidationSummary = useMemo(() => {
+    if (!editValidationVisible) {
+      return "";
+    }
+    const messages = [
+      ...editValidationResult.generalErrors.map((message) =>
+        translateDocumentMutationError(message)
+      ),
+    ];
+    if (editValidationResult.lineErrors.size > 0) {
+      messages.push(
+        l(
+          "Fix the highlighted line validation errors.",
+          "Vurgulanan satir dogrulama hatalarini duzeltin."
+        )
+      );
+    }
+    return [...new Set(messages.filter(Boolean))].join(" ");
+  }, [
+    editValidationResult.generalErrors,
+    editValidationResult.lineErrors,
+    editValidationVisible,
+    l,
+    translateDocumentMutationError,
+  ]);
   const createItemCardRowsById = useMemo(
     () =>
       new Map(
@@ -4357,6 +4562,7 @@ export default function CariDocumentsPage() {
     setCreateForm((previousForm) => buildSmartResetDraftForm(previousForm));
     setCreatePaymentTermTouched(false);
     setCreateCurrencyTouched(false);
+    setCreateValidationVisible(false);
     setCreateCounterpartyLookupQuery("");
     setCreateInlineCounterpartyError("");
     setCreateInlineCounterpartyMessage("");
@@ -4371,6 +4577,7 @@ export default function CariDocumentsPage() {
     setCreateForm(normalized);
     setCreatePaymentTermTouched(Boolean(normalizeText(normalized.paymentTermId)));
     setCreateCurrencyTouched(Boolean(normalizeCurrencyCode(normalized.currencyCode)));
+    setCreateValidationVisible(false);
     setCreateCounterpartyLookupQuery("");
     setCreateInlineCounterpartyError("");
     setCreateInlineCounterpartyMessage("");
@@ -5444,6 +5651,7 @@ export default function CariDocumentsPage() {
       setSelectedDetail(row);
       if (row && isDraft(row)) {
         setEditForm(mapDocumentRowToForm(row));
+        setEditValidationVisible(false);
         setEditLinePreviewError("");
         setEditLinePreviewMessage("");
       }
@@ -7633,16 +7841,16 @@ export default function CariDocumentsPage() {
     setCreateSaving(true);
     setCreateError("");
     setCreateMessage("");
+    setCreateValidationVisible(true);
     try {
-      const { errors } = validateDocumentMutationForm(createForm, createDocumentMutationOptions);
-      if (errors.length > 0) {
-        setCreateError(translateDocumentMutationErrors(errors));
+      if (createValidationResult.errors.length > 0) {
         return;
       }
       if (createWarehouseValidation.blockingMessages.length > 0) {
         setCreateError(createWarehouseValidation.blockingMessages.join(" "));
         return;
       }
+      setCreateValidationVisible(false);
       const payload = buildDocumentMutationPayload(createForm, createDocumentMutationOptions);
       const response = await createCariDocument(payload);
       setCreateMessage(
@@ -7677,16 +7885,16 @@ export default function CariDocumentsPage() {
     setEditSaving(true);
     setEditError("");
     setEditMessage("");
+    setEditValidationVisible(true);
     try {
-      const { errors } = validateDocumentMutationForm(editForm, editDocumentMutationOptions);
-      if (errors.length > 0) {
-        setEditError(translateDocumentMutationErrors(errors));
+      if (editValidationResult.errors.length > 0) {
         return;
       }
       if (editWarehouseValidation.blockingMessages.length > 0) {
         setEditError(editWarehouseValidation.blockingMessages.join(" "));
         return;
       }
+      setEditValidationVisible(false);
       const payload = buildDocumentMutationPayload(editForm, editDocumentMutationOptions);
       if (!payload.rowVersion) {
         payload.rowVersion = Number(selectedDetail?.rowVersion || 0) || undefined;
@@ -8646,6 +8854,11 @@ export default function CariDocumentsPage() {
           <h2 className="text-lg font-semibold text-slate-900">
             {l("Create Draft Document", "Belge Taslagi Olustur")}
           </h2>
+          {createValidationSummary ? (
+            <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {createValidationSummary}
+            </div>
+          ) : null}
           {createError ? <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{createError}</div> : null}
           {createMessage ? <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{createMessage}</div> : null}
           <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
@@ -9044,6 +9257,7 @@ export default function CariDocumentsPage() {
               warehouseError={createWarehousesError}
               warehouseInfoMessage={createWarehouseValidation.generalErrors[0] || ""}
               warehouseLineErrors={createWarehouseValidation.lineErrors}
+              lineValidationMessages={createLineValidationMessages}
               taxCategoryOptions={createTaxCategoryOptions}
               taxCategoryLoading={taxCategoryLoading}
               taxCategoryError={taxCategoryError}
@@ -9972,6 +10186,11 @@ export default function CariDocumentsPage() {
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
                   {l("Draft Actions", "Taslak Islemleri")}
                 </h3>
+                {editValidationSummary ? (
+                  <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {editValidationSummary}
+                  </div>
+                ) : null}
                 {editError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{editError}</div> : null}
                 {editMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{editMessage}</div> : null}
                 <form className="mt-3 grid gap-2 md:grid-cols-2" onSubmit={handleUpdateDraft}>
@@ -10166,6 +10385,7 @@ export default function CariDocumentsPage() {
                     warehouseError={editWarehousesError}
                     warehouseInfoMessage={editWarehouseValidation.generalErrors[0] || ""}
                     warehouseLineErrors={editWarehouseValidation.lineErrors}
+                    lineValidationMessages={editLineValidationMessages}
                     taxCategoryOptions={editTaxCategoryOptions}
                     taxCategoryLoading={taxCategoryLoading}
                     taxCategoryError={taxCategoryError}
