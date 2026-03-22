@@ -2964,6 +2964,28 @@ function resolveRouteFixedDirection(directionProp, searchParams) {
   return normalizeDirection(searchParams.get("direction"));
 }
 
+function getDocumentPageTitle(direction, l) {
+  const normalizedDirection = normalizeDirection(direction);
+  if (normalizedDirection === "AP") {
+    return l("Vendor Bills", "Alis Faturalari");
+  }
+  if (normalizedDirection === "AR") {
+    return l("Sales Invoices", "Satis Faturalari");
+  }
+  return l("Cari Documents", "Cari Belgeler");
+}
+
+function getCreateDraftDocumentTitle(direction, l) {
+  const normalizedDirection = normalizeDirection(direction);
+  if (normalizedDirection === "AP") {
+    return l("Create Vendor Bill Draft", "Alis Faturasi Taslagi Olustur");
+  }
+  if (normalizedDirection === "AR") {
+    return l("Create Sales Invoice Draft", "Satis Faturasi Taslagi Olustur");
+  }
+  return l("Create Draft Document", "Belge Taslagi Olustur");
+}
+
 function resolveOffsetAccountTypeByDirection(direction) {
   const normalized = normalizeDirection(direction);
   if (normalized === "AR") {
@@ -4794,6 +4816,8 @@ export default function CariDocumentsPage({ direction = "" }) {
     l
   );
   const editImmediateCashLabel = getImmediateCashSettlementLabel(editForm.direction, l);
+  const documentPageTitle = getDocumentPageTitle(fixedRouteDirection, l);
+  const createDraftDocumentTitle = getCreateDraftDocumentTitle(fixedRouteDirection, l);
   const createInlineCounterpartyName = normalizeLookupQuery(createCounterpartyLookupQuery);
   const editInlineCounterpartyName = normalizeLookupQuery(editCounterpartyLookupQuery);
   const canInlineCreateCounterpartyInCreateForm = Boolean(
@@ -9160,7 +9184,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     <div className="space-y-5">
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h1 className="text-xl font-semibold text-slate-900">
-          {l("Cari Documents", "Cari Belgeler")}
+          {documentPageTitle}
         </h1>
         {listError ? <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{listError}</div> : null}
         <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -9365,7 +9389,7 @@ export default function CariDocumentsPage({ direction = "" }) {
           className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
         >
           <h2 className="text-lg font-semibold text-slate-900">
-            {l("Create Draft Document", "Belge Taslagi Olustur")}
+            {createDraftDocumentTitle}
           </h2>
           {createValidationSummary ? (
             <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -9907,7 +9931,7 @@ export default function CariDocumentsPage({ direction = "" }) {
               onPreviewRow={(rowId) => handleCreateDocumentLineTaxPreview(rowId)}
             />
             <div className="md:col-span-4 flex gap-2">
-              <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? l("Creating...", "Olusturuluyor...") : l("Create Draft Document", "Belge Taslagi Olustur")}</button>
+              <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? l("Creating...", "Olusturuluyor...") : createDraftDocumentTitle}</button>
               <button
                 type="button"
                 className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"

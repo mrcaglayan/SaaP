@@ -501,6 +501,35 @@ function resolveRouteFixedDirection(directionProp, searchParams) {
   return normalizeDirection(searchParams.get("direction"));
 }
 
+function getSettlementPageHeading(direction, l) {
+  const normalizedDirection = normalizeDirection(direction);
+  if (normalizedDirection === "AP") {
+    return {
+      title: l("AP Payments", "Tedarikci Odemeler"),
+      description: l(
+        "Payment allocation, reversal, and linked-cash workflows are locked to AP on this page.",
+        "Bu sayfada odeme mahsuplastirma, tersleme ve bagli nakit akislari AP ile sinirlidir."
+      ),
+    };
+  }
+  if (normalizedDirection === "AR") {
+    return {
+      title: l("AR Receipts", "Musteri Tahsilatlar"),
+      description: l(
+        "Receipt allocation, reversal, and linked-cash workflows are locked to AR on this page.",
+        "Bu sayfada tahsilat mahsuplastirma, tersleme ve bagli nakit akislari AR ile sinirlidir."
+      ),
+    };
+  }
+  return {
+    title: l("Cari Settlements", "Cari Mahsuplastirmalari"),
+    description: l(
+      "Settlement apply/reverse and bank attach/apply workflows are separated on this page.",
+      "Mahsuplastirma uygula/tersle ve banka bagla/uygula akislari bu sayfada ayridir."
+    ),
+  };
+}
+
 const SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS = [
   { stateKey: "legalEntityId" },
   { stateKey: "asOfDate", contextKey: "dateTo" },
@@ -534,6 +563,7 @@ export default function CariSettlementsPage({ direction = "" }) {
   const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
+  const settlementPageHeading = getSettlementPageHeading(fixedRouteDirection, l);
   const translateLinkedCashValidationError = (message) => {
     switch (String(message || "").trim()) {
       case "Missing permission: cash.txn.create":
@@ -2730,13 +2760,10 @@ export default function CariSettlementsPage({ direction = "" }) {
     <div className="space-y-5">
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h1 className="text-xl font-semibold text-slate-900">
-          {l("Cari Settlements", "Cari Mahsuplastirmalari")}
+          {settlementPageHeading.title}
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          {l(
-            "Settlement apply/reverse and bank attach/apply workflows are separated on this page.",
-            "Mahsuplastirma uygula/tersle ve banka bagla/uygula akislari bu sayfada ayridir."
-          )}
+          {settlementPageHeading.description}
         </p>
         {lookupWarning ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">

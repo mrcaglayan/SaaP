@@ -437,6 +437,38 @@ export const messages = {
         "/app/ayarlar/demirbas-zimmetlileri": "Demirbas Zimmetlileri",
       },
     },
+    cariSplit: {
+      sections: {
+        purchases: "Satinalma",
+        sales: "Satis",
+      },
+      pages: {
+        vendorBills: "Alis Faturalari",
+        salesInvoices: "Satis Faturalari",
+        vendors: "Tedarikci Kartlari",
+        customers: "Musteri Kartlari",
+        apPayments: "Tedarikci Odemeler",
+        arReceipts: "Musteri Tahsilatlar",
+        apBalances: "Tedarikci Bakiyeleri",
+        arBalances: "Musteri Bakiyeleri",
+      },
+      actions: {
+        newVendorBill: "Yeni Alis Faturasi",
+        newSalesInvoice: "Yeni Satis Faturasi",
+      },
+      breadcrumbs: {
+        purchases: "Satinalma",
+        sales: "Satis",
+        vendorBills: "Alis Faturalari",
+        salesInvoices: "Satis Faturalari",
+        vendors: "Tedarikci Kartlari",
+        customers: "Musteri Kartlari",
+        apPayments: "Tedarikci Odemeler",
+        arReceipts: "Musteri Tahsilatlar",
+        apBalances: "Tedarikci Bakiyeleri",
+        arBalances: "Musteri Bakiyeleri",
+      },
+    },
     fixedAssets: {
       actions: {
         createAsset: "Yeni Demirbas Olustur",
@@ -2573,6 +2605,38 @@ export const messages = {
         "/app/ayarlar/stok-ayarlari": "Stock Settings",
         "/app/ayarlar/demirbas-ayarlari": "Fixed Asset Settings",
         "/app/ayarlar/demirbas-zimmetlileri": "Fixed Asset Custodians",
+      },
+    },
+    cariSplit: {
+      sections: {
+        purchases: "Purchases",
+        sales: "Sales",
+      },
+      pages: {
+        vendorBills: "Vendor Bills",
+        salesInvoices: "Sales Invoices",
+        vendors: "Vendors",
+        customers: "Customers",
+        apPayments: "AP Payments",
+        arReceipts: "AR Receipts",
+        apBalances: "AP Balances",
+        arBalances: "AR Balances",
+      },
+      actions: {
+        newVendorBill: "New Vendor Bill",
+        newSalesInvoice: "New Sales Invoice",
+      },
+      breadcrumbs: {
+        purchases: "Purchases",
+        sales: "Sales",
+        vendorBills: "Vendor Bills",
+        salesInvoices: "Sales Invoices",
+        vendors: "Vendors",
+        customers: "Customers",
+        apPayments: "AP Payments",
+        arReceipts: "AR Receipts",
+        apBalances: "AP Balances",
+        arBalances: "AR Balances",
       },
     },
     fixedAssets: {

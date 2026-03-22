@@ -31,25 +31,25 @@ import {
 
 const PAGE_CONFIG = {
   buyerCreate: {
-    title: "Alici Karti Olustur",
+    title: "Musteri Karti Olustur",
     subtitle: "Musteri odakli yeni cari kart olusturun.",
     mode: "create",
     roleDefault: "CUSTOMER",
   },
   buyerList: {
-    title: "Alici Karti Listesi",
+    title: "Musteri Kartlari",
     subtitle: "Musteri kartlarini filtreleyin ve duzenleyin.",
     mode: "list",
     roleDefault: "CUSTOMER",
   },
   vendorCreate: {
-    title: "Satici Karti Olustur",
+    title: "Tedarikci Karti Olustur",
     subtitle: "Tedarikci odakli yeni cari kart olusturun.",
     mode: "create",
     roleDefault: "VENDOR",
   },
   vendorList: {
-    title: "Satici Karti Listesi",
+    title: "Tedarikci Kartlari",
     subtitle: "Tedarikci kartlarini filtreleyin ve duzenleyin.",
     mode: "list",
     roleDefault: "VENDOR",

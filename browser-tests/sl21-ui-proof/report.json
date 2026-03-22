@@ -1,0 +1,30 @@
+{
+  "/app/alis-faturalari": {
+    "heading": "Alis Faturalari",
+    "apiDirection": "AP",
+    "selectedModeText": "Nakit Alis"
+  },
+  "/app/satis-faturalari": {
+    "heading": "Satis Faturalari",
+    "apiDirection": "AR",
+    "selectedModeText": "Nakit Satis"
+  },
+  "/app/tedarikci-kartlari": {
+    "heading": "Tedarikci Kartlari",
+    "apiRole": "VENDOR"
+  },
+  "/app/musteri-kartlari": {
+    "heading": "Musteri Kartlari",
+    "apiRole": "CUSTOMER"
+  },
+  "/app/tedarikci-odemeler": {
+    "heading": "Tedarikci Odemeler",
+    "apiDirection": "AP",
+    "counterpartyId": "5"
+  },
+  "/app/musteri-tahsilatlar": {
+    "heading": "Musteri Tahsilatlar",
+    "apiDirection": "AR",
+    "counterpartyId": "1"
+  }
+}
