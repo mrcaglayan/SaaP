@@ -30,6 +30,12 @@ const DOCUMENT_STATUS_VALUES = [
   "SETTLED",
 ];
 const LINE_KIND_VALUES = ["STANDARD", "COMMENT", "ROUNDING", "ADJUSTMENT", "OTHER"];
+const SUBLEDGER_TYPE_VALUES = ["NONE", "STOCK", "FIXED_ASSET"];
+const FIXED_ASSET_MODE_VALUES = [
+  "AUTO_CREATE",
+  "LINK_EXISTING",
+  "IMPROVE_EXISTING",
+];
 const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 const MAX_POSTING_LINES = 200;
 const MAX_DOCUMENT_LINES = 500;
@@ -122,6 +128,26 @@ function parseOptionalShortText(value, label, maxLength = 255) {
   return normalized;
 }
 
+function parseOptionalEnumField(value, label, allowedValues) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalizeEnum(normalized, label, allowedValues);
+}
+
+function isWholePositiveQuantity(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0;
+}
+
+function isUnitQuantity(value) {
+  return Number(value) === 1;
+}
+
 function parseRequiredAmount(value, label) {
   return parseAmount(value, label, {
     required: true,
@@ -146,7 +172,7 @@ function parseOptionalNonNegativeAmount(value, label) {
   });
 }
 
-function parseDocumentLines(value) {
+function parseDocumentLines(value, options = {}) {
   if (value === undefined) {
     return undefined;
   }
@@ -161,6 +187,7 @@ function parseDocumentLines(value) {
   }
 
   const rows = [];
+  const direction = options?.direction;
   for (let index = 0; index < value.length; index += 1) {
     const row = value[index];
     if (!row || typeof row !== "object" || Array.isArray(row)) {
@@ -261,6 +288,54 @@ function parseDocumentLines(value) {
         row.warehouseId ?? row.warehouse_id,
         `lines[${index}].warehouseId`
       ) || null;
+    const explicitSubledgerType = parseOptionalEnumField(
+      row.subledgerType ?? row.subledger_type,
+      `lines[${index}].subledgerType`,
+      SUBLEDGER_TYPE_VALUES
+    );
+    const targetFixedAssetId =
+      parseOptionalPositiveIntField(
+        row.targetFixedAssetId ?? row.target_fixed_asset_id,
+        `lines[${index}].targetFixedAssetId`
+      ) || null;
+    const fixedAssetCategoryId =
+      parseOptionalPositiveIntField(
+        row.fixedAssetCategoryId ?? row.fixed_asset_category_id,
+        `lines[${index}].fixedAssetCategoryId`
+      ) || null;
+    const fixedAssetOwnerOperatingUnitId =
+      parseOptionalPositiveIntField(
+        row.fixedAssetOwnerOperatingUnitId ??
+          row.fixed_asset_owner_operating_unit_id,
+        `lines[${index}].fixedAssetOwnerOperatingUnitId`
+      ) || null;
+    const fixedAssetLocationOperatingUnitId =
+      parseOptionalPositiveIntField(
+        row.fixedAssetLocationOperatingUnitId ??
+          row.fixed_asset_location_operating_unit_id,
+        `lines[${index}].fixedAssetLocationOperatingUnitId`
+      ) || null;
+    const explicitFixedAssetMode = parseOptionalEnumField(
+      row.fixedAssetMode ?? row.fixed_asset_mode,
+      `lines[${index}].fixedAssetMode`,
+      FIXED_ASSET_MODE_VALUES
+    );
+    const revisedUsefulLifeMonths =
+      parseOptionalPositiveIntField(
+        row.revisedUsefulLifeMonths ??
+          row.revised_useful_life_months ??
+          row.improvementRevisedUsefulLifeMonths ??
+          row.improvement_revised_useful_life_months,
+        `lines[${index}].revisedUsefulLifeMonths`
+      ) || null;
+    const lifeExtensionMonths =
+      parseOptionalPositiveIntField(
+        row.lifeExtensionMonths ??
+          row.life_extension_months ??
+          row.improvementLifeExtensionMonths ??
+          row.improvement_life_extension_months,
+        `lines[${index}].lifeExtensionMonths`
+      ) || null;
     const warehouseCodeInput = row.warehouseCode ?? row.warehouse_code;
     if (warehouseCodeInput !== undefined && warehouseCodeInput !== null) {
       const normalizedWarehouseCode = String(warehouseCodeInput).trim();
@@ -285,6 +360,173 @@ function parseDocumentLines(value) {
       );
     }
 
+    const subledgerType =
+      explicitSubledgerType ||
+      (targetFixedAssetId
+        ? "FIXED_ASSET"
+        : stockImpactMode !== "NONE"
+          ? "STOCK"
+          : "NONE");
+
+    const hasAnyFixedAssetPayload =
+      targetFixedAssetId ||
+      fixedAssetCategoryId ||
+      fixedAssetOwnerOperatingUnitId ||
+      fixedAssetLocationOperatingUnitId ||
+      explicitFixedAssetMode ||
+      revisedUsefulLifeMonths ||
+      lifeExtensionMonths;
+
+    let fixedAssetMode = explicitFixedAssetMode || null;
+
+    if (subledgerType === "FIXED_ASSET") {
+      if (!direction) {
+        throw badRequest(
+          `direction is required when lines[${index}].subledgerType resolves to FIXED_ASSET`
+        );
+      }
+      if (itemCardId) {
+        throw badRequest(
+          `lines[${index}].itemCardId is not allowed when subledgerType=FIXED_ASSET`
+        );
+      }
+      if (stockImpactMode !== "NONE") {
+        throw badRequest(
+          `lines[${index}].stockImpactMode must be NONE when subledgerType=FIXED_ASSET`
+        );
+      }
+
+      if (direction === "AP") {
+        fixedAssetMode =
+          fixedAssetMode || (targetFixedAssetId ? "LINK_EXISTING" : "AUTO_CREATE");
+
+        if (fixedAssetMode === "AUTO_CREATE") {
+          if (targetFixedAssetId) {
+            throw badRequest(
+              `lines[${index}].targetFixedAssetId is not allowed when fixedAssetMode=AUTO_CREATE`
+            );
+          }
+          if (!isWholePositiveQuantity(quantity)) {
+            throw badRequest(
+              `lines[${index}].quantity must be a whole positive integer when fixedAssetMode=AUTO_CREATE`
+            );
+          }
+          if (!fixedAssetCategoryId) {
+            throw badRequest(
+              `lines[${index}].fixedAssetCategoryId is required when fixedAssetMode=AUTO_CREATE`
+            );
+          }
+          if (!fixedAssetOwnerOperatingUnitId) {
+            throw badRequest(
+              `lines[${index}].fixedAssetOwnerOperatingUnitId is required when fixedAssetMode=AUTO_CREATE`
+            );
+          }
+          if (!fixedAssetLocationOperatingUnitId) {
+            throw badRequest(
+              `lines[${index}].fixedAssetLocationOperatingUnitId is required when fixedAssetMode=AUTO_CREATE`
+            );
+          }
+          if (revisedUsefulLifeMonths || lifeExtensionMonths) {
+            throw badRequest(
+              `lines[${index}].revisedUsefulLifeMonths and lifeExtensionMonths are allowed only when fixedAssetMode=IMPROVE_EXISTING`
+            );
+          }
+        } else if (fixedAssetMode === "LINK_EXISTING") {
+          if (!targetFixedAssetId) {
+            throw badRequest(
+              `lines[${index}].targetFixedAssetId is required when fixedAssetMode=LINK_EXISTING`
+            );
+          }
+          if (!isUnitQuantity(quantity)) {
+            throw badRequest(
+              `lines[${index}].quantity must equal 1 when fixedAssetMode=LINK_EXISTING`
+            );
+          }
+          if (revisedUsefulLifeMonths || lifeExtensionMonths) {
+            throw badRequest(
+              `lines[${index}].revisedUsefulLifeMonths and lifeExtensionMonths are allowed only when fixedAssetMode=IMPROVE_EXISTING`
+            );
+          }
+        } else if (fixedAssetMode === "IMPROVE_EXISTING") {
+          if (!targetFixedAssetId) {
+            throw badRequest(
+              `lines[${index}].targetFixedAssetId is required when fixedAssetMode=IMPROVE_EXISTING`
+            );
+          }
+          if (!isUnitQuantity(quantity)) {
+            throw badRequest(
+              `lines[${index}].quantity must equal 1 when fixedAssetMode=IMPROVE_EXISTING`
+            );
+          }
+          if (fixedAssetCategoryId || fixedAssetOwnerOperatingUnitId || fixedAssetLocationOperatingUnitId) {
+            throw badRequest(
+              `lines[${index}] generated-asset defaults (fixedAssetCategoryId, owner/location OUs) are not allowed when fixedAssetMode=IMPROVE_EXISTING — target asset already has these`
+            );
+          }
+          if (revisedUsefulLifeMonths && lifeExtensionMonths) {
+            throw badRequest(
+              `lines[${index}].revisedUsefulLifeMonths and lifeExtensionMonths cannot both be provided`
+            );
+          }
+        }
+      } else if (direction === "AR") {
+        if (!targetFixedAssetId) {
+          throw badRequest(
+            `lines[${index}].targetFixedAssetId is required when subledgerType=FIXED_ASSET on AR documents`
+          );
+        }
+        if (!isUnitQuantity(quantity)) {
+          throw badRequest(
+            `lines[${index}].quantity must equal 1 when subledgerType=FIXED_ASSET on AR documents`
+          );
+        }
+        if (explicitFixedAssetMode) {
+          throw badRequest(
+            `lines[${index}].fixedAssetMode is not allowed when subledgerType=FIXED_ASSET on AR documents`
+          );
+        }
+        if (
+          fixedAssetCategoryId ||
+          fixedAssetOwnerOperatingUnitId ||
+          fixedAssetLocationOperatingUnitId ||
+          revisedUsefulLifeMonths ||
+          lifeExtensionMonths
+        ) {
+          throw badRequest(
+            `lines[${index}] contains AP-only fixed-asset fields that are not allowed on AR documents`
+          );
+        }
+        fixedAssetMode = "LINK_EXISTING";
+      }
+    } else if (subledgerType === "STOCK") {
+      if (!itemCardId) {
+        throw badRequest(
+          `lines[${index}].itemCardId is required when subledgerType=STOCK`
+        );
+      }
+      if (stockImpactMode === "NONE") {
+        throw badRequest(
+          `lines[${index}].stockImpactMode must not be NONE when subledgerType=STOCK`
+        );
+      }
+      if (hasAnyFixedAssetPayload) {
+        throw badRequest(
+          `lines[${index}] fixed-asset fields are not allowed when subledgerType=STOCK`
+        );
+      }
+    } else if (subledgerType === "NONE") {
+      if (stockImpactMode !== "NONE") {
+        throw badRequest(
+          `lines[${index}].stockImpactMode must be NONE when subledgerType=NONE`
+        );
+      }
+      if (hasAnyFixedAssetPayload) {
+        throw badRequest(
+          `lines[${index}] fixed-asset fields are not allowed when subledgerType=NONE`
+        );
+      }
+    }
+
     rows.push({
       lineNo: index + 1,
       lineKind,
@@ -301,6 +543,14 @@ function parseDocumentLines(value) {
       taxCategoryCode,
       stockImpactMode,
       warehouseId,
+      subledgerType,
+      fixedAssetMode,
+      targetFixedAssetId,
+      fixedAssetCategoryId,
+      fixedAssetOwnerOperatingUnitId,
+      fixedAssetLocationOperatingUnitId,
+      revisedUsefulLifeMonths,
+      lifeExtensionMonths,
     });
   }
 
@@ -524,7 +774,7 @@ export function parseDocumentCreateInput(req) {
   const dueDate = dueDateInput === undefined ? null : dueDateInput;
   assertDueDateRule({ documentType, dueDate });
 
-  const lines = parseDocumentLines(req.body?.lines);
+  const lines = parseDocumentLines(req.body?.lines, { direction });
   const amountTxn =
     lines === undefined
       ? parseRequiredAmount(req.body?.amountTxn, "amountTxn")
@@ -599,7 +849,7 @@ export function parseDocumentUpdateInput(req) {
       ? parseDateOnly(req.body?.documentDate, "documentDate")
       : undefined;
   const dueDate = parseOptionalDate(req.body?.dueDate, "dueDate");
-  const lines = parseDocumentLines(req.body?.lines);
+  const lines = parseDocumentLines(req.body?.lines, { direction });
   const amountTxn = parseOptionalAmount(req.body?.amountTxn, "amountTxn");
   const amountBase = parseOptionalAmount(req.body?.amountBase, "amountBase");
   const currencyCode =

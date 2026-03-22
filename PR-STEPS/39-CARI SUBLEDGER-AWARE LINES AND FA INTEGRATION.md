@@ -428,7 +428,7 @@ Extend the CARI document line validator to accept and validate `subledgerType`, 
   - `fixedAssetMode = 'LINK_EXISTING'`: require `targetFixedAssetId` and require `quantity = 1`
   - `fixedAssetMode = 'IMPROVE_EXISTING'`: require `targetFixedAssetId`, require `quantity = 1`, accept optional `revisedUsefulLifeMonths` or `lifeExtensionMonths` (but not both). Generated-asset defaults (`fixedAssetCategoryId`, owner/location OUs) are NOT required — the target asset already has these. Reject if target asset is not ACTIVE or FULLY_DEPRECIATED. **FULLY_DEPRECIATED hard rule**: if target asset status is `FULLY_DEPRECIATED`, at least one of `revisedUsefulLifeMonths` or `lifeExtensionMonths` MUST be provided, and the resulting `remaining_useful_life_months` must be `> 0` — otherwise cost increases with no future depreciation periods. (Full posting logic in SL27)
   - In all three modes: reject `itemCardId` and `stockImpactMode != 'NONE'`
-- When `subledgerType = 'FIXED_ASSET'` on **AR**: require `targetFixedAssetId` and require `quantity = 1`
+- When `subledgerType = 'FIXED_ASSET'` on **AR**: require `targetFixedAssetId` and require `quantity = 1`. **Internal mode normalization**: the client does not send `fixedAssetMode` for AR lines (SL11 does not expose it), but the SL01 CHECK constraint requires `fixed_asset_mode IS NOT NULL` for every FIXED_ASSET line. The validator must normalize AR FIXED_ASSET lines to `fixedAssetMode = 'LINK_EXISTING'` internally — AR always references one specific existing asset for disposal. Reject any explicitly sent `fixedAssetMode` on AR FIXED_ASSET lines (the mode is server-determined, not client-chosen).
 - When `subledgerType = 'STOCK'` (explicit or inferred): require `itemCardId` and `stockImpactMode != 'NONE'`, reject `targetFixedAssetId`
 - When `subledgerType = 'NONE'`: reject `targetFixedAssetId`, reject fixed-asset generation fields, allow normal fields including `itemCardId` so long as `stockImpactMode = 'NONE'`
 
@@ -443,6 +443,8 @@ Extend the CARI document line validator to accept and validate `subledgerType`, 
 - AP `subledgerType=FIXED_ASSET, fixedAssetMode=AUTO_CREATE` with `targetFixedAssetId` returns 400
 - AP `subledgerType=FIXED_ASSET, fixedAssetMode=AUTO_CREATE` without generated-asset fields returns 400
 - AR `subledgerType=FIXED_ASSET` without `targetFixedAssetId` returns 400
+- AR `subledgerType=FIXED_ASSET` persists `fixed_asset_mode = 'LINK_EXISTING'` even though the client never sends `fixedAssetMode` (validator normalizes internally to satisfy the SL01 CHECK constraint)
+- AR `subledgerType=FIXED_ASSET` with an explicitly sent `fixedAssetMode` returns 400 (mode is server-determined for AR)
 - FIXED_ASSET with `itemCardId` returns 400
 - subledgerType=STOCK without itemCardId returns 400
 - Legacy request `{ itemCardId: 5, stockImpactMode: 'RECEIPT_PENDING', warehouseId: 3 }` (no subledgerType) succeeds and persists `subledger_type = 'STOCK'`
@@ -458,6 +460,7 @@ Persist `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, improveme
 ### In scope
 - **Update `replaceDocumentLinesTx`** (currently at line ~2497 in `cari.document.service.js`): add `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, `fixed_asset_category_id`, `fixed_asset_owner_operating_unit_id`, `fixed_asset_location_operating_unit_id`, `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`, `improvement_revised_useful_life_months`, and `improvement_life_extension_months` to the hardcoded INSERT statement
 - **Update line normalization** (currently at line ~2128): parse and pass through `subledgerType`, `fixedAssetMode`, `targetFixedAssetId`, `fixedAssetNameOverride`, `fixedAssetSerialNo`, `fixedAssetTag`, and generated-asset metadata from the validated input
+- **Extend `parseDocumentLines()` in `cari.document.validators.js`**: SL02 intentionally omits the pass-through metadata fields (`fixedAssetNameOverride`, `fixedAssetSerialNo`, `fixedAssetTag`) because they have no validation rules at the validator level. SL03 must add parsing of these three fields in `parseDocumentLines()` and include them in the output object — without this, the service-side line normalization at ~2128 cannot see them, since it reads exclusively from the validator output
 - **Update `loadDocumentLinesForDocument`** SELECT queries (around line ~775-855): add all new fixed-asset columns (including `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`) to the SELECT list and include them in the response mapping
 - Preserve current repo behavior where `itemCardId` may remain populated on `subledger_type = 'NONE'` lines for `SERVICE` / `NON_STOCK_GOOD` items; only stock-affecting lines (`stockImpactMode != 'NONE'`) are `STOCK`
 - When `subledger_type = 'FIXED_ASSET'` and `target_fixed_asset_id` is present: validate that it references an existing asset in the same tenant/legal entity
@@ -1209,20 +1212,22 @@ Add i18n labels for the new AP/AR-specific navigation and page titles.
 ## `STEP-SL23` — Remove old "Cari Islemler" routes, redirect legacy URLs, and make drillbacks direction-aware
 
 ### Patch target
-Clean up old routes, add redirects so bookmarks and links don't break, and make GL journal drillback / reverse-block links resolve to the correct AP or AR page instead of the old undirected routes.
+Clean up old routes, add simple convenience redirects, and — more importantly — make all internally generated drillback / source-link URLs direction-aware so new AP/AR pages receive the correct links.
 
 ### In scope
 
-**Route redirects:**
-- Add redirects from old routes to new routes:
-  - `/app/cari-belgeler` → `/app/alis-faturalari` (or a smart redirect based on user's last direction)
+**Route redirects (convenience only — no entity-aware "smart redirect" needed):**
+
+The system is not live yet and the database will be clean-reset before go-live, so there are no real old bookmarks, shared URLs, or saved links to preserve. Legacy redirects are just developer convenience during the transition — they do not need entity-aware lookup (e.g., "look up document direction and redirect to the correct AP/AR page"). Simple fixed-target redirects are sufficient:
+
+  - `/app/cari-belgeler` → `/app/alis-faturalari`
   - `/app/alici-kart-listesi` → `/app/musteri-kartlari`
   - `/app/satici-kart-listesi` → `/app/tedarikci-kartlari`
   - `/app/alici-kart-olustur` → `/app/musteri-kartlari/olustur`
   - `/app/satici-kart-olustur` → `/app/tedarikci-kartlari/olustur`
   - `/app/cari-settlements` → `/app/tedarikci-odemeler`
-  - `/app/cari-raporlari` → `/app/tedarikci-raporlari` (or shared reports section)
-  - `/app/cari-audit` → `/app/ayarlar/cari-denetim` (moved to Settings & Admin)
+  - `/app/cari-raporlari` → `/app/tedarikci-raporlari`
+  - `/app/cari-audit` → `/app/ayarlar/cari-denetim`
 - Remove old sidebar entries (already done in SL19, this step cleans up route registrations)
 - Remove or mark as deprecated any unused page wrappers
 
@@ -1248,6 +1253,20 @@ The following files reference old `/app/cari-belgeler` and `/app/cari-settlement
   - Currently hardcodes `` `/app/cari-belgeler?documentId=${documentId}` ``
   - Must use the enriched `destination.route` from the backend response, or call `resolveSourceLinkDestination()` helper
 
+**Route-wiring and smoke script baseline updates:**
+
+The following `backend/scripts/` test scripts assert old CARI route paths and will fail after the route and drillback changes above. Update their assertions to match the new AP/AR-split routes:
+
+- **`test-ux-rswire01-cross-file-wiring.js`** — update route path assertions from `/app/cari-belgeler`, `/app/cari-settlements`, `/app/cari-audit` to the new AP/AR equivalents
+- **`test-ux-rswire03-release-gate-smoke-coverage.js`** — update the expected-routes list to include new AP/AR routes instead of old mixed routes
+- **`test-cari-pr11-frontend-routing-and-api-clients.js`** — update all `hasPath` assertions for route registrations, sidebar entries, and i18n keys to reference new routes
+- **`test-cari-pr12-frontend-documents-smoke.js`** — update `/app/cari-belgeler` route mount assertion to verify the new AP/AR document routes
+- **`test-cari-pr13-frontend-settlement-smoke.js`** — update `/app/cari-settlements` route mount assertion to verify new settlement routes
+- **`test-cari-pr14-frontend-audit-smoke.js`** — update `/app/cari-audit` route mount assertion to verify `/app/ayarlar/cari-denetim`
+- **`test-fa43-journal-source-link-destination-smoke.js`** — **critical**: currently asserts `resolveDestination("CARI_DOCUMENT")` returns `/app/cari-belgeler` statically. After SL23 moves CARI types to dynamic resolution, the static `resolveDestination()` returns `null` and `resolveDestinationAsync()` returns direction-aware URLs. Update assertions accordingly.
+- **`test-cari-pr09-frontend-reports.js`** — update `/app/cari-raporlari` route and sidebar assertions to the new AP/AR report routes
+- **`test-ou-self-balancing-release-gate.js`** — update `/app/cari-settlements` token check to the new route
+
 ### Explicit non-goals
 - Do not remove the underlying CariDocumentsPage component — it's still used by the new routes
 - Do not change any HTTP API endpoint — the drillback changes are internal destination resolution only
@@ -1263,6 +1282,7 @@ The following files reference old `/app/cari-belgeler` and `/app/cari-settlement
 - GL journal drillback to an AR settlement batch lands on `/app/musteri-tahsilatlar`
 - Reverse-block messages show the correct direction-aware route
 - Dashboard source links resolve direction-correctly
+- All 9 route-wiring / smoke scripts pass with updated assertions
 
 ---
 
@@ -1750,11 +1770,11 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low — i18n only
 
 ### `STEP-SL23`
-- `AI size`: Medium
-- `Allowed files`: `frontend/src/App.jsx`, `frontend/src/layouts/sidebarConfig.js`, `backend/src/services/gl.reverse-block-destination.service.js`, `frontend/src/utils/journalSourceLinkDestinations.js`, `frontend/src/pages/Dashboard.jsx`, `frontend/src/pages/JournalWorkbenchPage.jsx`
+- `AI size`: Large
+- `Allowed files`: `frontend/src/App.jsx`, `frontend/src/layouts/sidebarConfig.js`, `backend/src/services/gl.reverse-block-destination.service.js`, `frontend/src/utils/journalSourceLinkDestinations.js`, `frontend/src/pages/Dashboard.jsx`, `frontend/src/pages/JournalWorkbenchPage.jsx`, `backend/scripts/test-ux-rswire01-cross-file-wiring.js`, `backend/scripts/test-ux-rswire03-release-gate-smoke-coverage.js`, `backend/scripts/test-cari-pr11-frontend-routing-and-api-clients.js`, `backend/scripts/test-cari-pr12-frontend-documents-smoke.js`, `backend/scripts/test-cari-pr13-frontend-settlement-smoke.js`, `backend/scripts/test-cari-pr14-frontend-audit-smoke.js`, `backend/scripts/test-fa43-journal-source-link-destination-smoke.js`, `backend/scripts/test-cari-pr09-frontend-reports.js`, `backend/scripts/test-ou-self-balancing-release-gate.js`
 - `Dependencies`: SL20, SL21
 - `Blocked by`: none
-- `Rollback risk`: Medium — removing old routes + changing drillback resolution; must ensure redirects work and drillbacks land on correct AP/AR page
+- `Rollback risk`: Medium — removing old routes + changing drillback resolution + updating test baselines; must ensure redirects work and drillbacks land on correct AP/AR page
 
 ### `STEP-SL24`
 - `AI size`: Large

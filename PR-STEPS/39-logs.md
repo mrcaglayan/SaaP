@@ -1,0 +1,1 @@
+STEP-SL01 is green. The migration-only schema foundation is in place with persisted fixed_asset_mode, expanded-line metadata, pre_disposal_status, the required FKs/CHECKs/indexes, and verified fresh/existing DB compatibility without touching existing rows.
