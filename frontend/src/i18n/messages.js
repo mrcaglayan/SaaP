@@ -454,8 +454,16 @@ export const messages = {
         title: "Demirbas Alim Islemleri",
         description: "Alim ve kapitalizasyon islemleri filtrelenmis gorunumu.",
         noResults: "Alim veya kapitalizasyon islemi bulunamadi.",
+        preferredFlowTitle: "Tercih Edilen Akis",
+        preferredFlowNote:
+          "Tercih edilen alim akisi artik CARI formundaki FIXED_ASSET satiridir. Tedarikci faturasina tek bir FIXED_ASSET satiri ve miktar girin; kayit sirasinda varlik birimleri otomatik olusturulur. Belirli bir taslak varlik zaten hazirsa yalnizca link-existing yolunu kullanin.",
+        expandGuidanceNote:
+          "Birimlerin kayit oncesi farkli sahip/lokasyon veya seri metadata ihtiyaci varsa 'Tekil varlik satirlarina genislet' kullanin. Muhasebe veya kategori farkliysa ayri CARI satirlarina bolun.",
         capitalizeFromAp: "CARI Belgesinden Kapitalize Et",
         capitalizeDescription: "Kayitli bir CARI AP belgesindeki uygun kalem satirindan yeni demirbas olusturun.",
+        fallbackTitle: "Legacy Fallback",
+        fallbackDescription:
+          "Bu bolum, FIXED_ASSET satir tipi olmadan zaten kaydedilmis AP belgeleri icin fallback olarak kalir. Yeni alimlarda tercih edilen akis CARI formundaki FIXED_ASSET satiridir.",
         documentId: "Belge ID",
         searchLines: "Satirlari Ara",
         searching: "Araniyor...",
@@ -481,6 +489,8 @@ export const messages = {
         submitFailed: "Demirbas olusturulamadi.",
         documentIdRequired: "Belge ID zorunludur.",
         lineRequired: "Bir AP satiri secmelisiniz.",
+        linkedFromCari: "CARI'ye Bagli",
+        cariCapitalization: "CARI Kapitalizasyonu",
       },
       disposals: {
         title: "Demirbas Satis/Elden Cikarma",
@@ -2534,8 +2544,16 @@ export const messages = {
         title: "Fixed Asset Acquisitions",
         description: "Filtered view of acquisition and capitalization transactions.",
         noResults: "No acquisition or capitalization transactions found.",
+        preferredFlowTitle: "Preferred Flow",
+        preferredFlowNote:
+          "The preferred acquisition flow is now the CARI FIXED_ASSET bill flow. Enter one vendor bill line with FIXED_ASSET and quantity, and let posting create the asset units automatically. Use the link-existing path only when a specific draft asset is already prepared.",
+        expandGuidanceNote:
+          "If units need different owner/location or serial metadata before posting, use 'Expand into individual asset lines'. If accounting or category differs, split them into separate CARI lines.",
         capitalizeFromAp: "Capitalize from AP Document",
         capitalizeDescription: "Create a new fixed asset from an eligible line on a posted CARI AP document.",
+        fallbackTitle: "Legacy Fallback",
+        fallbackDescription:
+          "This section remains the fallback for AP bills that were already posted without a FIXED_ASSET line type. For new acquisitions, the preferred flow is the FIXED_ASSET line on the CARI form.",
         documentId: "Document ID",
         searchLines: "Search Lines",
         searching: "Searching...",
@@ -2561,6 +2579,8 @@ export const messages = {
         submitFailed: "Failed to create asset.",
         documentIdRequired: "Document ID is required.",
         lineRequired: "You must select an AP line.",
+        linkedFromCari: "Linked from CARI",
+        cariCapitalization: "CARI Capitalization",
       },
       disposals: {
         title: "Fixed Asset Disposals",

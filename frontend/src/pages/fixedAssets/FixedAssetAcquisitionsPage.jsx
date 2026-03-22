@@ -5,6 +5,7 @@ import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import {
   listFixedAssets,
+  getFixedAsset,
   listCariEligibleApLines,
   createFixedAssetFromCariDocumentLine,
   listFixedAssetCategories,
@@ -39,6 +40,16 @@ function toPositiveInt(value) {
 
 const ACQUISITION_STATUSES = ["DRAFT", "ACTIVE"];
 
+function buildCariDocumentPath(documentId) {
+  const normalizedDocumentId = toPositiveInt(documentId);
+  if (!normalizedDocumentId) {
+    return "/app/cari-belgeler";
+  }
+  const params = new URLSearchParams();
+  params.set("documentId", String(normalizedDocumentId));
+  return `/app/cari-belgeler?${params.toString()}`;
+}
+
 export default function FixedAssetAcquisitionsPage() {
   const { l, t } = useI18n();
   const { hasPermission } = useAuth();
@@ -51,6 +62,7 @@ export default function FixedAssetAcquisitionsPage() {
 
   // ── Acquisitions list state ──────────────────────────────────────
   const [rows, setRows] = useState([]);
+  const [assetCariMetaById, setAssetCariMetaById] = useState(new Map());
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -83,6 +95,7 @@ export default function FixedAssetAcquisitionsPage() {
   useEffect(() => {
     if (!canRead) {
       setRows([]);
+      setAssetCariMetaById(new Map());
       setListError(l("Missing permission: fixed_assets.read", "Eksik yetki: fixed_assets.read"));
       return;
     }
@@ -108,6 +121,48 @@ export default function FixedAssetAcquisitionsPage() {
     })();
     return () => { active = false; };
   }, [canRead, legalEntityId, filterStatus, l]);
+
+  useEffect(() => {
+    if (!canRead || rows.length === 0) {
+      setAssetCariMetaById(new Map());
+      return;
+    }
+    let active = true;
+    (async () => {
+      const detailResults = await Promise.allSettled(
+        rows.map((row) => getFixedAsset(row.id))
+      );
+      if (!active) {
+        return;
+      }
+      const nextMetaById = new Map();
+      detailResults.forEach((result, index) => {
+        const row = rows[index];
+        if (!row?.id) {
+          return;
+        }
+        if (result.status === "fulfilled") {
+          nextMetaById.set(row.id, {
+            sourceCariDocumentId: toPositiveInt(result.value?.sourceCariDocumentId),
+            sourceCariDocumentLineId: toPositiveInt(result.value?.sourceCariDocumentLineId),
+            sourceCariDocumentLineUnitNo: toPositiveInt(result.value?.sourceCariDocumentLineUnitNo),
+            hasCariCapitalization: Boolean(result.value?.hasCariCapitalization),
+          });
+          return;
+        }
+        nextMetaById.set(row.id, {
+          sourceCariDocumentId: toPositiveInt(row.sourceCariDocumentId),
+          sourceCariDocumentLineId: toPositiveInt(row.sourceCariDocumentLineId),
+          sourceCariDocumentLineUnitNo: toPositiveInt(row.sourceCariDocumentLineUnitNo),
+          hasCariCapitalization: false,
+        });
+      });
+      setAssetCariMetaById(nextMetaById);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [canRead, rows]);
 
   // ── Load category + OU lookups when capitalize section opens ─────
   useEffect(() => {
@@ -240,6 +295,18 @@ export default function FixedAssetAcquisitionsPage() {
         </p>
       </section>
 
+      <section className="rounded-xl border border-cyan-200 bg-cyan-50 p-5 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-cyan-900">
+          {t("fixedAssets.acquisitions.preferredFlowTitle")}
+        </p>
+        <p className="mt-2 text-sm text-cyan-950">
+          {t("fixedAssets.acquisitions.preferredFlowNote")}
+        </p>
+        <p className="mt-2 text-sm text-cyan-900">
+          {t("fixedAssets.acquisitions.expandGuidanceNote")}
+        </p>
+      </section>
+
       {/* CARI Capitalization Section — permission-gated */}
       {canPost ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -258,6 +325,14 @@ export default function FixedAssetAcquisitionsPage() {
               <p className="text-sm text-slate-600">
                 {t("fixedAssets.acquisitions.capitalizeDescription")}
               </p>
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                  {t("fixedAssets.acquisitions.fallbackTitle")}
+                </p>
+                <p className="mt-2 text-sm text-amber-900">
+                  {t("fixedAssets.acquisitions.fallbackDescription")}
+                </p>
+              </div>
 
               {/* Step 1: Enter document ID and search */}
               <div className="flex items-end gap-3">
@@ -537,9 +612,72 @@ export default function FixedAssetAcquisitionsPage() {
                     <td className="px-3 py-2 text-right font-mono">{formatNumber(row.originalCostBase)}</td>
                     <td className="px-3 py-2">{row.currencyCode || "-"}</td>
                     <td className="px-3 py-2 text-xs">
-                      {row.sourceCariDocumentId
-                        ? l("CARI", "CARI")
-                        : l("Manual", "Manuel")}
+                      {(() => {
+                        const assetCariMeta = assetCariMetaById.get(row.id) || null;
+                        const sourceCariDocumentId =
+                          toPositiveInt(assetCariMeta?.sourceCariDocumentId) ||
+                          toPositiveInt(row.sourceCariDocumentId);
+                        const sourceCariDocumentLineId =
+                          toPositiveInt(assetCariMeta?.sourceCariDocumentLineId) ||
+                          toPositiveInt(row.sourceCariDocumentLineId);
+                        const sourceCariDocumentLineUnitNo =
+                          toPositiveInt(assetCariMeta?.sourceCariDocumentLineUnitNo) ||
+                          toPositiveInt(row.sourceCariDocumentLineUnitNo);
+                        const hasCariCapitalization =
+                          Boolean(assetCariMeta?.hasCariCapitalization) ||
+                          Boolean(sourceCariDocumentId);
+
+                        if (sourceCariDocumentId) {
+                          return (
+                            <div className="space-y-1">
+                              <span className="inline-flex rounded-full bg-cyan-100 px-2 py-0.5 font-semibold text-cyan-800">
+                                {t("fixedAssets.acquisitions.linkedFromCari")}
+                              </span>
+                              <div>
+                                <Link
+                                  to={buildCariDocumentPath(sourceCariDocumentId)}
+                                  className="font-medium text-cyan-700 hover:underline"
+                                >
+                                  {l(
+                                    `Source document #${sourceCariDocumentId}`,
+                                    `Kaynak belge #${sourceCariDocumentId}`
+                                  )}
+                                </Link>
+                              </div>
+                              {sourceCariDocumentLineId || sourceCariDocumentLineUnitNo ? (
+                                <p className="text-slate-500">
+                                  {[
+                                    sourceCariDocumentLineId
+                                      ? l(
+                                          `Line ${sourceCariDocumentLineId}`,
+                                          `Satir ${sourceCariDocumentLineId}`
+                                        )
+                                      : null,
+                                    sourceCariDocumentLineUnitNo
+                                      ? l(
+                                          `Unit ${sourceCariDocumentLineUnitNo}`,
+                                          `Birim ${sourceCariDocumentLineUnitNo}`
+                                        )
+                                      : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" | ")}
+                                </p>
+                              ) : null}
+                            </div>
+                          );
+                        }
+
+                        if (hasCariCapitalization) {
+                          return (
+                            <span className="inline-flex rounded-full bg-cyan-100 px-2 py-0.5 font-semibold text-cyan-800">
+                              {t("fixedAssets.acquisitions.cariCapitalization")}
+                            </span>
+                          );
+                        }
+
+                        return l("Manual", "Manuel");
+                      })()}
                     </td>
                   </tr>
                 ))}
