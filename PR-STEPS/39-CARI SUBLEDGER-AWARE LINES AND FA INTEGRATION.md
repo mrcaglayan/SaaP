@@ -331,7 +331,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL14` — Frontend FA sale flow: simplify to "create AR doc with FIXED_ASSET line" guidance
 
 **Phase 3: Immediate Cash/Bank Settlement**
-- [ ] `STEP-SL15` — Migration: add `settlement_mode`, `settlement_cash_register_id`, and auto-settlement tracking to `cari_documents`
+- [x] `STEP-SL15` — Migration: add `settlement_mode`, `settlement_cash_register_id`, and auto-settlement tracking to `cari_documents`
 - [ ] `STEP-SL16` — 🔥 HOT — Backend CARI posting: immediate cash settlement (auto-create cash payout/receipt + auto-apply CARI settlement)
 - [ ] `STEP-SL17` — Frontend CARI form: settlement mode selector (Accrual / Cash Purchase)
 - [ ] `STEP-SL18` — 🔥 HOT — Backend CARI reversal: reverse immediate settlement when document is reversed
