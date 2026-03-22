@@ -8,3 +8,4 @@ STEP-SL07 is green. The last missing proof is now closed: AR reversal correctly 
 STEP-SL08 is green. Activation now correctly splits between SL05 CARI-capitalized assets and FA06/manual assets: CARI assets activate without a second ACQUISITION, residual-aware AUTO_CREATE slot validation works, FA06/manual activation stays unchanged, and hasCariCapitalization is exposed on asset detail.
 STEP-SL09 been deleted.
 STEP-SL10 is green. The selector-and-state-transition logic matches the plan, NONE remains backward-compatible, and the labels are already localized through the repo’s existing inline bilingual l(...) pattern, so not touching messages.js is not a blocker.
+STEP-SL11 is green. The last missing browser proofs are now closed: the 500-line expansion guard disables correctly with the required inline warning, and the AP LINK_EXISTING + New Asset modal creates a draft asset and auto-selects it on the line without navigation away.
