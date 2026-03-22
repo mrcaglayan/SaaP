@@ -1377,6 +1377,29 @@ function isPosted(row) {
   return String(row?.status || "").toUpperCase() === "POSTED";
 }
 
+function isImmediateCashSettled(row) {
+  return (
+    String(row?.status || "").toUpperCase() === "SETTLED" &&
+    isImmediateCashSettlementMode(
+      firstDefinedRowValue(row, "settlementMode", "settlement_mode")
+    ) &&
+    toPositiveInt(
+      firstDefinedRowValue(row, "autoSettlementBatchId", "auto_settlement_batch_id")
+    ) &&
+    toPositiveInt(
+      firstDefinedRowValue(
+        row,
+        "autoSettlementCashTransactionId",
+        "auto_settlement_cash_transaction_id"
+      )
+    )
+  );
+}
+
+function canReverseDocument(row) {
+  return isPosted(row) || isImmediateCashSettled(row);
+}
+
 function resolveCounterpartyRoleFromDirection(direction) {
   const normalized = String(direction || "").trim().toUpperCase();
   if (normalized === "AR") return "CUSTOMER";
@@ -3899,7 +3922,9 @@ export default function CariDocumentsPage() {
   const canPostSelected = Boolean(
     selectedSnapshot && isDraft(selectedSnapshot) && canPost && !cariPostingNotReady
   );
-  const canReverseSelected = Boolean(selectedSnapshot && isPosted(selectedSnapshot) && canReverse);
+  const canReverseSelected = Boolean(
+    selectedSnapshot && canReverseDocument(selectedSnapshot) && canReverse
+  );
   const canAttachEvidence = Boolean(selectedSnapshot && canUpdate);
   const canWriteInternalComments = Boolean(selectedSnapshot && canUpdate);
   const canWriteOpsStatus = Boolean(selectedSnapshot && canUpdate);
@@ -8518,8 +8543,8 @@ export default function CariDocumentsPage() {
     if (!selectedDocumentId || !canReverseSelected) {
       setReverseError(
         l(
-          "Only POSTED documents can be reversed with cari.doc.reverse permission.",
-          "Yalnizca POSTED belgeler `cari.doc.reverse` yetkisiyle terslenebilir."
+          "Only POSTED documents or immediate-cash SETTLED documents can be reversed with cari.doc.reverse permission.",
+          "Yalnizca POSTED belgeler veya IMMEDIATE_CASH SETTLED belgeler `cari.doc.reverse` yetkisiyle terslenebilir."
         )
       );
       return;
@@ -8550,7 +8575,7 @@ export default function CariDocumentsPage() {
     } catch (error) {
       setReverseInventoryBlocks(normalizeInventoryReverseBlocks(error));
       setReverseError(
-        normalizeApiError(error, l("Failed to reverse posted document.", "Kaydedilmis belge terslenemedi."))
+        normalizeApiError(error, l("Failed to reverse document.", "Belge terslenemedi."))
       );
     } finally {
       setReverseSaving(false);
@@ -11404,7 +11429,7 @@ export default function CariDocumentsPage() {
 
                 <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Reverse Reason", "Ters Kayit Nedeni")}<input type="text" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reason} onChange={(event) => setReverseForm((prev) => ({ ...prev, reason: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
                 <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Reversal Date", "Ters Kayit Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reversalDate} onChange={(event) => setReverseForm((prev) => ({ ...prev, reversalDate: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
-                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handleReversePosted} disabled={!canReverseSelected || reverseSaving}>{reverseSaving ? l("Reversing...", "Ters kayit olusturuluyor...") : l("Reverse Posted Document", "Kaydedilmis Belgeyi Tersle")}</button>
+                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handleReversePosted} disabled={!canReverseSelected || reverseSaving}>{reverseSaving ? l("Reversing...", "Ters kayit olusturuluyor...") : l("Reverse Document", "Belgeyi Tersle")}</button>
                 {reverseError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{reverseError}</div> : null}
                 {reverseInventoryBlocks.length > 0 ? (
                   <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">

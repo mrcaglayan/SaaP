@@ -1,0 +1,1 @@
+reversal kayıtlar, kasa cari linkler, aynısı gibi yapıo mu etc kontrol edilmelicash settlementte immediate settlemneta da.
