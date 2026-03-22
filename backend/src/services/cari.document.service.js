@@ -29,12 +29,23 @@ import {
   normalizeStockImpactMode,
 } from "./ownership.context.policy.service.js";
 import { deriveStockLinkReadState } from "./stock.link.read-state.service.js";
+import { findCashRegisterById } from "./cash.queries.js";
+import {
+  createCashTransactionTx,
+  reverseCashTransactionTx,
+} from "./cash.transaction.service.js";
+import {
+  applyCariSettlementTx,
+  reverseCariSettlementTx,
+} from "./cari.settlement.service.js";
 import { FIXED_ASSET_TRANSACTION } from "../utils/source-ref-types.js";
 
 const DRAFT_STATUS = "DRAFT";
 const CANCELLED_STATUS = "CANCELLED";
 const POSTED_STATUS = "POSTED";
 const REVERSED_STATUS = "REVERSED";
+const PARTIALLY_SETTLED_STATUS = "PARTIALLY_SETTLED";
+const SETTLED_STATUS = "SETTLED";
 const OPEN_ITEM_STATUS_OPEN = "OPEN";
 const OPEN_ITEM_STATUS_CANCELLED = "CANCELLED";
 const DRAFT_SEQUENCE_NAMESPACE = "DRAFT";
@@ -70,6 +81,8 @@ const FROZEN_TRANSACTION_KEYS = new Set([
 ]);
 const STOCK_LINK_STATUS_PENDING = "PENDING";
 const STOCK_LINK_STATUS_VOID = "VOID";
+const SETTLEMENT_MODE_ACCRUAL = "ACCRUAL";
+const SETTLEMENT_MODE_IMMEDIATE_CASH = "IMMEDIATE_CASH";
 const FIXED_ASSET_AR_ELIGIBLE_STATUSES = new Set([
   "ACTIVE",
   "SUSPENDED",
@@ -247,6 +260,69 @@ function addDays(dateString, daysToAdd) {
   return utcDate.toISOString().slice(0, 10);
 }
 
+function normalizeDocumentSettlementMode(value, defaultValue = SETTLEMENT_MODE_ACCRUAL) {
+  const normalized = normalizeUpperText(value);
+  if (!normalized) {
+    return defaultValue;
+  }
+  if (
+    normalized !== SETTLEMENT_MODE_ACCRUAL &&
+    normalized !== SETTLEMENT_MODE_IMMEDIATE_CASH
+  ) {
+    throw badRequest("settlementMode must be ACCRUAL or IMMEDIATE_CASH");
+  }
+  return normalized;
+}
+
+function resolveDocumentSettlementHeader({
+  settlementMode,
+  settlementCashRegisterId,
+  currentSettlementMode = SETTLEMENT_MODE_ACCRUAL,
+  currentSettlementCashRegisterId = null,
+}) {
+  const nextSettlementMode =
+    settlementMode === undefined
+      ? normalizeDocumentSettlementMode(currentSettlementMode, SETTLEMENT_MODE_ACCRUAL)
+      : normalizeDocumentSettlementMode(settlementMode, SETTLEMENT_MODE_ACCRUAL);
+  const nextSettlementCashRegisterId =
+    settlementCashRegisterId === undefined
+      ? parsePositiveInt(currentSettlementCashRegisterId) || null
+      : parsePositiveInt(settlementCashRegisterId) || null;
+  if (
+    nextSettlementMode === SETTLEMENT_MODE_IMMEDIATE_CASH &&
+    !nextSettlementCashRegisterId
+  ) {
+    throw badRequest(
+      "settlementCashRegisterId is required when settlementMode=IMMEDIATE_CASH"
+    );
+  }
+  if (
+    nextSettlementMode !== SETTLEMENT_MODE_IMMEDIATE_CASH &&
+    settlementCashRegisterId !== undefined &&
+    nextSettlementCashRegisterId
+  ) {
+    throw badRequest(
+      "settlementCashRegisterId requires settlementMode=IMMEDIATE_CASH"
+    );
+  }
+  return {
+    settlementMode: nextSettlementMode,
+    settlementCashRegisterId:
+      nextSettlementMode === SETTLEMENT_MODE_IMMEDIATE_CASH
+        ? nextSettlementCashRegisterId
+        : null,
+  };
+}
+
+function buildDocumentImmediateCashIdempotencyKey(documentId, suffix) {
+  const normalizedDocumentId = parsePositiveInt(documentId);
+  if (!normalizedDocumentId) {
+    throw badRequest("documentId is required");
+  }
+  const normalizedSuffix = normalizeUpperText(suffix).replace(/[^A-Z0-9_]/g, "") || "EVENT";
+  return `CARI_DOC_${normalizedDocumentId}_${normalizedSuffix}`.slice(0, 100);
+}
+
 function mapDocumentRow(row, { lines } = {}) {
   const documentDate = toDateOnlyString(row.document_date, "documentDate");
   const dueDate = toDateOnlyString(row.due_date, "dueDate");
@@ -289,6 +365,12 @@ function mapDocumentRow(row, { lines } = {}) {
     dueDateSnapshot,
     currencyCodeSnapshot: row.currency_code_snapshot || null,
     fxRateSnapshot: toDecimalNumber(row.fx_rate_snapshot),
+    settlementMode: normalizeDocumentSettlementMode(row.settlement_mode),
+    settlementCashRegisterId: parsePositiveInt(row.settlement_cash_register_id),
+    autoSettlementBatchId: parsePositiveInt(row.auto_settlement_batch_id),
+    autoSettlementCashTransactionId: parsePositiveInt(
+      row.auto_settlement_cash_transaction_id
+    ),
     postedJournalEntryId: parsePositiveInt(row.posted_journal_entry_id),
     reversalOfDocumentId: parsePositiveInt(row.reversal_of_document_id),
     createdAt: row.created_at || null,
@@ -5494,6 +5576,10 @@ export async function createCariDraftDocument({
     "legalEntityId"
   );
   await assertCurrencyExists(payload.currencyCode, "currencyCode");
+  const settlementHeader = resolveDocumentSettlementHeader({
+    settlementMode: payload.settlementMode,
+    settlementCashRegisterId: payload.settlementCashRegisterId,
+  });
 
   const created = await withTransaction(async (tx) => {
     const counterparty = await fetchCounterpartyRow({
@@ -5599,9 +5685,11 @@ export async function createCariDraftDocument({
           payment_term_snapshot,
           due_date_snapshot,
           currency_code_snapshot,
-          fx_rate_snapshot
+          fx_rate_snapshot,
+          settlement_mode,
+          settlement_cash_register_id
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
       [
         tenantId,
         legalEntityId,
@@ -5635,6 +5723,8 @@ export async function createCariDraftDocument({
         resolvedDueDate,
         resolvedAmounts.currencyCode,
         resolvedAmounts.fxRate,
+        settlementHeader.settlementMode,
+        settlementHeader.settlementCashRegisterId,
       ]
     );
     const documentId = parsePositiveInt(insertResult.rows?.insertId);
@@ -5672,6 +5762,8 @@ export async function createCariDraftDocument({
         status: row.status,
         lineCount: draftWriteModel.lines.length,
         syntheticLineMode: draftWriteModel.isSynthetic,
+        settlementMode: settlementHeader.settlementMode,
+        settlementCashRegisterId: settlementHeader.settlementCashRegisterId,
       },
     });
 
@@ -5745,6 +5837,12 @@ export async function updateCariDraftDocumentById({
   const nextCurrencyCode =
     payload.currencyCode === undefined ? existing.currency_code : payload.currencyCode;
   const nextFxRate = payload.fxRate === undefined ? existing.fx_rate : payload.fxRate;
+  const settlementHeader = resolveDocumentSettlementHeader({
+    settlementMode: payload.settlementMode,
+    settlementCashRegisterId: payload.settlementCashRegisterId,
+    currentSettlementMode: existing.settlement_mode,
+    currentSettlementCashRegisterId: existing.settlement_cash_register_id,
+  });
   const financialFieldsTouched =
     payload.amountTxn !== undefined ||
     payload.amountBase !== undefined ||
@@ -5918,6 +6016,8 @@ export async function updateCariDraftDocumentById({
            due_date_snapshot = ?,
            currency_code_snapshot = ?,
            fx_rate_snapshot = ?,
+           settlement_mode = ?,
+           settlement_cash_register_id = ?,
            row_version = row_version + 1
        WHERE tenant_id = ?
          AND id = ?
@@ -5952,6 +6052,8 @@ export async function updateCariDraftDocumentById({
         resolvedDueDate,
         resolvedAmounts.currencyCode,
         resolvedAmounts.fxRate,
+        settlementHeader.settlementMode,
+        settlementHeader.settlementCashRegisterId,
         tenantId,
         documentId,
         expectedRowVersion,
@@ -6001,6 +6103,8 @@ export async function updateCariDraftDocumentById({
           amountBase: toDecimalNumber(existing.amount_base),
           documentDate: existing.document_date,
           dueDate: existing.due_date,
+          settlementMode: normalizeDocumentSettlementMode(existing.settlement_mode),
+          settlementCashRegisterId: parsePositiveInt(existing.settlement_cash_register_id),
           lineCount: existingLineRows.length,
         },
         after: {
@@ -6010,6 +6114,8 @@ export async function updateCariDraftDocumentById({
           amountBase: toDecimalNumber(row.amount_base),
           documentDate: row.document_date,
           dueDate: row.due_date,
+          settlementMode: settlementHeader.settlementMode,
+          settlementCashRegisterId: settlementHeader.settlementCashRegisterId,
           lineCount: shouldReplaceLines
             ? draftWriteModel.lines.length
             : existingLineRows.length,
@@ -6151,6 +6257,12 @@ async function postCariDocumentByIdTx(
   const currencyCode = normalizeUpperText(lockedDocument.currency_code);
   const counterpartyId = parsePositiveInt(lockedDocument.counterparty_id);
   const paymentTermId = parsePositiveInt(lockedDocument.payment_term_id);
+  const settlementMode = normalizeDocumentSettlementMode(
+    lockedDocument.settlement_mode,
+    SETTLEMENT_MODE_ACCRUAL
+  );
+  const settlementCashRegisterId =
+    parsePositiveInt(lockedDocument.settlement_cash_register_id) || null;
 
   const counterparty = await fetchCounterpartyRow({
     tenantId,
@@ -6648,7 +6760,7 @@ async function postCariDocumentByIdTx(
     );
 
     const openItemDueDate = resolvedDueDate || documentDate;
-    await tx.query(
+    const openItemInsert = await tx.query(
       `INSERT INTO cari_open_items (
           tenant_id,
           legal_entity_id,
@@ -6682,6 +6794,135 @@ async function postCariDocumentByIdTx(
         currencyCode,
       ]
     );
+    const createdOpenItemId = parsePositiveInt(openItemInsert.rows?.insertId);
+    if (!createdOpenItemId) {
+      throw new Error("Document open item create failed");
+    }
+    let autoSettlementBatchId = null;
+    let autoSettlementCashTransactionId = null;
+    if (settlementMode === SETTLEMENT_MODE_IMMEDIATE_CASH) {
+      if (!settlementCashRegisterId) {
+        throw badRequest(
+          "settlementCashRegisterId is required when settlementMode=IMMEDIATE_CASH"
+        );
+      }
+      const settlementCashRegister = await findCashRegisterById({
+        tenantId,
+        registerId: settlementCashRegisterId,
+        runQuery: tx.query,
+      });
+      if (!settlementCashRegister) {
+        throw badRequest("settlementCashRegisterId not found for tenant");
+      }
+      if (
+        parsePositiveInt(settlementCashRegister.legal_entity_id) !==
+        lockedLegalEntityId
+      ) {
+        throw badRequest("settlementCashRegisterId must belong to legalEntityId");
+      }
+      const cashCreateIdempotencyKey = buildDocumentImmediateCashIdempotencyKey(
+        documentId,
+        "CASH"
+      );
+      const cashCreateEventUid = buildDocumentImmediateCashIdempotencyKey(
+        documentId,
+        "CASH_EVENT"
+      );
+      const cashTransactionResult = await createCashTransactionTx(tx, {
+        req,
+        payload: {
+          tenantId,
+          userId: payload.userId,
+          registerId: settlementCashRegisterId,
+          txnType: direction === "AR" ? "RECEIPT" : "PAYOUT",
+          txnDatetime: `${documentDate} 12:00:00`,
+          bookDate: documentDate,
+          amount: grossAmountTxn,
+          amountBase: grossAmountBase,
+          currencyCode,
+          description: `Immediate cash settlement for ${postedNumbering.documentNo}`.slice(
+            0,
+            500
+          ),
+          referenceNo: toNullableString(postedNumbering.documentNo, 100),
+          sourceModule: "CARI",
+          sourceEntityType: "cari_document",
+          sourceEntityId: String(documentId),
+          integrationLinkStatus: "LINKED",
+          counterpartyType: direction === "AR" ? "CUSTOMER" : "VENDOR",
+          counterpartyId,
+          counterAccountId: postingAccounts.controlAccountId,
+          idempotencyKey: cashCreateIdempotencyKey,
+          integrationEventUid: cashCreateEventUid,
+        },
+        assertScopeAccess,
+      });
+      autoSettlementCashTransactionId = parsePositiveInt(
+        cashTransactionResult?.row?.id
+      );
+      if (!autoSettlementCashTransactionId) {
+        throw new Error("Immediate cash transaction create failed");
+      }
+
+      const settlementIdempotencyKey = buildDocumentImmediateCashIdempotencyKey(
+        documentId,
+        "SETTLE"
+      );
+      const settlementEventUid = buildDocumentImmediateCashIdempotencyKey(
+        documentId,
+        "SETTLE_EVENT"
+      );
+      const settlementResult = await applyCariSettlementTx(tx, {
+        req,
+        payload: {
+          tenantId,
+          userId: payload.userId,
+          legalEntityId: lockedLegalEntityId,
+          operatingUnitId: documentOperatingUnitId,
+          counterpartyId,
+          settlementDate: documentDate,
+          currencyCode,
+          incomingAmountTxn: grossAmountTxn,
+          paymentChannel: "CASH",
+          cashTransactionId: autoSettlementCashTransactionId,
+          useUnappliedCash: false,
+          autoAllocate: false,
+          allocations: [
+            {
+              openItemId: createdOpenItemId,
+              amountTxn: grossAmountTxn,
+            },
+          ],
+          idempotencyKey: settlementIdempotencyKey,
+          integrationEventUid: settlementEventUid,
+          sourceModule: "CARI",
+          sourceEntityType: "cari_document",
+          sourceEntityId: String(documentId),
+          integrationLinkStatus: "LINKED",
+        },
+        assertScopeAccess,
+      });
+      autoSettlementBatchId = parsePositiveInt(settlementResult?.row?.id);
+      autoSettlementCashTransactionId =
+        parsePositiveInt(settlementResult?.cashTransaction?.id) ||
+        autoSettlementCashTransactionId;
+      if (!autoSettlementBatchId || !autoSettlementCashTransactionId) {
+        throw new Error("Immediate cash settlement link failed");
+      }
+      await tx.query(
+        `UPDATE cari_documents
+         SET auto_settlement_batch_id = ?,
+             auto_settlement_cash_transaction_id = ?
+         WHERE tenant_id = ?
+           AND id = ?`,
+        [
+          autoSettlementBatchId,
+          autoSettlementCashTransactionId,
+          tenantId,
+          documentId,
+        ]
+      );
+    }
     await replaceDocumentLineStockLinksTx(tx, {
       tenantId,
       legalEntityId: lockedLegalEntityId,
@@ -6742,6 +6983,9 @@ async function postCariDocumentByIdTx(
         postingLinesUseLineLevelOffsets,
         fxRate: fxPolicy.effectiveFxRate,
         tax: taxAugmentation.summary,
+        settlementMode,
+        autoSettlementBatchId,
+        autoSettlementCashTransactionId,
       },
     });
 
@@ -6785,6 +7029,9 @@ async function postCariDocumentByIdTx(
         totalCredit: journalResult.totalCredit,
         subledgerReferenceNo,
         tax: taxAugmentation.summary,
+        settlementMode,
+        autoSettlementBatchId,
+        autoSettlementCashTransactionId,
       },
     };
 }
@@ -6968,6 +7215,142 @@ export async function resolveCariSaleDocumentLineForFinalizeTx(
   };
 }
 
+function canReversePostedCariDocument(row) {
+  const status = normalizeUpperText(row?.status);
+  if (status === POSTED_STATUS) {
+    return true;
+  }
+  return (
+    status === SETTLED_STATUS &&
+    normalizeDocumentSettlementMode(row?.settlement_mode, SETTLEMENT_MODE_ACCRUAL) ===
+      SETTLEMENT_MODE_IMMEDIATE_CASH &&
+    parsePositiveInt(row?.auto_settlement_batch_id) &&
+    parsePositiveInt(row?.auto_settlement_cash_transaction_id)
+  );
+}
+
+async function reverseImmediateCashSettlementPairTx({
+  tx,
+  req,
+  payload,
+  assertScopeAccess,
+  documentRow,
+}) {
+  const settlementMode = normalizeDocumentSettlementMode(
+    documentRow?.settlement_mode,
+    SETTLEMENT_MODE_ACCRUAL
+  );
+  if (settlementMode === SETTLEMENT_MODE_ACCRUAL) {
+    return null;
+  }
+  if (settlementMode !== SETTLEMENT_MODE_IMMEDIATE_CASH) {
+    throw badRequest("Only IMMEDIATE_CASH settlement mode is supported for document reversal");
+  }
+
+  const tenantId = payload.tenantId;
+  const documentId = parsePositiveInt(documentRow?.id);
+  const settlementBatchId = parsePositiveInt(documentRow?.auto_settlement_batch_id);
+  const cashTransactionId = parsePositiveInt(
+    documentRow?.auto_settlement_cash_transaction_id
+  );
+  if (!settlementBatchId || !cashTransactionId) {
+    throw badRequest("Immediate cash settlement linkage is missing on document");
+  }
+
+  const settlementResult = await tx.query(
+    `SELECT
+       id,
+       status,
+       cash_transaction_id,
+       reversal_of_settlement_batch_id
+     FROM cari_settlement_batches
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, settlementBatchId]
+  );
+  const settlementRow = settlementResult.rows?.[0] || null;
+  if (!settlementRow) {
+    throw badRequest("Immediate cash settlement batch not found");
+  }
+  if (parsePositiveInt(settlementRow.reversal_of_settlement_batch_id)) {
+    throw badRequest("Immediate cash settlement reversal batch cannot be reversed from document");
+  }
+  if (parsePositiveInt(settlementRow.cash_transaction_id) !== cashTransactionId) {
+    throw badRequest("Document auto-settlement linkage is inconsistent");
+  }
+
+  const cashResult = await tx.query(
+    `SELECT
+       id,
+       status,
+       linked_cari_settlement_batch_id,
+       reversal_of_transaction_id,
+       source_module,
+       source_entity_type,
+       source_entity_id
+     FROM cash_transactions
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, cashTransactionId]
+  );
+  const cashRow = cashResult.rows?.[0] || null;
+  if (!cashRow) {
+    throw badRequest("Immediate cash transaction not found");
+  }
+  if (parsePositiveInt(cashRow.reversal_of_transaction_id)) {
+    throw badRequest("Immediate cash reversal transaction cannot be reversed from document");
+  }
+  if (parsePositiveInt(cashRow.linked_cari_settlement_batch_id) !== settlementBatchId) {
+    throw badRequest("Document auto-settlement linkage is inconsistent");
+  }
+  if (
+    normalizeUpperText(cashRow.source_module) !== "CARI" ||
+    normalizeUpperText(cashRow.source_entity_type) !== "CARI_DOCUMENT" ||
+    parsePositiveInt(cashRow.source_entity_id) !== documentId
+  ) {
+    throw badRequest("Immediate cash transaction linkage is inconsistent with document");
+  }
+
+  const reversalReason = String(payload.reason || "Manual reversal").trim() || "Manual reversal";
+  const settlementReversal = await reverseCariSettlementTx(tx, {
+    req,
+    payload: {
+      tenantId,
+      settlementBatchId,
+      reason: reversalReason,
+      reversalDate: payload.reversalDate,
+      userId: payload.userId,
+    },
+    assertScopeAccess,
+    options: {
+      allowPostedLinkedCashTransactionId: cashTransactionId,
+    },
+  });
+  const cashReversal = await reverseCashTransactionTx(tx, {
+    req,
+    payload: {
+      tenantId,
+      transactionId: cashTransactionId,
+      reverseReason: reversalReason,
+      reversalDate: payload.reversalDate,
+      userId: payload.userId,
+    },
+    assertScopeAccess,
+    options: {
+      expectedLinkedSettlementBatchId: settlementBatchId,
+    },
+  });
+
+  return {
+    settlement: settlementReversal,
+    cashTransaction: cashReversal,
+  };
+}
+
 export async function reverseCariPostedDocumentById({
   req,
   payload,
@@ -6986,8 +7369,10 @@ export async function reverseCariPostedDocumentById({
 
   const legalEntityId = parsePositiveInt(existing.legal_entity_id);
   assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
-  if (normalizeUpperText(existing.status) !== POSTED_STATUS) {
-    throw badRequest("Only POSTED documents can be reversed");
+  if (!canReversePostedCariDocument(existing)) {
+    throw badRequest(
+      "Only POSTED documents or immediate-cash SETTLED documents can be reversed"
+    );
   }
 
   try {
@@ -7000,8 +7385,10 @@ export async function reverseCariPostedDocumentById({
       if (!original) {
         throw badRequest("Document not found");
       }
-      if (normalizeUpperText(original.status) !== POSTED_STATUS) {
-        throw badRequest("Only POSTED documents can be reversed");
+      if (!canReversePostedCariDocument(original)) {
+        throw badRequest(
+          "Only POSTED documents or immediate-cash SETTLED documents can be reversed"
+        );
       }
 
       const lockedLegalEntityId = parsePositiveInt(original.legal_entity_id);
@@ -7062,6 +7449,13 @@ export async function reverseCariPostedDocumentById({
         direction: original.direction,
         documentId,
         documentLines: originalDocumentLines,
+      });
+      const immediateSettlementReversal = await reverseImmediateCashSettlementPairTx({
+        tx,
+        req,
+        payload,
+        assertScopeAccess,
+        documentRow: original,
       });
 
       const reversalDate =
@@ -7436,6 +7830,10 @@ export async function reverseCariPostedDocumentById({
           reversalDocumentId,
           originalPostedJournalEntryId,
           reversalPostedJournalEntryId: reversalJournalResult.journalEntryId,
+          autoSettlementBatchId:
+            parsePositiveInt(immediateSettlementReversal?.settlement?.original?.id) || null,
+          autoSettlementCashTransactionId:
+            parsePositiveInt(immediateSettlementReversal?.cashTransaction?.original?.id) || null,
         },
       });
 

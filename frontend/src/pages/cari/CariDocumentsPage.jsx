@@ -28,6 +28,7 @@ import {
 } from "../../api/cariCounterparty.js";
 import { listCariPaymentTerms } from "../../api/cariPaymentTerms.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
+import { listCashRegisters } from "../../api/cashAdmin.js";
 import { getJournal, listAccounts } from "../../api/glAdmin.js";
 import { listItemCards } from "../../api/itemCards.js";
 import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
@@ -73,6 +74,7 @@ import {
   DOCUMENT_LINE_STOCK_IMPACT_MODES,
   DOCUMENT_LINE_SUBLEDGER_TYPES,
   DOCUMENT_DIRECTIONS,
+  DOCUMENT_SETTLEMENT_MODES,
   getDocumentLineTotals,
   DOCUMENT_STATUSES,
   normalizeDocumentFormLines,
@@ -1072,11 +1074,21 @@ function buildTemplateSafeDraftForm(input = {}) {
   const baseline = createInitialDraftForm();
   const direction = normalizeText(input?.direction).toUpperCase();
   const documentType = normalizeText(input?.documentType).toUpperCase();
+  const settlementMode = normalizeDocumentSettlementMode(
+    input?.settlementMode ?? input?.settlement_mode
+  );
   const next = {
     legalEntityId: normalizePositiveIntText(input?.legalEntityId),
     operatingUnitId: normalizePositiveIntText(input?.operatingUnitId),
     counterpartyId: normalizePositiveIntText(input?.counterpartyId),
     paymentTermId: normalizePositiveIntText(input?.paymentTermId),
+    settlementMode,
+    settlementCashRegisterId:
+      settlementMode === "IMMEDIATE_CASH"
+        ? normalizePositiveIntText(
+            input?.settlementCashRegisterId ?? input?.settlement_cash_register_id
+          )
+        : "",
     direction: DOCUMENT_DIRECTIONS.includes(direction) ? direction : baseline.direction,
     documentType: DOCUMENT_TYPES.includes(documentType)
       ? documentType
@@ -1135,6 +1147,12 @@ function buildCloneDraftFormFromRow(row, fallbackForm) {
     operatingUnitId: firstDefinedRowValue(row, "operatingUnitId", "operating_unit_id"),
     counterpartyId: firstDefinedRowValue(row, "counterpartyId", "counterparty_id"),
     paymentTermId: firstDefinedRowValue(row, "paymentTermId", "payment_term_id"),
+    settlementMode: firstDefinedRowValue(row, "settlementMode", "settlement_mode"),
+    settlementCashRegisterId: firstDefinedRowValue(
+      row,
+      "settlementCashRegisterId",
+      "settlement_cash_register_id"
+    ),
     direction: firstDefinedRowValue(row, "direction"),
     documentType: firstDefinedRowValue(row, "documentType", "document_type"),
     documentDate: fallbackDocumentDate,
@@ -1225,6 +1243,8 @@ function createInitialDraftForm() {
     operatingUnitId: "",
     counterpartyId: "",
     paymentTermId: "",
+    settlementMode: "ACCRUAL",
+    settlementCashRegisterId: "",
     direction: "AR",
     documentType: "INVOICE",
     documentDate: todayIsoDate(),
@@ -1362,6 +1382,102 @@ function resolveCounterpartyRoleFromDirection(direction) {
   if (normalized === "AR") return "CUSTOMER";
   if (normalized === "AP") return "VENDOR";
   return undefined;
+}
+
+function normalizeDocumentSettlementMode(value) {
+  const normalized = normalizeText(value).toUpperCase();
+  if (DOCUMENT_SETTLEMENT_MODES.includes(normalized)) {
+    return normalized;
+  }
+  return "ACCRUAL";
+}
+
+function isImmediateCashSettlementMode(value) {
+  return normalizeDocumentSettlementMode(value) === "IMMEDIATE_CASH";
+}
+
+function getImmediateCashSettlementLabel(direction, l) {
+  return normalizeDirection(direction) === "AP"
+    ? l("Cash Purchase", "Nakit Alis")
+    : l("Cash Sale", "Nakit Satis");
+}
+
+function formatCashRegisterLookupLabel(register, l) {
+  const code = normalizeText(register?.code);
+  const name = normalizeText(register?.name);
+  const currencyCode = normalizeCurrencyCode(
+    register?.currencyCode ?? register?.currency_code
+  );
+  const sessionMode = normalizeText(
+    register?.sessionMode ?? register?.session_mode
+  ).toUpperCase();
+  const ownershipContextLabel = normalizeText(register?.ownershipContextLabel);
+  const operatingUnitCode = normalizeText(
+    register?.operatingUnitCode ?? register?.operating_unit_code
+  );
+  const normalizedOwnershipContext = ownershipContextLabel
+    ? ownershipContextLabel === "Central / HQ" ||
+      ownershipContextLabel === "Merkez / HQ" ||
+      ownershipContextLabel === "Central" ||
+      ownershipContextLabel === "Merkez"
+      ? l("Central", "Merkez")
+      : ownershipContextLabel.startsWith("OU:")
+        ? ownershipContextLabel
+        : operatingUnitCode
+          ? `OU: ${operatingUnitCode}`
+          : ownershipContextLabel
+    : operatingUnitCode
+      ? `OU: ${operatingUnitCode}`
+      : l("Central", "Merkez");
+  const parts = [];
+  if (code || name) {
+    parts.push([code, name].filter(Boolean).join(" - "));
+  }
+  if (currencyCode) {
+    parts.push(currencyCode);
+  }
+  if (sessionMode) {
+    parts.push(`session=${sessionMode}`);
+  }
+  parts.push(normalizedOwnershipContext);
+  return parts.filter(Boolean).join(" | ") || "-";
+}
+
+function mapCashRegisterLookupOptions(rows = [], l) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      const value = String(toPositiveInt(row?.id) || "").trim();
+      if (!value) {
+        return null;
+      }
+      return {
+        value,
+        label: formatCashRegisterLookupLabel(row, l),
+      };
+    })
+    .filter(Boolean);
+}
+
+function extendCashRegisterOptionsForSelectedValue(options, selectedValue, l) {
+  const normalizedOptions = Array.isArray(options) ? [...options] : [];
+  const selectedId = normalizeText(selectedValue);
+  if (!selectedId) {
+    return normalizedOptions;
+  }
+  const knownValues = new Set(
+    normalizedOptions.map((row) => String(row?.value || "").trim()).filter(Boolean)
+  );
+  if (!knownValues.has(selectedId)) {
+    normalizedOptions.unshift({
+      value: selectedId,
+      label: `Cash register #${selectedId}`,
+      description: l(
+        "Selected value is outside current lookup scope.",
+        "Secili deger guncel arama kapsaminda degil."
+      ),
+    });
+  }
+  return normalizedOptions;
 }
 
 function translateDocumentMutationLineErrorMap(lineErrors, translateMessage) {
@@ -3099,6 +3215,21 @@ export default function CariDocumentsPage() {
         return l("documentType is invalid.", "documentType gecersiz.");
       case "documentDate is required.":
         return l("documentDate is required.", "documentDate zorunludur.");
+      case "settlementMode must be ACCRUAL or IMMEDIATE_CASH":
+        return l(
+          "settlementMode must be ACCRUAL or IMMEDIATE_CASH.",
+          "settlementMode ACCRUAL veya IMMEDIATE_CASH olmali."
+        );
+      case "settlementCashRegisterId is required when settlementMode=IMMEDIATE_CASH":
+        return l(
+          "Cash register is required when immediate cash is selected.",
+          "Aninda nakit secildiginde kasa zorunludur."
+        );
+      case "settlementCashRegisterId requires settlementMode=IMMEDIATE_CASH":
+        return l(
+          "Cash register can only be set when immediate cash is selected.",
+          "Kasa yalnizca aninda nakit secildiginde atanabilir."
+        );
       case "amountTxn must be > 0.":
         return l("amountTxn must be > 0.", "amountTxn 0'dan buyuk olmali.");
       case "amountBase must be > 0.":
@@ -3325,6 +3456,7 @@ export default function CariDocumentsPage() {
   const canReadReports = hasPermission("cari.report.read");
   const canReadCards = hasPermission("cari.card.read");
   const canUpsertCards = hasPermission("cari.card.upsert");
+  const canReadCashRegisters = hasPermission("cash.register.read");
   const canReadItemCards = hasPermission("item.card.read");
   const canReadGlJournals = hasPermission("gl.journal.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
@@ -3363,6 +3495,9 @@ export default function CariDocumentsPage() {
   const [createPaymentTermOptions, setCreatePaymentTermOptions] = useState([]);
   const [createPaymentTermsLoading, setCreatePaymentTermsLoading] = useState(false);
   const [createPaymentTermsError, setCreatePaymentTermsError] = useState("");
+  const [createCashRegisterRows, setCreateCashRegisterRows] = useState([]);
+  const [createCashRegistersLoading, setCreateCashRegistersLoading] = useState(false);
+  const [createCashRegistersError, setCreateCashRegistersError] = useState("");
   const [createOperatingUnitOptions, setCreateOperatingUnitOptions] = useState([]);
   const [createOperatingUnitsLoading, setCreateOperatingUnitsLoading] = useState(false);
   const [createOperatingUnitsError, setCreateOperatingUnitsError] = useState("");
@@ -3421,6 +3556,9 @@ export default function CariDocumentsPage() {
   const [editCounterpartyOptions, setEditCounterpartyOptions] = useState([]);
   const [editCounterpartyLoading, setEditCounterpartyLoading] = useState(false);
   const [editCounterpartyLookupQuery, setEditCounterpartyLookupQuery] = useState("");
+  const [editCashRegisterRows, setEditCashRegisterRows] = useState([]);
+  const [editCashRegistersLoading, setEditCashRegistersLoading] = useState(false);
+  const [editCashRegistersError, setEditCashRegistersError] = useState("");
   const [editOperatingUnitOptions, setEditOperatingUnitOptions] = useState([]);
   const [editOperatingUnitsLoading, setEditOperatingUnitsLoading] = useState(false);
   const [editOperatingUnitsError, setEditOperatingUnitsError] = useState("");
@@ -4581,6 +4719,35 @@ export default function CariDocumentsPage() {
     }
     return rows;
   }, [editForm.operatingUnitId, editOperatingUnitOptions]);
+  const createCashRegisterLookupOptions = useMemo(
+    () =>
+      extendCashRegisterOptionsForSelectedValue(
+        mapCashRegisterLookupOptions(createCashRegisterRows, l),
+        createForm.settlementCashRegisterId,
+        l
+      ),
+    [createCashRegisterRows, createForm.settlementCashRegisterId, l]
+  );
+  const editCashRegisterLookupOptions = useMemo(
+    () =>
+      extendCashRegisterOptionsForSelectedValue(
+        mapCashRegisterLookupOptions(editCashRegisterRows, l),
+        editForm.settlementCashRegisterId,
+        l
+      ),
+    [editCashRegisterRows, editForm.settlementCashRegisterId, l]
+  );
+  const createImmediateCashSelected = isImmediateCashSettlementMode(
+    createForm.settlementMode
+  );
+  const editImmediateCashSelected = isImmediateCashSettlementMode(
+    editForm.settlementMode
+  );
+  const createImmediateCashLabel = getImmediateCashSettlementLabel(
+    createForm.direction,
+    l
+  );
+  const editImmediateCashLabel = getImmediateCashSettlementLabel(editForm.direction, l);
   const createInlineCounterpartyName = normalizeLookupQuery(createCounterpartyLookupQuery);
   const editInlineCounterpartyName = normalizeLookupQuery(editCounterpartyLookupQuery);
   const canInlineCreateCounterpartyInCreateForm = Boolean(
@@ -5347,6 +5514,16 @@ export default function CariDocumentsPage() {
     setCreateInlineCounterpartyMessage("");
   }
 
+  function handleCreateSettlementModeChange(nextMode) {
+    const normalizedMode = normalizeDocumentSettlementMode(nextMode);
+    setCreateForm((previous) => ({
+      ...previous,
+      settlementMode: normalizedMode,
+      settlementCashRegisterId:
+        normalizedMode === "IMMEDIATE_CASH" ? previous.settlementCashRegisterId : "",
+    }));
+  }
+
   function handleCreateLegalEntityChange(nextValue) {
     const normalizedLegalEntityId = nextValue ? String(nextValue) : "";
     setCreateContextDefaultsSuspended(true);
@@ -5360,6 +5537,7 @@ export default function CariDocumentsPage() {
         operatingUnitId: "",
         counterpartyId: "",
         paymentTermId: "",
+        settlementCashRegisterId: "",
       };
     });
     setCreatePaymentTermTouched(false);
@@ -5368,6 +5546,32 @@ export default function CariDocumentsPage() {
     setCreateInlineCounterpartyMessage("");
     setCreateOperatingUnitsError("");
     setCreatePaymentTermsError("");
+  }
+
+  function handleEditSettlementModeChange(nextMode) {
+    const normalizedMode = normalizeDocumentSettlementMode(nextMode);
+    setEditForm((previous) => ({
+      ...previous,
+      settlementMode: normalizedMode,
+      settlementCashRegisterId:
+        normalizedMode === "IMMEDIATE_CASH" ? previous.settlementCashRegisterId : "",
+    }));
+  }
+
+  function handleEditLegalEntityChange(nextValue) {
+    const normalizedLegalEntityId = normalizeText(nextValue);
+    setEditForm((previous) => ({
+      ...previous,
+      legalEntityId: normalizedLegalEntityId,
+      operatingUnitId:
+        normalizeText(previous.legalEntityId) === normalizedLegalEntityId
+          ? previous.operatingUnitId
+          : "",
+      settlementCashRegisterId:
+        normalizeText(previous.legalEntityId) === normalizedLegalEntityId
+          ? previous.settlementCashRegisterId
+          : "",
+    }));
   }
 
   function replaceDraftFormLines(setForm, transformer) {
@@ -6109,6 +6313,50 @@ export default function CariDocumentsPage() {
   }, [canReadCards, createForm.direction, createForm.legalEntityId]);
 
   useEffect(() => {
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    setCreateCashRegistersError("");
+    if (!canReadCashRegisters || !legalEntityId) {
+      setCreateCashRegisterRows([]);
+      setCreateCashRegistersLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadCreateCashRegisters() {
+      setCreateCashRegistersLoading(true);
+      try {
+        const response = await listCashRegisters({
+          legalEntityId,
+          status: "ACTIVE",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setCreateCashRegisterRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCreateCashRegisterRows([]);
+        setCreateCashRegistersError(
+          normalizeApiError(error, l("Failed to load cash registers.", "Kasalar yuklenemedi."))
+        );
+      } finally {
+        if (active) {
+          setCreateCashRegistersLoading(false);
+        }
+      }
+    }
+
+    loadCreateCashRegisters();
+    return () => {
+      active = false;
+    };
+  }, [canReadCashRegisters, createForm.legalEntityId, l]);
+
+  useEffect(() => {
     setTaxCategoryError("");
     if (!canReadOrgTree) {
       setTaxRuleRows([]);
@@ -6405,6 +6653,50 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canReadCards, editForm.direction, editForm.legalEntityId]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    setEditCashRegistersError("");
+    if (!canReadCashRegisters || !legalEntityId) {
+      setEditCashRegisterRows([]);
+      setEditCashRegistersLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadEditCashRegisters() {
+      setEditCashRegistersLoading(true);
+      try {
+        const response = await listCashRegisters({
+          legalEntityId,
+          status: "ACTIVE",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setEditCashRegisterRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEditCashRegisterRows([]);
+        setEditCashRegistersError(
+          normalizeApiError(error, l("Failed to load cash registers.", "Kasalar yuklenemedi."))
+        );
+      } finally {
+        if (active) {
+          setEditCashRegistersLoading(false);
+        }
+      }
+    }
+
+    loadEditCashRegisters();
+    return () => {
+      active = false;
+    };
+  }, [canReadCashRegisters, editForm.legalEntityId, l]);
 
   useEffect(() => {
     const documentId = Number(selectedSnapshot?.id || 0);
@@ -9340,6 +9632,88 @@ export default function CariDocumentsPage() {
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentType} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentType: event.target.value }))} required>{DOCUMENT_TYPES.map((documentType) => <option key={`create-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Date", "Belge Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentDate: event.target.value }))} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Due Date", "Vade Tarihi")} {requiresDueDate(createForm.documentType) ? l("(required for this type)", "(bu tur icin zorunlu)") : l("(optional)", "(opsiyonel)")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.dueDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, dueDate: event.target.value }))} required={requiresDueDate(createForm.documentType)} /></label>
+            <div className="md:col-span-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                {l("Payment", "Odeme")}
+              </p>
+              <div className="mt-2 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {l("Mode", "Mod")}
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                    value={normalizeDocumentSettlementMode(createForm.settlementMode)}
+                    onChange={(event) => handleCreateSettlementModeChange(event.target.value)}
+                    disabled={createSaving}
+                  >
+                    <option value="ACCRUAL">
+                      {l("On Credit (Accrual)", "Vadeli (Tahakkuk)")}
+                    </option>
+                    <option value="IMMEDIATE_CASH">{createImmediateCashLabel}</option>
+                  </select>
+                </label>
+                {createImmediateCashSelected ? (
+                  canReadCashRegisters ? (
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      <label className="block">
+                        {l("Cash Register", "Kasa")}
+                        <Combobox
+                          className="mt-1"
+                          value={createForm.settlementCashRegisterId}
+                          options={createCashRegisterLookupOptions}
+                          loading={createCashRegistersLoading}
+                          disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
+                          placeholder={
+                            toPositiveInt(createForm.legalEntityId)
+                              ? l("Search cash register", "Kasa ara")
+                              : l("Select legal entity first", "Once tuzel kisilik secin")
+                          }
+                          noOptionsText={
+                            toPositiveInt(createForm.legalEntityId)
+                              ? l("No cash registers found.", "Kasa bulunamadi.")
+                              : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                          }
+                          onChange={(nextValue) =>
+                            setCreateForm((prev) => ({
+                              ...prev,
+                              settlementCashRegisterId: nextValue ? String(nextValue) : "",
+                            }))
+                          }
+                        />
+                      </label>
+                      {createCashRegistersError ? (
+                        <p className="mt-1 text-[11px] normal-case text-amber-700">
+                          {createCashRegistersError}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Cash Register ID", "Kasa ID")}
+                      <input
+                        type="number"
+                        min="1"
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                        value={createForm.settlementCashRegisterId}
+                        onChange={(event) =>
+                          setCreateForm((prev) => ({
+                            ...prev,
+                            settlementCashRegisterId: event.target.value,
+                          }))
+                        }
+                        disabled={createSaving}
+                      />
+                    </label>
+                  )
+                ) : (
+                  <p className="text-xs font-normal normal-case text-slate-500 md:self-end">
+                    {l(
+                      "Accrual keeps the current flow: post the document now and settle it later from CARI Settlements.",
+                      "Tahakkuk mevcut akisi korur: belgeyi simdi kayda alin, sonra CARI mahsuplastirmadan kapatin."
+                    )}
+                  </p>
+                )}
+              </div>
+            </div>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Invoice Total (derived)", "Fatura Toplami (turetilmis)")}<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700" value={normalizeOptionalDecimalText(createDocumentFxComputation.resolvedAmountTxn)} readOnly disabled={createSaving} /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Invoice Currency", "Fatura Para Birimi")}<input type="text" maxLength={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase" value={createForm.currencyCode} onChange={(event) => {
               setCreateCurrencyTouched(true);
@@ -10317,7 +10691,7 @@ export default function CariDocumentsPage() {
                 {editError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{editError}</div> : null}
                 {editMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{editMessage}</div> : null}
                 <form className="mt-3 grid gap-2 md:grid-cols-2" onSubmit={handleUpdateDraft}>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Legal Entity ID", "Tuzel Kisilik ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.legalEntityId} onChange={(event) => setEditForm((prev) => ({ ...prev, legalEntityId: event.target.value, operatingUnitId: normalizeText(prev.legalEntityId) === normalizeText(event.target.value) ? prev.operatingUnitId : "" }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Legal Entity ID", "Tuzel Kisilik ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.legalEntityId} onChange={(event) => handleEditLegalEntityChange(event.target.value)} disabled={!canEditOrCancelSelected || editSaving} /></label>
                   {canReadOrgTree ? (
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                       <label className="block">
@@ -10411,6 +10785,92 @@ export default function CariDocumentsPage() {
                   ) : null}
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.documentType} onChange={(event) => setEditForm((prev) => ({ ...prev, documentType: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving}>{DOCUMENT_TYPES.map((documentType) => <option key={`edit-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Due Date", "Vade Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.dueDate} onChange={(event) => setEditForm((prev) => ({ ...prev, dueDate: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} required={requiresDueDate(editForm.documentType)} /></label>
+                  <div className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                      {l("Payment", "Odeme")}
+                    </p>
+                    <div className="mt-2 grid gap-3 md:grid-cols-2">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Mode", "Mod")}
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                          value={normalizeDocumentSettlementMode(editForm.settlementMode)}
+                          onChange={(event) => handleEditSettlementModeChange(event.target.value)}
+                          disabled={!canEditOrCancelSelected || editSaving}
+                        >
+                          <option value="ACCRUAL">
+                            {l("On Credit (Accrual)", "Vadeli (Tahakkuk)")}
+                          </option>
+                          <option value="IMMEDIATE_CASH">{editImmediateCashLabel}</option>
+                        </select>
+                      </label>
+                      {editImmediateCashSelected ? (
+                        canReadCashRegisters ? (
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                            <label className="block">
+                              {l("Cash Register", "Kasa")}
+                              <Combobox
+                                className="mt-1"
+                                value={editForm.settlementCashRegisterId}
+                                options={editCashRegisterLookupOptions}
+                                loading={editCashRegistersLoading}
+                                disabled={
+                                  !canEditOrCancelSelected ||
+                                  !toPositiveInt(editForm.legalEntityId) ||
+                                  editSaving
+                                }
+                                placeholder={
+                                  toPositiveInt(editForm.legalEntityId)
+                                    ? l("Search cash register", "Kasa ara")
+                                    : l("Select legal entity first", "Once tuzel kisilik secin")
+                                }
+                                noOptionsText={
+                                  toPositiveInt(editForm.legalEntityId)
+                                    ? l("No cash registers found.", "Kasa bulunamadi.")
+                                    : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                                }
+                                onChange={(nextValue) =>
+                                  setEditForm((prev) => ({
+                                    ...prev,
+                                    settlementCashRegisterId: nextValue ? String(nextValue) : "",
+                                  }))
+                                }
+                              />
+                            </label>
+                            {editCashRegistersError ? (
+                              <p className="mt-1 text-[11px] normal-case text-amber-700">
+                                {editCashRegistersError}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                            {l("Cash Register ID", "Kasa ID")}
+                            <input
+                              type="number"
+                              min="1"
+                              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                              value={editForm.settlementCashRegisterId}
+                              onChange={(event) =>
+                                setEditForm((prev) => ({
+                                  ...prev,
+                                  settlementCashRegisterId: event.target.value,
+                                }))
+                              }
+                              disabled={!canEditOrCancelSelected || editSaving}
+                            />
+                          </label>
+                        )
+                      ) : (
+                        <p className="text-xs font-normal normal-case text-slate-500 md:self-end">
+                          {l(
+                            "Accrual keeps the current flow: post the document now and settle it later from CARI Settlements.",
+                            "Tahakkuk mevcut akisi korur: belgeyi simdi kayda alin, sonra CARI mahsuplastirmadan kapatin."
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                   <div className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
                       {l("Amounts + Currency", "Tutar + Para Birimi")}

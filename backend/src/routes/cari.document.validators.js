@@ -29,6 +29,7 @@ const DOCUMENT_STATUS_VALUES = [
   "PARTIALLY_SETTLED",
   "SETTLED",
 ];
+const SETTLEMENT_MODE_VALUES = ["ACCRUAL", "IMMEDIATE_CASH"];
 const LINE_KIND_VALUES = ["STANDARD", "COMMENT", "ROUNDING", "ADJUSTMENT", "OTHER"];
 const SUBLEDGER_TYPE_VALUES = ["NONE", "STOCK", "FIXED_ASSET"];
 const FIXED_ASSET_MODE_VALUES = [
@@ -783,6 +784,21 @@ export function parseDocumentCreateInput(req) {
   const currencyCode = normalizeCurrencyCode(req.body?.currencyCode, "currencyCode");
   const fxRateInput = parseOptionalDecimal(req.body?.fxRate, "fxRate");
   const fxRate = fxRateInput === undefined ? null : fxRateInput;
+  const settlementMode =
+    parseOptionalEnumField(
+      pickPrimaryOrAlias(req.body?.settlementMode, req.body?.settlement_mode),
+      "settlementMode",
+      SETTLEMENT_MODE_VALUES
+    ) || "ACCRUAL";
+  const settlementCashRegisterIdInput = parseOptionalPositiveIntField(
+    pickPrimaryOrAlias(
+      req.body?.settlementCashRegisterId,
+      req.body?.settlement_cash_register_id
+    ),
+    "settlementCashRegisterId"
+  );
+  const settlementCashRegisterId =
+    settlementCashRegisterIdInput === undefined ? null : settlementCashRegisterIdInput;
 
   return {
     tenantId,
@@ -799,6 +815,8 @@ export function parseDocumentCreateInput(req) {
     amountBase,
     currencyCode,
     fxRate,
+    settlementMode,
+    settlementCashRegisterId,
     lines: lines === undefined ? null : lines,
   };
 }
@@ -857,6 +875,18 @@ export function parseDocumentUpdateInput(req) {
       ? normalizeCurrencyCode(req.body?.currencyCode, "currencyCode")
       : undefined;
   const fxRate = parseOptionalDecimal(req.body?.fxRate, "fxRate");
+  const settlementMode = parseOptionalEnumField(
+    pickPrimaryOrAlias(req.body?.settlementMode, req.body?.settlement_mode),
+    "settlementMode",
+    SETTLEMENT_MODE_VALUES
+  );
+  const settlementCashRegisterId = parseOptionalPositiveIntField(
+    pickPrimaryOrAlias(
+      req.body?.settlementCashRegisterId,
+      req.body?.settlement_cash_register_id
+    ),
+    "settlementCashRegisterId"
+  );
 
   const hasAnyMutationField =
     legalEntityId !== undefined ||
@@ -871,7 +901,9 @@ export function parseDocumentUpdateInput(req) {
     amountTxn !== undefined ||
     amountBase !== undefined ||
     currencyCode !== undefined ||
-    fxRate !== undefined;
+    fxRate !== undefined ||
+    settlementMode !== undefined ||
+    settlementCashRegisterId !== undefined;
 
   if (!hasAnyMutationField) {
     throw badRequest("At least one updatable field is required");
@@ -895,6 +927,8 @@ export function parseDocumentUpdateInput(req) {
     amountBase,
     currencyCode,
     fxRate,
+    settlementMode,
+    settlementCashRegisterId,
   };
 }
 

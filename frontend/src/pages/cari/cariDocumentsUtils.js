@@ -8,6 +8,7 @@ export const DOCUMENT_STATUSES = [
 ];
 
 export const DOCUMENT_DIRECTIONS = ["AR", "AP"];
+export const DOCUMENT_SETTLEMENT_MODES = ["ACCRUAL", "IMMEDIATE_CASH"];
 
 export const DOCUMENT_TYPES = [
   "INVOICE",
@@ -46,6 +47,10 @@ function normalizeCurrencyCode(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function normalizeSettlementMode(value, fallbackValue = "ACCRUAL") {
+  return normalizeEnum(value, DOCUMENT_SETTLEMENT_MODES, fallbackValue);
 }
 
 function roundDocumentAmount(value) {
@@ -355,6 +360,13 @@ export function mapDocumentRowToForm(row) {
     operatingUnitId: String(row?.operatingUnitId ?? row?.operating_unit_id ?? ""),
     counterpartyId: String(row?.counterpartyId ?? row?.counterparty_id ?? ""),
     paymentTermId: String(row?.paymentTermId ?? row?.payment_term_id ?? ""),
+    settlementMode: normalizeSettlementMode(
+      row?.settlementMode ?? row?.settlement_mode,
+      "ACCRUAL"
+    ),
+    settlementCashRegisterId: String(
+      row?.settlementCashRegisterId ?? row?.settlement_cash_register_id ?? ""
+    ),
     direction: String(row?.direction || "AR"),
     documentType: String(row?.documentType ?? row?.document_type ?? "INVOICE"),
     documentDate: String(row?.documentDate ?? row?.document_date ?? ""),
@@ -433,6 +445,8 @@ export function buildDocumentMutationPayload(form, options = {}) {
   const operatingUnitId = toPositiveInt(form.operatingUnitId);
   const counterpartyId = toPositiveInt(form.counterpartyId);
   const paymentTermId = toPositiveInt(form.paymentTermId);
+  const settlementMode = normalizeSettlementMode(form.settlementMode);
+  const settlementCashRegisterId = toPositiveInt(form.settlementCashRegisterId);
   const amountTxn = toOptionalNumber(form.amountTxn);
   const fxComputation = getDocumentFxComputation(form, options);
   const direction = String(form.direction || "").trim().toUpperCase();
@@ -492,6 +506,9 @@ export function buildDocumentMutationPayload(form, options = {}) {
     operatingUnitId: operatingUnitId || undefined,
     counterpartyId,
     paymentTermId,
+    settlementMode,
+    settlementCashRegisterId:
+      settlementMode === "IMMEDIATE_CASH" ? settlementCashRegisterId || undefined : undefined,
     direction,
     documentType,
     documentDate,
@@ -509,6 +526,9 @@ export function validateDocumentMutationForm(form, options = {}) {
   const fxComputation = getDocumentFxComputation(form, options);
   const normalizedLines = normalizeDocumentFormLines(form?.lines);
   const rawFxRate = toOptionalNumber(form.fxRate);
+  const rawSettlementMode = String(form?.settlementMode || "")
+    .trim()
+    .toUpperCase();
   const errors = [];
   const generalErrors = [];
   const lineErrors = new Map();
@@ -548,6 +568,17 @@ export function validateDocumentMutationForm(form, options = {}) {
   }
   if (!payload.documentDate) {
     pushGeneralError("documentDate is required.");
+  }
+  if (rawSettlementMode && !DOCUMENT_SETTLEMENT_MODES.includes(rawSettlementMode)) {
+    pushGeneralError("settlementMode must be ACCRUAL or IMMEDIATE_CASH");
+  }
+  if (
+    payload.settlementMode === "IMMEDIATE_CASH" &&
+    !payload.settlementCashRegisterId
+  ) {
+    pushGeneralError(
+      "settlementCashRegisterId is required when settlementMode=IMMEDIATE_CASH"
+    );
   }
   if (requiresDueDate(payload.documentType) && !payload.dueDate) {
     pushGeneralError(`dueDate is required for documentType=${payload.documentType}.`);

@@ -4346,11 +4346,17 @@ export async function resolveCariSettlementScope(settlementBatchId, tenantId) {
 }
 
 export const CARI_SETTLEMENT_FOLLOW_UP_RISKS = FOLLOW_UP_RISKS;
-export async function applyCariSettlement({
-  req,
-  payload,
-  assertScopeAccess,
-}) {
+export async function applyCariSettlementTx(
+  tx,
+  {
+    req,
+    payload,
+    assertScopeAccess,
+  }
+) {
+  if (!tx || typeof tx.query !== "function") {
+    throw new Error("applyCariSettlementTx requires a transaction object with query()");
+  }
   const tenantId = payload.tenantId;
   const legalEntityId = payload.legalEntityId;
   const counterpartyId = payload.counterpartyId;
@@ -4430,67 +4436,17 @@ export async function applyCariSettlement({
   );
   const settlementCurrencyCode = normalizeUpperText(payload.currencyCode);
   await assertCurrencyExists(settlementCurrencyCode, "currencyCode");
-
-  const existingBatchIdByApply = await findSettlementBatchIdByApplyIdempotency({
+  const counterparty = await fetchCounterpartyRow({
     tenantId,
     legalEntityId,
-    applyIdempotencyKey: idempotencyKey,
+    counterpartyId,
+    runQuery: tx.query,
   });
-  const existingBatchIdByBankApply = await findSettlementBatchIdByBankApplyIdempotency({
-    tenantId,
-    legalEntityId,
-    bankApplyIdempotencyKey,
-  });
-  const existingBatchIdByEventUid = await findSettlementBatchIdByIntegrationEventUid({
-    tenantId,
-    legalEntityId,
-    integrationEventUid,
-  });
-  const existingBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
-    tenantId,
-    legalEntityId,
-    cashTransactionId: effectiveCashTransactionId,
-  });
-  const existingBatchIdCandidates = [
-    existingBatchIdByApply,
-    existingBatchIdByBankApply,
-    existingBatchIdByEventUid,
-    existingBatchIdByCashTxn,
-  ].filter(Boolean);
-  if (new Set(existingBatchIdCandidates).size > 1) {
-    throw badRequest(
-      "idempotencyKey, bankApplyIdempotencyKey, integrationEventUid, and cashTransactionId map to different settlements"
-    );
-  }
-  const existingBatchId = existingBatchIdCandidates[0] || null;
-  if (existingBatchId) {
-    const replay = await loadSettlementResult({
-      tenantId,
-      settlementBatchId: existingBatchId,
-      includeApplyAudit: true,
-    });
-    const replayWithCash = await enrichSettlementResultWithCashTransaction({
-      tenantId,
-      result: replay,
-    });
-    return {
-      ...replayWithCash,
-      idempotentReplay: true,
-      followUpRisks: FOLLOW_UP_RISKS,
-    };
+  if (!counterparty) {
+    throw badRequest("counterpartyId must belong to legalEntityId");
   }
 
-      const counterparty = await fetchCounterpartyRow({
-        tenantId,
-        legalEntityId,
-        counterpartyId,
-      });
-      if (!counterparty) {
-        throw badRequest("counterpartyId must belong to legalEntityId");
-      }
-
-      try {
-        const created = await withTransaction(async (tx) => {
+  try {
       const replayBatchIdByApply = await findSettlementBatchIdByApplyIdempotency({
         tenantId,
         legalEntityId,
@@ -5944,9 +5900,6 @@ export async function applyCariSettlement({
           settlementFxFallbackMaxDays: fxPolicy.fallbackMaxDays,
         },
       };
-    });
-
-    return created;
   } catch (err) {
     const duplicateApplyIdempotency = isDuplicateKeyError(err, "uk_cari_alloc_apply_idempo");
     const duplicateBankApplyIdempotency = isDuplicateKeyError(err, "uk_cari_alloc_bank_apply_idempo");
@@ -5985,21 +5938,25 @@ export async function applyCariSettlement({
         tenantId,
         legalEntityId,
         applyIdempotencyKey: idempotencyKey,
+        runQuery: tx.query,
       });
       const replayBatchIdByBankApply = await findSettlementBatchIdByBankApplyIdempotency({
         tenantId,
         legalEntityId,
         bankApplyIdempotencyKey,
+        runQuery: tx.query,
       });
       const replayBatchIdByEventUid = await findSettlementBatchIdByIntegrationEventUid({
         tenantId,
         legalEntityId,
         integrationEventUid,
+        runQuery: tx.query,
       });
       const replayBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
         tenantId,
         legalEntityId,
         cashTransactionId: effectiveCashTransactionId,
+        runQuery: tx.query,
       });
       const replayBatchCandidates = [
         replayBatchIdByApply,
@@ -6018,10 +5975,12 @@ export async function applyCariSettlement({
           tenantId,
           settlementBatchId: replayBatchId,
           includeApplyAudit: true,
+          runQuery: tx.query,
         });
         const replayWithCash = await enrichSettlementResultWithCashTransaction({
           tenantId,
           result: replay,
+          runQuery: tx.query,
         });
         return {
           ...replayWithCash,
@@ -6045,6 +6004,20 @@ export async function applyCariSettlement({
     }
     throw err;
   }
+}
+
+export async function applyCariSettlement({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  return withTransaction(async (tx) =>
+    applyCariSettlementTx(tx, {
+      req,
+      payload,
+      assertScopeAccess,
+    })
+  );
 }
 
 export async function attachCariBankReference({
@@ -6409,81 +6382,89 @@ export async function attachCariBankReference({
   }
 }
 
-export async function reverseCariSettlementById({
-  req,
-  payload,
-  assertScopeAccess,
-}) {
+async function reverseCariSettlementCore(
+  tx,
+  {
+    req,
+    payload,
+    assertScopeAccess,
+    options = {},
+  }
+) {
+  if (!tx?.query || typeof tx.query !== "function") {
+    throw new Error("reverseCariSettlementTx requires a transaction object with query()");
+  }
   const tenantId = payload.tenantId;
   const settlementBatchId = payload.settlementBatchId;
   const reason = toNullableString(payload.reason, 255) || "Manual settlement reversal";
   const reversalDate = payload.reversalDate
     ? normalizeDateInput(payload.reversalDate, "reversalDate")
     : toDateOnlyString(new Date(), "reversalDate");
+  const allowPostedLinkedCashTransactionId =
+    parsePositiveInt(options?.allowPostedLinkedCashTransactionId) || null;
 
-  const existing = await fetchSettlementBatchRow({
+  const original = await fetchSettlementBatchRow({
     tenantId,
     settlementBatchId,
+    runQuery: tx.query,
+    forUpdate: true,
   });
-  if (!existing) {
+  if (!original) {
     throw badRequest("Settlement batch not found");
   }
-  const legalEntityId = parsePositiveInt(existing.legal_entity_id);
-  assertScopeAccess(req, "legal_entity", legalEntityId, "settlementBatchId");
-  if (normalizeUpperText(existing.status) !== SETTLEMENT_STATUS_POSTED) {
+  const legalEntityId = parsePositiveInt(original.legal_entity_id);
+  if (typeof assertScopeAccess === "function") {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "settlementBatchId");
+  }
+  if (normalizeUpperText(original.status) !== SETTLEMENT_STATUS_POSTED) {
     throw badRequest("Only POSTED settlements can be reversed");
   }
+  const lockedLegalEntityId = parsePositiveInt(original.legal_entity_id);
+  await assertNoPostedDownstreamCrossContextSettlements({
+    tenantId,
+    legalEntityId: lockedLegalEntityId,
+    settlementBatchId,
+    runQuery: tx.query,
+    forUpdate: true,
+  });
+  const originalJournalEntryId = parsePositiveInt(original.posted_journal_entry_id);
+  const linkedCashTransactionId = parsePositiveInt(original.cash_transaction_id);
+  let linkedCashTxn = null;
+  if (linkedCashTransactionId) {
+    linkedCashTxn = await fetchCashTransactionForSettlementLink({
+      tenantId,
+      cashTransactionId: linkedCashTransactionId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    const canBypassPostedCashGuard = Boolean(
+      linkedCashTxn &&
+        allowPostedLinkedCashTransactionId &&
+        parsePositiveInt(linkedCashTxn.id) === allowPostedLinkedCashTransactionId &&
+        parsePositiveInt(linkedCashTxn.linked_cari_settlement_batch_id) === settlementBatchId
+    );
+    if (
+      linkedCashTxn &&
+      normalizeUpperText(linkedCashTxn.status) === "POSTED" &&
+      !canBypassPostedCashGuard
+    ) {
+      throw badRequest(
+        `Settlement cannot be reversed while linked cash transaction ${linkedCashTransactionId} is POSTED. Reverse cash transaction first.`
+      );
+    }
+  }
+  const hasSettlementJournal =
+    Boolean(originalJournalEntryId) &&
+    originalJournalEntryId !== parsePositiveInt(linkedCashTxn?.posted_journal_entry_id);
 
-  try {
-    const reversed = await withTransaction(async (tx) => {
-      const original = await fetchSettlementBatchRow({
-        tenantId,
-        settlementBatchId,
-        runQuery: tx.query,
-        forUpdate: true,
-      });
-      if (!original) {
-        throw badRequest("Settlement batch not found");
-      }
-      if (normalizeUpperText(original.status) !== SETTLEMENT_STATUS_POSTED) {
-        throw badRequest("Only POSTED settlements can be reversed");
-      }
-      const lockedLegalEntityId = parsePositiveInt(original.legal_entity_id);
-      await assertNoPostedDownstreamCrossContextSettlements({
-        tenantId,
-        legalEntityId: lockedLegalEntityId,
-        settlementBatchId,
-        runQuery: tx.query,
-        forUpdate: true,
-      });
-      const originalJournalEntryId = parsePositiveInt(original.posted_journal_entry_id);
-      const linkedCashTransactionId = parsePositiveInt(original.cash_transaction_id);
-      let linkedCashTxn = null;
-      if (linkedCashTransactionId) {
-        linkedCashTxn = await fetchCashTransactionForSettlementLink({
-          tenantId,
-          cashTransactionId: linkedCashTransactionId,
-          runQuery: tx.query,
-          forUpdate: true,
-        });
-        if (linkedCashTxn && normalizeUpperText(linkedCashTxn.status) === "POSTED") {
-          throw badRequest(
-            `Settlement cannot be reversed while linked cash transaction ${linkedCashTransactionId} is POSTED. Reverse cash transaction first.`
-          );
-        }
-      }
-      const hasSettlementJournal =
-        Boolean(originalJournalEntryId) &&
-        originalJournalEntryId !== parsePositiveInt(linkedCashTxn?.posted_journal_entry_id);
-
-      const existingReversalBatchId = await findReversalSettlementBatchId({
-        tenantId,
-        originalSettlementBatchId: settlementBatchId,
-        runQuery: tx.query,
-      });
-      if (existingReversalBatchId) {
-        throw badRequest("Settlement is already reversed");
-      }
+  const existingReversalBatchId = await findReversalSettlementBatchId({
+    tenantId,
+    originalSettlementBatchId: settlementBatchId,
+    runQuery: tx.query,
+  });
+  if (existingReversalBatchId) {
+    throw badRequest("Settlement is already reversed");
+  }
 
       const allocations = await fetchSettlementAllocationsByBatchId({
         tenantId,
@@ -6570,17 +6551,21 @@ export async function reverseCariSettlementById({
           lockedOpenItem.currency_code,
           minorUnitsByCurrency
         );
-        if (nextResidualTxn >= originalAmountTxn - documentTolerance - AMOUNT_EPSILON) {
-          nextResidualTxn = originalAmountTxn;
-          nextResidualBase = originalAmountBase;
-        }
+        const baseTolerance = resolveCurrencyTolerance(
+          functionalCurrencyCode || lockedOpenItem.currency_code,
+          minorUnitsByCurrency
+        );
         if (
-          nextResidualTxn > originalAmountTxn + AMOUNT_EPSILON ||
-          nextResidualBase > originalAmountBase + AMOUNT_EPSILON
+          nextResidualTxn > originalAmountTxn + documentTolerance + AMOUNT_EPSILON ||
+          nextResidualBase > originalAmountBase + baseTolerance + AMOUNT_EPSILON
         ) {
           throw badRequest(
             `Cannot reverse settlement because open item ${openItemId} has progressed beyond reversible state`
           );
+        }
+        if (nextResidualTxn >= originalAmountTxn - documentTolerance - AMOUNT_EPSILON) {
+          nextResidualTxn = originalAmountTxn;
+          nextResidualBase = originalAmountBase;
         }
         const nextSettledTxn = roundAmount(originalAmountTxn - nextResidualTxn);
         const nextSettledBase = roundAmount(originalAmountBase - nextResidualBase);
@@ -7021,25 +7006,56 @@ export async function reverseCariSettlementById({
         },
       });
 
-      const originalResult = await loadSettlementResult({
-        tenantId,
-        settlementBatchId,
-        runQuery: tx.query,
-      });
-      const reversalResult = await loadSettlementResult({
-        tenantId,
-        settlementBatchId: reversalSettlementBatchId,
-        runQuery: tx.query,
-      });
+  const originalResult = await loadSettlementResult({
+    tenantId,
+    settlementBatchId,
+    runQuery: tx.query,
+  });
+  const reversalResult = await loadSettlementResult({
+    tenantId,
+    settlementBatchId: reversalSettlementBatchId,
+    runQuery: tx.query,
+  });
 
-      return {
-        row: reversalResult.row,
-        original: originalResult.row,
-        journal: reversalResult.journal,
-        idempotentReplay: false,
-        followUpRisks: FOLLOW_UP_RISKS,
-      };
-    });
+  return {
+    row: reversalResult.row,
+    original: originalResult.row,
+    journal: reversalResult.journal,
+    idempotentReplay: false,
+    followUpRisks: FOLLOW_UP_RISKS,
+  };
+}
+
+export async function reverseCariSettlementTx(
+  tx,
+  {
+    req,
+    payload,
+    assertScopeAccess,
+    options = {},
+  }
+) {
+  return reverseCariSettlementCore(tx, {
+    req,
+    payload,
+    assertScopeAccess,
+    options,
+  });
+}
+
+export async function reverseCariSettlementById({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  try {
+    const reversed = await withTransaction(async (tx) =>
+      reverseCariSettlementCore(tx, {
+        req,
+        payload,
+        assertScopeAccess,
+      })
+    );
 
     return reversed;
   } catch (err) {
