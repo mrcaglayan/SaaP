@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closePool, query } from "../src/db.js";
+import { resolveOrPrepareSmokeContext } from "./_smoke-context.js";
 import {
   createCariDraftDocument,
   postCariDocumentById,
@@ -157,52 +158,7 @@ function buildState(stamp) {
 }
 
 async function resolveSmokeContext() {
-  const result = await query(
-    `SELECT
-        le.tenant_id,
-        le.id AS legal_entity_id,
-        le.functional_currency_code
-       FROM legal_entities le
-      WHERE EXISTS (
-              SELECT 1
-                FROM roles r
-               WHERE r.tenant_id = le.tenant_id
-                 AND r.code = 'TenantAdmin'
-            )
-        AND EXISTS (
-              SELECT 1
-                FROM charts_of_accounts coa
-               WHERE coa.tenant_id = le.tenant_id
-                 AND coa.legal_entity_id = le.id
-                 AND coa.scope = 'LEGAL_ENTITY'
-            )
-        AND EXISTS (
-              SELECT 1
-                FROM books b
-                JOIN fiscal_periods fp
-                  ON fp.calendar_id = b.calendar_id
-                LEFT JOIN period_statuses ps
-                  ON ps.book_id = b.id
-                 AND ps.fiscal_period_id = fp.id
-               WHERE b.tenant_id = le.tenant_id
-                 AND b.legal_entity_id = le.id
-                 AND b.book_type = 'LOCAL'
-                 AND fp.is_adjustment = 0
-                 AND COALESCE(ps.status, 'OPEN') = 'OPEN'
-            )
-      ORDER BY CASE WHEN le.tenant_id = 1 THEN 0 ELSE 1 END,
-               le.tenant_id ASC,
-               le.id ASC
-      LIMIT 1`
-  );
-  const row = result.rows?.[0] || null;
-  assert(row, "No smoke-ready legal entity found for SL24");
-  return {
-    tenantId: toPositiveInt(row.tenant_id),
-    legalEntityId: toPositiveInt(row.legal_entity_id),
-    currencyCode:
-      normalizeUpper(row.functional_currency_code).slice(0, 3) || "USD",
-  };
+  return resolveOrPrepareSmokeContext({ prefix: "SL24" });
 }
 
 async function resolveLegalEntityCoaId(tenantId, legalEntityId, state) {

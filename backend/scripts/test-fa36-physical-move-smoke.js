@@ -6,6 +6,7 @@
   import { fileURLToPath } from "node:url";
   import { setTimeout as sleep } from "node:timers/promises";
   import { closePool, query } from "../src/db.js";
+  import { resolveOrPrepareSmokeContext } from "./_smoke-context.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BACKEND_ROOT = path.resolve(__dirname, "..");
@@ -20,8 +21,8 @@ const ENV_TENANT_ID = parseOptionalPositiveInt(process.env.FA36_SMOKE_TENANT_ID)
 const ENV_LEGAL_ENTITY_ID = parseOptionalPositiveInt(
   process.env.FA36_SMOKE_LEGAL_ENTITY_ID
 );
-let TENANT_ID = ENV_TENANT_ID || 1;
-let LEGAL_ENTITY_ID = ENV_LEGAL_ENTITY_ID || 1;
+let TENANT_ID = ENV_TENANT_ID || 0;
+let LEGAL_ENTITY_ID = ENV_LEGAL_ENTITY_ID || 0;
 const KEEP_ARTIFACTS = parseBooleanEnv(
   process.env.FA36_SMOKE_KEEP_ARTIFACTS,
   true
@@ -227,85 +228,7 @@ async function resolveTenantAdminRoleId(tenantId) {
 }
 
 async function resolveSmokeContext() {
-  if (ENV_TENANT_ID && ENV_LEGAL_ENTITY_ID) {
-    return { tenantId: ENV_TENANT_ID, legalEntityId: ENV_LEGAL_ENTITY_ID };
-  }
-
-  const preferred = await query(
-    `SELECT le.tenant_id,
-            le.id AS legal_entity_id
-       FROM legal_entities le
-      WHERE le.tenant_id = 1
-        AND EXISTS (
-              SELECT 1
-                FROM roles r
-               WHERE r.tenant_id = le.tenant_id
-                 AND r.code = 'TenantAdmin'
-            )
-        AND EXISTS (
-              SELECT 1
-                FROM operating_units ou
-               WHERE ou.tenant_id = le.tenant_id
-                 AND ou.legal_entity_id = le.id
-                 AND ou.status = 'ACTIVE'
-            )
-        AND EXISTS (
-              SELECT 1
-                FROM accounts a
-                JOIN charts_of_accounts c ON c.id = a.coa_id
-               WHERE c.tenant_id = le.tenant_id
-                 AND c.legal_entity_id = le.id
-                 AND c.scope = 'LEGAL_ENTITY'
-                 AND a.account_type = 'ASSET'
-                 AND a.is_active = 1
-                 AND a.allow_posting = 1
-            )
-        AND EXISTS (
-              SELECT 1
-                FROM accounts a
-                JOIN charts_of_accounts c ON c.id = a.coa_id
-               WHERE c.tenant_id = le.tenant_id
-                 AND c.legal_entity_id = le.id
-                 AND c.scope = 'LEGAL_ENTITY'
-                 AND a.account_type = 'EXPENSE'
-                 AND a.is_active = 1
-                 AND a.allow_posting = 1
-            )
-        AND EXISTS (
-              SELECT 1
-                FROM accounts a
-                JOIN charts_of_accounts c ON c.id = a.coa_id
-               WHERE c.tenant_id = le.tenant_id
-                 AND c.legal_entity_id = le.id
-                 AND c.scope = 'LEGAL_ENTITY'
-                 AND a.account_type = 'REVENUE'
-                 AND a.is_active = 1
-                 AND a.allow_posting = 1
-            )
-        AND EXISTS (
-              SELECT 1
-                FROM books b
-                JOIN fiscal_periods fp ON fp.calendar_id = b.calendar_id
-                LEFT JOIN period_statuses ps
-                  ON ps.book_id = b.id
-                 AND ps.fiscal_period_id = fp.id
-               WHERE b.tenant_id = le.tenant_id
-                 AND b.legal_entity_id = le.id
-                 AND b.book_type = 'LOCAL'
-                 AND fp.is_adjustment = 0
-                 AND COALESCE(ps.status, 'OPEN') = 'OPEN'
-            )
-      ORDER BY le.id ASC
-      LIMIT 1`,
-    []
-  );
-
-  const row = preferred.rows?.[0];
-  assert(row, "No usable FA36 smoke context found in DB");
-  return {
-    tenantId: Number(row.tenant_id),
-    legalEntityId: Number(row.legal_entity_id),
-  };
+  return resolveOrPrepareSmokeContext({ prefix: "FA36" });
 }
 
 async function resolveActiveOperatingUnitIds(tenantId, legalEntityId) {

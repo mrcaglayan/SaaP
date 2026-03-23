@@ -24,6 +24,7 @@ import {
 import {
   createAssetsFromCariDocumentLineFa06,
 } from "../src/services/fixed-assets.service.js";
+import { resolveOrPrepareSmokeContext } from "./_smoke-context.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const KEEP_ARTIFACTS = parseBooleanEnv(
@@ -78,61 +79,7 @@ async function resolveTenantAdminRoleId(tenantId) {
 }
 
 async function resolveSmokeContext() {
-  const result = await query(
-    `SELECT
-        le.tenant_id,
-        le.id AS legal_entity_id,
-        le.functional_currency_code
-      FROM legal_entities le
-      WHERE EXISTS (
-              SELECT 1 FROM roles r
-               WHERE r.tenant_id = le.tenant_id AND r.code = 'TenantAdmin'
-            )
-        AND EXISTS (
-              SELECT 1 FROM operating_units ou
-               WHERE ou.tenant_id = le.tenant_id AND ou.legal_entity_id = le.id AND ou.status = 'ACTIVE'
-            )
-        AND EXISTS (
-              SELECT 1 FROM accounts a
-                JOIN charts_of_accounts c ON c.id = a.coa_id
-               WHERE c.tenant_id = le.tenant_id AND c.legal_entity_id = le.id
-                 AND c.scope = 'LEGAL_ENTITY' AND a.account_type = 'ASSET'
-                 AND a.is_active = 1 AND a.allow_posting = 1
-            )
-        AND EXISTS (
-              SELECT 1 FROM accounts a
-                JOIN charts_of_accounts c ON c.id = a.coa_id
-               WHERE c.tenant_id = le.tenant_id AND c.legal_entity_id = le.id
-                 AND c.scope = 'LEGAL_ENTITY' AND a.account_type = 'EXPENSE'
-                 AND a.is_active = 1 AND a.allow_posting = 1
-            )
-        AND EXISTS (
-              SELECT 1 FROM accounts a
-                JOIN charts_of_accounts c ON c.id = a.coa_id
-               WHERE c.tenant_id = le.tenant_id AND c.legal_entity_id = le.id
-                 AND c.scope = 'LEGAL_ENTITY' AND a.account_type = 'REVENUE'
-                 AND a.is_active = 1 AND a.allow_posting = 1
-            )
-        AND EXISTS (
-              SELECT 1 FROM books b
-                JOIN fiscal_periods fp ON fp.calendar_id = b.calendar_id
-                LEFT JOIN period_statuses ps
-                  ON ps.book_id = b.id AND ps.fiscal_period_id = fp.id
-               WHERE b.tenant_id = le.tenant_id AND b.legal_entity_id = le.id
-                 AND b.book_type = 'LOCAL' AND fp.is_adjustment = 0
-                 AND COALESCE(ps.status, 'OPEN') = 'OPEN'
-            )
-      ORDER BY CASE WHEN le.tenant_id = 1 THEN 0 ELSE 1 END,
-               le.tenant_id ASC, le.id ASC
-      LIMIT 1`
-  );
-  const row = result.rows?.[0];
-  assert(row, "No smoke-ready legal entity found");
-  return {
-    tenantId: Number(row.tenant_id),
-    legalEntityId: Number(row.legal_entity_id),
-    currencyCode: String(row.functional_currency_code || "").trim().toUpperCase() || "USD",
-  };
+  return resolveOrPrepareSmokeContext({ prefix: "FA27" });
 }
 
 async function resolveActiveOperatingUnitIds(tenantId, legalEntityId) {
