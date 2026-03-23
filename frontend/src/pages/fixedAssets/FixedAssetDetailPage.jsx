@@ -65,7 +65,7 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-const CARI_DOCUMENTS_ROUTE = "/app/cari-belgeler";
+const CARI_DOCUMENTS_ROUTE = "/app/satis-faturalari";
 const SALE_ELIGIBLE_STATUSES = new Set([
   "ACTIVE",
   "SUSPENDED",

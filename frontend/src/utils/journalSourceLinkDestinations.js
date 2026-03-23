@@ -39,12 +39,17 @@ const LOCAL_REVERSE_BLOCK_SOURCE_TYPES = Object.freeze(
   new Set(Object.keys(LOCAL_DESTINATION_REGISTRY))
 );
 
-// Fixed-assets types provide fully-formed URLs from the backend
-// (including query params like ?transactionId=...&assetId=...).
-// When backend destination.route is present for these types,
-// use it directly without further type-specific URL construction.
+// Backend-owned destination types provide fully-formed URLs from the backend
+// (including AP/AR CARI split routes and fixed-asset query params). When
+// backend destination.route is present for these types, use it directly
+// without further type-specific URL construction.
 const BACKEND_OWNED_DESTINATION_TYPES = Object.freeze(
-  new Set([FIXED_ASSET_TRANSACTION, FIXED_ASSET_DEPRECIATION_RUN])
+  new Set([
+    CARI_DOCUMENT,
+    CARI_SETTLEMENT_BATCH,
+    FIXED_ASSET_TRANSACTION,
+    FIXED_ASSET_DEPRECIATION_RUN,
+  ])
 );
 
 // ── internal helpers ─────────────────────────────────────────────────

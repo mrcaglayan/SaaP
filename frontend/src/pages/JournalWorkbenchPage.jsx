@@ -88,6 +88,18 @@ function parsePositiveIntOrNull(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function buildCariDocumentDestinationRoute(documentId, direction) {
+  const parsedDocumentId = parsePositiveIntOrNull(documentId);
+  if (!parsedDocumentId) {
+    return null;
+  }
+  const baseRoute =
+    normalizeSourceRefType(direction) === "AR"
+      ? "/app/satis-faturalari"
+      : "/app/alis-faturalari";
+  return `${baseRoute}?documentId=${parsedDocumentId}`;
+}
+
 function formatSettlementSourceLinkRole(role, l) {
   const normalizedRole = normalizeSourceRefType(role || "PRIMARY");
   if (normalizedRole === "REVERSAL_OF") {
@@ -4111,6 +4123,17 @@ export default function JournalWorkbenchPage() {
                               <div className="mt-2 space-y-1">
                                 {appliedDocuments.map((documentRow, documentIndex) => {
                                   const documentId = toInt(documentRow?.documentId);
+                                  const documentDestination = resolveSourceLinkDestination({
+                                    sourceRefType: "CARI_DOCUMENT",
+                                    sourceRefId: documentId,
+                                    destination: {
+                                      route: buildCariDocumentDestinationRoute(
+                                        documentId,
+                                        documentRow?.documentDirection ||
+                                          documentRow?.document_direction
+                                      ),
+                                    },
+                                  });
                                   const allocationAmount =
                                     documentRow?.allocationAmountDocTxn ??
                                     documentRow?.allocation_amount_doc_txn ??
@@ -4143,9 +4166,9 @@ export default function JournalWorkbenchPage() {
                                           currencyCode={documentCurrencyCode}
                                         />
                                       </span>
-                                      {canReadCariDocuments && documentId ? (
+                                      {canReadCariDocuments && documentDestination ? (
                                         <Link
-                                          to={`/app/cari-belgeler?documentId=${documentId}`}
+                                          to={documentDestination}
                                           className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
                                         >
                                           {l("Open Document", "Belgeyi Ac")}

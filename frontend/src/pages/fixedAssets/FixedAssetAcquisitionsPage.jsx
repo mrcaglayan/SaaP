@@ -43,11 +43,11 @@ const ACQUISITION_STATUSES = ["DRAFT", "ACTIVE"];
 function buildCariDocumentPath(documentId) {
   const normalizedDocumentId = toPositiveInt(documentId);
   if (!normalizedDocumentId) {
-    return "/app/cari-belgeler";
+    return "/app/alis-faturalari";
   }
   const params = new URLSearchParams();
   params.set("documentId", String(normalizedDocumentId));
-  return `/app/cari-belgeler?${params.toString()}`;
+  return `/app/alis-faturalari?${params.toString()}`;
 }
 
 export default function FixedAssetAcquisitionsPage() {

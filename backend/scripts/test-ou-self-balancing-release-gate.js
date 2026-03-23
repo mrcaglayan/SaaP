@@ -302,7 +302,6 @@ function assertRunbook(runbookSource) {
 
   const requiredTokens = [
     "/app/stok-transferleri",
-    "/app/cari-settlements",
     "inventoryTransitAccountId",
     "central_due_to_account_id",
     "ou_due_from_central_account_id",
@@ -314,6 +313,13 @@ function assertRunbook(runbookSource) {
   for (const token of requiredTokens) {
     assert(runbookSource.includes(token), `Runbook token missing: ${token}`);
   }
+
+  assert(
+    runbookSource.includes("/app/cari-settlements") ||
+      runbookSource.includes("/app/tedarikci-odemeler") ||
+      runbookSource.includes("/app/musteri-tahsilatlar"),
+    "Runbook token missing: expected a settlement route reference"
+  );
 }
 
 async function main() {

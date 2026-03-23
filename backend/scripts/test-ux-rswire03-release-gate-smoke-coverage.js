@@ -10,12 +10,12 @@ function assert(condition, message) {
 
 const BASELINE_CANONICAL_IMPLEMENTED_ROUTES = new Set([
   "/app/acilis-fisi",
-  "/app/alici-kart-listesi",
-  "/app/alici-kart-olustur",
+  "/app/alis-faturalari",
   "/app/ayarlar/exception-workbench",
   "/app/ayarlar/hesap-plani-ayarlari",
   "/app/ayarlar/hesap-plani-olustur",
   "/app/ayarlar/hesap-yeniden-siniflandirma",
+  "/app/ayarlar/cari-denetim",
   "/app/ayarlar/konsolidasyon-kurulumu",
   "/app/ayarlar/kur-yonetimi",
   "/app/ayarlar/operasyon-dashboard",
@@ -32,10 +32,6 @@ const BASELINE_CANONICAL_IMPLEMENTED_ROUTES = new Set([
   "/app/banka-mutabakat",
   "/app/banka-onaylar",
   "/app/banka-tanimla",
-  "/app/cari-audit",
-  "/app/cari-belgeler",
-  "/app/cari-raporlari",
-  "/app/cari-settlements",
   "/app/contracts",
   "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",
   "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",
@@ -46,6 +42,10 @@ const BASELINE_CANONICAL_IMPLEMENTED_ROUTES = new Set([
   "/app/kasa-tanimlari",
   "/app/kasa-transit-transferleri",
   "/app/mahsup-islemleri",
+  "/app/musteri-kartlari",
+  "/app/musteri-kartlari/olustur",
+  "/app/musteri-raporlari",
+  "/app/musteri-tahsilatlar",
   "/app/odeme-batchleri",
   "/app/payroll-beneficiaries",
   "/app/payroll-close-controls",
@@ -53,9 +53,12 @@ const BASELINE_CANONICAL_IMPLEMENTED_ROUTES = new Set([
   "/app/payroll-mappings",
   "/app/payroll-runs",
   "/app/payroll-runs/import",
-  "/app/satici-kart-listesi",
-  "/app/satici-kart-olustur",
+  "/app/satis-faturalari",
   "/app/tahsilat-islemleri",
+  "/app/tedarikci-kartlari",
+  "/app/tedarikci-kartlari/olustur",
+  "/app/tedarikci-odemeler",
+  "/app/tedarikci-raporlari",
   "/app/tediye-islemleri",
 ]);
 
@@ -115,7 +118,11 @@ function parseCanonicalImplementedRoutes(appSource) {
     if (!resolvedPath || !resolvedPath.startsWith("/app/")) {
       continue;
     }
-    if (elementMatch[1] === "Navigate" || resolvedPath.includes(":")) {
+    if (
+      elementMatch[1] === "Navigate" ||
+      elementMatch[1] === "LegacyRouteRedirect" ||
+      resolvedPath.includes(":")
+    ) {
       continue;
     }
 

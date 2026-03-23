@@ -39,18 +39,20 @@ async function main() {
 
   assert(implementedRoutesBlock, "missing implementedRoutes block");
   assert(
-    hasText(implementedRoutesBlock, 'appPath: "/app/cari-audit"'),
-    "missing /app/cari-audit route in implementedRoutes"
+    hasText(implementedRoutesBlock, 'appPath: "/app/ayarlar/cari-denetim"'),
+    "missing /app/ayarlar/cari-denetim route in implementedRoutes"
   );
   assert(
-    hasText(implementedRoutesBlock, "element: <CariAuditPage />"),
-    "cari-audit route should mount CariAuditPage"
-  );
-  assert(
-    !/appPath:\s*["']\/app\/cari-audit["'][\s\S]*?ModulePlaceholderPage/.test(
+    /appPath:\s*["']\/app\/ayarlar\/cari-denetim["'][\s\S]*?element:\s*<CariAuditPage\s*\/>/.test(
       implementedRoutesBlock
     ),
-    "cari-audit route must not remain on ModulePlaceholderPage"
+    "/app/ayarlar/cari-denetim route should mount CariAuditPage"
+  );
+  assert(
+    /appPath:\s*["']\/app\/cari-audit["'][\s\S]*?element:\s*<LegacyRouteRedirect/.test(
+      implementedRoutesBlock
+    ),
+    "legacy /app/cari-audit route should remain as a redirect"
   );
 
   assert(

@@ -22,24 +22,40 @@ const ROUTE_WIRING_RULES = [
     apiNeedles: ["../api/exceptionsWorkbench.js"],
   },
   {
-    routePath: "/app/cari-belgeler",
+    routePath: "/app/alis-faturalari",
     apiNeedles: ["../../api/cariDocuments.js"],
   },
   {
-    routePath: "/app/cari-settlements",
+    routePath: "/app/satis-faturalari",
+    apiNeedles: ["../../api/cariDocuments.js"],
+  },
+  {
+    routePath: "/app/tedarikci-odemeler",
     apiNeedles: ["../../api/cariSettlements.js"],
   },
   {
-    routePath: "/app/cari-audit",
+    routePath: "/app/musteri-tahsilatlar",
+    apiNeedles: ["../../api/cariSettlements.js"],
+  },
+  {
+    routePath: "/app/ayarlar/cari-denetim",
     apiNeedles: ["../../api/cariAudit.js"],
   },
   {
-    routePath: "/app/alici-kart-listesi",
+    routePath: "/app/musteri-kartlari",
     apiNeedles: ["../../api/cariCounterparty.js"],
   },
   {
-    routePath: "/app/satici-kart-listesi",
+    routePath: "/app/tedarikci-kartlari",
     apiNeedles: ["../../api/cariCounterparty.js"],
+  },
+  {
+    routePath: "/app/tedarikci-raporlari",
+    apiNeedles: ["../../api/cariReports.js"],
+  },
+  {
+    routePath: "/app/musteri-raporlari",
+    apiNeedles: ["../../api/cariReports.js"],
   },
   {
     routePath: "/app/kasa-islemleri",
@@ -104,6 +120,17 @@ async function main() {
     readFile(messagesPath, "utf8"),
   ]);
 
+  assert(
+    messagesSource.includes("cariSplit:") &&
+      messagesSource.includes("vendorBills:") &&
+      messagesSource.includes("salesInvoices:") &&
+      messagesSource.includes("vendors:") &&
+      messagesSource.includes("customers:") &&
+      messagesSource.includes("apPayments:") &&
+      messagesSource.includes("arReceipts:"),
+    "messages.js split-route labels missing from cariSplit block"
+  );
+
   for (const rule of ROUTE_WIRING_RULES) {
     const routePath = rule.routePath;
 
@@ -115,11 +142,6 @@ async function main() {
       sidebarSource.includes(`to: "${routePath}"`),
       `sidebarConfig.js link missing for ${routePath}`
     );
-    assert(
-      messagesSource.includes(`"${routePath}":`),
-      `messages.js sidebar label missing for ${routePath}`
-    );
-
     const componentName = resolveRouteComponentName(appSource, routePath);
     assert(componentName, `Could not resolve component from App route ${routePath}`);
     assert(

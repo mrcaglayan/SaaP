@@ -238,19 +238,19 @@ export const sidebarItems = [
     items: [
       {
         label: "Alis Faturalari",
-        to: "/app/cari-belgeler?direction=AP",
+        to: "/app/alis-faturalari",
         requiredPermissions: ["cari.doc.read"],
         implemented: true,
       },
       {
         label: "Tedarikci Kartlari",
-        to: "/app/satici-kart-listesi",
+        to: "/app/tedarikci-kartlari",
         requiredPermissions: ["cari.card.read"],
         implemented: true,
       },
       {
         label: "Tedarikci Odemeler",
-        to: "/app/cari-settlements?direction=AP",
+        to: "/app/tedarikci-odemeler",
         requiredPermissions: [
           "cari.settlement.apply",
           "cari.settlement.reverse",
@@ -261,13 +261,13 @@ export const sidebarItems = [
       },
       {
         label: "Tedarikci Bakiyeleri",
-        to: "/app/cari-raporlari?direction=AP&report=balances",
+        to: "/app/tedarikci-raporlari?report=balances",
         requiredPermissions: ["cari.report.read"],
         implemented: true,
       },
       {
         label: "Tedarikci Raporlari",
-        to: "/app/cari-raporlari?direction=AP",
+        to: "/app/tedarikci-raporlari",
         requiredPermissions: ["cari.report.read"],
         implemented: true,
       },
@@ -280,19 +280,19 @@ export const sidebarItems = [
     items: [
       {
         label: "Satis Faturalari",
-        to: "/app/cari-belgeler?direction=AR",
+        to: "/app/satis-faturalari",
         requiredPermissions: ["cari.doc.read"],
         implemented: true,
       },
       {
         label: "Musteri Kartlari",
-        to: "/app/alici-kart-listesi",
+        to: "/app/musteri-kartlari",
         requiredPermissions: ["cari.card.read"],
         implemented: true,
       },
       {
         label: "Musteri Tahsilatlar",
-        to: "/app/cari-settlements?direction=AR",
+        to: "/app/musteri-tahsilatlar",
         requiredPermissions: [
           "cari.settlement.apply",
           "cari.settlement.reverse",
@@ -303,13 +303,13 @@ export const sidebarItems = [
       },
       {
         label: "Musteri Bakiyeleri",
-        to: "/app/cari-raporlari?direction=AR&report=balances",
+        to: "/app/musteri-raporlari?report=balances",
         requiredPermissions: ["cari.report.read"],
         implemented: true,
       },
       {
         label: "Musteri Raporlari",
-        to: "/app/cari-raporlari?direction=AR",
+        to: "/app/musteri-raporlari",
         requiredPermissions: ["cari.report.read"],
         implemented: true,
       },
@@ -613,7 +613,7 @@ export const sidebarItems = [
       },
       {
         label: "Cari Denetim Izleri",
-        to: "/app/cari-audit",
+        to: "/app/ayarlar/cari-denetim",
         requiredPermissions: ["cari.audit.read"],
         implemented: true,
       },

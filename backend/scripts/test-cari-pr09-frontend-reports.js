@@ -18,18 +18,21 @@ async function main() {
 
   const appSource = await readFile(appPath, "utf8");
   assert(
-    appSource.includes('appPath: "/app/cari-raporlari"'),
-    "App route for cari reports must be registered"
+    appSource.includes('appPath: "/app/tedarikci-raporlari"') &&
+      appSource.includes('appPath: "/app/musteri-raporlari"'),
+    "App routes for AP/AR reports must be registered"
   );
   assert(
-    appSource.includes("element: <CariReportsPage />"),
-    "App route should mount CariReportsPage"
+    appSource.includes('element: <CariReportsPage direction="AP" />') &&
+      appSource.includes('element: <CariReportsPage direction="AR" />'),
+    "AP/AR report routes should mount CariReportsPage with locked direction"
   );
 
   const sidebarSource = await readFile(sidebarPath, "utf8");
   assert(
-    sidebarSource.includes('to: "/app/cari-raporlari"'),
-    "Sidebar should include cari reports link"
+    sidebarSource.includes('to: "/app/tedarikci-raporlari"') &&
+      sidebarSource.includes('to: "/app/musteri-raporlari"'),
+    "Sidebar should include AP/AR reports links"
   );
   assert(
     sidebarSource.includes('requiredPermissions: ["cari.report.read"]'),

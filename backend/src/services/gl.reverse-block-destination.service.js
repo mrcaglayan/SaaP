@@ -32,11 +32,9 @@ function normalizeUpperText(value) {
 // Types listed here also block direct GL journal reversal — the journal
 // must be reversed through the owning module instead.
 //
-// Static entries resolve synchronously. Dynamic entries (fixed-assets)
+// Static entries resolve synchronously. Dynamic entries (fixed-assets, CARI)
 // require a DB lookup and are resolved via resolveDestinationAsync().
 const DESTINATION_REGISTRY = Object.freeze({
-  [CARI_DOCUMENT]: { route: "/app/cari-belgeler" },
-  [CARI_SETTLEMENT_BATCH]: { route: "/app/cari-settlements" },
   [CASH_TRANSACTION]: { route: "/app/kasa-islemleri" },
   [PAYMENT_BATCH]: { route: "/app/odeme-batchleri" },
   [PAYROLL_RUN]: { route: "/app/payroll-runs" },
@@ -44,7 +42,12 @@ const DESTINATION_REGISTRY = Object.freeze({
 
 // Types that require dynamic (async) destination resolution.
 const DYNAMIC_DESTINATION_TYPES = Object.freeze(
-  new Set([FIXED_ASSET_TRANSACTION, FIXED_ASSET_DEPRECIATION_RUN])
+  new Set([
+    CARI_DOCUMENT,
+    CARI_SETTLEMENT_BATCH,
+    FIXED_ASSET_TRANSACTION,
+    FIXED_ASSET_DEPRECIATION_RUN,
+  ])
 );
 
 const REVERSE_BLOCK_SOURCE_TYPES = Object.freeze(
@@ -54,6 +57,107 @@ const REVERSE_BLOCK_SOURCE_TYPES = Object.freeze(
 // ── Dynamic destination resolvers ────────────────────────────────────
 
 const FA_TRANSACTION_SALE_WRITEOFF_TYPES = new Set(["SALE", "WRITEOFF"]);
+
+function normalizeCariDirection(value) {
+  return normalizeUpperText(value) === "AR" ? "AR" : "AP";
+}
+
+function buildCariDocumentRoute(direction, sourceRefId) {
+  const parsedId = parsePositiveInt(sourceRefId);
+  const baseRoute =
+    normalizeCariDirection(direction) === "AR"
+      ? "/app/satis-faturalari"
+      : "/app/alis-faturalari";
+  return parsedId ? `${baseRoute}?documentId=${parsedId}` : baseRoute;
+}
+
+function buildCariSettlementBatchRoute({
+  direction,
+  settlementBatchId,
+  legalEntityId = null,
+  counterpartyId = null,
+} = {}) {
+  const parsedSettlementBatchId = parsePositiveInt(settlementBatchId);
+  const baseRoute =
+    normalizeCariDirection(direction) === "AR"
+      ? "/app/musteri-tahsilatlar"
+      : "/app/tedarikci-odemeler";
+  if (!parsedSettlementBatchId) {
+    return baseRoute;
+  }
+  const params = new URLSearchParams({
+    settlementBatchId: String(parsedSettlementBatchId),
+  });
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  const parsedCounterpartyId = parsePositiveInt(counterpartyId);
+  if (parsedLegalEntityId) {
+    params.set("legalEntityId", String(parsedLegalEntityId));
+  }
+  if (parsedCounterpartyId) {
+    params.set("counterpartyId", String(parsedCounterpartyId));
+  }
+  return `${baseRoute}?${params.toString()}`;
+}
+
+async function resolveCariDocumentDestination(sourceRefId) {
+  const id = parsePositiveInt(sourceRefId);
+  if (!id) {
+    return { route: buildCariDocumentRoute("AP", null), isFallback: true };
+  }
+
+  const result = await query(
+    `SELECT direction
+       FROM cari_documents
+      WHERE id = ?
+      LIMIT 1`,
+    [id]
+  );
+  const row = result.rows?.[0];
+  if (!row) {
+    return { route: buildCariDocumentRoute("AP", id), isFallback: true };
+  }
+
+  return {
+    route: buildCariDocumentRoute(row.direction, id),
+  };
+}
+
+async function resolveCariSettlementBatchDestination(sourceRefId) {
+  const id = parsePositiveInt(sourceRefId);
+  if (!id) {
+    return {
+      route: buildCariSettlementBatchRoute({ direction: "AP" }),
+      isFallback: true,
+    };
+  }
+
+  const result = await query(
+    `SELECT direction, legal_entity_id, counterparty_id
+       FROM cari_settlement_batches
+      WHERE id = ?
+      LIMIT 1`,
+    [id]
+  );
+  const row = result.rows?.[0];
+  if (!row) {
+    return {
+      route: buildCariSettlementBatchRoute({
+        direction: "AP",
+        settlementBatchId: id,
+      }),
+      isFallback: true,
+    };
+  }
+
+  return {
+    route: buildCariSettlementBatchRoute({
+      direction: row.direction,
+      settlementBatchId: id,
+      legalEntityId: row.legal_entity_id,
+      counterpartyId: row.counterparty_id,
+    }),
+  };
+}
 
 async function resolveFixedAssetTransactionDestination(sourceRefId) {
   const id = parsePositiveInt(sourceRefId);
@@ -111,6 +215,12 @@ export async function resolveDestinationAsync(sourceRefType, sourceRefId) {
   if (staticEntry) return staticEntry;
 
   // Dynamic resolution
+  if (normalized === CARI_DOCUMENT) {
+    return resolveCariDocumentDestination(sourceRefId);
+  }
+  if (normalized === CARI_SETTLEMENT_BATCH) {
+    return resolveCariSettlementBatchDestination(sourceRefId);
+  }
   if (normalized === FIXED_ASSET_TRANSACTION) {
     return resolveFixedAssetTransactionDestination(sourceRefId);
   }

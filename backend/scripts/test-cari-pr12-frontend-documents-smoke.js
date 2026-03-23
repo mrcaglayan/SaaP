@@ -42,18 +42,20 @@ async function main() {
 
   assert(implementedRoutesBlock, "missing implementedRoutes block");
   assert(
-    hasPath(implementedRoutesBlock, 'appPath: "/app/cari-belgeler"'),
-    "missing /app/cari-belgeler route in implementedRoutes"
+    hasPath(implementedRoutesBlock, 'appPath: "/app/alis-faturalari"') &&
+      hasPath(implementedRoutesBlock, 'appPath: "/app/satis-faturalari"'),
+    "missing AP/AR document routes in implementedRoutes"
   );
   assert(
-    implementedRoutesBlock.includes("element: <CariDocumentsPage />"),
-    "cari-belgeler route must mount CariDocumentsPage"
+    implementedRoutesBlock.includes('element: <CariDocumentsPage direction="AP" />') &&
+      implementedRoutesBlock.includes('element: <CariDocumentsPage direction="AR" />'),
+    "AP/AR document routes must mount CariDocumentsPage with locked direction"
   );
   assert(
-    !/appPath:\s*["']\/app\/cari-belgeler["'][\s\S]{0,500}permissions\s*:/.test(
+    /appPath:\s*["']\/app\/cari-belgeler["'][\s\S]*?element:\s*<LegacyRouteRedirect/.test(
       implementedRoutesBlock
     ),
-    "PR-12 route must not introduce route-level permissions field"
+    "legacy /app/cari-belgeler route should remain as a redirect"
   );
 
   assert(
@@ -74,7 +76,7 @@ async function main() {
       page.includes("Update Draft Document") &&
       page.includes("Cancel Draft") &&
       page.includes("Post Draft") &&
-      page.includes("Reverse Posted Document"),
+      (page.includes("Reverse Document") || page.includes("Reverse Posted Document")),
     "document page should render expected action labels/buttons"
   );
   assert(

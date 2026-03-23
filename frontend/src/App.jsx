@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
 import AcceptInvitePage from "./pages/AcceptInvitePage.jsx";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage.jsx";
@@ -298,107 +298,106 @@ const implementedRoutes = [
   {
     appPath: "/app/alici-kart-olustur",
     childPath: "alici-kart-olustur",
-    element: <CariCounterpartyPage pageKey="buyerCreate" />,
+    permissionPath: "/app/musteri-kartlari",
+    element: <LegacyRouteRedirect to="/app/musteri-kartlari/olustur" />,
   },
   {
     appPath: "/app/musteri-kartlari/olustur",
     childPath: "musteri-kartlari/olustur",
-    permissionPath: "/app/alici-kart-listesi",
+    permissionPath: "/app/musteri-kartlari",
     element: <CariCounterpartyPage pageKey="buyerCreate" />,
   },
   {
     appPath: "/app/alici-kart-listesi",
     childPath: "alici-kart-listesi",
-    element: <CariCounterpartyPage pageKey="buyerList" />,
+    permissionPath: "/app/musteri-kartlari",
+    element: <LegacyRouteRedirect to="/app/musteri-kartlari" />,
   },
   {
     appPath: "/app/musteri-kartlari",
     childPath: "musteri-kartlari",
-    permissionPath: "/app/alici-kart-listesi",
     element: <CariCounterpartyPage pageKey="buyerList" />,
   },
   {
     appPath: "/app/satici-kart-olustur",
     childPath: "satici-kart-olustur",
-    element: <CariCounterpartyPage pageKey="vendorCreate" />,
+    permissionPath: "/app/tedarikci-kartlari",
+    element: <LegacyRouteRedirect to="/app/tedarikci-kartlari/olustur" />,
   },
   {
     appPath: "/app/tedarikci-kartlari/olustur",
     childPath: "tedarikci-kartlari/olustur",
-    permissionPath: "/app/satici-kart-listesi",
+    permissionPath: "/app/tedarikci-kartlari",
     element: <CariCounterpartyPage pageKey="vendorCreate" />,
   },
   {
     appPath: "/app/satici-kart-listesi",
     childPath: "satici-kart-listesi",
-    element: <CariCounterpartyPage pageKey="vendorList" />,
+    permissionPath: "/app/tedarikci-kartlari",
+    element: <LegacyRouteRedirect to="/app/tedarikci-kartlari" />,
   },
   {
     appPath: "/app/tedarikci-kartlari",
     childPath: "tedarikci-kartlari",
-    permissionPath: "/app/satici-kart-listesi",
     element: <CariCounterpartyPage pageKey="vendorList" />,
   },
   {
     appPath: "/app/cari-raporlari",
     childPath: "cari-raporlari",
-    element: <CariReportsPage />,
+    permissionPath: "/app/tedarikci-raporlari",
+    element: <LegacyRouteRedirect to="/app/tedarikci-raporlari" />,
   },
   {
     appPath: "/app/tedarikci-raporlari",
     childPath: "tedarikci-raporlari",
-    permissionPath: "/app/cari-raporlari",
     element: <CariReportsPage direction="AP" />,
   },
   {
     appPath: "/app/musteri-raporlari",
     childPath: "musteri-raporlari",
-    permissionPath: "/app/cari-raporlari",
     element: <CariReportsPage direction="AR" />,
   },
   {
     appPath: "/app/cari-belgeler",
     childPath: "cari-belgeler",
-    element: <CariDocumentsPage />,
+    permissionPath: "/app/alis-faturalari",
+    element: <LegacyRouteRedirect to="/app/alis-faturalari" />,
   },
   {
     appPath: "/app/alis-faturalari",
     childPath: "alis-faturalari",
-    permissionPath: "/app/cari-belgeler",
     element: <CariDocumentsPage direction="AP" />,
   },
   {
     appPath: "/app/satis-faturalari",
     childPath: "satis-faturalari",
-    permissionPath: "/app/cari-belgeler",
     element: <CariDocumentsPage direction="AR" />,
   },
   {
     appPath: "/app/cari-settlements",
     childPath: "cari-settlements",
-    element: <CariSettlementsPage />,
+    permissionPath: "/app/tedarikci-odemeler",
+    element: <LegacyRouteRedirect to="/app/tedarikci-odemeler" />,
   },
   {
     appPath: "/app/tedarikci-odemeler",
     childPath: "tedarikci-odemeler",
-    permissionPath: "/app/cari-settlements",
     element: <CariSettlementsPage direction="AP" />,
   },
   {
     appPath: "/app/musteri-tahsilatlar",
     childPath: "musteri-tahsilatlar",
-    permissionPath: "/app/cari-settlements",
     element: <CariSettlementsPage direction="AR" />,
   },
   {
     appPath: "/app/cari-audit",
     childPath: "cari-audit",
-    element: <CariAuditPage />,
+    permissionPath: "/app/ayarlar/cari-denetim",
+    element: <LegacyRouteRedirect to="/app/ayarlar/cari-denetim" />,
   },
   {
     appPath: "/app/ayarlar/cari-denetim",
     childPath: "ayarlar/cari-denetim",
-    permissionPath: "/app/cari-audit",
     element: <CariAuditPage />,
   },
   {
@@ -693,6 +692,13 @@ function withPermissionGuard(pathForPermissions, element, hasAnyFeature) {
 
 function toChildPath(appPath) {
   return toRoutePath(appPath).replace(/^\/app\//, "");
+}
+
+function LegacyRouteRedirect({ to }) {
+  const location = useLocation();
+  const search = String(location.search || "");
+  const hash = String(location.hash || "");
+  return <Navigate to={`${to}${search}${hash}`} replace />;
 }
 
 export default function App() {

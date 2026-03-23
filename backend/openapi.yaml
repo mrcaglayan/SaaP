@@ -86,6 +86,10 @@
       "description": "Unified exception workbench endpoints across bank and payroll operations."
     },
     {
+      "name": "FixedAssets",
+      "description": "Fixed-assets register, depreciation, disposal, and subledger workflow endpoints."
+    },
+    {
       "name": "Jobs",
       "description": "Background jobs, retries, and operational queue management endpoints."
     },
@@ -14613,6 +14617,2552 @@
             "name": "exceptionId",
             "required": true,
             "description": "exceptionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssets",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssets",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/categories": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsCategories",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/categories",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsCategories",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/categories",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/categories/{categoryId}": {
+      "patch": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "patchApiV1FixedAssetsCategoriesCategoryid",
+        "summary": "Auto-generated: PATCH /api/v1/fixed-assets/categories/{categoryId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "categoryId",
+            "required": true,
+            "description": "categoryId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/custodians": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsCustodians",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/custodians",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsCustodians",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/custodians",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/custodians/{custodianId}": {
+      "patch": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "patchApiV1FixedAssetsCustodiansCustodianid",
+        "summary": "Auto-generated: PATCH /api/v1/fixed-assets/custodians/{custodianId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "custodianId",
+            "required": true,
+            "description": "custodianId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/depreciation-profiles": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsDepreciationProfiles",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/depreciation-profiles",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsDepreciationProfiles",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/depreciation-profiles",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/depreciation-profiles/{profileId}": {
+      "patch": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "patchApiV1FixedAssetsDepreciationProfilesProfileid",
+        "summary": "Auto-generated: PATCH /api/v1/fixed-assets/depreciation-profiles/{profileId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profileId",
+            "required": true,
+            "description": "profileId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/from-cari-document-line": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsFromCariDocumentLine",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/from-cari-document-line",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsFromCariDocumentLine",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/from-cari-document-line",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/reports/{reportName}": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsReportsReportname",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/reports/{reportName}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reportName",
+            "required": true,
+            "description": "reportName identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/reports/{reportName}/export": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsReportsReportnameExport",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/reports/{reportName}/export",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reportName",
+            "required": true,
+            "description": "reportName identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/runs": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsRuns",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/runs",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsRuns",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/runs",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/runs/preview": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsRunsPreview",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/runs/preview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/runs/{runId}": {
+      "delete": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "deleteApiV1FixedAssetsRunsRunid",
+        "summary": "Auto-generated: DELETE /api/v1/fixed-assets/runs/{runId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsRunsRunid",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/runs/{runId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/runs/{runId}/evidence": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsRunsRunidEvidence",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/runs/{runId}/evidence",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsRunsRunidEvidence",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/runs/{runId}/evidence",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/runs/{runId}/evidence/{evidenceId}": {
+      "delete": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "deleteApiV1FixedAssetsRunsRunidEvidenceEvidenceid",
+        "summary": "Auto-generated: DELETE /api/v1/fixed-assets/runs/{runId}/evidence/{evidenceId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsRunsRunidEvidenceEvidenceid",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/runs/{runId}/evidence/{evidenceId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/runs/{runId}/evidence/{evidenceId}/content": {
+      "put": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "putApiV1FixedAssetsRunsRunidEvidenceEvidenceidContent",
+        "summary": "Auto-generated: PUT /api/v1/fixed-assets/runs/{runId}/evidence/{evidenceId}/content",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/runs/{runId}/evidence/{evidenceId}/download": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsRunsRunidEvidenceEvidenceidDownload",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/runs/{runId}/evidence/{evidenceId}/download",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/runs/{runId}/post": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsRunsRunidPost",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/runs/{runId}/post",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/runs/{runId}/reverse": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsRunsRunidReverse",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/runs/{runId}/reverse",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/transactions/{transactionId}/evidence": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsTransactionsTransactionidEvidence",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/transactions/{transactionId}/evidence",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsTransactionsTransactionidEvidence",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/transactions/{transactionId}/evidence",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/transactions/{transactionId}/evidence/{evidenceId}": {
+      "delete": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "deleteApiV1FixedAssetsTransactionsTransactionidEvidenceEvidenceid",
+        "summary": "Auto-generated: DELETE /api/v1/fixed-assets/transactions/{transactionId}/evidence/{evidenceId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsTransactionsTransactionidEvidenceEvidenceid",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/transactions/{transactionId}/evidence/{evidenceId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/transactions/{transactionId}/evidence/{evidenceId}/content": {
+      "put": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "putApiV1FixedAssetsTransactionsTransactionidEvidenceEvidenceidContent",
+        "summary": "Auto-generated: PUT /api/v1/fixed-assets/transactions/{transactionId}/evidence/{evidenceId}/content",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/transactions/{transactionId}/evidence/{evidenceId}/download": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsTransactionsTransactionidEvidenceEvidenceidDownload",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/transactions/{transactionId}/evidence/{evidenceId}/download",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/transactions/{transactionId}/reverse": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsTransactionsTransactionidReverse",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/transactions/{transactionId}/reverse",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsAssetid",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/{assetId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "patchApiV1FixedAssetsAssetid",
+        "summary": "Auto-generated: PATCH /api/v1/fixed-assets/{assetId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/activate": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidActivate",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/activate",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/depreciation-schedule": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsAssetidDepreciationSchedule",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/{assetId}/depreciation-schedule",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/evidence": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsAssetidEvidence",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/{assetId}/evidence",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidEvidence",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/evidence",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/evidence/{evidenceId}": {
+      "delete": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "deleteApiV1FixedAssetsAssetidEvidenceEvidenceid",
+        "summary": "Auto-generated: DELETE /api/v1/fixed-assets/{assetId}/evidence/{evidenceId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsAssetidEvidenceEvidenceid",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/{assetId}/evidence/{evidenceId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/evidence/{evidenceId}/content": {
+      "put": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "putApiV1FixedAssetsAssetidEvidenceEvidenceidContent",
+        "summary": "Auto-generated: PUT /api/v1/fixed-assets/{assetId}/evidence/{evidenceId}/content",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/evidence/{evidenceId}/download": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsAssetidEvidenceEvidenceidDownload",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/{assetId}/evidence/{evidenceId}/download",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/ownership-transfer": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidOwnershipTransfer",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/ownership-transfer",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/physical-move": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidPhysicalMove",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/physical-move",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/reactivate": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidReactivate",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/reactivate",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/sale/create-draft-ar-document": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidSaleCreateDraftArDocument",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/sale/create-draft-ar-document",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/sale/draft-ar-document": {
+      "patch": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "patchApiV1FixedAssetsAssetidSaleDraftArDocument",
+        "summary": "Auto-generated: PATCH /api/v1/fixed-assets/{assetId}/sale/draft-ar-document",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/sale/finalize": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidSaleFinalize",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/sale/finalize",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/sale/link-ar-document": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidSaleLinkArDocument",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/sale/link-ar-document",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/suspend": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidSuspend",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/suspend",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/transactions": {
+      "get": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "getApiV1FixedAssetsAssetidTransactions",
+        "summary": "Auto-generated: GET /api/v1/fixed-assets/{assetId}/transactions",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/writeoff": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsAssetidWriteoff",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/writeoff",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "assetId identifier",
             "schema": {
               "type": "integer",
               "minimum": 1

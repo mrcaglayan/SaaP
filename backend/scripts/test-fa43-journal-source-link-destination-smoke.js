@@ -129,6 +129,20 @@ async function runSourceCodeChecks() {
 async function runReverseBlockTypeChecks() {
   console.log("\n── Reverse-block type checks ──");
 
+  await test("CARI_DOCUMENT is a reverse-block source type", () => {
+    assert(
+      isReverseBlockSourceType("CARI_DOCUMENT"),
+      "CARI_DOCUMENT should block reversal"
+    );
+  })();
+
+  await test("CARI_SETTLEMENT_BATCH is a reverse-block source type", () => {
+    assert(
+      isReverseBlockSourceType("CARI_SETTLEMENT_BATCH"),
+      "CARI_SETTLEMENT_BATCH should block reversal"
+    );
+  })();
+
   await test("FIXED_ASSET_TRANSACTION is a reverse-block source type", () => {
     assert(
       isReverseBlockSourceType("FIXED_ASSET_TRANSACTION"),
@@ -143,7 +157,15 @@ async function runReverseBlockTypeChecks() {
     );
   })();
 
-  await test("Static resolveDestination returns null for dynamic FA types", () => {
+  await test("Static resolveDestination returns null for dynamic CARI + FA types", () => {
+    assert(
+      resolveDestination("CARI_DOCUMENT") === null,
+      "Static resolveDestination should return null for dynamic CARI document"
+    );
+    assert(
+      resolveDestination("CARI_SETTLEMENT_BATCH") === null,
+      "Static resolveDestination should return null for dynamic settlement batch"
+    );
     assert(
       resolveDestination("FIXED_ASSET_TRANSACTION") === null,
       "Static resolveDestination should return null for dynamic type"
@@ -155,10 +177,13 @@ async function runReverseBlockTypeChecks() {
   })();
 
   await test("Existing static types still resolve correctly", () => {
-    const cari = resolveDestination("CARI_DOCUMENT");
-    assert(cari && cari.route === "/app/cari-belgeler", "CARI_DOCUMENT should resolve");
     const cash = resolveDestination("CASH_TRANSACTION");
     assert(cash && cash.route === "/app/kasa-islemleri", "CASH_TRANSACTION should resolve");
+    const paymentBatch = resolveDestination("PAYMENT_BATCH");
+    assert(
+      paymentBatch && paymentBatch.route === "/app/odeme-batchleri",
+      "PAYMENT_BATCH should resolve"
+    );
   })();
 }
 
@@ -175,10 +200,47 @@ async function loadSmokeContext() {
   return result.rows[0];
 }
 
+async function loadCariDirectionFixtures() {
+  const [documentResult, settlementResult] = await Promise.all([
+    query(
+      `SELECT id, direction
+         FROM cari_documents
+        WHERE direction IN ('AP', 'AR')
+        ORDER BY id ASC`
+    ),
+    query(
+      `SELECT id, direction, legal_entity_id, counterparty_id
+         FROM cari_settlement_batches
+        WHERE direction IN ('AP', 'AR')
+        ORDER BY id ASC`
+    ),
+  ]);
+
+  const apDocument = (documentResult.rows || []).find((row) => row.direction === "AP") || null;
+  const arDocument = (documentResult.rows || []).find((row) => row.direction === "AR") || null;
+  const apSettlement =
+    (settlementResult.rows || []).find((row) => row.direction === "AP") || null;
+  const arSettlement =
+    (settlementResult.rows || []).find((row) => row.direction === "AR") || null;
+
+  assert(apDocument, "Need at least one AP CARI document fixture");
+  assert(arDocument, "Need at least one AR CARI document fixture");
+  assert(apSettlement, "Need at least one AP CARI settlement fixture");
+  assert(arSettlement, "Need at least one AR CARI settlement fixture");
+
+  return {
+    apDocument,
+    arDocument,
+    apSettlement,
+    arSettlement,
+  };
+}
+
 async function runDynamicResolutionChecks() {
   console.log("\n── Dynamic destination resolution checks ──");
 
   const ctx = await loadSmokeContext();
+  const cariFixtures = await loadCariDirectionFixtures();
 
   // Create a fixture FA transaction (normal type, e.g. ACQUISITION)
   let normalTxId;
@@ -327,9 +389,52 @@ async function runDynamicResolutionChecks() {
       assert(dest.isFallback === true, "Should be marked as fallback");
     })();
 
-    await test("resolveDestinationAsync: static types still work", async () => {
-      const dest = await resolveDestinationAsync("CARI_DOCUMENT", 1);
-      assert(dest && dest.route === "/app/cari-belgeler", "Static CARI_DOCUMENT should resolve");
+    await test("resolveDestinationAsync: AP CARI document resolves to purchases page", async () => {
+      const dest = await resolveDestinationAsync("CARI_DOCUMENT", cariFixtures.apDocument.id);
+      assert(
+        dest && dest.route === `/app/alis-faturalari?documentId=${cariFixtures.apDocument.id}`,
+        `AP CARI document should resolve to purchases page, got: ${dest?.route}`
+      );
+    })();
+
+    await test("resolveDestinationAsync: AR CARI document resolves to sales page", async () => {
+      const dest = await resolveDestinationAsync("CARI_DOCUMENT", cariFixtures.arDocument.id);
+      assert(
+        dest && dest.route === `/app/satis-faturalari?documentId=${cariFixtures.arDocument.id}`,
+        `AR CARI document should resolve to sales page, got: ${dest?.route}`
+      );
+    })();
+
+    await test("resolveDestinationAsync: AP settlement batch resolves to AP settlements page", async () => {
+      const dest = await resolveDestinationAsync(
+        "CARI_SETTLEMENT_BATCH",
+        cariFixtures.apSettlement.id
+      );
+      assert(dest, "Should resolve an AP settlement destination");
+      assert(
+        dest.route.includes("/app/tedarikci-odemeler?"),
+        `Expected AP settlement route, got: ${dest.route}`
+      );
+      assert(
+        dest.route.includes(`settlementBatchId=${cariFixtures.apSettlement.id}`),
+        `Expected settlementBatchId in AP route, got: ${dest.route}`
+      );
+    })();
+
+    await test("resolveDestinationAsync: AR settlement batch resolves to AR settlements page", async () => {
+      const dest = await resolveDestinationAsync(
+        "CARI_SETTLEMENT_BATCH",
+        cariFixtures.arSettlement.id
+      );
+      assert(dest, "Should resolve an AR settlement destination");
+      assert(
+        dest.route.includes("/app/musteri-tahsilatlar?"),
+        `Expected AR settlement route, got: ${dest.route}`
+      );
+      assert(
+        dest.route.includes(`settlementBatchId=${cariFixtures.arSettlement.id}`),
+        `Expected settlementBatchId in AR route, got: ${dest.route}`
+      );
     })();
 
     // ── enrichSourceLinksWithDestinationsAsync ──
@@ -338,7 +443,11 @@ async function runDynamicResolutionChecks() {
     await test("enrichSourceLinksWithDestinationsAsync resolves FA transaction links", async () => {
       const links = [
         { source_ref_type: "FIXED_ASSET_TRANSACTION", source_ref_id: normalTxId, link_role: "PRIMARY" },
-        { source_ref_type: "CARI_DOCUMENT", source_ref_id: 1, link_role: "PRIMARY" },
+        {
+          source_ref_type: "CARI_DOCUMENT",
+          source_ref_id: cariFixtures.arDocument.id,
+          link_role: "PRIMARY",
+        },
       ];
       const enriched = await enrichSourceLinksWithDestinationsAsync(links);
       assert(enriched.length === 2, "Should return same number of links");
@@ -347,20 +456,31 @@ async function runDynamicResolutionChecks() {
         `FA transaction should have resolved destination, got: ${JSON.stringify(enriched[0].destination)}`
       );
       assert(
-        enriched[1].destination && enriched[1].destination.route === "/app/cari-belgeler",
-        "CARI_DOCUMENT should still resolve statically"
+        enriched[1].destination &&
+          enriched[1].destination.route ===
+            `/app/satis-faturalari?documentId=${cariFixtures.arDocument.id}`,
+        "CARI_DOCUMENT should resolve direction-aware from the backend"
       );
     })();
 
-    await test("sync enrichSourceLinksWithDestinations returns null for FA types", () => {
+    await test("sync enrichSourceLinksWithDestinations returns null for dynamic CARI + FA types", () => {
       const links = [
         { source_ref_type: "FIXED_ASSET_TRANSACTION", source_ref_id: normalTxId, link_role: "PRIMARY" },
+        {
+          source_ref_type: "CARI_DOCUMENT",
+          source_ref_id: cariFixtures.apDocument.id,
+          link_role: "PRIMARY",
+        },
       ];
       const enriched = enrichSourceLinksWithDestinations(links);
-      assert(enriched.length === 1, "Should return same number of links");
+      assert(enriched.length === 2, "Should return same number of links");
       assert(
         enriched[0].destination === null,
         "Sync enrichment should return null for dynamic FA types"
+      );
+      assert(
+        enriched[1].destination === null,
+        "Sync enrichment should return null for dynamic CARI types"
       );
     })();
 
@@ -392,12 +512,50 @@ async function runDynamicResolutionChecks() {
       );
     })();
 
-    await test("sync resolveReverseBlock also blocks on FA types (with null route)", () => {
+    await test("resolveReverseBlockAsync blocks on AR CARI document links with sales route", async () => {
+      const links = [
+        {
+          source_ref_type: "CARI_DOCUMENT",
+          source_ref_id: cariFixtures.arDocument.id,
+          link_role: "PRIMARY",
+        },
+      ];
+      const result = await resolveReverseBlockAsync(links);
+      assert(result.isBlocked === true, "AR CARI document should be reverse-blocked");
+      assert(
+        result.primaryDestination.route ===
+          `/app/satis-faturalari?documentId=${cariFixtures.arDocument.id}`,
+        `Expected AR document route, got: ${result.primaryDestination.route}`
+      );
+    })();
+
+    await test("resolveReverseBlockAsync blocks on AP settlement links with AP route", async () => {
+      const links = [
+        {
+          source_ref_type: "CARI_SETTLEMENT_BATCH",
+          source_ref_id: cariFixtures.apSettlement.id,
+          link_role: "PRIMARY",
+        },
+      ];
+      const result = await resolveReverseBlockAsync(links);
+      assert(result.isBlocked === true, "AP settlement should be reverse-blocked");
+      assert(
+        result.primaryDestination.route.includes("/app/tedarikci-odemeler?"),
+        `Expected AP settlement route, got: ${result.primaryDestination.route}`
+      );
+    })();
+
+    await test("sync resolveReverseBlock also blocks on dynamic types (with null route)", () => {
       const links = [
         { source_ref_type: "FIXED_ASSET_TRANSACTION", source_ref_id: normalTxId, link_role: "PRIMARY" },
+        {
+          source_ref_type: "CARI_DOCUMENT",
+          source_ref_id: cariFixtures.apDocument.id,
+          link_role: "PRIMARY",
+        },
       ];
       const result = resolveReverseBlock(links);
-      assert(result.isBlocked === true, "Sync version should also block FA types");
+      assert(result.isBlocked === true, "Sync version should also block dynamic source types");
       assert(
         result.primaryDestination.route === null,
         "Sync version should have null route for dynamic types"

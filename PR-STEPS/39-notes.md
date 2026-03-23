@@ -1,1 +1,3 @@
 reversal kayıtlar, kasa cari linkler, aynısı gibi yapıo mu etc kontrol edilmelicash settlementte immediate settlemneta da.
+
+I can’t make dashboard notifications fully authoritative without widening into the notifications backend, but I can safely improve the current bounded behavior: if the notification payload already carries direction/scope, I’ll synthesize the canonical AP/AR destination before the helper falls back to the legacy redirect. That keeps the patch inside SL23 while avoiding needless misroutes for payloads that already have enough info.

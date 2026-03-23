@@ -19,6 +19,7 @@ import { useWorkingContext } from "../context/useWorkingContext.js";
 import { useI18n } from "../i18n/useI18n.js";
 import { useModuleReadiness } from "../readiness/useModuleReadiness.js";
 import { useTenantReadiness } from "../readiness/useTenantReadiness.js";
+import { resolveSourceLinkDestination } from "../utils/journalSourceLinkDestinations.js";
 
 function toInt(value, fallback = 0) {
   const parsed = Number(value);
@@ -50,19 +51,68 @@ function formatDateTimeLabel(value) {
   return parsed.toLocaleString();
 }
 
-function buildNotificationTargetPath(row) {
+function normalizeCariDirection(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized === "AR" ? "AR" : normalized === "AP" ? "AP" : "";
+}
+
+function buildCariNotificationDestination(row) {
   const sourceRefType = String(row?.sourceRefType || "")
     .trim()
     .toUpperCase();
   const sourceRefId = Number(row?.sourceRefId || 0);
   if (!Number.isInteger(sourceRefId) || sourceRefId <= 0) {
-    return "";
+    return null;
+  }
+
+  const payload = row?.payload && typeof row.payload === "object" ? row.payload : {};
+  const direction = normalizeCariDirection(
+    payload?.direction || payload?.documentDirection || payload?.settlementDirection
+  );
+  if (!direction) {
+    return null;
   }
 
   if (sourceRefType === "CARI_DOCUMENT") {
-    return `/app/cari-belgeler?documentId=${sourceRefId}`;
+    const baseRoute =
+      direction === "AR" ? "/app/satis-faturalari" : "/app/alis-faturalari";
+    return { route: `${baseRoute}?documentId=${sourceRefId}` };
   }
-  return "";
+
+  if (sourceRefType === "CARI_SETTLEMENT_BATCH") {
+    const baseRoute =
+      direction === "AR" ? "/app/musteri-tahsilatlar" : "/app/tedarikci-odemeler";
+    const params = new URLSearchParams({
+      settlementBatchId: String(sourceRefId),
+    });
+    const legalEntityId = Number(payload?.legalEntityId || payload?.legal_entity_id || 0);
+    const counterpartyId = Number(payload?.counterpartyId || payload?.counterparty_id || 0);
+    if (Number.isInteger(legalEntityId) && legalEntityId > 0) {
+      params.set("legalEntityId", String(legalEntityId));
+    }
+    if (Number.isInteger(counterpartyId) && counterpartyId > 0) {
+      params.set("counterpartyId", String(counterpartyId));
+    }
+    return { route: `${baseRoute}?${params.toString()}` };
+  }
+
+  return null;
+}
+
+function buildNotificationTargetPath(row) {
+  const inferredDestination = buildCariNotificationDestination(row);
+  return (
+    resolveSourceLinkDestination({
+      sourceRefType: row?.sourceRefType,
+      sourceRefId: row?.sourceRefId,
+      destination: inferredDestination ||
+        (row?.destination && typeof row.destination === "object"
+          ? row.destination
+          : row?.payload?.destination && typeof row.payload.destination === "object"
+            ? row.payload.destination
+            : null),
+    }) || ""
+  );
 }
 
 function resolveScopeParams(workingContext) {

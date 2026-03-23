@@ -44,18 +44,20 @@ async function main() {
 
   assert(implementedRoutesBlock, "missing implementedRoutes block");
   assert(
-    hasText(implementedRoutesBlock, 'appPath: "/app/cari-settlements"'),
-    "missing /app/cari-settlements route in implementedRoutes"
+    hasText(implementedRoutesBlock, 'appPath: "/app/tedarikci-odemeler"') &&
+      hasText(implementedRoutesBlock, 'appPath: "/app/musteri-tahsilatlar"'),
+    "missing AP/AR settlement routes in implementedRoutes"
   );
   assert(
-    hasText(implementedRoutesBlock, "element: <CariSettlementsPage />"),
-    "cari-settlements route must mount CariSettlementsPage"
+    hasText(implementedRoutesBlock, 'element: <CariSettlementsPage direction="AP" />') &&
+      hasText(implementedRoutesBlock, 'element: <CariSettlementsPage direction="AR" />'),
+    "AP/AR settlement routes must mount CariSettlementsPage with locked direction"
   );
   assert(
-    /appPath:\s*["']\/app\/cari-settlements["'][\s\S]*?element:\s*<CariSettlementsPage\s*\/>/.test(
+    /appPath:\s*["']\/app\/cari-settlements["'][\s\S]*?element:\s*<LegacyRouteRedirect/.test(
       implementedRoutesBlock
     ),
-    "cari-settlements route entry should mount CariSettlementsPage directly"
+    "legacy /app/cari-settlements route should remain as a redirect"
   );
 
   assert(

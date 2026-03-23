@@ -47,35 +47,42 @@ async function main() {
 
   assert(implementedRoutesBlock, "missing implementedRoutes block in App.jsx");
   assert(
-    hasPath(implementedRoutesBlock, "/app/cari-belgeler"),
-    "missing /app/cari-belgeler in implementedRoutes"
+    hasPath(implementedRoutesBlock, "/app/alis-faturalari") &&
+      hasPath(implementedRoutesBlock, "/app/satis-faturalari"),
+    "missing AP/AR document routes in implementedRoutes"
   );
   assert(
-    hasPath(implementedRoutesBlock, "/app/cari-settlements"),
-    "missing /app/cari-settlements in implementedRoutes"
+    hasPath(implementedRoutesBlock, "/app/tedarikci-odemeler") &&
+      hasPath(implementedRoutesBlock, "/app/musteri-tahsilatlar"),
+    "missing AP/AR settlement routes in implementedRoutes"
   );
   assert(
-    hasPath(implementedRoutesBlock, "/app/cari-audit"),
-    "missing /app/cari-audit in implementedRoutes"
-  );
-  assert(hasPath(sidebar, "/app/cari-belgeler"), "missing sidebar cari-belgeler");
-  assert(hasPath(sidebar, "/app/cari-settlements"), "missing sidebar cari-settlements");
-  assert(hasPath(sidebar, "/app/cari-audit"), "missing sidebar cari-audit");
-  assert(
-    /sidebar\s*:\s*\{[\s\S]*?byPath\s*:\s*\{/.test(i18nMessages),
-    "missing i18n sidebar.byPath structure"
+    hasPath(implementedRoutesBlock, "/app/ayarlar/cari-denetim"),
+    "missing /app/ayarlar/cari-denetim in implementedRoutes"
   );
   assert(
-    countOccurrences(i18nMessages, "/app/cari-belgeler") >= 2,
-    "missing i18n key /app/cari-belgeler in tr/en maps"
+    hasPath(implementedRoutesBlock, "/app/cari-belgeler") &&
+      hasPath(implementedRoutesBlock, "/app/cari-settlements") &&
+      hasPath(implementedRoutesBlock, "/app/cari-audit"),
+    "legacy convenience routes should remain registered as redirects"
   );
+  assert(hasPath(sidebar, "/app/alis-faturalari"), "missing sidebar alis-faturalari");
+  assert(hasPath(sidebar, "/app/satis-faturalari"), "missing sidebar satis-faturalari");
   assert(
-    countOccurrences(i18nMessages, "/app/cari-settlements") >= 2,
-    "missing i18n key /app/cari-settlements in tr/en maps"
+    hasPath(sidebar, "/app/tedarikci-odemeler") &&
+      hasPath(sidebar, "/app/musteri-tahsilatlar"),
+    "missing sidebar AP/AR settlement routes"
   );
+  assert(hasPath(sidebar, "/app/ayarlar/cari-denetim"), "missing sidebar cari-denetim");
   assert(
-    countOccurrences(i18nMessages, "/app/cari-audit") >= 2,
-    "missing i18n key /app/cari-audit in tr/en maps"
+    i18nMessages.includes("cariSplit:") &&
+      i18nMessages.includes("vendorBills:") &&
+      i18nMessages.includes("salesInvoices:") &&
+      i18nMessages.includes("vendors:") &&
+      i18nMessages.includes("customers:") &&
+      i18nMessages.includes("apPayments:") &&
+      i18nMessages.includes("arReceipts:"),
+    "missing cariSplit i18n block for AP/AR navigation labels"
   );
   assert(apiCommon.includes("parseCariApiError"), "cariCommon parser missing");
   assert(apiCommon.includes("toCariQueryString"), "cariCommon query helper missing");
