@@ -58,12 +58,45 @@ const CARI_ROLE_EXPECTATIONS = {
   ],
 };
 
-const CARI_MENU_EXPECTATIONS = {
-  "/app/alici-kart-olustur": "cari.card.upsert",
-  "/app/alici-kart-listesi": "cari.card.read",
-  "/app/satici-kart-olustur": "cari.card.upsert",
-  "/app/satici-kart-listesi": "cari.card.read",
+const CARI_SIDEBAR_EXPECTATIONS = {
+  "/app/musteri-kartlari": "cari.card.read",
+  "/app/tedarikci-kartlari": "cari.card.read",
 };
+
+const CARI_ROUTE_GUARD_EXPECTATIONS = [
+  {
+    appPath: "/app/alici-kart-olustur",
+    permissionPath: "/app/musteri-kartlari",
+  },
+  {
+    appPath: "/app/musteri-kartlari/olustur",
+    permissionPath: "/app/musteri-kartlari",
+  },
+  {
+    appPath: "/app/alici-kart-listesi",
+    permissionPath: "/app/musteri-kartlari",
+  },
+  {
+    appPath: "/app/musteri-kartlari",
+    permissionPath: null,
+  },
+  {
+    appPath: "/app/satici-kart-olustur",
+    permissionPath: "/app/tedarikci-kartlari",
+  },
+  {
+    appPath: "/app/tedarikci-kartlari/olustur",
+    permissionPath: "/app/tedarikci-kartlari",
+  },
+  {
+    appPath: "/app/satici-kart-listesi",
+    permissionPath: "/app/tedarikci-kartlari",
+  },
+  {
+    appPath: "/app/tedarikci-kartlari",
+    permissionPath: null,
+  },
+];
 
 function assert(condition, message) {
   if (!condition) {
@@ -401,7 +434,7 @@ async function runFrontendGuardSmokeAssertions() {
   const linkByPath = new Map(links.map((row) => [String(row.to), row]));
 
   for (const [routePath, expectedPermission] of Object.entries(
-    CARI_MENU_EXPECTATIONS
+    CARI_SIDEBAR_EXPECTATIONS
   )) {
     const link = linkByPath.get(routePath);
     assert(link, `Sidebar link missing for ${routePath}`);
@@ -423,11 +456,17 @@ async function runFrontendGuardSmokeAssertions() {
   const appFilePath = path.resolve(scriptDir, "../../frontend/src/App.jsx");
   const appSource = await readFile(appFilePath, "utf8");
 
-  for (const routePath of Object.keys(CARI_MENU_EXPECTATIONS)) {
+  for (const route of CARI_ROUTE_GUARD_EXPECTATIONS) {
     assert(
-      appSource.includes(`appPath: "${routePath}"`),
-      `App route is not implemented for ${routePath}`
+      appSource.includes(`appPath: "${route.appPath}"`),
+      `App route is not implemented for ${route.appPath}`
     );
+    if (route.permissionPath) {
+      assert(
+        appSource.includes(`permissionPath: "${route.permissionPath}"`),
+        `App route ${route.appPath} should inherit permissions from ${route.permissionPath}`
+      );
+    }
   }
   const permissionGuardPattern =
     /element=\{withPermissionGuard\(\s*route\.appPath,\s*route\.element(?:,\s*hasAnyFeature)?\s*\)\}/m;
@@ -457,7 +496,8 @@ async function main() {
         tenantId: tenant.tenantId,
         checkedPermissionCount: CARI_PERMISSION_CODES.length,
         checkedRoleCount: Object.keys(CARI_ROLE_EXPECTATIONS).length,
-        checkedMenuRouteCount: Object.keys(CARI_MENU_EXPECTATIONS).length,
+        checkedSidebarRouteCount: Object.keys(CARI_SIDEBAR_EXPECTATIONS).length,
+        checkedGuardedRouteCount: CARI_ROUTE_GUARD_EXPECTATIONS.length,
       },
       null,
       2
