@@ -596,6 +596,7 @@ export default function AppLayout() {
       resolveReadinessChip(readinessLoading, readinessError, tenantReady, t),
     [readinessLoading, readinessError, tenantReady, t]
   );
+  const showReadinessChip = readinessLoading || Boolean(readinessError) || !tenantReady;
 
   const closeMobileSidebar = () => setMobileOpen(false);
   const closeReadinessMenu = () => setReadinessMenuPathname(null);
@@ -657,6 +658,12 @@ export default function AppLayout() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [readinessMenuOpen]);
+
+  useEffect(() => {
+    if (!showReadinessChip) {
+      closeReadinessMenu();
+    }
+  }, [showReadinessChip]);
 
   function renderSectionChildren(items, depth = 0) {
     if (!Array.isArray(items)) return null;
@@ -790,7 +797,7 @@ export default function AppLayout() {
             </button>
             {!collapsed && <LanguageSwitcher />}
           </div>
-          {!collapsed && (
+          {!collapsed && showReadinessChip && (
             <div className="relative mt-2" ref={readinessMenuRef}>
               <button
                 type="button"

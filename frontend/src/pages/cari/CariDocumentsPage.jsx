@@ -128,6 +128,7 @@ const DOCUMENT_DRAFT_TEMPLATE_MODULE_CODE = "CARI_DOCUMENT_DRAFT_TEMPLATES";
 const DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE = 50;
 const DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
 const INVENTORY_MOVEMENTS_ROUTE = "/app/stok-yansitma-islemleri";
+const FIXED_ASSET_SETTINGS_PATH = "/app/ayarlar/demirbas-ayarlari";
 const INVENTORY_TRANSFERS_ROUTE = "/app/stok-transferleri";
 const DOCUMENT_LINE_EXPANSION_LIMIT = 500;
 const FIXED_ASSET_AR_ELIGIBLE_STATUSES = [
@@ -596,6 +597,34 @@ function getFixedAssetCategoryDefaultAssetAccountId(categoryRow) {
   );
 }
 
+function formatFixedAssetCategoryDisplay(categoryRow, fallbackId = null) {
+  const code = normalizeText(categoryRow?.code);
+  const name = normalizeText(categoryRow?.name);
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  if (code || name) {
+    return code || name;
+  }
+  const categoryId = toPositiveInt(categoryRow?.id) || toPositiveInt(fallbackId);
+  return categoryId ? `#${categoryId}` : "-";
+}
+
+function getFixedAssetCategoryMissingAccountIssue(categoryId, categoriesById) {
+  const normalizedCategoryId = toPositiveInt(categoryId);
+  if (!normalizedCategoryId || !(categoriesById instanceof Map)) {
+    return null;
+  }
+  const categoryRow = categoriesById.get(normalizedCategoryId) || null;
+  if (!categoryRow || getFixedAssetCategoryDefaultAssetAccountId(categoryRow)) {
+    return null;
+  }
+  return {
+    categoryId: normalizedCategoryId,
+    categoryLabel: formatFixedAssetCategoryDisplay(categoryRow, normalizedCategoryId),
+  };
+}
+
 function mapFixedAssetCategoryLookupOptions(rows = [], accountRowsById = new Map()) {
   return (Array.isArray(rows) ? rows : [])
     .map((row) => {
@@ -1060,6 +1089,32 @@ function normalizeRecurringAnchorDay(value) {
     return "";
   }
   return String(parsed);
+}
+
+function addDaysToIsoDate(dateText, daysToAdd) {
+  const normalizedDateText = normalizeText(dateText);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDateText)) {
+    return "";
+  }
+  const parsedDays = Number(daysToAdd || 0);
+  const utcDate = new Date(`${normalizedDateText}T00:00:00Z`);
+  if (Number.isNaN(utcDate.getTime()) || !Number.isFinite(parsedDays)) {
+    return "";
+  }
+  utcDate.setUTCDate(utcDate.getUTCDate() + parsedDays);
+  return utcDate.toISOString().slice(0, 10);
+}
+
+function resolvePaymentTermDueDateCandidate(documentDate, paymentTermRow) {
+  if (!paymentTermRow) {
+    return "";
+  }
+  const dueDays = Number(paymentTermRow?.dueDays ?? paymentTermRow?.due_days ?? 0);
+  const graceDays = Number(paymentTermRow?.graceDays ?? paymentTermRow?.grace_days ?? 0);
+  if (!Number.isFinite(dueDays) || !Number.isFinite(graceDays)) {
+    return "";
+  }
+  return addDaysToIsoDate(documentDate, dueDays + graceDays);
 }
 
 function createInitialRecurringTemplateRule() {
@@ -1704,6 +1759,90 @@ function FixedAssetQuickCreateModal({
   );
 }
 
+function FixedAssetCategorySetupModal({
+  open,
+  l,
+  categoryLabel,
+  canReadSettings,
+  canUpsertSettings,
+  onClose,
+}) {
+  if (!open) {
+    return null;
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
+      <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">
+              {l("Asset Setup Required", "Varlik Kurulumu Gerekli")}
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              {l(
+                `"${categoryLabel}" cannot be used for Auto-Create because its default asset account is not configured.`,
+                `"${categoryLabel}" kategorisi varsayilan varlik hesabi tanimli olmadigi icin Otomatik Olustur ile kullanilamaz.`
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
+            onClick={onClose}
+          >
+            {l("Close", "Kapat")}
+          </button>
+        </div>
+        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          <p>
+            {l(
+              "Open Fixed Asset Settings, configure the category, then come back and select it again.",
+              "Demirbas Ayarlari sayfasini acin, kategoriyi yapilandirin ve sonra geri gelip yeniden secin."
+            )}
+          </p>
+          {canReadSettings ? (
+            !canUpsertSettings ? (
+              <p className="mt-2 text-xs text-amber-800">
+                {l(
+                  "You can open the settings page, but you need fixed_assets.settings.upsert to update the category.",
+                  "Ayarlar sayfasini acabilirsiniz ancak kategoriyi guncellemek icin fixed_assets.settings.upsert gerekir."
+                )}
+              </p>
+            ) : null
+          ) : (
+            <p className="mt-2 text-xs text-amber-800">
+              {l(
+                "Missing permission: fixed_assets.settings.read",
+                "Eksik yetki: fixed_assets.settings.read"
+              )}
+            </p>
+          )}
+        </div>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
+            onClick={onClose}
+          >
+            {l("Cancel", "Iptal")}
+          </button>
+          {canReadSettings ? (
+            <a
+              href={FIXED_ASSET_SETTINGS_PATH}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+              onClick={onClose}
+            >
+              {l("Open Fixed Asset Settings", "Demirbas Ayarlarini Ac")}
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DocumentLineWorkbench({
   l,
   title,
@@ -1746,6 +1885,8 @@ function DocumentLineWorkbench({
   fixedAssetSaleRowsById,
   fixedAssetOperatingUnitOptions,
   canQuickCreateFixedAsset,
+  canReadFixedAssetSettings,
+  canUpsertFixedAssetSettings,
   onAddLine,
   onRemoveLine,
   onMoveLine,
@@ -1931,6 +2072,17 @@ function DocumentLineWorkbench({
           const selectedCategory = fixedAssetCategoriesById.get(
             toPositiveInt(line.fixedAssetCategoryId)
           ) || null;
+          const selectedCategoryLabel = selectedCategory
+            ? formatFixedAssetCategoryDisplay(
+                selectedCategory,
+                toPositiveInt(line.fixedAssetCategoryId)
+              )
+            : "";
+          const selectedCategoryMissingDefaultAssetAccount = Boolean(
+            isAutoCreateMode &&
+              selectedCategory &&
+              !getFixedAssetCategoryDefaultAssetAccountId(selectedCategory)
+          );
           const selectedTargetAsset = fixedAssetRowsById.get(
             toPositiveInt(line.targetFixedAssetId)
           ) || null;
@@ -2140,6 +2292,52 @@ function DocumentLineWorkbench({
                         />
                       </label>
                     </div>
+                    {selectedCategoryMissingDefaultAssetAccount ? (
+                      <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900 md:col-span-4">
+                        <p className="font-semibold">
+                          {l(
+                            "Auto-Create is blocked for this category.",
+                            "Bu kategori icin Otomatik Olustur kullanilamaz."
+                          )}
+                        </p>
+                        <p className="mt-1">
+                          {l(
+                            `"${selectedCategoryLabel}" is missing its default asset account. Configure it in Fixed Asset Settings, then select it again.`,
+                            `"${selectedCategoryLabel}" kategorisinin varsayilan varlik hesabi eksik. Demirbas Ayarlarinda yapilandirin, sonra yeniden secin.`
+                          )}
+                        </p>
+                        {canReadFixedAssetSettings ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <a
+                              href={FIXED_ASSET_SETTINGS_PATH}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-semibold underline underline-offset-2"
+                            >
+                              {l(
+                                "Open Fixed Asset Settings",
+                                "Demirbas Ayarlarini Ac"
+                              )}
+                            </a>
+                            {!canUpsertFixedAssetSettings ? (
+                              <span className="text-xs text-amber-800">
+                                {l(
+                                  "You can open the page, but you need fixed_assets.settings.upsert to update the category.",
+                                  "Sayfayi acabilirsiniz ancak kategoriyi guncellemek icin fixed_assets.settings.upsert gerekir."
+                                )}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-amber-800">
+                            {l(
+                              "Missing permission: fixed_assets.settings.read",
+                              "Eksik yetki: fixed_assets.settings.read"
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                       <label className="block">
                         {l("Owner OU", "Sahip OB")}
@@ -3481,6 +3679,14 @@ export default function CariDocumentsPage({ direction = "" }) {
             "Secili depo aktif olmalidir."
           );
         }
+        const missingCategoryAccountPattern =
+          /^lines\[\d+\]\.fixedAssetCategoryId is missing default_asset_account_id$/;
+        if (missingCategoryAccountPattern.test(trimmedMessage)) {
+          return l(
+            "Selected asset category is missing its default asset account. Configure the category in Fixed Asset Settings and try again.",
+            "Secili varlik kategorisinin varsayilan varlik hesabi eksik. Kategoriyi Demirbas Ayarlarinda yapilandirin ve tekrar deneyin."
+          );
+        }
         if (
           /^Warehouse does not belong to ownership context /i.test(trimmedMessage)
         ) {
@@ -3526,6 +3732,8 @@ export default function CariDocumentsPage({ direction = "" }) {
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadFixedAssets = hasPermission("fixed_assets.read");
   const canUpsertFixedAssets = hasPermission("fixed_assets.upsert");
+  const canReadFixedAssetSettings = hasPermission("fixed_assets.settings.read");
+  const canUpsertFixedAssetSettings = hasPermission("fixed_assets.settings.upsert");
 
   const [filters, setFilters, resetFilters] = usePersistedFilters(
     DOCUMENT_FILTERS_STORAGE_SCOPE,
@@ -3554,6 +3762,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [createMessage, setCreateMessage] = useState("");
   const [createValidationVisible, setCreateValidationVisible] = useState(false);
   const [createPaymentTermTouched, setCreatePaymentTermTouched] = useState(false);
+  const [createDueDateTouched, setCreateDueDateTouched] = useState(false);
   const [createCurrencyTouched, setCreateCurrencyTouched] = useState(false);
   const [createCounterpartyOptions, setCreateCounterpartyOptions] = useState([]);
   const [createCounterpartyLoading, setCreateCounterpartyLoading] = useState(false);
@@ -3567,6 +3776,8 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [createOperatingUnitOptions, setCreateOperatingUnitOptions] = useState([]);
   const [createOperatingUnitsLoading, setCreateOperatingUnitsLoading] = useState(false);
   const [createOperatingUnitsError, setCreateOperatingUnitsError] = useState("");
+  const [createOperatingUnitOverrideOpen, setCreateOperatingUnitOverrideOpen] =
+    useState(false);
   const [createLineAccountRows, setCreateLineAccountRows] = useState([]);
   const [createLineAccountsLoading, setCreateLineAccountsLoading] = useState(false);
   const [createLineAccountsError, setCreateLineAccountsError] = useState("");
@@ -3619,6 +3830,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [editError, setEditError] = useState("");
   const [editMessage, setEditMessage] = useState("");
   const [editValidationVisible, setEditValidationVisible] = useState(false);
+  const [, setEditDueDateTouched] = useState(false);
   const [editCounterpartyOptions, setEditCounterpartyOptions] = useState([]);
   const [editCounterpartyLoading, setEditCounterpartyLoading] = useState(false);
   const [editCounterpartyLookupQuery, setEditCounterpartyLookupQuery] = useState("");
@@ -3660,6 +3872,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   );
   const [quickCreateFixedAssetSaving, setQuickCreateFixedAssetSaving] = useState(false);
   const [quickCreateFixedAssetError, setQuickCreateFixedAssetError] = useState("");
+  const [fixedAssetCategorySetupPrompt, setFixedAssetCategorySetupPrompt] = useState(null);
 
   const [postForm, setPostForm] = useState(() => buildInitialPostForm());
   const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
@@ -4738,6 +4951,37 @@ export default function CariDocumentsPage({ direction = "" }) {
     }
     return rows;
   }, [createForm.paymentTermId, createPaymentTermOptions]);
+  const selectedCreatePaymentTerm = useMemo(() => {
+    const selectedPaymentTermId = toPositiveInt(createForm.paymentTermId);
+    if (!selectedPaymentTermId) {
+      return null;
+    }
+    return (
+      createPaymentTermOptions.find(
+        (row) => toPositiveInt(row?.id) === selectedPaymentTermId
+      ) || null
+    );
+  }, [createForm.paymentTermId, createPaymentTermOptions]);
+  const createImmediateCashDueDate =
+    requiresDueDate(createForm.documentType) &&
+    isImmediateCashSettlementMode(createForm.settlementMode)
+      ? normalizeText(createForm.documentDate)
+      : "";
+  const createPaymentTermDerivedDueDate = resolvePaymentTermDueDateCandidate(
+    createImmediateCashDueDate ? "" : createForm.documentDate,
+    createImmediateCashDueDate ? null : selectedCreatePaymentTerm
+  );
+  const createDueDateForcedByImmediateCash = Boolean(
+    createImmediateCashDueDate &&
+      normalizeText(createForm.dueDate) === createImmediateCashDueDate
+  );
+  const createDueDateAutoDerived = Boolean(
+    !createImmediateCashDueDate &&
+      requiresDueDate(createForm.documentType) &&
+      !createDueDateTouched &&
+      createPaymentTermDerivedDueDate &&
+      normalizeText(createForm.dueDate) === createPaymentTermDerivedDueDate
+  );
   const createOperatingUnitLookupOptions = useMemo(() => {
     const selectedOperatingUnitId = normalizeText(createForm.operatingUnitId);
     const rows = (createOperatingUnitOptions || [])
@@ -4766,6 +5010,21 @@ export default function CariDocumentsPage({ direction = "" }) {
       ) || null
     );
   }, [createCounterpartyOptions, createForm.counterpartyId]);
+  const selectedCreateCounterpartyPrimaryOperatingUnitId = normalizePositiveIntText(
+    selectedCreateCounterparty?.primaryOperatingUnitId
+  );
+  const selectedCreateCounterpartyPrimaryOperatingUnitLabel = formatOperatingUnitDisplay(
+    selectedCreateCounterpartyPrimaryOperatingUnitId,
+    selectedCreateCounterparty?.primaryOperatingUnitCode,
+    selectedCreateCounterparty?.primaryOperatingUnitName
+  );
+  const createOperatingUnitDerivedFromCounterpartyPrimary = Boolean(
+    selectedCreateCounterpartyPrimaryOperatingUnitId &&
+      !createOperatingUnitOverrideOpen &&
+      (!normalizeText(createForm.operatingUnitId) ||
+        normalizeText(createForm.operatingUnitId) ===
+          selectedCreateCounterpartyPrimaryOperatingUnitId)
+  );
   const editCounterpartyLookupOptions = useMemo(
     () => (editCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [editCounterpartyOptions]
@@ -4816,6 +5075,11 @@ export default function CariDocumentsPage({ direction = "" }) {
     l
   );
   const editImmediateCashLabel = getImmediateCashSettlementLabel(editForm.direction, l);
+  const editImmediateCashDueDate =
+    requiresDueDate(editForm.documentType) &&
+    isImmediateCashSettlementMode(editForm.settlementMode)
+      ? normalizeText(editForm.documentDate)
+      : "";
   const documentPageTitle = getDocumentPageTitle(fixedRouteDirection, l);
   const createDraftDocumentTitle = getCreateDraftDocumentTitle(fixedRouteDirection, l);
   const createInlineCounterpartyName = normalizeLookupQuery(createCounterpartyLookupQuery);
@@ -4856,7 +5120,9 @@ export default function CariDocumentsPage({ direction = "" }) {
 
   function resetCreateDraftFormWithSmartDefaults() {
     setCreateForm((previousForm) => buildSmartResetDraftForm(previousForm));
+    setCreateOperatingUnitOverrideOpen(false);
     setCreatePaymentTermTouched(false);
+    setCreateDueDateTouched(false);
     setCreateCurrencyTouched(false);
     setCreateValidationVisible(false);
     setCreateCounterpartyLookupQuery("");
@@ -4871,7 +5137,9 @@ export default function CariDocumentsPage({ direction = "" }) {
   function applyCreateDraftFormSnapshot(nextForm) {
     const normalized = buildTemplateSafeDraftForm(nextForm);
     setCreateForm(normalized);
+    setCreateOperatingUnitOverrideOpen(false);
     setCreatePaymentTermTouched(Boolean(normalizeText(normalized.paymentTermId)));
+    setCreateDueDateTouched(Boolean(normalizeText(normalized.dueDate)));
     setCreateCurrencyTouched(Boolean(normalizeCurrencyCode(normalized.currencyCode)));
     setCreateValidationVisible(false);
     setCreateCounterpartyLookupQuery("");
@@ -5020,6 +5288,20 @@ export default function CariDocumentsPage({ direction = "" }) {
   function selectCreateDocumentLineFixedAssetCategory(rowId, categoryId) {
     setCreateLinePreviewError("");
     setCreateLinePreviewMessage("");
+    const categorySetupIssue = getFixedAssetCategoryMissingAccountIssue(
+      categoryId,
+      createFixedAssetCategoriesById
+    );
+    if (categorySetupIssue) {
+      setCreateLinePreviewError(
+        l(
+          `Selected category "${categorySetupIssue.categoryLabel}" is missing its default asset account. Configure it in Fixed Asset Settings first.`,
+          `Secili "${categorySetupIssue.categoryLabel}" kategorisinin varsayilan varlik hesabi eksik. Once Demirbas Ayarlarinda yapilandirin.`
+        )
+      );
+      setFixedAssetCategorySetupPrompt(categorySetupIssue);
+      return;
+    }
     patchDraftFormLine(setCreateForm, rowId, {
       fixedAssetCategoryId: categoryId ? String(categoryId) : "",
     });
@@ -5232,6 +5514,20 @@ export default function CariDocumentsPage({ direction = "" }) {
   function selectEditDocumentLineFixedAssetCategory(rowId, categoryId) {
     setEditLinePreviewError("");
     setEditLinePreviewMessage("");
+    const categorySetupIssue = getFixedAssetCategoryMissingAccountIssue(
+      categoryId,
+      editFixedAssetCategoriesById
+    );
+    if (categorySetupIssue) {
+      setEditLinePreviewError(
+        l(
+          `Selected category "${categorySetupIssue.categoryLabel}" is missing its default asset account. Configure it in Fixed Asset Settings first.`,
+          `Secili "${categorySetupIssue.categoryLabel}" kategorisinin varsayilan varlik hesabi eksik. Once Demirbas Ayarlarinda yapilandirin.`
+        )
+      );
+      setFixedAssetCategorySetupPrompt(categorySetupIssue);
+      return;
+    }
     patchDraftFormLine(setEditForm, rowId, {
       fixedAssetCategoryId: categoryId ? String(categoryId) : "",
     });
@@ -5592,6 +5888,9 @@ export default function CariDocumentsPage({ direction = "" }) {
       settlementCashRegisterId:
         normalizedMode === "IMMEDIATE_CASH" ? previous.settlementCashRegisterId : "",
     }));
+    if (normalizedMode === "IMMEDIATE_CASH") {
+      setCreateDueDateTouched(false);
+    }
   }
 
   function handleCreateLegalEntityChange(nextValue) {
@@ -5611,6 +5910,7 @@ export default function CariDocumentsPage({ direction = "" }) {
       };
     });
     setCreatePaymentTermTouched(false);
+    setCreateDueDateTouched(false);
     setCreateCounterpartyLookupQuery("");
     setCreateInlineCounterpartyError("");
     setCreateInlineCounterpartyMessage("");
@@ -5626,6 +5926,9 @@ export default function CariDocumentsPage({ direction = "" }) {
       settlementCashRegisterId:
         normalizedMode === "IMMEDIATE_CASH" ? previous.settlementCashRegisterId : "",
     }));
+    if (normalizedMode === "IMMEDIATE_CASH") {
+      setEditDueDateTouched(false);
+    }
   }
 
   function handleEditLegalEntityChange(nextValue) {
@@ -5990,6 +6293,7 @@ export default function CariDocumentsPage({ direction = "" }) {
       setSelectedDetail(row);
       if (row && isDraft(row)) {
         setEditForm(mapDocumentRowToForm(row));
+        setEditDueDateTouched(false);
         setEditValidationVisible(false);
         setEditLinePreviewError("");
         setEditLinePreviewMessage("");
@@ -6657,6 +6961,50 @@ export default function CariDocumentsPage({ direction = "" }) {
       return changed ? nextForm : previousForm;
     });
   }, [createCurrencyTouched, createPaymentTermTouched, selectedCreateCounterparty]);
+
+  useEffect(() => {
+    if (createImmediateCashDueDate) {
+      setCreateForm((previousForm) =>
+        normalizeText(previousForm.dueDate) === createImmediateCashDueDate
+          ? previousForm
+          : { ...previousForm, dueDate: createImmediateCashDueDate }
+      );
+      return;
+    }
+    if (createDueDateTouched) {
+      return;
+    }
+    if (!requiresDueDate(createForm.documentType)) {
+      return;
+    }
+    const derivedDueDate = createPaymentTermDerivedDueDate;
+    setCreateForm((previousForm) =>
+      normalizeText(previousForm.dueDate) === (derivedDueDate || "")
+        ? previousForm
+        : { ...previousForm, dueDate: derivedDueDate || "" }
+    );
+  }, [
+    createImmediateCashDueDate,
+    createDueDateTouched,
+    createForm.documentDate,
+    createForm.documentType,
+    createPaymentTermDerivedDueDate,
+  ]);
+
+  useEffect(() => {
+    if (!editImmediateCashDueDate) {
+      return;
+    }
+    setEditForm((previousForm) =>
+      normalizeText(previousForm.dueDate) === editImmediateCashDueDate
+        ? previousForm
+        : { ...previousForm, dueDate: editImmediateCashDueDate }
+    );
+  }, [editImmediateCashDueDate]);
+
+  useEffect(() => {
+    setCreateOperatingUnitOverrideOpen(false);
+  }, [createForm.counterpartyId, createForm.direction, createForm.legalEntityId]);
 
   useEffect(() => {
     if (!canReadOrgTree) {
@@ -8272,7 +8620,11 @@ export default function CariDocumentsPage({ direction = "" }) {
         );
       }
       setCreateCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
-      setCreateForm((prev) => ({ ...prev, counterpartyId: String(counterpartyId) }));
+      setCreateForm((prev) => ({
+        ...prev,
+        counterpartyId: String(counterpartyId),
+        operatingUnitId: "",
+      }));
       setCreateCounterpartyLookupQuery("");
       setCreateInlineCounterpartyMessage(
         l(
@@ -8422,6 +8774,7 @@ export default function CariDocumentsPage({ direction = "" }) {
       setSelectedDetail(response?.row || null);
       if (response?.row) {
         setEditForm(mapDocumentRowToForm(response.row));
+        setEditDueDateTouched(false);
       }
       await loadDocuments(filters);
     } catch (error) {
@@ -9571,39 +9924,93 @@ export default function CariDocumentsPage({ direction = "" }) {
               ) : null}
             </div>
             {canReadOrgTree ? (
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <label className="block">
-                  {l("Operating Unit (optional)", "Operasyon Birimi (opsiyonel)")}
-                  <Combobox
-                    className="mt-1"
-                    value={createForm.operatingUnitId}
-                    options={createOperatingUnitLookupOptions}
-                    loading={createOperatingUnitsLoading}
-                    disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
-                    placeholder={
-                      toPositiveInt(createForm.legalEntityId)
-                        ? l("Search operating unit code/name", "Operasyon birimi kodu/adi ara")
-                        : l("Select legal entity first", "Once tuzel kisilik secin")
-                    }
-                    noOptionsText={
-                      toPositiveInt(createForm.legalEntityId)
-                        ? l("No operating units found.", "Operasyon birimi bulunamadi.")
-                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
-                    }
-                    onChange={(nextValue) =>
-                      setCreateForm((prev) => ({
-                        ...prev,
-                        operatingUnitId: nextValue ? String(nextValue) : "",
-                      }))
-                    }
-                  />
-                </label>
-                {createOperatingUnitsError ? (
-                  <p className="mt-1 text-[11px] normal-case text-amber-700">
-                    {createOperatingUnitsError}
+              createOperatingUnitDerivedFromCounterpartyPrimary ? (
+                <div className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-3 text-sm text-cyan-950">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
+                    {l("Operating Unit", "Operasyon Birimi")}
                   </p>
-                ) : null}
-              </div>
+                  <p className="mt-1 font-semibold">
+                    {selectedCreateCounterpartyPrimaryOperatingUnitLabel}
+                  </p>
+                  <p className="mt-1 text-xs text-cyan-900">
+                    {l(
+                      "This counterparty has a primary operating unit. The document will use it automatically unless you choose another operating unit.",
+                      "Bu carinin bir birincil operasyon birimi var. Siz baska bir operasyon birimi secmedikce belge bunu otomatik kullanir."
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-3 rounded-md border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-900 disabled:opacity-60"
+                    onClick={() => setCreateOperatingUnitOverrideOpen(true)}
+                    disabled={createSaving || !toPositiveInt(createForm.legalEntityId)}
+                  >
+                    {l("Choose another operating unit", "Baska operasyon birimi sec")}
+                  </button>
+                </div>
+              ) : (
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <label className="block">
+                    {l("Operating Unit (optional)", "Operasyon Birimi (opsiyonel)")}
+                    <Combobox
+                      className="mt-1"
+                      value={createForm.operatingUnitId}
+                      options={createOperatingUnitLookupOptions}
+                      loading={createOperatingUnitsLoading}
+                      disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
+                      placeholder={
+                        toPositiveInt(createForm.legalEntityId)
+                          ? l("Search operating unit code/name", "Operasyon birimi kodu/adi ara")
+                          : l("Select legal entity first", "Once tuzel kisilik secin")
+                      }
+                      noOptionsText={
+                        toPositiveInt(createForm.legalEntityId)
+                          ? l("No operating units found.", "Operasyon birimi bulunamadi.")
+                          : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                      }
+                      onChange={(nextValue) => {
+                        const normalizedOperatingUnitId = nextValue ? String(nextValue) : "";
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          operatingUnitId: normalizedOperatingUnitId,
+                        }));
+                        setCreateOperatingUnitOverrideOpen(
+                          Boolean(
+                            normalizedOperatingUnitId &&
+                              normalizedOperatingUnitId !==
+                                selectedCreateCounterpartyPrimaryOperatingUnitId
+                          )
+                        );
+                      }}
+                    />
+                  </label>
+                  {selectedCreateCounterpartyPrimaryOperatingUnitId ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 normal-case text-[11px] text-slate-600">
+                      <span>
+                        {l("Counterparty primary operating unit:", "Cari birincil operasyon birimi:")}{" "}
+                        <span className="font-semibold text-slate-800">
+                          {selectedCreateCounterpartyPrimaryOperatingUnitLabel}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="font-semibold text-slate-700 underline underline-offset-2 disabled:no-underline disabled:opacity-60"
+                        onClick={() => {
+                          setCreateForm((prev) => ({ ...prev, operatingUnitId: "" }));
+                          setCreateOperatingUnitOverrideOpen(false);
+                        }}
+                        disabled={createSaving}
+                      >
+                        {l("Use counterparty default", "Cari varsayilanini kullan")}
+                      </button>
+                    </div>
+                  ) : null}
+                  {createOperatingUnitsError ? (
+                    <p className="mt-1 text-[11px] normal-case text-amber-700">
+                      {createOperatingUnitsError}
+                    </p>
+                  ) : null}
+                </div>
+              )
             ) : (
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 {l("Operating Unit ID (optional)", "Operasyon Birimi ID (opsiyonel)")}
@@ -9670,10 +10077,17 @@ export default function CariDocumentsPage({ direction = "" }) {
                       setCreateCounterpartyLookupQuery(normalizeLookupQuery(nextValue));
                     }}
                     onChange={(nextValue) =>
-                      setCreateForm((prev) => ({
-                        ...prev,
-                        counterpartyId: nextValue ? String(nextValue) : "",
-                      }))
+                      setCreateForm((prev) => {
+                        const normalizedCounterpartyId = nextValue ? String(nextValue) : "";
+                        if (normalizeText(prev.counterpartyId) === normalizedCounterpartyId) {
+                          return prev;
+                        }
+                        return {
+                          ...prev,
+                          counterpartyId: normalizedCounterpartyId,
+                          operatingUnitId: "",
+                        };
+                      })
                     }
                   />
                 </label>
@@ -9769,7 +10183,40 @@ export default function CariDocumentsPage({ direction = "" }) {
             )}
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentType} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentType: event.target.value }))} required>{DOCUMENT_TYPES.map((documentType) => <option key={`create-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Date", "Belge Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentDate: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Due Date", "Vade Tarihi")} {requiresDueDate(createForm.documentType) ? l("(required for this type)", "(bu tur icin zorunlu)") : l("(optional)", "(opsiyonel)")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.dueDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, dueDate: event.target.value }))} required={requiresDueDate(createForm.documentType)} /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {l("Due Date", "Vade Tarihi")}{" "}
+              {requiresDueDate(createForm.documentType)
+                ? l("(required for this type)", "(bu tur icin zorunlu)")
+                : l("(optional)", "(opsiyonel)")}
+              <input
+                type="date"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={createForm.dueDate}
+                onChange={(event) => {
+                  const nextDueDate = event.target.value;
+                  setCreateDueDateTouched(Boolean(nextDueDate));
+                  setCreateForm((prev) => ({ ...prev, dueDate: nextDueDate }));
+                }}
+                disabled={createSaving || Boolean(createImmediateCashDueDate)}
+                required={requiresDueDate(createForm.documentType)}
+              />
+              {createDueDateForcedByImmediateCash ? (
+                <p className="mt-1 text-[11px] normal-case text-slate-500">
+                  {l(
+                    "Immediate cash uses the document date as the due date.",
+                    "Aninda nakit tahsilat/odeme, vade tarihi olarak belge tarihini kullanir."
+                  )}
+                </p>
+              ) : null}
+              {createDueDateAutoDerived && selectedCreatePaymentTerm ? (
+                <p className="mt-1 text-[11px] normal-case text-slate-500">
+                  {l(
+                    `Auto-filled from payment term ${selectedCreatePaymentTerm.code || selectedCreatePaymentTerm.name || `#${selectedCreatePaymentTerm.id}`}. You can still override it.`,
+                    `Odeme kosulu ${selectedCreatePaymentTerm.code || selectedCreatePaymentTerm.name || `#${selectedCreatePaymentTerm.id}`} ile otomatik dolduruldu. Isterseniz yine de degistirebilirsiniz.`
+                  )}
+                </p>
+              ) : null}
+            </label>
             <div className="md:col-span-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
                 {l("Payment", "Odeme")}
@@ -9912,6 +10359,8 @@ export default function CariDocumentsPage({ direction = "" }) {
               fixedAssetSaleError={createFixedAssetSaleError}
               fixedAssetSaleRowsById={createFixedAssetSaleRowsById}
               fixedAssetOperatingUnitOptions={createFixedAssetOperatingUnitOptions}
+              canReadFixedAssetSettings={canReadFixedAssetSettings}
+              canUpsertFixedAssetSettings={canUpsertFixedAssetSettings}
               onAddLine={addCreateDocumentLine}
               onRemoveLine={removeCreateDocumentLine}
               onMoveLine={moveCreateDocumentLine}
@@ -10922,7 +11371,31 @@ export default function CariDocumentsPage({ direction = "" }) {
                     </div>
                   ) : null}
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.documentType} onChange={(event) => setEditForm((prev) => ({ ...prev, documentType: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving}>{DOCUMENT_TYPES.map((documentType) => <option key={`edit-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Due Date", "Vade Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.dueDate} onChange={(event) => setEditForm((prev) => ({ ...prev, dueDate: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} required={requiresDueDate(editForm.documentType)} /></label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    {l("Due Date", "Vade Tarihi")}
+                    <input
+                      type="date"
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                      value={editForm.dueDate}
+                      onChange={(event) => {
+                        const nextDueDate = event.target.value;
+                        setEditDueDateTouched(Boolean(nextDueDate));
+                        setEditForm((prev) => ({ ...prev, dueDate: nextDueDate }));
+                      }}
+                      disabled={
+                        !canEditOrCancelSelected || editSaving || Boolean(editImmediateCashDueDate)
+                      }
+                      required={requiresDueDate(editForm.documentType)}
+                    />
+                    {editImmediateCashDueDate ? (
+                      <p className="mt-1 text-[11px] normal-case text-slate-500">
+                        {l(
+                          "Immediate cash uses the document date as the due date.",
+                          "Aninda nakit tahsilat/odeme, vade tarihi olarak belge tarihini kullanir."
+                        )}
+                      </p>
+                    ) : null}
+                  </label>
                   <div className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
                       {l("Payment", "Odeme")}
@@ -11126,6 +11599,8 @@ export default function CariDocumentsPage({ direction = "" }) {
                     fixedAssetSaleError={editFixedAssetSaleError}
                     fixedAssetSaleRowsById={editFixedAssetSaleRowsById}
                     fixedAssetOperatingUnitOptions={editFixedAssetOperatingUnitOptions}
+                    canReadFixedAssetSettings={canReadFixedAssetSettings}
+                    canUpsertFixedAssetSettings={canUpsertFixedAssetSettings}
                     onAddLine={addEditDocumentLine}
                     onRemoveLine={removeEditDocumentLine}
                     onMoveLine={moveEditDocumentLine}
@@ -11612,6 +12087,14 @@ export default function CariDocumentsPage({ direction = "" }) {
           </div>
         ) : null}
       </section>
+      <FixedAssetCategorySetupModal
+        open={Boolean(fixedAssetCategorySetupPrompt)}
+        l={l}
+        categoryLabel={fixedAssetCategorySetupPrompt?.categoryLabel || ""}
+        canReadSettings={canReadFixedAssetSettings}
+        canUpsertSettings={canUpsertFixedAssetSettings}
+        onClose={() => setFixedAssetCategorySetupPrompt(null)}
+      />
       <FixedAssetQuickCreateModal
         open={quickCreateFixedAssetOpen}
         l={l}

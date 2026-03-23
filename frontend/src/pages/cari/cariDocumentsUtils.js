@@ -453,6 +453,12 @@ export function buildDocumentMutationPayload(form, options = {}) {
   const documentType = String(form.documentType || "").trim().toUpperCase();
   const documentDate = String(form.documentDate || "").trim();
   const dueDate = String(form.dueDate || "").trim();
+  const resolvedDueDate =
+    settlementMode === "IMMEDIATE_CASH" &&
+    requiresDueDate(documentType) &&
+    documentDate
+      ? documentDate
+      : dueDate;
   const currencyCode = normalizeCurrencyCode(form.currencyCode);
   const lines = Array.isArray(form?.lines)
     ? form.lines.map((row, index) => {
@@ -512,7 +518,7 @@ export function buildDocumentMutationPayload(form, options = {}) {
     direction,
     documentType,
     documentDate,
-    dueDate: dueDate || null,
+    dueDate: resolvedDueDate || null,
     amountTxn: lines.length > 0 ? fxComputation.resolvedAmountTxn : amountTxn,
     amountBase: fxComputation.resolvedAmountBase,
     currencyCode,
