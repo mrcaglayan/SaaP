@@ -39,7 +39,8 @@ function parseImplementedRoutes(appSource) {
   }
 
   const constMap = parseConstantStringMap(appSource);
-  const chunks = blockMatch[1]
+  const normalizedBlock = blockMatch[1].replace(/\r\n/g, "\n");
+  const chunks = normalizedBlock
     .split(/\n\s*},\n/g)
     .map((row) => row.trim())
     .filter(Boolean);
@@ -47,6 +48,7 @@ function parseImplementedRoutes(appSource) {
   const routes = [];
   for (const chunk of chunks) {
     const appPathMatch = chunk.match(/appPath:\s*([^,\n]+)/);
+    const permissionPathMatch = chunk.match(/permissionPath:\s*([^,\n]+)/);
     const elementMatch = chunk.match(/element:\s*<([A-Za-z0-9_]+)/);
     if (!appPathMatch || !elementMatch) {
       continue;
@@ -56,12 +58,21 @@ function parseImplementedRoutes(appSource) {
     const resolvedPath = token.startsWith("/")
       ? token
       : constMap.get(token) || null;
+    const permissionToken = permissionPathMatch
+      ? stripQuotes(permissionPathMatch[1])
+      : null;
+    const resolvedPermissionPath = permissionToken
+      ? permissionToken.startsWith("/")
+        ? permissionToken
+        : constMap.get(permissionToken) || null
+      : null;
     if (!resolvedPath || !resolvedPath.startsWith("/app/")) {
       continue;
     }
 
     routes.push({
       appPath: resolvedPath,
+      permissionPath: resolvedPermissionPath,
       componentName: elementMatch[1],
     });
   }
@@ -100,14 +111,14 @@ async function main() {
   const missingSidebar = [];
   const missingI18n = [];
   for (const route of routesToGuard) {
-    const pathKey = route.appPath;
-    if (!sidebarSource.includes(`to: "${pathKey}"`)) {
-      missingSidebar.push(pathKey);
+    const navPath = route.permissionPath || route.appPath;
+    if (!sidebarSource.includes(`to: "${navPath}"`)) {
+      missingSidebar.push(route.appPath);
     }
-    const i18nOccurrences = (messagesSource.match(new RegExp(`"${pathKey}":`, "g")) || [])
+    const i18nOccurrences = (messagesSource.match(new RegExp(`"${navPath}":`, "g")) || [])
       .length;
     if (i18nOccurrences < 2) {
-      missingI18n.push(pathKey);
+      missingI18n.push(route.appPath);
     }
   }
 
