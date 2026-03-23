@@ -772,10 +772,78 @@ export async function getOpsJobsHealth({
   };
 }
 
+export async function getOpsFixedAssetDepreciationAttention({
+  req,
+  tenantId,
+  filters = {},
+  buildScopeFilter,
+  assertScopeAccess,
+}) {
+  const params = [];
+  const where = buildScopedLegalEntityWhere({
+    req,
+    tenantId,
+    filters,
+    alias: "fa",
+    params,
+    buildScopeFilter,
+    assertScopeAccess,
+  });
+  where.push("fa.status = 'ACTIVE'");
+  const whereSql = where.join(" AND ");
+
+  const summary = await querySingleRow(
+    `SELECT COUNT(DISTINCT fa.id) AS affected_asset_count,
+            COUNT(DISTINCT run.id) AS skipped_run_count,
+            MIN(run.period_key) AS oldest_period_key,
+            MAX(run.period_key) AS latest_period_key
+       FROM fixed_assets fa
+       JOIN fixed_asset_depreciation_run_lines line
+         ON line.tenant_id = fa.tenant_id
+        AND line.asset_id = fa.id
+        AND line.status = 'SKIPPED'
+       JOIN fixed_asset_depreciation_runs run
+         ON run.tenant_id = line.tenant_id
+        AND run.id = line.run_id
+        AND run.status = 'SKIPPED'
+      LEFT JOIN (
+        SELECT tenant_id,
+               asset_id,
+               MAX(period_key) AS last_posted_period_key
+          FROM fixed_asset_depreciation_schedule_lines
+         WHERE status = 'POSTED'
+         GROUP BY tenant_id, asset_id
+      ) posted
+        ON posted.tenant_id = fa.tenant_id
+       AND posted.asset_id = fa.id
+      WHERE ${whereSql}
+        AND (
+          posted.last_posted_period_key IS NULL
+          OR run.period_key > posted.last_posted_period_key
+        )`,
+    params
+  );
+
+  return {
+    filters: {
+      legalEntityId: parsePositiveInt(filters.legalEntityId) || null,
+    },
+    affected_assets: {
+      pending_skipped_assets: toInt(summary.affected_asset_count, 0),
+    },
+    runs: {
+      pending_skipped_runs: toInt(summary.skipped_run_count, 0),
+      oldest_period_key: String(summary.oldest_period_key || "").trim() || null,
+      latest_period_key: String(summary.latest_period_key || "").trim() || null,
+    },
+  };
+}
+
 export default {
   getOpsBankReconciliationSummary,
   getOpsBankPaymentBatchesHealth,
   getOpsPayrollImportHealth,
   getOpsPayrollCloseStatus,
   getOpsJobsHealth,
+  getOpsFixedAssetDepreciationAttention,
 };

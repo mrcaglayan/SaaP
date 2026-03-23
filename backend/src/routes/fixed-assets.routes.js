@@ -35,6 +35,7 @@ import {
   parseDepreciationRunListInput,
   parseDepreciationRunParams,
   parseDepreciationRunPostInput,
+  parseDepreciationRunReprocessInput,
   parseDepreciationRunReverseInput,
   parseFixedAssetTransactionReverseInput,
   parseDepreciationRunPreviewInput,
@@ -98,6 +99,7 @@ import {
   getDepreciationRunDetail,
   deleteDepreciationRunDraft,
   postDepreciationRun,
+  reprocessSkippedDepreciationRun,
   reverseDepreciationRun,
   previewDepreciationRun,
   createDepreciationRunDraft,
@@ -362,6 +364,18 @@ router.post(
   asyncHandler(async (req, res) => {
     const input = parseDepreciationRunPostInput(req);
     const result = await postDepreciationRun(input);
+    return res.json(result);
+  })
+);
+
+router.post(
+  "/runs/:runId/reprocess",
+  requirePermission("fixed_assets.depreciation.run", {
+    resolveScope: resolveFixedAssetRunRouteScope,
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseDepreciationRunReprocessInput(req);
+    const result = await reprocessSkippedDepreciationRun(input);
     return res.json(result);
   })
 );

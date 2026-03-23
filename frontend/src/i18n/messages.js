@@ -2734,7 +2734,7 @@ export const messages = {
         preferredSaleFlowStepOne:
           "The shortcut opens CARI Documents with an AR draft prefilled for this asset.",
         preferredSaleFlowStepTwo:
-          "Choose Fixed Asset as the line type, target this asset, then enter the sale proceeds account and amount.",
+          "Choose Fixed Asset as the line type, target this asset, then enter the sale amount.",
         preferredSaleFlowStepThree:
           "Save and post the document; the sale and disposal flow completes in the same posting.",
         openCariSaleFlow: "Open Sale Invoice Draft",

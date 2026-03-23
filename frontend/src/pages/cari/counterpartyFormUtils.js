@@ -230,7 +230,10 @@ export function mapDetailToCounterpartyForm(row, fallbackRole = "CUSTOMER") {
   };
 }
 
-export function validateCounterpartyForm(form, { mode = "create" } = {}) {
+export function validateCounterpartyForm(
+  form,
+  { mode = "create", requireRoleAccounts = mode === "create" } = {}
+) {
   const fieldErrors = {};
   const globalErrors = [];
   const createMode = mode === "create";
@@ -273,10 +276,10 @@ export function validateCounterpartyForm(form, { mode = "create" } = {}) {
   if (!form.isVendor && parsedApAccountId) {
     fieldErrors.apAccountId = "AP account requires Vendor role.";
   }
-  if (createMode && form.isCustomer && !parsedArAccountId) {
+  if (requireRoleAccounts && form.isCustomer && !parsedArAccountId) {
     fieldErrors.arAccountId = "AR account is required when Customer role is selected.";
   }
-  if (createMode && form.isVendor && !parsedApAccountId) {
+  if (requireRoleAccounts && form.isVendor && !parsedApAccountId) {
     fieldErrors.apAccountId = "AP account is required when Vendor role is selected.";
   }
 

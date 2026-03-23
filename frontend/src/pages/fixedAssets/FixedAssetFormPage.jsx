@@ -408,6 +408,7 @@ export default function FixedAssetFormPage() {
   const isLegacySuspendActivation =
     hasLegacyOnboardingDraftValues
     && normalizeText(form.legacyOnboardingStatus).toUpperCase() === "SUSPENDED";
+  const activationAssetTagMissing = !normalizeText(form.assetTag);
 
   // ── Handlers ────────────────────────────────────────────────────
 
@@ -443,6 +444,18 @@ export default function FixedAssetFormPage() {
 
   async function handleActivate() {
     if (!createdAssetId || !canPost) return;
+    const assetTag = normalizeText(form.assetTag);
+    const serialNo = normalizeText(form.serialNo);
+    const custodianEmployeeId = toPositiveInt(form.custodianEmployeeId);
+    if (!assetTag) {
+      setFormError(
+        l(
+          "Asset tag is required before activation.",
+          "Aktiflestirme oncesinde varlik etiketi zorunludur."
+        )
+      );
+      return;
+    }
     if (isLegacySuspendActivation && !normalizeText(form.legacySuspendEffectiveDate)) {
       setFormError(
         l(
@@ -460,6 +473,9 @@ export default function FixedAssetFormPage() {
         postingDate: normalizeText(form.acquisitionDate),
         capitalizationDate: normalizeText(form.acquisitionDate) || undefined,
         inServiceDate: normalizeText(form.inServiceDate) || undefined,
+        assetTag,
+        serialNo: serialNo || null,
+        custodianEmployeeId: custodianEmployeeId || null,
       };
       if (isLegacySuspendActivation) {
         activationPayload.legacyOnboardingStatus = "SUSPENDED";
@@ -525,6 +541,14 @@ export default function FixedAssetFormPage() {
             {cf("lowValueNotice")}
           </p>
         ) : null}
+        {canPost && createdAssetId && activationAssetTagMissing ? (
+          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {l(
+              "Asset Tag is still missing. Enter it below before activating this draft.",
+              "Varlik Etiketi hala eksik. Bu taslagi aktiflestirmeden once asagida girin."
+            )}
+          </p>
+        ) : null}
       </section>
 
       {/* Identity */}
@@ -558,10 +582,18 @@ export default function FixedAssetFormPage() {
           <TextInput value={form.description} onChange={(v) => setField("description", v)} disabled={!!createdAssetId} />
         </FormField>
         <FormField label={cf("fieldAssetTag")}>
-          <TextInput value={form.assetTag} onChange={(v) => setField("assetTag", v)} disabled={!!createdAssetId} />
+          <TextInput
+            value={form.assetTag}
+            onChange={(v) => setField("assetTag", v)}
+            disabled={saving || activating}
+          />
         </FormField>
         <FormField label={cf("fieldSerialNo")}>
-          <TextInput value={form.serialNo} onChange={(v) => setField("serialNo", v)} disabled={!!createdAssetId} />
+          <TextInput
+            value={form.serialNo}
+            onChange={(v) => setField("serialNo", v)}
+            disabled={saving || activating}
+          />
         </FormField>
       </FormSection>
 
@@ -597,7 +629,7 @@ export default function FixedAssetFormPage() {
             placeholder={l("Select", "Secin")}
             noOptionsText={l("None", "Yok")}
             onChange={(v) => setField("custodianEmployeeId", v ? String(v) : "")}
-            disabled={!!createdAssetId}
+            disabled={saving || activating}
           />
         </FormField>
         <FormField label={cf("fieldDepartmentCode")}>

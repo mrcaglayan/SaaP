@@ -21,7 +21,7 @@ import {
 import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
-import { FIXED_ASSET_TRANSACTION } from "../utils/source-ref-types.js";
+import { FIXED_ASSET, FIXED_ASSET_TRANSACTION } from "../utils/source-ref-types.js";
 
 // ── Local helpers ─────────────────────────────────────────────────
 
@@ -368,7 +368,7 @@ export async function listAssets(filters) {
   if (disposed === true) {
     conditions.push("fa.status = 'DISPOSED'");
   } else if (disposed === false) {
-    conditions.push("fa.status != 'DISPOSED'");
+    conditions.push("fa.status NOT IN ('DISPOSED', 'CANCELLED')");
   }
 
   const result = await query(
@@ -433,6 +433,16 @@ export async function getAssetDetail({ tenantId, assetId }) {
     [tenantId, assetId]
   );
   const txnRow = txnSummary.rows?.[0];
+  const evidenceSummary = await query(
+    `SELECT COUNT(*) AS total_count
+       FROM evidence_objects
+      WHERE tenant_id = ?
+        AND source_ref_type = ?
+        AND source_ref_id = ?
+        AND status <> ?`,
+    [tenantId, FIXED_ASSET, assetId, "DELETED"]
+  );
+  const evidenceRow = evidenceSummary.rows?.[0];
 
   const cariCapitalizationResult = await query(
     `SELECT 1
@@ -457,6 +467,75 @@ export async function getAssetDetail({ tenantId, assetId }) {
     [tenantId, assetId]
   );
   const hasCariCapitalization = Boolean(cariCapitalizationResult.rows?.[0]);
+  const postedScheduleSummary = await query(
+    `SELECT COUNT(*) AS posted_count,
+            MAX(period_key) AS last_period_key
+       FROM fixed_asset_depreciation_schedule_lines
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'`,
+    [tenantId, assetId]
+  );
+  const postedScheduleRow = postedScheduleSummary.rows?.[0];
+  const postedScheduleCount = Number(postedScheduleRow?.posted_count ?? 0);
+  const hasLegacyOnboarding = (
+    row.legacy_accum_depr_txn != null
+    || row.legacy_accum_depr_base != null
+    || row.legacy_nbv_txn != null
+    || row.legacy_nbv_base != null
+  );
+  const storedRemainingUsefulLifeMonths = row.remaining_useful_life_months != null
+    ? Number(row.remaining_useful_life_months)
+    : null;
+  const usefulLifeMonths = row.useful_life_months != null
+    ? Number(row.useful_life_months)
+    : null;
+  const depreciationMethod = normalizeUpperText(row.depreciation_method);
+  const effectiveRemainingUsefulLifeMonths = row.status === "FULLY_DEPRECIATED"
+    ? 0
+    : row.status === "CANCELLED"
+      ? 0
+    : (
+      depreciationMethod !== "NONE"
+      && !hasLegacyOnboarding
+      && usefulLifeMonths != null
+      && row.status !== "DISPOSED"
+      && row.status !== "CANCELLED"
+    )
+      ? Math.max(usefulLifeMonths - postedScheduleCount, 0)
+      : storedRemainingUsefulLifeMonths;
+  const effectiveLastDepreciationPeriod = postedScheduleRow?.last_period_key
+    || row.last_depreciation_period
+    || null;
+  const skippedDepreciationSummary = await query(
+    `SELECT COUNT(DISTINCT run.id) AS skipped_count,
+            MIN(run.period_key) AS first_period_key,
+            MAX(run.period_key) AS latest_period_key,
+            SUBSTRING_INDEX(
+              GROUP_CONCAT(run.id ORDER BY run.period_key DESC, run.id DESC SEPARATOR ','),
+              ',',
+              1
+            ) AS latest_run_id
+       FROM fixed_asset_depreciation_runs run
+       JOIN fixed_asset_depreciation_run_lines line
+         ON line.tenant_id = run.tenant_id
+        AND line.run_id = run.id
+      WHERE run.tenant_id = ?
+        AND line.asset_id = ?
+        AND run.status = 'SKIPPED'
+        AND line.status = 'SKIPPED'
+        AND (? IS NULL OR run.period_key > ?)`,
+    [
+      tenantId,
+      assetId,
+      effectiveLastDepreciationPeriod,
+      effectiveLastDepreciationPeriod,
+    ]
+  );
+  const skippedDepreciationRow = skippedDepreciationSummary.rows?.[0];
+  const pendingSkippedDepreciationCount = Number(
+    skippedDepreciationRow?.skipped_count ?? 0
+  );
 
   // ── Build detail payload ────────────────────────────────────────
   return {
@@ -549,9 +628,15 @@ export async function getAssetDetail({ tenantId, assetId }) {
       || row.switch_to_straight_line === "1",
     usefulLifeMonths: row.useful_life_months != null
       ? Number(row.useful_life_months) : null,
-    remainingUsefulLifeMonths: row.remaining_useful_life_months != null
-      ? Number(row.remaining_useful_life_months) : null,
-    lastDepreciationPeriod: row.last_depreciation_period || null,
+    remainingUsefulLifeMonths: effectiveRemainingUsefulLifeMonths,
+    lastDepreciationPeriod: effectiveLastDepreciationPeriod,
+    pendingSkippedDepreciation: {
+      totalCount: pendingSkippedDepreciationCount,
+      firstPeriodKey: skippedDepreciationRow?.first_period_key || null,
+      latestPeriodKey: skippedDepreciationRow?.latest_period_key || null,
+      latestRunId: parsePositiveInt(skippedDepreciationRow?.latest_run_id) || null,
+      reviewRecommended: pendingSkippedDepreciationCount > 0 && row.status === "ACTIVE",
+    },
 
     // ── Account mappings ─────────────────────────────────────────
     assetAccountId: row.asset_account_id != null
@@ -586,7 +671,7 @@ export async function getAssetDetail({ tenantId, assetId }) {
 
     // ── Evidence summary (foundation — table not yet created) ────
     evidenceSummary: {
-      totalCount: 0,
+      totalCount: Number(evidenceRow?.total_count ?? 0),
     },
 
     // ── Audit trail ──────────────────────────────────────────────
@@ -720,10 +805,10 @@ export async function listDepreciationRunAssetSnapshots({
             legacy_nbv_txn,
             legacy_nbv_base,
             last_depreciation_period
-       FROM fixed_assets
-      WHERE tenant_id = ?
-        AND legal_entity_id = ?
-        AND status <> 'DRAFT'
+      FROM fixed_assets
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+        AND status NOT IN ('DRAFT', 'CANCELLED')
       ORDER BY asset_no ASC, id ASC`,
     [tenantId, legalEntityId]
   );
@@ -3560,6 +3645,9 @@ export async function activateAsset(input) {
     postingDate,
     capitalizationDate: inputCapDate,
     inServiceDate: inputInServiceDate,
+    assetTag: inputAssetTag,
+    serialNo: inputSerialNo,
+    custodianEmployeeId: inputCustodianEmployeeId,
     legacyOnboardingStatus = null,
     legacySuspendEffectiveDate = null,
     userId,
@@ -3627,8 +3715,21 @@ export async function activateAsset(input) {
     // ── Apply capitalization/in-service dates from input or existing ─
     const capitalizationDate = inputCapDate || asset.capitalization_date;
     const inServiceDate = inputInServiceDate || asset.in_service_date;
+    const resolvedAssetTag =
+      inputAssetTag !== undefined
+        ? inputAssetTag
+        : (asset.asset_tag != null ? String(asset.asset_tag).trim() || null : null);
+    const resolvedSerialNo =
+      inputSerialNo !== undefined
+        ? inputSerialNo
+        : (asset.serial_no != null ? String(asset.serial_no).trim() || null : null);
+    const resolvedCustodianEmployeeId =
+      inputCustodianEmployeeId !== undefined
+        ? inputCustodianEmployeeId
+        : (asset.custodian_employee_id != null ? Number(asset.custodian_employee_id) : null);
 
     // ── Activation-time required field validation ────────────────
+    if (!resolvedAssetTag) throw badRequest("assetTag is required for activation");
     if (!asset.owner_operating_unit_id) throw badRequest("ownerOperatingUnitId is required for activation");
     if (!asset.location_operating_unit_id) throw badRequest("locationOperatingUnitId is required for activation");
 
@@ -3872,6 +3973,9 @@ export async function activateAsset(input) {
     await tx.query(
       `UPDATE fixed_assets
           SET status = ?,
+              asset_tag = ?,
+              serial_no = ?,
+              custodian_employee_id = ?,
               capitalization_date = ?,
               in_service_date = ?,
               salvage_rule_type = ?,
@@ -3887,6 +3991,9 @@ export async function activateAsset(input) {
         WHERE id = ? AND tenant_id = ?`,
       [
         activatedStatus,
+        resolvedAssetTag,
+        resolvedSerialNo,
+        resolvedCustodianEmployeeId,
         capitalizationDate,
         inServiceDate,
         resolvedSalvageRuleType,
@@ -4674,9 +4781,40 @@ function getDisposalScheduleOpeningAmounts(asset) {
   }
 
   return {
-    openingNbvTxn: roundDisposalAmount(asset.original_cost_txn),
-    openingNbvBase: roundDisposalAmount(asset.original_cost_base),
+    openingNbvTxn: asset.disposal_schedule_opening_nbv_txn != null
+      ? roundDisposalAmount(asset.disposal_schedule_opening_nbv_txn)
+      : roundDisposalAmount(asset.original_cost_txn),
+    openingNbvBase: asset.disposal_schedule_opening_nbv_base != null
+      ? roundDisposalAmount(asset.disposal_schedule_opening_nbv_base)
+      : roundDisposalAmount(asset.original_cost_base),
   };
+}
+
+function resolveDisposalScheduleRemainingUsefulLifeMonths(asset, {
+  priorPostedScheduleCount = 0,
+} = {}) {
+  const depreciationMethod = normalizeUpperText(asset.depreciation_method);
+  if (depreciationMethod === "NONE") {
+    return 0;
+  }
+
+  const assetStatus = normalizeUpperText(asset.status);
+  if (assetStatus === "FULLY_DEPRECIATED") {
+    return 0;
+  }
+
+  const storedRemainingUsefulLifeMonths = asset.remaining_useful_life_months != null
+    ? Number(asset.remaining_useful_life_months)
+    : null;
+  const usefulLifeMonths = asset.useful_life_months != null
+    ? Number(asset.useful_life_months)
+    : null;
+
+  if (!hasLegacyDepreciationOpeningValues(asset) && usefulLifeMonths != null) {
+    return Math.max(usefulLifeMonths - Number(priorPostedScheduleCount || 0), 0);
+  }
+
+  return storedRemainingUsefulLifeMonths;
 }
 
 function normalizeCurrentNbvForFreshActivationDisposal(asset, currentNbv, {
@@ -5104,7 +5242,60 @@ async function loadDisposalSchedulePeriods({
   return resolvedPeriods;
 }
 
-function buildDisposalScheduleRows(asset, periods, lifecycleHistory, terminalDisposalDate) {
+async function loadCurrentPostedDisposalScheduleLines({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT id,
+            tenant_id,
+            legal_entity_id,
+            asset_id,
+            period_key,
+            line_no,
+            planned_amount_txn,
+            planned_amount_base,
+            opening_nbv_txn,
+            opening_nbv_base,
+            closing_nbv_txn,
+            closing_nbv_base
+       FROM fixed_asset_depreciation_schedule_lines
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'
+      ORDER BY period_key ASC, line_no ASC, id ASC`,
+    [tenantId, assetId]
+  );
+
+  return (result.rows || []).map((row) => ({
+    id: Number(row.id),
+    tenantId: Number(row.tenant_id),
+    legalEntityId: Number(row.legal_entity_id),
+    assetId: Number(row.asset_id),
+    periodKey: row.period_key,
+    lineNo: Number(row.line_no || 0),
+    plannedAmountTxn: roundDisposalAmount(row.planned_amount_txn || 0),
+    plannedAmountBase: roundDisposalAmount(row.planned_amount_base || 0),
+    openingNbvTxn: roundDisposalAmount(row.opening_nbv_txn || 0),
+    openingNbvBase: roundDisposalAmount(row.opening_nbv_base || 0),
+    closingNbvTxn: roundDisposalAmount(row.closing_nbv_txn || 0),
+    closingNbvBase: roundDisposalAmount(row.closing_nbv_base || 0),
+  }));
+}
+
+function buildDisposalScheduleRows(
+  asset,
+  periods,
+  lifecycleHistory,
+  terminalDisposalDate,
+  {
+    initialRemainingUsefulLifeMonths = null,
+  } = {}
+) {
   if (!periods.length) {
     return [];
   }
@@ -5122,6 +5313,9 @@ function buildDisposalScheduleRows(asset, periods, lifecycleHistory, terminalDis
     : null;
   let hasSwitchedToStraightLine = depreciationMethod === "STRAIGHT_LINE";
   let hasLifecycleEligibilityCutoff = false;
+  let remainingPeriodsCounter = initialRemainingUsefulLifeMonths != null
+    ? Math.max(Number(initialRemainingUsefulLifeMonths || 0), 0)
+    : periods.length;
 
   const lifecycleTimeline = buildDisposalLifecycleTimeline(
     asset,
@@ -5153,8 +5347,9 @@ function buildDisposalScheduleRows(asset, periods, lifecycleHistory, terminalDis
       lifecycleState
     );
     const eligibleDays = periodEligibility.eligibleDays;
-    const remainingPeriods = periods.length - index;
-    const isFinalScheduleLine = index === periods.length - 1;
+    const consumesUsefulLifePeriod = eligibleDays > 0;
+    const remainingPeriods = Math.max(remainingPeriodsCounter, 0);
+    const isFinalUsefulLifeLine = consumesUsefulLifePeriod && remainingPeriodsCounter === 1;
 
     const remainingDepreciableTxn = getRemainingDepreciableAmountForDisposal(
       openingNbvTxn,
@@ -5218,7 +5413,7 @@ function buildDisposalScheduleRows(asset, periods, lifecycleHistory, terminalDis
       || periodEligibility.lifecycleExcludedDays > 0;
 
     if (
-      isFinalScheduleLine
+      isFinalUsefulLifeLine
       && effectiveMethod === "STRAIGHT_LINE"
       && !hasLifecycleEligibilityCutoff
     ) {
@@ -5230,13 +5425,13 @@ function buildDisposalScheduleRows(asset, periods, lifecycleHistory, terminalDis
       openingNbv: openingNbvTxn,
       salvageValue: salvageValueTxn,
       plannedAmount: plannedAmountTxn,
-      absorbRoundingResidual: isFinalScheduleLine && effectiveMethod !== "STRAIGHT_LINE",
+      absorbRoundingResidual: isFinalUsefulLifeLine && effectiveMethod !== "STRAIGHT_LINE",
     });
     const baseScheduleAmounts = clampDisposalPlannedAmount({
       openingNbv: openingNbvBase,
       salvageValue: salvageValueBase,
       plannedAmount: plannedAmountBase,
-      absorbRoundingResidual: isFinalScheduleLine && effectiveMethod !== "STRAIGHT_LINE",
+      absorbRoundingResidual: isFinalUsefulLifeLine && effectiveMethod !== "STRAIGHT_LINE",
     });
 
     plannedAmountTxn = txnScheduleAmounts.plannedAmount;
@@ -5261,6 +5456,9 @@ function buildDisposalScheduleRows(asset, periods, lifecycleHistory, terminalDis
 
     openingNbvTxn = closingNbvTxn;
     openingNbvBase = closingNbvBase;
+    if (consumesUsefulLifePeriod && remainingPeriodsCounter > 0) {
+      remainingPeriodsCounter -= 1;
+    }
 
     if (lifecycleState.isDisposed) {
       break;
@@ -5297,17 +5495,35 @@ export async function resolveDisposalCutoffEconomics({
   const grossCostBase = roundDisposalAmount(asset.original_cost_base);
   const depreciationMethod = normalizeUpperText(asset.depreciation_method);
   const cutoffDate = addDaysToDateText(effectiveDate, -1);
+  const disposalPeriodKey = effectiveDate.slice(0, 7);
   const cutoffPeriodKey = (
     asset.in_service_date
     && cutoffDate >= String(asset.in_service_date).slice(0, 10)
   )
     ? cutoffDate.slice(0, 7)
     : null;
+  const currentPostedScheduleLines = await loadCurrentPostedDisposalScheduleLines({
+    tenantId,
+    assetId: asset.id,
+    queryFn,
+  });
+  const hasPostedDisposalPeriodLine = currentPostedScheduleLines.some(
+    (row) => row.periodKey === disposalPeriodKey
+  );
+  const priorPostedScheduleLines = currentPostedScheduleLines.filter(
+    (row) => row.periodKey < disposalPeriodKey
+  );
+  const lastPriorPostedScheduleLine = priorPostedScheduleLines.at(-1) || null;
+  const remainingUsefulLifeMonths = resolveDisposalScheduleRemainingUsefulLifeMonths(asset, {
+    priorPostedScheduleCount: priorPostedScheduleLines.length,
+  });
 
   if (
     depreciationMethod === "NONE"
-    || asset.remaining_useful_life_months == null
-    || Number(asset.remaining_useful_life_months) <= 0
+    || (
+      (remainingUsefulLifeMonths == null || Number(remainingUsefulLifeMonths) <= 0)
+      && !hasPostedDisposalPeriodLine
+    )
   ) {
     return {
       cutoffDate,
@@ -5335,14 +5551,43 @@ export async function resolveDisposalCutoffEconomics({
     assetId: asset.id,
     queryFn,
   });
+  const scheduleSimulationStartDate = lastPriorPostedScheduleLine
+    ? formatDateOnly(
+      addMonthsUtc(
+        startOfMonthUtc(
+          parseDateOnlyStrict(
+            `${lastPriorPostedScheduleLine.periodKey}-01`,
+            "lastPriorPostedScheduleLine.periodKey"
+          )
+        ),
+        1
+      )
+    )
+    : asset.in_service_date;
+  const seededAsset = {
+    ...asset,
+    disposal_schedule_opening_nbv_txn: lastPriorPostedScheduleLine
+      ? lastPriorPostedScheduleLine.closingNbvTxn
+      : openingAmounts.openingNbvTxn,
+    disposal_schedule_opening_nbv_base: lastPriorPostedScheduleLine
+      ? lastPriorPostedScheduleLine.closingNbvBase
+      : openingAmounts.openingNbvBase,
+  };
   const periods = await loadDisposalSchedulePeriods({
     calendarId,
-    startDate: asset.in_service_date,
-    monthCount: countMonthBucketsInclusive(asset.in_service_date, effectiveDate),
+    startDate: scheduleSimulationStartDate,
+    monthCount: countMonthBucketsInclusive(scheduleSimulationStartDate, effectiveDate),
     queryFn,
   });
-  const rows = buildDisposalScheduleRows(asset, periods, lifecycleHistory, effectiveDate);
-  const disposalPeriodKey = effectiveDate.slice(0, 7);
+  const rows = buildDisposalScheduleRows(
+    seededAsset,
+    periods,
+    lifecycleHistory,
+    effectiveDate,
+    {
+      initialRemainingUsefulLifeMonths: remainingUsefulLifeMonths,
+    }
+  );
   const cutoffRow = rows.find((row) => row.periodKey === disposalPeriodKey) || null;
   const lastPriorRow = rows
     .filter((row) => row.periodKey < disposalPeriodKey)
@@ -5353,14 +5598,14 @@ export async function resolveDisposalCutoffEconomics({
     : (
       lastPriorRow
         ? roundDisposalAmount(lastPriorRow.closingNbvTxn)
-        : openingAmounts.openingNbvTxn
+        : roundDisposalAmount(seededAsset.disposal_schedule_opening_nbv_txn)
     );
   const openingNbvBase = cutoffRow
     ? roundDisposalAmount(cutoffRow.openingNbvBase)
     : (
       lastPriorRow
         ? roundDisposalAmount(lastPriorRow.closingNbvBase)
-        : openingAmounts.openingNbvBase
+        : roundDisposalAmount(seededAsset.disposal_schedule_opening_nbv_base)
     );
   const theoreticalCutoffNbvTxn = cutoffRow
     ? roundDisposalAmount(cutoffRow.closingNbvTxn)
@@ -6048,6 +6293,7 @@ async function loadAndLockAssetForSaleFinalize(tx, tenantId, assetId) {
             depreciation_method,
             declining_balance_rate_percent,
             switch_to_straight_line,
+            useful_life_months,
             remaining_useful_life_months,
             legacy_accum_depr_txn,
             legacy_accum_depr_base,
@@ -6385,12 +6631,6 @@ export async function saleFinalizeAsset(input) {
         "Asset is missing accumDeprAccountId; sale finalize requires an accumulated depreciation GL account"
       );
     }
-    if (!saleCariContext.proceedsAccountId) {
-      throw badRequest(
-        "Linked AR sale line does not resolve a deterministic proceeds account for fixed-assets finalize"
-      );
-    }
-
     const saleJournalLines = [];
     if (cutoffEconomics.accumDeprTxn > 0 || cutoffEconomics.accumDeprBase > 0) {
       saleJournalLines.push(
@@ -6406,19 +6646,6 @@ export async function saleFinalizeAsset(input) {
         })
       );
     }
-
-    saleJournalLines.push(
-      buildCariDirectionalJournalLine({
-        accountId: saleCariContext.proceedsAccountId,
-        side: "DEBIT",
-        amountTxn: saleCariContext.proceedsAmountTxn,
-        amountBase: saleCariContext.proceedsAmountBase,
-        lineDescription: `FA sale ${assetNo} relieve AR sale proceeds`,
-        subledgerReferenceNo: assetNo,
-        currencyCode,
-        operatingUnitId: ownerOperatingUnitId,
-      })
-    );
 
     saleJournalLines.push(
       buildCariDirectionalJournalLine({

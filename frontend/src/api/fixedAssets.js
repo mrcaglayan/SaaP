@@ -228,6 +228,11 @@ export async function postFixedAssetRun(runId, payload = {}) {
   return response.data;
 }
 
+export async function reprocessFixedAssetRun(runId, payload = {}) {
+  const response = await api.post(`/api/v1/fixed-assets/runs/${runId}/reprocess`, payload);
+  return response.data;
+}
+
 export async function reverseFixedAssetRun(runId, payload = {}) {
   const response = await api.post(`/api/v1/fixed-assets/runs/${runId}/reverse`, payload);
   return response.data;
@@ -241,6 +246,23 @@ function evidenceBasePath(surface, surfaceId) {
   if (surface === "transaction") return `/api/v1/fixed-assets/transactions/${surfaceId}/evidence`;
   if (surface === "run") return `/api/v1/fixed-assets/runs/${surfaceId}/evidence`;
   throw new Error(`Unknown evidence surface: ${surface}`);
+}
+
+function parseDispositionFileName(dispositionHeader) {
+  const raw = String(dispositionHeader || "").trim();
+  if (!raw) {
+    return null;
+  }
+  const utf8Match = raw.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]).trim();
+    } catch {
+      return String(utf8Match[1]).trim();
+    }
+  }
+  const basicMatch = raw.match(/filename="([^"]+)"/i) || raw.match(/filename=([^;]+)/i);
+  return basicMatch?.[1] ? String(basicMatch[1]).trim() : null;
 }
 
 export async function listFixedAssetEvidence(surface, surfaceId) {
@@ -272,7 +294,11 @@ export async function downloadFixedAssetEvidence(surface, surfaceId, evidenceId)
     `${evidenceBasePath(surface, surfaceId)}/${evidenceId}/download`,
     { responseType: "blob" }
   );
-  return response.data;
+  return {
+    blob: response.data,
+    fileName: parseDispositionFileName(response.headers?.["content-disposition"]),
+    contentType: response.headers?.["content-type"] || null,
+  };
 }
 
 export async function deleteFixedAssetEvidence(surface, surfaceId, evidenceId) {

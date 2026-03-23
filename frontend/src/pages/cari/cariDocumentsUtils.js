@@ -674,9 +674,6 @@ export function validateDocumentMutationForm(form, options = {}) {
           if (Number(line.quantity ?? 0) !== 1) {
             pushLineError(index, rowId, "quantity must equal 1 for AR FIXED_ASSET lines.");
           }
-          if (!line.postingAccountId) {
-            pushLineError(index, rowId, "postingAccountId is required for AR FIXED_ASSET lines.");
-          }
         }
       } else if (subledgerType === "STOCK") {
         if (!line.itemCardId) {

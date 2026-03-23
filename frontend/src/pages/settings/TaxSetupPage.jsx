@@ -183,6 +183,31 @@ function buildMappingFormFromRow(row) {
     status: toUpper(row?.status) || "ACTIVE",
   });
 }
+
+function inferTaxPurposeCodeFromRules(taxCodeId, rules) {
+  const normalizedTaxCodeId = toPositiveInt(taxCodeId);
+  if (!normalizedTaxCodeId) {
+    return "";
+  }
+
+  const inferredPurposeCodes = new Set();
+  for (const row of Array.isArray(rules) ? rules : []) {
+    if (toPositiveInt(row?.taxCodeId) !== normalizedTaxCodeId) {
+      continue;
+    }
+    const counterpartyType = toUpper(row?.counterpartyType);
+    if (counterpartyType === "CUSTOMER") {
+      inferredPurposeCodes.add("VAT_OUTPUT");
+    } else if (counterpartyType === "VENDOR") {
+      inferredPurposeCodes.add("VAT_INPUT");
+    }
+  }
+
+  return inferredPurposeCodes.size === 1
+    ? Array.from(inferredPurposeCodes)[0]
+    : "";
+}
+
 function defaultPreviewForm() {
 return {
   postingDate: todayIsoDate(),
@@ -1582,9 +1607,18 @@ return (
           </select>
           <select
             value={mappingForm.taxCodeId}
-            onChange={(event) =>
-              setMappingForm((prev) => ({ ...prev, taxCodeId: event.target.value }))
-            }
+            onChange={(event) => {
+              const nextTaxCodeId = event.target.value;
+              const inferredTaxPurposeCode = inferTaxPurposeCodeFromRules(
+                nextTaxCodeId,
+                rules
+              );
+              setMappingForm((prev) => ({
+                ...prev,
+                taxCodeId: nextTaxCodeId,
+                taxPurposeCode: inferredTaxPurposeCode || prev.taxPurposeCode,
+              }));
+            }}
             className="rounded border border-slate-300 px-3 py-2 text-sm"
             required
           >

@@ -26,6 +26,7 @@ const VALID_DEPRECIATION_METHODS = new Set([
 
 const VALID_DEPRECIATION_RUN_STATUSES = new Set([
   "DRAFT",
+  "SKIPPED",
   "POSTED",
   "REVERSED",
 ]);
@@ -264,6 +265,16 @@ export function parseDepreciationRunReverseInput(req) {
   };
 }
 
+export function parseDepreciationRunReprocessInput(req) {
+  const { tenantId, runId } = parseDepreciationRunParams(req);
+
+  return {
+    tenantId,
+    runId,
+    userId: req.user?.userId || null,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // FA06 eligible CARI AP-line read validators
 // ═══════════════════════════════════════════════════════════════════
@@ -420,6 +431,25 @@ export function parseActivateAssetInput(req) {
     "inServiceDate"
   );
 
+  const assetTagInput = pickBodyValue(body, "assetTag", "asset_tag");
+  const assetTag = assetTagInput.present
+    ? (assetTagInput.value != null ? String(assetTagInput.value).trim() || null : null)
+    : undefined;
+
+  const serialNoInput = pickBodyValue(body, "serialNo", "serial_no");
+  const serialNo = serialNoInput.present
+    ? (serialNoInput.value != null ? String(serialNoInput.value).trim() || null : null)
+    : undefined;
+
+  const custodianEmployeeIdInput = pickBodyValue(
+    body,
+    "custodianEmployeeId",
+    "custodian_employee_id"
+  );
+  const custodianEmployeeId = custodianEmployeeIdInput.present
+    ? (parsePositiveInt(custodianEmployeeIdInput.value) || null)
+    : undefined;
+
   const legacyOnboardingStatusInput = pickBodyValue(
     body,
     "legacyOnboardingStatus",
@@ -454,6 +484,9 @@ export function parseActivateAssetInput(req) {
     postingDate,
     capitalizationDate,
     inServiceDate,
+    assetTag,
+    serialNo,
+    custodianEmployeeId,
     legacyOnboardingStatus,
     legacySuspendEffectiveDate,
     userId,
@@ -1096,6 +1129,7 @@ const VALID_ASSET_STATUSES = new Set([
   "SUSPENDED",
   "FULLY_DEPRECIATED",
   "DISPOSED",
+  "CANCELLED",
 ]);
 
 export function parseRegisterListFilters(req) {

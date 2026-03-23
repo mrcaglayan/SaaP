@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import {
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
+  getOpsFixedAssetDepreciationAttention,
   getOpsJobsHealth,
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
@@ -210,6 +211,8 @@ export default function Dashboard() {
   const canReadExceptions = hasPermission("ops.exceptions.read");
   const canReadReadiness = hasPermission("org.tree.read");
   const canReadInventory = hasPermission("inventory.read");
+  const canReadFixedAssetRuns =
+    hasPermission("fixed_assets.depreciation.run") || hasPermission("fixed_assets.read");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -218,11 +221,12 @@ export default function Dashboard() {
     bankReconciliation: null,
     bankPayments: null,
     payrollImports: null,
-    payrollClose: null,
-    jobs: null,
-    exceptions: null,
-    inventoryWorkQueue: null,
-  });
+      payrollClose: null,
+      jobs: null,
+      exceptions: null,
+      inventoryWorkQueue: null,
+      fixedAssetDepreciationAttention: null,
+    });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState("");
   const [notificationRows, setNotificationRows] = useState([]);
@@ -269,6 +273,13 @@ export default function Dashboard() {
       );
     }
 
+    if (canReadOps && canReadFixedAssetRuns) {
+      requestEntries.push({
+        key: "fixedAssetDepreciationAttention",
+        run: () => getOpsFixedAssetDepreciationAttention(scopeParams),
+      });
+    }
+
     if (canReadExceptions) {
       requestEntries.push({
         key: "exceptions",
@@ -301,6 +312,7 @@ export default function Dashboard() {
         jobs: null,
         exceptions: null,
         inventoryWorkQueue: null,
+        fixedAssetDepreciationAttention: null,
       });
       setLastRefreshedAt(new Date().toISOString());
       return;
@@ -321,6 +333,7 @@ export default function Dashboard() {
         jobs: null,
         exceptions: null,
         inventoryWorkQueue: null,
+        fixedAssetDepreciationAttention: null,
       };
 
       const failedKeys = [];
@@ -353,7 +366,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [canReadExceptions, canReadInventory, canReadOps, inventoryScopeParams, scopeParams, t]);
+  }, [canReadExceptions, canReadFixedAssetRuns, canReadInventory, canReadOps, inventoryScopeParams, scopeParams, t]);
 
   useEffect(() => {
     load();
@@ -486,6 +499,40 @@ export default function Dashboard() {
     const tenantMissing = Array.isArray(missingChecks) ? missingChecks.length : 0;
     return payrollFailedChecks + tenantMissing + moduleBlockerCount;
   }, [missingChecks, moduleBlockerCount, snapshot.payrollClose]);
+
+  const fixedAssetSkippedAttentionAssetCount = useMemo(
+    () =>
+      toInt(
+        snapshot.fixedAssetDepreciationAttention?.affected_assets?.pending_skipped_assets,
+        0
+      ),
+    [snapshot.fixedAssetDepreciationAttention]
+  );
+
+  const fixedAssetSkippedAttentionRunCount = useMemo(
+    () =>
+      toInt(
+        snapshot.fixedAssetDepreciationAttention?.runs?.pending_skipped_runs,
+        0
+      ),
+    [snapshot.fixedAssetDepreciationAttention]
+  );
+
+  const fixedAssetSkippedAttentionPeriodHint = useMemo(() => {
+    const oldest = String(
+      snapshot.fixedAssetDepreciationAttention?.runs?.oldest_period_key || ""
+    ).trim();
+    const latest = String(
+      snapshot.fixedAssetDepreciationAttention?.runs?.latest_period_key || ""
+    ).trim();
+    if (!oldest && !latest) {
+      return "";
+    }
+    if (oldest && latest && oldest !== latest) {
+      return `${oldest} - ${latest}`;
+    }
+    return latest || oldest;
+  }, [snapshot.fixedAssetDepreciationAttention]);
 
   const inventoryQueueLinks = useMemo(() => {
     const legalEntityId = inventoryScopeParams.legalEntityId || "";
@@ -650,7 +697,7 @@ export default function Dashboard() {
         ) : null}
       </header>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard
           title={t("dashboard.cards.toPost", "To Post")}
           value={formatCount(toPostCount)}
@@ -694,6 +741,29 @@ export default function Dashboard() {
           to="/app/payroll-close-controls"
           ctaLabel={t("dashboard.openQueue", "Open queue")}
           locked={!canReadOps && !canReadReadiness}
+        />
+        <MetricCard
+          title={t("dashboard.cards.fixedAssetSkippedMonths", "FA Skipped Months")}
+          value={formatCount(fixedAssetSkippedAttentionAssetCount)}
+          subtitle={
+            fixedAssetSkippedAttentionAssetCount > 0
+              ? t(
+                  "dashboard.cards.fixedAssetSkippedMonthsHint",
+                  "{{assetCount}} active assets need skipped-month depreciation review across {{runCount}} runs. Oldest period: {{period}}.",
+                  {
+                    assetCount: formatCount(fixedAssetSkippedAttentionAssetCount),
+                    runCount: formatCount(fixedAssetSkippedAttentionRunCount),
+                    period: fixedAssetSkippedAttentionPeriodHint || "-",
+                  }
+                )
+              : t(
+                  "dashboard.cards.fixedAssetSkippedMonthsClear",
+                  "No active assets currently need skipped-month depreciation review."
+                )
+          }
+          to="/app/demirbas-amortisman-islemleri"
+          ctaLabel={t("dashboard.openQueue", "Open queue")}
+          locked={!canReadOps || !canReadFixedAssetRuns}
         />
       </div>
 

@@ -1031,6 +1031,7 @@ async function fetchFixedAssetDisposalRowForPostingLock({
         depreciation_method,
         declining_balance_rate_percent,
         switch_to_straight_line,
+        useful_life_months,
         remaining_useful_life_months,
         legacy_accum_depr_txn,
         legacy_accum_depr_base,
@@ -2504,20 +2505,8 @@ async function applyFixedAssetAccountResolutionToLines({
 
     const fieldPrefix = `${fieldCollectionLabel}[${index + 1}].`;
     if (normalizedDirection === "AR") {
-      if (!parsePositiveInt(line.postingAccountId)) {
-        throw badRequest(
-          `${fieldPrefix}postingAccountId is required when subledgerType=FIXED_ASSET on AR documents`
-        );
-      }
-      const resolvedPostingAccount = await resolveCariLinePostingAccount({
-        tenantId,
-        legalEntityId,
-        accountId: line.postingAccountId,
-        fieldLabel: `${fieldPrefix}postingAccountId`,
-        runQuery,
-      });
-      if (parsePositiveInt(line.postingAccountId) !== resolvedPostingAccount.id) {
-        line.postingAccountId = resolvedPostingAccount.id;
+      if (normalizeText(line.postingAccountId)) {
+        line.postingAccountId = "";
         mutated = true;
       }
       continue;
@@ -3923,13 +3912,10 @@ function buildFixedAssetSaleCutoffPostingLines({
 }
 
 function buildFixedAssetSaleDisposalPostingLines({
-  proceedsAccountId,
   assetAccountId,
   accumDeprAccountId,
   disposalGainAccountId,
   disposalLossAccountId,
-  proceedsAmountTxn,
-  proceedsAmountBase,
   grossCostTxn,
   grossCostBase,
   accumDeprTxn,
@@ -3956,19 +3942,6 @@ function buildFixedAssetSaleDisposalPostingLines({
       })
     );
   }
-
-  lines.push(
-    buildCariDirectionalJournalLine({
-      accountId: proceedsAccountId,
-      side: "DEBIT",
-      amountTxn: proceedsAmountTxn,
-      amountBase: proceedsAmountBase,
-      lineDescription: `FA sale ${assetNo} relieve AR sale proceeds`.slice(0, 255),
-      subledgerReferenceNo: assetNo,
-      currencyCode,
-      operatingUnitId: ownerOperatingUnitId,
-    })
-  );
   lines.push(
     buildCariDirectionalJournalLine({
       accountId: assetAccountId,
@@ -4096,14 +4069,6 @@ async function prepareFixedAssetPostingAugmentationsTx({
       );
     }
 
-    const proceedsAccount = await resolveCariLinePostingAccount({
-      tenantId,
-      legalEntityId,
-      accountId: line.postingAccountId,
-      fieldLabel: `${fieldPrefix}postingAccountId`,
-      runQuery: tx.query,
-    });
-
     const grossCostTxn = roundFixedAssetDisposalAmount(asset.original_cost_txn);
     const grossCostBase = roundFixedAssetDisposalAmount(asset.original_cost_base);
     const assetAccountId = parsePositiveInt(asset.asset_account_id);
@@ -4204,13 +4169,10 @@ async function prepareFixedAssetPostingAugmentationsTx({
 
     postingLines.push(
       ...buildFixedAssetSaleDisposalPostingLines({
-        proceedsAccountId: proceedsAccount.id,
         assetAccountId,
         accumDeprAccountId,
         disposalGainAccountId,
         disposalLossAccountId,
-        proceedsAmountTxn,
-        proceedsAmountBase,
         grossCostTxn,
         grossCostBase,
         accumDeprTxn: roundFixedAssetDisposalAmount(cutoffEconomics.accumDeprTxn),
@@ -5106,6 +5068,66 @@ async function markFixedAssetTransactionsReversedTx(tx, {
   );
 }
 
+async function cancelActivatedFixedAssetsForCariReverseTx(tx, {
+  tenantId,
+  userId,
+  capitalizationTransactions,
+}) {
+  const activeCapitalizationTransactions = (Array.isArray(capitalizationTransactions)
+    ? capitalizationTransactions
+    : []
+  ).filter(
+    (transaction) =>
+      parsePositiveInt(transaction?.id)
+      && parsePositiveInt(transaction?.assetId)
+      && normalizeUpperText(transaction?.assetStatus) !== "DRAFT"
+  );
+
+  if (activeCapitalizationTransactions.length === 0) {
+    return;
+  }
+
+  const transactionIds = activeCapitalizationTransactions
+    .map((transaction) => parsePositiveInt(transaction.id))
+    .filter(Boolean);
+  const assetIds = Array.from(
+    new Set(
+      activeCapitalizationTransactions
+        .map((transaction) => parsePositiveInt(transaction.assetId))
+        .filter(Boolean)
+    )
+  );
+
+  await markFixedAssetTransactionsReversedTx(tx, {
+    tenantId,
+    transactionIds,
+  });
+
+  await tx.query(
+    `UPDATE fixed_assets
+        SET status = 'CANCELLED',
+            capitalization_date = NULL,
+            in_service_date = NULL,
+            original_cost_txn = 0,
+            original_cost_base = 0,
+            salvage_value_txn = 0,
+            salvage_value_base = 0,
+            remaining_useful_life_months = 0,
+            last_depreciation_period = NULL,
+            disposal_date = NULL,
+            disposal_type = NULL,
+            disposed_at = NULL,
+            disposal_proceeds_base = NULL,
+            disposal_gain_loss_base = NULL,
+            pending_sale_cari_document_id = NULL,
+            pending_sale_cari_document_line_id = NULL,
+            updated_by_user_id = ?
+      WHERE tenant_id = ?
+        AND id IN (${assetIds.map(() => "?").join(", ")})`,
+    [userId, tenantId, ...assetIds]
+  );
+}
+
 async function prepareFixedAssetReverseSideEffectsTx(tx, {
   tenantId,
   direction,
@@ -5136,14 +5158,23 @@ async function prepareFixedAssetReverseSideEffectsTx(tx, {
         continue;
       }
 
-      const nonDraftAsset = capitalizationTransactions.find(
+      const activatedCapitalizationTransactions = capitalizationTransactions.filter(
         (transaction) => normalizeUpperText(transaction.assetStatus) !== "DRAFT"
       );
-      if (nonDraftAsset) {
-        throw badRequest(
-          `Asset ${nonDraftAsset.assetNo} has been activated since capitalization. ` +
-          "Reverse the activation first before reversing the source CARI document."
-        );
+      for (const capitalizationTransaction of activatedCapitalizationTransactions) {
+        const laterBlocker = await findLaterPostedFixedAssetTransactionBlockerTx(tx, {
+          tenantId,
+          assetId: capitalizationTransaction.assetId,
+          effectiveDate: capitalizationTransaction.effectiveDate,
+          transactionId: capitalizationTransaction.id,
+        });
+        if (laterBlocker) {
+          throw badRequest(
+            `Asset ${capitalizationTransaction.assetNo} has had later fixed-asset activity since capitalization. ` +
+            `Reverse the later ${laterBlocker.transactionType || "UNKNOWN"} transaction first ` +
+            `(transactionId=${laterBlocker.id}).`
+          );
+        }
       }
 
       linePlans.set(lineId, {
@@ -5218,14 +5249,23 @@ async function applyFixedAssetReverseSideEffectsTx(tx, {
       if (capitalizationTransactions.length === 0) {
         continue;
       }
+      const draftCapitalizationTransactions = capitalizationTransactions.filter(
+        (transaction) => normalizeUpperText(transaction.assetStatus) === "DRAFT"
+      );
+      const activatedCapitalizationTransactions = capitalizationTransactions.filter(
+        (transaction) => normalizeUpperText(transaction.assetStatus) !== "DRAFT"
+      );
 
-      if (linePlan.fixedAssetMode === "AUTO_CREATE") {
-        const transactionIds = capitalizationTransactions
+      if (
+        linePlan.fixedAssetMode === "AUTO_CREATE"
+        && draftCapitalizationTransactions.length > 0
+      ) {
+        const transactionIds = draftCapitalizationTransactions
           .map((transaction) => transaction.id)
           .filter(Boolean);
         const assetIds = Array.from(
           new Set(
-            capitalizationTransactions
+            draftCapitalizationTransactions
               .map((transaction) => transaction.assetId)
               .filter(Boolean)
           )
@@ -5248,14 +5288,16 @@ async function applyFixedAssetReverseSideEffectsTx(tx, {
               AND id IN (${assetIds.map(() => "?").join(", ")})`,
           [tenantId, ...assetIds]
         );
-        continue;
       }
 
-      if (linePlan.fixedAssetMode === "LINK_EXISTING") {
-        const transaction = capitalizationTransactions[0];
+      if (
+        linePlan.fixedAssetMode === "LINK_EXISTING"
+        && draftCapitalizationTransactions.length > 0
+      ) {
+        const transaction = draftCapitalizationTransactions[0];
         await markFixedAssetTransactionsReversedTx(tx, {
           tenantId,
-          transactionIds: capitalizationTransactions.map((entry) => entry.id),
+          transactionIds: draftCapitalizationTransactions.map((entry) => entry.id),
         });
         await tx.query(
           `UPDATE fixed_assets
@@ -5270,6 +5312,14 @@ async function applyFixedAssetReverseSideEffectsTx(tx, {
               AND status = 'DRAFT'`,
           [userId, tenantId, transaction.assetId]
         );
+      }
+
+      if (activatedCapitalizationTransactions.length > 0) {
+        await cancelActivatedFixedAssetsForCariReverseTx(tx, {
+          tenantId,
+          userId,
+          capitalizationTransactions: activatedCapitalizationTransactions,
+        });
       }
       continue;
     }
@@ -6563,6 +6613,13 @@ async function postCariDocumentByIdTx(
           (lineDrivenTotalBase + lineAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
         );
 
+        if (
+          normalizeUpperText(direction) === "AR" &&
+          normalizeUpperText(line.subledgerType || "NONE") === "FIXED_ASSET"
+        ) {
+          continue;
+        }
+
         const resolvedLinePostingAccount = parsePositiveInt(line.postingAccountId)
           ? await resolveCariLinePostingAccount({
               tenantId,
@@ -7174,7 +7231,7 @@ export async function resolveCariSaleDocumentLineForFinalizeTx(
     );
   }
 
-  let documentStatus = normalizeUpperText(lockedDocument.status);
+  const documentStatus = normalizeUpperText(lockedDocument.status);
   if (documentStatus !== DRAFT_STATUS && documentStatus !== POSTED_STATUS) {
     throw badRequest(
       `Linked document (id=${normalizedDocumentId}) must be DRAFT or POSTED; got ${lockedDocument.status}`
@@ -7195,7 +7252,6 @@ export async function resolveCariSaleDocumentLineForFinalizeTx(
       existingDocument: lockedDocument,
     });
     resolvedDocument = posted.row;
-    documentStatus = normalizeUpperText(resolvedDocument.status);
   } else {
     const lines = await loadDocumentLinesForDocument({
       tenantId: normalizedTenantId,
@@ -7224,49 +7280,9 @@ export async function resolveCariSaleDocumentLineForFinalizeTx(
     "saleLine.lineNetAmountBase"
   );
 
-  let proceedsAccount = null;
-  if (parsePositiveInt(line.postingAccountId)) {
-    proceedsAccount = await resolveCariLinePostingAccount({
-      tenantId: normalizedTenantId,
-      legalEntityId: resolvedDocument.legalEntityId,
-      accountId: line.postingAccountId,
-      fieldLabel: "saleLine.postingAccountId",
-      runQuery: tx.query,
-    });
-  } else if (documentStatus === DRAFT_STATUS || postedDuringFinalize) {
-    const counterparty = await fetchCounterpartyRow({
-      tenantId: normalizedTenantId,
-      legalEntityId: resolvedDocument.legalEntityId,
-      counterpartyId: resolvedDocument.counterpartyId,
-      runQuery: tx.query,
-    });
-    if (!counterparty) {
-      throw badRequest(
-        `Document counterparty (id=${resolvedDocument.counterpartyId}) must belong to legalEntityId=${resolvedDocument.legalEntityId}`
-      );
-    }
-    const postingAccounts = await resolveCariPostingAccounts({
-      tenantId: normalizedTenantId,
-      legalEntityId: resolvedDocument.legalEntityId,
-      direction: normalizedDirection,
-      counterpartyRow: counterparty,
-      runQuery: tx.query,
-    });
-    proceedsAccount = {
-      id: postingAccounts.offsetAccountId,
-      code: postingAccounts.offsetAccountCode || null,
-    };
-  } else {
-    throw badRequest(
-      `Posted AR line (id=${normalizedDocumentLineId}) must keep a dedicated postingAccountId for fixed-assets sale finalize`
-    );
-  }
-
   return {
     document: resolvedDocument,
     line,
-    proceedsAccountId: parsePositiveInt(proceedsAccount?.id),
-    proceedsAccountCode: proceedsAccount?.code || null,
     proceedsAmountTxn,
     proceedsAmountBase,
     postedDuringFinalize,

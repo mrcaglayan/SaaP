@@ -13,6 +13,7 @@ const ASSET_STATUS_VALUES = [
   "SUSPENDED",
   "FULLY_DEPRECIATED",
   "DISPOSED",
+  "CANCELLED",
 ];
 
 function normalizeText(value) {
@@ -405,6 +406,7 @@ export default function FixedAssetsPage() {
                       <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${
                         row.status === "ACTIVE" ? "bg-emerald-100 text-emerald-800" :
                         row.status === "DISPOSED" ? "bg-rose-100 text-rose-800" :
+                        row.status === "CANCELLED" ? "bg-slate-200 text-slate-700" :
                         row.status === "SUSPENDED" ? "bg-amber-100 text-amber-800" :
                         row.status === "FULLY_DEPRECIATED" ? "bg-blue-100 text-blue-800" :
                         "bg-slate-100 text-slate-700"

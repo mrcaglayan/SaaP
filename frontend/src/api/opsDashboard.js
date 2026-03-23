@@ -31,6 +31,11 @@ export async function getOpsBankPaymentBatchesHealth(params = {}) {
   return response.data;
 }
 
+export async function getOpsFixedAssetDepreciationAttention(params = {}) {
+  const response = await api.get("/api/v1/ops/fixed-assets/depreciation-attention", { params });
+  return response.data;
+}
+
 export async function getOpsPayrollImportHealth(params = {}) {
   const response = await api.get("/api/v1/ops/payroll/import-health", { params });
   return response.data;

@@ -226,6 +226,16 @@ function getLegacyOpeningAmounts(asset) {
 }
 
 function getScheduleOpeningAmounts(asset) {
+  if (
+    asset?.scheduleOpeningNbvTxn != null
+    || asset?.scheduleOpeningNbvBase != null
+  ) {
+    return {
+      openingNbvTxn: roundAmount(asset.scheduleOpeningNbvTxn || 0),
+      openingNbvBase: roundAmount(asset.scheduleOpeningNbvBase || 0),
+    };
+  }
+
   if (hasLegacyOnboardingValues(asset)) {
     return getLegacyOpeningAmounts(asset);
   }
@@ -245,9 +255,121 @@ function normalizeNonNegativeInteger(value, label) {
 }
 
 function resolveAssetRemainingUsefulLifeMonths(asset, depreciationMethod) {
-  return depreciationMethod === "NONE"
-    ? (asset.remainingUsefulLifeMonths != null ? Number(asset.remainingUsefulLifeMonths) : null)
-    : normalizeNonNegativeInteger(asset.remainingUsefulLifeMonths, "remainingUsefulLifeMonths");
+  if (depreciationMethod === "NONE") {
+    return asset.remainingUsefulLifeMonths != null
+      ? Number(asset.remainingUsefulLifeMonths)
+      : null;
+  }
+  if (hasLegacyOnboardingValues(asset)) {
+    return normalizeNonNegativeInteger(asset.remainingUsefulLifeMonths, "remainingUsefulLifeMonths");
+  }
+  if (asset.usefulLifeMonths != null) {
+    return normalizeNonNegativeInteger(asset.usefulLifeMonths, "usefulLifeMonths");
+  }
+  return normalizeNonNegativeInteger(asset.remainingUsefulLifeMonths, "remainingUsefulLifeMonths");
+}
+
+function resolveCurrentRemainingUsefulLifeMonths(asset, currentPostedScheduleCount = 0) {
+  const depreciationMethod = normalizeUpperText(asset?.depreciationMethod);
+  const storedRemainingUsefulLifeMonths = asset?.remainingUsefulLifeMonths != null
+    ? Number(asset.remainingUsefulLifeMonths)
+    : null;
+
+  if (depreciationMethod === "NONE" || hasLegacyOnboardingValues(asset)) {
+    return storedRemainingUsefulLifeMonths;
+  }
+
+  const usefulLifeMonths = asset?.usefulLifeMonths != null
+    ? Number(asset.usefulLifeMonths)
+    : null;
+  if (!Number.isInteger(usefulLifeMonths) || usefulLifeMonths < 0) {
+    return storedRemainingUsefulLifeMonths;
+  }
+
+  return Math.max(
+    usefulLifeMonths - Math.max(0, Number(currentPostedScheduleCount || 0)),
+    0
+  );
+}
+
+function resolveDisplayScheduleSeedRemainingUsefulLifeMonths(asset) {
+  const depreciationMethod = normalizeUpperText(asset?.depreciationMethod);
+  if (
+    depreciationMethod === "NONE"
+    || normalizeUpperText(asset?.status) === "FULLY_DEPRECIATED"
+    || hasLegacyOnboardingValues(asset)
+  ) {
+    return asset?.remainingUsefulLifeMonths ?? null;
+  }
+
+  return asset?.usefulLifeMonths != null
+    ? Number(asset.usefulLifeMonths)
+    : (asset?.remainingUsefulLifeMonths ?? null);
+}
+
+function mapScheduleRowForDisplay(asset, row) {
+  const closingNbvTxn = roundAmount(row?.closingNbvTxn || 0);
+  const closingNbvBase = roundAmount(row?.closingNbvBase || 0);
+  const originalCostTxn = roundAmount(asset?.originalCostTxn || 0);
+  const originalCostBase = roundAmount(asset?.originalCostBase || 0);
+
+  return {
+    ...row,
+    depreciationAmountTxn: roundAmount(row?.plannedAmountTxn || 0),
+    depreciationAmountBase: roundAmount(row?.plannedAmountBase || 0),
+    accumDepreciationTxn: roundAmount(originalCostTxn - closingNbvTxn),
+    accumDepreciationBase: roundAmount(originalCostBase - closingNbvBase),
+    nbvTxn: closingNbvTxn,
+    nbvBase: closingNbvBase,
+  };
+}
+
+function mapSkippedScheduleRowForDisplay(asset, skippedRunLine, row = {}, previousRow = null) {
+  const openingNbvTxn = row?.openingNbvTxn != null
+    ? roundAmount(row.openingNbvTxn)
+    : previousRow?.closingNbvTxn != null
+      ? roundAmount(previousRow.closingNbvTxn)
+      : null;
+  const openingNbvBase = row?.openingNbvBase != null
+    ? roundAmount(row.openingNbvBase)
+    : previousRow?.closingNbvBase != null
+      ? roundAmount(previousRow.closingNbvBase)
+      : null;
+  const closingNbvTxn = row?.closingNbvTxn != null
+    ? roundAmount(row.closingNbvTxn)
+    : openingNbvTxn;
+  const closingNbvBase = row?.closingNbvBase != null
+    ? roundAmount(row.closingNbvBase)
+    : openingNbvBase;
+  const originalCostTxn = roundAmount(asset?.originalCostTxn || 0);
+  const originalCostBase = roundAmount(asset?.originalCostBase || 0);
+
+  return {
+    ...row,
+    fiscalPeriodId: row?.fiscalPeriodId ?? skippedRunLine?.fiscalPeriodId ?? null,
+    periodKey: skippedRunLine?.periodKey || row?.periodKey || null,
+    daysInPeriod: Number(skippedRunLine?.daysInPeriod ?? row?.daysInPeriod ?? 0),
+    eligibleDays: Number(skippedRunLine?.eligibleDays ?? row?.eligibleDays ?? 0),
+    plannedAmountTxn: 0,
+    plannedAmountBase: 0,
+    openingNbvTxn,
+    openingNbvBase,
+    closingNbvTxn,
+    closingNbvBase,
+    status: "SKIPPED",
+    skipReasonCode: skippedRunLine?.skipReasonCode || row?.skipReasonCode || null,
+    skipReasonText: skippedRunLine?.skipReasonText || row?.skipReasonText || null,
+    depreciationAmountTxn: 0,
+    depreciationAmountBase: 0,
+    accumDepreciationTxn: closingNbvTxn != null
+      ? roundAmount(originalCostTxn - closingNbvTxn)
+      : null,
+    accumDepreciationBase: closingNbvBase != null
+      ? roundAmount(originalCostBase - closingNbvBase)
+      : null,
+    nbvTxn: closingNbvTxn,
+    nbvBase: closingNbvBase,
+  };
 }
 
 function calculateStraightLineFullMonthAmount(remainingDepreciable, remainingPeriods) {
@@ -695,7 +817,12 @@ async function loadSchedulePeriodsForRange({
   };
 }
 
-function buildDepreciationScheduleRows(asset, periods, lifecycleHistory) {
+function buildDepreciationScheduleRows(
+  asset,
+  periods,
+  lifecycleHistory,
+  { requestedMonthCount = periods.length } = {}
+) {
   if (!periods.length) {
     return [];
   }
@@ -713,11 +840,16 @@ function buildDepreciationScheduleRows(asset, periods, lifecycleHistory) {
     : null;
   let hasSwitchedToStraightLine = depreciationMethod === "STRAIGHT_LINE";
   let hasLifecycleEligibilityCutoff = false;
+  const totalScheduledMonths = Math.max(
+    Number(requestedMonthCount || periods.length),
+    periods.length
+  );
 
   const lifecycleTimeline = buildLifecycleTimeline(asset, lifecycleHistory, periods);
   const lifecycleState = {
     ...lifecycleTimeline.initialState,
   };
+  let remainingPeriodsCounter = totalScheduledMonths;
 
   const rows = [];
   for (let index = 0; index < periods.length; index += 1) {
@@ -742,8 +874,9 @@ function buildDepreciationScheduleRows(asset, periods, lifecycleHistory) {
       lifecycleState
     );
     const eligibleDays = periodEligibility.eligibleDays;
-    const remainingPeriods = periods.length - index;
-    const isFinalScheduleLine = index === periods.length - 1;
+    const remainingPeriods = Math.max(remainingPeriodsCounter, 0);
+    const consumesUsefulLifePeriod = eligibleDays > 0;
+    const isFinalScheduleLine = consumesUsefulLifePeriod && remainingPeriodsCounter === 1;
 
     const remainingDepreciableTxn = getRemainingDepreciableAmount(openingNbvTxn, salvageValueTxn);
     const remainingDepreciableBase = getRemainingDepreciableAmount(openingNbvBase, salvageValueBase);
@@ -845,6 +978,9 @@ function buildDepreciationScheduleRows(asset, periods, lifecycleHistory) {
 
     openingNbvTxn = closingNbvTxn;
     openingNbvBase = closingNbvBase;
+    if (consumesUsefulLifePeriod) {
+      remainingPeriodsCounter = Math.max(remainingPeriodsCounter - 1, 0);
+    }
 
     if (lifecycleState.isDisposed) {
       break;
@@ -985,7 +1121,7 @@ function buildSkippedRunRow({
   };
 }
 
-function buildErrorRunRow({ asset, period, error }) {
+function buildErrorRunRow({ asset, period, error, errorCode = "SCHEDULE_GENERATION_FAILED" }) {
   const periodStart = parseDateOnly(period.startDate, "period.startDate");
   const periodEnd = parseDateOnly(period.endDate, "period.endDate");
   return {
@@ -1007,7 +1143,7 @@ function buildErrorRunRow({ asset, period, error }) {
     status: "ERROR",
     skipReasonCode: null,
     skipReasonText: null,
-    errorCode: "SCHEDULE_GENERATION_FAILED",
+    errorCode,
     errorMessage: String(error?.message || "Failed to generate depreciation schedule snapshot"),
     allocationSegments: [],
   };
@@ -1260,7 +1396,19 @@ async function buildAssetDepreciationScheduleContext({
   assertScheduleFoundationEligibility(asset);
 
   const depreciationMethod = normalizeUpperText(asset.depreciationMethod);
-  const remainingUsefulLifeMonths = resolveAssetRemainingUsefulLifeMonths(asset, depreciationMethod);
+  const currentPostedScheduleLines = await loadCurrentPostedDepreciationScheduleLinesForAsset({
+    tenantId,
+    assetId: Number(asset.id),
+    queryFn,
+  });
+  const currentPostedScheduleCount = currentPostedScheduleLines.length;
+  const currentRemainingUsefulLifeMonths = resolveCurrentRemainingUsefulLifeMonths(
+    asset,
+    currentPostedScheduleCount
+  );
+  const remainingUsefulLifeMonths = currentPostedScheduleCount > 0
+    ? currentRemainingUsefulLifeMonths
+    : resolveAssetRemainingUsefulLifeMonths(asset, depreciationMethod);
   const lifecycleHistory = await loadAssetDepreciationLifecycleHistory({
     tenantId,
     assetId: asset.id,
@@ -1277,29 +1425,52 @@ async function buildAssetDepreciationScheduleContext({
       scheduleHorizon: null,
       rows: [],
       isExcludedLowValue: true,
+      currentPostedScheduleLines,
+      currentPostedScheduleCount,
     };
   }
 
   let periods = [];
   let rows = [];
   let scheduleHorizon = null;
+  let scheduleStartDate = asset.inServiceDate;
+  let scheduleSeedAsset = asset;
+  if (currentPostedScheduleCount > 0) {
+    const lastPostedScheduleLine = currentPostedScheduleLines.at(-1) || null;
+    const lastPostedMonthStart = lastPostedScheduleLine?.periodKey
+      ? parseDateOnly(`${lastPostedScheduleLine.periodKey}-01`, "lastPostedPeriodKey")
+      : null;
+    if (lastPostedMonthStart) {
+      scheduleStartDate = formatDateOnly(startOfMonth(addMonths(lastPostedMonthStart, 1)));
+      scheduleSeedAsset = {
+        ...asset,
+        scheduleOpeningNbvTxn: roundAmount(lastPostedScheduleLine.closingNbvTxn || 0),
+        scheduleOpeningNbvBase: roundAmount(lastPostedScheduleLine.closingNbvBase || 0),
+      };
+    }
+  }
   if (
     (depreciationMethod === "STRAIGHT_LINE" || depreciationMethod === "DECLINING_BALANCE")
     && remainingUsefulLifeMonths > 0
   ) {
     const periodResolution = await loadSchedulePeriodsForRange({
       calendarId: book.calendar_id,
-      startDate: asset.inServiceDate,
+      startDate: scheduleStartDate,
       monthCount: remainingUsefulLifeMonths,
       queryFn,
     });
     periods = periodResolution.periods;
     scheduleHorizon = periodResolution.horizon;
-    rows = buildDepreciationScheduleRows(asset, periods, lifecycleHistory);
+    rows = buildDepreciationScheduleRows(
+      scheduleSeedAsset,
+      periods,
+      lifecycleHistory,
+      { requestedMonthCount: remainingUsefulLifeMonths }
+    );
   }
 
   return {
-    asset,
+    asset: scheduleSeedAsset,
     depreciationMethod,
     remainingUsefulLifeMonths,
     lifecycleHistory,
@@ -1307,6 +1478,8 @@ async function buildAssetDepreciationScheduleContext({
     scheduleHorizon,
     rows,
     isExcludedLowValue: false,
+    currentPostedScheduleLines,
+    currentPostedScheduleCount,
   };
 }
 
@@ -1346,7 +1519,7 @@ async function resolveDepreciationRunScope({
     queryFn
   );
   const resolvedPostingDate = resolveRunPostingDate(
-    postingDate || run.postingDate || null,
+    postingDate || null,
     period
   );
   await ensurePeriodOpenForFixedAssets(
@@ -1381,6 +1554,10 @@ async function buildDepreciationRunRowForAsset({
       book,
       queryFn,
     });
+    const currentPostedScheduleLines = scheduleContext.currentPostedScheduleLines || [];
+    const currentPostedPeriodKeys = new Set(
+      currentPostedScheduleLines.map((row) => row.periodKey)
+    );
 
     if (scheduleContext.isExcludedLowValue) {
       return null;
@@ -1392,6 +1569,34 @@ async function buildDepreciationRunRowForAsset({
       period
     );
     const scheduleRow = scheduleContext.rows.find((row) => row.periodKey === period.periodKey) || null;
+    const earliestUnpostedScheduleRow = scheduleContext.rows.find((row) => (
+      hasPositivePlannedAmount(row) && !currentPostedPeriodKeys.has(row.periodKey)
+    )) || null;
+
+    if (currentPostedPeriodKeys.has(period.periodKey)) {
+      return buildErrorRunRow({
+        asset,
+        period,
+        errorCode: "PERIOD_ALREADY_POSTED",
+        error: new Error(
+          `Asset already has posted depreciation for period ${period.periodKey}`
+        ),
+      });
+    }
+
+    if (
+      earliestUnpostedScheduleRow
+      && String(period.periodKey || "") > String(earliestUnpostedScheduleRow.periodKey || "")
+    ) {
+      return buildErrorRunRow({
+        asset,
+        period,
+        errorCode: "PERIOD_SEQUENCE_GAP",
+        error: new Error(
+          `Selected period ${period.periodKey} skips earlier unposted depreciation period ${earliestUnpostedScheduleRow.periodKey}`
+        ),
+      });
+    }
 
     if (scheduleRow && hasPositivePlannedAmount(scheduleRow)) {
       return buildReadyRunRow({
@@ -1507,7 +1712,30 @@ function mapRunSnapshotToPreviewResponse(snapshot) {
   };
 }
 
-async function assertNoExistingDraftRunForScope({
+function resolvePersistedRunStatusFromSnapshot(snapshot) {
+  const readyAssetCount = Number(snapshot?.summary?.readyAssetCount || 0);
+  if (readyAssetCount > 0) {
+    return "DRAFT";
+  }
+  return "SKIPPED";
+}
+
+function buildExistingPersistedRunMessage({
+  legalEntityId,
+  bookId,
+  fiscalPeriodId,
+  status,
+  runId = null,
+}) {
+  const normalizedStatus = normalizeUpperText(status) || "RUN";
+  return (
+    `A persisted ${normalizedStatus} depreciation run already exists for legalEntityId=${legalEntityId}, ` +
+    `bookId=${bookId}, fiscalPeriodId=${fiscalPeriodId}` +
+    (runId ? ` (runId=${runId})` : "")
+  );
+}
+
+async function assertNoExistingOpenOrSkippedRunForScope({
   tenantId,
   legalEntityId,
   bookId,
@@ -1515,22 +1743,26 @@ async function assertNoExistingDraftRunForScope({
   queryFn,
 }) {
   const existingResult = await queryFn(
-    `SELECT id
+    `SELECT id, status
        FROM fixed_asset_depreciation_runs
       WHERE tenant_id = ?
         AND legal_entity_id = ?
         AND book_id = ?
         AND fiscal_period_id = ?
-        AND status = 'DRAFT'
+        AND status IN ('DRAFT', 'SKIPPED')
       LIMIT 1`,
     [tenantId, legalEntityId, bookId, fiscalPeriodId]
   );
-  const existingRunId = Number(existingResult.rows?.[0]?.id || 0);
+  const existingRow = existingResult.rows?.[0] || null;
+  const existingRunId = Number(existingRow?.id || 0);
   if (existingRunId > 0) {
-    throw badRequest(
-      `A persisted DRAFT depreciation run already exists for legalEntityId=${legalEntityId}, ` +
-      `bookId=${bookId}, fiscalPeriodId=${fiscalPeriodId} (runId=${existingRunId})`
-    );
+    throw badRequest(buildExistingPersistedRunMessage({
+      legalEntityId,
+      bookId,
+      fiscalPeriodId,
+      status: existingRow?.status,
+      runId: existingRunId,
+    }));
   }
 }
 
@@ -1540,12 +1772,13 @@ function isDuplicateDraftRunError(error) {
 
 function buildDuplicateDraftRunMessage({ legalEntityId, bookId, fiscalPeriodId }) {
   return (
-    `A persisted DRAFT depreciation run already exists for legalEntityId=${legalEntityId}, ` +
+    `A persisted DRAFT or SKIPPED depreciation run already exists for legalEntityId=${legalEntityId}, ` +
     `bookId=${bookId}, fiscalPeriodId=${fiscalPeriodId}`
   );
 }
 
 async function insertDepreciationRunHeaderTx({ tx, snapshot, userId }) {
+  const persistedRunStatus = resolvePersistedRunStatusFromSnapshot(snapshot);
   const insertResult = await tx.query(
     `INSERT INTO fixed_asset_depreciation_runs (
        tenant_id,
@@ -1565,7 +1798,7 @@ async function insertDepreciationRunHeaderTx({ tx, snapshot, userId }) {
        total_posted_amount_base,
        created_by_user_id
      ) VALUES (
-        ?, ?, ?, ?, ?, ?, 'DRAFT', ?, 0, ?, ?, ?, ?, 0, 0, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 0, 0, ?
      )`,
     [
       snapshot.tenantId,
@@ -1574,6 +1807,7 @@ async function insertDepreciationRunHeaderTx({ tx, snapshot, userId }) {
       snapshot.fiscalPeriodId,
       snapshot.postingDate,
       snapshot.periodKey,
+      persistedRunStatus,
       snapshot.summary.assetCount,
       snapshot.summary.skippedAssetCount,
       snapshot.summary.errorCount,
@@ -2047,6 +2281,90 @@ export async function getDepreciationRunDetail({ tenantId, runId, queryFn = quer
   };
 }
 
+async function deletePersistedDraftOrSkippedRunTx({
+  tx,
+  tenantId,
+  run,
+}) {
+  const lines = await loadPersistedDepreciationRunLines({
+    tenantId,
+    runId: run.id,
+    forUpdate: true,
+    queryFn: tx.query,
+  });
+  const scheduleLineIds = lines
+    .map((line) => line.scheduleLineId)
+    .filter((value) => Number.isInteger(value) && value > 0);
+
+  const lineCountResult = await tx.query(
+    `SELECT COUNT(*) AS line_count
+       FROM fixed_asset_depreciation_run_lines
+      WHERE tenant_id = ?
+        AND run_id = ?`,
+    [tenantId, run.id]
+  );
+  const allocationCountResult = await tx.query(
+    `SELECT COUNT(*) AS allocation_count
+       FROM fixed_asset_depreciation_run_line_allocations alloc
+       JOIN fixed_asset_depreciation_run_lines line
+         ON line.id = alloc.run_line_id
+      WHERE alloc.tenant_id = ?
+        AND line.run_id = ?`,
+    [tenantId, run.id]
+  );
+  const lineCount = Number(lineCountResult.rows?.[0]?.line_count || 0);
+  const allocationRowCount = Number(
+    allocationCountResult.rows?.[0]?.allocation_count || 0
+  );
+
+  await tx.query(
+    `DELETE alloc
+       FROM fixed_asset_depreciation_run_line_allocations alloc
+       JOIN fixed_asset_depreciation_run_lines line
+         ON line.id = alloc.run_line_id
+      WHERE alloc.tenant_id = ?
+        AND line.run_id = ?`,
+    [tenantId, run.id]
+  );
+  await tx.query(
+    `DELETE FROM fixed_asset_depreciation_run_lines
+      WHERE tenant_id = ?
+        AND run_id = ?`,
+    [tenantId, run.id]
+  );
+  if (scheduleLineIds.length > 0) {
+    const schedulePlaceholders = scheduleLineIds.map(() => "?").join(", ");
+    await tx.query(
+      `DELETE FROM fixed_asset_depreciation_schedule_lines
+        WHERE tenant_id = ?
+          AND id IN (${schedulePlaceholders})
+          AND status = 'PLANNED'
+          AND posted_run_line_id IS NULL
+          AND posted_transaction_id IS NULL`,
+      [tenantId, ...scheduleLineIds]
+    );
+  }
+
+  const deleteResult = await tx.query(
+    `DELETE FROM fixed_asset_depreciation_runs
+      WHERE tenant_id = ?
+        AND id = ?
+        AND status IN ('DRAFT', 'SKIPPED')`,
+    [tenantId, run.id]
+  );
+  const deletedCount = Number(deleteResult.rows?.affectedRows || 0);
+  if (deletedCount !== 1) {
+    throw badRequest(
+      `Failed to delete ${run.status} depreciation run (runId=${run.id})`
+    );
+  }
+
+  return {
+    lineCount,
+    allocationRowCount,
+  };
+}
+
 export async function deleteDepreciationRunDraft({ tenantId, runId }) {
   if (!tenantId) throw badRequest("tenantId is required");
   if (!runId) throw badRequest("runId is required");
@@ -2062,82 +2380,17 @@ export async function deleteDepreciationRunDraft({ tenantId, runId }) {
       throw badRequest(`Depreciation run (id=${runId}) not found for tenant`);
     }
 
-    if (run.status !== "DRAFT") {
+    if (!["DRAFT", "SKIPPED"].includes(run.status)) {
       throw badRequest(
-        `Only DRAFT depreciation runs can be deleted (runId=${runId}, status=${run.status})`
+        `Only DRAFT or SKIPPED depreciation runs can be deleted (runId=${runId}, status=${run.status})`
       );
     }
 
-    const lines = await loadPersistedDepreciationRunLines({
+    const deletedSnapshot = await deletePersistedDraftOrSkippedRunTx({
+      tx,
       tenantId,
-      runId,
-      forUpdate: true,
-      queryFn: tx.query,
+      run,
     });
-    const scheduleLineIds = lines
-      .map((line) => line.scheduleLineId)
-      .filter((value) => Number.isInteger(value) && value > 0);
-
-    const lineCountResult = await tx.query(
-      `SELECT COUNT(*) AS line_count
-         FROM fixed_asset_depreciation_run_lines
-        WHERE tenant_id = ?
-          AND run_id = ?`,
-      [tenantId, runId]
-    );
-    const allocationCountResult = await tx.query(
-      `SELECT COUNT(*) AS allocation_count
-         FROM fixed_asset_depreciation_run_line_allocations alloc
-         JOIN fixed_asset_depreciation_run_lines line
-           ON line.id = alloc.run_line_id
-        WHERE alloc.tenant_id = ?
-          AND line.run_id = ?`,
-      [tenantId, runId]
-    );
-    const lineCount = Number(lineCountResult.rows?.[0]?.line_count || 0);
-    const allocationRowCount = Number(
-      allocationCountResult.rows?.[0]?.allocation_count || 0
-    );
-
-    await tx.query(
-      `DELETE alloc
-         FROM fixed_asset_depreciation_run_line_allocations alloc
-         JOIN fixed_asset_depreciation_run_lines line
-           ON line.id = alloc.run_line_id
-        WHERE alloc.tenant_id = ?
-          AND line.run_id = ?`,
-      [tenantId, runId]
-    );
-    await tx.query(
-      `DELETE FROM fixed_asset_depreciation_run_lines
-        WHERE tenant_id = ?
-          AND run_id = ?`,
-      [tenantId, runId]
-    );
-    if (scheduleLineIds.length > 0) {
-      const schedulePlaceholders = scheduleLineIds.map(() => "?").join(", ");
-      await tx.query(
-        `DELETE FROM fixed_asset_depreciation_schedule_lines
-          WHERE tenant_id = ?
-            AND id IN (${schedulePlaceholders})
-            AND status = 'PLANNED'
-            AND posted_run_line_id IS NULL
-            AND posted_transaction_id IS NULL`,
-        [tenantId, ...scheduleLineIds]
-      );
-    }
-
-    const deleteResult = await tx.query(
-      `DELETE FROM fixed_asset_depreciation_runs
-        WHERE tenant_id = ?
-          AND id = ?
-          AND status = 'DRAFT'`,
-      [tenantId, runId]
-    );
-    const deletedCount = Number(deleteResult.rows?.affectedRows || 0);
-    if (deletedCount !== 1) {
-      throw badRequest(`Failed to delete DRAFT depreciation run (runId=${runId})`);
-    }
 
     return {
       id: run.id,
@@ -2148,8 +2401,183 @@ export async function deleteDepreciationRunDraft({ tenantId, runId }) {
       periodKey: run.periodKey,
       deleted: true,
       previousStatus: run.status,
-      lineCount,
+      lineCount: deletedSnapshot.lineCount,
+      allocationRowCount: deletedSnapshot.allocationRowCount,
+    };
+  });
+}
+
+async function assertNoLaterNonReversedRunsForReprocess({
+  tenantId,
+  run,
+  queryFn,
+}) {
+  const fiscalYear = Number(run?.fiscalYear || 0);
+  const periodNo = Number(run?.periodNo || 0);
+  if (!fiscalYear || !periodNo) {
+    throw badRequest(
+      `Depreciation run (id=${run?.id || "?"}) is missing fiscal period sequence metadata`
+    );
+  }
+
+  const result = await queryFn(
+    `SELECT run.id,
+            run.status,
+            run.period_key
+       FROM fixed_asset_depreciation_runs run
+       JOIN fiscal_periods period
+         ON period.id = run.fiscal_period_id
+      WHERE run.tenant_id = ?
+        AND run.legal_entity_id = ?
+        AND run.book_id = ?
+        AND run.id <> ?
+        AND run.status <> 'REVERSED'
+        AND (
+          period.fiscal_year > ?
+          OR (period.fiscal_year = ? AND period.period_no > ?)
+        )
+      ORDER BY period.fiscal_year ASC, period.period_no ASC, run.id ASC
+      LIMIT 1
+      FOR UPDATE`,
+    [
+      tenantId,
+      run.legalEntityId,
+      run.bookId,
+      run.id,
+      fiscalYear,
+      fiscalYear,
+      periodNo,
+    ]
+  );
+
+  const blocker = result.rows?.[0];
+  if (!blocker) {
+    return;
+  }
+
+  throw badRequest(
+    `Skipped depreciation run (id=${run.id}) cannot be reprocessed because later ` +
+    `non-reversed run ${Number(blocker.id)} (${normalizeUpperText(blocker.status) || "UNKNOWN"}) ` +
+    `exists for period ${blocker.period_key || "?"}`
+  );
+}
+
+export async function reprocessSkippedDepreciationRun({
+  tenantId,
+  runId,
+  userId = null,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!runId) throw badRequest("runId is required");
+
+  return withTransaction(async (tx) => {
+    const run = await loadPersistedDepreciationRunHeader({
+      tenantId,
+      runId,
+      forUpdate: true,
+      queryFn: tx.query,
+    });
+    if (!run) {
+      throw badRequest(`Depreciation run (id=${runId}) not found for tenant`);
+    }
+    if (run.status !== "SKIPPED") {
+      throw badRequest(
+        `Only SKIPPED depreciation runs can be reprocessed (runId=${runId}, status=${run.status})`
+      );
+    }
+
+    const operationalBook = await resolveBookForLegalEntity(
+      tenantId,
+      run.legalEntityId,
+      tx.query
+    );
+    const operationalBookId = Number(operationalBook.id);
+    if (Number(run.bookId) !== operationalBookId) {
+      throw badRequest(
+        `Run bookId (${Number(run.bookId)}) no longer matches the operational fixed-assets book ` +
+        `(${operationalBookId}) for legalEntityId=${run.legalEntityId}`
+      );
+    }
+
+    const period = await resolveSupportedFixedAssetFiscalPeriod(
+      Number(operationalBook.calendar_id),
+      run.fiscalPeriodId,
+      tx.query
+    );
+    await ensurePeriodOpenForFixedAssets(
+      operationalBookId,
+      period.id,
+      "reprocess skipped depreciation run",
+      tx.query
+    );
+    await assertNoLaterNonReversedRunsForReprocess({
+      tenantId,
+      run,
+      queryFn: tx.query,
+    });
+
+    await deletePersistedDraftOrSkippedRunTx({
+      tx,
+      tenantId,
+      run,
+    });
+
+    const snapshot = await buildDepreciationRunSnapshot({
+      tenantId,
+      legalEntityId: run.legalEntityId,
+      fiscalPeriodId: run.fiscalPeriodId,
+      bookId: run.bookId,
+      postingDate: run.postingDate || null,
+      actionLabel: "reprocess skipped depreciation run",
+      queryFn: tx.query,
+    });
+
+    if (!snapshot.rows.length) {
+      throw badRequest(
+        `No depreciation run rows are available for legalEntityId=${snapshot.legalEntityId}, ` +
+        `fiscalPeriodId=${snapshot.fiscalPeriodId}`
+      );
+    }
+    if (Number(snapshot.summary?.errorCount || 0) > 0) {
+      const firstErrorRow = (snapshot.rows || []).find((row) => row.status === "ERROR");
+      throw badRequest(
+        firstErrorRow?.errorMessage
+        || `Skipped depreciation run cannot be reprocessed because period ${snapshot.periodKey} contains blocking depreciation errors`
+      );
+    }
+
+    const newRunId = await insertDepreciationRunHeaderTx({
+      tx,
+      snapshot,
+      userId,
+    });
+    const allocationRowCount = await insertDepreciationRunRowsTx({
+      tx,
+      snapshot,
+      runId: newRunId,
+    });
+    const persistedRunStatus = resolvePersistedRunStatusFromSnapshot(snapshot);
+
+    return {
+      id: newRunId,
+      tenantId: snapshot.tenantId,
+      legalEntityId: snapshot.legalEntityId,
+      bookId: snapshot.bookId,
+      fiscalPeriodId: snapshot.fiscalPeriodId,
+      periodKey: snapshot.periodKey,
+      postingDate: snapshot.postingDate,
+      periodConvention: snapshot.periodConvention,
+      status: persistedRunStatus,
+      assetCount: snapshot.summary.assetCount,
+      postedAssetCount: 0,
+      skippedAssetCount: snapshot.summary.skippedAssetCount,
+      errorCount: snapshot.summary.errorCount,
+      totalPlannedAmountTxn: snapshot.summary.totalPlannedAmountTxn,
+      totalPlannedAmountBase: snapshot.summary.totalPlannedAmountBase,
+      excludedLowValueAssetCount: snapshot.excludedLowValueAssetCount,
+      lineCount: snapshot.rows.length,
       allocationRowCount,
+      reprocessedFromRunId: run.id,
     };
   });
 }
@@ -2193,12 +2621,20 @@ async function loadAssetDepreciationPostingSnapshots({
             tenant_id,
             legal_entity_id,
             asset_no,
+            status,
             currency_code,
             owner_operating_unit_id,
             original_cost_txn,
             original_cost_base,
             salvage_value_txn,
             salvage_value_base,
+            depreciation_method,
+            useful_life_months,
+            remaining_useful_life_months,
+            legacy_accum_depr_txn,
+            legacy_accum_depr_base,
+            legacy_nbv_txn,
+            legacy_nbv_base,
             asset_account_id,
             accum_depr_account_id,
             depr_expense_account_id,
@@ -2215,6 +2651,7 @@ async function loadAssetDepreciationPostingSnapshots({
     tenantId: Number(row.tenant_id),
     legalEntityId: Number(row.legal_entity_id),
     assetNo: row.asset_no || null,
+    status: normalizeUpperText(row.status),
     currencyCode: row.currency_code || null,
     ownerOperatingUnitId: row.owner_operating_unit_id != null
       ? Number(row.owner_operating_unit_id)
@@ -2223,6 +2660,15 @@ async function loadAssetDepreciationPostingSnapshots({
     originalCostBase: roundAmount(row.original_cost_base || 0),
     salvageValueTxn: roundAmount(row.salvage_value_txn || 0),
     salvageValueBase: roundAmount(row.salvage_value_base || 0),
+    depreciationMethod: row.depreciation_method || null,
+    usefulLifeMonths: row.useful_life_months != null ? Number(row.useful_life_months) : null,
+    remainingUsefulLifeMonths: row.remaining_useful_life_months != null
+      ? Number(row.remaining_useful_life_months)
+      : null,
+    legacyAccumDeprTxn: row.legacy_accum_depr_txn != null ? Number(row.legacy_accum_depr_txn) : null,
+    legacyAccumDeprBase: row.legacy_accum_depr_base != null ? Number(row.legacy_accum_depr_base) : null,
+    legacyNbvTxn: row.legacy_nbv_txn != null ? Number(row.legacy_nbv_txn) : null,
+    legacyNbvBase: row.legacy_nbv_base != null ? Number(row.legacy_nbv_base) : null,
     assetAccountId: row.asset_account_id != null ? Number(row.asset_account_id) : null,
     accumDeprAccountId: row.accum_depr_account_id != null ? Number(row.accum_depr_account_id) : null,
     deprExpenseAccountId: row.depr_expense_account_id != null ? Number(row.depr_expense_account_id) : null,
@@ -2282,6 +2728,136 @@ async function loadPersistedDepreciationScheduleLines({
     status: normalizeUpperText(row.status),
     postedRunLineId: row.posted_run_line_id != null ? Number(row.posted_run_line_id) : null,
     postedTransactionId: row.posted_transaction_id != null ? Number(row.posted_transaction_id) : null,
+  }));
+}
+
+async function loadCurrentPostedDepreciationScheduleStatsByAsset({
+  tenantId,
+  assetIds,
+  queryFn = query,
+  forUpdate = false,
+}) {
+  const normalizedAssetIds = getDistinctIds(assetIds);
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!normalizedAssetIds.length) {
+    return new Map();
+  }
+
+  const placeholders = normalizedAssetIds.map(() => "?").join(", ");
+  const result = await queryFn(
+    `SELECT asset_id,
+            COUNT(*) AS posted_count,
+            MAX(period_key) AS last_period_key
+       FROM fixed_asset_depreciation_schedule_lines
+      WHERE tenant_id = ?
+        AND asset_id IN (${placeholders})
+        AND status = 'POSTED'
+      GROUP BY asset_id${forUpdate ? " FOR UPDATE" : ""}`,
+    [tenantId, ...normalizedAssetIds]
+  );
+
+  return new Map(
+    (result.rows || []).map((row) => [
+      Number(row.asset_id),
+      {
+        postedCount: Number(row.posted_count || 0),
+        lastPeriodKey: row.last_period_key || null,
+      },
+    ])
+  );
+}
+
+async function loadCurrentPostedDepreciationScheduleLinesForAsset({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT id,
+            tenant_id,
+            legal_entity_id,
+            asset_id,
+            period_key,
+            line_no,
+            planned_amount_txn,
+            planned_amount_base,
+            opening_nbv_txn,
+            opening_nbv_base,
+            closing_nbv_txn,
+            closing_nbv_base,
+            status,
+            posted_run_line_id,
+            posted_transaction_id
+       FROM fixed_asset_depreciation_schedule_lines
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'
+      ORDER BY period_key ASC, line_no ASC, id ASC`,
+    [tenantId, assetId]
+  );
+
+  return (result.rows || []).map((row) => ({
+    id: Number(row.id),
+    tenantId: Number(row.tenant_id),
+    legalEntityId: Number(row.legal_entity_id),
+    assetId: Number(row.asset_id),
+    periodKey: row.period_key,
+    lineNo: Number(row.line_no || 0),
+    plannedAmountTxn: roundAmount(row.planned_amount_txn || 0),
+    plannedAmountBase: roundAmount(row.planned_amount_base || 0),
+    openingNbvTxn: roundAmount(row.opening_nbv_txn || 0),
+    openingNbvBase: roundAmount(row.opening_nbv_base || 0),
+    closingNbvTxn: roundAmount(row.closing_nbv_txn || 0),
+    closingNbvBase: roundAmount(row.closing_nbv_base || 0),
+    status: normalizeUpperText(row.status),
+    postedRunLineId: row.posted_run_line_id != null ? Number(row.posted_run_line_id) : null,
+    postedTransactionId: row.posted_transaction_id != null ? Number(row.posted_transaction_id) : null,
+  }));
+}
+
+async function loadCurrentSkippedDepreciationRunLinesForAsset({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT line.id,
+            line.run_id,
+            line.asset_id,
+            line.fiscal_period_id,
+            line.period_key,
+            line.eligible_days,
+            line.days_in_period,
+            line.skip_reason_code,
+            line.skip_reason_text
+       FROM fixed_asset_depreciation_run_lines line
+       JOIN fixed_asset_depreciation_runs run
+         ON run.tenant_id = line.tenant_id
+        AND run.id = line.run_id
+      WHERE line.tenant_id = ?
+        AND line.asset_id = ?
+        AND line.status = 'SKIPPED'
+        AND run.status = 'SKIPPED'
+      ORDER BY line.period_key ASC, line.id ASC`,
+    [tenantId, assetId]
+  );
+
+  return (result.rows || []).map((row) => ({
+    id: Number(row.id),
+    runId: Number(row.run_id),
+    assetId: Number(row.asset_id),
+    fiscalPeriodId: Number(row.fiscal_period_id),
+    periodKey: row.period_key,
+    eligibleDays: Number(row.eligible_days || 0),
+    daysInPeriod: Number(row.days_in_period || 0),
+    skipReasonCode: row.skip_reason_code || null,
+    skipReasonText: row.skip_reason_text || null,
   }));
 }
 
@@ -2406,44 +2982,6 @@ async function loadPostedFixedAssetTransactionsForAssets({
       : null,
     note: row.note || null,
   }));
-}
-
-async function loadRemainingPostedDepreciationPeriodsByAsset({
-  tenantId,
-  assetIds,
-  excludedScheduleLineIds,
-  queryFn = query,
-}) {
-  const normalizedAssetIds = getDistinctIds(assetIds);
-  const normalizedExcludedScheduleLineIds = getDistinctIds(excludedScheduleLineIds);
-  if (!tenantId) throw badRequest("tenantId is required");
-  if (!normalizedAssetIds.length) {
-    return new Map();
-  }
-
-  const assetPlaceholders = normalizedAssetIds.map(() => "?").join(", ");
-  const params = [tenantId, ...normalizedAssetIds];
-  let excludedSql = "";
-  if (normalizedExcludedScheduleLineIds.length > 0) {
-    excludedSql = ` AND id NOT IN (${normalizedExcludedScheduleLineIds.map(() => "?").join(", ")})`;
-    params.push(...normalizedExcludedScheduleLineIds);
-  }
-
-  const result = await queryFn(
-    `SELECT asset_id,
-            MAX(period_key) AS last_period_key
-       FROM fixed_asset_depreciation_schedule_lines
-      WHERE tenant_id = ?
-        AND asset_id IN (${assetPlaceholders})
-        AND status = 'POSTED'${excludedSql}
-      GROUP BY asset_id
-      FOR UPDATE`,
-    params
-  );
-
-  return new Map(
-    (result.rows || []).map((row) => [Number(row.asset_id), row.last_period_key || null])
-  );
 }
 
 function findRunReversalBlockers({
@@ -2906,15 +3444,39 @@ export async function postDepreciationRun({
       }
     }
 
-    if (readyAssetIds.length > 0) {
-      const readyAssetPlaceholders = readyAssetIds.map(() => "?").join(", ");
+    const postedScheduleStatsByAsset = await loadCurrentPostedDepreciationScheduleStatsByAsset({
+      tenantId,
+      assetIds: readyAssetIds,
+      queryFn: tx.query,
+      forUpdate: true,
+    });
+    for (const assetId of readyAssetIds) {
+      const assetSnapshot = assetSnapshotsById.get(assetId);
+      if (!assetSnapshot) {
+        throw badRequest(`Missing asset posting snapshot for assetId=${assetId}`);
+      }
+      const postedScheduleStats = postedScheduleStatsByAsset.get(assetId) || {
+        postedCount: 0,
+        lastPeriodKey: run.periodKey,
+      };
+      const remainingUsefulLifeMonths = resolveCurrentRemainingUsefulLifeMonths(
+        assetSnapshot,
+        postedScheduleStats.postedCount
+      );
       await tx.query(
         `UPDATE fixed_assets
             SET last_depreciation_period = ?,
+                remaining_useful_life_months = ?,
                 updated_by_user_id = ?
           WHERE tenant_id = ?
-            AND id IN (${readyAssetPlaceholders})`,
-        [run.periodKey, userId, tenantId, ...readyAssetIds]
+            AND id = ?`,
+        [
+          postedScheduleStats.lastPeriodKey || run.periodKey,
+          remainingUsefulLifeMonths,
+          userId,
+          tenantId,
+          assetId,
+        ]
       );
     }
 
@@ -3104,13 +3666,6 @@ export async function reverseDepreciationRun({
       );
     }
 
-    const remainingPostedPeriodsByAsset = await loadRemainingPostedDepreciationPeriodsByAsset({
-      tenantId,
-      assetIds: affectedAssetIds,
-      excludedScheduleLineIds: scheduleLineIds,
-      queryFn: tx.query,
-    });
-
     const reversalJournalResult = await reverseJournalEntryTx(tx, {
       tenantId,
       journalId: run.postedJournalEntryId,
@@ -3168,13 +3723,41 @@ export async function reverseDepreciationRun({
       );
     }
 
+    const affectedAssetSnapshots = await loadAssetDepreciationPostingSnapshots({
+      tenantId,
+      assetIds: affectedAssetIds,
+      queryFn: tx.query,
+    });
+    const affectedAssetSnapshotsById = new Map(
+      affectedAssetSnapshots.map((asset) => [asset.id, asset])
+    );
+    const remainingPostedScheduleStatsByAsset = await loadCurrentPostedDepreciationScheduleStatsByAsset({
+      tenantId,
+      assetIds: affectedAssetIds,
+      queryFn: tx.query,
+      forUpdate: true,
+    });
+
     for (const assetId of affectedAssetIds) {
+      const assetSnapshot = affectedAssetSnapshotsById.get(assetId);
+      if (!assetSnapshot) {
+        throw badRequest(`Missing asset posting snapshot for assetId=${assetId}`);
+      }
+      const postedScheduleStats = remainingPostedScheduleStatsByAsset.get(assetId) || {
+        postedCount: 0,
+        lastPeriodKey: null,
+      };
+      const remainingUsefulLifeMonths = resolveCurrentRemainingUsefulLifeMonths(
+        assetSnapshot,
+        postedScheduleStats.postedCount
+      );
       // Keep the historical REVERSED rows and restore only the current linkage/state.
       // Reversal is successor-blocked, so a FULLY_DEPRECIATED asset here can safely
       // return to ACTIVE when its latest posted run is removed.
       await tx.query(
         `UPDATE fixed_assets
             SET last_depreciation_period = ?,
+                remaining_useful_life_months = ?,
                 status = CASE
                   WHEN status = 'FULLY_DEPRECIATED' THEN 'ACTIVE'
                   ELSE status
@@ -3183,7 +3766,8 @@ export async function reverseDepreciationRun({
           WHERE tenant_id = ?
             AND id = ?`,
         [
-          remainingPostedPeriodsByAsset.get(assetId) || null,
+          postedScheduleStats.lastPeriodKey || null,
+          remainingUsefulLifeMonths,
           userId,
           tenantId,
           assetId,
@@ -3227,6 +3811,62 @@ export async function getAssetDepreciationSchedule({ tenantId, assetId }) {
     asset,
     book,
   });
+  const currentPostedScheduleLines = scheduleContext.currentPostedScheduleLines || [];
+  const currentPostedScheduleCount = scheduleContext.currentPostedScheduleCount
+    ?? currentPostedScheduleLines.length;
+  const currentSkippedRunLines = await loadCurrentSkippedDepreciationRunLinesForAsset({
+    tenantId,
+    assetId: asset.id,
+  });
+  const currentRemainingUsefulLifeMonths = resolveCurrentRemainingUsefulLifeMonths(
+    asset,
+    currentPostedScheduleCount
+  );
+  const currentLastDepreciationPeriod = currentPostedScheduleLines.at(-1)?.periodKey
+    || asset.lastDepreciationPeriod
+    || null;
+  const rowsByPeriodKey = new Map(
+    (scheduleContext.rows || []).map((row) => [row.periodKey, mapScheduleRowForDisplay(asset, row)])
+  );
+  for (const postedLine of currentPostedScheduleLines) {
+    rowsByPeriodKey.set(postedLine.periodKey, mapScheduleRowForDisplay(asset, postedLine));
+  }
+  for (const skippedRunLine of currentSkippedRunLines) {
+    if (!rowsByPeriodKey.has(skippedRunLine.periodKey)) {
+      rowsByPeriodKey.set(skippedRunLine.periodKey, {
+        periodKey: skippedRunLine.periodKey,
+        fiscalPeriodId: skippedRunLine.fiscalPeriodId,
+        lineNo: 0,
+      });
+    }
+  }
+  const skippedRunLinesByPeriodKey = new Map(
+    currentSkippedRunLines.map((line) => [line.periodKey, line])
+  );
+  const sortedRows = Array.from(rowsByPeriodKey.values()).sort((left, right) => (
+    String(left?.periodKey || "").localeCompare(String(right?.periodKey || ""))
+    || Number(left?.lineNo || 0) - Number(right?.lineNo || 0)
+  ));
+  const rows = [];
+  for (let index = 0; index < sortedRows.length; index += 1) {
+    const row = sortedRows[index];
+    const skippedRunLine = skippedRunLinesByPeriodKey.get(row.periodKey);
+    if (!skippedRunLine) {
+      rows.push(row);
+      continue;
+    }
+    const previousRow = rows.at(-1) || null;
+    const skippedDisplayRow = mapSkippedScheduleRowForDisplay(
+      asset,
+      skippedRunLine,
+      row,
+      previousRow
+    );
+    rows.push({
+      ...skippedDisplayRow,
+      lineNo: Number(skippedDisplayRow.lineNo || index + 1),
+    });
+  }
 
   if (scheduleContext.isExcludedLowValue) {
     return {
@@ -3244,14 +3884,13 @@ export async function getAssetDepreciationSchedule({ tenantId, assetId }) {
       originalCostBase: asset.originalCostBase,
       salvageValueTxn: asset.salvageValueTxn,
       salvageValueBase: asset.salvageValueBase,
-      remainingUsefulLifeMonths: scheduleContext.remainingUsefulLifeMonths,
+      remainingUsefulLifeMonths: currentRemainingUsefulLifeMonths,
+      lastDepreciationPeriod: currentLastDepreciationPeriod,
       scheduleHorizon: scheduleContext.scheduleHorizon,
-      rows: [],
-      total: 0,
+      rows,
+      total: rows.length,
     };
   }
-
-  const rows = scheduleContext.rows;
 
   return {
     tenantId,
@@ -3268,7 +3907,8 @@ export async function getAssetDepreciationSchedule({ tenantId, assetId }) {
     originalCostBase: asset.originalCostBase,
     salvageValueTxn: asset.salvageValueTxn,
     salvageValueBase: asset.salvageValueBase,
-    remainingUsefulLifeMonths: scheduleContext.remainingUsefulLifeMonths,
+    remainingUsefulLifeMonths: currentRemainingUsefulLifeMonths,
+    lastDepreciationPeriod: currentLastDepreciationPeriod,
     scheduleHorizon: scheduleContext.scheduleHorizon,
     rows,
     total: rows.length,
@@ -3298,8 +3938,15 @@ export async function createDepreciationRunDraft(input) {
         `fiscalPeriodId=${snapshot.fiscalPeriodId}`
       );
     }
+    if (Number(snapshot.summary?.errorCount || 0) > 0) {
+      const firstErrorRow = (snapshot.rows || []).find((row) => row.status === "ERROR");
+      throw badRequest(
+        firstErrorRow?.errorMessage
+        || `Depreciation draft cannot be created because period ${snapshot.periodKey} contains blocking depreciation errors`
+      );
+    }
 
-    await assertNoExistingDraftRunForScope({
+    await assertNoExistingOpenOrSkippedRunForScope({
       tenantId: snapshot.tenantId,
       legalEntityId: snapshot.legalEntityId,
       bookId: snapshot.bookId,
@@ -3326,6 +3973,7 @@ export async function createDepreciationRunDraft(input) {
       snapshot,
       runId,
     });
+    const persistedRunStatus = resolvePersistedRunStatusFromSnapshot(snapshot);
 
     return {
       id: runId,
@@ -3336,7 +3984,7 @@ export async function createDepreciationRunDraft(input) {
       periodKey: snapshot.periodKey,
       postingDate: snapshot.postingDate,
       periodConvention: snapshot.periodConvention,
-      status: "DRAFT",
+      status: persistedRunStatus,
       assetCount: snapshot.summary.assetCount,
       postedAssetCount: 0,
       skippedAssetCount: snapshot.summary.skippedAssetCount,

@@ -23,7 +23,6 @@ import {
   updateCariDocument,
 } from "../../api/cariDocuments.js";
 import {
-  createCariCounterparty,
   listCariCounterparties,
 } from "../../api/cariCounterparty.js";
 import { listCariPaymentTerms } from "../../api/cariPaymentTerms.js";
@@ -64,6 +63,7 @@ import {
 } from "../../lifecycle/lifecycleRules.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import { exportRowsAsCsv } from "../../utils/csvExport.js";
+import InlineCounterpartyCreateModal from "./InlineCounterpartyCreateModal.jsx";
 import {
   buildDocumentListQuery,
   buildDocumentMutationPayload,
@@ -85,10 +85,8 @@ import {
   validateDocumentMutationForm,
 } from "./cariDocumentsUtils.js";
 import {
-  buildInlineCounterpartyCode,
   normalizeLookupQuery,
   prependOrReplaceCounterpartyOption,
-  resolveInlineCounterpartyRoleFlags,
 } from "./counterpartyInlineCreate.js";
 
 const DEFAULT_FILTERS = {
@@ -599,6 +597,18 @@ function getFixedAssetCategoryDefaultAssetAccountId(categoryRow) {
   );
 }
 
+function getFixedAssetCategoryDefaultDepreciationProfileId(categoryRow) {
+  return toPositiveInt(
+    categoryRow?.defaultDepreciationProfileId ?? categoryRow?.default_depreciation_profile_id
+  );
+}
+
+function getFixedAssetCategoryDefaultUsefulLifeMonths(categoryRow) {
+  return toPositiveInt(
+    categoryRow?.defaultUsefulLifeMonths ?? categoryRow?.default_useful_life_months
+  );
+}
+
 function formatFixedAssetCategoryDisplay(categoryRow, fallbackId = null) {
   const code = normalizeText(categoryRow?.code);
   const name = normalizeText(categoryRow?.name);
@@ -612,22 +622,69 @@ function formatFixedAssetCategoryDisplay(categoryRow, fallbackId = null) {
   return categoryId ? `#${categoryId}` : "-";
 }
 
-function getFixedAssetCategoryMissingAccountIssue(categoryId, categoriesById) {
-  const normalizedCategoryId = toPositiveInt(categoryId);
-  if (!normalizedCategoryId || !(categoriesById instanceof Map)) {
+function buildFixedAssetCategorySetupIssue(categoryRow, fallbackId = null) {
+  const normalizedCategoryId =
+    toPositiveInt(categoryRow?.id) || toPositiveInt(fallbackId);
+  if (!normalizedCategoryId) {
     return null;
   }
-  const categoryRow = categoriesById.get(normalizedCategoryId) || null;
-  if (!categoryRow || getFixedAssetCategoryDefaultAssetAccountId(categoryRow)) {
+  const missingRequirements = [];
+  if (!getFixedAssetCategoryDefaultAssetAccountId(categoryRow)) {
+    missingRequirements.push("defaultAssetAccountId");
+  }
+  if (!getFixedAssetCategoryDefaultDepreciationProfileId(categoryRow)) {
+    missingRequirements.push("defaultDepreciationProfileId");
+  }
+  if (!getFixedAssetCategoryDefaultUsefulLifeMonths(categoryRow)) {
+    missingRequirements.push("defaultUsefulLifeMonths");
+  }
+  if (missingRequirements.length === 0) {
     return null;
   }
   return {
     categoryId: normalizedCategoryId,
     categoryLabel: formatFixedAssetCategoryDisplay(categoryRow, normalizedCategoryId),
+    missingRequirements,
   };
 }
 
-function mapFixedAssetCategoryLookupOptions(rows = [], accountRowsById = new Map()) {
+function getFixedAssetCategorySetupIssue(categoryId, categoriesById) {
+  const normalizedCategoryId = toPositiveInt(categoryId);
+  if (!normalizedCategoryId || !(categoriesById instanceof Map)) {
+    return null;
+  }
+  const categoryRow = categoriesById.get(normalizedCategoryId) || null;
+  return categoryRow
+    ? buildFixedAssetCategorySetupIssue(categoryRow, normalizedCategoryId)
+    : null;
+}
+
+function formatFixedAssetCategorySetupRequirementLabel(requirementKey, l) {
+  if (requirementKey === "defaultAssetAccountId") {
+    return l("Default Asset Account", "Varsayilan Varlik Hesabi");
+  }
+  if (requirementKey === "defaultDepreciationProfileId") {
+    return l("Default Depreciation Profile", "Varsayilan Amortisman Profili");
+  }
+  if (requirementKey === "defaultUsefulLifeMonths") {
+    return l("Default Useful Life (months)", "Varsayilan Faydali Omur (ay)");
+  }
+  return requirementKey;
+}
+
+function formatFixedAssetCategorySetupRequirementList(missingRequirements, l) {
+  return (Array.isArray(missingRequirements) ? missingRequirements : [])
+    .map((requirementKey) =>
+      formatFixedAssetCategorySetupRequirementLabel(requirementKey, l)
+    )
+    .join(", ");
+}
+
+function mapFixedAssetCategoryLookupOptions(
+  rows = [],
+  accountRowsById = new Map(),
+  l = (englishText) => englishText
+) {
   return (Array.isArray(rows) ? rows : [])
     .map((row) => {
       const id = toPositiveInt(row?.id);
@@ -638,12 +695,33 @@ function mapFixedAssetCategoryLookupOptions(rows = [], accountRowsById = new Map
       const name = normalizeText(row?.name);
       const accountId = getFixedAssetCategoryDefaultAssetAccountId(row);
       const account = accountRowsById.get(accountId) || null;
+      const setupIssue = buildFixedAssetCategorySetupIssue(row, id);
+      const readinessDescription = setupIssue
+        ? l(
+            `Missing setup: ${formatFixedAssetCategorySetupRequirementList(
+              setupIssue.missingRequirements,
+              l
+            )}.`,
+            `Eksik kurulum: ${formatFixedAssetCategorySetupRequirementList(
+              setupIssue.missingRequirements,
+              l
+            )}.`
+          )
+        : l(
+            `Ready for asset creation. Asset account: ${formatPostableAccountDisplay(
+              account,
+              accountId
+            )}`,
+            `Varlik olusturma icin hazir. Varlik hesabi: ${formatPostableAccountDisplay(
+              account,
+              accountId
+            )}`
+          );
       return {
         value: String(id),
         label: code && name ? `${code} - ${name}` : code || name || `#${id}`,
-        description: accountId
-          ? `Asset account: ${formatPostableAccountDisplay(account, accountId)}`
-          : "Asset account is not configured.",
+        description: readinessDescription,
+        disabled: Boolean(setupIssue),
       };
     })
     .filter(Boolean);
@@ -940,6 +1018,7 @@ function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
       ...fixedAssetResetPatch,
       subledgerType: "FIXED_ASSET",
       itemCardId: "",
+      postingAccountId: "",
       warehouseId: "",
       warehouseCode: "",
       warehouseName: "",
@@ -1197,8 +1276,15 @@ function resolveDocumentDraftTemplateState(savedView) {
   return { draftForm, recurringRule };
 }
 
-function buildCloneDraftFormFromRow(row, fallbackForm) {
-  const fallbackDocumentDate = normalizeText(fallbackForm?.documentDate) || todayIsoDate();
+function buildCloneDraftFormFromRow(row, fallbackForm, options = {}) {
+  const preserveSourceDocumentDate = Boolean(options?.preserveSourceDocumentDate);
+  const sourceDocumentDate = normalizeText(
+    firstDefinedRowValue(row, "documentDate", "document_date")
+  );
+  const fallbackDocumentDate =
+    preserveSourceDocumentDate && sourceDocumentDate
+      ? sourceDocumentDate
+      : normalizeText(fallbackForm?.documentDate) || todayIsoDate();
   const sourceForm = {
     legalEntityId: firstDefinedRowValue(row, "legalEntityId", "legal_entity_id"),
     operatingUnitId: firstDefinedRowValue(row, "operatingUnitId", "operating_unit_id"),
@@ -1603,6 +1689,8 @@ function FixedAssetQuickCreateModal({
   categoryOptions,
   operatingUnitOptions,
   categoriesById,
+  canReadSettings,
+  canUpsertSettings,
   onChange,
   onClose,
   onSave,
@@ -1616,6 +1704,15 @@ function FixedAssetQuickCreateModal({
     ...(form || {}),
   };
   const selectedCategory = categoriesById.get(toPositiveInt(activeForm.categoryId)) || null;
+  const selectedCategorySetupIssue = selectedCategory
+    ? buildFixedAssetCategorySetupIssue(selectedCategory)
+    : null;
+  const setupRequirementList = selectedCategorySetupIssue
+    ? formatFixedAssetCategorySetupRequirementList(
+        selectedCategorySetupIssue.missingRequirements,
+        l
+      )
+    : "";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
       <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
@@ -1733,7 +1830,7 @@ function FixedAssetQuickCreateModal({
           </div>
         </div>
 
-        {selectedCategory ? (
+        {selectedCategory && !selectedCategorySetupIssue ? (
           <p className="mt-3 text-xs text-slate-500">
             {l(
               `Category defaults will be applied automatically: useful life ${
@@ -1748,6 +1845,49 @@ function FixedAssetQuickCreateModal({
               }, hurda kurali ${selectedCategory.defaultSalvageRuleType || "NONE"}.`
             )}
           </p>
+        ) : null}
+        {selectedCategorySetupIssue ? (
+          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+            <p className="font-semibold">
+              {l(
+                "This category is not ready for draft asset creation.",
+                "Bu kategori taslak varlik olusturma icin hazir degil."
+              )}
+            </p>
+            <p className="mt-1">
+              {l(
+                `Missing setup: ${setupRequirementList}.`,
+                `Eksik kurulum: ${setupRequirementList}.`
+              )}
+            </p>
+            {canReadSettings ? (
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+                <a
+                  href={FIXED_ASSET_SETTINGS_PATH}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-semibold underline underline-offset-2"
+                >
+                  {l("Open Fixed Asset Settings", "Demirbas Ayarlarini Ac")}
+                </a>
+                {!canUpsertSettings ? (
+                  <span className="text-amber-800">
+                    {l(
+                      "You can open the page, but you need fixed_assets.settings.upsert to update the category.",
+                      "Sayfayi acabilirsiniz ancak kategoriyi guncellemek icin fixed_assets.settings.upsert gerekir."
+                    )}
+                  </span>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-amber-800">
+                {l(
+                  "Missing permission: fixed_assets.settings.read",
+                  "Eksik yetki: fixed_assets.settings.read"
+                )}
+              </p>
+            )}
+          </div>
         ) : null}
         {error ? <p className="mt-3 text-sm text-rose-700">{error}</p> : null}
 
@@ -1764,7 +1904,7 @@ function FixedAssetQuickCreateModal({
             type="button"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
             onClick={onSave}
-            disabled={saving}
+            disabled={saving || Boolean(selectedCategorySetupIssue)}
           >
             {saving
               ? l("Creating draft asset...", "Taslak varlik olusturuluyor...")
@@ -1780,6 +1920,7 @@ function FixedAssetCategorySetupModal({
   open,
   l,
   categoryLabel,
+  missingRequirements,
   canReadSettings,
   canUpsertSettings,
   onClose,
@@ -1787,6 +1928,12 @@ function FixedAssetCategorySetupModal({
   if (!open) {
     return null;
   }
+  const missingRequirementLabels = (Array.isArray(missingRequirements)
+    ? missingRequirements
+    : []
+  ).map((requirementKey) =>
+    formatFixedAssetCategorySetupRequirementLabel(requirementKey, l)
+  );
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
       <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
@@ -1797,8 +1944,8 @@ function FixedAssetCategorySetupModal({
             </h3>
             <p className="mt-1 text-sm text-slate-600">
               {l(
-                `"${categoryLabel}" cannot be used for Auto-Create because its default asset account is not configured.`,
-                `"${categoryLabel}" kategorisi varsayilan varlik hesabi tanimli olmadigi icin Otomatik Olustur ile kullanilamaz.`
+                `"${categoryLabel}" cannot be used for fixed asset creation until its required defaults are configured.`,
+                `"${categoryLabel}" kategorisi gerekli varsayilanlar tanimlanmadan duran varlik olusturma icin kullanilamaz.`
               )}
             </p>
           </div>
@@ -1811,6 +1958,18 @@ function FixedAssetCategorySetupModal({
           </button>
         </div>
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          {missingRequirementLabels.length > 0 ? (
+            <>
+              <p className="font-semibold">
+                {l("Missing setup", "Eksik kurulum")}
+              </p>
+              <ul className="mt-2 list-disc pl-5">
+                {missingRequirementLabels.map((label) => (
+                  <li key={`fa-category-setup-${label}`}>{label}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
           <p>
             {l(
               "Open Fixed Asset Settings, configure the category, then come back and select it again.",
@@ -2095,11 +2254,16 @@ function DocumentLineWorkbench({
                 toPositiveInt(line.fixedAssetCategoryId)
               )
             : "";
-          const selectedCategoryMissingDefaultAssetAccount = Boolean(
-            isAutoCreateMode &&
-              selectedCategory &&
-              !getFixedAssetCategoryDefaultAssetAccountId(selectedCategory)
-          );
+          const selectedCategorySetupIssue =
+            isAutoCreateMode && selectedCategory
+              ? buildFixedAssetCategorySetupIssue(selectedCategory)
+              : null;
+          const selectedCategorySetupRequirementList = selectedCategorySetupIssue
+            ? formatFixedAssetCategorySetupRequirementList(
+                selectedCategorySetupIssue.missingRequirements,
+                l
+              )
+            : "";
           const selectedTargetAsset = fixedAssetRowsById.get(
             toPositiveInt(line.targetFixedAssetId)
           ) || null;
@@ -2308,7 +2472,7 @@ function DocumentLineWorkbench({
                         />
                       </label>
                     </div>
-                    {selectedCategoryMissingDefaultAssetAccount ? (
+                    {selectedCategorySetupIssue ? (
                       <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900 md:col-span-4">
                         <p className="font-semibold">
                           {l(
@@ -2318,8 +2482,8 @@ function DocumentLineWorkbench({
                         </p>
                         <p className="mt-1">
                           {l(
-                            `"${selectedCategoryLabel}" is missing its default asset account. Configure it in Fixed Asset Settings, then select it again.`,
-                            `"${selectedCategoryLabel}" kategorisinin varsayilan varlik hesabi eksik. Demirbas Ayarlarinda yapilandirin, sonra yeniden secin.`
+                            `"${selectedCategoryLabel}" is missing required defaults: ${selectedCategorySetupRequirementList}. Configure them in Fixed Asset Settings, then select the category again.`,
+                            `"${selectedCategoryLabel}" kategorisinde gerekli varsayilanlar eksik: ${selectedCategorySetupRequirementList}. Demirbas Ayarlarinda yapilandirin, sonra kategoriyi yeniden secin.`
                           )}
                         </p>
                         {canReadFixedAssetSettings ? (
@@ -2671,46 +2835,7 @@ function DocumentLineWorkbench({
                           {formatPostableAccountDisplay(fixedAssetAccount, fixedAssetAccountId)}
                         </div>
                       </div>
-                    ) : canReadGlAccounts ? (
-                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                        {l("Sale Proceeds Account", "Satis Hasilat Hesabi")}
-                        <select
-                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                          value={line.postingAccountId}
-                          onChange={(event) =>
-                            onPatchLine(line.rowId, {
-                              postingAccountId: event.target.value,
-                            })
-                          }
-                          disabled={saving || lineAccountsLoading}
-                        >
-                          <option value="">
-                            {l("Select account", "Hesap secin")}
-                          </option>
-                          {lineAccountOptions.map((row) => (
-                            <option key={`line-account-${line.rowId}-${row.id}`} value={String(row.id)}>
-                              {row.code} - {row.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : (
-                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                        {l("Sale Proceeds Account ID", "Satis Hasilat Hesabi ID")}
-                        <input
-                          type="number"
-                          min="1"
-                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                          value={line.postingAccountId}
-                          onChange={(event) =>
-                            onPatchLine(line.rowId, {
-                              postingAccountId: event.target.value,
-                            })
-                          }
-                          disabled={saving}
-                        />
-                      </label>
-                    )}
+                    ) : null}
                   </>
                 ) : null}
 
@@ -3686,11 +3811,6 @@ export default function CariDocumentsPage({ direction = "" }) {
               "AR fixed-asset lines must use quantity 1.",
               "AR duran varlik satirlari miktar 1 kullanmalidir."
             );
-          case "postingAccountId is required for AR FIXED_ASSET lines.":
-            return l(
-              "Sale proceeds account is required for AR fixed-asset lines.",
-              "AR duran varlik satirlari icin satis hasilat hesabi zorunludur."
-            );
           case "itemCardId is required for STOCK lines.":
             return l(
               "Item card is required for stock lines.",
@@ -3765,6 +3885,22 @@ export default function CariDocumentsPage({ direction = "" }) {
           return l(
             "Selected asset category is missing its default asset account. Configure the category in Fixed Asset Settings and try again.",
             "Secili varlik kategorisinin varsayilan varlik hesabi eksik. Kategoriyi Demirbas Ayarlarinda yapilandirin ve tekrar deneyin."
+          );
+        }
+        const missingCategoryProfilePattern =
+          /^Category \(id=\d+\) must provide a default depreciation profile for FA06 capitalization$/;
+        if (missingCategoryProfilePattern.test(trimmedMessage)) {
+          return l(
+            "Selected asset category is missing its default depreciation profile. Configure the category in Fixed Asset Settings and try again.",
+            "Secili varlik kategorisinin varsayilan amortisman profili eksik. Kategoriyi Demirbas Ayarlarinda yapilandirin ve tekrar deneyin."
+          );
+        }
+        const missingCategoryUsefulLifePattern =
+          /^Category \(id=\d+\) must provide defaultUsefulLifeMonths for FA06 capitalization$/;
+        if (missingCategoryUsefulLifePattern.test(trimmedMessage)) {
+          return l(
+            "Selected asset category is missing its default useful life. Configure the category in Fixed Asset Settings and try again.",
+            "Secili varlik kategorisinin varsayilan faydali omru eksik. Kategoriyi Demirbas Ayarlarinda yapilandirin ve tekrar deneyin."
           );
         }
         if (
@@ -3882,7 +4018,8 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [createLinePreviewLoading, setCreateLinePreviewLoading] = useState(false);
   const [createLinePreviewError, setCreateLinePreviewError] = useState("");
   const [createLinePreviewMessage, setCreateLinePreviewMessage] = useState("");
-  const [createInlineCounterpartySaving, setCreateInlineCounterpartySaving] = useState(false);
+  const [createInlineCounterpartyModalOpen, setCreateInlineCounterpartyModalOpen] =
+    useState(false);
   const [createInlineCounterpartyError, setCreateInlineCounterpartyError] = useState("");
   const [createInlineCounterpartyMessage, setCreateInlineCounterpartyMessage] = useState("");
   const [createRecurringRule, setCreateRecurringRule] = useState(() =>
@@ -3942,7 +4079,8 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [editLinePreviewLoading, setEditLinePreviewLoading] = useState(false);
   const [editLinePreviewError, setEditLinePreviewError] = useState("");
   const [editLinePreviewMessage, setEditLinePreviewMessage] = useState("");
-  const [editInlineCounterpartySaving, setEditInlineCounterpartySaving] = useState(false);
+  const [editInlineCounterpartyModalOpen, setEditInlineCounterpartyModalOpen] =
+    useState(false);
   const [editInlineCounterpartyError, setEditInlineCounterpartyError] = useState("");
   const [editInlineCounterpartyMessage, setEditInlineCounterpartyMessage] = useState("");
   const [cancelSaving, setCancelSaving] = useState(false);
@@ -4262,6 +4400,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   const canReverseSelected = Boolean(
     selectedSnapshot && canReverseDocument(selectedSnapshot) && canReverse
   );
+  const canCopySelectedToDraft = Boolean(selectedSnapshot && canCreate);
   const canAttachEvidence = Boolean(selectedSnapshot && canUpdate);
   const canWriteInternalComments = Boolean(selectedSnapshot && canUpdate);
   const canWriteOpsStatus = Boolean(selectedSnapshot && canUpdate);
@@ -4915,6 +5054,29 @@ export default function CariDocumentsPage({ direction = "" }) {
     () => buildRowsById(editFixedAssetSaleRows),
     [editFixedAssetSaleRows]
   );
+  const detailFixedAssetRowsById = useMemo(
+    () =>
+      new Map([
+        ...(createFixedAssetDraftRowsById instanceof Map
+          ? [...createFixedAssetDraftRowsById.entries()]
+          : []),
+        ...(editFixedAssetDraftRowsById instanceof Map
+          ? [...editFixedAssetDraftRowsById.entries()]
+          : []),
+        ...(createFixedAssetSaleRowsById instanceof Map
+          ? [...createFixedAssetSaleRowsById.entries()]
+          : []),
+        ...(editFixedAssetSaleRowsById instanceof Map
+          ? [...editFixedAssetSaleRowsById.entries()]
+          : []),
+      ]),
+    [
+      createFixedAssetDraftRowsById,
+      editFixedAssetDraftRowsById,
+      createFixedAssetSaleRowsById,
+      editFixedAssetSaleRowsById,
+    ]
+  );
   const createFixedAssetOperatingUnitOptions = useMemo(
     () =>
       (createOperatingUnitOptions || [])
@@ -4934,22 +5096,24 @@ export default function CariDocumentsPage({ direction = "" }) {
       extendFixedAssetCategoryOptionsForSelectedLines(
         mapFixedAssetCategoryLookupOptions(
           createFixedAssetCategoryRows,
-          createLineAccountsById
+          createLineAccountsById,
+          l
         ),
         createForm.lines
       ),
-    [createFixedAssetCategoryRows, createForm.lines, createLineAccountsById]
+    [createFixedAssetCategoryRows, createForm.lines, createLineAccountsById, l]
   );
   const editFixedAssetCategoryOptions = useMemo(
     () =>
       extendFixedAssetCategoryOptionsForSelectedLines(
         mapFixedAssetCategoryLookupOptions(
           editFixedAssetCategoryRows,
-          editLineAccountsById
+          editLineAccountsById,
+          l
         ),
         editForm.lines
       ),
-    [editFixedAssetCategoryRows, editForm.lines, editLineAccountsById]
+    [editFixedAssetCategoryRows, editForm.lines, editLineAccountsById, l]
   );
   const createFixedAssetDraftOptions = useMemo(
     () =>
@@ -5215,12 +5379,15 @@ export default function CariDocumentsPage({ direction = "" }) {
     setCreateLinePreviewMessage("");
   }
 
-  function applyCreateDraftFormSnapshot(nextForm) {
+  function applyCreateDraftFormSnapshot(nextForm, options = {}) {
     const normalized = buildTemplateSafeDraftForm(nextForm);
+    const treatDueDateAsDerived = Boolean(options?.treatDueDateAsDerived);
     setCreateForm(normalized);
     setCreateOperatingUnitOverrideOpen(false);
     setCreatePaymentTermTouched(Boolean(normalizeText(normalized.paymentTermId)));
-    setCreateDueDateTouched(Boolean(normalizeText(normalized.dueDate)));
+    setCreateDueDateTouched(
+      treatDueDateAsDerived ? false : Boolean(normalizeText(normalized.dueDate))
+    );
     setCreateCurrencyTouched(Boolean(normalizeCurrencyCode(normalized.currencyCode)));
     setCreateValidationVisible(false);
     setCreateCounterpartyLookupQuery("");
@@ -5228,6 +5395,126 @@ export default function CariDocumentsPage({ direction = "" }) {
     setCreateInlineCounterpartyMessage("");
     setCreateLinePreviewError("");
     setCreateLinePreviewMessage("");
+  }
+
+  async function resolveDocumentCloneSourceRow(documentId, fallbackRow = null) {
+    const normalizedDocumentId = toPositiveInt(documentId || fallbackRow?.id);
+    if (!normalizedDocumentId) {
+      return fallbackRow || null;
+    }
+    const loadedDetailId = toPositiveInt(selectedDetail?.id);
+    if (
+      loadedDetailId === normalizedDocumentId &&
+      Array.isArray(selectedDetail?.lines) &&
+      selectedDetail.lines.length > 0
+    ) {
+      return selectedDetail;
+    }
+    if (
+      toPositiveInt(fallbackRow?.id) === normalizedDocumentId &&
+      Array.isArray(fallbackRow?.lines) &&
+      fallbackRow.lines.length > 0
+    ) {
+      return fallbackRow;
+    }
+    const response = await getCariDocument(normalizedDocumentId);
+    return response?.row || fallbackRow || null;
+  }
+
+  async function resolvePreferredDocumentCloneSourceRow(documentId, fallbackRow = null) {
+    const resolvedRow = await resolveDocumentCloneSourceRow(documentId, fallbackRow);
+    const reversalOfDocumentId = toPositiveInt(
+      resolvedRow?.reversalOfDocumentId ?? resolvedRow?.reversal_of_document_id
+    );
+    if (!reversalOfDocumentId) {
+      return resolvedRow;
+    }
+    const originalRow = await resolveDocumentCloneSourceRow(
+      reversalOfDocumentId,
+      null
+    );
+    return originalRow || resolvedRow;
+  }
+
+  function focusCreateDraftSection() {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const target = document.getElementById("create-draft-document");
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function copyDocumentIntoCreateDraft(sourceRow, options = {}) {
+    if (!sourceRow) {
+      throw new Error(
+        l(
+          "Document detail is required to prepare the correction draft.",
+          "Duzeltme taslagini hazirlamak icin belge detayi gereklidir."
+        )
+      );
+    }
+    const nextForm = buildCloneDraftFormFromRow(sourceRow, createForm, {
+      preserveSourceDocumentDate: Boolean(options?.preserveSourceDocumentDate),
+    });
+    applyCreateDraftFormSnapshot(nextForm, {
+      treatDueDateAsDerived: Boolean(options?.treatDueDateAsDerived),
+    });
+    setDraftTemplatesError("");
+    setDraftTemplatesMessage(
+      options?.message ||
+        l(
+          `Draft form copied from document id=${sourceRow?.id || "-"}.`,
+          `Taslak form belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
+        )
+    );
+    focusCreateDraftSection();
+  }
+
+  async function handleCopySelectedDocumentToCreateForm() {
+    if (!selectedSnapshot) {
+      setDraftTemplatesError(
+        l(
+          "Select a document first to copy into draft form.",
+          "Taslak forma kopyalamak icin once bir belge secin."
+        )
+      );
+      return;
+    }
+    setDraftTemplatesError("");
+    try {
+      const sourceRow = await resolvePreferredDocumentCloneSourceRow(
+        selectedDocumentId,
+        selectedSnapshot
+      );
+      const copiedFromReversalRecord =
+        toPositiveInt(
+          selectedSnapshot?.reversalOfDocumentId ??
+            selectedSnapshot?.reversal_of_document_id
+        ) &&
+        toPositiveInt(sourceRow?.id) !== toPositiveInt(selectedSnapshot?.id);
+      copyDocumentIntoCreateDraft(sourceRow, {
+        treatDueDateAsDerived: true,
+        message: copiedFromReversalRecord
+          ? l(
+              `Draft copied from original document id=${sourceRow?.id || "-"} behind reversal record id=${selectedSnapshot?.id || "-"}.`,
+              `Taslak, ters kayit belge id=${selectedSnapshot?.id || "-"} arkasindaki orijinal belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
+            )
+          : l(
+              `Draft form cloned from document id=${sourceRow?.id || "-"}`,
+              `Taslak form belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
+            ),
+      });
+    } catch (error) {
+      setDraftTemplatesError(
+        normalizeApiError(
+          error,
+          l(
+            "Failed to clone selected document into draft form.",
+            "Secili belge taslak forma kopyalanamadi."
+          )
+        )
+      );
+    }
   }
 
   function addCreateDocumentLine() {
@@ -5369,15 +5656,19 @@ export default function CariDocumentsPage({ direction = "" }) {
   function selectCreateDocumentLineFixedAssetCategory(rowId, categoryId) {
     setCreateLinePreviewError("");
     setCreateLinePreviewMessage("");
-    const categorySetupIssue = getFixedAssetCategoryMissingAccountIssue(
+    const categorySetupIssue = getFixedAssetCategorySetupIssue(
       categoryId,
       createFixedAssetCategoriesById
     );
     if (categorySetupIssue) {
+      const requirementList = formatFixedAssetCategorySetupRequirementList(
+        categorySetupIssue.missingRequirements,
+        l
+      );
       setCreateLinePreviewError(
         l(
-          `Selected category "${categorySetupIssue.categoryLabel}" is missing its default asset account. Configure it in Fixed Asset Settings first.`,
-          `Secili "${categorySetupIssue.categoryLabel}" kategorisinin varsayilan varlik hesabi eksik. Once Demirbas Ayarlarinda yapilandirin.`
+          `Selected category "${categorySetupIssue.categoryLabel}" is missing required defaults: ${requirementList}. Configure it in Fixed Asset Settings first.`,
+          `Secili "${categorySetupIssue.categoryLabel}" kategorisinde gerekli varsayilanlar eksik: ${requirementList}. Once Demirbas Ayarlarinda yapilandirin.`
         )
       );
       setFixedAssetCategorySetupPrompt(categorySetupIssue);
@@ -5595,15 +5886,19 @@ export default function CariDocumentsPage({ direction = "" }) {
   function selectEditDocumentLineFixedAssetCategory(rowId, categoryId) {
     setEditLinePreviewError("");
     setEditLinePreviewMessage("");
-    const categorySetupIssue = getFixedAssetCategoryMissingAccountIssue(
+    const categorySetupIssue = getFixedAssetCategorySetupIssue(
       categoryId,
       editFixedAssetCategoriesById
     );
     if (categorySetupIssue) {
+      const requirementList = formatFixedAssetCategorySetupRequirementList(
+        categorySetupIssue.missingRequirements,
+        l
+      );
       setEditLinePreviewError(
         l(
-          `Selected category "${categorySetupIssue.categoryLabel}" is missing its default asset account. Configure it in Fixed Asset Settings first.`,
-          `Secili "${categorySetupIssue.categoryLabel}" kategorisinin varsayilan varlik hesabi eksik. Once Demirbas Ayarlarinda yapilandirin.`
+          `Selected category "${categorySetupIssue.categoryLabel}" is missing required defaults: ${requirementList}. Configure it in Fixed Asset Settings first.`,
+          `Secili "${categorySetupIssue.categoryLabel}" kategorisinde gerekli varsayilanlar eksik: ${requirementList}. Once Demirbas Ayarlarinda yapilandirin.`
         )
       );
       setFixedAssetCategorySetupPrompt(categorySetupIssue);
@@ -5763,6 +6058,24 @@ export default function CariDocumentsPage({ direction = "" }) {
       setQuickCreateFixedAssetError(
         l("Category is required.", "Kategori zorunludur.")
       );
+      return;
+    }
+    const categorySetupIssue = getFixedAssetCategorySetupIssue(
+      categoryId,
+      buildRowsById(sourceCategoryRows)
+    );
+    if (categorySetupIssue) {
+      const requirementList = formatFixedAssetCategorySetupRequirementList(
+        categorySetupIssue.missingRequirements,
+        l
+      );
+      setQuickCreateFixedAssetError(
+        l(
+          `Selected category "${categorySetupIssue.categoryLabel}" is missing required defaults: ${requirementList}. Configure it in Fixed Asset Settings first.`,
+          `Secili "${categorySetupIssue.categoryLabel}" kategorisinde gerekli varsayilanlar eksik: ${requirementList}. Once Demirbas Ayarlarinda yapilandirin.`
+        )
+      );
+      setFixedAssetCategorySetupPrompt(categorySetupIssue);
       return;
     }
     if (salvageRuleType && salvageRuleType !== "NONE") {
@@ -6644,8 +6957,8 @@ export default function CariDocumentsPage({ direction = "" }) {
     setCreateError("");
     setCreateMessage(
       l(
-        `Sale draft was prefilled from fixed asset detail for ${assetLabel}. Complete counterparty, sale proceeds account, and amount before saving.`,
-        `${assetLabel} icin satis taslagi duran varlik detayindan hazirlandi. Kaydetmeden once cari, satis hasilat hesabi ve tutari tamamlayin.`
+        `Sale draft was prefilled from fixed asset detail for ${assetLabel}. Complete counterparty and amount before saving.`,
+        `${assetLabel} icin satis taslagi duran varlik detayindan hazirlandi. Kaydetmeden once cari ve tutari tamamlayin.`
       )
     );
     appliedCreatePrefillSignatureRef.current =
@@ -8693,44 +9006,7 @@ export default function CariDocumentsPage({ direction = "" }) {
       );
       return;
     }
-
-    setCreateInlineCounterpartySaving(true);
-    try {
-      const payload = {
-        legalEntityId,
-        code: buildInlineCounterpartyCode({ legalEntityId, name }),
-        name,
-        status: "ACTIVE",
-        ...resolveInlineCounterpartyRoleFlags(createForm.direction),
-      };
-      const response = await createCariCounterparty(payload);
-      const row = response?.row || null;
-      const counterpartyId = toPositiveInt(row?.id);
-      if (!counterpartyId) {
-        throw new Error(
-          l("Counterparty create response is missing row.id.", "Cari olusturma yanitinda row.id yok.")
-        );
-      }
-      setCreateCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
-      setCreateForm((prev) => ({
-        ...prev,
-        counterpartyId: String(counterpartyId),
-        operatingUnitId: "",
-      }));
-      setCreateCounterpartyLookupQuery("");
-      setCreateInlineCounterpartyMessage(
-        l(
-          `Counterparty created and selected. counterpartyId=${counterpartyId}`,
-          `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
-        )
-      );
-    } catch (error) {
-      setCreateInlineCounterpartyError(
-        normalizeApiError(error, l("Failed to create counterparty from lookup.", "Aramadan cari olusturulamadi."))
-      );
-    } finally {
-      setCreateInlineCounterpartySaving(false);
-    }
+    setCreateInlineCounterpartyModalOpen(true);
   }
 
   async function handleInlineCreateCounterpartyForEditForm() {
@@ -8762,40 +9038,55 @@ export default function CariDocumentsPage({ direction = "" }) {
       );
       return;
     }
+    setEditInlineCounterpartyModalOpen(true);
+  }
 
-    setEditInlineCounterpartySaving(true);
-    try {
-      const payload = {
-        legalEntityId,
-        code: buildInlineCounterpartyCode({ legalEntityId, name }),
-        name,
-        status: "ACTIVE",
-        ...resolveInlineCounterpartyRoleFlags(editForm.direction),
-      };
-      const response = await createCariCounterparty(payload);
-      const row = response?.row || null;
-      const counterpartyId = toPositiveInt(row?.id);
-      if (!counterpartyId) {
-        throw new Error(
-          l("Counterparty create response is missing row.id.", "Cari olusturma yanitinda row.id yok.")
-        );
-      }
-      setEditCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
-      setEditForm((prev) => ({ ...prev, counterpartyId: String(counterpartyId) }));
-      setEditCounterpartyLookupQuery("");
-      setEditInlineCounterpartyMessage(
+  function handleInlineCounterpartyCreatedForCreateForm(row) {
+    const counterpartyId = toPositiveInt(row?.id);
+    if (!counterpartyId) {
+      setCreateInlineCounterpartyError(
         l(
-          `Counterparty created and selected. counterpartyId=${counterpartyId}`,
-          `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+          "Counterparty create response is missing row.id.",
+          "Cari olusturma yanitinda row.id yok."
         )
       );
-    } catch (error) {
-      setEditInlineCounterpartyError(
-        normalizeApiError(error, l("Failed to create counterparty from lookup.", "Aramadan cari olusturulamadi."))
-      );
-    } finally {
-      setEditInlineCounterpartySaving(false);
+      return;
     }
+    setCreateCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
+    setCreateForm((prev) => ({
+      ...prev,
+      counterpartyId: String(counterpartyId),
+      operatingUnitId: "",
+    }));
+    setCreateCounterpartyLookupQuery("");
+    setCreateInlineCounterpartyMessage(
+      l(
+        `Counterparty created and selected. counterpartyId=${counterpartyId}`,
+        `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+      )
+    );
+  }
+
+  function handleInlineCounterpartyCreatedForEditForm(row) {
+    const counterpartyId = toPositiveInt(row?.id);
+    if (!counterpartyId) {
+      setEditInlineCounterpartyError(
+        l(
+          "Counterparty create response is missing row.id.",
+          "Cari olusturma yanitinda row.id yok."
+        )
+      );
+      return;
+    }
+    setEditCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
+    setEditForm((prev) => ({ ...prev, counterpartyId: String(counterpartyId) }));
+    setEditCounterpartyLookupQuery("");
+    setEditInlineCounterpartyMessage(
+      l(
+        `Counterparty created and selected. counterpartyId=${counterpartyId}`,
+        `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+      )
+    );
   }
 
   async function handleCreateDraft(event) {
@@ -8897,6 +9188,50 @@ export default function CariDocumentsPage({ direction = "" }) {
     } catch (error) {
       setCancelError(
         normalizeApiError(error, l("Failed to cancel draft document.", "Belge taslagi iptal edilemedi."))
+      );
+    } finally {
+      setCancelSaving(false);
+    }
+  }
+
+  async function handleCancelAndCopyDraft() {
+    if (!selectedDocumentId || !canEditOrCancelSelected || !canCreate) {
+      setCancelError(
+        l(
+          "Draft correction copy requires both cari.doc.update and cari.doc.create permissions.",
+          "Taslak duzeltme kopyasi icin hem cari.doc.update hem de cari.doc.create yetkisi gerekir."
+        )
+      );
+      return;
+    }
+    setCancelSaving(true);
+    setCancelError("");
+    setDraftTemplatesError("");
+    try {
+      const sourceRow = await resolveDocumentCloneSourceRow(
+        selectedDocumentId,
+        selectedSnapshot
+      );
+      const response = await cancelCariDocument(selectedDocumentId);
+      setSelectedDetail(response?.row || null);
+      await loadDocuments(filters);
+      copyDocumentIntoCreateDraft(sourceRow, {
+        preserveSourceDocumentDate: true,
+        treatDueDateAsDerived: true,
+        message: l(
+          `Draft copied from cancelled document id=${sourceRow?.id || "-"}.`,
+          `Taslak, iptal edilen belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
+        ),
+      });
+    } catch (error) {
+      setCancelError(
+        normalizeApiError(
+          error,
+          l(
+            "Failed to cancel and copy draft document.",
+            "Taslak iptal edilip kopyalanamadi."
+          )
+        )
       );
     } finally {
       setCancelSaving(false);
@@ -9108,6 +9443,70 @@ export default function CariDocumentsPage({ direction = "" }) {
     }
   }
 
+  async function handleReverseAndCopyPosted() {
+    if (!selectedDocumentId || !canReverseSelected || !canCreate) {
+      setReverseError(
+        l(
+          "Reverse + copy requires both cari.doc.reverse and cari.doc.create permissions.",
+          "Tersle + kopyala icin hem cari.doc.reverse hem de cari.doc.create yetkisi gerekir."
+        )
+      );
+      return;
+    }
+    setReverseSaving(true);
+    setReverseError("");
+    setReverseMessage("");
+    setReverseInventoryBlocks([]);
+    setDraftTemplatesError("");
+    try {
+      const sourceRow = await resolveDocumentCloneSourceRow(
+        selectedDocumentId,
+        selectedSnapshot
+      );
+      const response = await reverseCariDocument(selectedDocumentId, {
+        reason:
+          String(reverseForm.reason || "").trim() ||
+          l("Manual reversal", "Manuel ters kayit"),
+        reversalDate: String(reverseForm.reversalDate || "").trim() || undefined,
+      });
+      setReverseResult({
+        reversalDocumentId: response?.row?.id || null,
+        reversalDocumentNo: response?.row?.documentNo || null,
+        reversalJournalEntryId: response?.journal?.reversalJournalEntryId || null,
+      });
+      setReverseMessage(
+        l(
+          `Reverse completed. reversalDocumentId=${response?.row?.id || "-"}`,
+          `Ters kayit tamamlandi. reversalDocumentId=${response?.row?.id || "-"}`
+        )
+      );
+      setReverseInventoryBlocks([]);
+      await loadDocuments(filters);
+      await loadDocumentDetail(selectedDocumentId);
+      copyDocumentIntoCreateDraft(sourceRow, {
+        preserveSourceDocumentDate: true,
+        treatDueDateAsDerived: true,
+        message: l(
+          `Correction draft copied from reversed document id=${sourceRow?.id || "-"}.`,
+          `Duzeltme taslagi terslenen belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
+        ),
+      });
+    } catch (error) {
+      setReverseInventoryBlocks(normalizeInventoryReverseBlocks(error));
+      setReverseError(
+        normalizeApiError(
+          error,
+          l(
+            "Failed to reverse and copy document.",
+            "Belge terslenip kopyalanamadi."
+          )
+        )
+      );
+    } finally {
+      setReverseSaving(false);
+    }
+  }
+
   function handleExportDocumentListCsv() {
     setListError("");
     const exported = exportRowsAsCsv({
@@ -9123,27 +9522,6 @@ export default function CariDocumentsPage({ direction = "" }) {
         )
       );
     }
-  }
-
-  function handleCloneSelectedDocumentToCreateForm() {
-    if (!selectedSnapshot) {
-      setDraftTemplatesError(
-        l(
-          "Select a document first to clone into draft form.",
-          "Taslak forma kopyalamak icin once bir belge secin."
-        )
-      );
-      return;
-    }
-    const nextForm = buildCloneDraftFormFromRow(selectedSnapshot, createForm);
-    applyCreateDraftFormSnapshot(nextForm);
-    setDraftTemplatesError("");
-    setDraftTemplatesMessage(
-      l(
-        `Draft form cloned from document id=${selectedSnapshot?.id || "-"}`,
-        `Taslak form belge id=${selectedSnapshot?.id || "-"} kaydindan kopyalandi.`
-      )
-    );
   }
 
   async function loadDocumentDraftTemplates(options = {}) {
@@ -9851,7 +10229,7 @@ export default function CariDocumentsPage({ direction = "" }) {
               <button
                 type="button"
                 className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
-                onClick={handleCloneSelectedDocumentToCreateForm}
+                onClick={handleCopySelectedDocumentToCreateForm}
                 disabled={!selectedSnapshot || createSaving}
               >
                 {l("Clone Selected Document", "Secili Belgeyi Kopyala")}
@@ -10188,14 +10566,12 @@ export default function CariDocumentsPage({ direction = "" }) {
                     type="button"
                     className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold normal-case text-slate-700 disabled:opacity-60"
                     onClick={handleInlineCreateCounterpartyForCreateForm}
-                    disabled={!canInlineCreateCounterpartyInCreateForm || createInlineCounterpartySaving || createSaving}
+                    disabled={!canInlineCreateCounterpartyInCreateForm || createSaving}
                   >
-                    {createInlineCounterpartySaving
-                      ? l("Creating counterparty...", "Cari olusturuluyor...")
-                      : l(
-                          `Create "${createInlineCounterpartyName || "new counterparty"}"`,
-                          `"${createInlineCounterpartyName || "yeni cari"}" olustur`
-                        )}
+                    {l(
+                      `Create "${createInlineCounterpartyName || "new counterparty"}" with details`,
+                      `"${createInlineCounterpartyName || "yeni cari"}" icin detayli kart ac`
+                    )}
                   </button>
                 ) : null}
                 {createInlineCounterpartyError ? (
@@ -10707,8 +11083,8 @@ export default function CariDocumentsPage({ direction = "" }) {
                         ? line.generatedFixedAssets
                         : [];
                       const targetFixedAsset =
-                        targetFixedAssetId && fixedAssetRowsById instanceof Map
-                          ? fixedAssetRowsById.get(targetFixedAssetId) || null
+                        targetFixedAssetId && detailFixedAssetRowsById instanceof Map
+                          ? detailFixedAssetRowsById.get(targetFixedAssetId) || null
                           : null;
                       const targetFixedAssetLabel =
                         normalizeText(targetFixedAsset?.assetNo) ||
@@ -10935,6 +11311,29 @@ export default function CariDocumentsPage({ direction = "" }) {
                     )}
                   </p>
                 )}
+                {canCopySelectedToDraft ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-md border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 disabled:opacity-60"
+                      onClick={handleCopySelectedDocumentToCreateForm}
+                      disabled={createSaving}
+                    >
+                      {l("Copy to Draft", "Taslaga Kopyala")}
+                    </button>
+                    {toPositiveInt(
+                      selectedSnapshot?.reversalOfDocumentId ??
+                        selectedSnapshot?.reversal_of_document_id
+                    ) ? (
+                      <p className="text-[11px] text-slate-500">
+                        {l(
+                          "For reversal records, copy uses the original source document.",
+                          "Ters kayit belgelerinde kopya, orijinal kaynak belgeden alinir."
+                        )}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               {reverseResult ? <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{l("Reverse linkage", "Ters baglanti")}: `response.row.id`={reverseResult.reversalDocumentId || "-"}, `response.row.documentNo`={reverseResult.reversalDocumentNo || "-"}, `response.journal.reversalJournalEntryId`={reverseResult.reversalJournalEntryId || "-"}</div> : null}
               {canReadReports ? (
@@ -11527,19 +11926,17 @@ export default function CariDocumentsPage({ direction = "" }) {
                         />
                       </label>
                       {canUpsertCards ? (
-                        <button
+                      <button
                           type="button"
                           className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold normal-case text-slate-700 disabled:opacity-60"
                           onClick={handleInlineCreateCounterpartyForEditForm}
-                          disabled={!canInlineCreateCounterpartyInEditForm || editInlineCounterpartySaving || editSaving}
+                          disabled={!canInlineCreateCounterpartyInEditForm || editSaving}
                         >
-                          {editInlineCounterpartySaving
-                            ? l("Creating counterparty...", "Cari olusturuluyor...")
-                            : l(
-                                `Create "${editInlineCounterpartyName || "new counterparty"}"`,
-                                `"${editInlineCounterpartyName || "yeni cari"}" olustur`
-                              )}
-                        </button>
+                          {l(
+                            `Create "${editInlineCounterpartyName || "new counterparty"}" with details`,
+                            `"${editInlineCounterpartyName || "yeni cari"}" icin detayli kart ac`
+                          )}
+                      </button>
                       ) : null}
                       {editInlineCounterpartyError ? (
                         <p className="mt-1 text-[11px] normal-case text-rose-700">{editInlineCounterpartyError}</p>
@@ -11800,6 +12197,18 @@ export default function CariDocumentsPage({ direction = "" }) {
                   />
                   <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!canEditOrCancelSelected || editSaving}>{editSaving ? l("Saving...", "Kaydediliyor...") : l("Update Draft Document", "Taslak Belgeyi Guncelle")}</button>
                   <button type="button" className="rounded-md border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50" onClick={handleCancelDraft} disabled={!canEditOrCancelSelected || cancelSaving}>{cancelSaving ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel Draft", "Taslagi Iptal Et")}</button>
+                  {canCreate ? (
+                    <button
+                      type="button"
+                      className="rounded-md border border-sky-300 px-4 py-2 text-sm font-semibold text-sky-700 disabled:opacity-50"
+                      onClick={handleCancelAndCopyDraft}
+                      disabled={!canEditOrCancelSelected || cancelSaving || createSaving}
+                    >
+                      {cancelSaving
+                        ? l("Cancelling...", "Iptal ediliyor...")
+                        : l("Cancel + Copy to Draft", "Iptal Et + Taslaga Kopyala")}
+                    </button>
+                  ) : null}
                 </form>
                 {cancelError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{cancelError}</div> : null}
               </div>
@@ -12196,7 +12605,21 @@ export default function CariDocumentsPage({ direction = "" }) {
 
                 <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Reverse Reason", "Ters Kayit Nedeni")}<input type="text" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reason} onChange={(event) => setReverseForm((prev) => ({ ...prev, reason: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
                 <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Reversal Date", "Ters Kayit Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reversalDate} onChange={(event) => setReverseForm((prev) => ({ ...prev, reversalDate: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
-                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handleReversePosted} disabled={!canReverseSelected || reverseSaving}>{reverseSaving ? l("Reversing...", "Ters kayit olusturuluyor...") : l("Reverse Document", "Belgeyi Tersle")}</button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handleReversePosted} disabled={!canReverseSelected || reverseSaving}>{reverseSaving ? l("Reversing...", "Ters kayit olusturuluyor...") : l("Reverse Document", "Belgeyi Tersle")}</button>
+                  {canCreate ? (
+                    <button
+                      type="button"
+                      className="rounded-md border border-sky-300 bg-white px-4 py-2 text-sm font-semibold text-sky-700 disabled:opacity-50"
+                      onClick={handleReverseAndCopyPosted}
+                      disabled={!canReverseSelected || reverseSaving || createSaving}
+                    >
+                      {reverseSaving
+                        ? l("Reversing...", "Ters kayit olusturuluyor...")
+                        : l("Reverse + Copy to Draft", "Tersle + Taslaga Kopyala")}
+                    </button>
+                  ) : null}
+                </div>
                 {reverseError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{reverseError}</div> : null}
                 {reverseInventoryBlocks.length > 0 ? (
                   <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -12266,10 +12689,29 @@ export default function CariDocumentsPage({ direction = "" }) {
           </div>
         ) : null}
       </section>
+      <InlineCounterpartyCreateModal
+        open={createInlineCounterpartyModalOpen}
+        legalEntityId={createForm.legalEntityId}
+        direction={createForm.direction}
+        initialName={createCounterpartyLookupQuery}
+        l={l}
+        onClose={() => setCreateInlineCounterpartyModalOpen(false)}
+        onCreated={handleInlineCounterpartyCreatedForCreateForm}
+      />
+      <InlineCounterpartyCreateModal
+        open={editInlineCounterpartyModalOpen}
+        legalEntityId={editForm.legalEntityId}
+        direction={editForm.direction}
+        initialName={editCounterpartyLookupQuery}
+        l={l}
+        onClose={() => setEditInlineCounterpartyModalOpen(false)}
+        onCreated={handleInlineCounterpartyCreatedForEditForm}
+      />
       <FixedAssetCategorySetupModal
         open={Boolean(fixedAssetCategorySetupPrompt)}
         l={l}
         categoryLabel={fixedAssetCategorySetupPrompt?.categoryLabel || ""}
+        missingRequirements={fixedAssetCategorySetupPrompt?.missingRequirements || []}
         canReadSettings={canReadFixedAssetSettings}
         canUpsertSettings={canUpsertFixedAssetSettings}
         onClose={() => setFixedAssetCategorySetupPrompt(null)}
@@ -12286,6 +12728,8 @@ export default function CariDocumentsPage({ direction = "" }) {
         categoryOptions={quickCreateCategoryOptions}
         operatingUnitOptions={quickCreateOperatingUnitOptions}
         categoriesById={quickCreateCategoriesById}
+        canReadSettings={canReadFixedAssetSettings}
+        canUpsertSettings={canUpsertFixedAssetSettings}
         onChange={patchQuickCreateFixedAssetForm}
         onClose={closeQuickCreateFixedAssetModal}
         onSave={handleQuickCreateFixedAssetSave}

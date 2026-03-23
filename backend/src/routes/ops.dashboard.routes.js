@@ -5,6 +5,7 @@ import { resolveBankAccountScope } from "../services/bank.accounts.service.js";
 import {
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
+  getOpsFixedAssetDepreciationAttention,
   getOpsJobsHealth,
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
@@ -114,6 +115,22 @@ router.get(
   asyncHandler(async (req, res) => {
     const filters = parseOpsCommonFilters(req);
     const result = await getOpsBankPaymentBatchesHealth({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({ tenantId: filters.tenantId, ...result });
+  })
+);
+
+router.get(
+  "/fixed-assets/depreciation-attention",
+  requirePermission("ops.dashboard.read", { resolveScope: resolveOpsScope }),
+  asyncHandler(async (req, res) => {
+    const filters = parseOpsCommonFilters(req);
+    const result = await getOpsFixedAssetDepreciationAttention({
       req,
       tenantId: filters.tenantId,
       filters,

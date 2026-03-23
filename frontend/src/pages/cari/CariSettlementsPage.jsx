@@ -14,7 +14,6 @@ import {
 } from "../../api/cashAdmin.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import {
-  createCariCounterparty,
   listCariCounterparties,
 } from "../../api/cariCounterparty.js";
 import { listFxRates } from "../../api/fxAdmin.js";
@@ -34,6 +33,7 @@ import {
 } from "../../readiness/ouCurrentAccountReadiness.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import { formatMoneyText } from "../../utils/money.js";
+import InlineCounterpartyCreateModal from "./InlineCounterpartyCreateModal.jsx";
 import {
   buildAutoAllocatePreview,
   buildSettlementApplyPayload,
@@ -49,10 +49,8 @@ import {
   shouldClearPendingKeyAfterError,
 } from "./cariIdempotency.js";
 import {
-  buildInlineCounterpartyCode,
   normalizeLookupQuery,
   prependOrReplaceCounterpartyOption,
-  resolveInlineCounterpartyRoleFlags,
 } from "./counterpartyInlineCreate.js";
 
 function todayIsoDate() {
@@ -677,13 +675,15 @@ export default function CariSettlementsPage({ direction = "" }) {
   const [counterpartyOptions, setCounterpartyOptions] = useState([]);
   const [counterpartyLoading, setCounterpartyLoading] = useState(false);
   const [applyCounterpartyLookupQuery, setApplyCounterpartyLookupQuery] = useState("");
-  const [applyInlineCounterpartySaving, setApplyInlineCounterpartySaving] = useState(false);
+  const [applyInlineCounterpartyModalOpen, setApplyInlineCounterpartyModalOpen] =
+    useState(false);
   const [applyInlineCounterpartyError, setApplyInlineCounterpartyError] = useState("");
   const [applyInlineCounterpartyMessage, setApplyInlineCounterpartyMessage] = useState("");
   const [bankApplyCounterpartyOptions, setBankApplyCounterpartyOptions] = useState([]);
   const [bankApplyCounterpartyLoading, setBankApplyCounterpartyLoading] = useState(false);
   const [bankApplyCounterpartyLookupQuery, setBankApplyCounterpartyLookupQuery] = useState("");
-  const [bankApplyInlineCounterpartySaving, setBankApplyInlineCounterpartySaving] = useState(false);
+  const [bankApplyInlineCounterpartyModalOpen, setBankApplyInlineCounterpartyModalOpen] =
+    useState(false);
   const [bankApplyInlineCounterpartyError, setBankApplyInlineCounterpartyError] = useState("");
   const [bankApplyInlineCounterpartyMessage, setBankApplyInlineCounterpartyMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
@@ -2191,40 +2191,7 @@ export default function CariSettlementsPage({ direction = "" }) {
       );
       return;
     }
-
-    setApplyInlineCounterpartySaving(true);
-    try {
-      const payload = {
-        legalEntityId,
-        code: buildInlineCounterpartyCode({ legalEntityId, name }),
-        name,
-        status: "ACTIVE",
-        ...resolveInlineCounterpartyRoleFlags(applyForm.direction),
-      };
-      const response = await createCariCounterparty(payload);
-      const row = response?.row || null;
-      const counterpartyId = toPositiveInt(row?.id);
-      if (!counterpartyId) {
-        throw new Error(
-          l("Counterparty create response is missing row.id.", "Cari olusturma yanitinda row.id yok.")
-        );
-      }
-      setCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
-      updateApplyForm("counterpartyId", String(counterpartyId));
-      setApplyCounterpartyLookupQuery("");
-      setApplyInlineCounterpartyMessage(
-        l(
-          `Counterparty created and selected. counterpartyId=${counterpartyId}`,
-          `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
-        )
-      );
-    } catch (error) {
-      setApplyInlineCounterpartyError(
-        normalizeUiError(error, l("Failed to create counterparty from lookup.", "Aramadan cari olusturulamadi."))
-      );
-    } finally {
-      setApplyInlineCounterpartySaving(false);
-    }
+    setApplyInlineCounterpartyModalOpen(true);
   }
 
   async function handleInlineCreateCounterpartyForBankApplyForm() {
@@ -2256,43 +2223,54 @@ export default function CariSettlementsPage({ direction = "" }) {
       );
       return;
     }
+    setBankApplyInlineCounterpartyModalOpen(true);
+  }
 
-    setBankApplyInlineCounterpartySaving(true);
-    try {
-      const payload = {
-        legalEntityId,
-        code: buildInlineCounterpartyCode({ legalEntityId, name }),
-        name,
-        status: "ACTIVE",
-        ...resolveInlineCounterpartyRoleFlags(bankApplyForm.direction),
-      };
-      const response = await createCariCounterparty(payload);
-      const row = response?.row || null;
-      const counterpartyId = toPositiveInt(row?.id);
-      if (!counterpartyId) {
-        throw new Error(
-          l("Counterparty create response is missing row.id.", "Cari olusturma yanitinda row.id yok.")
-        );
-      }
-      setBankApplyCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
-      setBankApplyForm((prev) => ({
-        ...prev,
-        counterpartyId: String(counterpartyId),
-      }));
-      setBankApplyCounterpartyLookupQuery("");
-      setBankApplyInlineCounterpartyMessage(
+  function handleInlineCounterpartyCreatedForApplyForm(row) {
+    const counterpartyId = toPositiveInt(row?.id);
+    if (!counterpartyId) {
+      setApplyInlineCounterpartyError(
         l(
-          `Counterparty created and selected. counterpartyId=${counterpartyId}`,
-          `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+          "Counterparty create response is missing row.id.",
+          "Cari olusturma yanitinda row.id yok."
         )
       );
-    } catch (error) {
-      setBankApplyInlineCounterpartyError(
-        normalizeUiError(error, l("Failed to create counterparty from lookup.", "Aramadan cari olusturulamadi."))
-      );
-    } finally {
-      setBankApplyInlineCounterpartySaving(false);
+      return;
     }
+    setCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
+    updateApplyForm("counterpartyId", String(counterpartyId));
+    setApplyCounterpartyLookupQuery("");
+    setApplyInlineCounterpartyMessage(
+      l(
+        `Counterparty created and selected. counterpartyId=${counterpartyId}`,
+        `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+      )
+    );
+  }
+
+  function handleInlineCounterpartyCreatedForBankApplyForm(row) {
+    const counterpartyId = toPositiveInt(row?.id);
+    if (!counterpartyId) {
+      setBankApplyInlineCounterpartyError(
+        l(
+          "Counterparty create response is missing row.id.",
+          "Cari olusturma yanitinda row.id yok."
+        )
+      );
+      return;
+    }
+    setBankApplyCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
+    setBankApplyForm((prev) => ({
+      ...prev,
+      counterpartyId: String(counterpartyId),
+    }));
+    setBankApplyCounterpartyLookupQuery("");
+    setBankApplyInlineCounterpartyMessage(
+      l(
+        `Counterparty created and selected. counterpartyId=${counterpartyId}`,
+        `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+      )
+    );
   }
 
   async function onApply(form = applyForm) {
@@ -2857,14 +2835,12 @@ export default function CariSettlementsPage({ direction = "" }) {
                   type="button"
                   className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold normal-case text-slate-700 disabled:opacity-60"
                   onClick={handleInlineCreateCounterpartyForApplyForm}
-                  disabled={!canInlineCreateCounterpartyInApplyForm || applyInlineCounterpartySaving}
+                  disabled={!canInlineCreateCounterpartyInApplyForm}
                 >
-                  {applyInlineCounterpartySaving
-                    ? l("Creating counterparty...", "Cari olusturuluyor...")
-                    : l(
-                        `Create "${applyInlineCounterpartyName || "new counterparty"}"`,
-                        `"${applyInlineCounterpartyName || "yeni cari"}" olustur`
-                      )}
+                  {l(
+                    `Create "${applyInlineCounterpartyName || "new counterparty"}" with details`,
+                    `"${applyInlineCounterpartyName || "yeni cari"}" icin detayli kart ac`
+                  )}
                 </button>
               ) : null}
               {applyInlineCounterpartyError ? (
@@ -4425,14 +4401,12 @@ export default function CariSettlementsPage({ direction = "" }) {
                   type="button"
                   className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold normal-case text-slate-700 disabled:opacity-60"
                   onClick={handleInlineCreateCounterpartyForBankApplyForm}
-                  disabled={!canInlineCreateCounterpartyInBankApplyForm || bankApplyInlineCounterpartySaving || bankApplySubmitting}
+                  disabled={!canInlineCreateCounterpartyInBankApplyForm || bankApplySubmitting}
                 >
-                  {bankApplyInlineCounterpartySaving
-                    ? l("Creating counterparty...", "Cari olusturuluyor...")
-                    : l(
-                        `Create "${bankApplyInlineCounterpartyName || "new counterparty"}"`,
-                        `"${bankApplyInlineCounterpartyName || "yeni cari"}" olustur`
-                      )}
+                  {l(
+                    `Create "${bankApplyInlineCounterpartyName || "new counterparty"}" with details`,
+                    `"${bankApplyInlineCounterpartyName || "yeni cari"}" icin detayli kart ac`
+                  )}
                 </button>
               ) : null}
               {bankApplyInlineCounterpartyError ? (
@@ -4627,6 +4601,24 @@ export default function CariSettlementsPage({ direction = "" }) {
           </>
         ) : null}
       </section>
+      <InlineCounterpartyCreateModal
+        open={applyInlineCounterpartyModalOpen}
+        legalEntityId={applyForm.legalEntityId}
+        direction={applyForm.direction}
+        initialName={applyCounterpartyLookupQuery}
+        l={l}
+        onClose={() => setApplyInlineCounterpartyModalOpen(false)}
+        onCreated={handleInlineCounterpartyCreatedForApplyForm}
+      />
+      <InlineCounterpartyCreateModal
+        open={bankApplyInlineCounterpartyModalOpen}
+        legalEntityId={bankApplyForm.legalEntityId}
+        direction={bankApplyForm.direction}
+        initialName={bankApplyCounterpartyLookupQuery}
+        l={l}
+        onClose={() => setBankApplyInlineCounterpartyModalOpen(false)}
+        onCreated={handleInlineCounterpartyCreatedForBankApplyForm}
+      />
     </div>
   );
 }

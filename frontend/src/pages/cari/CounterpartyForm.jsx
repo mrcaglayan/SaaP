@@ -358,9 +358,13 @@ export default function CounterpartyForm({
   serverError = "",
   serverMessage = "",
   roleHint = "",
+  enforceRoleAccountRequirement = mode === "create",
 }) {
   const [showValidation, setShowValidation] = useState(false);
-  const validationState = validateCounterpartyForm(form, { mode });
+  const validationState = validateCounterpartyForm(form, {
+    mode,
+    requireRoleAccounts: enforceRoleAccountRequirement,
+  });
   const fieldErrors = showValidation ? validationState.fieldErrors || {} : {};
   const globalErrors = showValidation ? validationState.globalErrors || [] : [];
 

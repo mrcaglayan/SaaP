@@ -660,9 +660,15 @@ export default function AppLayout() {
   }, [readinessMenuOpen]);
 
   useEffect(() => {
-    if (!showReadinessChip) {
-      closeReadinessMenu();
-    }
+    if (showReadinessChip) return undefined;
+
+    const timerId = window.setTimeout(() => {
+      setReadinessMenuPathname(null);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
   }, [showReadinessChip]);
 
   function renderSectionChildren(items, depth = 0) {

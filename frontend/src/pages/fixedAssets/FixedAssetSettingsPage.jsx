@@ -590,6 +590,7 @@ export default function FixedAssetSettingsPage() {
   const [catAccountRows, setCatAccountRows] = useState([]);
   const [catAccountLoading, setCatAccountLoading] = useState(false);
   const [catAccountError, setCatAccountError] = useState("");
+  const [catAccountRefreshToken, setCatAccountRefreshToken] = useState(0);
 
   // ── Profile state ───────────────────────────────────────────────
   const [profRows, setProfRows] = useState([]);
@@ -665,6 +666,10 @@ export default function FixedAssetSettingsPage() {
       setCatProfileLoading(false);
       return;
     }
+    if (activeTab !== "categories") {
+      setCatProfileLoading(false);
+      return;
+    }
     let active = true;
     (async () => {
       setCatProfileLoading(true);
@@ -695,7 +700,7 @@ export default function FixedAssetSettingsPage() {
       }
     })();
     return () => { active = false; };
-  }, [canReadSettings, catForm.legalEntityId, l]);
+  }, [activeTab, canReadSettings, catForm.legalEntityId, l]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(catDetailRow?.legalEntityId);
@@ -756,6 +761,10 @@ export default function FixedAssetSettingsPage() {
       setCatAccountLoading(false);
       return;
     }
+    if (activeTab !== "categories") {
+      setCatAccountLoading(false);
+      return;
+    }
     let active = true;
     (async () => {
       setCatAccountLoading(true);
@@ -789,7 +798,27 @@ export default function FixedAssetSettingsPage() {
       }
     })();
     return () => { active = false; };
-  }, [canReadSettings, catForm.legalEntityId, l]);
+  }, [activeTab, canReadSettings, catForm.legalEntityId, catAccountRefreshToken, l]);
+
+  useEffect(() => {
+    if (!canReadSettings) {
+      return undefined;
+    }
+    const requestRefresh = () => {
+      setCatAccountRefreshToken((current) => current + 1);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        requestRefresh();
+      }
+    };
+    window.addEventListener("focus", requestRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", requestRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [canReadSettings]);
 
   const catAssetAccountOptions = useMemo(
     () => filterAccountRowsByType(catAccountRows, "ASSET").map(mapAccountOption).filter(Boolean),

@@ -1,17 +1,33 @@
-import { isValidElement, useEffect, useState } from "react";
+import { isValidElement, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import Combobox from "../../components/Combobox.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { listOperatingUnits } from "../../api/orgAdmin.js";
-import { getCariDocument } from "../../api/cariDocuments.js";
+import {
+  downloadCariDocumentEvidence,
+  getCariDocument,
+  listCariDocumentEvidence,
+} from "../../api/cariDocuments.js";
 import { listUsers } from "../../api/rbacAdmin.js";
 import {
   activateFixedAsset,
+  createFixedAssetEvidence,
+  deleteFixedAssetEvidence,
+  downloadFixedAssetEvidence,
   getFixedAsset,
   getFixedAssetDepreciationSchedule,
+  listFixedAssetEvidence,
+  listFixedAssetCustodians,
   listFixedAssetTransactions,
+  ownershipTransferAsset,
+  physicalMoveAsset,
+  reactivateFixedAsset,
   saleCreateDraftAr,
+  suspendFixedAsset,
+  uploadFixedAssetEvidenceContent,
+  writeoffAsset,
 } from "../../api/fixedAssets.js";
 
 function normalizeApiError(error, fallback) {
@@ -39,8 +55,61 @@ function formatBool(value) {
   return value ? "Yes" : "No";
 }
 
+function formatDateTime(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleString();
+}
+
+function formatFileSize(bytes) {
+  const parsed = Number(bytes);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return "-";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let size = parsed;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const precision = unitIndex === 0 ? 0 : unitIndex === 1 ? 1 : 2;
+  return `${size.toFixed(precision)} ${units[unitIndex]}`;
+}
+
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function buildSkippedPeriodRangeLabel(summary) {
+  const firstPeriodKey = normalizeText(summary?.firstPeriodKey);
+  const latestPeriodKey = normalizeText(summary?.latestPeriodKey);
+  if (firstPeriodKey && latestPeriodKey && firstPeriodKey !== latestPeriodKey) {
+    return `${firstPeriodKey} - ${latestPeriodKey}`;
+  }
+  return latestPeriodKey || firstPeriodKey || "-";
+}
+
+function normalizeUpperText(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function triggerBlobDownload(blob, fileName) {
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = String(fileName || "").trim() || "download.bin";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+function buildEvidenceDisplayName(row) {
+  return normalizeText(row?.displayName) || normalizeText(row?.fileName) || "-";
 }
 
 function DetailField({ label, value, mono = false }) {
@@ -52,6 +121,27 @@ function DetailField({ label, value, mono = false }) {
         {!hasValue ? "-" : isValidElement(value) ? value : String(value)}
       </dd>
     </div>
+  );
+}
+
+function InfoHint({ text }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-emerald-300 bg-white text-[10px] font-semibold text-emerald-700"
+        title={text}
+        aria-label={text}
+      >
+        i
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-full top-1/2 z-20 ml-2 hidden w-72 -translate-y-1/2 rounded-md border border-slate-200 bg-slate-900 px-3 py-2 text-[11px] leading-5 text-white shadow-lg group-hover:block group-focus-within:block"
+      >
+        {text}
+      </span>
+    </span>
   );
 }
 
@@ -84,6 +174,45 @@ function buildActivationForm(asset = null) {
     postingDate: capitalizationDate || defaultDate,
     capitalizationDate: capitalizationDate || defaultDate,
     inServiceDate: inServiceDate || capitalizationDate || acquisitionDate || todayIsoDate(),
+    assetTag: normalizeText(asset?.assetTag),
+    serialNo: normalizeText(asset?.serialNo),
+    custodianEmployeeId: String(parsePositiveInt(asset?.custodianEmployeeId) || ""),
+  };
+}
+
+function buildLifecycleNoteForm(defaultDate = todayIsoDate()) {
+  return {
+    effectiveDate: defaultDate,
+    note: "",
+  };
+}
+
+function buildPhysicalMoveForm(asset = null) {
+  return {
+    effectiveDate: todayIsoDate(),
+    locationOperatingUnitId: String(parsePositiveInt(asset?.locationOperatingUnitId) || ""),
+    custodianEmployeeId: String(parsePositiveInt(asset?.custodianEmployeeId) || ""),
+    departmentCode: normalizeText(asset?.departmentCode),
+    costCenterCode: normalizeText(asset?.costCenterCode),
+    note: "",
+  };
+}
+
+function buildOwnershipTransferForm(asset = null) {
+  return {
+    effectiveDate: todayIsoDate(),
+    postingDate: todayIsoDate(),
+    targetOwnerOperatingUnitId: "",
+    targetLocationOperatingUnitId: String(parsePositiveInt(asset?.locationOperatingUnitId) || ""),
+    note: "",
+  };
+}
+
+function buildWriteoffForm() {
+  return {
+    effectiveDate: todayIsoDate(),
+    postingDate: todayIsoDate(),
+    note: "",
   };
 }
 
@@ -93,6 +222,24 @@ const SALE_ELIGIBLE_STATUSES = new Set([
   "ACTIVE",
   "SUSPENDED",
   "FULLY_DEPRECIATED",
+]);
+const MOVE_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+]);
+const WRITEOFF_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "SUSPENDED",
+  "FULLY_DEPRECIATED",
+]);
+const VALID_DETAIL_TABS = new Set([
+  "overview",
+  "accounting",
+  "depreciation",
+  "transactions",
+  "evidence",
+  "audit",
 ]);
 
 function resolveCariDocumentsRoute(direction) {
@@ -152,6 +299,26 @@ function buildCodeNameLabel(row, idFallback) {
   if (name) return name;
   const normalizedId = parsePositiveInt(idFallback);
   return normalizedId ? `#${normalizedId}` : "-";
+}
+
+function mapCustodianOption(row) {
+  const value = String(parsePositiveInt(row?.id) || "").trim();
+  if (!value) return null;
+  const code = normalizeText(row?.employeeCode || row?.employee_code);
+  const name = normalizeText(row?.displayName || row?.display_name);
+  return {
+    value,
+    label: code && name ? `${code} - ${name}` : code || name || `#${value}`,
+  };
+}
+
+function mapCodeNameOption(row, idValue = row?.id) {
+  const value = String(parsePositiveInt(idValue) || "").trim();
+  if (!value) return null;
+  return {
+    value,
+    label: buildCodeNameLabel(row, value),
+  };
 }
 
 function buildUserLabel(rows, userId) {
@@ -229,12 +396,12 @@ export default function FixedAssetDetailPage() {
   const [searchParams] = useSearchParams();
   const { l, t } = useI18n();
   const { hasPermission } = useAuth();
+  const saleFlowSectionRef = useRef(null);
   const canRead = hasPermission("fixed_assets.read");
   const canUpsert = hasPermission("fixed_assets.upsert");
   const canPost = hasPermission("fixed_assets.post");
   const canDispose = hasPermission("fixed_assets.dispose");
   const canTransfer = hasPermission("fixed_assets.transfer");
-  const canOverrideAccounts = hasPermission("fixed_assets.account_override");
   const canReadCariDocuments = hasPermission("cari.doc.read");
   const canCreateCariDocuments = hasPermission("cari.doc.create");
 
@@ -245,7 +412,7 @@ export default function FixedAssetDetailPage() {
   const [asset, setAsset] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const initialTab = queryTab === "transactions" ? "transactions" : "overview";
+  const initialTab = VALID_DETAIL_TABS.has(queryTab) ? queryTab : "overview";
   const [activeTab, setActiveTab] = useState(initialTab);
 
   // Transaction list state (loaded when transactions tab is active)
@@ -258,6 +425,7 @@ export default function FixedAssetDetailPage() {
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState("");
   const [legacySaleFallbackOpen, setLegacySaleFallbackOpen] = useState(false);
+  const [saleFlowOpen, setSaleFlowOpen] = useState(false);
   const [legacySaleFallbackForm, setLegacySaleFallbackForm] = useState(
     createInitialLegacySaleFallbackForm()
   );
@@ -269,8 +437,41 @@ export default function FixedAssetDetailPage() {
   const [activationSaving, setActivationSaving] = useState(false);
   const [activationError, setActivationError] = useState("");
   const [activationSuccess, setActivationSuccess] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionSuccess, setActionSuccess] = useState("");
+  const [actionWarning, setActionWarning] = useState("");
+  const [suspendOpen, setSuspendOpen] = useState(false);
+  const [suspendForm, setSuspendForm] = useState(() => buildLifecycleNoteForm());
+  const [suspendSaving, setSuspendSaving] = useState(false);
+  const [reactivateOpen, setReactivateOpen] = useState(false);
+  const [reactivateForm, setReactivateForm] = useState(() => buildLifecycleNoteForm());
+  const [reactivateSaving, setReactivateSaving] = useState(false);
+  const [physicalMoveOpen, setPhysicalMoveOpen] = useState(false);
+  const [physicalMoveForm, setPhysicalMoveForm] = useState(() => buildPhysicalMoveForm());
+  const [physicalMoveSaving, setPhysicalMoveSaving] = useState(false);
+  const [ownershipTransferOpen, setOwnershipTransferOpen] = useState(false);
+  const [ownershipTransferForm, setOwnershipTransferForm] = useState(() => buildOwnershipTransferForm());
+  const [ownershipTransferSaving, setOwnershipTransferSaving] = useState(false);
+  const [writeoffOpen, setWriteoffOpen] = useState(false);
+  const [writeoffForm, setWriteoffForm] = useState(() => buildWriteoffForm());
+  const [writeoffSaving, setWriteoffSaving] = useState(false);
+  const [assetEvidenceRows, setAssetEvidenceRows] = useState([]);
+  const [assetEvidenceLoading, setAssetEvidenceLoading] = useState(false);
+  const [assetEvidenceError, setAssetEvidenceError] = useState("");
+  const [assetEvidenceMessage, setAssetEvidenceMessage] = useState("");
+  const [assetEvidenceUploadFile, setAssetEvidenceUploadFile] = useState(null);
+  const [assetEvidenceNote, setAssetEvidenceNote] = useState("");
+  const [assetEvidenceUploading, setAssetEvidenceUploading] = useState(false);
+  const [assetEvidenceUploadInputKey, setAssetEvidenceUploadInputKey] = useState(0);
+  const [assetEvidenceDownloadingId, setAssetEvidenceDownloadingId] = useState(null);
+  const [assetEvidenceDeletingId, setAssetEvidenceDeletingId] = useState(null);
+  const [sourceDocumentEvidenceRows, setSourceDocumentEvidenceRows] = useState([]);
+  const [sourceDocumentEvidenceLoading, setSourceDocumentEvidenceLoading] = useState(false);
+  const [sourceDocumentEvidenceError, setSourceDocumentEvidenceError] = useState("");
+  const [sourceDocumentEvidenceDownloadingId, setSourceDocumentEvidenceDownloadingId] = useState(null);
   const [accountRows, setAccountRows] = useState([]);
   const [operatingUnitRows, setOperatingUnitRows] = useState([]);
+  const [custodianRows, setCustodianRows] = useState([]);
   const [sourceCariDocument, setSourceCariDocument] = useState(null);
   const [userRows, setUserRows] = useState([]);
 
@@ -345,6 +546,7 @@ export default function FixedAssetDetailPage() {
 
   useEffect(() => {
     setLegacySaleFallbackOpen(false);
+    setSaleFlowOpen(false);
     setLegacySaleFallbackError("");
     setLegacySaleFallbackResult(null);
     setLegacySaleFallbackForm(createInitialLegacySaleFallbackForm());
@@ -352,33 +554,72 @@ export default function FixedAssetDetailPage() {
     setActivationError("");
     setActivationSuccess("");
     setActivationForm(buildActivationForm(asset));
-  }, [asset?.id]);
+    setActionError("");
+    setActionSuccess("");
+    setActionWarning("");
+    setSuspendOpen(false);
+    setSuspendForm(buildLifecycleNoteForm());
+    setSuspendSaving(false);
+    setReactivateOpen(false);
+    setReactivateForm(buildLifecycleNoteForm());
+    setReactivateSaving(false);
+    setPhysicalMoveOpen(false);
+    setPhysicalMoveForm(buildPhysicalMoveForm(asset));
+    setPhysicalMoveSaving(false);
+    setOwnershipTransferOpen(false);
+    setOwnershipTransferForm(buildOwnershipTransferForm(asset));
+    setOwnershipTransferSaving(false);
+    setWriteoffOpen(false);
+    setWriteoffForm(buildWriteoffForm());
+    setWriteoffSaving(false);
+    setAssetEvidenceRows([]);
+    setAssetEvidenceLoading(false);
+    setAssetEvidenceError("");
+    setAssetEvidenceMessage("");
+    setAssetEvidenceUploadFile(null);
+    setAssetEvidenceNote("");
+    setAssetEvidenceUploading(false);
+    setAssetEvidenceUploadInputKey((prev) => prev + 1);
+    setAssetEvidenceDownloadingId(null);
+    setAssetEvidenceDeletingId(null);
+    setSourceDocumentEvidenceRows([]);
+    setSourceDocumentEvidenceLoading(false);
+    setSourceDocumentEvidenceError("");
+    setSourceDocumentEvidenceDownloadingId(null);
+  }, [asset]);
 
   useEffect(() => {
     const legalEntityId = parsePositiveInt(asset?.legalEntityId);
     if (!legalEntityId) {
       setAccountRows([]);
       setOperatingUnitRows([]);
+      setCustodianRows([]);
       return;
     }
     let active = true;
     (async () => {
       try {
-        const [accountResponse, operatingUnitResponse] = await Promise.all([
+        const [accountResponse, operatingUnitResponse, custodianResponse] = await Promise.all([
           listAccounts({
             legalEntityId,
             includeInactive: true,
             limit: 1000,
           }),
           listOperatingUnits({ legalEntityId, limit: 500 }),
+          listFixedAssetCustodians({
+            legalEntityId,
+            status: "ACTIVE",
+          }),
         ]);
         if (!active) return;
         setAccountRows(Array.isArray(accountResponse?.rows) ? accountResponse.rows : []);
         setOperatingUnitRows(Array.isArray(operatingUnitResponse?.rows) ? operatingUnitResponse.rows : []);
+        setCustodianRows(Array.isArray(custodianResponse?.rows) ? custodianResponse.rows : []);
       } catch {
         if (!active) return;
         setAccountRows([]);
         setOperatingUnitRows([]);
+        setCustodianRows([]);
       }
     })();
     return () => { active = false; };
@@ -405,6 +646,77 @@ export default function FixedAssetDetailPage() {
     })();
     return () => { active = false; };
   }, [asset?.sourceCariDocumentId, canReadCariDocuments]);
+
+  useEffect(() => {
+    if (!canRead || !assetId || activeTab !== "evidence") return;
+    let active = true;
+    (async () => {
+      setAssetEvidenceLoading(true);
+      setAssetEvidenceError("");
+      try {
+        const response = await listFixedAssetEvidence("asset", assetId);
+        if (!active) return;
+        const rows = Array.isArray(response?.rows) ? response.rows : [];
+        setAssetEvidenceRows(rows);
+        setAsset((prev) => (
+          prev
+            ? {
+                ...prev,
+                evidenceSummary: {
+                  ...(prev.evidenceSummary || {}),
+                  totalCount: rows.length,
+                },
+              }
+            : prev
+        ));
+      } catch (err) {
+        if (!active) return;
+        setAssetEvidenceRows([]);
+        setAssetEvidenceError(
+          normalizeApiError(err, l("Failed to load evidence.", "Kanitlar yuklenemedi."))
+        );
+      } finally {
+        if (active) {
+          setAssetEvidenceLoading(false);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [activeTab, assetId, canRead, l]);
+
+  useEffect(() => {
+    const documentId = parsePositiveInt(asset?.sourceCariDocumentId);
+    if (activeTab !== "evidence" || !documentId || !canReadCariDocuments) {
+      setSourceDocumentEvidenceRows([]);
+      setSourceDocumentEvidenceLoading(false);
+      setSourceDocumentEvidenceError("");
+      return;
+    }
+    let active = true;
+    (async () => {
+      setSourceDocumentEvidenceLoading(true);
+      setSourceDocumentEvidenceError("");
+      try {
+        const response = await listCariDocumentEvidence(documentId);
+        if (!active) return;
+        setSourceDocumentEvidenceRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (err) {
+        if (!active) return;
+        setSourceDocumentEvidenceRows([]);
+        setSourceDocumentEvidenceError(
+          normalizeApiError(
+            err,
+            l("Failed to load source document evidence.", "Kaynak belge kanitlari yuklenemedi.")
+          )
+        );
+      } finally {
+        if (active) {
+          setSourceDocumentEvidenceLoading(false);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [activeTab, asset?.sourceCariDocumentId, canReadCariDocuments, l]);
 
   useEffect(() => {
     let active = true;
@@ -470,12 +782,18 @@ export default function FixedAssetDetailPage() {
   const statusColor =
     status === "ACTIVE" ? "bg-emerald-100 text-emerald-800" :
     status === "DISPOSED" ? "bg-rose-100 text-rose-800" :
+    status === "CANCELLED" ? "bg-slate-200 text-slate-700" :
     status === "SUSPENDED" ? "bg-amber-100 text-amber-800" :
     status === "FULLY_DEPRECIATED" ? "bg-blue-100 text-blue-800" :
     "bg-slate-100 text-slate-700";
   const isSaleEligibleStatus = SALE_ELIGIBLE_STATUSES.has(status);
+  const isMoveEligibleStatus = MOVE_ELIGIBLE_STATUSES.has(status);
+  const isWriteoffEligibleStatus = WRITEOFF_ELIGIBLE_STATUSES.has(status);
   const canOpenCariSaleFlow = canReadCariDocuments && canCreateCariDocuments;
   const canUseLegacySaleFallback = canDispose && canCreateCariDocuments;
+  const canManageAssetEvidence = canUpsert;
+  const normalizedAssetId = parsePositiveInt(asset?.id);
+  const normalizedSourceCariDocumentId = parsePositiveInt(asset?.sourceCariDocumentId);
   const ownerOperatingUnitLabel = buildOperatingUnitLabel(
     operatingUnitRows,
     asset.ownerOperatingUnitId
@@ -498,11 +816,281 @@ export default function FixedAssetDetailPage() {
     sourceCariDocument,
     asset.sourceCariDocumentLineId
   );
+  const sourceCariDocumentPath = normalizedSourceCariDocumentId
+    ? buildCariDocumentPath(normalizedSourceCariDocumentId, sourceCariDirection)
+    : null;
   const createdByLabel = buildUserLabel(userRows, asset.createdByUserId);
   const updatedByLabel = buildUserLabel(userRows, asset.updatedByUserId);
+  const operatingUnitOptions = operatingUnitRows
+    .map((row) => mapCodeNameOption(row))
+    .filter(Boolean);
+  const ownershipTargetOwnerOptions = operatingUnitOptions.filter(
+    (option) => parsePositiveInt(option.value) !== parsePositiveInt(asset.ownerOperatingUnitId)
+  );
+  const custodianOptions = custodianRows.map(mapCustodianOption).filter(Boolean);
+  const activationAssetTagMissing = !normalizeText(activationForm.assetTag);
+  const activationSerialNoMissing = !normalizeText(activationForm.serialNo);
+  const assetEvidenceCount = assetEvidenceLoading
+    ? Number(asset.evidenceSummary?.totalCount ?? 0)
+    : assetEvidenceRows.length;
+  const sourceDocumentEvidenceCount = sourceDocumentEvidenceLoading
+    ? sourceDocumentEvidenceRows.length
+    : sourceDocumentEvidenceRows.length;
+  const capitalizationDateHelpText = l(
+    "Example: invoice date is March 5, but the machine is installed and capitalized on March 20. Bill date can stay as acquisition date, while capitalization date becomes March 20.",
+    "Ornek: fatura tarihi 5 Mart, ancak makine 20 Mart'ta kurulup aktiflestiriliyor. Fatura tarihi alim tarihi olarak kalabilir; aktiflesme tarihi ise 20 Mart olur."
+  );
+  const pendingSkippedDepreciation = asset.pendingSkippedDepreciation || {};
+  const pendingSkippedDepreciationCount = Number(
+    pendingSkippedDepreciation.totalCount ?? 0
+  );
+  const pendingSkippedDepreciationLatestRunId = parsePositiveInt(
+    pendingSkippedDepreciation.latestRunId
+  );
+  const pendingSkippedDepreciationLatestRunPath = pendingSkippedDepreciationLatestRunId
+    ? `/app/demirbas-amortisman-islemleri?runId=${pendingSkippedDepreciationLatestRunId}`
+    : "/app/demirbas-amortisman-islemleri";
+  const pendingSkippedDepreciationPeriodLabel = buildSkippedPeriodRangeLabel(
+    pendingSkippedDepreciation
+  );
+  const pendingSkippedDepreciationReviewRecommended = Boolean(
+    pendingSkippedDepreciation.reviewRecommended
+  );
+
+  function resetActionFeedback() {
+    setActionError("");
+    setActionSuccess("");
+    setActionWarning("");
+  }
+
+  function closeLifecyclePanels() {
+    setSuspendOpen(false);
+    setReactivateOpen(false);
+    setPhysicalMoveOpen(false);
+    setOwnershipTransferOpen(false);
+    setWriteoffOpen(false);
+    setSaleFlowOpen(false);
+    setLegacySaleFallbackOpen(false);
+  }
+
+  function openSuspendPanel() {
+    closeLifecyclePanels();
+    setSuspendForm(buildLifecycleNoteForm());
+    resetActionFeedback();
+    setSuspendOpen(true);
+  }
+
+  function openReactivatePanel() {
+    closeLifecyclePanels();
+    setReactivateForm(buildLifecycleNoteForm());
+    resetActionFeedback();
+    setReactivateOpen(true);
+  }
+
+  function openPhysicalMovePanel() {
+    closeLifecyclePanels();
+    setPhysicalMoveForm(buildPhysicalMoveForm(asset));
+    resetActionFeedback();
+    setPhysicalMoveOpen(true);
+  }
+
+  function openOwnershipTransferPanel() {
+    closeLifecyclePanels();
+    setOwnershipTransferForm(buildOwnershipTransferForm(asset));
+    resetActionFeedback();
+    setOwnershipTransferOpen(true);
+  }
+
+  function openWriteoffPanel() {
+    closeLifecyclePanels();
+    setWriteoffForm(buildWriteoffForm());
+    resetActionFeedback();
+    setWriteoffOpen(true);
+  }
+
+  function focusSaleFlowPanel() {
+    closeLifecyclePanels();
+    resetActionFeedback();
+    setLegacySaleFallbackError("");
+    setLegacySaleFallbackResult(null);
+    setLegacySaleFallbackOpen(false);
+    setSaleFlowOpen(true);
+    window.setTimeout(() => {
+      saleFlowSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 0);
+  }
+
+  async function refreshAssetEvidenceRows(targetAssetId = asset?.id) {
+    const evidenceAssetId = parsePositiveInt(targetAssetId);
+    if (!evidenceAssetId) {
+      setAssetEvidenceRows([]);
+      return [];
+    }
+    const response = await listFixedAssetEvidence("asset", evidenceAssetId);
+    const rows = Array.isArray(response?.rows) ? response.rows : [];
+    setAssetEvidenceRows(rows);
+    setAsset((prev) => (
+      prev
+        ? {
+            ...prev,
+            evidenceSummary: {
+              ...(prev.evidenceSummary || {}),
+              totalCount: rows.length,
+            },
+          }
+        : prev
+    ));
+    return rows;
+  }
+
+  async function handleAttachAssetEvidence(event) {
+    event.preventDefault();
+    if (!normalizedAssetId || !canManageAssetEvidence) {
+      setAssetEvidenceError(
+        l(
+          "Evidence attach requires a valid asset and permission: fixed_assets.upsert.",
+          "Kanit eklemek icin gecerli demirbas ve `fixed_assets.upsert` yetkisi gerekir."
+        )
+      );
+      return;
+    }
+    if (!assetEvidenceUploadFile) {
+      setAssetEvidenceError(
+        l("Select a file before attaching evidence.", "Kanit eklemeden once dosya secin.")
+      );
+      return;
+    }
+
+    setAssetEvidenceUploading(true);
+    setAssetEvidenceError("");
+    setAssetEvidenceMessage("");
+    try {
+      const draftResponse = await createFixedAssetEvidence("asset", normalizedAssetId, {
+        fileName: assetEvidenceUploadFile.name || "evidence.bin",
+        contentType: assetEvidenceUploadFile.type || undefined,
+        displayName: assetEvidenceUploadFile.name || undefined,
+        note: normalizeText(assetEvidenceNote) || undefined,
+      });
+      const evidenceId = parsePositiveInt(draftResponse?.row?.id);
+      if (!evidenceId) {
+        throw new Error(
+          l("Evidence create response is missing id.", "Kanit olusturma yanitinda id yok.")
+        );
+      }
+
+      await uploadFixedAssetEvidenceContent(
+        "asset",
+        normalizedAssetId,
+        evidenceId,
+        assetEvidenceUploadFile,
+        assetEvidenceUploadFile.type || "application/octet-stream"
+      );
+
+      await refreshAssetEvidenceRows(normalizedAssetId);
+      setAssetEvidenceMessage(
+        l(`Evidence attached. id=${evidenceId}`, `Kanit eklendi. id=${evidenceId}`)
+      );
+      setAssetEvidenceNote("");
+      setAssetEvidenceUploadFile(null);
+      setAssetEvidenceUploadInputKey((prev) => prev + 1);
+    } catch (err) {
+      await refreshAssetEvidenceRows(normalizedAssetId).catch(() => {});
+      setAssetEvidenceError(
+        normalizeApiError(err, l("Failed to attach evidence.", "Kanit eklenemedi."))
+      );
+    } finally {
+      setAssetEvidenceUploading(false);
+    }
+  }
+
+  async function handleDownloadAssetEvidence(row) {
+    const evidenceId = parsePositiveInt(row?.id);
+    if (!normalizedAssetId || !evidenceId) {
+      setAssetEvidenceError(l("Evidence id is invalid.", "Kanit id gecersiz."));
+      return;
+    }
+    setAssetEvidenceDownloadingId(evidenceId);
+    setAssetEvidenceError("");
+    try {
+      const response = await downloadFixedAssetEvidence("asset", normalizedAssetId, evidenceId);
+      const blob = response?.blob;
+      if (!(blob instanceof Blob)) {
+        throw new Error(
+          l("Evidence download payload is invalid.", "Kanit indirme yuklemi gecersiz.")
+        );
+      }
+      triggerBlobDownload(blob, response?.fileName || row?.fileName || `evidence-${evidenceId}.bin`);
+    } catch (err) {
+      setAssetEvidenceError(
+        normalizeApiError(err, l("Failed to download evidence.", "Kanit indirilemedi."))
+      );
+    } finally {
+      setAssetEvidenceDownloadingId(null);
+    }
+  }
+
+  async function handleDeleteAssetEvidence(evidenceIdRaw) {
+    const evidenceId = parsePositiveInt(evidenceIdRaw);
+    if (!normalizedAssetId || !evidenceId || !canManageAssetEvidence) {
+      setAssetEvidenceError(
+        l(
+          "Evidence delete requires a valid asset, evidence id, and fixed_assets.upsert permission.",
+          "Kanit silmek icin gecerli demirbas, kanit id ve `fixed_assets.upsert` yetkisi gerekir."
+        )
+      );
+      return;
+    }
+    setAssetEvidenceDeletingId(evidenceId);
+    setAssetEvidenceError("");
+    setAssetEvidenceMessage("");
+    try {
+      await deleteFixedAssetEvidence("asset", normalizedAssetId, evidenceId);
+      await refreshAssetEvidenceRows(normalizedAssetId);
+      setAssetEvidenceMessage(
+        l(`Evidence deleted. id=${evidenceId}`, `Kanit silindi. id=${evidenceId}`)
+      );
+    } catch (err) {
+      setAssetEvidenceError(
+        normalizeApiError(err, l("Failed to delete evidence.", "Kanit silinemedi."))
+      );
+    } finally {
+      setAssetEvidenceDeletingId(null);
+    }
+  }
+
+  async function handleDownloadSourceDocumentEvidence(row) {
+    const evidenceId = parsePositiveInt(row?.id);
+    if (!normalizedSourceCariDocumentId || !evidenceId) {
+      setSourceDocumentEvidenceError(l("Evidence id is invalid.", "Kanit id gecersiz."));
+      return;
+    }
+    setSourceDocumentEvidenceDownloadingId(evidenceId);
+    setSourceDocumentEvidenceError("");
+    try {
+      const response = await downloadCariDocumentEvidence(normalizedSourceCariDocumentId, evidenceId);
+      const blob = response?.blob;
+      if (!(blob instanceof Blob)) {
+        throw new Error(
+          l("Evidence download payload is invalid.", "Kanit indirme yuklemi gecersiz.")
+        );
+      }
+      triggerBlobDownload(blob, response?.fileName || row?.fileName || `evidence-${evidenceId}.bin`);
+    } catch (err) {
+      setSourceDocumentEvidenceError(
+        normalizeApiError(
+          err,
+          l("Failed to download source document evidence.", "Kaynak belge kaniti indirilemedi.")
+        )
+      );
+    } finally {
+      setSourceDocumentEvidenceDownloadingId(null);
+    }
+  }
 
   async function handleCreateLegacySaleFallbackDraft() {
-    const normalizedAssetId = parsePositiveInt(asset?.id);
     const counterpartyId = parsePositiveInt(legacySaleFallbackForm.counterpartyId);
     const saleAmountTxn = Number(legacySaleFallbackForm.saleAmountTxn);
     const documentDate = String(legacySaleFallbackForm.documentDate || "").trim();
@@ -576,12 +1164,24 @@ export default function FixedAssetDetailPage() {
     const postingDate = normalizeText(activationForm.postingDate);
     const capitalizationDate = normalizeText(activationForm.capitalizationDate);
     const inServiceDate = normalizeText(activationForm.inServiceDate);
+    const assetTag = normalizeText(activationForm.assetTag);
+    const serialNo = normalizeText(activationForm.serialNo);
+    const custodianEmployeeId = parsePositiveInt(activationForm.custodianEmployeeId);
 
     if (!postingDate || !capitalizationDate || !inServiceDate) {
       setActivationError(
         l(
           "Posting date, capitalization date, and in-service date are required.",
           "Kayit tarihi, aktiflesme tarihi ve hizmete giris tarihi zorunludur."
+        )
+      );
+      return;
+    }
+    if (!assetTag) {
+      setActivationError(
+        l(
+          "Asset tag is required before activation.",
+          "Aktiflestirme oncesinde varlik etiketi zorunludur."
         )
       );
       return;
@@ -595,6 +1195,9 @@ export default function FixedAssetDetailPage() {
         postingDate,
         capitalizationDate,
         inServiceDate,
+        assetTag,
+        serialNo: serialNo || null,
+        custodianEmployeeId: custodianEmployeeId || null,
       });
       setAsset(response || null);
       setActivationOpen(false);
@@ -614,6 +1217,270 @@ export default function FixedAssetDetailPage() {
       );
     } finally {
       setActivationSaving(false);
+    }
+  }
+
+  async function handleSuspendAsset() {
+    if (!normalizedAssetId) {
+      setActionError(l("Asset record is missing.", "Demirbas kaydi eksik."));
+      return;
+    }
+    const effectiveDate = normalizeText(suspendForm.effectiveDate);
+    if (!effectiveDate) {
+      setActionError(l("Effective date is required.", "Gecerlilik tarihi zorunludur."));
+      return;
+    }
+
+    setSuspendSaving(true);
+    resetActionFeedback();
+    try {
+      const response = await suspendFixedAsset(normalizedAssetId, {
+        effectiveDate,
+        note: normalizeText(suspendForm.note) || null,
+      });
+      setAsset(response || null);
+      setSuspendOpen(false);
+      setActionSuccess(l("Asset suspended successfully.", "Demirbas basariyla askiya alindi."));
+      setActiveTab("overview");
+    } catch (err) {
+      setActionError(
+        normalizeApiError(err, l("Failed to suspend asset.", "Demirbas askiya alinamadi."))
+      );
+    } finally {
+      setSuspendSaving(false);
+    }
+  }
+
+  async function handleReactivateAsset() {
+    if (!normalizedAssetId) {
+      setActionError(l("Asset record is missing.", "Demirbas kaydi eksik."));
+      return;
+    }
+    const effectiveDate = normalizeText(reactivateForm.effectiveDate);
+    if (!effectiveDate) {
+      setActionError(l("Effective date is required.", "Gecerlilik tarihi zorunludur."));
+      return;
+    }
+
+    setReactivateSaving(true);
+    resetActionFeedback();
+    try {
+      const response = await reactivateFixedAsset(normalizedAssetId, {
+        effectiveDate,
+        note: normalizeText(reactivateForm.note) || null,
+      });
+      const skippedSummary = response?.pendingSkippedDepreciation || {};
+      const skippedCount = Number(skippedSummary.totalCount ?? 0);
+      const skippedPeriodLabel = buildSkippedPeriodRangeLabel(skippedSummary);
+      setAsset(response || null);
+      setReactivateOpen(false);
+      setActionSuccess(
+        l("Asset reactivated successfully.", "Demirbas basariyla yeniden aktiflestirildi.")
+      );
+      if (skippedCount > 0) {
+        setActionWarning(
+          l(
+            `Skipped depreciation months now need review and reprocess. Periods: ${skippedPeriodLabel}.`,
+            `Atlanan amortisman donemleri artik gozden gecirilmeli ve yeniden islenmelidir. Donemler: ${skippedPeriodLabel}.`
+          )
+        );
+      }
+      setActiveTab("overview");
+    } catch (err) {
+      setActionError(
+        normalizeApiError(
+          err,
+          l("Failed to reactivate asset.", "Demirbas yeniden aktiflestirilemedi.")
+        )
+      );
+    } finally {
+      setReactivateSaving(false);
+    }
+  }
+
+  async function handlePhysicalMoveAsset() {
+    if (!normalizedAssetId) {
+      setActionError(l("Asset record is missing.", "Demirbas kaydi eksik."));
+      return;
+    }
+
+    const effectiveDate = normalizeText(physicalMoveForm.effectiveDate);
+    const currentLocationValue = String(parsePositiveInt(asset?.locationOperatingUnitId) || "");
+    const currentCustodianValue = String(parsePositiveInt(asset?.custodianEmployeeId) || "");
+    const currentDepartmentCode = normalizeText(asset?.departmentCode);
+    const currentCostCenterCode = normalizeText(asset?.costCenterCode);
+
+    if (!effectiveDate) {
+      setActionError(l("Effective date is required.", "Gecerlilik tarihi zorunludur."));
+      return;
+    }
+
+    const payload = {
+      effectiveDate,
+      note: normalizeText(physicalMoveForm.note) || null,
+    };
+    let hasChange = false;
+
+    if (physicalMoveForm.locationOperatingUnitId !== currentLocationValue) {
+      const locationOperatingUnitId = parsePositiveInt(physicalMoveForm.locationOperatingUnitId);
+      if (!locationOperatingUnitId) {
+        setActionError(
+          l(
+            "Location operating unit cannot be empty for physical move.",
+            "Fiziksel hareket icin lokasyon isletme birimi bos birakilamaz."
+          )
+        );
+        return;
+      }
+      payload.locationOperatingUnitId = locationOperatingUnitId;
+      hasChange = true;
+    }
+
+    if (physicalMoveForm.custodianEmployeeId !== currentCustodianValue) {
+      payload.custodianEmployeeId = parsePositiveInt(physicalMoveForm.custodianEmployeeId) || null;
+      hasChange = true;
+    }
+
+    if (normalizeText(physicalMoveForm.departmentCode) !== currentDepartmentCode) {
+      payload.departmentCode = normalizeText(physicalMoveForm.departmentCode) || null;
+      hasChange = true;
+    }
+
+    if (normalizeText(physicalMoveForm.costCenterCode) !== currentCostCenterCode) {
+      payload.costCenterCode = normalizeText(physicalMoveForm.costCenterCode) || null;
+      hasChange = true;
+    }
+
+    if (!hasChange) {
+      setActionError(
+        l(
+          "Change at least one location or responsibility field before posting the move.",
+          "Hareketi kaydetmeden once en az bir lokasyon veya sorumluluk alani degistirin."
+        )
+      );
+      return;
+    }
+
+    setPhysicalMoveSaving(true);
+    resetActionFeedback();
+    try {
+      const response = await physicalMoveAsset(normalizedAssetId, payload);
+      setAsset(response || null);
+      setPhysicalMoveOpen(false);
+      setActionSuccess(
+        l("Physical move posted successfully.", "Fiziksel hareket basariyla kaydedildi.")
+      );
+      setActiveTab("overview");
+    } catch (err) {
+      setActionError(
+        normalizeApiError(
+          err,
+          l("Failed to post physical move.", "Fiziksel hareket kaydedilemedi.")
+        )
+      );
+    } finally {
+      setPhysicalMoveSaving(false);
+    }
+  }
+
+  async function handleOwnershipTransferAsset() {
+    if (!normalizedAssetId) {
+      setActionError(l("Asset record is missing.", "Demirbas kaydi eksik."));
+      return;
+    }
+
+    const effectiveDate = normalizeText(ownershipTransferForm.effectiveDate);
+    const postingDate = normalizeText(ownershipTransferForm.postingDate);
+    const targetOwnerOperatingUnitId = parsePositiveInt(
+      ownershipTransferForm.targetOwnerOperatingUnitId
+    );
+    const targetLocationOperatingUnitId = parsePositiveInt(
+      ownershipTransferForm.targetLocationOperatingUnitId
+    );
+
+    if (!effectiveDate || !postingDate) {
+      setActionError(
+        l(
+          "Effective date and posting date are required.",
+          "Gecerlilik tarihi ve kayit tarihi zorunludur."
+        )
+      );
+      return;
+    }
+    if (!targetOwnerOperatingUnitId) {
+      setActionError(
+        l(
+          "Target owner operating unit is required.",
+          "Hedef sahip isletme birimi zorunludur."
+        )
+      );
+      return;
+    }
+
+    setOwnershipTransferSaving(true);
+    resetActionFeedback();
+    try {
+      const response = await ownershipTransferAsset(normalizedAssetId, {
+        effectiveDate,
+        postingDate,
+        targetOwnerOperatingUnitId,
+        targetLocationOperatingUnitId: targetLocationOperatingUnitId || null,
+        note: normalizeText(ownershipTransferForm.note) || null,
+      });
+      setAsset(response || null);
+      setOwnershipTransferOpen(false);
+      setActionSuccess(
+        l("Ownership transfer posted successfully.", "Sahiplik transferi basariyla kaydedildi.")
+      );
+      setActiveTab("overview");
+    } catch (err) {
+      setActionError(
+        normalizeApiError(
+          err,
+          l("Failed to post ownership transfer.", "Sahiplik transferi kaydedilemedi.")
+        )
+      );
+    } finally {
+      setOwnershipTransferSaving(false);
+    }
+  }
+
+  async function handleWriteoffAsset() {
+    if (!normalizedAssetId) {
+      setActionError(l("Asset record is missing.", "Demirbas kaydi eksik."));
+      return;
+    }
+
+    const effectiveDate = normalizeText(writeoffForm.effectiveDate);
+    const postingDate = normalizeText(writeoffForm.postingDate);
+    if (!effectiveDate || !postingDate) {
+      setActionError(
+        l(
+          "Effective date and posting date are required.",
+          "Gecerlilik tarihi ve kayit tarihi zorunludur."
+        )
+      );
+      return;
+    }
+
+    setWriteoffSaving(true);
+    resetActionFeedback();
+    try {
+      const response = await writeoffAsset(normalizedAssetId, {
+        effectiveDate,
+        postingDate,
+        note: normalizeText(writeoffForm.note) || null,
+      });
+      setAsset(response || null);
+      setWriteoffOpen(false);
+      setActionSuccess(l("Write-off posted successfully.", "Hurda islemi basariyla kaydedildi."));
+      setActiveTab("overview");
+    } catch (err) {
+      setActionError(
+        normalizeApiError(err, l("Failed to post write-off.", "Hurda islemi kaydedilemedi."))
+      );
+    } finally {
+      setWriteoffSaving(false);
     }
   }
 
@@ -637,6 +1504,56 @@ export default function FixedAssetDetailPage() {
         {asset.description ? <p className="mt-1 text-xs text-slate-500">{asset.description}</p> : null}
       </section>
 
+      {pendingSkippedDepreciationCount > 0 ? (
+        <section
+          className={`rounded-xl border p-4 shadow-sm ${
+            pendingSkippedDepreciationReviewRecommended
+              ? "border-amber-200 bg-amber-50"
+              : "border-slate-200 bg-white"
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                {pendingSkippedDepreciationReviewRecommended
+                  ? l(
+                      "Skipped depreciation months need review",
+                      "Atlanan amortisman donemleri gozden gecirilmeli"
+                    )
+                  : l(
+                      "Skipped depreciation months are recorded",
+                      "Atlanan amortisman donemleri kayitli"
+                    )}
+              </h2>
+              <p className="mt-1 text-sm text-slate-700">
+                {pendingSkippedDepreciationReviewRecommended
+                  ? l(
+                      "Skipped depreciation months exist after the last posted period. Review the latest skipped run and reprocess the affected month if the asset has returned to service.",
+                      "Son postalanan donemden sonra atlanan amortisman donemleri var. Varlik yeniden hizmete donduyse en son atlanan runu inceleyin ve ilgili donemi yeniden isleyin."
+                    )
+                  : l(
+                      "Skipped depreciation months are still tracked after the last posted period. They remain visible until the asset returns to service or becomes depreciable again.",
+                      "Son postalanan donemden sonra atlanan amortisman donemleri izlenmeye devam ediyor. Varlik yeniden hizmete donene veya tekrar amortismana uygun hale gelene kadar gorunur kalir."
+                    )}
+              </p>
+              <p className="mt-2 text-xs font-medium text-slate-600">
+                {l("Periods", "Donemler")}: {pendingSkippedDepreciationPeriodLabel} · {l("Count", "Adet")}: {pendingSkippedDepreciationCount}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                to={pendingSkippedDepreciationLatestRunPath}
+                className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+              >
+                {pendingSkippedDepreciationLatestRunId
+                  ? l("Open Latest Skipped Run", "Son Atlanan Runu Ac")
+                  : l("Open Depreciation Runs", "Amortisman Runlarini Ac")}
+              </Link>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       {/* Permission-gated actions */}
       {(canUpsert || canPost || canDispose || canTransfer) ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -652,8 +1569,10 @@ export default function FixedAssetDetailPage() {
             {canPost && status === "DRAFT" ? (
               <button
                 type="button"
-                className="rounded-md bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
+                className="cursor-pointer rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => {
+                  closeLifecyclePanels();
+                  resetActionFeedback();
                   setActivationOpen(true);
                   setActivationError("");
                   setActivationSuccess("");
@@ -665,34 +1584,58 @@ export default function FixedAssetDetailPage() {
               </button>
             ) : null}
             {canPost && status === "ACTIVE" ? (
-              <span className="rounded-md bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 border border-amber-200">
+              <button
+                type="button"
+                className="cursor-pointer rounded-md border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                onClick={openSuspendPanel}
+              >
                 {l("Suspend", "Askiya Al")}
-              </span>
+              </button>
             ) : null}
             {canPost && status === "SUSPENDED" ? (
-              <span className="rounded-md bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 border border-emerald-200">
+              <button
+                type="button"
+                className="cursor-pointer rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+                onClick={openReactivatePanel}
+              >
                 {l("Reactivate", "Yeniden Aktiflestir")}
-              </span>
+              </button>
             ) : null}
-            {canTransfer && (status === "ACTIVE" || status === "SUSPENDED") ? (
+            {canTransfer && isMoveEligibleStatus ? (
               <>
-                <span className="rounded-md bg-blue-50 px-3 py-1 text-xs font-medium text-blue-800 border border-blue-200">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100"
+                  onClick={openPhysicalMovePanel}
+                >
                   {l("Physical Move", "Fiziksel Hareket")}
-                </span>
-                <span className="rounded-md bg-blue-50 px-3 py-1 text-xs font-medium text-blue-800 border border-blue-200">
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100"
+                  onClick={openOwnershipTransferPanel}
+                >
                   {l("Ownership Transfer", "Sahiplik Transferi")}
-                </span>
+                </button>
               </>
             ) : null}
-            {canDispose && status === "ACTIVE" ? (
-              <span className="rounded-md bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 border border-rose-200">
+            {canDispose && isWriteoffEligibleStatus ? (
+              <button
+                type="button"
+                className="cursor-pointer rounded-md border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                onClick={openWriteoffPanel}
+              >
                 {l("Write Off", "Hurda Islem")}
-              </span>
+              </button>
             ) : null}
             {canDispose && isSaleEligibleStatus ? (
-              <span className="rounded-md bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 border border-rose-200">
+              <button
+                type="button"
+                className="cursor-pointer rounded-md border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                onClick={focusSaleFlowPanel}
+              >
                 {l("Sale", "Satis")}
-              </span>
+              </button>
             ) : null}
           </div>
           {activationSuccess ? (
@@ -700,6 +1643,25 @@ export default function FixedAssetDetailPage() {
           ) : null}
           {activationError ? (
             <p className="mt-3 text-sm text-rose-700">{activationError}</p>
+          ) : null}
+          {actionSuccess ? (
+            <p className="mt-3 text-sm text-emerald-700">{actionSuccess}</p>
+          ) : null}
+          {actionWarning ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <p>{actionWarning}</p>
+              <Link
+                to={pendingSkippedDepreciationLatestRunPath}
+                className="mt-2 inline-flex text-xs font-semibold text-amber-900 underline"
+              >
+                {pendingSkippedDepreciationLatestRunId
+                  ? l("Open Latest Skipped Run", "Son Atlanan Runu Ac")
+                  : l("Open Depreciation Runs", "Amortisman Runlarini Ac")}
+              </Link>
+            </div>
+          ) : null}
+          {actionError ? (
+            <p className="mt-3 text-sm text-rose-700">{actionError}</p>
           ) : null}
           {activationOpen ? (
             <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
@@ -712,6 +1674,27 @@ export default function FixedAssetDetailPage() {
                   "Aktiflestirmeden once gercek hizmet tarihlerini girin. Varlik daha once kullanima basladiysa, o gercek hizmete giris tarihini burada girin."
                 )}
               </p>
+              {activationAssetTagMissing || activationSerialNoMissing ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <p className="font-medium">
+                    {l(
+                      "Complete missing identity details before activation.",
+                      "Aktiflestirmeden once eksik kimlik bilgilerini tamamlayin."
+                    )}
+                  </p>
+                  <p className="mt-1 text-xs">
+                    {activationAssetTagMissing
+                      ? l(
+                          "Asset Tag is required. Serial No can be filled now if known.",
+                          "Varlik Etiketi zorunludur. Seri No biliniyorsa simdi girilebilir."
+                        )
+                      : l(
+                          "Serial No is still optional, but this is the last easy point to capture it.",
+                          "Seri No hala opsiyoneldir, ancak kaydetmek icin en kolay nokta burasidir."
+                        )}
+                  </p>
+                </div>
+              ) : null}
               <div className="mt-3 grid gap-3 md:grid-cols-3">
                 <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
                   {l("Posting Date", "Kayit Tarihi")}
@@ -729,7 +1712,10 @@ export default function FixedAssetDetailPage() {
                   />
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
-                  {l("Capitalization Date", "Aktiflesme Tarihi")}
+                  <span className="inline-flex items-center gap-1">
+                    <span>{l("Capitalization Date", "Aktiflesme Tarihi")}</span>
+                    <InfoHint text={capitalizationDateHelpText} />
+                  </span>
                   <input
                     type="date"
                     className="mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
@@ -759,10 +1745,62 @@ export default function FixedAssetDetailPage() {
                   />
                 </label>
               </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                  {l("Asset Tag", "Varlik Etiketi")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={activationForm.assetTag}
+                    onChange={(event) =>
+                      setActivationForm((prev) => ({
+                        ...prev,
+                        assetTag: event.target.value,
+                      }))
+                    }
+                    disabled={activationSaving}
+                    placeholder={l("Required before activation", "Aktiflestirme oncesi zorunlu")}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                  {l("Serial No", "Seri No")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={activationForm.serialNo}
+                    onChange={(event) =>
+                      setActivationForm((prev) => ({
+                        ...prev,
+                        serialNo: event.target.value,
+                      }))
+                    }
+                    disabled={activationSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                  {l("Custodian", "Zimmetli")}
+                  <div className="mt-1">
+                    <Combobox
+                      value={activationForm.custodianEmployeeId}
+                      options={custodianOptions}
+                      placeholder={l("Optional", "Opsiyonel")}
+                      noOptionsText={l("None", "Yok")}
+                      onChange={(value) =>
+                        setActivationForm((prev) => ({
+                          ...prev,
+                          custodianEmployeeId: value ? String(value) : "",
+                        }))
+                      }
+                      disabled={activationSaving}
+                    />
+                  </div>
+                </label>
+              </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  className="rounded-md border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                  className="cursor-pointer rounded-md border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={handleActivateAsset}
                   disabled={activationSaving}
                 >
@@ -772,7 +1810,7 @@ export default function FixedAssetDetailPage() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
                   onClick={() => {
                     setActivationOpen(false);
                     setActivationError("");
@@ -785,18 +1823,476 @@ export default function FixedAssetDetailPage() {
               </div>
             </div>
           ) : null}
-          {canOverrideAccounts ? (
-            <div className="mt-2 border-t border-slate-100 pt-2">
-              <span className="rounded-md bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 border border-violet-200">
-                {l("Override Account Mappings", "Hesap Eslemelerini Gecersiz Kil")}
-              </span>
+          {suspendOpen ? (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                {l("Suspend Asset", "Demirbasi Askiya Al")}
+              </p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                  {l("Effective Date", "Gecerlilik Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={suspendForm.effectiveDate}
+                    onChange={(event) =>
+                      setSuspendForm((prev) => ({
+                        ...prev,
+                        effectiveDate: event.target.value,
+                      }))
+                    }
+                    disabled={suspendSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                  {l("Note", "Not")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={suspendForm.note}
+                    onChange={(event) =>
+                      setSuspendForm((prev) => ({
+                        ...prev,
+                        note: event.target.value,
+                      }))
+                    }
+                    disabled={suspendSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handleSuspendAsset}
+                  disabled={suspendSaving}
+                >
+                  {suspendSaving ? l("Posting...", "Kaydediliyor...") : l("Confirm Suspend", "Askiya Almayi Onayla")}
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    setSuspendOpen(false);
+                    setSuspendForm(buildLifecycleNoteForm());
+                    resetActionFeedback();
+                  }}
+                  disabled={suspendSaving}
+                >
+                  {l("Cancel", "Iptal")}
+                </button>
+              </div>
             </div>
           ) : null}
-          {canDispose && isSaleEligibleStatus ? (
-            <div className="mt-4 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-cyan-900">
-                {t("fixedAssets.detail.preferredSaleFlowTitle")}
+          {reactivateOpen ? (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                {l("Reactivate Asset", "Demirbasi Yeniden Aktiflestir")}
               </p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                  {l("Effective Date", "Gecerlilik Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={reactivateForm.effectiveDate}
+                    onChange={(event) =>
+                      setReactivateForm((prev) => ({
+                        ...prev,
+                        effectiveDate: event.target.value,
+                      }))
+                    }
+                    disabled={reactivateSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                  {l("Note", "Not")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={reactivateForm.note}
+                    onChange={(event) =>
+                      setReactivateForm((prev) => ({
+                        ...prev,
+                        note: event.target.value,
+                      }))
+                    }
+                    disabled={reactivateSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handleReactivateAsset}
+                  disabled={reactivateSaving}
+                >
+                  {reactivateSaving
+                    ? l("Posting...", "Kaydediliyor...")
+                    : l("Confirm Reactivation", "Yeniden Aktiflestirmeyi Onayla")}
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    setReactivateOpen(false);
+                    setReactivateForm(buildLifecycleNoteForm());
+                    resetActionFeedback();
+                  }}
+                  disabled={reactivateSaving}
+                >
+                  {l("Cancel", "Iptal")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {physicalMoveOpen ? (
+            <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                {l("Physical Move", "Fiziksel Hareket")}
+              </p>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Effective Date", "Gecerlilik Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={physicalMoveForm.effectiveDate}
+                    onChange={(event) =>
+                      setPhysicalMoveForm((prev) => ({
+                        ...prev,
+                        effectiveDate: event.target.value,
+                      }))
+                    }
+                    disabled={physicalMoveSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Location Operating Unit", "Lokasyon Isletme Birimi")}
+                  <div className="mt-1">
+                    <Combobox
+                      value={physicalMoveForm.locationOperatingUnitId}
+                      options={operatingUnitOptions}
+                      placeholder={l("Select operating unit", "Isletme birimi secin")}
+                      noOptionsText={l("None", "Yok")}
+                      onChange={(value) =>
+                        setPhysicalMoveForm((prev) => ({
+                          ...prev,
+                          locationOperatingUnitId: value ? String(value) : "",
+                        }))
+                      }
+                      disabled={physicalMoveSaving}
+                    />
+                  </div>
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Custodian", "Zimmetli")}
+                  <div className="mt-1">
+                    <Combobox
+                      value={physicalMoveForm.custodianEmployeeId}
+                      options={custodianOptions}
+                      placeholder={l("Optional", "Opsiyonel")}
+                      noOptionsText={l("None", "Yok")}
+                      onChange={(value) =>
+                        setPhysicalMoveForm((prev) => ({
+                          ...prev,
+                          custodianEmployeeId: value ? String(value) : "",
+                        }))
+                      }
+                      disabled={physicalMoveSaving}
+                    />
+                  </div>
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Department Code", "Departman Kodu")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={physicalMoveForm.departmentCode}
+                    onChange={(event) =>
+                      setPhysicalMoveForm((prev) => ({
+                        ...prev,
+                        departmentCode: event.target.value,
+                      }))
+                    }
+                    disabled={physicalMoveSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Cost Center Code", "Masraf Merkezi Kodu")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={physicalMoveForm.costCenterCode}
+                    onChange={(event) =>
+                      setPhysicalMoveForm((prev) => ({
+                        ...prev,
+                        costCenterCode: event.target.value,
+                      }))
+                    }
+                    disabled={physicalMoveSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900 md:col-span-3">
+                  {l("Note", "Not")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={physicalMoveForm.note}
+                    onChange={(event) =>
+                      setPhysicalMoveForm((prev) => ({
+                        ...prev,
+                        note: event.target.value,
+                      }))
+                    }
+                    disabled={physicalMoveSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-900 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handlePhysicalMoveAsset}
+                  disabled={physicalMoveSaving}
+                >
+                  {physicalMoveSaving
+                    ? l("Posting...", "Kaydediliyor...")
+                    : l("Confirm Move", "Hareketi Onayla")}
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    setPhysicalMoveOpen(false);
+                    setPhysicalMoveForm(buildPhysicalMoveForm(asset));
+                    resetActionFeedback();
+                  }}
+                  disabled={physicalMoveSaving}
+                >
+                  {l("Cancel", "Iptal")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {ownershipTransferOpen ? (
+            <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                {l("Ownership Transfer", "Sahiplik Transferi")}
+              </p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Effective Date", "Gecerlilik Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={ownershipTransferForm.effectiveDate}
+                    onChange={(event) =>
+                      setOwnershipTransferForm((prev) => ({
+                        ...prev,
+                        effectiveDate: event.target.value,
+                      }))
+                    }
+                    disabled={ownershipTransferSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Posting Date", "Kayit Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={ownershipTransferForm.postingDate}
+                    onChange={(event) =>
+                      setOwnershipTransferForm((prev) => ({
+                        ...prev,
+                        postingDate: event.target.value,
+                      }))
+                    }
+                    disabled={ownershipTransferSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Target Owner Operating Unit", "Hedef Sahip Isletme Birimi")}
+                  <div className="mt-1">
+                    <Combobox
+                      value={ownershipTransferForm.targetOwnerOperatingUnitId}
+                      options={ownershipTargetOwnerOptions}
+                      placeholder={l("Select operating unit", "Isletme birimi secin")}
+                      noOptionsText={l("None", "Yok")}
+                      onChange={(value) =>
+                        setOwnershipTransferForm((prev) => ({
+                          ...prev,
+                          targetOwnerOperatingUnitId: value ? String(value) : "",
+                        }))
+                      }
+                      disabled={ownershipTransferSaving}
+                    />
+                  </div>
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                  {l("Target Location Operating Unit", "Hedef Lokasyon Isletme Birimi")}
+                  <div className="mt-1">
+                    <Combobox
+                      value={ownershipTransferForm.targetLocationOperatingUnitId}
+                      options={operatingUnitOptions}
+                      placeholder={l("Keep current location", "Mevcut lokasyonu koru")}
+                      noOptionsText={l("None", "Yok")}
+                      onChange={(value) =>
+                        setOwnershipTransferForm((prev) => ({
+                          ...prev,
+                          targetLocationOperatingUnitId: value ? String(value) : "",
+                        }))
+                      }
+                      disabled={ownershipTransferSaving}
+                    />
+                  </div>
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-blue-900 md:col-span-2">
+                  {l("Note", "Not")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={ownershipTransferForm.note}
+                    onChange={(event) =>
+                      setOwnershipTransferForm((prev) => ({
+                        ...prev,
+                        note: event.target.value,
+                      }))
+                    }
+                    disabled={ownershipTransferSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-900 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handleOwnershipTransferAsset}
+                  disabled={ownershipTransferSaving}
+                >
+                  {ownershipTransferSaving
+                    ? l("Posting...", "Kaydediliyor...")
+                    : l("Confirm Transfer", "Transferi Onayla")}
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    setOwnershipTransferOpen(false);
+                    setOwnershipTransferForm(buildOwnershipTransferForm(asset));
+                    resetActionFeedback();
+                  }}
+                  disabled={ownershipTransferSaving}
+                >
+                  {l("Cancel", "Iptal")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {writeoffOpen ? (
+            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-rose-900">
+                {l("Write Off Asset", "Demirbasi Hurda Yap")}
+              </p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-rose-900">
+                  {l("Effective Date", "Gecerlilik Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={writeoffForm.effectiveDate}
+                    onChange={(event) =>
+                      setWriteoffForm((prev) => ({
+                        ...prev,
+                        effectiveDate: event.target.value,
+                      }))
+                    }
+                    disabled={writeoffSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-rose-900">
+                  {l("Posting Date", "Kayit Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={writeoffForm.postingDate}
+                    onChange={(event) =>
+                      setWriteoffForm((prev) => ({
+                        ...prev,
+                        postingDate: event.target.value,
+                      }))
+                    }
+                    disabled={writeoffSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-rose-900 md:col-span-2">
+                  {l("Note", "Not")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={writeoffForm.note}
+                    onChange={(event) =>
+                      setWriteoffForm((prev) => ({
+                        ...prev,
+                        note: event.target.value,
+                      }))
+                    }
+                    disabled={writeoffSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-rose-300 bg-white px-3 py-2 text-sm font-semibold text-rose-900 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handleWriteoffAsset}
+                  disabled={writeoffSaving}
+                >
+                  {writeoffSaving
+                    ? l("Posting...", "Kaydediliyor...")
+                    : l("Confirm Write Off", "Hurda Islemini Onayla")}
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    setWriteoffOpen(false);
+                    setWriteoffForm(buildWriteoffForm());
+                    resetActionFeedback();
+                  }}
+                  disabled={writeoffSaving}
+                >
+                  {l("Cancel", "Iptal")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {canDispose && isSaleEligibleStatus && saleFlowOpen ? (
+            <div ref={saleFlowSectionRef} className="mt-4 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-900">
+                  {t("fixedAssets.detail.preferredSaleFlowTitle")}
+                </p>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                  onClick={() => {
+                    setSaleFlowOpen(false);
+                    setLegacySaleFallbackOpen(false);
+                    setLegacySaleFallbackError("");
+                  }}
+                >
+                  {l("Close", "Kapat")}
+                </button>
+              </div>
               <p className="mt-2 text-sm text-cyan-950">
                 {t("fixedAssets.detail.preferredSaleFlowDescription")}
               </p>
@@ -917,7 +2413,7 @@ export default function FixedAssetDetailPage() {
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
                         type="button"
-                        className="rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900"
+                        className="cursor-pointer rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900 disabled:cursor-not-allowed"
                         onClick={handleCreateLegacySaleFallbackDraft}
                         disabled={legacySaleFallbackSaving}
                       >
@@ -927,7 +2423,7 @@ export default function FixedAssetDetailPage() {
                       </button>
                       <button
                         type="button"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+                        className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
                         onClick={() => {
                           setLegacySaleFallbackOpen(false);
                           setLegacySaleFallbackError("");
@@ -943,8 +2439,9 @@ export default function FixedAssetDetailPage() {
                     {canUseLegacySaleFallback ? (
                       <button
                         type="button"
-                        className="inline-flex rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+                        className="inline-flex cursor-pointer rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
                         onClick={() => {
+                          setSaleFlowOpen(true);
                           setLegacySaleFallbackOpen(true);
                           setLegacySaleFallbackError("");
                         }}
@@ -958,6 +2455,19 @@ export default function FixedAssetDetailPage() {
                     )}
                   </div>
                 )}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                  onClick={() => {
+                    setSaleFlowOpen(false);
+                    setLegacySaleFallbackOpen(false);
+                    setLegacySaleFallbackError("");
+                  }}
+                >
+                  {l("Close", "Kapat")}
+                </button>
               </div>
             </div>
           ) : null}
@@ -975,7 +2485,7 @@ export default function FixedAssetDetailPage() {
       <div className="flex gap-1 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-1">
         {tabs.map((tab) => (
           <button key={tab.key} type="button"
-            className={`rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap ${
+            className={`cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap ${
               activeTab === tab.key
                 ? "bg-white text-slate-900 shadow-sm"
                 : "text-slate-600 hover:text-slate-900"
@@ -1122,15 +2632,34 @@ export default function FixedAssetDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {schedule.map((line, idx) => (
-                      <tr key={line.id || idx} className="border-b border-slate-100 hover:bg-slate-50">
-                        <td className="px-2 py-1.5">{line.periodKey || line.period_key || "-"}</td>
-                        <td className="px-2 py-1.5">{line.status || "-"}</td>
-                        <td className="px-2 py-1.5 text-right font-mono">{formatNumber(line.depreciationAmountBase || line.depreciation_amount_base)}</td>
-                        <td className="px-2 py-1.5 text-right font-mono">{formatNumber(line.accumDepreciationBase || line.accum_depreciation_base)}</td>
-                        <td className="px-2 py-1.5 text-right font-mono">{formatNumber(line.nbvBase || line.nbv_base)}</td>
-                      </tr>
-                    ))}
+                    {schedule.map((line, idx) => {
+                      const depreciationAmountBase = (
+                        line.depreciationAmountBase
+                        ?? line.depreciation_amount_base
+                        ?? line.plannedAmountBase
+                        ?? line.planned_amount_base
+                      );
+                      const accumDepreciationBase = (
+                        line.accumDepreciationBase
+                        ?? line.accum_depreciation_base
+                        ?? line.accumulatedDepreciationBase
+                      );
+                      const nbvBase = (
+                        line.nbvBase
+                        ?? line.nbv_base
+                        ?? line.closingNbvBase
+                        ?? line.closing_nbv_base
+                      );
+                      return (
+                        <tr key={line.id || idx} className="border-b border-slate-100 hover:bg-slate-50">
+                          <td className="px-2 py-1.5">{line.periodKey || line.period_key || "-"}</td>
+                          <td className="px-2 py-1.5">{line.status || "-"}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{formatNumber(depreciationAmountBase)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{formatNumber(accumDepreciationBase)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{formatNumber(nbvBase)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1204,18 +2733,302 @@ export default function FixedAssetDetailPage() {
       {/* ── Evidence Tab ─────────────────────────────────────────── */}
       {activeTab === "evidence" ? (
         <div className="space-y-4">
-          <SectionCard title={l("Evidence Summary", "Kanit Ozeti")} cols={2}>
-            <DetailField label={l("Total Attachments", "Toplam Ek")} value={asset.evidenceSummary?.totalCount} />
+          <SectionCard title={l("Evidence Summary", "Kanit Ozeti")} cols={3}>
+            <DetailField
+              label={l("Asset Attachments", "Demirbas Ekleri")}
+              value={assetEvidenceCount}
+            />
+            <DetailField
+              label={l("Source Document Attachments", "Kaynak Belge Ekleri")}
+              value={
+                !normalizedSourceCariDocumentId
+                  ? l("Not linked", "Bagli degil")
+                  : canReadCariDocuments
+                    ? sourceDocumentEvidenceCount
+                    : l("Hidden by permission", "Yetki nedeniyle gizli")
+              }
+            />
+            <DetailField
+              label={l("Source Document", "Kaynak Belge")}
+              value={
+                normalizedSourceCariDocumentId
+                  ? canReadCariDocuments && sourceCariDocumentPath
+                    ? (
+                        <Link
+                          to={sourceCariDocumentPath}
+                          className="text-cyan-700 hover:underline"
+                        >
+                          {sourceCariDocumentLabel}
+                        </Link>
+                      )
+                    : sourceCariDocumentLabel
+                  : l("Not linked", "Bagli degil")
+              }
+            />
           </SectionCard>
 
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">{l("Evidence", "Kanit")}</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              {l(
-                "Evidence endpoints are available. Full evidence management UI will be delivered with the frontend completion pass.",
-                "Kanit endpointleri kullanilabilir. Tam kanit yonetimi arayuzu frontend tamamlama adiminda sunulacaktir."
-              )}
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {l("Asset Evidence", "Demirbas Kanitlari")}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {l(
+                    "Attach files directly to this asset when the evidence belongs to the asset itself, not only to the source bill or invoice.",
+                    "Kanit sadece kaynak fatura/belgeye degil dogrudan bu demirbasa aitse dosyalari burada ekleyin."
+                  )}
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                {l("Count", "Adet")}: {assetEvidenceCount}
+              </span>
+            </div>
+
+            {assetEvidenceError ? (
+              <p className="mt-3 text-sm text-rose-600">{assetEvidenceError}</p>
+            ) : null}
+            {assetEvidenceMessage ? (
+              <p className="mt-3 text-sm text-emerald-700">{assetEvidenceMessage}</p>
+            ) : null}
+            {assetEvidenceLoading ? (
+              <p className="mt-3 text-sm text-slate-500">{l("Loading...", "Yukleniyor...")}</p>
+            ) : null}
+
+            {canManageAssetEvidence ? (
+              <form
+                onSubmit={handleAttachAssetEvidence}
+                className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4"
+              >
+                <input
+                  key={assetEvidenceUploadInputKey}
+                  type="file"
+                  className="block w-full cursor-pointer text-sm text-slate-700 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-700"
+                  onChange={(event) => {
+                    setAssetEvidenceError("");
+                    setAssetEvidenceMessage("");
+                    setAssetEvidenceUploadFile(event.target.files?.[0] || null);
+                  }}
+                  disabled={assetEvidenceUploading}
+                />
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                  placeholder={l("Optional note", "Opsiyonel not")}
+                  value={assetEvidenceNote}
+                  onChange={(event) => setAssetEvidenceNote(event.target.value)}
+                  disabled={assetEvidenceUploading}
+                />
+                <button
+                  type="submit"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!assetEvidenceUploadFile || assetEvidenceUploading}
+                >
+                  {assetEvidenceUploading
+                    ? l("Uploading...", "Yukleniyor...")
+                    : l("Attach Evidence", "Kanit Ekle")}
+                </button>
+              </form>
+            ) : (
+              <p className="mt-3 text-sm text-slate-500">
+                {l("Missing permission: fixed_assets.upsert", "Eksik yetki: fixed_assets.upsert")}
+              </p>
+            )}
+
+            {!assetEvidenceLoading && assetEvidenceRows.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-500">
+                {l(
+                  "No evidence is attached directly to this asset yet.",
+                  "Bu demirbasa dogrudan eklenmis kanit henuz yok."
+                )}
+              </p>
+            ) : null}
+
+            {!assetEvidenceLoading && assetEvidenceRows.length > 0 ? (
+              <ul className="mt-4 space-y-3">
+                {assetEvidenceRows.map((row) => {
+                  const rowId = parsePositiveInt(row?.id);
+                  const isDownloading = rowId && Number(assetEvidenceDownloadingId) === Number(rowId);
+                  const isDeleting = rowId && Number(assetEvidenceDeletingId) === Number(rowId);
+                  const isDownloadable = normalizeUpperText(row?.status) === "ACTIVE";
+                  return (
+                    <li
+                      key={`asset-evidence-${row.id}`}
+                      className="rounded-xl border border-slate-200 bg-white p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-slate-900">
+                            {buildEvidenceDisplayName(row)}
+                          </p>
+                          <p className="mt-1 text-sm text-slate-600">
+                            {row.fileName || "-"} | {formatFileSize(row.fileSizeBytes)} |{" "}
+                            {row.contentType || "-"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            status={row.status || "-"} | uploaded={formatDateTime(row.uploadedAt)} |
+                            created={formatDateTime(row.createdAt)}
+                          </p>
+                          {row.note ? (
+                            <p className="mt-2 text-sm text-slate-600">note={row.note}</p>
+                          ) : null}
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            normalizeUpperText(row?.status) === "ACTIVE"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {row.status || "-"}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => handleDownloadAssetEvidence(row)}
+                          disabled={!rowId || !isDownloadable || Boolean(isDownloading)}
+                        >
+                          {isDownloading
+                            ? l("Downloading...", "Indiriliyor...")
+                            : l("Download", "Indir")}
+                        </button>
+                        {canManageAssetEvidence ? (
+                          <button
+                            type="button"
+                            className="cursor-pointer rounded-md border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => handleDeleteAssetEvidence(row.id)}
+                            disabled={!rowId || Boolean(isDeleting)}
+                          >
+                            {isDeleting ? l("Deleting...", "Siliniyor...") : l("Delete", "Sil")}
+                          </button>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {l("Source Document Evidence", "Kaynak Belge Kanitlari")}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {l(
+                    "Files attached on the source bill or invoice remain on the source CARI document. They are shown here for visibility.",
+                    "Kaynak alis/satis belgesine eklenen dosyalar CARI belge uzerinde kalir. Burada gorunurluk icin listelenir."
+                  )}
+                </p>
+              </div>
+              {normalizedSourceCariDocumentId && canReadCariDocuments && sourceCariDocumentPath ? (
+                <Link
+                  to={sourceCariDocumentPath}
+                  className="text-sm font-medium text-cyan-700 hover:underline"
+                >
+                  {l("Open Source Document", "Kaynak Belgeyi Ac")}
+                </Link>
+              ) : null}
+            </div>
+
+            {!normalizedSourceCariDocumentId ? (
+              <p className="mt-4 text-sm text-slate-500">
+                {l(
+                  "This asset is not linked to a source CARI document.",
+                  "Bu demirbas bir kaynak CARI belgeye bagli degil."
+                )}
+              </p>
+            ) : !canReadCariDocuments ? (
+              <p className="mt-4 text-sm text-slate-500">
+                {l("Missing permission: cari.doc.read", "Eksik yetki: cari.doc.read")}
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-800">
+                    {sourceCariDocumentLabel}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {l("Linked line", "Bagli satir")}: {sourceCariLineLabel}
+                  </p>
+                </div>
+
+                {sourceDocumentEvidenceError ? (
+                  <p className="mt-3 text-sm text-rose-600">{sourceDocumentEvidenceError}</p>
+                ) : null}
+                {sourceDocumentEvidenceLoading ? (
+                  <p className="mt-3 text-sm text-slate-500">{l("Loading...", "Yukleniyor...")}</p>
+                ) : null}
+                {!sourceDocumentEvidenceLoading && sourceDocumentEvidenceRows.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-500">
+                    {l(
+                      "No evidence is attached to the source CARI document.",
+                      "Kaynak CARI belgeye eklenmis kanit yok."
+                    )}
+                  </p>
+                ) : null}
+                {!sourceDocumentEvidenceLoading && sourceDocumentEvidenceRows.length > 0 ? (
+                  <ul className="mt-4 space-y-3">
+                    {sourceDocumentEvidenceRows.map((row) => {
+                      const rowId = parsePositiveInt(row?.id);
+                      const isDownloading =
+                        rowId && Number(sourceDocumentEvidenceDownloadingId) === Number(rowId);
+                      const isDownloadable = normalizeUpperText(row?.status) === "ACTIVE";
+                      return (
+                        <li
+                          key={`source-document-evidence-${row.id}`}
+                          className="rounded-xl border border-slate-200 bg-white p-4"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="font-semibold text-slate-900">
+                                {buildEvidenceDisplayName(row)}
+                              </p>
+                              <p className="mt-1 text-sm text-slate-600">
+                                {row.fileName || "-"} | {formatFileSize(row.fileSizeBytes)} |{" "}
+                                {row.contentType || "-"}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                status={row.status || "-"} | uploaded={formatDateTime(row.uploadedAt)} |
+                                created={formatDateTime(row.createdAt)}
+                              </p>
+                              {row.note ? (
+                                <p className="mt-2 text-sm text-slate-600">note={row.note}</p>
+                              ) : null}
+                            </div>
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                normalizeUpperText(row?.status) === "ACTIVE"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-amber-100 text-amber-800"
+                              }`}
+                            >
+                              {row.status || "-"}
+                            </span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={() => handleDownloadSourceDocumentEvidence(row)}
+                              disabled={!rowId || !isDownloadable || Boolean(isDownloading)}
+                            >
+                              {isDownloading
+                                ? l("Downloading...", "Indiriliyor...")
+                                : l("Download", "Indir")}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+              </>
+            )}
           </section>
         </div>
       ) : null}
