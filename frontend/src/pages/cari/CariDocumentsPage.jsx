@@ -131,6 +131,7 @@ const INVENTORY_MOVEMENTS_ROUTE = "/app/stok-yansitma-islemleri";
 const FIXED_ASSET_SETTINGS_PATH = "/app/ayarlar/demirbas-ayarlari";
 const INVENTORY_TRANSFERS_ROUTE = "/app/stok-transferleri";
 const DOCUMENT_LINE_EXPANSION_LIMIT = 500;
+const LINE_TEXT_INPUT_COMMIT_DELAY_MS = 180;
 const FIXED_ASSET_AR_ELIGIBLE_STATUSES = [
   "ACTIVE",
   "SUSPENDED",
@@ -1312,6 +1313,21 @@ function createInitialDraftForm() {
   };
 }
 
+function buildDirectionScopedDraftForm(previousForm, nextDirection) {
+  const baseline = createInitialDraftForm();
+  const normalizedDirection = normalizeText(nextDirection).toUpperCase();
+  return {
+    ...baseline,
+    legalEntityId: normalizeText(previousForm?.legalEntityId) || baseline.legalEntityId,
+    direction: DOCUMENT_DIRECTIONS.includes(normalizedDirection)
+      ? normalizedDirection
+      : baseline.direction,
+    documentType: normalizeText(previousForm?.documentType) || baseline.documentType,
+    documentDate: normalizeText(previousForm?.documentDate) || baseline.documentDate,
+    currencyCode: normalizeCurrencyCode(previousForm?.currencyCode) || baseline.currencyCode,
+  };
+}
+
 function createInitialQuickCreateFixedAssetForm() {
   return {
     scope: "",
@@ -2201,12 +2217,11 @@ function DocumentLineWorkbench({
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
                   {l("Description", "Aciklama")}
-                  <input
-                    type="text"
+                  <BufferedDraftLineTextInput
                     className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
                     value={line.description}
-                    onChange={(event) =>
-                      onPatchLine(line.rowId, { description: event.target.value })
+                    onCommit={(nextValue) =>
+                      onPatchLine(line.rowId, { description: nextValue })
                     }
                     disabled={saving}
                   />
@@ -3143,6 +3158,70 @@ function DocumentLineWorkbench({
   );
 }
 
+function BufferedDraftLineTextInput({
+  value,
+  onCommit,
+  disabled = false,
+  className = "",
+  maxLength,
+}) {
+  const normalizedValue = String(value ?? "");
+  const [draftValue, setDraftValue] = useState(normalizedValue);
+  const commitTimeoutRef = useRef(null);
+  const latestCommitRef = useRef(onCommit);
+
+  useEffect(() => {
+    latestCommitRef.current = onCommit;
+  }, [onCommit]);
+
+  useEffect(() => {
+    setDraftValue(normalizedValue);
+  }, [normalizedValue]);
+
+  useEffect(
+    () => () => {
+      if (commitTimeoutRef.current) {
+        clearTimeout(commitTimeoutRef.current);
+      }
+    },
+    []
+  );
+
+  const flushDraftValue = useCallback((nextValue) => {
+    if (commitTimeoutRef.current) {
+      clearTimeout(commitTimeoutRef.current);
+      commitTimeoutRef.current = null;
+    }
+    latestCommitRef.current?.(nextValue);
+  }, []);
+
+  const scheduleCommit = useCallback((nextValue) => {
+    if (commitTimeoutRef.current) {
+      clearTimeout(commitTimeoutRef.current);
+    }
+    commitTimeoutRef.current = setTimeout(() => {
+      commitTimeoutRef.current = null;
+      latestCommitRef.current?.(nextValue);
+    }, LINE_TEXT_INPUT_COMMIT_DELAY_MS);
+  }, []);
+
+  return (
+    <input
+      type="text"
+      className={className}
+      value={draftValue}
+      maxLength={maxLength}
+      onChange={(event) => {
+        const nextValue = event.target.value;
+        setDraftValue(nextValue);
+        scheduleCommit(nextValue);
+      }}
+      onBlur={() => flushDraftValue(draftValue)}
+      disabled={disabled}
+    />
+  );
+}
+
 function normalizeDirection(value) {
   const normalized = String(value || "").trim().toUpperCase();
   if (normalized === "AR" || normalized === "AP") {
@@ -3822,6 +3901,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   const lastObservedUrlDocumentIdRef = useRef(null);
   const pendingUrlSelectionDocumentIdRef = useRef(null);
   const appliedCreatePrefillSignatureRef = useRef("");
+  const lastAppliedFixedRouteDirectionRef = useRef(null);
   const internalCommentTextareaRef = useRef(null);
   const internalCommentMentionRequestRef = useRef(0);
 
@@ -6397,15 +6477,26 @@ export default function CariDocumentsPage({ direction = "" }) {
   }, [fixedRouteDirection, hasFixedRouteDirection, setFilters]);
 
   useEffect(() => {
-    if (
-      !hasFixedRouteDirection ||
-      normalizeDirection(createForm.direction) === fixedRouteDirection
-    ) {
+    if (!hasFixedRouteDirection) {
+      lastAppliedFixedRouteDirectionRef.current = null;
       return;
     }
-    handleCreateDirectionChange(fixedRouteDirection);
+    if (lastAppliedFixedRouteDirectionRef.current === fixedRouteDirection) {
+      return;
+    }
+    lastAppliedFixedRouteDirectionRef.current = fixedRouteDirection;
+    setCreateForm((previousForm) =>
+      buildDirectionScopedDraftForm(previousForm, fixedRouteDirection)
+    );
+    setCreateOperatingUnitOverrideOpen(false);
+    setCreatePaymentTermTouched(false);
+    setCreateDueDateTouched(false);
+    setCreateCounterpartyLookupQuery("");
+    setCreateInlineCounterpartyError("");
+    setCreateInlineCounterpartyMessage("");
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
   }, [
-    createForm.direction,
     fixedRouteDirection,
     hasFixedRouteDirection,
   ]);

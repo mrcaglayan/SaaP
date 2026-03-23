@@ -181,7 +181,7 @@ export function createDocumentLineDraft(seed = {}) {
       DOCUMENT_LINE_KINDS,
       "STANDARD"
     ),
-    description: String(seed?.description || "").trim(),
+    description: String(seed?.description ?? ""),
     itemCardId: String(seed?.itemCardId ?? seed?.item_card_id ?? "").trim(),
     quantity: String(amounts.quantity ?? 1),
     unitPriceTxn:
@@ -468,7 +468,7 @@ export function buildDocumentMutationPayload(form, options = {}) {
         return {
           lineNo: index + 1,
           lineKind: normalizedLine.lineKind,
-          description: normalizedLine.description || undefined,
+          description: String(normalizedLine.description || "").trim() || undefined,
           subledgerType: normalizedLine.subledgerType || undefined,
           fixedAssetMode:
             isApFixedAssetLine && normalizedLine.fixedAssetMode

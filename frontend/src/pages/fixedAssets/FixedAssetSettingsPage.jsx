@@ -11,6 +11,7 @@ import {
   createFixedAssetDepreciationProfile,
   updateFixedAssetDepreciationProfile,
 } from "../../api/fixedAssets.js";
+import { listAccounts } from "../../api/glAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 
 const STATUS_VALUES = ["ACTIVE", "INACTIVE"];
@@ -48,6 +49,59 @@ function mapLegalEntityOption(row) {
   };
 }
 
+function mapDepreciationProfileOption(row) {
+  const value = String(toPositiveInt(row?.id) || "").trim();
+  if (!value) return null;
+  const code = normalizeText(row?.code);
+  const name = normalizeText(row?.name);
+  return {
+    value,
+    label: code && name ? `${code} - ${name}` : code || name || `#${value}`,
+    description: [normalizeText(row?.method), normalizeText(row?.status)]
+      .filter(Boolean)
+      .join(" | "),
+  };
+}
+
+function mapAccountRows(response) {
+  if (!Array.isArray(response?.rows)) {
+    return [];
+  }
+  return response.rows.map((row) => ({
+    id: Number(row?.id || 0),
+    code: String(row?.code || ""),
+    name: String(row?.name || ""),
+    accountType: String(row?.account_type || row?.accountType || "").toUpperCase(),
+    allowPosting: Boolean(row?.allow_posting ?? row?.allowPosting),
+    isActive: Boolean(row?.is_active ?? row?.isActive),
+  }));
+}
+
+function mapAccountOption(row) {
+  const value = String(toPositiveInt(row?.id) || "").trim();
+  if (!value) return null;
+  const code = normalizeText(row?.code);
+  const name = normalizeText(row?.name);
+  const descriptionParts = [normalizeText(row?.accountType)];
+  if (row?.isActive === false) {
+    descriptionParts.push("INACTIVE");
+  }
+  return {
+    value,
+    label: code && name ? `${code} - ${name}` : code || name || `#${value}`,
+    description: descriptionParts.filter(Boolean).join(" | "),
+  };
+}
+
+function filterAccountRowsByType(rows, expectedType) {
+  const normalizedType = normalizeText(expectedType).toUpperCase();
+  return (Array.isArray(rows) ? rows : []).filter(
+    (row) =>
+      row?.allowPosting &&
+      normalizeText(row?.accountType).toUpperCase() === normalizedType
+  );
+}
+
 // ── Category form helpers ───────────────────────────────────────
 
 function createCategoryForm() {
@@ -59,6 +113,12 @@ function createCategoryForm() {
     description: "",
     capitalizationThresholdBase: "",
     defaultUsefulLifeMonths: "",
+    defaultDepreciationProfileId: "",
+    defaultAssetAccountId: "",
+    defaultAccumDeprAccountId: "",
+    defaultDeprExpenseAccountId: "",
+    defaultDisposalGainAccountId: "",
+    defaultDisposalLossAccountId: "",
     defaultSalvageRuleType: "NONE",
     defaultSalvagePercent: "",
     defaultSalvageAmountBase: "",
@@ -79,6 +139,30 @@ function mapCategoryToForm(row) {
     defaultUsefulLifeMonths:
       row?.defaultUsefulLifeMonths != null
         ? String(row.defaultUsefulLifeMonths)
+        : "",
+    defaultDepreciationProfileId:
+      row?.defaultDepreciationProfileId != null
+        ? String(row.defaultDepreciationProfileId)
+        : "",
+    defaultAssetAccountId:
+      row?.defaultAssetAccountId != null
+        ? String(row.defaultAssetAccountId)
+        : "",
+    defaultAccumDeprAccountId:
+      row?.defaultAccumDeprAccountId != null
+        ? String(row.defaultAccumDeprAccountId)
+        : "",
+    defaultDeprExpenseAccountId:
+      row?.defaultDeprExpenseAccountId != null
+        ? String(row.defaultDeprExpenseAccountId)
+        : "",
+    defaultDisposalGainAccountId:
+      row?.defaultDisposalGainAccountId != null
+        ? String(row.defaultDisposalGainAccountId)
+        : "",
+    defaultDisposalLossAccountId:
+      row?.defaultDisposalLossAccountId != null
+        ? String(row.defaultDisposalLossAccountId)
         : "",
     defaultSalvageRuleType: String(row?.defaultSalvageRuleType || "NONE"),
     defaultSalvagePercent:
@@ -105,6 +189,12 @@ function buildCategoryPayload(form) {
         ? Number(form.capitalizationThresholdBase)
         : undefined,
     defaultUsefulLifeMonths: toPositiveInt(form.defaultUsefulLifeMonths) || undefined,
+    defaultDepreciationProfileId: toPositiveInt(form.defaultDepreciationProfileId),
+    defaultAssetAccountId: toPositiveInt(form.defaultAssetAccountId),
+    defaultAccumDeprAccountId: toPositiveInt(form.defaultAccumDeprAccountId),
+    defaultDeprExpenseAccountId: toPositiveInt(form.defaultDeprExpenseAccountId),
+    defaultDisposalGainAccountId: toPositiveInt(form.defaultDisposalGainAccountId),
+    defaultDisposalLossAccountId: toPositiveInt(form.defaultDisposalLossAccountId),
     defaultSalvageRuleType: salvageType,
     defaultSalvagePercent:
       salvageType === "PERCENT_OF_COST" && normalizeText(form.defaultSalvagePercent)
@@ -163,6 +253,263 @@ function buildProfilePayload(form) {
     switchToStraightLine: form.switchToStraightLine === true,
     description: normalizeText(form.description) || undefined,
   };
+}
+
+function buildDisplayLabel(code, name, fallbackId) {
+  const normalizedCode = normalizeText(code);
+  const normalizedName = normalizeText(name);
+  if (normalizedCode && normalizedName) {
+    return `${normalizedCode} - ${normalizedName}`;
+  }
+  return normalizedCode || normalizedName || (fallbackId ? `#${fallbackId}` : "-");
+}
+
+function formatSalvageRuleSummary(row) {
+  const ruleType = normalizeText(row?.defaultSalvageRuleType).toUpperCase() || "NONE";
+  if (ruleType === "PERCENT_OF_COST") {
+    return row?.defaultSalvagePercent != null
+      ? `${ruleType} (${row.defaultSalvagePercent}%)`
+      : ruleType;
+  }
+  if (ruleType === "FIXED_BASE_AMOUNT") {
+    return row?.defaultSalvageAmountBase != null
+      ? `${ruleType} (${row.defaultSalvageAmountBase})`
+      : ruleType;
+  }
+  return ruleType;
+}
+
+function summarizeCategoryAccountingSetup(row) {
+  const fieldIds = [
+    toPositiveInt(row?.defaultDepreciationProfileId),
+    toPositiveInt(row?.defaultAssetAccountId),
+    toPositiveInt(row?.defaultAccumDeprAccountId),
+    toPositiveInt(row?.defaultDeprExpenseAccountId),
+    toPositiveInt(row?.defaultDisposalGainAccountId),
+    toPositiveInt(row?.defaultDisposalLossAccountId),
+  ];
+  const configuredCount = fieldIds.filter(Boolean).length;
+  const totalCount = fieldIds.length;
+  if (!toPositiveInt(row?.defaultAssetAccountId)) {
+    return {
+      tone: "rose",
+      label: "Missing default asset account",
+      description: "Default Asset Account is required before CARI Auto-Create can use this category.",
+      configuredCount,
+      totalCount,
+    };
+  }
+  if (configuredCount < totalCount) {
+    return {
+      tone: "amber",
+      label: "Partial accounting setup",
+      description: "Some default accounting fields are still not configured.",
+      configuredCount,
+      totalCount,
+    };
+  }
+  return {
+    tone: "emerald",
+    label: "Ready",
+    description: "All tracked default accounting fields are configured.",
+    configuredCount,
+    totalCount,
+  };
+}
+
+function resolveReferenceDisplay(id, rowsById) {
+  const normalizedId = toPositiveInt(id);
+  if (!normalizedId) {
+    return null;
+  }
+  const row = rowsById instanceof Map ? rowsById.get(normalizedId) : null;
+  if (!row) {
+    return `#${normalizedId}`;
+  }
+  return buildDisplayLabel(row.code, row.name, normalizedId);
+}
+
+function CategoryDetailsModal({
+  l,
+  row,
+  accountRowsById,
+  profileRowsById,
+  loading,
+  error,
+  canUpsertSettings,
+  onClose,
+  onEdit,
+}) {
+  if (!row) {
+    return null;
+  }
+
+  const readiness = summarizeCategoryAccountingSetup(row);
+  const readinessLabel =
+    readiness.tone === "emerald"
+      ? l("Ready", "Hazir")
+      : readiness.tone === "amber"
+        ? l("Partial accounting setup", "Kismi muhasebe kurulumu")
+        : l("Missing default asset account", "Varsayilan varlik hesabi eksik");
+  const readinessDescription =
+    readiness.tone === "emerald"
+      ? l(
+          "All tracked default accounting fields are configured.",
+          "Takip edilen varsayilan muhasebe alanlarinin tamami tanimlanmis."
+        )
+      : readiness.tone === "amber"
+        ? l(
+            "Some default accounting fields are still not configured.",
+            "Bazi varsayilan muhasebe alanlari halen tanimlanmamis."
+          )
+        : l(
+            "Default Asset Account is required before CARI Auto-Create can use this category.",
+            "CARI Otomatik Olustur bu kategoriyi kullanmadan once Varsayilan Varlik Hesabi tanimlanmalidir."
+          );
+  const toneClasses =
+    readiness.tone === "emerald"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : readiness.tone === "amber"
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-rose-200 bg-rose-50 text-rose-700";
+
+  const detailRows = [
+    {
+      label: l("Code", "Kod"),
+      value: row.code || "-",
+    },
+    {
+      label: l("Name", "Ad"),
+      value: row.name || "-",
+    },
+    {
+      label: l("Status", "Durum"),
+      value: row.status || "-",
+    },
+    {
+      label: l("Capitalization Threshold", "Aktiflestirme Esigi"),
+      value:
+        row.capitalizationThresholdBase != null
+          ? String(row.capitalizationThresholdBase)
+          : "-",
+    },
+    {
+      label: l("Default Useful Life (months)", "Varsayilan Faydali Omur (ay)"),
+      value:
+        row.defaultUsefulLifeMonths != null
+          ? String(row.defaultUsefulLifeMonths)
+          : "-",
+    },
+    {
+      label: l("Salvage Rule", "Hurda Kural"),
+      value: formatSalvageRuleSummary(row),
+    },
+    {
+      label: l("Default Depreciation Profile", "Varsayilan Amortisman Profili"),
+      value:
+        resolveReferenceDisplay(row.defaultDepreciationProfileId, profileRowsById) || "-",
+    },
+    {
+      label: l("Default Asset Account", "Varsayilan Varlik Hesabi"),
+      value:
+        resolveReferenceDisplay(row.defaultAssetAccountId, accountRowsById)
+        || l("Missing", "Eksik"),
+    },
+    {
+      label: l(
+        "Default Accumulated Depreciation Account",
+        "Varsayilan Birikmis Amortisman Hesabi"
+      ),
+      value:
+        resolveReferenceDisplay(row.defaultAccumDeprAccountId, accountRowsById) || "-",
+    },
+    {
+      label: l(
+        "Default Depreciation Expense Account",
+        "Varsayilan Amortisman Gider Hesabi"
+      ),
+      value:
+        resolveReferenceDisplay(row.defaultDeprExpenseAccountId, accountRowsById) || "-",
+    },
+    {
+      label: l("Default Disposal Gain Account", "Varsayilan Elden Cikarma Kar Hesabi"),
+      value:
+        resolveReferenceDisplay(row.defaultDisposalGainAccountId, accountRowsById) || "-",
+    },
+    {
+      label: l("Default Disposal Loss Account", "Varsayilan Elden Cikarma Zarar Hesabi"),
+      value:
+        resolveReferenceDisplay(row.defaultDisposalLossAccountId, accountRowsById) || "-",
+    },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+      <div className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">
+              {l("Category Details", "Kategori Detaylari")}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {buildDisplayLabel(row.code, row.name, row.id)}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700"
+            onClick={onClose}
+          >
+            {l("Close", "Kapat")}
+          </button>
+        </div>
+
+        <div className={`mt-4 rounded-lg border px-4 py-3 ${toneClasses}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold">{readinessLabel}</p>
+            <span className="text-xs font-semibold">
+              {readiness.configuredCount}/{readiness.totalCount}
+            </span>
+          </div>
+          <p className="mt-1 text-sm">{readinessDescription}</p>
+        </div>
+
+        {error ? (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            {error}
+          </div>
+        ) : null}
+        {loading ? (
+          <p className="mt-4 text-sm text-slate-600">
+            {l("Loading related profile/account labels...", "Ilgili profil/hesap etiketleri yukleniyor...")}
+          </p>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {detailRows.map((item) => (
+            <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {item.label}
+              </p>
+              <p className="mt-1 text-sm text-slate-900">{item.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          {canUpsertSettings ? (
+            <button
+              type="button"
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+              onClick={onEdit}
+            >
+              {l("Edit Category", "Kategoriyi Duzenle")}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -232,6 +579,17 @@ export default function FixedAssetSettingsPage() {
   const [catSaving, setCatSaving] = useState(false);
   const [catFormError, setCatFormError] = useState("");
   const [catFormMsg, setCatFormMsg] = useState("");
+  const [catDetailRow, setCatDetailRow] = useState(null);
+  const [catDetailAccounts, setCatDetailAccounts] = useState([]);
+  const [catDetailProfiles, setCatDetailProfiles] = useState([]);
+  const [catDetailLoading, setCatDetailLoading] = useState(false);
+  const [catDetailError, setCatDetailError] = useState("");
+  const [catProfileOptions, setCatProfileOptions] = useState([]);
+  const [catProfileLoading, setCatProfileLoading] = useState(false);
+  const [catProfileError, setCatProfileError] = useState("");
+  const [catAccountRows, setCatAccountRows] = useState([]);
+  const [catAccountLoading, setCatAccountLoading] = useState(false);
+  const [catAccountError, setCatAccountError] = useState("");
 
   // ── Profile state ───────────────────────────────────────────────
   const [profRows, setProfRows] = useState([]);
@@ -298,6 +656,171 @@ export default function FixedAssetSettingsPage() {
     })();
     return () => { active = false; };
   }, [canReadSettings, filterLeId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(catForm.legalEntityId);
+    if (!canReadSettings || !legalEntityId) {
+      setCatProfileOptions([]);
+      setCatProfileError("");
+      setCatProfileLoading(false);
+      return;
+    }
+    let active = true;
+    (async () => {
+      setCatProfileLoading(true);
+      setCatProfileError("");
+      try {
+        const response = await listFixedAssetDepreciationProfiles({ legalEntityId });
+        const items = Array.isArray(response?.rows) ? response.rows : [];
+        if (active) {
+          setCatProfileOptions(items.map(mapDepreciationProfileOption).filter(Boolean));
+        }
+      } catch (err) {
+        if (active) {
+          setCatProfileOptions([]);
+          setCatProfileError(
+            normalizeApiError(
+              err,
+              l(
+                "Failed to load depreciation profile options.",
+                "Amortisman profili secenekleri yuklenemedi."
+              )
+            )
+          );
+        }
+      } finally {
+        if (active) {
+          setCatProfileLoading(false);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [canReadSettings, catForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(catDetailRow?.legalEntityId);
+    if (!catDetailRow || !canReadSettings || !legalEntityId) {
+      setCatDetailAccounts([]);
+      setCatDetailProfiles([]);
+      setCatDetailError("");
+      setCatDetailLoading(false);
+      return;
+    }
+    let active = true;
+    (async () => {
+      setCatDetailLoading(true);
+      setCatDetailError("");
+      try {
+        const [profileResponse, accountResponse] = await Promise.all([
+          listFixedAssetDepreciationProfiles({ legalEntityId }),
+          listAccounts({
+            legalEntityId,
+            includeInactive: true,
+            limit: 1000,
+          }),
+        ]);
+        if (active) {
+          setCatDetailProfiles(
+            Array.isArray(profileResponse?.rows) ? profileResponse.rows : []
+          );
+          setCatDetailAccounts(mapAccountRows(accountResponse));
+        }
+      } catch (err) {
+        if (active) {
+          setCatDetailProfiles([]);
+          setCatDetailAccounts([]);
+          setCatDetailError(
+            normalizeApiError(
+              err,
+              l(
+                "Failed to load category detail references.",
+                "Kategori detay referanslari yuklenemedi."
+              )
+            )
+          );
+        }
+      } finally {
+        if (active) {
+          setCatDetailLoading(false);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [canReadSettings, catDetailRow, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(catForm.legalEntityId);
+    if (!canReadSettings || !legalEntityId) {
+      setCatAccountRows([]);
+      setCatAccountError("");
+      setCatAccountLoading(false);
+      return;
+    }
+    let active = true;
+    (async () => {
+      setCatAccountLoading(true);
+      setCatAccountError("");
+      try {
+        const response = await listAccounts({
+          legalEntityId,
+          includeInactive: true,
+          limit: 1000,
+        });
+        if (active) {
+          setCatAccountRows(mapAccountRows(response));
+        }
+      } catch (err) {
+        if (active) {
+          setCatAccountRows([]);
+          setCatAccountError(
+            normalizeApiError(
+              err,
+              l(
+                "Failed to load account options for selected legal entity.",
+                "Secili tuzel kisilik icin hesap secenekleri yuklenemedi."
+              )
+            )
+          );
+        }
+      } finally {
+        if (active) {
+          setCatAccountLoading(false);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [canReadSettings, catForm.legalEntityId, l]);
+
+  const catAssetAccountOptions = useMemo(
+    () => filterAccountRowsByType(catAccountRows, "ASSET").map(mapAccountOption).filter(Boolean),
+    [catAccountRows]
+  );
+  const catExpenseAccountOptions = useMemo(
+    () => filterAccountRowsByType(catAccountRows, "EXPENSE").map(mapAccountOption).filter(Boolean),
+    [catAccountRows]
+  );
+  const catRevenueAccountOptions = useMemo(
+    () => filterAccountRowsByType(catAccountRows, "REVENUE").map(mapAccountOption).filter(Boolean),
+    [catAccountRows]
+  );
+  const catDetailAccountRowsById = useMemo(
+    () =>
+      new Map(
+        (Array.isArray(catDetailAccounts) ? catDetailAccounts : [])
+          .map((row) => [Number(row?.id || 0), row])
+          .filter(([id]) => id > 0)
+      ),
+    [catDetailAccounts]
+  );
+  const catDetailProfileRowsById = useMemo(
+    () =>
+      new Map(
+        (Array.isArray(catDetailProfiles) ? catDetailProfiles : [])
+          .map((row) => [Number(row?.id || 0), row])
+          .filter(([id]) => id > 0)
+      ),
+    [catDetailProfiles]
+  );
 
   // ── Category handlers ──────────────────────────────────────────
   function resetCatForm() {
@@ -488,6 +1011,193 @@ export default function FixedAssetSettingsPage() {
                 <input type="number" min="1" step="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={catForm.defaultUsefulLifeMonths}
                   onChange={(e) => setCatForm((p) => ({ ...p, defaultUsefulLifeMonths: e.target.value }))} disabled={catSaving} />
               </label>
+              <div className="md:col-span-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  {l("Default Posting Setup", "Varsayilan Muhasebe Kurulumu")}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {l(
+                    "These defaults drive asset creation, capitalization, depreciation, and disposal accounting. Default Asset Account is required for CARI Auto-Create.",
+                    "Bu varsayilanlar duran varlik olusturma, aktiflestirme, amortisman ve elden cikarma muhasebesini yonetir. Varsayilan Varlik Hesabi, CARI Otomatik Olustur icin zorunludur."
+                  )}
+                </p>
+              </div>
+              {catProfileError ? <p className="md:col-span-4 text-sm text-amber-700">{catProfileError}</p> : null}
+              {catAccountError ? <p className="md:col-span-4 text-sm text-amber-700">{catAccountError}</p> : null}
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  {l("Default Depreciation Profile", "Varsayilan Amortisman Profili")}
+                  <Combobox
+                    className="mt-1"
+                    value={catForm.defaultDepreciationProfileId}
+                    options={catProfileOptions}
+                    loading={catProfileLoading}
+                    placeholder={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("Select profile", "Profil secin")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
+                    }
+                    noOptionsText={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("No profiles found.", "Profil bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                    }
+                    onChange={(v) =>
+                      setCatForm((p) => ({
+                        ...p,
+                        defaultDepreciationProfileId: v ? String(v) : "",
+                      }))
+                    }
+                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
+                  />
+                </label>
+              </div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  {l("Default Asset Account", "Varsayilan Varlik Hesabi")}
+                  <Combobox
+                    className="mt-1"
+                    value={catForm.defaultAssetAccountId}
+                    options={catAssetAccountOptions}
+                    loading={catAccountLoading}
+                    placeholder={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("Select account", "Hesap secin")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
+                    }
+                    noOptionsText={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("No asset accounts found.", "Varlik hesabi bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                    }
+                    onChange={(v) =>
+                      setCatForm((p) => ({
+                        ...p,
+                        defaultAssetAccountId: v ? String(v) : "",
+                      }))
+                    }
+                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
+                  />
+                </label>
+              </div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  {l(
+                    "Default Accumulated Depreciation Account",
+                    "Varsayilan Birikmis Amortisman Hesabi"
+                  )}
+                  <Combobox
+                    className="mt-1"
+                    value={catForm.defaultAccumDeprAccountId}
+                    options={catAssetAccountOptions}
+                    loading={catAccountLoading}
+                    placeholder={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("Select account", "Hesap secin")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
+                    }
+                    noOptionsText={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("No asset accounts found.", "Varlik hesabi bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                    }
+                    onChange={(v) =>
+                      setCatForm((p) => ({
+                        ...p,
+                        defaultAccumDeprAccountId: v ? String(v) : "",
+                      }))
+                    }
+                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
+                  />
+                </label>
+              </div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  {l(
+                    "Default Depreciation Expense Account",
+                    "Varsayilan Amortisman Gider Hesabi"
+                  )}
+                  <Combobox
+                    className="mt-1"
+                    value={catForm.defaultDeprExpenseAccountId}
+                    options={catExpenseAccountOptions}
+                    loading={catAccountLoading}
+                    placeholder={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("Select account", "Hesap secin")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
+                    }
+                    noOptionsText={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("No expense accounts found.", "Gider hesabi bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                    }
+                    onChange={(v) =>
+                      setCatForm((p) => ({
+                        ...p,
+                        defaultDeprExpenseAccountId: v ? String(v) : "",
+                      }))
+                    }
+                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
+                  />
+                </label>
+              </div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  {l("Default Disposal Gain Account", "Varsayilan Elden Cikarma Kar Hesabi")}
+                  <Combobox
+                    className="mt-1"
+                    value={catForm.defaultDisposalGainAccountId}
+                    options={catRevenueAccountOptions}
+                    loading={catAccountLoading}
+                    placeholder={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("Select account", "Hesap secin")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
+                    }
+                    noOptionsText={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("No revenue accounts found.", "Gelir hesabi bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                    }
+                    onChange={(v) =>
+                      setCatForm((p) => ({
+                        ...p,
+                        defaultDisposalGainAccountId: v ? String(v) : "",
+                      }))
+                    }
+                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
+                  />
+                </label>
+              </div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  {l("Default Disposal Loss Account", "Varsayilan Elden Cikarma Zarar Hesabi")}
+                  <Combobox
+                    className="mt-1"
+                    value={catForm.defaultDisposalLossAccountId}
+                    options={catExpenseAccountOptions}
+                    loading={catAccountLoading}
+                    placeholder={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("Select account", "Hesap secin")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
+                    }
+                    noOptionsText={
+                      toPositiveInt(catForm.legalEntityId)
+                        ? l("No expense accounts found.", "Gider hesabi bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                    }
+                    onChange={(v) =>
+                      setCatForm((p) => ({
+                        ...p,
+                        defaultDisposalLossAccountId: v ? String(v) : "",
+                      }))
+                    }
+                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
+                  />
+                </label>
+              </div>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 {l("Salvage Rule Type", "Hurda Kural Tipi")}
                 <select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={catForm.defaultSalvageRuleType}
@@ -533,6 +1243,7 @@ export default function FixedAssetSettingsPage() {
                       <th className="px-3 py-2">{l("Threshold", "Esik")}</th>
                       <th className="px-3 py-2">{l("Useful Life", "Faydali Omur")}</th>
                       <th className="px-3 py-2">{l("Salvage Rule", "Hurda Kural")}</th>
+                      <th className="px-3 py-2">{l("Setup", "Kurulum")}</th>
                       <th className="px-3 py-2">{l("Status", "Durum")}</th>
                       <th className="px-3 py-2 text-right">{l("Action", "Islem")}</th>
                     </tr>
@@ -544,13 +1255,47 @@ export default function FixedAssetSettingsPage() {
                         <td className="px-3 py-2">{row.name || "-"}</td>
                         <td className="px-3 py-2">{row.capitalizationThresholdBase != null ? row.capitalizationThresholdBase : "-"}</td>
                         <td className="px-3 py-2">{row.defaultUsefulLifeMonths != null ? `${row.defaultUsefulLifeMonths} mo` : "-"}</td>
-                        <td className="px-3 py-2">{row.defaultSalvageRuleType || "-"}</td>
+                        <td className="px-3 py-2">{formatSalvageRuleSummary(row)}</td>
+                        <td className="px-3 py-2">
+                          {(() => {
+                            const readiness = summarizeCategoryAccountingSetup(row);
+                            const badgeClass =
+                              readiness.tone === "emerald"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : readiness.tone === "amber"
+                                  ? "border-amber-200 bg-amber-50 text-amber-700"
+                                  : "border-rose-200 bg-rose-50 text-rose-700";
+                            const label =
+                              readiness.tone === "emerald"
+                                ? l("Ready", "Hazir")
+                                : readiness.tone === "amber"
+                                  ? l("Partial", "Kismi")
+                                  : l("Missing asset account", "Varlik hesabi eksik");
+                            return (
+                              <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${badgeClass}`}>
+                                {label}
+                              </span>
+                            );
+                          })()}
+                        </td>
                         <td className="px-3 py-2">{row.status || "-"}</td>
                         <td className="px-3 py-2 text-right">
-                          <button type="button" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 disabled:opacity-60"
-                            onClick={() => { setCatSelected(row); setCatForm(mapCategoryToForm(row)); setCatFormError(""); setCatFormMsg(""); }} disabled={!canUpsertSettings}>
-                            {l("Edit", "Duzenle")}
-                          </button>
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700"
+                              onClick={() => {
+                                setCatDetailRow(row);
+                                setCatDetailError("");
+                              }}
+                            >
+                              {l("Details", "Detay")}
+                            </button>
+                            <button type="button" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 disabled:opacity-60"
+                              onClick={() => { setCatSelected(row); setCatForm(mapCategoryToForm(row)); setCatFormError(""); setCatFormMsg(""); }} disabled={!canUpsertSettings}>
+                              {l("Edit", "Duzenle")}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -680,6 +1425,30 @@ export default function FixedAssetSettingsPage() {
           </section>
         </>
       ) : null}
+      <CategoryDetailsModal
+        l={l}
+        row={catDetailRow}
+        accountRowsById={catDetailAccountRowsById}
+        profileRowsById={catDetailProfileRowsById}
+        loading={catDetailLoading}
+        error={catDetailError}
+        canUpsertSettings={canUpsertSettings}
+        onClose={() => {
+          setCatDetailRow(null);
+          setCatDetailError("");
+        }}
+        onEdit={() => {
+          if (!catDetailRow) {
+            return;
+          }
+          setCatSelected(catDetailRow);
+          setCatForm(mapCategoryToForm(catDetailRow));
+          setCatFormError("");
+          setCatFormMsg("");
+          setCatDetailRow(null);
+          setCatDetailError("");
+        }}
+      />
     </div>
   );
 }
