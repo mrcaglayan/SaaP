@@ -617,6 +617,18 @@ function applyCariOperationOverrides(specObject) {
   ensureTagPresent(specObject, "Cari");
   const paths = specObject.paths || {};
   const schemas = specObject.components?.schemas || {};
+  const cariRecommendedFlowDescription = [
+    "Recommended path for new AP/AR documents: create them in CARI with explicit `subledgerType` values on each line so posting knows whether a line remains in GL, drives inventory, or capitalizes or disposes a fixed asset.",
+    "Fallback flows remain available for backward compatibility: manual FA acquisition, capitalize-from-AP for legacy posted bills, FA sale staging, classic stock-impact documents without `subledgerType`, manual CARI cash settlement with `settlementMode = ACCRUAL`, and standalone cash transactions."
+  ].join(" ");
+  const cariImmediateSettlementDescription = [
+    "Recommended cash purchase and sale flow: set `settlementMode` to `IMMEDIATE_CASH` and provide `settlementCashRegisterId` so posting creates the cash transaction and applies the settlement in the same transaction.",
+    "`IMMEDIATE_BANK` is intentionally deferred until the repo exposes a bank-side immediate-posting primitive that can participate in that same posting transaction."
+  ].join(" ");
+  const cariWorkflowContractDescription = [
+    cariRecommendedFlowDescription,
+    cariImmediateSettlementDescription,
+  ].join(" ");
 
   Object.assign(schemas, {
     CariDocumentDirection: {
@@ -638,6 +650,35 @@ function applyCariOperationOverrides(specObject) {
     CariDocumentLineStockImpactMode: {
       type: "string",
       enum: ["NONE", "RECEIPT_PENDING", "ISSUE_PENDING"],
+    },
+    CariDocumentSettlementMode: {
+      type: "string",
+      enum: ["ACCRUAL", "IMMEDIATE_CASH"],
+      description: [
+        "Persists to `settlement_mode`.",
+        "Use `IMMEDIATE_CASH` for the recommended same-transaction cash settlement flow.",
+        "Use `ACCRUAL` to keep the legacy manual settlement flow as a supported fallback.",
+        "`IMMEDIATE_BANK` is not exposed here because it is deferred until a bank-side immediate-posting primitive exists."
+      ].join(" "),
+    },
+    CariDocumentLineSubledgerType: {
+      type: "string",
+      enum: ["NONE", "STOCK", "FIXED_ASSET"],
+      description: [
+        "Persists to `subledger_type`.",
+        "Recommended line-routing field for new CARI documents.",
+        "Use `NONE` for plain GL lines, `STOCK` for inventory-linked lines, and `FIXED_ASSET` for capitalization or disposal lines.",
+        "Legacy requests that omit this field remain supported as fallback and keep the existing stock/manual behavior."
+      ].join(" "),
+    },
+    CariDocumentLineFixedAssetMode: {
+      type: "string",
+      enum: ["AUTO_CREATE", "LINK_EXISTING"],
+      description: [
+        "`AUTO_CREATE` is the recommended AP acquisition flow for new bills because posting creates draft assets directly from the CARI line.",
+        "`LINK_EXISTING` remains available when one specific target asset must be referenced.",
+        "Legacy capitalize-from-AP and sale-staging flows remain supported fallback paths outside this document contract."
+      ].join(" "),
     },
     CariDocumentOpenItemStatus: {
       type: "string",
@@ -713,6 +754,8 @@ function applyCariOperationOverrides(specObject) {
     },
     CariDocumentLineRow: {
       type: "object",
+      description:
+        "Stored CARI document line, including subledger-aware routing fields for the recommended new flow while still returning legacy lines that were created without them.",
       properties: {
         id: { ...intId, nullable: true },
         tenantId: { ...intId, nullable: true },
@@ -722,6 +765,10 @@ function applyCariOperationOverrides(specObject) {
         lineKind: { $ref: "#/components/schemas/CariDocumentLineKind" },
         description: { type: "string", nullable: true },
         itemCardId: { ...intId, nullable: true },
+        subledgerType: {
+          allOf: [{ $ref: "#/components/schemas/CariDocumentLineSubledgerType" }],
+          nullable: true,
+        },
         quantity: { type: "number", nullable: true },
         unitPriceTxn: { type: "number", nullable: true },
         lineNetAmountTxn: { type: "number", nullable: true },
@@ -733,6 +780,51 @@ function applyCariOperationOverrides(specObject) {
         postingAccountId: { ...intId, nullable: true },
         taxCategoryCode: { type: "string", nullable: true },
         stockImpactMode: { $ref: "#/components/schemas/CariDocumentLineStockImpactMode" },
+        fixedAssetMode: {
+          allOf: [{ $ref: "#/components/schemas/CariDocumentLineFixedAssetMode" }],
+          nullable: true,
+        },
+        targetFixedAssetId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Target asset for `LINK_EXISTING` AP lines and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`.",
+        },
+        fixedAssetCategoryId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Required category for `AUTO_CREATE` fixed-asset acquisition lines.",
+        },
+        fixedAssetOwnerOperatingUnitId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Owner operating unit for `AUTO_CREATE` fixed-asset acquisition lines.",
+        },
+        fixedAssetLocationOperatingUnitId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Location operating unit for `AUTO_CREATE` fixed-asset acquisition lines.",
+        },
+        fixedAssetNameOverride: {
+          type: "string",
+          nullable: true,
+          description:
+            "Optional per-line asset name override used by the recommended AUTO_CREATE flow.",
+        },
+        fixedAssetSerialNo: {
+          type: "string",
+          nullable: true,
+          description:
+            "Optional asset serial number captured on fixed-asset acquisition lines.",
+        },
+        fixedAssetTag: {
+          type: "string",
+          nullable: true,
+          description: "Optional asset tag captured on fixed-asset acquisition lines.",
+        },
         warehouseId: { ...intId, nullable: true },
         warehouseCode: { type: "string", nullable: true },
         warehouseName: { type: "string", nullable: true },
@@ -760,6 +852,8 @@ function applyCariOperationOverrides(specObject) {
     },
     CariDocumentRow: {
       type: "object",
+      description:
+        "Stored CARI document, including immediate-settlement linkage for the recommended cash flow while preserving legacy accrual and manual-settlement documents as fallback records.",
       properties: {
         id: { ...intId, nullable: true },
         tenantId: { ...intId, nullable: true },
@@ -769,6 +863,28 @@ function applyCariOperationOverrides(specObject) {
         operatingUnitName: { type: "string", nullable: true },
         counterpartyId: { ...intId, nullable: true },
         paymentTermId: { ...intId, nullable: true },
+        settlementMode: {
+          allOf: [{ $ref: "#/components/schemas/CariDocumentSettlementMode" }],
+          nullable: true,
+        },
+        settlementCashRegisterId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Cash register used when the recommended `IMMEDIATE_CASH` flow is selected. Persists to `settlement_cash_register_id`.",
+        },
+        autoSettlementBatchId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Settlement batch created by `IMMEDIATE_CASH`; used for settlement drillbacks and reversal lookup.",
+        },
+        autoSettlementCashTransactionId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Cash transaction created by `IMMEDIATE_CASH`; used for cash drillbacks and reversal lookup.",
+        },
         paymentTermCode: { type: "string", nullable: true },
         paymentTermName: { type: "string", nullable: true },
         direction: { $ref: "#/components/schemas/CariDocumentDirection" },
@@ -922,11 +1038,19 @@ function applyCariOperationOverrides(specObject) {
     },
     CariDocumentCreateRequest: {
       type: "object",
+      description: cariWorkflowContractDescription,
       properties: {
         legalEntityId: intId,
         operatingUnitId: { ...intId, nullable: true },
         counterpartyId: intId,
         paymentTermId: { ...intId, nullable: true },
+        settlementMode: { $ref: "#/components/schemas/CariDocumentSettlementMode" },
+        settlementCashRegisterId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Required when `settlementMode = IMMEDIATE_CASH`; leave empty for the fallback `ACCRUAL` flow. Persists to `settlement_cash_register_id`.",
+        },
         direction: { $ref: "#/components/schemas/CariDocumentDirection" },
         documentType: { $ref: "#/components/schemas/CariDocumentType" },
         documentDate: { type: "string", format: "date" },
@@ -952,12 +1076,20 @@ function applyCariOperationOverrides(specObject) {
     },
     CariDocumentUpdateRequest: {
       type: "object",
+      description: cariWorkflowContractDescription,
       properties: {
         rowVersion: { type: "integer", minimum: 1 },
         legalEntityId: { ...intId, nullable: true },
         operatingUnitId: { ...intId, nullable: true },
         counterpartyId: { ...intId, nullable: true },
         paymentTermId: { ...intId, nullable: true },
+        settlementMode: { $ref: "#/components/schemas/CariDocumentSettlementMode" },
+        settlementCashRegisterId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Required when `settlementMode = IMMEDIATE_CASH`; leave empty for the fallback `ACCRUAL` flow. Persists to `settlement_cash_register_id`.",
+        },
         direction: { $ref: "#/components/schemas/CariDocumentDirection" },
         documentType: { $ref: "#/components/schemas/CariDocumentType" },
         documentDate: { type: "string", format: "date", nullable: true },
@@ -976,10 +1108,13 @@ function applyCariOperationOverrides(specObject) {
     },
     CariDocumentLineInput: {
       type: "object",
+      description:
+        "Draft line input for the recommended subledger-aware document flow. Legacy requests that omit the new routing fields remain supported as fallback.",
       properties: {
         lineKind: { $ref: "#/components/schemas/CariDocumentLineKind" },
         description: { type: "string", maxLength: 500, nullable: true },
         itemCardId: { ...intId, nullable: true },
+        subledgerType: { $ref: "#/components/schemas/CariDocumentLineSubledgerType" },
         quantity: { type: "number", minimum: 0, nullable: true },
         unitPriceTxn: { type: "number", minimum: 0, nullable: true },
         lineNetAmountTxn: { type: "number", minimum: 0 },
@@ -990,6 +1125,46 @@ function applyCariOperationOverrides(specObject) {
         taxCode: { type: "string", maxLength: 40, nullable: true },
         taxCategoryCode: { type: "string", maxLength: 60, nullable: true },
         stockImpactMode: { $ref: "#/components/schemas/CariDocumentLineStockImpactMode" },
+        fixedAssetMode: { $ref: "#/components/schemas/CariDocumentLineFixedAssetMode" },
+        targetFixedAssetId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Required for `LINK_EXISTING` AP lines and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`.",
+        },
+        fixedAssetCategoryId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Required for the recommended `AUTO_CREATE` fixed-asset acquisition flow.",
+        },
+        fixedAssetOwnerOperatingUnitId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Owner operating unit for the recommended `AUTO_CREATE` fixed-asset acquisition flow.",
+        },
+        fixedAssetLocationOperatingUnitId: {
+          ...intId,
+          nullable: true,
+          description:
+            "Location operating unit for the recommended `AUTO_CREATE` fixed-asset acquisition flow.",
+        },
+        fixedAssetNameOverride: {
+          type: "string",
+          maxLength: 255,
+          nullable: true,
+        },
+        fixedAssetSerialNo: {
+          type: "string",
+          maxLength: 100,
+          nullable: true,
+        },
+        fixedAssetTag: {
+          type: "string",
+          maxLength: 100,
+          nullable: true,
+        },
         warehouseId: { ...intId, nullable: true },
       },
       required: ["lineNetAmountTxn"],
@@ -1441,6 +1616,7 @@ function applyCariOperationOverrides(specObject) {
   const documentsCreateOperation = paths["/api/v1/cari/documents"]?.post;
   if (documentsCreateOperation) {
     documentsCreateOperation.summary = "Create draft cari document";
+    documentsCreateOperation.description = cariRecommendedFlowDescription;
     documentsCreateOperation.requestBody = bodyFromRef(
       "#/components/schemas/CariDocumentCreateRequest"
     );
@@ -1458,6 +1634,10 @@ function applyCariOperationOverrides(specObject) {
   const documentDetailOperation = paths["/api/v1/cari/documents/{documentId}"]?.get;
   if (documentDetailOperation) {
     documentDetailOperation.summary = "Get cari document detail";
+    documentDetailOperation.description = [
+      "Detail responses include subledger-aware line fields and immediate-settlement linkage fields when those recommended flows were used.",
+      "Legacy documents that were created without the new fields remain valid fallback records."
+    ].join(" ");
     documentDetailOperation.responses = withStandardResponses(
       "200",
       "Cari document detail",
@@ -1468,6 +1648,7 @@ function applyCariOperationOverrides(specObject) {
   const documentUpdateOperation = paths["/api/v1/cari/documents/{documentId}"]?.put;
   if (documentUpdateOperation) {
     documentUpdateOperation.summary = "Update draft cari document";
+    documentUpdateOperation.description = cariRecommendedFlowDescription;
     documentUpdateOperation.requestBody = bodyFromRef(
       "#/components/schemas/CariDocumentUpdateRequest"
     );
@@ -1578,6 +1759,11 @@ function applyCariOperationOverrides(specObject) {
   const documentPostOperation = paths["/api/v1/cari/documents/{documentId}/post"]?.post;
   if (documentPostOperation) {
     documentPostOperation.summary = "Post draft cari document";
+    documentPostOperation.description = [
+      cariImmediateSettlementDescription,
+      "Use `settlementMode = ACCRUAL` to preserve the legacy manual CARI-to-cash settlement flow.",
+      "Subledger-aware lines are the recommended posting path for new inventory and fixed-asset documents; legacy capitalize-from-AP and sale-staging flows remain available as fallback."
+    ].join(" ");
     documentPostOperation.requestBody = bodyFromRef(
       "#/components/schemas/CariDocumentPostRequest",
       false

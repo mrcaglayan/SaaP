@@ -172,6 +172,7 @@
     "test:fa24:eligible-ap-line-smoke": "node scripts/test-fa24-eligible-ap-line-smoke.js",
     "test:fa26:cross-ou-capitalization-smoke": "node scripts/test-fa26-cross-ou-capitalization-smoke.js",
     "test:fa27:draft-link-revalidation-smoke": "node scripts/test-fa27-draft-link-revalidation-smoke.js",
+    "test:cari:sl24": "node scripts/test-cari-sl24-subledger-cash-fa-smoke.js",
     "test:fa36:physical-move-smoke": "node scripts/test-fa36-physical-move-smoke.js",
     "test:fa37:ownership-transfer-smoke": "node scripts/test-fa37-ownership-transfer-smoke.js",
     "test:fa38:writeoff-smoke": "node scripts/test-fa38-writeoff-smoke.js",

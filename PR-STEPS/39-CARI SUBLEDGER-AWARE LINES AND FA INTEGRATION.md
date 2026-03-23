@@ -344,7 +344,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL23` — Remove old "Cari Islemler" routes, redirect legacy URLs, and make drillbacks direction-aware
 
 **Phase 5: Testing & Release**
-- [ ] `STEP-SL24` — Smoke suite: subledger lines + immediate settlement + AP/AR navigation + mixed flows + reversals
+- [x] `STEP-SL24` — Smoke suite: subledger lines + immediate settlement + AP/AR navigation + mixed flows + reversals
 - [ ] `STEP-SL25` — Release gates and backward-compatibility verification
 
 **Phase 6: Subsequent Acquisition / Improvement**

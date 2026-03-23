@@ -173,7 +173,6 @@ export default function FixedAssetSettingsPage() {
   const {
     legalEntities: workingContextLegalEntities,
     loading: workingContextLoading,
-    error: workingContextError,
   } = useWorkingContext();
 
   const canReadSettings = hasPermission("fixed_assets.settings.read");

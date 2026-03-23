@@ -116,11 +116,6 @@ export default function PayrollEmployeeOwnershipPage() {
     const [message, setMessage] = useState("");
     const [lookupWarning, setLookupWarning] = useState("");
 
-    const selectedRow = useMemo(
-        () => rows.find((row) => Number(row.id) === Number(selectedId)) || null,
-        [rows, selectedId]
-    );
-
     const legalEntityOptions = useMemo(
         () =>
             [...(legalEntities || [])].sort((left, right) =>

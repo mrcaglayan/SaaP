@@ -3262,7 +3262,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
-  const translateDocumentMutationError = (message) => {
+  const translateDocumentMutationError = useCallback((message) => {
     const trimmedMessage = String(message || "").trim();
     const coreMessage = trimmedMessage.replace(/^lines\[\d+\]\./, "");
     switch (trimmedMessage) {
@@ -3502,7 +3502,7 @@ export default function CariDocumentsPage({ direction = "" }) {
         return trimmedMessage;
       }
     }
-  };
+  }, [l]);
   const {
     legalEntities: workingContextLegalEntities,
     loadingBase: workingContextBaseLoading,

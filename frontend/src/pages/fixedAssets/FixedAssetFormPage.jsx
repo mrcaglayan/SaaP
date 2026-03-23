@@ -393,7 +393,7 @@ export default function FixedAssetFormPage() {
       }
       return next;
     });
-  }, [selectedCategory]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedCategory]);
 
   // ── Low-value threshold indication ──────────────────────────────
   const capThreshold = selectedCategory?.capitalizationThresholdBase;
