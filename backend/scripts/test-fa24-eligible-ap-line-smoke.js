@@ -655,6 +655,10 @@ function findLineByDescription(document, description) {
   );
 }
 
+function unwrapPostedDocumentRow(result) {
+  return result?.row || result;
+}
+
 async function resolveReusableFixtureDocument({ tenantId, legalEntityId }) {
   const result = await query(
     `SELECT d.id,
@@ -762,14 +766,15 @@ async function ensurePostedApFixture({
     },
     assertScopeAccess: allowAllScopes,
   });
+  const postedRow = unwrapPostedDocumentRow(posted);
 
-  const validLine = findLineByDescription(posted, VALID_LINE_DESCRIPTION);
-  const invalidLine = findLineByDescription(posted, INVALID_QTY_LINE_DESCRIPTION);
+  const validLine = findLineByDescription(postedRow, VALID_LINE_DESCRIPTION);
+  const invalidLine = findLineByDescription(postedRow, INVALID_QTY_LINE_DESCRIPTION);
   assert(validLine?.id, "Posted FA24 smoke document missing valid source line");
   assert(invalidLine?.id, "Posted FA24 smoke document missing invalid-quantity source line");
 
   return {
-    documentId: Number(posted.id),
+    documentId: Number(postedRow?.id || draft.id),
     validLineId: Number(validLine.id),
     invalidLineId: Number(invalidLine.id),
     createdFixture: true,

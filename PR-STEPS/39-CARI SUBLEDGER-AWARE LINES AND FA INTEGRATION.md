@@ -345,7 +345,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 
 **Phase 5: Testing & Release**
 - [x] `STEP-SL24` — Smoke suite: subledger lines + immediate settlement + AP/AR navigation + mixed flows + reversals
-- [ ] `STEP-SL25` — Release gates and backward-compatibility verification
+- [x] `STEP-SL25` — Release gates and backward-compatibility verification
 
 **Phase 6: Subsequent Acquisition / Improvement**
 - [ ] `STEP-SL26` — Migration: add IMPROVEMENT transaction type and improvement metadata columns

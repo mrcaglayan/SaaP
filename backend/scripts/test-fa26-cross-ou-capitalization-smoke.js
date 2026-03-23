@@ -372,13 +372,39 @@ async function createSmokeUser({ tenantId, uniqueSuffix, state }) {
 }
 
 async function ensureSmokeVendor({ tenantId, legalEntityId, currencyCode, liabilityAccountId, operatingUnitId, uniqueSuffix, state }) {
-  // Try to reuse an existing vendor that has an AP account
+  // Reuse only vendors that are unconstrained or explicitly compatible with the chosen source OU.
   const reusable = await query(
-    `SELECT id FROM counterparties
-      WHERE tenant_id = ? AND legal_entity_id = ? AND is_vendor = 1 AND status = 'ACTIVE'
-        AND ap_account_id IS NOT NULL
-      ORDER BY id ASC LIMIT 1`,
-    [tenantId, legalEntityId]
+    `SELECT c.id
+       FROM counterparties c
+      WHERE c.tenant_id = ?
+        AND c.legal_entity_id = ?
+        AND c.is_vendor = 1
+        AND c.status = 'ACTIVE'
+        AND c.ap_account_id IS NOT NULL
+        AND (
+              (
+                c.primary_operating_unit_id IS NULL
+                AND NOT EXISTS (
+                      SELECT 1
+                        FROM counterparty_operating_units cou
+                       WHERE cou.tenant_id = c.tenant_id
+                         AND cou.legal_entity_id = c.legal_entity_id
+                         AND cou.counterparty_id = c.id
+                    )
+              )
+              OR c.primary_operating_unit_id = ?
+              OR EXISTS (
+                    SELECT 1
+                      FROM counterparty_operating_units cou
+                     WHERE cou.tenant_id = c.tenant_id
+                       AND cou.legal_entity_id = c.legal_entity_id
+                       AND cou.counterparty_id = c.id
+                       AND cou.operating_unit_id = ?
+                  )
+            )
+      ORDER BY c.id ASC
+      LIMIT 1`,
+    [tenantId, legalEntityId, operatingUnitId, operatingUnitId]
   );
   const reusableId = Number(reusable.rows?.[0]?.id || 0);
   if (reusableId > 0) return { counterpartyId: reusableId, created: false };

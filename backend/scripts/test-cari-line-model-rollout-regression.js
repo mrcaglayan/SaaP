@@ -69,6 +69,31 @@ function makeInClause(ids) {
   return ids.map(() => "?").join(", ");
 }
 
+async function hasActiveWarehouseForOwnershipContext({
+  tenantId,
+  legalEntityId,
+  operatingUnitId = null,
+}) {
+  const ownershipScope = operatingUnitId ? "OPERATING_UNIT" : "CENTRAL";
+  const params = [tenantId, legalEntityId, ownershipScope];
+  let sql = `
+    SELECT id
+      FROM inventory_warehouses
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND status = 'ACTIVE'
+       AND ownership_scope = ?`;
+  if (operatingUnitId) {
+    sql += " AND operating_unit_id = ?";
+    params.push(operatingUnitId);
+  } else {
+    sql += " AND operating_unit_id IS NULL";
+  }
+  sql += " LIMIT 1";
+  const result = await query(sql, params);
+  return toPositiveInt(result.rows?.[0]?.id) > 0;
+}
+
 async function createInventoryMovementFromStockLink({ payload }) {
   const strictPayload = {
     tenantId: payload?.tenantId,
@@ -1291,6 +1316,10 @@ async function runStrictPostingValidationScenario({
     },
   });
   state.warehouseIds.push(toPositiveInt(inactiveWarehouse.id));
+  const hasActiveCentralWarehouse = await hasActiveWarehouseForOwnershipContext({
+    tenantId: context.tenantId,
+    legalEntityId: context.legalEntityId,
+  });
 
   const noActiveWarehouseDraft = await createCariDraftDocument({
     req: makeRequestContext({
@@ -1331,7 +1360,9 @@ async function runStrictPostingValidationScenario({
     documentId: noActiveWarehouseDraft.id,
     stamp: state.stamp,
     suffix: "strict-no-active-post",
-    expectedMessagePattern: /No active warehouse exists for ownership context CENTRAL/i,
+    expectedMessagePattern: hasActiveCentralWarehouse
+      ? /warehouseId must reference an ACTIVE warehouse/i
+      : /No active warehouse exists for ownership context CENTRAL/i,
   });
 
   const activeWarehouse = await createInventoryWarehouse({
