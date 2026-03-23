@@ -89,6 +89,7 @@ async function main() {
   const routesToGuard = implementedRoutes.filter(
     (route) =>
       route.componentName !== "Navigate" &&
+      route.componentName !== "LegacyRouteRedirect" &&
       !route.appPath.includes(":")
   );
   assert(

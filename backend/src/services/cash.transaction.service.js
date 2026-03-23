@@ -2334,7 +2334,7 @@ export async function createCashTransactionTx(
         tenantId: payload.tenantId,
         registerId: payload.registerId,
         idempotencyKey: payload.idempotencyKey,
-        runQuery: tx.query,
+        runQuery: query,
       });
       if (replayRow) {
         return {
@@ -2346,7 +2346,7 @@ export async function createCashTransactionTx(
         const replayByEvent = await findCashTransactionByIntegrationEventUid({
           tenantId: payload.tenantId,
           integrationEventUid: payload.integrationEventUid,
-          runQuery: tx.query,
+          runQuery: query,
         });
         if (replayByEvent) {
           return {
