@@ -2505,7 +2505,7 @@ async function applyFixedAssetAccountResolutionToLines({
 
     const fieldPrefix = `${fieldCollectionLabel}[${index + 1}].`;
     if (normalizedDirection === "AR") {
-      if (normalizeText(line.postingAccountId)) {
+      if (String(line.postingAccountId ?? "").trim()) {
         line.postingAccountId = "";
         mutated = true;
       }

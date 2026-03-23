@@ -5,6 +5,7 @@ import {
   attachCariBankReference,
   applyCariBankSettlement,
   describeCariSettlementContext,
+  getCariSettlementOpenItemsPreview,
   getCariSettlementErrorHint,
   reverseCariSettlement,
 } from "../../api/cariSettlements.js";
@@ -18,7 +19,6 @@ import {
 } from "../../api/cariCounterparty.js";
 import { listFxRates } from "../../api/fxAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
-import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import Combobox from "../../components/Combobox.jsx";
@@ -54,8 +54,15 @@ import {
 } from "./counterpartyInlineCreate.js";
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
+
+const CASH_REGISTER_SETUP_PATH = "/app/kasa-tanimlari";
+const CASH_SESSION_SETUP_PATH = "/app/kasa-oturumlari";
 
 function toDateTimeLocalInput(date = new Date()) {
   const year = date.getFullYear();
@@ -483,7 +490,6 @@ function buildPreviewDefaultFilters(direction = "") {
   return {
     legalEntityId: "",
     counterpartyId: "",
-    asOfDate: todayIsoDate(),
     direction: defaultDirection,
   };
 }
@@ -530,7 +536,6 @@ function getSettlementPageHeading(direction, l) {
 
 const SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS = [
   { stateKey: "legalEntityId" },
-  { stateKey: "asOfDate", contextKey: "dateTo" },
 ];
 const SETTLEMENT_APPLY_CONTEXT_MAPPINGS = [
   { stateKey: "legalEntityId" },
@@ -742,7 +747,6 @@ export default function CariSettlementsPage({ direction = "" }) {
 
   useWorkingContextDefaults(setPreviewFilters, SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS, [
     previewFilters.legalEntityId,
-    previewFilters.asOfDate,
   ]);
   useWorkingContextDefaults(setApplyForm, SETTLEMENT_APPLY_CONTEXT_MAPPINGS, [
     applyForm.legalEntityId,
@@ -977,6 +981,11 @@ export default function CariSettlementsPage({ direction = "" }) {
     );
   }, [linkedCashForm.registerId, openCashSessions]);
   const linkedRegisterSessionMode = toUpper(selectedLinkedRegister?.session_mode);
+  const linkedCashRegisterLookupEmpty = Boolean(
+    canReadCashRegisters &&
+      toPositiveInt(applyForm.legalEntityId) &&
+      linkedRegisterOptions.length === 0
+  );
   const linkedCashSessionRequiredByRegister = Boolean(
     linkedCashForm.createLinkedCashTransaction &&
       toUpper(linkedCashForm.paymentChannel) === "CASH" &&
@@ -1333,7 +1342,6 @@ export default function CariSettlementsPage({ direction = "" }) {
   );
   const previewLegalEntityId = previewFilters.legalEntityId;
   const previewCounterpartyId = previewFilters.counterpartyId;
-  const previewAsOfDate = previewFilters.asOfDate;
   const previewDirection = fixedRouteDirection || previewFilters.direction;
   const previewDocumentCurrencies = useMemo(() => {
     const currencies = new Set();
@@ -1371,7 +1379,7 @@ export default function CariSettlementsPage({ direction = "" }) {
       return;
     }
 
-    if (!previewLegalEntityId || !previewCounterpartyId || !previewAsOfDate) {
+    if (!previewLegalEntityId || !previewCounterpartyId) {
       setOpenItems([]);
       setPreviewError("");
       return;
@@ -1382,14 +1390,11 @@ export default function CariSettlementsPage({ direction = "" }) {
       setPreviewLoading(true);
       setPreviewError("");
       try {
-        const payload = await getCariOpenItemsReport({
+        const payload = await getCariSettlementOpenItemsPreview({
           legalEntityId: previewLegalEntityId,
           counterpartyId: previewCounterpartyId,
-          asOfDate: previewAsOfDate,
           direction: previewDirection || undefined,
-          status: "OPEN",
           limit: 500,
-          offset: 0,
         });
         if (!active) {
           return;
@@ -1420,7 +1425,6 @@ export default function CariSettlementsPage({ direction = "" }) {
     l,
     previewLegalEntityId,
     previewCounterpartyId,
-    previewAsOfDate,
     previewDirection,
     previewRefreshToken,
   ]);
@@ -2867,18 +2871,6 @@ export default function CariSettlementsPage({ direction = "" }) {
             </label>
           ) : null}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("As-Of Date (Preview)", "Tarih Itibariyla (Onizleme)")}
-            <input
-              type="date"
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={previewFilters.asOfDate}
-              onChange={(event) =>
-                setPreviewFilters((prev) => ({ ...prev, asOfDate: event.target.value }))
-              }
-              disabled={!canApply}
-            />
-          </label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             {l("Payment Channel", "Odeme Kanali")}
             <select
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3255,6 +3247,16 @@ export default function CariSettlementsPage({ direction = "" }) {
                       </option>
                     ))}
                   </select>
+                ) : linkedCashRegisterLookupEmpty ? (
+                  <div className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm normal-case text-amber-800">
+                    {l(
+                      "No cash registers are defined for the selected legal entity.",
+                      "Secili tuzel kisilik icin tanimli kasa yok."
+                    )}{" "}
+                    <Link className="font-semibold underline" to={CASH_REGISTER_SETUP_PATH}>
+                      {l("Open Cash Registers", "Kasa Tanimlari'ni ac")}
+                    </Link>
+                  </div>
                 ) : (
                   <input
                     type="number"
@@ -3292,6 +3294,26 @@ export default function CariSettlementsPage({ direction = "" }) {
                       </option>
                     ))}
                   </select>
+                ) : canReadCashSessions && !toPositiveInt(linkedCashForm.registerId) ? (
+                  <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm normal-case text-slate-500">
+                    {l("Select cash register first.", "Once kasa secin.")}
+                  </div>
+                ) : linkedCashSessionMissingOpenSession ? (
+                  <div className="mt-1 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm normal-case text-rose-700">
+                    {l(
+                      "Selected register requires an OPEN cash session, but none exists.",
+                      "Secili kasa bir OPEN kasa oturumu gerektiriyor, ancak tanimli acik oturum yok."
+                    )}{" "}
+                    <Link className="font-semibold underline" to={CASH_SESSION_SETUP_PATH}>
+                      {l("Open Cash Sessions", "Kasa Oturumlari'ni ac")}
+                    </Link>
+                  </div>
+                ) : canReadCashSessions ? (
+                  <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm normal-case text-slate-500">
+                    {linkedCashSessionRequiredByRegister
+                      ? l("No OPEN cash session found for the selected register.", "Secili kasa icin OPEN kasa oturumu bulunamadi.")
+                      : l("No OPEN cash session found. This field is optional for the selected register.", "OPEN kasa oturumu bulunamadi. Bu alan secili kasa icin opsiyoneldir.")}
+                  </div>
                 ) : (
                   <input
                     type="number"
@@ -3698,8 +3720,8 @@ export default function CariSettlementsPage({ direction = "" }) {
                       {previewLoading
                         ? l("Loading preview...", "Onizleme yukleniyor...")
                         : l(
-                            "No open-item preview rows for the selected legalEntityId, counterpartyId, and asOfDate.",
-                            "Secili legalEntityId, counterpartyId ve asOfDate icin acik kalem onizleme satiri yok."
+                            "No currently settleable open items were found for the selected legalEntityId and counterpartyId.",
+                            "Secili legalEntityId ve counterpartyId icin mahsuplastirilabilir acik kalem bulunamadi."
                           )}
                     </td>
                   </tr>

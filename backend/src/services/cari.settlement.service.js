@@ -3203,7 +3203,10 @@ async function fetchOpenItemsForApply({
   counterpartyId,
   operatingUnitId = null,
   currencyCode = null,
+  direction = null,
+  asOfDate = null,
   openItemIds = null,
+  forUpdate = true,
   runQuery = query,
 }) {
   const statuses = [OPEN_ITEM_STATUS_OPEN, OPEN_ITEM_STATUS_PARTIALLY_SETTLED];
@@ -3220,11 +3223,23 @@ async function fetchOpenItemsForApply({
   if (normalizedCurrency) {
     params.push(normalizedCurrency);
   }
+  const normalizedDirection = normalizeUpperText(direction);
+  const directionFilterSql =
+    normalizedDirection === "AR" || normalizedDirection === "AP" ? "AND d.direction = ?" : "";
+  if (directionFilterSql) {
+    params.push(normalizedDirection);
+  }
+  const normalizedAsOfDate = asOfDate ? toDateOnlyString(asOfDate, "asOfDate") : null;
+  const asOfDateFilterSql = normalizedAsOfDate ? "AND d.document_date <= ?" : "";
+  if (normalizedAsOfDate) {
+    params.push(normalizedAsOfDate);
+  }
   let whereExtra = "";
   if (Array.isArray(openItemIds) && openItemIds.length > 0) {
     whereExtra = ` AND oi.id IN (${openItemIds.map(() => "?").join(", ")})`;
     params.push(...openItemIds);
   }
+  const lockSql = forUpdate ? "FOR UPDATE" : "";
 
   const result = await runQuery(
     `SELECT
@@ -3243,15 +3258,22 @@ async function fetchOpenItemsForApply({
        oi.settled_amount_txn,
        oi.settled_amount_base,
        oi.currency_code,
+       d.document_no,
        d.operating_unit_id,
        d.direction,
        d.document_type,
-       d.status AS document_status
+       d.status AS document_status,
+       ou.code AS operating_unit_code,
+       ou.name AS operating_unit_name
      FROM cari_open_items oi
      JOIN cari_documents d
        ON d.tenant_id = oi.tenant_id
       AND d.legal_entity_id = oi.legal_entity_id
       AND d.id = oi.document_id
+     LEFT JOIN operating_units ou
+       ON ou.tenant_id = d.tenant_id
+      AND ou.legal_entity_id = d.legal_entity_id
+      AND ou.id = d.operating_unit_id
      WHERE oi.tenant_id = ?
        AND oi.legal_entity_id = ?
        AND oi.counterparty_id = ?
@@ -3259,12 +3281,71 @@ async function fetchOpenItemsForApply({
        AND oi.residual_amount_txn > 0
        ${operatingUnitFilterSql}
        ${currencyFilterSql}
+       ${directionFilterSql}
+       ${asOfDateFilterSql}
        ${whereExtra}
      ORDER BY oi.id ASC
-     FOR UPDATE`,
+     ${lockSql}`,
     params
   );
   return result.rows || [];
+}
+
+function buildOperatingUnitContextLabel({
+  operatingUnitId,
+  operatingUnitCode = null,
+  operatingUnitName = null,
+}) {
+  const resolvedOperatingUnitId = parsePositiveInt(operatingUnitId) || null;
+  const code = String(operatingUnitCode || "").trim() || null;
+  const name = String(operatingUnitName || "").trim() || null;
+  if (!resolvedOperatingUnitId) {
+    return "Central";
+  }
+  return [code ? `OU: ${code}` : `OU: ${resolvedOperatingUnitId}`, name]
+    .filter(Boolean)
+    .join(" - ");
+}
+
+function mapOpenItemPreviewRow(row) {
+  const operatingUnitId = parsePositiveInt(row.operating_unit_id) || null;
+  const operatingUnitCode = String(row.operating_unit_code || "").trim() || null;
+  const operatingUnitName = String(row.operating_unit_name || "").trim() || null;
+  const operatingUnitContextLabel = buildOperatingUnitContextLabel({
+    operatingUnitId,
+    operatingUnitCode,
+    operatingUnitName,
+  });
+
+  return {
+    openItemId: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    counterpartyId: parsePositiveInt(row.counterparty_id),
+    documentId: parsePositiveInt(row.document_id),
+    documentNo: row.document_no || null,
+    documentDate: toDateOnlyString(row.document_date, "documentDate"),
+    dueDate: toDateOnlyString(row.due_date, "dueDate"),
+    direction: normalizeUpperText(row.direction) || null,
+    documentType: normalizeUpperText(row.document_type) || null,
+    documentStatusCurrent: normalizeUpperText(row.document_status) || null,
+    operatingUnitId,
+    operatingUnitCode,
+    operatingUnitName,
+    operatingUnitContextLabel,
+    ownerContextLabel: operatingUnitContextLabel,
+    currencyCode: normalizeUpperText(row.currency_code) || null,
+    currencyCodeSnapshot: normalizeUpperText(row.currency_code) || null,
+    originalAmountTxn: Number(row.original_amount_txn || 0),
+    originalAmountBase: Number(row.original_amount_base || 0),
+    allocatedAmountTxnAsOf: Number(row.settled_amount_txn || 0),
+    allocatedAmountBaseAsOf: Number(row.settled_amount_base || 0),
+    residualAmountTxnAsOf: Number(row.residual_amount_txn || 0),
+    residualAmountBaseAsOf: Number(row.residual_amount_base || 0),
+    settledAmountTxnAsOf: Number(row.settled_amount_txn || 0),
+    settledAmountBaseAsOf: Number(row.settled_amount_base || 0),
+    asOfStatus: normalizeUpperText(row.status) || null,
+  };
 }
 
 async function fetchOpenItemsByIdsForUpdate({
@@ -6018,6 +6099,28 @@ export async function applyCariSettlement({
       assertScopeAccess,
     })
   );
+}
+
+export async function getCariSettlementOpenItemsPreview({
+  filters,
+  runQuery = query,
+}) {
+  const rows = await fetchOpenItemsForApply({
+    tenantId: filters.tenantId,
+    legalEntityId: filters.legalEntityId,
+    counterpartyId: filters.counterpartyId,
+    operatingUnitId: filters.operatingUnitId,
+    currencyCode: filters.currencyCode,
+    direction: filters.direction,
+    asOfDate: filters.asOfDate,
+    forUpdate: false,
+    runQuery,
+  });
+
+  return {
+    count: rows.length,
+    rows: rows.slice(0, filters.limit).map(mapOpenItemPreviewRow),
+  };
 }
 
 export async function attachCariBankReference({

@@ -27,7 +27,11 @@ import {
 } from "./cariReportsUtils.js";
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function toNumber(value) {
@@ -159,6 +163,38 @@ function resolveDefaultTabForDirection(direction) {
   return REPORT_TABS.AR_AGING;
 }
 
+function normalizeReportShortcut(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  if (
+    normalized === "balances" ||
+    normalized === "open-items" ||
+    normalized === "open_items"
+  ) {
+    return REPORT_TABS.OPEN_ITEMS;
+  }
+  if (normalized === "statement") {
+    return REPORT_TABS.STATEMENT;
+  }
+  if (normalized === "ar-aging" || normalized === "ar_aging") {
+    return REPORT_TABS.AR_AGING;
+  }
+  if (normalized === "ap-aging" || normalized === "ap_aging") {
+    return REPORT_TABS.AP_AGING;
+  }
+  if (
+    normalized === "settlement-realized-fx" ||
+    normalized === "settlement_realized_fx" ||
+    normalized === "realized-fx" ||
+    normalized === "realized_fx"
+  ) {
+    return REPORT_TABS.SETTLEMENT_REALIZED_FX;
+  }
+  return "";
+}
+
 function buildDefaultFilters(direction = "") {
   const fixedRole = resolveRoleFromDirection(direction);
   return fixedRole ? { ...DEFAULT_FILTERS, role: fixedRole } : { ...DEFAULT_FILTERS };
@@ -251,6 +287,10 @@ export default function CariReportsPage({ direction = "" }) {
     () => resolveRouteFixedDirection(direction, searchParams),
     [direction, searchParams]
   );
+  const requestedReportTab = useMemo(
+    () => normalizeReportShortcut(searchParams.get("report")),
+    [searchParams]
+  );
   const fixedRole = useMemo(
     () => resolveRoleFromDirection(fixedRouteDirection),
     [fixedRouteDirection]
@@ -262,7 +302,7 @@ export default function CariReportsPage({ direction = "" }) {
   const canReadOrg = hasPermission("org.tree.read");
 
   const [activeTab, setActiveTab] = useState(() =>
-    resolveDefaultTabForDirection(fixedRouteDirection)
+    requestedReportTab || resolveDefaultTabForDirection(fixedRouteDirection)
   );
   const [filters, setFilters] = useState(() => buildDefaultFilters(fixedRouteDirection));
   const [reportData, setReportData] = useState(null);
@@ -405,11 +445,12 @@ export default function CariReportsPage({ direction = "" }) {
   }, [canReadCards, canReadOrg]);
 
   useEffect(() => {
+    const defaultTab =
+      requestedReportTab || resolveDefaultTabForDirection(fixedRouteDirection);
+    setActiveTab((prev) => (prev === defaultTab ? prev : defaultTab));
     if (!hasFixedRouteDirection) {
       return;
     }
-    const defaultTab = resolveDefaultTabForDirection(fixedRouteDirection);
-    setActiveTab((prev) => (prev === defaultTab ? prev : defaultTab));
     setFilters((prev) => {
       if (prev.role === fixedRole) {
         return prev;
@@ -419,7 +460,7 @@ export default function CariReportsPage({ direction = "" }) {
         role: fixedRole,
       };
     });
-  }, [fixedRole, fixedRouteDirection, hasFixedRouteDirection]);
+  }, [fixedRole, fixedRouteDirection, hasFixedRouteDirection, requestedReportTab]);
 
   useEffect(() => {
     loadReport(activeTab, filters);

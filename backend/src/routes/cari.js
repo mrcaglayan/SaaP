@@ -18,12 +18,14 @@ import {
 import {
   parseBankApplyInput,
   parseBankAttachInput,
+  parseSettlementOpenItemsPreviewFilters,
   parseSettlementApplyInput,
   parseSettlementReverseInput,
 } from "./cari.settlement.validators.js";
 import {
   attachCariBankReference,
   applyCariSettlement,
+  getCariSettlementOpenItemsPreview,
   resolveCariSettlementScope,
   reverseCariSettlementById,
 } from "../services/cari.settlement.service.js";
@@ -234,6 +236,23 @@ router.post(
       original: result.original,
       journal: result.journal,
       followUpRisks: result.followUpRisks || [],
+    });
+  })
+);
+
+router.get(
+  "/settlements/open-items-preview",
+  requirePermission("cari.report.read", {
+    resolveScope: (req) => resolveCariScope(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseSettlementOpenItemsPreviewFilters(req);
+    const result = await getCariSettlementOpenItemsPreview({
+      filters,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
     });
   })
 );

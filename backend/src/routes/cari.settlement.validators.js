@@ -444,3 +444,34 @@ export function parseSettlementReverseInput(req) {
     reason,
   };
 }
+
+export function parseSettlementOpenItemsPreviewFilters(req) {
+  const tenantId = requireTenantId(req);
+  const legalEntityId = requirePositiveInt(req.query?.legalEntityId, "legalEntityId");
+  const counterpartyId = requirePositiveInt(req.query?.counterpartyId, "counterpartyId");
+  const operatingUnitId = optionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId");
+  const directionRaw = String(req.query?.direction || "")
+    .trim()
+    .toUpperCase();
+  const direction = directionRaw
+    ? normalizeEnum(directionRaw, "direction", DIRECTION_VALUES)
+    : null;
+  const currencyCodeRaw = String(req.query?.currencyCode || "").trim();
+  const currencyCode = currencyCodeRaw
+    ? normalizeCurrencyCode(currencyCodeRaw, "currencyCode")
+    : null;
+  const asOfDate = parseOptionalDate(req.query?.asOfDate || req.query?.as_of_date, "asOfDate");
+  const limitParsed = parsePositiveInt(req.query?.limit);
+  const limit = !limitParsed ? 500 : Math.min(limitParsed, 1000);
+
+  return {
+    tenantId,
+    legalEntityId,
+    counterpartyId,
+    operatingUnitId,
+    direction,
+    currencyCode,
+    asOfDate,
+    limit,
+  };
+}

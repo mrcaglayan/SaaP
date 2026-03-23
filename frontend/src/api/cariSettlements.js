@@ -1,5 +1,5 @@
 import { api } from "./client.js";
-import { parseCariApiError } from "./cariCommon.js";
+import { parseCariApiError, toCariQueryString } from "./cariCommon.js";
 
 async function run(requestFn) {
   try {
@@ -160,6 +160,12 @@ export async function applyCariSettlement(payload) {
 export async function reverseCariSettlement(settlementBatchId, payload = {}) {
   return run(() =>
     api.post(`/api/v1/cari/settlements/${settlementBatchId}/reverse`, payload)
+  );
+}
+
+export async function getCariSettlementOpenItemsPreview(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cari/settlements/open-items-preview${toCariQueryString(params)}`)
   );
 }
 
