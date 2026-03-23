@@ -13,6 +13,10 @@ async function fileContains(filePath, expectedSnippet) {
   return source.includes(expectedSnippet);
 }
 
+function escapeForRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function main() {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -34,30 +38,64 @@ async function main() {
   const links = collectSidebarLinks(sidebarItems);
   const linkByPath = new Map(links.map((row) => [String(row.to), row]));
 
-  const expectedRoutes = [
+  const expectedSidebarRoutes = [
     {
-      path: "/app/alici-kart-olustur",
-      permission: "cari.card.upsert",
+      path: "/app/musteri-kartlari",
+      permission: "cari.card.read",
+    },
+    {
+      path: "/app/tedarikci-kartlari",
+      permission: "cari.card.read",
+    },
+  ];
+
+  const expectedCanonicalRoutes = [
+    {
+      path: "/app/musteri-kartlari/olustur",
+      permissionPath: "/app/musteri-kartlari",
       pageKey: "buyerCreate",
     },
     {
-      path: "/app/alici-kart-listesi",
-      permission: "cari.card.read",
+      path: "/app/musteri-kartlari",
+      permissionPath: null,
       pageKey: "buyerList",
     },
     {
-      path: "/app/satici-kart-olustur",
-      permission: "cari.card.upsert",
+      path: "/app/tedarikci-kartlari/olustur",
+      permissionPath: "/app/tedarikci-kartlari",
       pageKey: "vendorCreate",
     },
     {
-      path: "/app/satici-kart-listesi",
-      permission: "cari.card.read",
+      path: "/app/tedarikci-kartlari",
+      permissionPath: null,
       pageKey: "vendorList",
     },
   ];
 
-  for (const row of expectedRoutes) {
+  const expectedLegacyAliasRoutes = [
+    {
+      path: "/app/alici-kart-olustur",
+      permissionPath: "/app/musteri-kartlari",
+      redirectTo: "/app/musteri-kartlari/olustur",
+    },
+    {
+      path: "/app/alici-kart-listesi",
+      permissionPath: "/app/musteri-kartlari",
+      redirectTo: "/app/musteri-kartlari",
+    },
+    {
+      path: "/app/satici-kart-olustur",
+      permissionPath: "/app/tedarikci-kartlari",
+      redirectTo: "/app/tedarikci-kartlari/olustur",
+    },
+    {
+      path: "/app/satici-kart-listesi",
+      permissionPath: "/app/tedarikci-kartlari",
+      redirectTo: "/app/tedarikci-kartlari",
+    },
+  ];
+
+  for (const row of expectedSidebarRoutes) {
     const link = linkByPath.get(row.path);
     assert(link, `Sidebar link missing for ${row.path}`);
     assert(link.implemented === true, `Sidebar link should be implemented for ${row.path}`);
@@ -71,16 +109,31 @@ async function main() {
   }
 
   const appSource = await readFile(appPath, "utf8");
-  for (const row of expectedRoutes) {
-    assert(
-      appSource.includes(`appPath: "${row.path}"`),
-      `App route is missing for ${row.path}`
+  for (const row of expectedCanonicalRoutes) {
+    const routePattern = new RegExp(
+      `appPath:\\s*"${escapeForRegex(row.path)}"[\\s\\S]*?` +
+        (row.permissionPath
+          ? `permissionPath:\\s*"${escapeForRegex(row.permissionPath)}"[\\s\\S]*?`
+          : "") +
+        `pageKey="${escapeForRegex(row.pageKey)}"`,
+      "m"
     );
     assert(
-      appSource.includes(`pageKey="${row.pageKey}"`),
-      `App route should wire pageKey=${row.pageKey}`
+      routePattern.test(appSource),
+      `App route should wire ${row.path} to pageKey=${row.pageKey}`
     );
   }
+
+  for (const row of expectedLegacyAliasRoutes) {
+    const aliasPattern = new RegExp(
+      `appPath:\\s*"${escapeForRegex(row.path)}"[\\s\\S]*?` +
+        `permissionPath:\\s*"${escapeForRegex(row.permissionPath)}"[\\s\\S]*?` +
+        `LegacyRouteRedirect\\s+to="${escapeForRegex(row.redirectTo)}"`,
+      "m"
+    );
+    assert(aliasPattern.test(appSource), `Legacy alias route is missing for ${row.path}`);
+  }
+
   const permissionGuardPattern =
     /element=\{withPermissionGuard\(\s*route\.appPath,\s*route\.element(?:,\s*hasAnyFeature)?\s*\)\}/m;
   assert(
@@ -191,7 +244,9 @@ async function main() {
   console.log(
     JSON.stringify(
       {
-        checkedRouteCount: expectedRoutes.length,
+        checkedSidebarRouteCount: expectedSidebarRoutes.length,
+        checkedCanonicalRouteCount: expectedCanonicalRoutes.length,
+        checkedLegacyAliasRouteCount: expectedLegacyAliasRoutes.length,
         checkedFiles: [appPath, sidebarPath, pagePath, formPath, apiPath, utilsPath].length,
       },
       null,
