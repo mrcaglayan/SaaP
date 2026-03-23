@@ -12,6 +12,8 @@ const BASELINE_CANONICAL_IMPLEMENTED_ROUTES = new Set([
   "/app/acilis-fisi",
   "/app/alis-faturalari",
   "/app/ayarlar/exception-workbench",
+  "/app/ayarlar/demirbas-ayarlari",
+  "/app/ayarlar/demirbas-zimmetlileri",
   "/app/ayarlar/hesap-plani-ayarlari",
   "/app/ayarlar/hesap-plani-olustur",
   "/app/ayarlar/hesap-yeniden-siniflandirma",
@@ -33,6 +35,12 @@ const BASELINE_CANONICAL_IMPLEMENTED_ROUTES = new Set([
   "/app/banka-onaylar",
   "/app/banka-tanimla",
   "/app/contracts",
+  "/app/demirbas-alim-islemleri",
+  "/app/demirbas-amortisman-islemleri",
+  "/app/demirbas-karti-listesi",
+  "/app/demirbas-karti-olustur",
+  "/app/demirbas-raporu",
+  "/app/demirbas-satis-islemleri",
   "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",
   "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",
   "/app/gelecek-yillar-gelirleri",
@@ -98,7 +106,8 @@ function parseCanonicalImplementedRoutes(appSource) {
   assert(blockMatch?.[1], "Could not parse implementedRoutes block from App.jsx");
 
   const constMap = parseConstantStringMap(appSource);
-  const chunks = blockMatch[1]
+  const normalizedBlock = blockMatch[1].replace(/\r\n/g, "\n");
+  const chunks = normalizedBlock
     .split(/\n\s*},\n/g)
     .map((row) => row.trim())
     .filter(Boolean);
