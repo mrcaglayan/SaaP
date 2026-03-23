@@ -52,6 +52,15 @@ function mapLegalEntityOption(row) {
   return opt;
 }
 
+function resolveOptionLabel(options, value) {
+  const normalizedValue = String(toPositiveInt(value) || "").trim();
+  if (!normalizedValue) return "-";
+  const match = (Array.isArray(options) ? options : []).find(
+    (option) => String(option?.value || "").trim() === normalizedValue
+  );
+  return match?.label || `#${normalizedValue}`;
+}
+
 function formatDate(value) {
   if (!value) return "-";
   const s = String(value).slice(0, 10);
@@ -403,8 +412,12 @@ export default function FixedAssetsPage() {
                         {row.status || "-"}
                       </span>
                     </td>
-                    <td className="px-3 py-2">{row.ownerOperatingUnitId || "-"}</td>
-                    <td className="px-3 py-2">{row.locationOperatingUnitId || "-"}</td>
+                    <td className="px-3 py-2">
+                      {resolveOptionLabel(ouOptions, row.ownerOperatingUnitId)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {resolveOptionLabel(ouOptions, row.locationOperatingUnitId)}
+                    </td>
                     <td className="px-3 py-2">{row.custodianDisplayName || "-"}</td>
                     <td className="px-3 py-2">{formatDate(row.acquisitionDate)}</td>
                     <td className="px-3 py-2">{formatDate(row.inServiceDate)}</td>

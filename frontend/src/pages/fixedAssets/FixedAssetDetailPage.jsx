@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
+import { isValidElement, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { listAccounts } from "../../api/glAdmin.js";
+import { listOperatingUnits } from "../../api/orgAdmin.js";
+import { getCariDocument } from "../../api/cariDocuments.js";
+import { listUsers } from "../../api/rbacAdmin.js";
 import {
+  activateFixedAsset,
   getFixedAsset,
   getFixedAssetDepreciationSchedule,
   listFixedAssetTransactions,
@@ -34,12 +39,17 @@ function formatBool(value) {
   return value ? "Yes" : "No";
 }
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
 function DetailField({ label, value, mono = false }) {
+  const hasValue = value != null && value !== "";
   return (
     <div>
       <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
       <dd className={`mt-0.5 text-sm text-slate-900 ${mono ? "font-mono" : ""}`}>
-        {value != null && value !== "" ? String(value) : "-"}
+        {!hasValue ? "-" : isValidElement(value) ? value : String(value)}
       </dd>
     </div>
   );
@@ -65,21 +75,41 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function buildActivationForm(asset = null) {
+  const acquisitionDate = normalizeText(asset?.acquisitionDate);
+  const capitalizationDate = normalizeText(asset?.capitalizationDate);
+  const inServiceDate = normalizeText(asset?.inServiceDate);
+  const defaultDate = acquisitionDate || capitalizationDate || todayIsoDate();
+  return {
+    postingDate: capitalizationDate || defaultDate,
+    capitalizationDate: capitalizationDate || defaultDate,
+    inServiceDate: inServiceDate || capitalizationDate || acquisitionDate || todayIsoDate(),
+  };
+}
+
 const CARI_DOCUMENTS_ROUTE = "/app/satis-faturalari";
+const CARI_AP_DOCUMENTS_ROUTE = "/app/alis-faturalari";
 const SALE_ELIGIBLE_STATUSES = new Set([
   "ACTIVE",
   "SUSPENDED",
   "FULLY_DEPRECIATED",
 ]);
 
-function buildCariDocumentPath(documentId) {
+function resolveCariDocumentsRoute(direction) {
+  return String(direction || "").trim().toUpperCase() === "AP"
+    ? CARI_AP_DOCUMENTS_ROUTE
+    : CARI_DOCUMENTS_ROUTE;
+}
+
+function buildCariDocumentPath(documentId, direction = "AR") {
   const normalizedDocumentId = parsePositiveInt(documentId);
+  const baseRoute = resolveCariDocumentsRoute(direction);
   if (!normalizedDocumentId) {
-    return CARI_DOCUMENTS_ROUTE;
+    return baseRoute;
   }
   const params = new URLSearchParams();
   params.set("documentId", String(normalizedDocumentId));
-  return `${CARI_DOCUMENTS_ROUTE}?${params.toString()}`;
+  return `${baseRoute}?${params.toString()}`;
 }
 
 function buildCariSalePrefillPath(asset) {
@@ -112,6 +142,86 @@ function createInitialLegacySaleFallbackForm() {
     documentDate: todayIsoDate(),
     saleAmountTxn: "",
   };
+}
+
+function buildCodeNameLabel(row, idFallback) {
+  const code = normalizeText(row?.code);
+  const name = normalizeText(row?.name);
+  if (code && name) return `${code} - ${name}`;
+  if (code) return code;
+  if (name) return name;
+  const normalizedId = parsePositiveInt(idFallback);
+  return normalizedId ? `#${normalizedId}` : "-";
+}
+
+function buildUserLabel(rows, userId) {
+  const normalizedUserId = parsePositiveInt(userId);
+  if (!normalizedUserId) return "-";
+  const match = (Array.isArray(rows) ? rows : []).find(
+    (row) => parsePositiveInt(row?.id) === normalizedUserId
+  );
+  const name = normalizeText(
+    match?.name ||
+    match?.displayName ||
+    match?.display_name ||
+    match?.fullName ||
+    match?.full_name
+  );
+  const email = normalizeText(match?.email);
+  if (name && email) return `${name} (${email})`;
+  if (name) return name;
+  if (email) return email;
+  return `User ID #${normalizedUserId}`;
+}
+
+function buildAccountLabel(rows, accountId) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  if (!normalizedAccountId) return "-";
+  const match = (Array.isArray(rows) ? rows : []).find(
+    (row) => parsePositiveInt(row?.id) === normalizedAccountId
+  );
+  return buildCodeNameLabel(match, normalizedAccountId);
+}
+
+function buildOperatingUnitLabel(rows, operatingUnitId) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (!normalizedOperatingUnitId) return "-";
+  const match = (Array.isArray(rows) ? rows : []).find(
+    (row) => parsePositiveInt(row?.id) === normalizedOperatingUnitId
+  );
+  return buildCodeNameLabel(match, normalizedOperatingUnitId);
+}
+
+function buildCariDocumentLabel(document, idFallback) {
+  if (!document) {
+    const normalizedId = parsePositiveInt(idFallback);
+    return normalizedId ? `Record ID #${normalizedId}` : "-";
+  }
+  const documentNo = normalizeText(document?.documentNo);
+  const documentDate = normalizeText(document?.documentDate);
+  if (documentNo && documentDate) {
+    return `${documentNo} · ${documentDate}`;
+  }
+  return documentNo || documentDate || `Record ID #${idFallback}`;
+}
+
+function buildCariLineLabel(document, lineId) {
+  const normalizedLineId = parsePositiveInt(lineId);
+  if (!normalizedLineId) return "-";
+  if (!document) return `Line record ID #${normalizedLineId}`;
+  const line = (Array.isArray(document?.lines) ? document.lines : []).find(
+    (candidate) => parsePositiveInt(candidate?.id) === normalizedLineId
+  );
+  if (!line) return `Line record ID #${normalizedLineId}`;
+  const lineNo = Number(line?.lineNo || 0);
+  const description = normalizeText(line?.description);
+  if (lineNo > 0 && description) {
+    return `Line ${lineNo} - ${description}`;
+  }
+  if (lineNo > 0) {
+    return `Line ${lineNo}`;
+  }
+  return description || `#${normalizedLineId}`;
 }
 
 export default function FixedAssetDetailPage() {
@@ -154,6 +264,15 @@ export default function FixedAssetDetailPage() {
   const [legacySaleFallbackSaving, setLegacySaleFallbackSaving] = useState(false);
   const [legacySaleFallbackError, setLegacySaleFallbackError] = useState("");
   const [legacySaleFallbackResult, setLegacySaleFallbackResult] = useState(null);
+  const [activationOpen, setActivationOpen] = useState(false);
+  const [activationForm, setActivationForm] = useState(() => buildActivationForm());
+  const [activationSaving, setActivationSaving] = useState(false);
+  const [activationError, setActivationError] = useState("");
+  const [activationSuccess, setActivationSuccess] = useState("");
+  const [accountRows, setAccountRows] = useState([]);
+  const [operatingUnitRows, setOperatingUnitRows] = useState([]);
+  const [sourceCariDocument, setSourceCariDocument] = useState(null);
+  const [userRows, setUserRows] = useState([]);
 
   useEffect(() => {
     if (!canRead || !assetId) { setAsset(null); return; }
@@ -229,7 +348,80 @@ export default function FixedAssetDetailPage() {
     setLegacySaleFallbackError("");
     setLegacySaleFallbackResult(null);
     setLegacySaleFallbackForm(createInitialLegacySaleFallbackForm());
+    setActivationOpen(false);
+    setActivationError("");
+    setActivationSuccess("");
+    setActivationForm(buildActivationForm(asset));
   }, [asset?.id]);
+
+  useEffect(() => {
+    const legalEntityId = parsePositiveInt(asset?.legalEntityId);
+    if (!legalEntityId) {
+      setAccountRows([]);
+      setOperatingUnitRows([]);
+      return;
+    }
+    let active = true;
+    (async () => {
+      try {
+        const [accountResponse, operatingUnitResponse] = await Promise.all([
+          listAccounts({
+            legalEntityId,
+            includeInactive: true,
+            limit: 1000,
+          }),
+          listOperatingUnits({ legalEntityId, limit: 500 }),
+        ]);
+        if (!active) return;
+        setAccountRows(Array.isArray(accountResponse?.rows) ? accountResponse.rows : []);
+        setOperatingUnitRows(Array.isArray(operatingUnitResponse?.rows) ? operatingUnitResponse.rows : []);
+      } catch {
+        if (!active) return;
+        setAccountRows([]);
+        setOperatingUnitRows([]);
+      }
+    })();
+    return () => { active = false; };
+  }, [asset?.legalEntityId]);
+
+  useEffect(() => {
+    const documentId = parsePositiveInt(asset?.sourceCariDocumentId);
+    if (!documentId || !canReadCariDocuments) {
+      setSourceCariDocument(null);
+      return;
+    }
+    let active = true;
+    (async () => {
+      try {
+        const response = await getCariDocument(documentId);
+        if (active) {
+          setSourceCariDocument(response || null);
+        }
+      } catch {
+        if (active) {
+          setSourceCariDocument(null);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [asset?.sourceCariDocumentId, canReadCariDocuments]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const response = await listUsers();
+        if (active) {
+          setUserRows(Array.isArray(response?.rows) ? response.rows : []);
+        }
+      } catch {
+        if (active) {
+          setUserRows([]);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   // Focused transaction (highlighted from deep-link)
   const focusedTransactionId = queryTransactionId;
@@ -284,6 +476,30 @@ export default function FixedAssetDetailPage() {
   const isSaleEligibleStatus = SALE_ELIGIBLE_STATUSES.has(status);
   const canOpenCariSaleFlow = canReadCariDocuments && canCreateCariDocuments;
   const canUseLegacySaleFallback = canDispose && canCreateCariDocuments;
+  const ownerOperatingUnitLabel = buildOperatingUnitLabel(
+    operatingUnitRows,
+    asset.ownerOperatingUnitId
+  );
+  const locationOperatingUnitLabel = buildOperatingUnitLabel(
+    operatingUnitRows,
+    asset.locationOperatingUnitId
+  );
+  const assetAccountLabel = buildAccountLabel(accountRows, asset.assetAccountId);
+  const accumDeprAccountLabel = buildAccountLabel(accountRows, asset.accumDeprAccountId);
+  const deprExpenseAccountLabel = buildAccountLabel(accountRows, asset.deprExpenseAccountId);
+  const disposalGainAccountLabel = buildAccountLabel(accountRows, asset.disposalGainAccountId);
+  const disposalLossAccountLabel = buildAccountLabel(accountRows, asset.disposalLossAccountId);
+  const sourceCariDirection = normalizeText(sourceCariDocument?.direction).toUpperCase() || "AP";
+  const sourceCariDocumentLabel = buildCariDocumentLabel(
+    sourceCariDocument,
+    asset.sourceCariDocumentId
+  );
+  const sourceCariLineLabel = buildCariLineLabel(
+    sourceCariDocument,
+    asset.sourceCariDocumentLineId
+  );
+  const createdByLabel = buildUserLabel(userRows, asset.createdByUserId);
+  const updatedByLabel = buildUserLabel(userRows, asset.updatedByUserId);
 
   async function handleCreateLegacySaleFallbackDraft() {
     const normalizedAssetId = parsePositiveInt(asset?.id);
@@ -348,6 +564,59 @@ export default function FixedAssetDetailPage() {
     }
   }
 
+  async function handleActivateAsset() {
+    const normalizedAssetId = parsePositiveInt(asset?.id);
+    if (!normalizedAssetId) {
+      setActivationError(
+        l("Asset record is missing.", "Demirbas kaydi eksik.")
+      );
+      return;
+    }
+
+    const postingDate = normalizeText(activationForm.postingDate);
+    const capitalizationDate = normalizeText(activationForm.capitalizationDate);
+    const inServiceDate = normalizeText(activationForm.inServiceDate);
+
+    if (!postingDate || !capitalizationDate || !inServiceDate) {
+      setActivationError(
+        l(
+          "Posting date, capitalization date, and in-service date are required.",
+          "Kayit tarihi, aktiflesme tarihi ve hizmete giris tarihi zorunludur."
+        )
+      );
+      return;
+    }
+
+    setActivationSaving(true);
+    setActivationError("");
+    setActivationSuccess("");
+    try {
+      const response = await activateFixedAsset(normalizedAssetId, {
+        postingDate,
+        capitalizationDate,
+        inServiceDate,
+      });
+      setAsset(response || null);
+      setActivationOpen(false);
+      setActivationSuccess(
+        l(
+          "Asset activated successfully.",
+          "Demirbas basariyla aktiflestirildi."
+        )
+      );
+      setActiveTab("overview");
+    } catch (err) {
+      setActivationError(
+        normalizeApiError(
+          err,
+          l("Failed to activate asset.", "Demirbas aktiflestirilemedi.")
+        )
+      );
+    } finally {
+      setActivationSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -381,9 +650,19 @@ export default function FixedAssetDetailPage() {
               </span>
             ) : null}
             {canPost && status === "DRAFT" ? (
-              <span className="rounded-md bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 border border-emerald-200">
+              <button
+                type="button"
+                className="rounded-md bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
+                onClick={() => {
+                  setActivationOpen(true);
+                  setActivationError("");
+                  setActivationSuccess("");
+                  setActivationForm(buildActivationForm(asset));
+                }}
+                disabled={activationSaving}
+              >
                 {l("Activate", "Aktiflestir")}
-              </span>
+              </button>
             ) : null}
             {canPost && status === "ACTIVE" ? (
               <span className="rounded-md bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 border border-amber-200">
@@ -416,6 +695,96 @@ export default function FixedAssetDetailPage() {
               </span>
             ) : null}
           </div>
+          {activationSuccess ? (
+            <p className="mt-3 text-sm text-emerald-700">{activationSuccess}</p>
+          ) : null}
+          {activationError ? (
+            <p className="mt-3 text-sm text-rose-700">{activationError}</p>
+          ) : null}
+          {activationOpen ? (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                {l("Activate Asset", "Demirbasi Aktiflestir")}
+              </p>
+              <p className="mt-2 text-sm text-emerald-950">
+                {l(
+                  "Set the real service dates before activation. If the asset started being used earlier, enter that historical in-service date here.",
+                  "Aktiflestirmeden once gercek hizmet tarihlerini girin. Varlik daha once kullanima basladiysa, o gercek hizmete giris tarihini burada girin."
+                )}
+              </p>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                  {l("Posting Date", "Kayit Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={activationForm.postingDate}
+                    onChange={(event) =>
+                      setActivationForm((prev) => ({
+                        ...prev,
+                        postingDate: event.target.value,
+                      }))
+                    }
+                    disabled={activationSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                  {l("Capitalization Date", "Aktiflesme Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={activationForm.capitalizationDate}
+                    onChange={(event) =>
+                      setActivationForm((prev) => ({
+                        ...prev,
+                        capitalizationDate: event.target.value,
+                      }))
+                    }
+                    disabled={activationSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                  {l("In-Service Date", "Hizmete Giris Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={activationForm.inServiceDate}
+                    onChange={(event) =>
+                      setActivationForm((prev) => ({
+                        ...prev,
+                        inServiceDate: event.target.value,
+                      }))
+                    }
+                    disabled={activationSaving}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                  onClick={handleActivateAsset}
+                  disabled={activationSaving}
+                >
+                  {activationSaving
+                    ? l("Activating...", "Aktiflestiriliyor...")
+                    : l("Confirm Activation", "Aktiflestirmeyi Onayla")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+                  onClick={() => {
+                    setActivationOpen(false);
+                    setActivationError("");
+                    setActivationForm(buildActivationForm(asset));
+                  }}
+                  disabled={activationSaving}
+                >
+                  {l("Cancel", "Iptal")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           {canOverrideAccounts ? (
             <div className="mt-2 border-t border-slate-100 pt-2">
               <span className="rounded-md bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 border border-violet-200">
@@ -632,8 +1001,8 @@ export default function FixedAssetDetailPage() {
           </SectionCard>
 
           <SectionCard title={l("Organizational Assignment", "Organizasyonel Atama")}>
-            <DetailField label={l("Owner Operating Unit", "Sahip Isletme Birimi")} value={asset.ownerOperatingUnitId} />
-            <DetailField label={l("Location Operating Unit", "Lokasyon Isletme Birimi")} value={asset.locationOperatingUnitId} />
+            <DetailField label={l("Owner Operating Unit", "Sahip Isletme Birimi")} value={ownerOperatingUnitLabel} />
+            <DetailField label={l("Location Operating Unit", "Lokasyon Isletme Birimi")} value={locationOperatingUnitLabel} />
             <DetailField label={l("Department Code", "Departman Kodu")} value={asset.departmentCode} />
             <DetailField label={l("Cost Center Code", "Masraf Merkezi Kodu")} value={asset.costCenterCode} />
             <DetailField label={l("Custodian", "Zimmetli")} value={
@@ -658,8 +1027,20 @@ export default function FixedAssetDetailPage() {
           {/* Source CARI Linkage */}
           {asset.sourceCariDocumentId ? (
             <SectionCard title={l("Source CARI Linkage", "Kaynak CARI Baglantisi")}>
-              <DetailField label={l("CARI Document ID", "CARI Belge ID")} value={asset.sourceCariDocumentId} />
-              <DetailField label={l("CARI Document Line ID", "CARI Belge Satir ID")} value={asset.sourceCariDocumentLineId} />
+              <DetailField
+                label={l("CARI Document", "CARI Belgesi")}
+                value={
+                  canReadCariDocuments ? (
+                    <Link
+                      to={buildCariDocumentPath(asset.sourceCariDocumentId, sourceCariDirection)}
+                      className="text-cyan-700 hover:underline"
+                    >
+                      {sourceCariDocumentLabel}
+                    </Link>
+                  ) : sourceCariDocumentLabel
+                }
+              />
+              <DetailField label={l("CARI Source Line", "CARI Kaynak Satiri")} value={sourceCariLineLabel} />
               <DetailField label={l("CARI Line Unit No", "CARI Satir Birim No")} value={asset.sourceCariDocumentLineUnitNo} />
             </SectionCard>
           ) : null}
@@ -691,11 +1072,11 @@ export default function FixedAssetDetailPage() {
           </SectionCard>
 
           <SectionCard title={l("Account Mappings", "Hesap Eslemeleri")}>
-            <DetailField label={l("Asset Account", "Varlik Hesabi")} value={asset.assetAccountId} />
-            <DetailField label={l("Accum Depreciation Account", "Birikm. Amort. Hesabi")} value={asset.accumDeprAccountId} />
-            <DetailField label={l("Depreciation Expense Account", "Amort. Gider Hesabi")} value={asset.deprExpenseAccountId} />
-            <DetailField label={l("Disposal Gain Account", "Elden Cikarma Kar Hesabi")} value={asset.disposalGainAccountId} />
-            <DetailField label={l("Disposal Loss Account", "Elden Cikarma Zarar Hesabi")} value={asset.disposalLossAccountId} />
+            <DetailField label={l("Asset Account", "Varlik Hesabi")} value={assetAccountLabel} />
+            <DetailField label={l("Accum Depreciation Account", "Birikm. Amort. Hesabi")} value={accumDeprAccountLabel} />
+            <DetailField label={l("Depreciation Expense Account", "Amort. Gider Hesabi")} value={deprExpenseAccountLabel} />
+            <DetailField label={l("Disposal Gain Account", "Elden Cikarma Kar Hesabi")} value={disposalGainAccountLabel} />
+            <DetailField label={l("Disposal Loss Account", "Elden Cikarma Zarar Hesabi")} value={disposalLossAccountLabel} />
           </SectionCard>
         </div>
       ) : null}
@@ -842,8 +1223,8 @@ export default function FixedAssetDetailPage() {
       {/* ── Audit Trail Tab ──────────────────────────────────────── */}
       {activeTab === "audit" ? (
         <SectionCard title={l("Audit Trail", "Denetim Izi")}>
-          <DetailField label={l("Created By", "Olusturan")} value={asset.createdByUserId} />
-          <DetailField label={l("Updated By", "Guncelleyen")} value={asset.updatedByUserId} />
+          <DetailField label={l("Created By", "Olusturan")} value={createdByLabel} />
+          <DetailField label={l("Updated By", "Guncelleyen")} value={updatedByLabel} />
           <DetailField label={l("Created At", "Olusturma Tarihi")} value={formatDate(asset.createdAt)} />
           <DetailField label={l("Updated At", "Guncelleme Tarihi")} value={formatDate(asset.updatedAt)} />
         </SectionCard>

@@ -130,6 +130,7 @@ const DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
 const INVENTORY_MOVEMENTS_ROUTE = "/app/stok-yansitma-islemleri";
 const FIXED_ASSET_SETTINGS_PATH = "/app/ayarlar/demirbas-ayarlari";
 const INVENTORY_TRANSFERS_ROUTE = "/app/stok-transferleri";
+const FIXED_ASSET_DETAIL_ROUTE_PREFIX = "/app/demirbas-karti-detayi";
 const DOCUMENT_LINE_EXPANSION_LIMIT = 500;
 const LINE_TEXT_INPUT_COMMIT_DELAY_MS = 180;
 const FIXED_ASSET_AR_ELIGIBLE_STATUSES = [
@@ -10699,7 +10700,21 @@ export default function CariDocumentsPage({ direction = "" }) {
                   </p>
                 ) : (
                   <div className="mt-2 space-y-2">
-                    {selectedSnapshot.lines.map((line) => (
+                    {selectedSnapshot.lines.map((line) => {
+                      const isFixedAssetLine = line.subledgerType === "FIXED_ASSET";
+                      const targetFixedAssetId = toPositiveInt(line.targetFixedAssetId);
+                      const generatedFixedAssets = Array.isArray(line.generatedFixedAssets)
+                        ? line.generatedFixedAssets
+                        : [];
+                      const targetFixedAsset =
+                        targetFixedAssetId && fixedAssetRowsById instanceof Map
+                          ? fixedAssetRowsById.get(targetFixedAssetId) || null
+                          : null;
+                      const targetFixedAssetLabel =
+                        normalizeText(targetFixedAsset?.assetNo) ||
+                        normalizeText(targetFixedAsset?.name) ||
+                        (targetFixedAssetId ? `#${targetFixedAssetId}` : "");
+                      return (
                       <div
                         key={`detail-line-${line.id || line.lineNo}`}
                         className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
@@ -10716,9 +10731,37 @@ export default function CariDocumentsPage({ direction = "" }) {
                           {line.description || "-"}
                         </div>
                         <div className="mt-1 flex flex-wrap gap-3 text-slate-600">
-                          <span>
-                            {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
-                          </span>
+                          {isFixedAssetLine ? (
+                            <>
+                              <span>
+                                {l("Fixed asset mode", "Demirbas modu")}: {line.fixedAssetMode || "-"}
+                              </span>
+                              <span>
+                                {l("Fixed asset", "Demirbas")}:{" "}
+                                {targetFixedAssetId ? (
+                                  canReadFixedAssets ? (
+                                    <Link
+                                      to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${targetFixedAssetId}`}
+                                      className="text-cyan-700 hover:underline"
+                                    >
+                                      {targetFixedAssetLabel}
+                                    </Link>
+                                  ) : targetFixedAssetLabel
+                                ) : line.fixedAssetMode === "AUTO_CREATE" ? (
+                                  generatedFixedAssets.length > 0
+                                    ? l(
+                                        "Generated assets are listed below",
+                                        "Olusan demirbaslar asagida listeleniyor"
+                                      )
+                                    : l("Auto-create on post", "Kayitta otomatik olusturulur")
+                                ) : "-"}
+                              </span>
+                            </>
+                          ) : (
+                            <span>
+                              {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
+                            </span>
+                          )}
                           <span>
                             {l("Qty", "Miktar")}: {line.quantity ?? "-"}
                           </span>
@@ -10740,6 +10783,51 @@ export default function CariDocumentsPage({ direction = "" }) {
                             )}
                           </span>
                         </div>
+                        {isFixedAssetLine &&
+                        line.fixedAssetMode === "AUTO_CREATE" &&
+                        generatedFixedAssets.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                            <span className="font-semibold text-slate-700">
+                              {l("Generated fixed assets", "Olusan demirbaslar")}:
+                            </span>
+                            {generatedFixedAssets.map((assetRow) => {
+                              const generatedAssetId = toPositiveInt(assetRow?.id);
+                              const generatedAssetLabel =
+                                normalizeText(assetRow?.assetNo) ||
+                                normalizeText(assetRow?.name) ||
+                                (generatedAssetId ? `#${generatedAssetId}` : "-");
+                              const generatedAssetStatus = normalizeText(assetRow?.status);
+                              const generatedAssetUnitNo = toPositiveInt(
+                                assetRow?.sourceCariDocumentLineUnitNo
+                              );
+                              const chipLabel = [
+                                generatedAssetUnitNo
+                                  ? `${l("Unit", "Birim")} ${generatedAssetUnitNo}`
+                                  : null,
+                                generatedAssetLabel,
+                                generatedAssetStatus || null,
+                              ]
+                                .filter(Boolean)
+                                .join(" | ");
+                              return generatedAssetId && canReadFixedAssets ? (
+                                <Link
+                                  key={`generated-fixed-asset-${line.id || line.lineNo}-${generatedAssetId}`}
+                                  to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${generatedAssetId}`}
+                                  className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-1 text-cyan-800 hover:bg-cyan-100 hover:underline"
+                                >
+                                  {chipLabel}
+                                </Link>
+                              ) : (
+                                <span
+                                  key={`generated-fixed-asset-${line.id || line.lineNo}-${generatedAssetId || generatedAssetLabel}`}
+                                  className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-700"
+                                >
+                                  {chipLabel}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                         <div className="mt-2 grid gap-2 md:grid-cols-3">
                           <div className="rounded border border-slate-200 bg-white px-2 py-1">
                             <span className="block text-[11px] uppercase tracking-wide text-slate-500">
@@ -10820,7 +10908,7 @@ export default function CariDocumentsPage({ direction = "" }) {
                           </ul>
                         ) : null}
                       </div>
-                    ))}
+                    )})}
                   </div>
                 )}
               </div>

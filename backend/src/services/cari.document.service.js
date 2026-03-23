@@ -618,7 +618,7 @@ function documentReverseBlockedByInventoryError(documentId, inventoryBlocks) {
   );
 }
 
-function mapDocumentLineRow(row, taxes = [], stockLinks = []) {
+function mapDocumentLineRow(row, taxes = [], stockLinks = [], generatedFixedAssets = []) {
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -663,6 +663,9 @@ function mapDocumentLineRow(row, taxes = [], stockLinks = []) {
     updatedAt: row.updated_at || null,
     taxes: Array.isArray(taxes) ? taxes : [],
     stockLinks: Array.isArray(stockLinks) ? stockLinks : [],
+    generatedFixedAssets: Array.isArray(generatedFixedAssets)
+      ? generatedFixedAssets
+      : [],
   };
 }
 
@@ -1485,6 +1488,34 @@ async function listDocumentLineStockLinkRows({
   return result.rows || [];
 }
 
+async function listDocumentLineGeneratedFixedAssetRows({
+  tenantId,
+  legalEntityId,
+  documentId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        fa.id,
+        fa.asset_no,
+        fa.name,
+        fa.status,
+        fa.source_cari_document_line_id,
+        fa.source_cari_document_line_unit_no
+     FROM fixed_assets fa
+     WHERE fa.tenant_id = ?
+       AND fa.legal_entity_id = ?
+       AND fa.source_cari_document_id = ?
+       AND fa.source_cari_document_line_id IS NOT NULL
+     ORDER BY
+       fa.source_cari_document_line_id ASC,
+       COALESCE(fa.source_cari_document_line_unit_no, 0) ASC,
+       fa.id ASC`,
+    [tenantId, legalEntityId, documentId]
+  );
+  return result.rows || [];
+}
+
 async function loadDocumentLinesForDocument({
   tenantId,
   legalEntityId,
@@ -1509,6 +1540,12 @@ async function loadDocumentLinesForDocument({
     documentId,
     runQuery,
   });
+  const generatedFixedAssetRows = await listDocumentLineGeneratedFixedAssetRows({
+    tenantId,
+    legalEntityId,
+    documentId,
+    runQuery,
+  });
 
   const taxesByLineId = new Map();
   for (const taxRow of taxRows) {
@@ -1528,12 +1565,33 @@ async function loadDocumentLinesForDocument({
     }
     stockLinksByLineId.get(lineId).push(mappedStockLink);
   }
+  const generatedFixedAssetsByLineId = new Map();
+  for (const assetRow of generatedFixedAssetRows) {
+    const lineId = parsePositiveInt(assetRow.source_cari_document_line_id);
+    if (!lineId) {
+      continue;
+    }
+    const mappedAsset = {
+      id: parsePositiveInt(assetRow.id),
+      assetNo: assetRow.asset_no || null,
+      name: assetRow.name || null,
+      status: normalizeUpperText(assetRow.status),
+      sourceCariDocumentLineUnitNo: parsePositiveInt(
+        assetRow.source_cari_document_line_unit_no
+      ),
+    };
+    if (!generatedFixedAssetsByLineId.has(lineId)) {
+      generatedFixedAssetsByLineId.set(lineId, []);
+    }
+    generatedFixedAssetsByLineId.get(lineId).push(mappedAsset);
+  }
 
   return lineRows.map((lineRow) =>
     mapDocumentLineRow(
       lineRow,
       taxesByLineId.get(parsePositiveInt(lineRow.id)) || [],
-      stockLinksByLineId.get(parsePositiveInt(lineRow.id)) || []
+      stockLinksByLineId.get(parsePositiveInt(lineRow.id)) || [],
+      generatedFixedAssetsByLineId.get(parsePositiveInt(lineRow.id)) || []
     )
   );
 }
