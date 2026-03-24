@@ -761,8 +761,8 @@ export default function Dashboard() {
                   "No active assets currently need skipped-month depreciation review."
                 )
           }
-          to="/app/demirbas-amortisman-islemleri"
-          ctaLabel={t("dashboard.openQueue", "Open queue")}
+          to="/app/demirbas-ops-dashboard"
+          ctaLabel={t("dashboard.openDashboard", "Open dashboard")}
           locked={!canReadOps || !canReadFixedAssetRuns}
         />
       </div>

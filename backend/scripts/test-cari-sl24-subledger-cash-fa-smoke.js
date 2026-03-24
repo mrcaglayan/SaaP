@@ -828,6 +828,28 @@ async function getAssetRow(assetId) {
     return result.rows?.[0] || null;
   }
 
+async function listPostedDepreciationScheduleLinesByTransactionIds(transactionIds) {
+    const normalizedIds = Array.from(
+      new Set((Array.isArray(transactionIds) ? transactionIds : []).map((value) => toPositiveInt(value)).filter(Boolean))
+    );
+    if (normalizedIds.length === 0) {
+      return [];
+    }
+    const result = await query(
+      `SELECT
+        id,
+        asset_id,
+        period_key,
+        status,
+        posted_transaction_id
+      FROM fixed_asset_depreciation_schedule_lines
+      WHERE posted_transaction_id IN (${makeInClause(normalizedIds)})
+      ORDER BY id ASC`,
+      normalizedIds
+    );
+    return result.rows || [];
+  }
+
 async function getPendingStockLinkByLine(documentId, documentLineId) {
     const result = await query(
       `SELECT
@@ -1321,6 +1343,7 @@ async function runSaleSmoke(env, state, artifacts) {
         postingDate: scenarioDate(env.window, 3),
         capitalizationDate: scenarioDate(env.window, 3),
         inServiceDate: scenarioDate(env.window, 4),
+        assetTag: `SL24-SALE-${env.stamp}`,
         userId: env.userId,
       });
 
@@ -1340,7 +1363,6 @@ async function runSaleSmoke(env, state, artifacts) {
             description: "SL24 SALE line",
             subledgerType: "FIXED_ASSET",
             targetFixedAssetId: sourceAsset.id,
-            postingAccountId: env.accounts.arOffsetAccountId,
             quantity: 1,
             lineNetAmountTxn: 1200,
             lineTaxAmountTxn: 0,
@@ -1363,11 +1385,30 @@ async function runSaleSmoke(env, state, artifacts) {
         saleDraft.id,
         saleLine.id
       );
+      const cutoffDepreciationTransaction = saleTransactions.find(
+        (row) => normalizeUpper(row.transaction_type) === "DEPRECIATION"
+      );
       const saleTransaction = saleTransactions.find(
         (row) => normalizeUpper(row.transaction_type) === "SALE"
       );
       pushUnique(state.fixedAssetTransactionIds, saleTransactions.map((row) => row.id));
       assert(saleTransaction, "Sale smoke must create a SALE fixed-asset transaction");
+      assert(
+        cutoffDepreciationTransaction,
+        "Sale smoke must create a cutoff DEPRECIATION fixed-asset transaction"
+      );
+
+      const postedCutoffScheduleLines = await listPostedDepreciationScheduleLinesByTransactionIds([
+        cutoffDepreciationTransaction.id,
+      ]);
+      assert(
+        postedCutoffScheduleLines.length === 1
+        && normalizeUpper(postedCutoffScheduleLines[0]?.status) === "POSTED"
+        && toPositiveInt(postedCutoffScheduleLines[0]?.asset_id) === toPositiveInt(sourceAsset.id)
+        && toPositiveInt(postedCutoffScheduleLines[0]?.posted_transaction_id)
+          === toPositiveInt(cutoffDepreciationTransaction.id),
+        "Sale smoke must mark the disposal cutoff period as POSTED in depreciation schedule state"
+      );
 
       const assetRow = await getAssetRow(sourceAsset.id);
       assert(assetRow, "Disposed asset must remain queryable");
@@ -1671,6 +1712,7 @@ async function runReversalGuardSmoke(env, state) {
         postingDate: scenarioDate(env.window, 9),
         capitalizationDate: scenarioDate(env.window, 9),
         inServiceDate: scenarioDate(env.window, 10),
+        assetTag: `SL24-REV-GUARD-${env.stamp}`,
         userId: env.userId,
       });
 
@@ -2296,6 +2338,14 @@ async function cleanupState(state) {
         `DELETE FROM inventory_movements
         WHERE id IN (${makeInClause(inventoryMovementIds)})`,
         inventoryMovementIds
+      );
+    }
+
+    if (fixedAssetIds.length > 0) {
+      await query(
+        `DELETE FROM fixed_asset_depreciation_schedule_lines
+        WHERE asset_id IN (${makeInClause(fixedAssetIds)})`,
+        fixedAssetIds
       );
     }
 

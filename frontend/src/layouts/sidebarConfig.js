@@ -458,6 +458,12 @@ export const sidebarItems = [
         implemented: true,
       },
       {
+        label: "Demirbas Ops Dashboard",
+        to: "/app/demirbas-ops-dashboard",
+        requiredPermissions: ["fixed_assets.read", "fixed_assets.depreciation.run"],
+        implemented: true,
+      },
+      {
         label: "Amortisman Islemleri",
         to: "/app/demirbas-amortisman-islemleri",
         requiredPermissions: ["fixed_assets.depreciation.run"],

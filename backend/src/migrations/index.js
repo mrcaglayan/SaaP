@@ -136,6 +136,7 @@ import migration146CariDocumentsSettlementMode from "./m146_cari_documents_settl
 import migration147FixedAssetRunSkippedStatus from "./m147_fixed_asset_run_skipped_status.js";
 import migration148FixedAssetRunGuardSkipped from "./m148_fixed_asset_run_guard_skipped.js";
 import migration149FixedAssetCancelledStatus from "./m149_fixed_asset_cancelled_status.js";
+import migration150FixedAssetCatchUpDepreciationKind from "./m150_fixed_asset_catch_up_depreciation_kind.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -276,6 +277,7 @@ const migrations = [
   migration147FixedAssetRunSkippedStatus,
   migration148FixedAssetRunGuardSkipped,
   migration149FixedAssetCancelledStatus,
+  migration150FixedAssetCatchUpDepreciationKind,
 ];
 
 export default migrations;

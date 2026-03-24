@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Combobox from "../../components/Combobox.jsx";
+import InlineChildAccountCreatePanel from "../../components/InlineChildAccountCreatePanel.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
@@ -13,10 +14,27 @@ import {
 } from "../../api/fixedAssets.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
+import {
+  buildInlineParentAccountOptions,
+  buildNextInlineChildCode,
+  deriveSearchCodeCandidate,
+  findBestParentAccount,
+  findExactInlineCodeMatch,
+  normalizeAccountCode,
+  runInlineChildAccountCreate,
+} from "../../utils/glInlineChildAccounts.js";
+import { maybePromptParentBalanceTransferAfterChildCreate } from "../../utils/glInlineBalanceTransfer.js";
 
 const STATUS_VALUES = ["ACTIVE", "INACTIVE"];
 const SALVAGE_RULE_TYPES = ["NONE", "FIXED_BASE_AMOUNT", "PERCENT_OF_COST"];
 const DEPRECIATION_METHODS = ["STRAIGHT_LINE", "DECLINING_BALANCE", "NONE"];
+const CATEGORY_ACCOUNT_INLINE_FIELD_SPECS = {
+  defaultAssetAccountId: { accountType: "ASSET", fallbackNormalSide: "DEBIT" },
+  defaultAccumDeprAccountId: { accountType: "ASSET", fallbackNormalSide: "CREDIT" },
+  defaultDeprExpenseAccountId: { accountType: "EXPENSE", fallbackNormalSide: "DEBIT" },
+  defaultDisposalGainAccountId: { accountType: "REVENUE", fallbackNormalSide: "CREDIT" },
+  defaultDisposalLossAccountId: { accountType: "EXPENSE", fallbackNormalSide: "DEBIT" },
+};
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -69,11 +87,15 @@ function mapAccountRows(response) {
   }
   return response.rows.map((row) => ({
     id: Number(row?.id || 0),
+    coaId: Number(row?.coa_id || row?.coaId || 0) || null,
     code: String(row?.code || ""),
     name: String(row?.name || ""),
     accountType: String(row?.account_type || row?.accountType || "").toUpperCase(),
+    normalSide: String(row?.normal_side || row?.normalSide || "").toUpperCase(),
     allowPosting: Boolean(row?.allow_posting ?? row?.allowPosting),
     isActive: Boolean(row?.is_active ?? row?.isActive),
+    parentAccountId:
+      Number(row?.parent_account_id || row?.parentAccountId || 0) || null,
   }));
 }
 
@@ -99,6 +121,27 @@ function filterAccountRowsByType(rows, expectedType) {
     (row) =>
       row?.allowPosting &&
       normalizeText(row?.accountType).toUpperCase() === normalizedType
+  );
+}
+
+function createInlineAccountCreateDraft() {
+  return {
+    lookupQuery: "",
+    parentAccountId: "",
+    childCode: "",
+    childName: "",
+    saving: false,
+    error: "",
+    message: "",
+  };
+}
+
+function createCategoryInlineAccountCreateState() {
+  return Object.fromEntries(
+    Object.keys(CATEGORY_ACCOUNT_INLINE_FIELD_SPECS).map((fieldName) => [
+      fieldName,
+      createInlineAccountCreateDraft(),
+    ])
   );
 }
 
@@ -524,6 +567,12 @@ export default function FixedAssetSettingsPage() {
 
   const canReadSettings = hasPermission("fixed_assets.settings.read");
   const canUpsertSettings = hasPermission("fixed_assets.settings.upsert");
+  const canUpsertGlAccounts = hasPermission("gl.account.upsert");
+  const canCreateJournals = hasPermission("gl.journal.create");
+  const canPostJournals = hasPermission("gl.journal.post");
+  const canReadBooks = hasPermission("gl.book.read");
+  const canReadFiscalPeriods = hasPermission("org.fiscal_period.read");
+  const canReadTrialBalance = hasPermission("gl.trial_balance.read");
 
   // ── Legal entity lookup ─────────────────────────────────────────
   const [fallbackLeRows, setFallbackLeRows] = useState([]);
@@ -591,6 +640,9 @@ export default function FixedAssetSettingsPage() {
   const [catAccountLoading, setCatAccountLoading] = useState(false);
   const [catAccountError, setCatAccountError] = useState("");
   const [catAccountRefreshToken, setCatAccountRefreshToken] = useState(0);
+  const [catInlineAccountCreate, setCatInlineAccountCreate] = useState(
+    createCategoryInlineAccountCreateState
+  );
 
   // ── Profile state ───────────────────────────────────────────────
   const [profRows, setProfRows] = useState([]);
@@ -832,6 +884,67 @@ export default function FixedAssetSettingsPage() {
     () => filterAccountRowsByType(catAccountRows, "REVENUE").map(mapAccountOption).filter(Boolean),
     [catAccountRows]
   );
+  const catInlineAccountMetaByField = useMemo(() => {
+    const next = {};
+    const canResolveInlineAccount =
+      Boolean(toPositiveInt(catForm.legalEntityId)) && !catAccountLoading;
+    for (const [fieldName, spec] of Object.entries(
+      CATEGORY_ACCOUNT_INLINE_FIELD_SPECS
+    )) {
+      const inlineState =
+        catInlineAccountCreate[fieldName] || createInlineAccountCreateDraft();
+      const lookupQuery = normalizeText(inlineState.lookupQuery);
+      const codeCandidate = deriveSearchCodeCandidate(lookupQuery);
+      const parentRows = buildInlineParentAccountOptions(
+        catAccountRows,
+        spec.accountType
+      );
+      const exactMatch =
+        codeCandidate &&
+        canResolveInlineAccount &&
+        findExactInlineCodeMatch(catAccountRows, codeCandidate, spec.accountType);
+      const selectedParent =
+        parentRows.find(
+          (row) =>
+            toPositiveInt(row?.id) === toPositiveInt(inlineState.parentAccountId)
+        ) || null;
+      const bestParent =
+        findBestParentAccount(
+          normalizeAccountCode(inlineState.childCode || codeCandidate),
+          parentRows
+        ) ||
+        parentRows.find((row) => !toPositiveInt(row?.parentAccountId)) ||
+        parentRows[0] ||
+        null;
+      const effectiveParent = selectedParent || bestParent || null;
+      const suggestedNextCode = buildNextInlineChildCode(
+        catAccountRows,
+        effectiveParent
+      );
+      next[fieldName] = {
+        spec,
+        inlineState,
+        lookupQuery,
+        codeCandidate,
+        exactMatch,
+        parentLookupOptions: parentRows.map(mapAccountOption).filter(Boolean),
+        effectiveParentId: toPositiveInt(effectiveParent?.id)
+          ? String(effectiveParent.id)
+          : "",
+        effectiveChildCode:
+          normalizeText(inlineState.childCode) ||
+          suggestedNextCode ||
+          codeCandidate,
+        effectiveChildName: normalizeText(inlineState.childName) || lookupQuery,
+        suggestedNextCode,
+        showPanel:
+          canResolveInlineAccount &&
+          Boolean(lookupQuery) &&
+          !(Boolean(codeCandidate) && Boolean(exactMatch)),
+      };
+    }
+    return next;
+  }, [catAccountLoading, catAccountRows, catForm.legalEntityId, catInlineAccountCreate]);
   const catDetailAccountRowsById = useMemo(
     () =>
       new Map(
@@ -852,9 +965,230 @@ export default function FixedAssetSettingsPage() {
   );
 
   // ── Category handlers ──────────────────────────────────────────
+  function updateCatInlineAccountCreate(fieldName, patch) {
+    setCatInlineAccountCreate((current) => ({
+      ...current,
+      [fieldName]: {
+        ...(current[fieldName] || createInlineAccountCreateDraft()),
+        ...patch,
+      },
+    }));
+  }
+
+  function resetCatInlineAccountCreate(fieldName, patch = {}) {
+    setCatInlineAccountCreate((current) => ({
+      ...current,
+      [fieldName]: {
+        ...createInlineAccountCreateDraft(),
+        ...patch,
+      },
+    }));
+  }
+
+  function handleCatAccountLookupInput(fieldName, nextValue, meta = {}) {
+    const reason = normalizeText(meta?.reason).toLowerCase();
+    if (reason === "select" || reason === "clear") {
+      resetCatInlineAccountCreate(fieldName);
+      return;
+    }
+    const normalizedLookup = normalizeText(nextValue);
+    updateCatInlineAccountCreate(fieldName, {
+      lookupQuery: normalizedLookup,
+      parentAccountId: "",
+      childCode: "",
+      childName: normalizedLookup,
+      saving: false,
+      error: "",
+      message: "",
+    });
+  }
+
+  async function handleCatInlineAccountCreate(fieldName) {
+    const meta = catInlineAccountMetaByField[fieldName];
+    const spec = CATEGORY_ACCOUNT_INLINE_FIELD_SPECS[fieldName];
+    if (!meta || !spec) {
+      return;
+    }
+    updateCatInlineAccountCreate(fieldName, {
+      saving: true,
+      error: "",
+      message: "",
+    });
+    try {
+      const result = await runInlineChildAccountCreate({
+        legalEntityId: catForm.legalEntityId,
+        lookupName: meta.lookupQuery,
+        parentAccountIdValue:
+          meta.inlineState.parentAccountId || meta.effectiveParentId,
+        childCodeValue: meta.effectiveChildCode,
+        childNameValue: meta.effectiveChildName,
+        accountType: spec.accountType,
+        fallbackNormalSide: spec.fallbackNormalSide,
+        l,
+      });
+      setCatAccountRows(Array.isArray(result?.accountRows) ? result.accountRows : []);
+      setCatForm((current) => ({
+        ...current,
+        [fieldName]: result?.accountId ? String(result.accountId) : "",
+      }));
+      const transferOutcome =
+        result?.mode === "created"
+          ? await maybePromptParentBalanceTransferAfterChildCreate({
+              l,
+              legalEntityId: catForm.legalEntityId,
+              parentAccount: result?.parentAccount,
+              childAccountId: result?.accountId,
+              childCode: result?.accountRow?.code || result?.code || meta.effectiveChildCode,
+              childName: result?.accountRow?.name || meta.effectiveChildName,
+              accountPool: result?.accountRows,
+              canCreateJournals,
+              canPostJournals,
+              canReadBooks,
+              canReadFiscalPeriods,
+              canReadTrialBalance,
+            })
+          : null;
+      const accountLabel = [
+        result?.accountRow?.code || result?.code || "",
+        result?.accountRow?.name || meta.effectiveChildName,
+      ]
+        .filter(Boolean)
+        .join(" - ");
+      resetCatInlineAccountCreate(fieldName, {
+        message: [
+          result?.mode === "existing"
+            ? l(
+                `Existing account selected: ${accountLabel}`,
+                `Mevcut hesap secildi: ${accountLabel}`
+              )
+            : l(
+                `Child account created: ${accountLabel}`,
+                `Child hesap olusturuldu: ${accountLabel}`
+              ),
+          transferOutcome?.message || "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      });
+    } catch (err) {
+      updateCatInlineAccountCreate(fieldName, {
+        saving: false,
+        error: normalizeApiError(
+          err,
+          l(
+            "Failed to create child account.",
+            "Child hesap olusturulamadi."
+          )
+        ),
+        message: "",
+      });
+    }
+  }
+
+  function renderCatInlineAccountField({
+    fieldName,
+    label,
+    options,
+    placeholder,
+    noOptionsText,
+  }) {
+    const meta = catInlineAccountMetaByField[fieldName];
+    const inlineState =
+      catInlineAccountCreate[fieldName] || createInlineAccountCreateDraft();
+
+    return (
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+        <label className="block">
+          {label}
+          <Combobox
+            className="mt-1"
+            value={catForm[fieldName]}
+            options={options}
+            loading={catAccountLoading}
+            placeholder={
+              toPositiveInt(catForm.legalEntityId)
+                ? placeholder
+                : l("Select legal entity first", "Once tuzel kisilik secin")
+            }
+            noOptionsText={
+              toPositiveInt(catForm.legalEntityId)
+                ? noOptionsText
+                : l("Select legal entity first.", "Once tuzel kisilik secin.")
+            }
+            onChange={(value) =>
+              setCatForm((current) => ({
+                ...current,
+                [fieldName]: value ? String(value) : "",
+              }))
+            }
+            onInputChange={(nextValue, inputMeta) =>
+              handleCatAccountLookupInput(fieldName, nextValue, inputMeta)
+            }
+            disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
+          />
+        </label>
+        {inlineState.error ? (
+          <p className="mt-1 text-[11px] normal-case text-rose-700">
+            {inlineState.error}
+          </p>
+        ) : null}
+        {inlineState.message ? (
+          <p className="mt-1 text-[11px] normal-case text-emerald-700">
+            {inlineState.message}
+          </p>
+        ) : null}
+        {meta?.showPanel ? (
+          <InlineChildAccountCreatePanel
+            l={l}
+            codeCandidate={meta.codeCandidate}
+            searchText={meta.lookupQuery}
+            parentAccountLookupOptions={meta.parentLookupOptions}
+            parentAccountId={inlineState.parentAccountId || meta.effectiveParentId}
+            onParentAccountIdChange={(value) =>
+              updateCatInlineAccountCreate(fieldName, {
+                parentAccountId: value || "",
+              })
+            }
+            childCode={meta.effectiveChildCode}
+            onChildCodeChange={(value) =>
+              updateCatInlineAccountCreate(fieldName, { childCode: value || "" })
+            }
+            childName={meta.effectiveChildName}
+            onChildNameChange={(value) =>
+              updateCatInlineAccountCreate(fieldName, { childName: value || "" })
+            }
+            onUseTypedCode={() =>
+              updateCatInlineAccountCreate(fieldName, {
+                childCode: meta.codeCandidate,
+              })
+            }
+            onUseNextCode={() =>
+              updateCatInlineAccountCreate(fieldName, {
+                childCode: meta.suggestedNextCode,
+              })
+            }
+            suggestedNextCode={meta.suggestedNextCode}
+            hasSelectedParent={Boolean(
+              toPositiveInt(inlineState.parentAccountId || meta.effectiveParentId)
+            )}
+            onCreateChild={() => handleCatInlineAccountCreate(fieldName)}
+            creating={Boolean(inlineState.saving)}
+            canUpsertAccounts={canUpsertGlAccounts}
+            submitting={catSaving}
+            permissionHint={l(
+              "Missing permission: gl.account.upsert",
+              "Eksik yetki: gl.account.upsert"
+            )}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   function resetCatForm() {
     setCatSelected(null);
     setCatForm({ ...createCategoryForm(), legalEntityId: filterLeId });
+    setCatInlineAccountCreate(createCategoryInlineAccountCreateState());
     setCatFormError("");
     setCatFormMsg("");
   }
@@ -1005,7 +1339,7 @@ export default function FixedAssetSettingsPage() {
                   {l("Legal Entity", "Tuzel Kisilik")}
                   <Combobox className="mt-1" value={catForm.legalEntityId} options={leOptions} loading={leLookupLoading}
                     placeholder={l("Select", "Secin")} noOptionsText={l("None", "Yok")}
-                    onChange={(v) => setCatForm((p) => ({ ...p, legalEntityId: v ? String(v) : "" }))} disabled={catSaving || !!catSelected?.id} />
+                    onChange={(v) => { setCatForm((p) => ({ ...p, legalEntityId: v ? String(v) : "" })); setCatInlineAccountCreate(createCategoryInlineAccountCreateState()); }} disabled={catSaving || !!catSelected?.id} />
                 </label>
               </div>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -1081,152 +1415,80 @@ export default function FixedAssetSettingsPage() {
                   />
                 </label>
               </div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <label className="block">
-                  {l("Default Asset Account", "Varsayilan Varlik Hesabi")}
-                  <Combobox
-                    className="mt-1"
-                    value={catForm.defaultAssetAccountId}
-                    options={catAssetAccountOptions}
-                    loading={catAccountLoading}
-                    placeholder={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("Select account", "Hesap secin")
-                        : l("Select legal entity first", "Once tuzel kisilik secin")
-                    }
-                    noOptionsText={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("No asset accounts found.", "Varlik hesabi bulunamadi.")
-                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
-                    }
-                    onChange={(v) =>
-                      setCatForm((p) => ({
-                        ...p,
-                        defaultAssetAccountId: v ? String(v) : "",
-                      }))
-                    }
-                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
-                  />
-                </label>
-              </div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <label className="block">
-                  {l(
-                    "Default Accumulated Depreciation Account",
-                    "Varsayilan Birikmis Amortisman Hesabi"
-                  )}
-                  <Combobox
-                    className="mt-1"
-                    value={catForm.defaultAccumDeprAccountId}
-                    options={catAssetAccountOptions}
-                    loading={catAccountLoading}
-                    placeholder={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("Select account", "Hesap secin")
-                        : l("Select legal entity first", "Once tuzel kisilik secin")
-                    }
-                    noOptionsText={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("No asset accounts found.", "Varlik hesabi bulunamadi.")
-                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
-                    }
-                    onChange={(v) =>
-                      setCatForm((p) => ({
-                        ...p,
-                        defaultAccumDeprAccountId: v ? String(v) : "",
-                      }))
-                    }
-                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
-                  />
-                </label>
-              </div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <label className="block">
-                  {l(
-                    "Default Depreciation Expense Account",
-                    "Varsayilan Amortisman Gider Hesabi"
-                  )}
-                  <Combobox
-                    className="mt-1"
-                    value={catForm.defaultDeprExpenseAccountId}
-                    options={catExpenseAccountOptions}
-                    loading={catAccountLoading}
-                    placeholder={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("Select account", "Hesap secin")
-                        : l("Select legal entity first", "Once tuzel kisilik secin")
-                    }
-                    noOptionsText={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("No expense accounts found.", "Gider hesabi bulunamadi.")
-                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
-                    }
-                    onChange={(v) =>
-                      setCatForm((p) => ({
-                        ...p,
-                        defaultDeprExpenseAccountId: v ? String(v) : "",
-                      }))
-                    }
-                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
-                  />
-                </label>
-              </div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <label className="block">
-                  {l("Default Disposal Gain Account", "Varsayilan Elden Cikarma Kar Hesabi")}
-                  <Combobox
-                    className="mt-1"
-                    value={catForm.defaultDisposalGainAccountId}
-                    options={catRevenueAccountOptions}
-                    loading={catAccountLoading}
-                    placeholder={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("Select account", "Hesap secin")
-                        : l("Select legal entity first", "Once tuzel kisilik secin")
-                    }
-                    noOptionsText={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("No revenue accounts found.", "Gelir hesabi bulunamadi.")
-                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
-                    }
-                    onChange={(v) =>
-                      setCatForm((p) => ({
-                        ...p,
-                        defaultDisposalGainAccountId: v ? String(v) : "",
-                      }))
-                    }
-                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
-                  />
-                </label>
-              </div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <label className="block">
-                  {l("Default Disposal Loss Account", "Varsayilan Elden Cikarma Zarar Hesabi")}
-                  <Combobox
-                    className="mt-1"
-                    value={catForm.defaultDisposalLossAccountId}
-                    options={catExpenseAccountOptions}
-                    loading={catAccountLoading}
-                    placeholder={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("Select account", "Hesap secin")
-                        : l("Select legal entity first", "Once tuzel kisilik secin")
-                    }
-                    noOptionsText={
-                      toPositiveInt(catForm.legalEntityId)
-                        ? l("No expense accounts found.", "Gider hesabi bulunamadi.")
-                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
-                    }
-                    onChange={(v) =>
-                      setCatForm((p) => ({
-                        ...p,
-                        defaultDisposalLossAccountId: v ? String(v) : "",
-                      }))
-                    }
-                    disabled={catSaving || !toPositiveInt(catForm.legalEntityId)}
-                  />
-                </label>
-              </div>
+              {renderCatInlineAccountField({
+                fieldName: "defaultAssetAccountId",
+                label: l("Default Asset Account", "Varsayilan Varlik Hesabi"),
+                options: catAssetAccountOptions,
+                placeholder: l("Search asset account", "Varlik hesabi ara"),
+                noOptionsText: l(
+                  "No asset accounts found.",
+                  "Varlik hesabi bulunamadi."
+                ),
+              })}
+              {renderCatInlineAccountField({
+                fieldName: "defaultAccumDeprAccountId",
+                label: l(
+                  "Default Accumulated Depreciation Account",
+                  "Varsayilan Birikmis Amortisman Hesabi"
+                ),
+                options: catAssetAccountOptions,
+                placeholder: l(
+                  "Search accumulated depreciation account",
+                  "Birikmis amortisman hesabi ara"
+                ),
+                noOptionsText: l(
+                  "No asset accounts found.",
+                  "Varlik hesabi bulunamadi."
+                ),
+              })}
+              {renderCatInlineAccountField({
+                fieldName: "defaultDeprExpenseAccountId",
+                label: l(
+                  "Default Depreciation Expense Account",
+                  "Varsayilan Amortisman Gider Hesabi"
+                ),
+                options: catExpenseAccountOptions,
+                placeholder: l(
+                  "Search depreciation expense account",
+                  "Amortisman gider hesabi ara"
+                ),
+                noOptionsText: l(
+                  "No expense accounts found.",
+                  "Gider hesabi bulunamadi."
+                ),
+              })}
+              {renderCatInlineAccountField({
+                fieldName: "defaultDisposalGainAccountId",
+                label: l(
+                  "Default Disposal Gain Account",
+                  "Varsayilan Elden Cikarma Kar Hesabi"
+                ),
+                options: catRevenueAccountOptions,
+                placeholder: l(
+                  "Search disposal gain account",
+                  "Elden cikarma kar hesabi ara"
+                ),
+                noOptionsText: l(
+                  "No revenue accounts found.",
+                  "Gelir hesabi bulunamadi."
+                ),
+              })}
+              {renderCatInlineAccountField({
+                fieldName: "defaultDisposalLossAccountId",
+                label: l(
+                  "Default Disposal Loss Account",
+                  "Varsayilan Elden Cikarma Zarar Hesabi"
+                ),
+                options: catExpenseAccountOptions,
+                placeholder: l(
+                  "Search disposal loss account",
+                  "Elden cikarma zarar hesabi ara"
+                ),
+                noOptionsText: l(
+                  "No expense accounts found.",
+                  "Gider hesabi bulunamadi."
+                ),
+              })}
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 {l("Salvage Rule Type", "Hurda Kural Tipi")}
                 <select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={catForm.defaultSalvageRuleType}
@@ -1321,7 +1583,7 @@ export default function FixedAssetSettingsPage() {
                               {l("Details", "Detay")}
                             </button>
                             <button type="button" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 disabled:opacity-60"
-                              onClick={() => { setCatSelected(row); setCatForm(mapCategoryToForm(row)); setCatFormError(""); setCatFormMsg(""); }} disabled={!canUpsertSettings}>
+                              onClick={() => { setCatSelected(row); setCatForm(mapCategoryToForm(row)); setCatInlineAccountCreate(createCategoryInlineAccountCreateState()); setCatFormError(""); setCatFormMsg(""); }} disabled={!canUpsertSettings}>
                               {l("Edit", "Duzenle")}
                             </button>
                           </div>
@@ -1472,6 +1734,7 @@ export default function FixedAssetSettingsPage() {
           }
           setCatSelected(catDetailRow);
           setCatForm(mapCategoryToForm(catDetailRow));
+          setCatInlineAccountCreate(createCategoryInlineAccountCreateState());
           setCatFormError("");
           setCatFormMsg("");
           setCatDetailRow(null);

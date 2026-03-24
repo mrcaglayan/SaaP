@@ -71,6 +71,7 @@ import FixedAssetDetailPage from "./pages/fixedAssets/FixedAssetDetailPage.jsx";
 import FixedAssetFormPage from "./pages/fixedAssets/FixedAssetFormPage.jsx";
 import FixedAssetAcquisitionsPage from "./pages/fixedAssets/FixedAssetAcquisitionsPage.jsx";
 import FixedAssetDisposalsPage from "./pages/fixedAssets/FixedAssetDisposalsPage.jsx";
+import FixedAssetOpsDashboardPage from "./pages/fixedAssets/FixedAssetOpsDashboardPage.jsx";
 import FixedAssetDepreciationRunsPage from "./pages/fixedAssets/FixedAssetDepreciationRunsPage.jsx";
 import FixedAssetReportsPage from "./pages/fixedAssets/FixedAssetReportsPage.jsx";
 import FixedAssetSettingsPage from "./pages/fixedAssets/FixedAssetSettingsPage.jsx";
@@ -452,6 +453,11 @@ const implementedRoutes = [
     appPath: "/app/demirbas-satis-islemleri",
     childPath: "demirbas-satis-islemleri",
     element: <FixedAssetDisposalsPage />,
+  },
+  {
+    appPath: "/app/demirbas-ops-dashboard",
+    childPath: "demirbas-ops-dashboard",
+    element: <FixedAssetOpsDashboardPage />,
   },
   {
     appPath: "/app/demirbas-amortisman-islemleri",

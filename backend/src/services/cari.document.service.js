@@ -4559,6 +4559,7 @@ async function applyFixedAssetPostingSideEffectsTx({
 }) {
   const normalizedDirection = normalizeUpperText(direction);
   if (normalizedDirection === "AR") {
+    const { upsertDisposalCutoffPostedScheduleLineTx } = await import("./fixed-assets.service.js");
     const preparedFixedAssetLines =
       fixedAssetPostingState?.preparedFixedAssetLines instanceof Map
         ? fixedAssetPostingState.preparedFixedAssetLines
@@ -4608,6 +4609,19 @@ async function applyFixedAssetPostingSideEffectsTx({
           sourceRefType: FIXED_ASSET_TRANSACTION,
           sourceRefId: depreciationTransactionId,
           linkRole: "SUPPORTING",
+        });
+        await upsertDisposalCutoffPostedScheduleLineTx(tx, {
+          tenantId,
+          legalEntityId,
+          assetId: prepared.assetId,
+          periodKey: prepared.cutoffEconomics.cutoffPeriodKey,
+          plannedAmountTxn: prepared.cutoffEconomics.cutoffDepreciationTxn,
+          plannedAmountBase: prepared.cutoffEconomics.cutoffDepreciationBase,
+          openingNbvTxn: prepared.cutoffEconomics.openingNbvTxn,
+          openingNbvBase: prepared.cutoffEconomics.openingNbvBase,
+          closingNbvTxn: prepared.cutoffEconomics.cutoffNbvTxn,
+          closingNbvBase: prepared.cutoffEconomics.cutoffNbvBase,
+          postedTransactionId: depreciationTransactionId,
         });
       }
 
@@ -5241,6 +5255,8 @@ async function applyFixedAssetReverseSideEffectsTx(tx, {
     return;
   }
 
+  const { reverseDisposalCutoffPostedScheduleLinesTx } = await import("./fixed-assets.service.js");
+
   for (const linePlan of linePlans.values()) {
     if (linePlan?.direction === "AP") {
       const capitalizationTransactions = Array.isArray(linePlan.capitalizationTransactions)
@@ -5339,6 +5355,12 @@ async function applyFixedAssetReverseSideEffectsTx(tx, {
       await markFixedAssetTransactionsReversedTx(tx, {
         tenantId,
         transactionIds: allTransactionIds,
+      });
+      await reverseDisposalCutoffPostedScheduleLinesTx(tx, {
+        tenantId,
+        postedTransactionIds: Array.isArray(linePlan.cutoffTransactions)
+          ? linePlan.cutoffTransactions.map((transaction) => transaction.id)
+          : [],
       });
 
       const restoredLastDepreciationPeriod = await loadLatestPostedDepreciationPeriodForCariReverseTx(

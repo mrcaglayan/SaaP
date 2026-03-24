@@ -3015,16 +3015,6 @@ export default function JournalWorkbenchPage() {
                   legalEntityId: nextValue ? String(nextValue) : "",
                 }))
               }
-              onInputChange={(text, { reason }) => {
-                if (reason === "input") {
-                  setJournal((prev) => ({
-                    ...prev,
-                    legalEntityId: keepDigits(text),
-                  }));
-                } else if (reason === "clear") {
-                  setJournal((prev) => ({ ...prev, legalEntityId: "" }));
-                }
-              }}
               placeholder={l("Select legal entity", "Istirak / bagli ortak secin")}
               noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
               clearable={false}
@@ -3038,16 +3028,6 @@ export default function JournalWorkbenchPage() {
                   bookId: nextValue ? String(nextValue) : "",
                 }))
               }
-              onInputChange={(text, { reason }) => {
-                if (reason === "input") {
-                  setJournal((prev) => ({
-                    ...prev,
-                    bookId: keepDigits(text),
-                  }));
-                } else if (reason === "clear") {
-                  setJournal((prev) => ({ ...prev, bookId: "" }));
-                }
-              }}
               placeholder={l("Select book", "Defter secin")}
               noOptionsText={l("No books found.", "Defter bulunamadi.")}
               clearable={false}
@@ -3193,13 +3173,6 @@ export default function JournalWorkbenchPage() {
                           onChange={(nextValue) =>
                             updateLineAccount(line.id, nextValue ? String(nextValue) : "")
                           }
-                          onInputChange={(text, { reason }) => {
-                            if (reason === "input") {
-                              updateLineAccount(line.id, keepDigits(text));
-                            } else if (reason === "clear") {
-                              updateLineAccount(line.id, "");
-                            }
-                          }}
                         />
                         <div className="mt-1 text-[10px] text-slate-500">
                           {l("Balance", "Bakiye")}:{" "}
@@ -3233,10 +3206,8 @@ export default function JournalWorkbenchPage() {
                         onChange={(nextValue) =>
                           updateLineOperatingUnit(line.id, nextValue ? String(nextValue) : "")
                         }
-                        onInputChange={(text, { reason }) => {
-                          if (reason === "input") {
-                            updateLineOperatingUnit(line.id, keepDigits(text));
-                          } else if (reason === "clear") {
+                        onInputChange={(_, { reason }) => {
+                          if (reason === "clear") {
                             updateLineOperatingUnit(line.id, "");
                           }
                         }}
@@ -3291,14 +3262,8 @@ export default function JournalWorkbenchPage() {
                             nextValue ? String(nextValue) : ""
                           )
                         }
-                        onInputChange={(text, { reason }) => {
-                          if (reason === "input") {
-                            updateLine(
-                              line.id,
-                              "counterpartyLegalEntityId",
-                              keepDigits(text)
-                            );
-                          } else if (reason === "clear") {
+                        onInputChange={(_, { reason }) => {
+                          if (reason === "clear") {
                             updateLine(line.id, "counterpartyLegalEntityId", "");
                           }
                         }}

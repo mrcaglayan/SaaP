@@ -48,7 +48,6 @@ import {
 import Combobox from "../../components/Combobox.jsx";
 import MoneyText from "../../components/MoneyText.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
-import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
@@ -64,6 +63,7 @@ import {
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import { exportRowsAsCsv } from "../../utils/csvExport.js";
 import InlineCounterpartyCreateModal from "./InlineCounterpartyCreateModal.jsx";
+import InlineFixedAssetCategoryCreateModal from "./InlineFixedAssetCategoryCreateModal.jsx";
 import {
   buildDocumentListQuery,
   buildDocumentMutationPayload,
@@ -597,6 +597,30 @@ function getFixedAssetCategoryDefaultAssetAccountId(categoryRow) {
   );
 }
 
+function getFixedAssetCategoryDefaultAccumDeprAccountId(categoryRow) {
+  return toPositiveInt(
+    categoryRow?.defaultAccumDeprAccountId ?? categoryRow?.default_accum_depr_account_id
+  );
+}
+
+function getFixedAssetCategoryDefaultDeprExpenseAccountId(categoryRow) {
+  return toPositiveInt(
+    categoryRow?.defaultDeprExpenseAccountId ?? categoryRow?.default_depr_expense_account_id
+  );
+}
+
+function getFixedAssetCategoryDefaultDisposalGainAccountId(categoryRow) {
+  return toPositiveInt(
+    categoryRow?.defaultDisposalGainAccountId ?? categoryRow?.default_disposal_gain_account_id
+  );
+}
+
+function getFixedAssetCategoryDefaultDisposalLossAccountId(categoryRow) {
+  return toPositiveInt(
+    categoryRow?.defaultDisposalLossAccountId ?? categoryRow?.default_disposal_loss_account_id
+  );
+}
+
 function getFixedAssetCategoryDefaultDepreciationProfileId(categoryRow) {
   return toPositiveInt(
     categoryRow?.defaultDepreciationProfileId ?? categoryRow?.default_depreciation_profile_id
@@ -632,6 +656,18 @@ function buildFixedAssetCategorySetupIssue(categoryRow, fallbackId = null) {
   if (!getFixedAssetCategoryDefaultAssetAccountId(categoryRow)) {
     missingRequirements.push("defaultAssetAccountId");
   }
+  if (!getFixedAssetCategoryDefaultAccumDeprAccountId(categoryRow)) {
+    missingRequirements.push("defaultAccumDeprAccountId");
+  }
+  if (!getFixedAssetCategoryDefaultDeprExpenseAccountId(categoryRow)) {
+    missingRequirements.push("defaultDeprExpenseAccountId");
+  }
+  if (!getFixedAssetCategoryDefaultDisposalGainAccountId(categoryRow)) {
+    missingRequirements.push("defaultDisposalGainAccountId");
+  }
+  if (!getFixedAssetCategoryDefaultDisposalLossAccountId(categoryRow)) {
+    missingRequirements.push("defaultDisposalLossAccountId");
+  }
   if (!getFixedAssetCategoryDefaultDepreciationProfileId(categoryRow)) {
     missingRequirements.push("defaultDepreciationProfileId");
   }
@@ -665,6 +701,24 @@ function formatFixedAssetCategorySetupRequirementLabel(requirementKey, l) {
   }
   if (requirementKey === "defaultDepreciationProfileId") {
     return l("Default Depreciation Profile", "Varsayilan Amortisman Profili");
+  }
+  if (requirementKey === "defaultAccumDeprAccountId") {
+    return l(
+      "Default Accumulated Depreciation Account",
+      "Varsayilan Birikmis Amortisman Hesabi"
+    );
+  }
+  if (requirementKey === "defaultDeprExpenseAccountId") {
+    return l(
+      "Default Depreciation Expense Account",
+      "Varsayilan Amortisman Gider Hesabi"
+    );
+  }
+  if (requirementKey === "defaultDisposalGainAccountId") {
+    return l("Default Disposal Gain Account", "Varsayilan Satis Kar Hesabi");
+  }
+  if (requirementKey === "defaultDisposalLossAccountId") {
+    return l("Default Disposal Loss Account", "Varsayilan Satis Zarar Hesabi");
   }
   if (requirementKey === "defaultUsefulLifeMonths") {
     return l("Default Useful Life (months)", "Varsayilan Faydali Omur (ay)");
@@ -746,6 +800,26 @@ function extendFixedAssetCategoryOptionsForSelectedLines(options, lines) {
     }
   });
   return normalizedOptions;
+}
+
+function upsertFixedAssetCategoryRow(rows, nextRow) {
+  const normalizedId = Number(nextRow?.id || 0);
+  if (!normalizedId) {
+    return Array.isArray(rows) ? [...rows] : [];
+  }
+  const mergedRows = [
+    ...(Array.isArray(rows) ? rows : []).filter(
+      (row) => Number(row?.id || 0) !== normalizedId
+    ),
+    nextRow,
+  ];
+  mergedRows.sort((left, right) =>
+    String(left?.code || "").localeCompare(String(right?.code || ""), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+  return mergedRows;
 }
 
 function mapFixedAssetLookupOptions(
@@ -2063,6 +2137,7 @@ function DocumentLineWorkbench({
   canQuickCreateFixedAsset,
   canReadFixedAssetSettings,
   canUpsertFixedAssetSettings,
+  onOpenInlineFixedAssetCategoryCreate,
   onAddLine,
   onRemoveLine,
   onMoveLine,
@@ -2456,21 +2531,42 @@ function DocumentLineWorkbench({
                 {isFixedAssetLine && isAutoCreateMode ? (
                   <>
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      <label className="block">
-                        {l("Asset Category", "Varlik Kategorisi")}
-                        <Combobox
-                          className="mt-1"
-                          value={line.fixedAssetCategoryId}
-                          options={fixedAssetCategoryOptions}
-                          loading={fixedAssetCategoriesLoading}
-                          disabled={saving}
-                          placeholder={l("Search category", "Kategori ara")}
-                          noOptionsText={l("No categories found.", "Kategori bulunamadi.")}
-                          onChange={(nextValue) =>
-                            onSelectFixedAssetCategory(line.rowId, nextValue)
-                          }
-                        />
-                      </label>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>{l("Asset Category", "Varlik Kategorisi")}</span>
+                        {canUpsertFixedAssetSettings ? (
+                          <button
+                            type="button"
+                            className="text-[11px] font-semibold normal-case text-cyan-700 underline underline-offset-2 disabled:opacity-60"
+                            onClick={() =>
+                              onOpenInlineFixedAssetCategoryCreate?.(line.rowId)
+                            }
+                            disabled={saving || !toPositiveInt(form?.legalEntityId)}
+                          >
+                            {l("Create Category", "Kategori Olustur")}
+                          </button>
+                        ) : canReadFixedAssetSettings ? (
+                          <a
+                            href={FIXED_ASSET_SETTINGS_PATH}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] font-semibold normal-case text-cyan-700 underline underline-offset-2"
+                          >
+                            {l("Open Settings", "Ayarlari Ac")}
+                          </a>
+                        ) : null}
+                      </div>
+                      <Combobox
+                        className="mt-1"
+                        value={line.fixedAssetCategoryId}
+                        options={fixedAssetCategoryOptions}
+                        loading={fixedAssetCategoriesLoading}
+                        disabled={saving}
+                        placeholder={l("Search category", "Kategori ara")}
+                        noOptionsText={l("No categories found.", "Kategori bulunamadi.")}
+                        onChange={(nextValue) =>
+                          onSelectFixedAssetCategory(line.rowId, nextValue)
+                        }
+                      />
                     </div>
                     {selectedCategorySetupIssue ? (
                       <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900 md:col-span-4">
@@ -4092,6 +4188,10 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [quickCreateFixedAssetSaving, setQuickCreateFixedAssetSaving] = useState(false);
   const [quickCreateFixedAssetError, setQuickCreateFixedAssetError] = useState("");
   const [fixedAssetCategorySetupPrompt, setFixedAssetCategorySetupPrompt] = useState(null);
+  const [inlineFixedAssetCategoryCreateContext, setInlineFixedAssetCategoryCreateContext] =
+    useState(null);
+  const [fixedAssetCategoryRefreshToken, setFixedAssetCategoryRefreshToken] =
+    useState(0);
 
   const [postForm, setPostForm] = useState(() => buildInitialPostForm());
   const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
@@ -4127,6 +4227,30 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [internalCommentsLoading, setInternalCommentsLoading] = useState(false);
   const [internalCommentsError, setInternalCommentsError] = useState("");
   const [internalCommentsMessage, setInternalCommentsMessage] = useState("");
+
+  const refreshFixedAssetCategoryLookups = useCallback(() => {
+    setFixedAssetCategoryRefreshToken((current) => current + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!canReadFixedAssets) {
+      return undefined;
+    }
+    function handleWindowFocus() {
+      refreshFixedAssetCategoryLookups();
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshFixedAssetCategoryLookups();
+      }
+    }
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [canReadFixedAssets, refreshFixedAssetCategoryLookups]);
   const [internalCommentBody, setInternalCommentBody] = useState("");
   const [internalCommentSaving, setInternalCommentSaving] = useState(false);
   const [internalCommentMentionDraft, setInternalCommentMentionDraft] = useState(null);
@@ -4162,6 +4286,45 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [savedViews, setSavedViews] = useState([]);
   const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
   const [defaultSavedViewHydrated, setDefaultSavedViewHydrated] = useState(false);
+  const [documentListActivePopover, setDocumentListActivePopover] = useState("");
+  const documentListToolbarRef = useRef(null);
+  const documentListAdvancedFiltersOpen = documentListActivePopover === "filters";
+  const documentListSavedViewsOpen = documentListActivePopover === "savedViews";
+  const documentListColumnsOpen = documentListActivePopover === "columns";
+
+  const closeDocumentListPopover = useCallback(() => {
+    setDocumentListActivePopover("");
+  }, []);
+
+  const toggleDocumentListPopover = useCallback((popoverKey) => {
+    setDocumentListActivePopover((previous) => (previous === popoverKey ? "" : popoverKey));
+  }, []);
+
+  useEffect(() => {
+    if (!documentListActivePopover) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      if (documentListToolbarRef.current?.contains(event.target)) {
+        return;
+      }
+      closeDocumentListPopover();
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        closeDocumentListPopover();
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeDocumentListPopover, documentListActivePopover]);
   const operatingUnitsById = useMemo(
     () =>
       buildOperatingUnitsById(
@@ -4329,25 +4492,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     [rows, selectedDocumentId]
   );
   const selectedSnapshot = selectedDetail || selectedRow;
-  const selectedDocumentOutsideList = useMemo(() => {
-    const selectedId = Number(selectedSnapshot?.id || 0);
-    if (!selectedId) {
-      return false;
-    }
-    return !rows.some((row) => Number(row?.id || 0) === selectedId);
-  }, [rows, selectedSnapshot]);
-  const documentListRows = useMemo(() => {
-    if (!selectedDocumentOutsideList || !selectedSnapshot) {
-      return rows;
-    }
-    return [
-      {
-        ...selectedSnapshot,
-        _outsideActiveFilters: true,
-      },
-      ...rows,
-    ];
-  }, [rows, selectedDocumentOutsideList, selectedSnapshot]);
+  const documentListRows = rows;
   const documentListTotalPages = useMemo(() => {
     if (!documentListRows.length) {
       return 1;
@@ -5906,6 +6051,89 @@ export default function CariDocumentsPage({ direction = "" }) {
     }
     patchDraftFormLine(setEditForm, rowId, {
       fixedAssetCategoryId: categoryId ? String(categoryId) : "",
+    });
+  }
+
+  function openInlineFixedAssetCategoryCreateForCreateForm(rowId) {
+    const legalEntityId = toPositiveInt(createForm?.legalEntityId);
+    if (!legalEntityId) {
+      setCreateLinePreviewError(
+        l(
+          "Select legal entity before creating an asset category.",
+          "Varlik kategorisi olusturmadan once tuzel kisilik secin."
+        )
+      );
+      return;
+    }
+    const currentLine = normalizeDocumentFormLines(createForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
+    setInlineFixedAssetCategoryCreateContext({
+      scope: "create",
+      rowId,
+      legalEntityId: String(legalEntityId),
+      initialName: normalizeText(currentLine?.description),
+    });
+  }
+
+  function openInlineFixedAssetCategoryCreateForEditForm(rowId) {
+    const legalEntityId = toPositiveInt(editForm?.legalEntityId);
+    if (!legalEntityId) {
+      setEditLinePreviewError(
+        l(
+          "Select legal entity before creating an asset category.",
+          "Varlik kategorisi olusturmadan once tuzel kisilik secin."
+        )
+      );
+      return;
+    }
+    const currentLine = normalizeDocumentFormLines(editForm?.lines).find(
+      (row) => row?.rowId === rowId
+    );
+    setInlineFixedAssetCategoryCreateContext({
+      scope: "edit",
+      rowId,
+      legalEntityId: String(legalEntityId),
+      initialName: normalizeText(currentLine?.description),
+    });
+  }
+
+  function handleInlineFixedAssetCategoryCreated(categoryRow) {
+    const normalizedCategoryId = toPositiveInt(categoryRow?.id);
+    const normalizedLegalEntityId = toPositiveInt(categoryRow?.legalEntityId);
+    if (!normalizedCategoryId || !normalizedLegalEntityId) {
+      setInlineFixedAssetCategoryCreateContext(null);
+      refreshFixedAssetCategoryLookups();
+      return;
+    }
+    if (normalizedLegalEntityId === toPositiveInt(createForm?.legalEntityId)) {
+      setCreateFixedAssetCategoryRows((current) =>
+        upsertFixedAssetCategoryRow(current, categoryRow)
+      );
+    }
+    if (normalizedLegalEntityId === toPositiveInt(editForm?.legalEntityId)) {
+      setEditFixedAssetCategoryRows((current) =>
+        upsertFixedAssetCategoryRow(current, categoryRow)
+      );
+    }
+    const modalContext = inlineFixedAssetCategoryCreateContext;
+    setInlineFixedAssetCategoryCreateContext(null);
+    refreshFixedAssetCategoryLookups();
+    if (!modalContext?.rowId) {
+      return;
+    }
+    if (modalContext.scope === "edit") {
+      setEditLinePreviewError("");
+      setEditLinePreviewMessage("");
+      patchDraftFormLine(setEditForm, modalContext.rowId, {
+        fixedAssetCategoryId: String(normalizedCategoryId),
+      });
+      return;
+    }
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    patchDraftFormLine(setCreateForm, modalContext.rowId, {
+      fixedAssetCategoryId: String(normalizedCategoryId),
     });
   }
 
@@ -7896,7 +8124,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     return () => {
       active = false;
     };
-  }, [canReadFixedAssets, createForm.legalEntityId, l]);
+  }, [canReadFixedAssets, createForm.legalEntityId, fixedAssetCategoryRefreshToken, l]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
@@ -8200,7 +8428,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     return () => {
       active = false;
     };
-  }, [canReadFixedAssets, editForm.legalEntityId, l]);
+  }, [canReadFixedAssets, editForm.legalEntityId, fixedAssetCategoryRefreshToken, l]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
@@ -8745,13 +8973,6 @@ export default function CariDocumentsPage({ direction = "" }) {
     }
     setDocumentListPage(documentListTotalPages);
   }, [documentListPage, documentListTotalPages]);
-
-  useEffect(() => {
-    if (!selectedDocumentOutsideList || documentListPage === 1) {
-      return;
-    }
-    setDocumentListPage(1);
-  }, [documentListPage, selectedDocumentOutsideList]);
 
   async function handleSaveOpsStatus(event) {
     event.preventDefault();
@@ -10002,208 +10223,557 @@ export default function CariDocumentsPage({ direction = "" }) {
     quickCreateScope === "edit"
       ? editFixedAssetOperatingUnitOptions
       : createFixedAssetOperatingUnitOptions;
-
-  return (
-    <div className="space-y-5">
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="text-xl font-semibold text-slate-900">
-          {documentPageTitle}
-        </h1>
-        {listError ? <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{listError}</div> : null}
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            <label className="block">
-              {l("Legal Entity", "Tuzel Kisilik")}
-              <Combobox
-                className="mt-1"
-                value={filters.legalEntityId}
-                options={filterLegalEntityLookupOptions}
-                loading={filterLegalEntityLookupLoading}
-                placeholder={
-                  filterLegalEntityLookupOptions.length > 0
-                    ? l("Search legal entity code/name", "Tuzel kisilik kodu/adi ara")
-                    : l("No legal entities available", "Kullanilabilir tuzel kisilik yok")
-                }
-                noOptionsText={l("No legal entities found.", "Tuzel kisilik bulunamadi.")}
-                onChange={(nextValue) => handleFilterLegalEntityChange(nextValue)}
+  const documentListFilterControls = (
+    <div ref={documentListToolbarRef} className="relative">
+      {listError ? (
+        <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {listError}
+        </div>
+      ) : null}
+      <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+          <div className="grid flex-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {l("Search", "Ara")}
+              <input
+                type="text"
+                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                value={filters.q}
+                onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))}
+                placeholder={l("documentNo / counterparty snapshot", "documentNo / cari ozet")}
               />
             </label>
-            {workingContextError ? (
-              <p className="mt-1 text-[11px] normal-case text-amber-700">
-                {workingContextError}
-              </p>
-            ) : null}
-          </div>
-          {!hasFixedRouteDirection ? (
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-              {l("Direction", "Yon")}
-              <select
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                value={filters.direction}
-                onChange={(event) => handleFilterDirectionChange(event.target.value)}
-              >
-                <option value="">{l("ALL", "TUMU")}</option>
-                {DOCUMENT_DIRECTIONS.map((entryDirection) => (
-                  <option key={`filter-direction-${entryDirection}`} value={entryDirection}>
-                    {entryDirection}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {canReadOrgTree ? (
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
               <label className="block">
-                {l("Operating Unit", "Operasyon Birimi")}
+                {l("Legal Entity", "Tuzel Kisilik")}
                 <Combobox
                   className="mt-1"
-                  value={filters.operatingUnitId}
-                  options={filterOperatingUnitLookupOptions}
-                  loading={filterOperatingUnitLoading}
+                  value={filters.legalEntityId}
+                  options={filterLegalEntityLookupOptions}
+                  loading={filterLegalEntityLookupLoading}
+                  placeholder={
+                    filterLegalEntityLookupOptions.length > 0
+                      ? l("Search legal entity code/name", "Tuzel kisilik kodu/adi ara")
+                      : l("No legal entities available", "Kullanilabilir tuzel kisilik yok")
+                  }
+                  noOptionsText={l("No legal entities found.", "Tuzel kisilik bulunamadi.")}
+                  onChange={(nextValue) => handleFilterLegalEntityChange(nextValue)}
+                />
+              </label>
+              {workingContextError ? (
+                <p className="mt-1 text-[11px] normal-case text-amber-700">
+                  {workingContextError}
+                </p>
+              ) : null}
+            </div>
+            {canReadCards ? (
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {l("Counterparty Lookup", "Cari Arama")}
+                <Combobox
+                  className="mt-1"
+                  value={filters.counterpartyId}
+                  options={filterCounterpartyLookupOptions}
+                  loading={filterCounterpartyLoading}
                   disabled={!toPositiveInt(filters.legalEntityId)}
                   placeholder={
                     toPositiveInt(filters.legalEntityId)
-                      ? l("Search operating unit code/name", "Operasyon birimi kodu/adi ara")
+                      ? l("Type code/name", "Kod/ad yazin")
                       : l("Select legal entity first", "Once tuzel kisilik secin")
                   }
                   noOptionsText={
                     toPositiveInt(filters.legalEntityId)
-                      ? l("No operating units found.", "Operasyon birimi bulunamadi.")
-                      : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                      ? l("No counterparties found.", "Cari bulunamadi.")
+                      : l(
+                          "Set legalEntityId to load counterparties.",
+                          "Carileri yuklemek icin legalEntityId secin."
+                        )
                   }
                   onChange={(nextValue) =>
                     setFilters((prev) => ({
                       ...prev,
-                      operatingUnitId: nextValue ? String(nextValue) : "",
+                      counterpartyId: nextValue ? String(nextValue) : "",
                     }))
                   }
                 />
               </label>
-              {filterOperatingUnitError ? (
-                <p className="mt-1 text-[11px] normal-case text-amber-700">
-                  {filterOperatingUnitError}
-                </p>
+            ) : (
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {l("Counterparty ID", "Cari ID")}
+                <input
+                  type="number"
+                  min="1"
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                  value={filters.counterpartyId}
+                  onChange={(event) =>
+                    setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))
+                  }
+                />
+              </label>
+            )}
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {l("Status", "Durum")}
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                value={filters.status}
+                onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
+              >
+                <option value="">{l("ALL", "TUMU")}</option>
+                {DOCUMENT_STATUSES.map((status) => (
+                  <option key={`filter-status-${status}`} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <div className="relative">
+              <button
+                type="button"
+                aria-expanded={documentListColumnsOpen}
+                aria-controls="document-list-columns-popover"
+                className={`rounded-md border px-3 py-2 text-xs font-semibold ${
+                  documentListColumnsOpen
+                    ? "border-cyan-300 bg-cyan-50 text-cyan-800"
+                    : "border-slate-300 bg-white text-slate-700"
+                }`}
+                onClick={() => toggleDocumentListPopover("columns")}
+              >
+                {l("Columns", "Kolonlar")}
+              </button>
+              {documentListColumnsOpen ? (
+                <div
+                  id="document-list-columns-popover"
+                  className="absolute right-0 top-full z-20 mt-2 w-[min(92vw,36rem)] rounded-xl border border-slate-200 bg-white p-4 shadow-xl"
+                >
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        {l("Document table preferences", "Belge tablo tercihleri")}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {l(
+                          "Choose visible columns and table behavior.",
+                          "Gorunur kolonlari ve tablo davranisini secin."
+                        )}
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Rows per page", "Sayfa basi satir")}
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                          value={documentRowsPerPage}
+                          onChange={(event) => handleDocumentTableRowsPerPageChange(event.target.value)}
+                        >
+                          {DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS.map((optionValue) => (
+                            <option
+                              key={`document-rows-per-page-${optionValue}`}
+                              value={optionValue}
+                            >
+                              {optionValue}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 sm:self-end">
+                        <input
+                          type="checkbox"
+                          checked={documentTablePrefs.stickyHeader}
+                          onChange={(event) =>
+                            handleDocumentTableStickyHeaderChange(event.target.checked)
+                          }
+                        />
+                        <span>{l("Sticky header", "Sabit baslik")}</span>
+                      </label>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-slate-500">
+                        {l("Visible columns", "Gorunen kolonlar")}:{" "}
+                        {documentTablePrefs.visibleColumnIds.length}/{documentTableColumns.length}
+                      </span>
+                      <button
+                        type="button"
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700"
+                        onClick={handleDocumentTableSelectAllColumns}
+                      >
+                        {l("Select all columns", "Tum kolonlari sec")}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700"
+                        onClick={handleDocumentTableResetPrefs}
+                      >
+                        {l("Reset table prefs", "Tablo tercihlerini sifirla")}
+                      </button>
+                    </div>
+                    <div className="grid max-h-72 gap-2 overflow-auto sm:grid-cols-2">
+                      {documentTableColumns.map((column) => (
+                        <label
+                          key={`document-table-column-toggle-${column.id}`}
+                          className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={documentTablePrefs.visibleColumnIds.includes(column.id)}
+                            onChange={() => handleDocumentTableToggleColumn(column.id)}
+                          />
+                          <span>{column.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               ) : null}
             </div>
-          ) : (
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Operating Unit ID", "Operasyon Birimi ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.operatingUnitId} onChange={(event) => setFilters((prev) => ({ ...prev, operatingUnitId: event.target.value }))} /></label>
-          )}
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Counterparty ID", "Cari ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.counterpartyId} onChange={(event) => setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))} /></label>
-          {canReadCards ? (
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-              {l("Counterparty Lookup", "Cari Arama")}
-              <Combobox
-                className="mt-1"
-                value={filters.counterpartyId}
-                options={filterCounterpartyLookupOptions}
-                loading={filterCounterpartyLoading}
-                disabled={!toPositiveInt(filters.legalEntityId)}
-                placeholder={toPositiveInt(filters.legalEntityId) ? l("Type code/name", "Kod/ad yazin") : l("Select legal entity first", "Once tuzel kisilik secin")}
-                noOptionsText={toPositiveInt(filters.legalEntityId) ? l("No counterparties found.", "Cari bulunamadi.") : l("Set legalEntityId to load counterparties.", "Carileri yuklemek icin legalEntityId secin.")}
-                onChange={(nextValue) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    counterpartyId: nextValue ? String(nextValue) : "",
-                  }))
-                }
-              />
-            </label>
-          ) : null}
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.documentType} onChange={(event) => setFilters((prev) => ({ ...prev, documentType: event.target.value }))}><option value="">{l("ALL", "TUMU")}</option>{DOCUMENT_TYPES.map((documentType) => <option key={`filter-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Status", "Durum")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}><option value="">{l("ALL", "TUMU")}</option>{DOCUMENT_STATUSES.map((status) => <option key={`filter-status-${status}`} value={status}>{status}</option>)}</select></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Date From", "Baslangic Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.dateFrom} onChange={(event) => setFilters((prev) => ({ ...prev, dateFrom: event.target.value }))} /></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Date To", "Bitis Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.dateTo} onChange={(event) => setFilters((prev) => ({ ...prev, dateTo: event.target.value }))} /></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Search", "Ara")}<input type="text" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.q} onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))} placeholder={l("documentNo / counterparty snapshot", "documentNo / cari ozet")} /></label>
-        </div>
-        <div className="mt-3 flex gap-2">
-          <button type="button" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={() => loadDocuments(filters)} disabled={listLoading}>{listLoading ? l("Loading...", "Yukleniyor...") : l("Refresh List", "Listeyi Yenile")}</button>
-          <button type="button" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700" onClick={resetFilters} disabled={listLoading}>{l("Reset Filters", "Filtreleri Sifirla")}</button>
-          <button
-            type="button"
-            className="rounded-md border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-700 disabled:opacity-60"
-            onClick={handleExportDocumentListCsv}
-            disabled={listLoading || rows.length === 0}
-          >
-            {l("Export CSV", "CSV Disa Aktar")}
-          </button>
-        </div>
-        <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("Saved Views (server-side)", "Kayitli Gorunumler (sunucu)")}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <select
-              className="min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-              value={selectedSavedViewId}
-              onChange={(event) => setSelectedSavedViewId(event.target.value)}
-              disabled={savedViewsLoading || savedViewsSaving || savedViews.length === 0}
-            >
-              <option value="">{l("Select saved view", "Kayitli gorunum secin")}</option>
-              {savedViews.map((row) => (
-                <option key={`document-saved-view-${row.id}`} value={row.id}>
-                  {row.name}
-                  {row.isDefault ? l(" (default)", " (varsayilan)") : ""}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
-              onClick={() => applyDocumentSavedView(selectedSavedView)}
-              disabled={!selectedSavedView || savedViewsSaving}
-            >
-              {l("Apply", "Uygula")}
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-60"
-              onClick={handleCreateDocumentSavedView}
-              disabled={savedViewsSaving}
-            >
-              {l("Save Current", "Mevcutu Kaydet")}
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-cyan-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-cyan-700 disabled:opacity-60"
-              onClick={handleUpdateDocumentSavedView}
-              disabled={!selectedSavedView || savedViewsSaving}
-            >
-              {l("Update Selected", "Secileni Guncelle")}
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-indigo-700 disabled:opacity-60"
-              onClick={handleSetDefaultDocumentSavedView}
-              disabled={!selectedSavedView || savedViewsSaving}
-            >
-              {l("Set Default", "Varsayilan Yap")}
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
-              onClick={handleDeleteDocumentSavedView}
-              disabled={!selectedSavedView || savedViewsSaving}
-            >
-              {l("Delete", "Sil")}
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
-              onClick={() => loadDocumentSavedViews({ preferredId: selectedSavedViewId })}
-              disabled={savedViewsLoading || savedViewsSaving}
-            >
-              {savedViewsLoading
-                ? l("Loading...", "Yukleniyor...")
-                : l("Refresh Saved Views", "Kayitli Gorunumleri Yenile")}
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                aria-expanded={documentListAdvancedFiltersOpen}
+                aria-controls="document-list-filters-popover"
+                className={`rounded-md border px-3 py-2 text-xs font-semibold ${
+                  documentListAdvancedFiltersOpen
+                    ? "border-cyan-300 bg-cyan-50 text-cyan-800"
+                    : "border-slate-300 bg-white text-slate-700"
+                }`}
+                onClick={() => toggleDocumentListPopover("filters")}
+              >
+                {l("Filter", "Filtre")}
+              </button>
+              {documentListAdvancedFiltersOpen ? (
+                <div
+                  id="document-list-filters-popover"
+                  className="absolute right-0 top-full z-20 mt-2 w-[min(92vw,56rem)] rounded-xl border border-slate-200 bg-white p-4 shadow-xl"
+                >
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        {l("More Filters", "Daha Fazla Filtre")}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {l(
+                          "Refine the document list without changing the page layout.",
+                          "Sayfa duzenini bozmadan belge listesini daraltin."
+                        )}
+                      </p>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {!hasFixedRouteDirection ? (
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                          {l("Direction", "Yon")}
+                          <select
+                            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                            value={filters.direction}
+                            onChange={(event) => handleFilterDirectionChange(event.target.value)}
+                          >
+                            <option value="">{l("ALL", "TUMU")}</option>
+                            {DOCUMENT_DIRECTIONS.map((entryDirection) => (
+                              <option
+                                key={`filter-direction-${entryDirection}`}
+                                value={entryDirection}
+                              >
+                                {entryDirection}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      {canReadOrgTree ? (
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                          <label className="block">
+                            {l("Operating Unit", "Operasyon Birimi")}
+                            <Combobox
+                              className="mt-1"
+                              value={filters.operatingUnitId}
+                              options={filterOperatingUnitLookupOptions}
+                              loading={filterOperatingUnitLoading}
+                              disabled={!toPositiveInt(filters.legalEntityId)}
+                              placeholder={
+                                toPositiveInt(filters.legalEntityId)
+                                  ? l(
+                                      "Search operating unit code/name",
+                                      "Operasyon birimi kodu/adi ara"
+                                    )
+                                  : l("Select legal entity first", "Once tuzel kisilik secin")
+                              }
+                              noOptionsText={
+                                toPositiveInt(filters.legalEntityId)
+                                  ? l("No operating units found.", "Operasyon birimi bulunamadi.")
+                                  : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                              }
+                              onChange={(nextValue) =>
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  operatingUnitId: nextValue ? String(nextValue) : "",
+                                }))
+                              }
+                            />
+                          </label>
+                          {filterOperatingUnitError ? (
+                            <p className="mt-1 text-[11px] normal-case text-amber-700">
+                              {filterOperatingUnitError}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                          {l("Operating Unit ID", "Operasyon Birimi ID")}
+                          <input
+                            type="number"
+                            min="1"
+                            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                            value={filters.operatingUnitId}
+                            onChange={(event) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                operatingUnitId: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                      )}
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Counterparty ID", "Cari ID")}
+                        <input
+                          type="number"
+                          min="1"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={filters.counterpartyId}
+                          onChange={(event) =>
+                            setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))
+                          }
+                        />
+                      </label>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Document Type", "Belge Turu")}
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={filters.documentType}
+                          onChange={(event) =>
+                            setFilters((prev) => ({ ...prev, documentType: event.target.value }))
+                          }
+                        >
+                          <option value="">{l("ALL", "TUMU")}</option>
+                          {DOCUMENT_TYPES.map((documentType) => (
+                            <option
+                              key={`filter-document-type-${documentType}`}
+                              value={documentType}
+                            >
+                              {documentType}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Date From", "Baslangic Tarihi")}
+                        <input
+                          type="date"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={filters.dateFrom}
+                          onChange={(event) =>
+                            setFilters((prev) => ({ ...prev, dateFrom: event.target.value }))
+                          }
+                        />
+                      </label>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Date To", "Bitis Tarihi")}
+                        <input
+                          type="date"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={filters.dateTo}
+                          onChange={(event) =>
+                            setFilters((prev) => ({ ...prev, dateTo: event.target.value }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
+                        onClick={() => {
+                          closeDocumentListPopover();
+                          resetFilters();
+                        }}
+                      >
+                        {l("Reset Filters", "Filtreleri Sifirla")}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white"
+                        onClick={() => {
+                          closeDocumentListPopover();
+                          loadDocuments(filters);
+                        }}
+                        disabled={listLoading}
+                      >
+                        {listLoading
+                          ? l("Loading...", "Yukleniyor...")
+                          : l("Apply Filters", "Filtreleri Uygula")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                aria-expanded={documentListSavedViewsOpen}
+                aria-controls="document-list-saved-views-popover"
+                className={`rounded-md border px-3 py-2 text-xs font-semibold ${
+                  documentListSavedViewsOpen
+                    ? "border-cyan-300 bg-cyan-50 text-cyan-800"
+                    : "border-slate-300 bg-white text-slate-700"
+                }`}
+                onClick={() => toggleDocumentListPopover("savedViews")}
+              >
+                {l("Saved Views", "Kayitli Gorunumler")}
+              </button>
+              {documentListSavedViewsOpen ? (
+                <div
+                  id="document-list-saved-views-popover"
+                  className="absolute right-0 top-full z-20 mt-2 w-[min(92vw,34rem)] rounded-xl border border-slate-200 bg-white p-4 shadow-xl"
+                >
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        {l("Saved Views", "Kayitli Gorunumler")}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {l(
+                          "Apply or maintain server-side list presets.",
+                          "Sunucu tarafli liste gorunumlerini uygulayin veya yonetin."
+                        )}
+                      </p>
+                    </div>
+                    <div className="space-y-3">
+                      <select
+                        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                        value={selectedSavedViewId}
+                        onChange={(event) => setSelectedSavedViewId(event.target.value)}
+                        disabled={savedViewsLoading || savedViewsSaving || savedViews.length === 0}
+                      >
+                        <option value="">{l("Select saved view", "Kayitli gorunum secin")}</option>
+                        {savedViews.map((row) => (
+                          <option key={`document-saved-view-${row.id}`} value={row.id}>
+                            {row.name}
+                            {row.isDefault ? l(" (default)", " (varsayilan)") : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                          onClick={() => {
+                            applyDocumentSavedView(selectedSavedView);
+                            closeDocumentListPopover();
+                          }}
+                          disabled={!selectedSavedView || savedViewsSaving}
+                        >
+                          {l("Apply", "Uygula")}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+                          onClick={handleCreateDocumentSavedView}
+                          disabled={savedViewsSaving}
+                        >
+                          {l("Save Current", "Mevcutu Kaydet")}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md border border-cyan-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-cyan-700 disabled:opacity-60"
+                          onClick={handleUpdateDocumentSavedView}
+                          disabled={!selectedSavedView || savedViewsSaving}
+                        >
+                          {l("Update Selected", "Secileni Guncelle")}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-indigo-700 disabled:opacity-60"
+                          onClick={handleSetDefaultDocumentSavedView}
+                          disabled={!selectedSavedView || savedViewsSaving}
+                        >
+                          {l("Set Default", "Varsayilan Yap")}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
+                          onClick={handleDeleteDocumentSavedView}
+                          disabled={!selectedSavedView || savedViewsSaving}
+                        >
+                          {l("Delete", "Sil")}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                          onClick={() =>
+                            loadDocumentSavedViews({ preferredId: selectedSavedViewId })
+                          }
+                          disabled={savedViewsLoading || savedViewsSaving}
+                        >
+                          {savedViewsLoading
+                            ? l("Loading...", "Yukleniyor...")
+                            : l("Refresh Saved Views", "Kayitli Gorunumleri Yenile")}
+                        </button>
+                      </div>
+                    </div>
+                    {savedViewsError ? (
+                      <p className="text-xs text-rose-700">{savedViewsError}</p>
+                    ) : null}
+                    {savedViewsMessage ? (
+                      <p className="text-xs text-emerald-700">{savedViewsMessage}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
-          {savedViewsError ? (
-            <p className="mt-2 text-xs text-rose-700">{savedViewsError}</p>
-          ) : null}
-          {savedViewsMessage ? (
-            <p className="mt-2 text-xs text-emerald-700">{savedViewsMessage}</p>
-          ) : null}
         </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+          onClick={() => {
+            closeDocumentListPopover();
+            loadDocuments(filters);
+          }}
+          disabled={listLoading}
+        >
+          {listLoading ? l("Loading...", "Yukleniyor...") : l("Apply Filters", "Filtreleri Uygula")}
+        </button>
+        <button
+          type="button"
+          className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+          onClick={() => {
+            closeDocumentListPopover();
+            resetFilters();
+          }}
+          disabled={listLoading}
+        >
+          {l("Reset Filters", "Filtreleri Sifirla")}
+        </button>
+        <button
+          type="button"
+          className="rounded-md border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-700 disabled:opacity-60"
+          onClick={handleExportDocumentListCsv}
+          disabled={listLoading || rows.length === 0}
+        >
+          {l("Export CSV", "CSV Disa Aktar")}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <section className="space-y-1">
+        <h1 className="text-xl font-semibold text-slate-900">
+          {documentPageTitle}
+        </h1>
       </section>
 
       {canCreate ? (
@@ -10829,6 +11399,9 @@ export default function CariDocumentsPage({ direction = "" }) {
               fixedAssetOperatingUnitOptions={createFixedAssetOperatingUnitOptions}
               canReadFixedAssetSettings={canReadFixedAssetSettings}
               canUpsertFixedAssetSettings={canUpsertFixedAssetSettings}
+              onOpenInlineFixedAssetCategoryCreate={
+                openInlineFixedAssetCategoryCreateForCreateForm
+              }
               onAddLine={addCreateDocumentLine}
               onRemoveLine={removeCreateDocumentLine}
               onMoveLine={moveCreateDocumentLine}
@@ -10871,31 +11444,7 @@ export default function CariDocumentsPage({ direction = "" }) {
           {l("Showing", "Gosterilen")}: {pagedDocumentRows.length} / {documentListRows.length} |{" "}
           {l("Page", "Sayfa")} {documentListPage}/{documentListTotalPages}
         </p>
-        {selectedDocumentOutsideList ? (
-          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            {l(
-              "Selected document is outside the active list filters and is shown temporarily.",
-              "Secili belge aktif liste filtrelerinin disinda; gecici olarak gosteriliyor."
-            )}
-          </p>
-        ) : null}
-        <TablePreferencesPanel
-          className="mt-3"
-          title={l("Document table preferences", "Belge tablo tercihleri")}
-          rowsPerPage={documentRowsPerPage}
-          rowsPerPageOptions={DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS}
-          onRowsPerPageChange={handleDocumentTableRowsPerPageChange}
-          stickyHeader={documentTablePrefs.stickyHeader}
-          onStickyHeaderChange={handleDocumentTableStickyHeaderChange}
-          columns={documentTableColumns.map((column) => ({
-            id: column.id,
-            label: column.label,
-          }))}
-          visibleColumnIds={documentTablePrefs.visibleColumnIds}
-          onToggleColumn={handleDocumentTableToggleColumn}
-          onSelectAllColumns={handleDocumentTableSelectAllColumns}
-          onReset={handleDocumentTableResetPrefs}
-        />
+        {documentListFilterControls}
         <div className="mt-4 max-h-[28rem] overflow-auto rounded-lg border border-slate-200">
           <table className="min-w-full text-sm">
             <thead
@@ -10919,11 +11468,7 @@ export default function CariDocumentsPage({ direction = "" }) {
                 <tr
                   key={`doc-row-${row.id}`}
                   className={`border-t border-slate-100 ${
-                    row._outsideActiveFilters
-                      ? "bg-amber-50"
-                      : Number(row.id) === Number(selectedDocumentId)
-                        ? "bg-cyan-50"
-                        : "bg-white"
+                    Number(row.id) === Number(selectedDocumentId) ? "bg-cyan-50" : "bg-white"
                   }`}
                 >
                   {documentVisibleColumns.map((column) => (
@@ -12177,6 +12722,9 @@ export default function CariDocumentsPage({ direction = "" }) {
                     fixedAssetOperatingUnitOptions={editFixedAssetOperatingUnitOptions}
                     canReadFixedAssetSettings={canReadFixedAssetSettings}
                     canUpsertFixedAssetSettings={canUpsertFixedAssetSettings}
+                    onOpenInlineFixedAssetCategoryCreate={
+                      openInlineFixedAssetCategoryCreateForEditForm
+                    }
                     onAddLine={addEditDocumentLine}
                     onRemoveLine={removeEditDocumentLine}
                     onMoveLine={moveEditDocumentLine}
@@ -12706,6 +13254,14 @@ export default function CariDocumentsPage({ direction = "" }) {
         l={l}
         onClose={() => setEditInlineCounterpartyModalOpen(false)}
         onCreated={handleInlineCounterpartyCreatedForEditForm}
+      />
+      <InlineFixedAssetCategoryCreateModal
+        open={Boolean(inlineFixedAssetCategoryCreateContext)}
+        legalEntityId={inlineFixedAssetCategoryCreateContext?.legalEntityId || ""}
+        initialName={inlineFixedAssetCategoryCreateContext?.initialName || ""}
+        l={l}
+        onClose={() => setInlineFixedAssetCategoryCreateContext(null)}
+        onCreated={handleInlineFixedAssetCategoryCreated}
       />
       <FixedAssetCategorySetupModal
         open={Boolean(fixedAssetCategorySetupPrompt)}

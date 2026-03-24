@@ -12,7 +12,10 @@ import {
 } from "./cari.document.service.js";
 import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
-import { FIXED_ASSET_DEPRECIATION_RUN } from "../utils/source-ref-types.js";
+import {
+  FIXED_ASSET_DEPRECIATION_RUN,
+  FIXED_ASSET_TRANSACTION,
+} from "../utils/source-ref-types.js";
 import {
   loadAssetDepreciationSnapshot,
   loadAssetDepreciationLifecycleHistory,
@@ -20,6 +23,7 @@ import {
   resolveSupportedFixedAssetFiscalPeriod,
   resolveBookForLegalEntity,
   ensurePeriodOpenForFixedAssets,
+  upsertDisposalCutoffPostedScheduleLineTx,
 } from "./fixed-assets.service.js";
 
 const AMOUNT_SCALE = 10000;
@@ -2586,6 +2590,11 @@ function buildFixedAssetRunJournalNo(runId) {
   return `FA-RUN-${parsePositiveInt(runId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
 }
 
+function buildFixedAssetCatchUpJournalNo(assetId) {
+  return `FA-CATCHUP-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`
+    .slice(0, 40);
+}
+
 function buildFixedAssetRunReversalJournalNo(runId) {
   return `FA-RUN-REV-${parsePositiveInt(runId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
 }
@@ -2728,6 +2737,46 @@ async function loadPersistedDepreciationScheduleLines({
     status: normalizeUpperText(row.status),
     postedRunLineId: row.posted_run_line_id != null ? Number(row.posted_run_line_id) : null,
     postedTransactionId: row.posted_transaction_id != null ? Number(row.posted_transaction_id) : null,
+  }));
+}
+
+async function loadPostedDepreciationRunPeriodsForScope({
+  tenantId,
+  legalEntityId,
+  bookId,
+  throughDate = null,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!legalEntityId) throw badRequest("legalEntityId is required");
+  if (!bookId) throw badRequest("bookId is required");
+
+  const result = await queryFn(
+    `SELECT DISTINCT run.period_key,
+            period.start_date,
+            period.end_date
+       FROM fixed_asset_depreciation_runs run
+       JOIN fiscal_periods period
+         ON period.id = run.fiscal_period_id
+      WHERE run.tenant_id = ?
+        AND run.legal_entity_id = ?
+        AND run.book_id = ?
+        AND run.status = 'POSTED'
+        AND (? IS NULL OR period.end_date <= ?)
+      ORDER BY run.period_key ASC`,
+    [
+      tenantId,
+      legalEntityId,
+      bookId,
+      throughDate || null,
+      throughDate || null,
+    ]
+  );
+
+  return (result.rows || []).map((row) => ({
+    periodKey: row.period_key || null,
+    startDate: row.start_date ? String(row.start_date).slice(0, 10) : null,
+    endDate: row.end_date ? String(row.end_date).slice(0, 10) : null,
   }));
 }
 
@@ -3097,6 +3146,7 @@ async function resolveDepreciationRunPostScope({
 }
 
 async function insertPostedDepreciationTransactionTx(tx, payload) {
+  const depreciationKind = String(payload?.depreciationKind || "RUN").trim().toUpperCase();
   const result = await tx.query(
     `INSERT INTO fixed_asset_transactions (
        tenant_id,
@@ -3123,7 +3173,7 @@ async function insertPostedDepreciationTransactionTx(tx, payload) {
        note,
        created_by_user_id
      ) VALUES (
-       ?, ?, ?, 'DEPRECIATION', 'POSTED', ?, ?, ?, ?, ?, 'RUN', ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?
+       ?, ?, ?, 'DEPRECIATION', 'POSTED', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?
      )`,
     [
       payload.tenantId,
@@ -3134,6 +3184,7 @@ async function insertPostedDepreciationTransactionTx(tx, payload) {
       payload.bookId,
       payload.fiscalPeriodId,
       payload.currencyCode,
+      depreciationKind,
       payload.journalEntryId,
       payload.grossAmountTxn,
       payload.grossAmountBase,
@@ -3153,6 +3204,308 @@ async function insertPostedDepreciationTransactionTx(tx, payload) {
     );
   }
   return transactionId;
+}
+
+export async function postLateAssetCatchUpDepreciationTx(tx, {
+  tenantId,
+  assetId,
+  legalEntityId = null,
+  bookId = null,
+  fiscalPeriodId = null,
+  postingDate,
+  userId = null,
+}) {
+  if (!tx?.query) throw badRequest("tx is required");
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+  if (!postingDate) throw badRequest("postingDate is required");
+
+  const asset = await loadAssetDepreciationSnapshot({
+    tenantId,
+    assetId,
+    queryFn: tx.query,
+  });
+  if (legalEntityId != null && Number(asset.legalEntityId) !== Number(legalEntityId)) {
+    throw badRequest(
+      `Asset ${assetId} does not belong to legalEntityId=${Number(legalEntityId)}`
+    );
+  }
+  if (
+    asset.status === "DRAFT"
+    || asset.status === "CANCELLED"
+    || asset.status === "DISPOSED"
+  ) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "ASSET_STATUS_INELIGIBLE",
+    };
+  }
+  if (
+    isLowValueFullyExpensedAsset(asset)
+    || normalizeUpperText(asset.depreciationMethod) === "NONE"
+  ) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "NOT_DEPRECIABLE",
+    };
+  }
+
+  const scope = await resolveDepreciationRunScope({
+    tenantId,
+    legalEntityId: asset.legalEntityId,
+    fiscalPeriodId,
+    bookId,
+    postingDate,
+    actionLabel: "post late asset catch-up depreciation",
+    queryFn: tx.query,
+  });
+
+  const postedRunPeriods = await loadPostedDepreciationRunPeriodsForScope({
+    tenantId,
+    legalEntityId: asset.legalEntityId,
+    bookId: Number(scope.book.id),
+    throughDate: scope.postingDate,
+    queryFn: tx.query,
+  });
+  if (!postedRunPeriods.length) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "NO_PRIOR_POSTED_PERIODS",
+    };
+  }
+
+  const scheduleContext = await buildAssetDepreciationScheduleContext({
+    tenantId,
+    asset,
+    book: scope.book,
+    queryFn: tx.query,
+  });
+  const currentPostedPeriodKeys = new Set(
+    (scheduleContext.currentPostedScheduleLines || []).map((row) => row.periodKey)
+  );
+  const postedRunPeriodKeys = new Set(
+    postedRunPeriods.map((row) => row.periodKey).filter(Boolean)
+  );
+  const catchUpRows = (scheduleContext.rows || []).filter((row) => (
+    postedRunPeriodKeys.has(row.periodKey)
+    && !currentPostedPeriodKeys.has(row.periodKey)
+    && hasPositivePlannedAmount(row)
+  ));
+  if (!catchUpRows.length) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "NO_MISSED_POSTED_PERIODS",
+    };
+  }
+
+  const assetPostingSnapshots = await loadAssetDepreciationPostingSnapshots({
+    tenantId,
+    assetIds: [assetId],
+    queryFn: tx.query,
+  });
+  const assetSnapshot = assetPostingSnapshots[0] || null;
+  if (!assetSnapshot) {
+    throw badRequest(`Missing asset posting snapshot for assetId=${assetId}`);
+  }
+  if (!assetSnapshot.deprExpenseAccountId || !assetSnapshot.accumDeprAccountId) {
+    throw badRequest(`Asset ${assetId} is missing depreciation posting accounts`);
+  }
+
+  const journalLines = [];
+  let totalCatchUpAmountTxn = 0;
+  let totalCatchUpAmountBase = 0;
+
+  for (const row of catchUpRows) {
+    const allocations = buildAllocationSnapshotsForRunRow(row);
+    if (!allocations.length) {
+      throw badRequest(
+        `Late catch-up depreciation requires allocation segments for asset ${assetId} period ${row.periodKey}`
+      );
+    }
+
+    const allocatedTxn = sumRunLineAllocationAmounts(allocations, "plannedAmountTxn");
+    const allocatedBase = sumRunLineAllocationAmounts(allocations, "plannedAmountBase");
+    if (
+      Math.abs(allocatedTxn - Number(row.plannedAmountTxn || 0)) > ROUNDING_UNIT
+      || Math.abs(allocatedBase - Number(row.plannedAmountBase || 0)) > ROUNDING_UNIT
+    ) {
+      throw badRequest(
+        `Catch-up allocation totals do not match planned amounts for asset ${assetId} period ${row.periodKey}`
+      );
+    }
+
+    for (const allocation of allocations) {
+      const amountTxn = roundAmount(allocation.plannedAmountTxn || 0);
+      const amountBase = roundAmount(allocation.plannedAmountBase || 0);
+      if (amountTxn <= 0 && amountBase <= 0) {
+        continue;
+      }
+
+      const operatingUnitId = allocation.operatingUnitId ?? assetSnapshot.ownerOperatingUnitId ?? null;
+      journalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: assetSnapshot.deprExpenseAccountId,
+          side: "DEBIT",
+          amountTxn,
+          amountBase,
+          lineDescription: `FA catch-up depreciation ${assetSnapshot.assetNo || assetId} ${row.periodKey}`.slice(0, 255),
+          subledgerReferenceNo: String(assetSnapshot.assetNo || assetId).slice(0, 100),
+          currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
+          operatingUnitId,
+        })
+      );
+      journalLines.push(
+        buildCariDirectionalJournalLine({
+          accountId: assetSnapshot.accumDeprAccountId,
+          side: "CREDIT",
+          amountTxn,
+          amountBase,
+          lineDescription: `FA catch-up accum depreciation ${assetSnapshot.assetNo || assetId} ${row.periodKey}`.slice(0, 255),
+          subledgerReferenceNo: String(assetSnapshot.assetNo || assetId).slice(0, 100),
+          currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
+          operatingUnitId,
+        })
+      );
+    }
+
+    totalCatchUpAmountTxn = roundAmount(totalCatchUpAmountTxn + Number(row.plannedAmountTxn || 0));
+    totalCatchUpAmountBase = roundAmount(totalCatchUpAmountBase + Number(row.plannedAmountBase || 0));
+  }
+
+  if (!journalLines.length) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "NO_JOURNAL_LINES",
+    };
+  }
+
+  const lastCatchUpRow = catchUpRows.at(-1) || null;
+  if (!lastCatchUpRow) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "NO_CATCH_UP_ROWS",
+    };
+  }
+
+  const journalResult = await insertPostedJournalWithLinesTx(tx, {
+    tenantId,
+    legalEntityId: assetSnapshot.legalEntityId,
+    bookId: Number(scope.book.id),
+    fiscalPeriodId: Number(scope.period.id),
+    userId,
+    journalNo: buildFixedAssetCatchUpJournalNo(assetId),
+    entryDate: scope.postingDate,
+    documentDate: scope.postingDate,
+    currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
+    description: `FA catch-up depreciation ${assetSnapshot.assetNo || assetId} through ${lastCatchUpRow.periodKey}`.slice(0, 500),
+    referenceNo: String(assetSnapshot.assetNo || assetId).slice(0, 100),
+    lines: journalLines,
+    operatingUnitId: assetSnapshot.ownerOperatingUnitId ?? null,
+  });
+
+  const transactionId = await insertPostedDepreciationTransactionTx(tx, {
+    tenantId,
+    legalEntityId: assetSnapshot.legalEntityId,
+    assetId,
+    effectiveDate: lastCatchUpRow.periodEndDate || scope.postingDate,
+    postingDate: scope.postingDate,
+    bookId: Number(scope.book.id),
+    fiscalPeriodId: Number(scope.period.id),
+    currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
+    depreciationKind: "CATCH_UP",
+    journalEntryId: journalResult.journalEntryId,
+    grossAmountTxn: assetSnapshot.originalCostTxn,
+    grossAmountBase: assetSnapshot.originalCostBase,
+    accumDeprAmountTxn: roundAmount(assetSnapshot.originalCostTxn - Number(lastCatchUpRow.closingNbvTxn || 0)),
+    accumDeprAmountBase: roundAmount(assetSnapshot.originalCostBase - Number(lastCatchUpRow.closingNbvBase || 0)),
+    nbvAmountTxn: roundAmount(lastCatchUpRow.closingNbvTxn || 0),
+    nbvAmountBase: roundAmount(lastCatchUpRow.closingNbvBase || 0),
+    note: `Late catch-up depreciation through ${lastCatchUpRow.periodKey}`.slice(0, 1000),
+    createdByUserId: userId,
+  });
+
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId: assetSnapshot.legalEntityId,
+    journalEntryId: journalResult.journalEntryId,
+    sourceRefType: FIXED_ASSET_TRANSACTION,
+    sourceRefId: transactionId,
+    linkRole: "PRIMARY",
+  });
+
+  for (const row of catchUpRows) {
+    await upsertDisposalCutoffPostedScheduleLineTx(tx, {
+      tenantId,
+      legalEntityId: assetSnapshot.legalEntityId,
+      assetId,
+      periodKey: row.periodKey,
+      plannedAmountTxn: row.plannedAmountTxn,
+      plannedAmountBase: row.plannedAmountBase,
+      openingNbvTxn: row.openingNbvTxn,
+      openingNbvBase: row.openingNbvBase,
+      closingNbvTxn: row.closingNbvTxn,
+      closingNbvBase: row.closingNbvBase,
+      postedTransactionId: transactionId,
+    });
+  }
+
+  const postedScheduleStatsByAsset = await loadCurrentPostedDepreciationScheduleStatsByAsset({
+    tenantId,
+    assetIds: [assetId],
+    queryFn: tx.query,
+    forUpdate: true,
+  });
+  const postedScheduleStats = postedScheduleStatsByAsset.get(assetId) || {
+    postedCount: 0,
+    lastPeriodKey: null,
+  };
+  const remainingUsefulLifeMonths = resolveCurrentRemainingUsefulLifeMonths(
+    assetSnapshot,
+    postedScheduleStats.postedCount
+  );
+  const fullyDepreciated = (
+    roundAmount(lastCatchUpRow.closingNbvTxn || 0) <= roundAmount(assetSnapshot.salvageValueTxn || 0)
+    && roundAmount(lastCatchUpRow.closingNbvBase || 0) <= roundAmount(assetSnapshot.salvageValueBase || 0)
+  );
+
+  await tx.query(
+    `UPDATE fixed_assets
+        SET last_depreciation_period = ?,
+            remaining_useful_life_months = ?,
+            status = CASE
+              WHEN ? = 1 AND status <> 'DISPOSED' THEN 'FULLY_DEPRECIATED'
+              ELSE status
+            END,
+            updated_by_user_id = ?
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [
+      postedScheduleStats.lastPeriodKey || null,
+      remainingUsefulLifeMonths,
+      fullyDepreciated ? 1 : 0,
+      userId,
+      tenantId,
+      assetId,
+    ]
+  );
+
+  return {
+    posted: true,
+    assetId,
+    transactionId,
+    journalEntryId: journalResult.journalEntryId,
+    postingDate: scope.postingDate,
+    catchUpPeriodKeys: catchUpRows.map((row) => row.periodKey),
+    totalAmountTxn: totalCatchUpAmountTxn,
+    totalAmountBase: totalCatchUpAmountBase,
+    lastDepreciationPeriod: postedScheduleStats.lastPeriodKey || null,
+  };
 }
 
 export async function postDepreciationRun({
