@@ -791,6 +791,13 @@ function applyCariOperationOverrides(specObject) {
           description:
             "Target asset for `LINK_EXISTING` and `IMPROVE_EXISTING` AP lines, and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`.",
         },
+        improvementEffectiveDate: {
+          type: "string",
+          format: "date",
+          nullable: true,
+          description:
+            "Optional line-level effective date for `IMPROVE_EXISTING` AP lines. Defaults to the document date. If backdated into already-posted historical periods, the system may post a current-period catch-up depreciation delta instead of rewriting posted history.",
+        },
         fixedAssetCategoryId: {
           ...intId,
           nullable: true,
@@ -1146,6 +1153,13 @@ function applyCariOperationOverrides(specObject) {
           nullable: true,
           description:
             "Required for `LINK_EXISTING` and `IMPROVE_EXISTING` AP lines, and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`.",
+        },
+        improvementEffectiveDate: {
+          type: "string",
+          format: "date",
+          nullable: true,
+          description:
+            "Optional line-level effective date for `IMPROVE_EXISTING` AP lines. Defaults to the document date. Backdated improvements may create current-period catch-up depreciation when historical periods are already posted.",
         },
         fixedAssetCategoryId: {
           ...intId,

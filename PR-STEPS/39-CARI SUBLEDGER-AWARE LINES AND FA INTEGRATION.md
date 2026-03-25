@@ -264,6 +264,7 @@ quantity = 1
 **Improvement life revision payload**:
 - `revisedUsefulLifeMonths` — absolute new total useful life (e.g., change from 60 to 84 months)
 - `lifeExtensionMonths` — relative extension (e.g., add 24 months to remaining life)
+- `improvementEffectiveDate` — optional line-level FA effective date for `IMPROVE_EXISTING`; defaults to the CARI `documentDate`, but can be backdated when the economic improvement happened earlier than the bill entry/posting
 - Only one of these may be provided; if neither is given, useful life stays unchanged
 - **FULLY_DEPRECIATED hard rule**: If the target asset is `FULLY_DEPRECIATED`, at least one of `revisedUsefulLifeMonths` or `lifeExtensionMonths` **MUST** be provided, and the resulting `remaining_useful_life_months` must be `> 0`. Rationale: a fully-depreciated asset has `remaining_useful_life_months = 0`; adding cost without extending life would leave undepreciated cost with no future depreciation periods — the schedule engine would have nowhere to allocate the new depreciable base.
 
@@ -274,7 +275,7 @@ quantity = 1
 4. Increase `original_cost_txn/base` on the asset by the improvement amount
 5. If useful life revision is provided: update `useful_life_months` and `remaining_useful_life_months`
 6. **Status transition rule**: If the resulting `remaining_useful_life_months > 0` and the asset was `FULLY_DEPRECIATED`, transition status to `ACTIVE`. The check is on resulting remaining life, not on whether `lifeExtensionMonths` was specifically used — this covers both `revisedUsefulLifeMonths` and `lifeExtensionMonths` paths uniformly.
-7. Depreciation schedule **automatically regenerates prospectively** — the existing schedule engine (`buildAssetDepreciationScheduleContext`) always rebuilds from current asset state, so the new cost basis and revised useful life are picked up on the next schedule read/depreciation run
+7. Depreciation schedule **automatically regenerates prospectively** — the schedule engine must reseed future rows from the last posted depreciation boundary plus any eligible posted IMPROVEMENT events, so the new cost basis and revised useful life are picked up on the next schedule read/depreciation run. For an unposted open period, the improvement month is **day-prorated from the effective date** instead of waiting for the next full month. If the effective date is backdated into already-posted historical periods, the system posts a **current-period catch-up depreciation delta** rather than rewriting posted history.
 8. No past closed-period depreciation is rewritten — prospective only
 
 **Why no separate "recalculate" step**: The repo's depreciation schedule is **dynamically computed** from the asset's current cost, useful life, and lifecycle timeline. It is not a pre-computed stored schedule that needs manual recalculation. After the IMPROVEMENT transaction updates the cost/life fields, the next call to `getAssetDepreciationSchedule()` or the next depreciation run automatically uses the new values.
@@ -349,10 +350,10 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 
 **Phase 6: Subsequent Acquisition / Improvement**
 - [x] `STEP-SL26` — Migration: add IMPROVEMENT transaction type and improvement metadata columns (implemented in `m151_fixed_asset_improvement_transaction_type.js`)
-- [x] `STEP-SL27` — 🔥 HOT — Backend: IMPROVE_EXISTING mode — validators, posting, chronology gates, and prospective depreciation
-- [ ] `STEP-SL28` — Backend: reversal of improvement capitalization on active assets
-- [ ] `STEP-SL29` — Frontend: IMPROVE_EXISTING mode UI on CARI document form
-- [ ] `STEP-SL30` — Smoke suite: improvement flows, chronology gates, life revision, and reversal guards
+- [x] `STEP-SL27` — 🔥 HOT — Backend: IMPROVE_EXISTING mode — validators, posting, chronology gates, prospective depreciation, and improvement-aware schedule reseed
+- [x] `STEP-SL28` — Backend: reversal of improvement capitalization on active assets
+- [x] `STEP-SL29` — Frontend: IMPROVE_EXISTING mode UI on CARI document form
+- [x] `STEP-SL30` — Smoke suite: improvement flows, chronology gates, life revision, and reversal guards
 
 ---
 
@@ -1397,10 +1398,13 @@ Final validation that all new flows work alongside existing flows without regres
    - block `IMPROVE_EXISTING` if the asset already appears in any `DRAFT` depreciation run, draft schedule snapshot, or equivalent unposted frozen depreciation context
    - do not silently mutate previously generated draft-run rows after improvement posting
    - require the operator to delete/recreate the draft run first, or follow a future explicit invalidation path if product later adds one
-5. Keep V1 depreciation behavior explicitly **prospective**:
-   - the improvement affects the first eligible future unposted depreciation period under the chronology-safe rules above
-   - V1 does **not** introduce a new intra-period improvement-proration model
-   - V1 does **not** let improvement leak into already-posted months or pending historical catch-up periods
+5. Keep improvement depreciation behavior explicitly **chronology-safe and prospective for posted history**:
+   - the improvement affects the first eligible future **unposted** depreciation period under the chronology-safe rules above
+   - when the improvement lands inside an open unposted month, the schedule engine must **day-prorate that same month** from the effective date instead of deferring to the next month
+   - when the improvement is entered late with a backdated `improvementEffectiveDate`, already-posted historical months are **not** rewritten; instead, the system books the cumulative delta as a current-period `CATCH_UP` depreciation journal/transaction linked back to the same CARI line
+   - already-posted months and pending historical catch-up periods are otherwise **not** rewritten
+   - future schedule generation and the next depreciation run must reseed from the correct pre-improvement opening NBV, then apply posted IMPROVEMENT events on their actual effective dates inside the month
+   - life revision/extension becomes effective on the same improvement date for the prorated in-month segment
 6. Support useful-life changes on improvement lines:
    - accept either `revisedUsefulLifeMonths` or `lifeExtensionMonths`, but not both
    - validate both as positive integers
@@ -1418,10 +1422,12 @@ Final validation that all new flows work alongside existing flows without regres
      - pre useful life months
      - pre remaining useful life months
    - read `improvement_revised_useful_life_months` and `improvement_life_extension_months` from persisted line columns and copy them to the `IMPROVEMENT` transaction for audit/reversal
+   - read optional `improvement_effective_date` from the persisted line, defaulting to `documentDate` when absent
    - increase asset capitalized cost by the improvement amount
    - if provided, apply revised useful life or life extension using the shared remaining-life rule above
    - if resulting remaining useful life becomes positive and the asset was `FULLY_DEPRECIATED`, transition the asset back to `ACTIVE`
    - add journal/source linkage using the shared CARI posting journal
+   - if backdated historical periods are already posted, create a separate current-period `DEPRECIATION/CATCH_UP` transaction and journal for the missed delta, linked to the same CARI line for audit and reversal
 9. Update API contract / OpenAPI for:
    - `IMPROVE_EXISTING`
    - chronology-blocking reason codes
@@ -1443,7 +1449,9 @@ Final validation that all new flows work alongside existing flows without regres
 - Asset capitalized cost increases by the improvement amount
 - Life revision/extension updates asset fields correctly under the shared remaining-life rule
 - `FULLY_DEPRECIATED` asset receiving a valid life revision/extension can transition back to `ACTIVE`
-- Depreciation schedule reflects new cost/life only for safe future periods in V1
+- Depreciation schedule reflects new cost/life only for safe future unposted periods, including same-month day-proration from the improvement effective date
+- Future schedule reads and the next depreciation run both stop using the stale pre-improvement opening base once a posted IMPROVEMENT becomes eligible inside the month
+- Backdated improvement bills use line-level `improvementEffectiveDate` and automatically book current-period catch-up depreciation instead of forcing historical depreciation reversal for already-posted closed periods
 - Account auto-resolves from the target asset category
 - OpenAPI and validator/service behavior match the implemented contract
 
@@ -1524,9 +1532,9 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
    - draft depreciation run exists
    - asset status not eligible
    - later lifecycle blocker if returned by backend
-6. Make the V1 behavior explicit in UX text:
-   - improvement is prospective only
+6. Make the improvement timing behavior explicit in UX text:
    - improvement does not rewrite already-posted depreciation
+   - open unposted month amounts may change prospectively from the improvement effective date
    - user must bring depreciation current first if chronology blockers exist
 7. Keep generated-asset defaults hidden/disabled for this mode:
    - no category requirement from auto-create path
@@ -1577,10 +1585,11 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 3. Add smoke coverage for fully-depreciated behavior:
    - fully depreciated asset blocked when no valid life revision/extension is provided
    - fully depreciated asset allowed when valid remaining life is restored by the provided revision/extension
-4. Add smoke coverage for prospective-only V1 behavior:
+4. Add smoke coverage for improvement timing behavior:
    - posted historical depreciation remains unchanged after improvement
-   - future eligible depreciation reflects the improvement under the locked chronology rules
-   - no intra-period retrospective rewrite is performed
+   - an improvement posted mid-month changes the open month prospectively from the effective date
+   - the following full month uses the post-improvement base/life without stale carryover
+   - no intra-period retrospective rewrite is performed on already-posted or catch-up periods
    - prior suspend/reactivate history does not cause the improvement to leak backward into historical posted or catch-up periods
 5. Add smoke coverage for reversal guards:
    - reversal allowed when no later dependent activity exists

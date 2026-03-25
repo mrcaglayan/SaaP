@@ -174,6 +174,11 @@ function formatPeriodKey(date) {
   return formatDateOnly(date).slice(0, 7);
 }
 
+function derivePeriodKeyFromDate(dateText) {
+  const normalized = String(dateText || "").slice(0, 7);
+  return /^\d{4}-\d{2}$/.test(normalized) ? normalized : null;
+}
+
 function startOfMonth(date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }
@@ -311,11 +316,15 @@ function resolveDisplayScheduleSeedRemainingUsefulLifeMonths(asset) {
     : (asset?.remainingUsefulLifeMonths ?? null);
 }
 
-function mapScheduleRowForDisplay(asset, row) {
+function mapScheduleRowForDisplay(asset, row, displayGrossAmounts = null) {
   const closingNbvTxn = roundAmount(row?.closingNbvTxn || 0);
   const closingNbvBase = roundAmount(row?.closingNbvBase || 0);
-  const originalCostTxn = roundAmount(asset?.originalCostTxn || 0);
-  const originalCostBase = roundAmount(asset?.originalCostBase || 0);
+  const originalCostTxn = roundAmount(
+    displayGrossAmounts?.grossAmountTxn ?? asset?.originalCostTxn ?? 0
+  );
+  const originalCostBase = roundAmount(
+    displayGrossAmounts?.grossAmountBase ?? asset?.originalCostBase ?? 0
+  );
 
   return {
     ...row,
@@ -328,7 +337,13 @@ function mapScheduleRowForDisplay(asset, row) {
   };
 }
 
-function mapSkippedScheduleRowForDisplay(asset, skippedRunLine, row = {}, previousRow = null) {
+function mapSkippedScheduleRowForDisplay(
+  asset,
+  skippedRunLine,
+  row = {},
+  previousRow = null,
+  displayGrossAmounts = null,
+) {
   const openingNbvTxn = row?.openingNbvTxn != null
     ? roundAmount(row.openingNbvTxn)
     : previousRow?.closingNbvTxn != null
@@ -345,8 +360,12 @@ function mapSkippedScheduleRowForDisplay(asset, skippedRunLine, row = {}, previo
   const closingNbvBase = row?.closingNbvBase != null
     ? roundAmount(row.closingNbvBase)
     : openingNbvBase;
-  const originalCostTxn = roundAmount(asset?.originalCostTxn || 0);
-  const originalCostBase = roundAmount(asset?.originalCostBase || 0);
+  const originalCostTxn = roundAmount(
+    displayGrossAmounts?.grossAmountTxn ?? asset?.originalCostTxn ?? 0
+  );
+  const originalCostBase = roundAmount(
+    displayGrossAmounts?.grossAmountBase ?? asset?.originalCostBase ?? 0
+  );
 
   return {
     ...row,
@@ -441,6 +460,543 @@ function compareLifecycleEvents(left, right) {
   return Number(left.transactionId || 0) - Number(right.transactionId || 0);
 }
 
+function mapAssetDepreciationImprovementRow(row) {
+  return {
+    transactionId: Number(row.id),
+    assetId: row.asset_id != null ? Number(row.asset_id) : null,
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    postingDate: row.posting_date ? String(row.posting_date).slice(0, 10) : null,
+    sourceRefType: row.source_ref_type || null,
+    sourceRefId: row.source_ref_id != null ? Number(row.source_ref_id) : null,
+    sourceRefLineId: row.source_ref_line_id != null ? Number(row.source_ref_line_id) : null,
+    grossAmountTxn: row.gross_amount_txn != null ? Number(row.gross_amount_txn) : null,
+    grossAmountBase: row.gross_amount_base != null ? Number(row.gross_amount_base) : null,
+    preCostTxn: row.improvement_pre_cost_txn != null ? Number(row.improvement_pre_cost_txn) : null,
+    preCostBase: row.improvement_pre_cost_base != null ? Number(row.improvement_pre_cost_base) : null,
+    revisedUsefulLifeMonths: row.improvement_revised_useful_life_months != null
+      ? Number(row.improvement_revised_useful_life_months)
+      : null,
+    lifeExtensionMonths: row.improvement_life_extension_months != null
+      ? Number(row.improvement_life_extension_months)
+      : null,
+    preUsefulLifeMonths: row.improvement_pre_useful_life_months != null
+      ? Number(row.improvement_pre_useful_life_months)
+      : null,
+    preRemainingUsefulLifeMonths: row.improvement_pre_remaining_life_months != null
+      ? Number(row.improvement_pre_remaining_life_months)
+      : null,
+  };
+}
+
+async function loadAssetDepreciationImprovementHistory({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT fat.id,
+            fat.asset_id,
+            fat.effective_date,
+            fat.posting_date,
+            fat.source_ref_type,
+            fat.source_ref_id,
+            fat.source_ref_line_id,
+            fat.gross_amount_txn,
+            fat.gross_amount_base,
+            fat.improvement_pre_cost_txn,
+            fat.improvement_pre_cost_base,
+            fat.improvement_revised_useful_life_months,
+            fat.improvement_life_extension_months,
+            fat.improvement_pre_useful_life_months,
+            fat.improvement_pre_remaining_life_months
+       FROM fixed_asset_transactions fat
+      WHERE fat.tenant_id = ?
+        AND fat.asset_id = ?
+        AND fat.transaction_type = 'IMPROVEMENT'
+        AND fat.status = 'POSTED'
+        AND fat.reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY fat.effective_date ASC, fat.id ASC`,
+    [tenantId, assetId]
+  );
+
+  return (result.rows || []).map(mapAssetDepreciationImprovementRow);
+}
+
+async function loadAssetDepreciationImprovementHistoryByAssetIds({
+  tenantId,
+  assetIds,
+  queryFn = query,
+}) {
+  const normalizedAssetIds = getDistinctIds(assetIds);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const groupedHistory = new Map(
+    normalizedAssetIds.map((assetId) => [Number(assetId), []])
+  );
+  if (!normalizedAssetIds.length) {
+    return groupedHistory;
+  }
+
+  const placeholders = normalizedAssetIds.map(() => "?").join(", ");
+  const result = await queryFn(
+    `SELECT fat.id,
+            fat.asset_id,
+            fat.effective_date,
+            fat.posting_date,
+            fat.source_ref_type,
+            fat.source_ref_id,
+            fat.source_ref_line_id,
+            fat.gross_amount_txn,
+            fat.gross_amount_base,
+            fat.improvement_pre_cost_txn,
+            fat.improvement_pre_cost_base,
+            fat.improvement_revised_useful_life_months,
+            fat.improvement_life_extension_months,
+            fat.improvement_pre_useful_life_months,
+            fat.improvement_pre_remaining_life_months
+       FROM fixed_asset_transactions fat
+      WHERE fat.tenant_id = ?
+        AND fat.asset_id IN (${placeholders})
+        AND fat.transaction_type = 'IMPROVEMENT'
+        AND fat.status = 'POSTED'
+        AND fat.reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY fat.asset_id ASC, fat.effective_date ASC, fat.id ASC`,
+    [tenantId, ...normalizedAssetIds]
+  );
+
+  for (const historyRow of (result.rows || []).map(mapAssetDepreciationImprovementRow)) {
+    const assetId = Number(historyRow.assetId);
+    const assetHistory = groupedHistory.get(assetId) || [];
+    assetHistory.push(historyRow);
+    groupedHistory.set(assetId, assetHistory);
+  }
+
+  return groupedHistory;
+}
+
+function sameSourceReference(left, right) {
+  const leftType = normalizeUpperText(left?.sourceRefType);
+  const rightType = normalizeUpperText(right?.sourceRefType);
+  const leftHasSourceIdentity = Boolean(
+    leftType
+    || left?.sourceRefId != null
+    || left?.sourceRefLineId != null
+  );
+  const rightHasSourceIdentity = Boolean(
+    rightType
+    || right?.sourceRefId != null
+    || right?.sourceRefLineId != null
+  );
+  if (!leftHasSourceIdentity || !rightHasSourceIdentity) {
+    return false;
+  }
+
+  return leftType === rightType
+    && Number(left?.sourceRefId || 0) === Number(right?.sourceRefId || 0)
+    && Number(left?.sourceRefLineId || 0) === Number(right?.sourceRefLineId || 0);
+}
+
+function buildPeriodKeyRangeSet(startPeriodKey, endPeriodKey) {
+  const periodKeys = new Set();
+  const normalizedStartPeriodKey = String(startPeriodKey || "").trim();
+  const normalizedEndPeriodKey = String(endPeriodKey || "").trim();
+  if (
+    !/^\d{4}-\d{2}$/.test(normalizedStartPeriodKey)
+    || !/^\d{4}-\d{2}$/.test(normalizedEndPeriodKey)
+    || comparePeriodKeys(normalizedStartPeriodKey, normalizedEndPeriodKey) > 0
+  ) {
+    return periodKeys;
+  }
+
+  let cursor = startOfMonth(parseDateOnly(`${normalizedStartPeriodKey}-01`, "startPeriodKey"));
+  const endMonth = startOfMonth(parseDateOnly(`${normalizedEndPeriodKey}-01`, "endPeriodKey"));
+  while (cursor.getTime() <= endMonth.getTime()) {
+    periodKeys.add(formatPeriodKey(cursor));
+    cursor = addMonths(cursor, 1);
+  }
+
+  return periodKeys;
+}
+
+async function loadPostedCatchUpDepreciationTransactionsForAsset({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT fat.id,
+            fat.asset_id,
+            fat.effective_date,
+            fat.posting_date,
+            fat.source_ref_type,
+            fat.source_ref_id,
+            fat.source_ref_line_id
+       FROM fixed_asset_transactions fat
+      WHERE fat.tenant_id = ?
+        AND fat.asset_id = ?
+        AND fat.transaction_type = 'DEPRECIATION'
+        AND fat.depreciation_kind = 'CATCH_UP'
+        AND fat.status = 'POSTED'
+        AND fat.reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY fat.effective_date ASC, fat.id ASC`,
+    [tenantId, assetId]
+  );
+
+  return (result.rows || []).map((row) => ({
+    transactionId: Number(row.id),
+    assetId: row.asset_id != null ? Number(row.asset_id) : null,
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    postingDate: row.posting_date ? String(row.posting_date).slice(0, 10) : null,
+    sourceRefType: row.source_ref_type || null,
+    sourceRefId: row.source_ref_id != null ? Number(row.source_ref_id) : null,
+    sourceRefLineId: row.source_ref_line_id != null ? Number(row.source_ref_line_id) : null,
+  }));
+}
+
+function resolveRetroImprovementCorrectedPeriodKeys({
+  improvementHistory = [],
+  catchUpTransactions = [],
+}) {
+  const correctedPeriodKeys = new Set();
+
+  for (const catchUpTransaction of catchUpTransactions || []) {
+    const matchingImprovement = (improvementHistory || []).find((historyRow) => (
+      sameSourceReference(historyRow, catchUpTransaction)
+    ));
+    if (!matchingImprovement) {
+      continue;
+    }
+
+    const startPeriodKey = derivePeriodKeyFromDate(matchingImprovement.effectiveDate);
+    const endPeriodKey = derivePeriodKeyFromDate(catchUpTransaction.effectiveDate);
+    for (const periodKey of buildPeriodKeyRangeSet(startPeriodKey, endPeriodKey)) {
+      correctedPeriodKeys.add(periodKey);
+    }
+  }
+
+  return correctedPeriodKeys;
+}
+
+async function buildCorrectedHistoricalRowsByPeriodKey({
+  tenantId,
+  asset,
+  book,
+  depreciationMethod,
+  lifecycleHistory = [],
+  improvementHistory = [],
+  throughPeriodKey,
+  queryFn = query,
+}) {
+  const normalizedThroughPeriodKey = String(throughPeriodKey || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(normalizedThroughPeriodKey)) {
+    return new Map();
+  }
+
+  const requestedMonthCountFloor = calculateInclusiveMonthCount(
+    asset.inServiceDate,
+    normalizedThroughPeriodKey
+  );
+  if (requestedMonthCountFloor <= 0) {
+    return new Map();
+  }
+
+  const improvementAwareSeed = resolveImprovementAwareScheduleSeed({
+    asset,
+    currentPostedScheduleLines: [],
+    currentPostedScheduleCount: 0,
+    baseRemainingUsefulLifeMonths: resolveAssetRemainingUsefulLifeMonths(
+      asset,
+      depreciationMethod
+    ),
+    scheduleStartDate: asset.inServiceDate,
+    improvementHistory,
+  });
+  const requestedMonthCount = Math.max(
+    Number(improvementAwareSeed.requestedMonthCount || 0),
+    requestedMonthCountFloor
+  );
+  if (requestedMonthCount <= 0) {
+    return new Map();
+  }
+
+  const periodResolution = await loadSchedulePeriodsForRange({
+    calendarId: book.calendar_id,
+    startDate: asset.inServiceDate,
+    monthCount: requestedMonthCount,
+    queryFn,
+  });
+  const correctedRows = buildDepreciationScheduleRows(
+    improvementAwareSeed.scheduleSeedAsset,
+    periodResolution.periods,
+    lifecycleHistory,
+    {
+      requestedMonthCount,
+      postedScheduleCount: 0,
+      initialRemainingUsefulLifeMonths:
+        improvementAwareSeed.initialRemainingUsefulLifeMonths,
+      improvementHistory: improvementAwareSeed.futureImprovements,
+    }
+  );
+
+  return new Map(
+    correctedRows.map((row) => [row.periodKey, row])
+  );
+}
+
+function deriveImprovementCostDelta(historyRow, fieldLabel) {
+  const nextValue = historyRow?.[fieldLabel];
+  const preValue = fieldLabel === "grossAmountTxn"
+    ? historyRow?.preCostTxn
+    : historyRow?.preCostBase;
+  if (nextValue == null || preValue == null) {
+    throw badRequest(
+      `Improvement transaction ${historyRow?.transactionId || "UNKNOWN"} is missing persisted ` +
+      `pre/post cost state required for depreciation schedule reseeding`
+    );
+  }
+  return roundAmount(Number(nextValue) - Number(preValue));
+}
+
+function resolveImprovementSchedulePeriodKey(effectiveDate) {
+  return formatPeriodKey(parseDateOnly(effectiveDate, "improvement.effectiveDate"));
+}
+
+function resolveDepreciationGrossAmountsForPeriod({
+  asset,
+  improvementHistory = [],
+  periodKey,
+}) {
+  const normalizedPeriodKey = String(periodKey || "").trim();
+  let grossAmountTxn = roundAmount(asset?.originalCostTxn || 0);
+  let grossAmountBase = roundAmount(asset?.originalCostBase || 0);
+
+  for (const historyRow of improvementHistory || []) {
+    const effectivePeriodKey = resolveImprovementSchedulePeriodKey(historyRow?.effectiveDate);
+    if (normalizedPeriodKey && comparePeriodKeys(effectivePeriodKey, normalizedPeriodKey) > 0) {
+      grossAmountTxn = roundAmount(
+        grossAmountTxn - deriveImprovementCostDelta(historyRow, "grossAmountTxn")
+      );
+      grossAmountBase = roundAmount(
+        grossAmountBase - deriveImprovementCostDelta(historyRow, "grossAmountBase")
+      );
+    }
+  }
+
+  return {
+    grossAmountTxn,
+    grossAmountBase,
+  };
+}
+
+function buildImprovementTimeline(improvementHistory, periods) {
+  const eventsByPeriodKey = new Map();
+  if (!periods.length || !Array.isArray(improvementHistory) || !improvementHistory.length) {
+    return { eventsByPeriodKey };
+  }
+
+  const firstPeriodKey = String(periods[0]?.periodKey || "").trim();
+  for (const historyRow of improvementHistory) {
+    const effectiveDate = String(historyRow?.effectiveDate || "").slice(0, 10);
+    if (!effectiveDate) {
+      throw badRequest("Improvement history row is missing effectiveDate");
+    }
+
+    const effectivePeriodKey = resolveImprovementSchedulePeriodKey(effectiveDate);
+    if (!effectivePeriodKey || comparePeriodKeys(effectivePeriodKey, firstPeriodKey) < 0) {
+      continue;
+    }
+
+    const event = {
+      transactionId: historyRow.transactionId,
+      effectiveDate,
+      effectivePeriodKey,
+      costDeltaTxn: deriveImprovementCostDelta(historyRow, "grossAmountTxn"),
+      costDeltaBase: deriveImprovementCostDelta(historyRow, "grossAmountBase"),
+      revisedUsefulLifeMonths: historyRow.revisedUsefulLifeMonths,
+      lifeExtensionMonths: historyRow.lifeExtensionMonths,
+    };
+
+    const existing = eventsByPeriodKey.get(effectivePeriodKey) || [];
+    existing.push(event);
+    existing.sort(compareLifecycleEvents);
+    eventsByPeriodKey.set(effectivePeriodKey, existing);
+  }
+
+  return {
+    eventsByPeriodKey,
+  };
+}
+
+function splitAllocationSegmentsByImprovementDates(allocationSegments, improvementEvents) {
+  const normalizedSegments = Array.isArray(allocationSegments)
+    ? allocationSegments.filter((segment) => Number(segment?.eligibleDays || 0) > 0)
+    : [];
+  if (!normalizedSegments.length) {
+    return [];
+  }
+
+  const splitDates = [...new Set(
+    (Array.isArray(improvementEvents) ? improvementEvents : [])
+      .map((event) => String(event?.effectiveDate || "").slice(0, 10))
+      .filter(Boolean)
+  )].sort();
+  if (!splitDates.length) {
+    return normalizedSegments.map((segment) => ({
+      allocationType: segment.allocationType || "OWNER_OU",
+      operatingUnitId: segment.operatingUnitId != null ? Number(segment.operatingUnitId) : null,
+      fromDate: segment.fromDate,
+      toDate: segment.toDate,
+      eligibleDays: Number(segment.eligibleDays || 0),
+    }));
+  }
+
+  const splitSegments = [];
+  for (const segment of normalizedSegments) {
+    const segmentEnd = parseDateOnly(segment.toDate, "allocationSegment.toDate");
+    let currentStart = parseDateOnly(segment.fromDate, "allocationSegment.fromDate");
+    const boundaryDates = splitDates.filter((dateText) => (
+      dateText > formatDateOnly(currentStart)
+      && dateText <= formatDateOnly(segmentEnd)
+    ));
+
+    for (const boundaryDateText of [...boundaryDates, null]) {
+      const currentEnd = boundaryDateText
+        ? addDays(parseDateOnly(boundaryDateText, "improvement.effectiveDate"), -1)
+        : segmentEnd;
+      if (currentStart.getTime() > currentEnd.getTime()) {
+        if (boundaryDateText) {
+          currentStart = parseDateOnly(boundaryDateText, "improvement.effectiveDate");
+        }
+        continue;
+      }
+
+      splitSegments.push({
+        allocationType: segment.allocationType || "OWNER_OU",
+        operatingUnitId: segment.operatingUnitId != null ? Number(segment.operatingUnitId) : null,
+        fromDate: formatDateOnly(currentStart),
+        toDate: formatDateOnly(currentEnd),
+        eligibleDays: countDaysInclusive(currentStart, currentEnd),
+      });
+
+      if (boundaryDateText) {
+        currentStart = parseDateOnly(boundaryDateText, "improvement.effectiveDate");
+      }
+    }
+  }
+
+  return splitSegments;
+}
+
+function resolveImprovementAwareScheduleSeed({
+  asset,
+  currentPostedScheduleLines,
+  currentPostedScheduleCount,
+  baseRemainingUsefulLifeMonths,
+  scheduleStartDate,
+  improvementHistory,
+  latestCatchUpDepreciation = null,
+}) {
+  const lastPostedScheduleLine = currentPostedScheduleLines.at(-1) || null;
+  const catchUpSeedPeriodKey = latestCatchUpDepreciation?.effectiveDate
+    ? derivePeriodKeyFromDate(latestCatchUpDepreciation.effectiveDate)
+    : null;
+  const canUseCatchUpSeed = (
+    currentPostedScheduleCount > 0
+    && lastPostedScheduleLine
+    && catchUpSeedPeriodKey
+    && comparePeriodKeys(catchUpSeedPeriodKey, lastPostedScheduleLine.periodKey) >= 0
+    && latestCatchUpDepreciation.nbvAmountTxn != null
+    && latestCatchUpDepreciation.nbvAmountBase != null
+  );
+  const seedOpeningAmounts = currentPostedScheduleCount > 0
+    ? {
+      openingNbvTxn: canUseCatchUpSeed
+        ? roundAmount(latestCatchUpDepreciation.nbvAmountTxn || 0)
+        : roundAmount(lastPostedScheduleLine?.closingNbvTxn || 0),
+      openingNbvBase: canUseCatchUpSeed
+        ? roundAmount(latestCatchUpDepreciation.nbvAmountBase || 0)
+        : roundAmount(lastPostedScheduleLine?.closingNbvBase || 0),
+    }
+    : getScheduleOpeningAmounts(asset);
+  const futureImprovements = [];
+
+  for (const historyRow of improvementHistory || []) {
+    const effectiveDate = String(historyRow?.effectiveDate || "").slice(0, 10);
+    if (!effectiveDate) {
+      throw badRequest("Improvement history row is missing effectiveDate");
+    }
+    if (effectiveDate >= scheduleStartDate) {
+      futureImprovements.push(historyRow);
+    }
+  }
+
+  let openingNbvTxn = seedOpeningAmounts.openingNbvTxn;
+  let openingNbvBase = seedOpeningAmounts.openingNbvBase;
+
+  if (currentPostedScheduleCount <= 0 && !hasLegacyOnboardingValues(asset)) {
+    for (const historyRow of futureImprovements) {
+      openingNbvTxn = roundAmount(
+        openingNbvTxn - deriveImprovementCostDelta(historyRow, "grossAmountTxn")
+      );
+      openingNbvBase = roundAmount(
+        openingNbvBase - deriveImprovementCostDelta(historyRow, "grossAmountBase")
+      );
+    }
+  }
+
+  const firstFutureImprovement = futureImprovements[0] || null;
+  const initialRemainingUsefulLifeMonths = currentPostedScheduleCount <= 0
+    ? (
+      firstFutureImprovement?.preUsefulLifeMonths != null
+        ? Number(firstFutureImprovement.preUsefulLifeMonths)
+        : Number(baseRemainingUsefulLifeMonths || 0)
+    )
+    : (
+      firstFutureImprovement?.preRemainingUsefulLifeMonths != null
+        ? Number(firstFutureImprovement.preRemainingUsefulLifeMonths)
+        : Number(baseRemainingUsefulLifeMonths || 0)
+    );
+  const requestedMonthCount = Math.max(
+    Number(baseRemainingUsefulLifeMonths || 0),
+    Number(initialRemainingUsefulLifeMonths || 0)
+  );
+
+  return {
+    scheduleSeedAsset: {
+      ...asset,
+      scheduleOpeningNbvTxn: openingNbvTxn,
+      scheduleOpeningNbvBase: openingNbvBase,
+    },
+    futureImprovements,
+    initialRemainingUsefulLifeMonths,
+    requestedMonthCount,
+  };
+}
+
 function applyLifecycleEventToState(state, event) {
   if (!event) return;
 
@@ -459,6 +1015,28 @@ function applyLifecycleEventToState(state, event) {
   if (event.kind === "TERMINAL_DISPOSAL") {
     state.isActive = false;
     state.isDisposed = true;
+  }
+}
+
+function applyImprovementEventToScheduleState(state, event, elapsedLifeMonths) {
+  if (!event) return;
+
+  state.openingNbvTxn = roundAmount(state.openingNbvTxn + Number(event.costDeltaTxn || 0));
+  state.openingNbvBase = roundAmount(state.openingNbvBase + Number(event.costDeltaBase || 0));
+
+  if (event.revisedUsefulLifeMonths != null) {
+    state.remainingPeriodsCounter = Math.max(
+      Number(event.revisedUsefulLifeMonths) - Math.max(0, Number(elapsedLifeMonths || 0)),
+      0
+    );
+    return;
+  }
+
+  if (event.lifeExtensionMonths != null) {
+    state.remainingPeriodsCounter = Math.max(
+      Number(state.remainingPeriodsCounter || 0) + Number(event.lifeExtensionMonths),
+      0
+    );
   }
 }
 
@@ -660,6 +1238,223 @@ function buildPeriodEligibility(periodStart, periodEnd, inServiceDate, lifecycle
   };
 }
 
+function resolveDepreciationComputationForOpening({
+  asset,
+  depreciationMethod,
+  openingNbvTxn,
+  openingNbvBase,
+  salvageValueTxn,
+  salvageValueBase,
+  remainingPeriods,
+  monthlyDecliningBalanceRate,
+  hasSwitchedToStraightLine,
+}) {
+  const remainingDepreciableTxn = getRemainingDepreciableAmount(openingNbvTxn, salvageValueTxn);
+  const remainingDepreciableBase = getRemainingDepreciableAmount(openingNbvBase, salvageValueBase);
+
+  let effectiveMethod = depreciationMethod;
+  let nextHasSwitchedToStraightLine = hasSwitchedToStraightLine;
+  if (
+    depreciationMethod === "DECLINING_BALANCE"
+    && (
+      nextHasSwitchedToStraightLine
+      || shouldSwitchDecliningBalanceToStraightLine({
+        switchToStraightLine: asset.switchToStraightLine,
+        remainingPeriods,
+        monthlyRate: monthlyDecliningBalanceRate,
+      })
+    )
+  ) {
+    nextHasSwitchedToStraightLine = true;
+    effectiveMethod = "STRAIGHT_LINE";
+  }
+
+  let fullMonthAmountTxn = 0;
+  let fullMonthAmountBase = 0;
+  if (effectiveMethod === "STRAIGHT_LINE") {
+    fullMonthAmountTxn = calculateStraightLineFullMonthAmount(
+      remainingDepreciableTxn,
+      remainingPeriods
+    );
+    fullMonthAmountBase = calculateStraightLineFullMonthAmount(
+      remainingDepreciableBase,
+      remainingPeriods
+    );
+  } else if (effectiveMethod === "DECLINING_BALANCE") {
+    fullMonthAmountTxn = calculateDecliningBalanceFullMonthAmount(
+      remainingDepreciableTxn,
+      monthlyDecliningBalanceRate
+    );
+    fullMonthAmountBase = calculateDecliningBalanceFullMonthAmount(
+      remainingDepreciableBase,
+      monthlyDecliningBalanceRate
+    );
+  }
+
+  return {
+    effectiveMethod,
+    hasSwitchedToStraightLine: nextHasSwitchedToStraightLine,
+    remainingDepreciableTxn,
+    remainingDepreciableBase,
+    fullMonthAmountTxn,
+    fullMonthAmountBase,
+  };
+}
+
+function calculatePeriodProratedSchedule({
+  asset,
+  period,
+  daysInPeriod,
+  periodEligibility,
+  periodImprovementEvents,
+  depreciationMethod,
+  salvageValueTxn,
+  salvageValueBase,
+  monthlyDecliningBalanceRate,
+  hasSwitchedToStraightLine,
+  openingNbvTxn,
+  openingNbvBase,
+  remainingPeriodsCounter,
+  elapsedLifeMonths,
+}) {
+  const improvementEvents = Array.isArray(periodImprovementEvents)
+    ? [...periodImprovementEvents].sort(compareLifecycleEvents)
+    : [];
+  const allocationSegments = splitAllocationSegmentsByImprovementDates(
+    periodEligibility.allocationSegments,
+    improvementEvents
+  );
+  const scheduleState = {
+    openingNbvTxn: roundAmount(openingNbvTxn || 0),
+    openingNbvBase: roundAmount(openingNbvBase || 0),
+    remainingPeriodsCounter: Math.max(Number(remainingPeriodsCounter || 0), 0),
+  };
+  const computedSegments = [];
+  let currentHasSwitchedToStraightLine = hasSwitchedToStraightLine;
+  let improvementIndex = 0;
+  const periodEndText = String(period.endDate || "").slice(0, 10);
+
+  const applyImprovementEventsThrough = (throughDateText) => {
+    while (
+      improvementIndex < improvementEvents.length
+      && improvementEvents[improvementIndex].effectiveDate <= throughDateText
+    ) {
+      applyImprovementEventToScheduleState(
+        scheduleState,
+        improvementEvents[improvementIndex],
+        elapsedLifeMonths
+      );
+      improvementIndex += 1;
+    }
+  };
+
+  for (const allocationSegment of allocationSegments) {
+    applyImprovementEventsThrough(allocationSegment.fromDate);
+
+    const remainingPeriods = Math.max(Number(scheduleState.remainingPeriodsCounter || 0), 0);
+    const computation = resolveDepreciationComputationForOpening({
+      asset,
+      depreciationMethod,
+      openingNbvTxn: scheduleState.openingNbvTxn,
+      openingNbvBase: scheduleState.openingNbvBase,
+      salvageValueTxn,
+      salvageValueBase,
+      remainingPeriods,
+      monthlyDecliningBalanceRate,
+      hasSwitchedToStraightLine: currentHasSwitchedToStraightLine,
+    });
+    currentHasSwitchedToStraightLine = computation.hasSwitchedToStraightLine;
+
+    let plannedAmountTxn = roundAmount(
+      computation.fullMonthAmountTxn * (Number(allocationSegment.eligibleDays || 0) / daysInPeriod)
+    );
+    let plannedAmountBase = roundAmount(
+      computation.fullMonthAmountBase * (Number(allocationSegment.eligibleDays || 0) / daysInPeriod)
+    );
+    plannedAmountTxn = Math.min(plannedAmountTxn, computation.remainingDepreciableTxn);
+    plannedAmountBase = Math.min(plannedAmountBase, computation.remainingDepreciableBase);
+
+    const txnAmounts = clampPlannedAmount({
+      openingNbv: scheduleState.openingNbvTxn,
+      salvageValue: salvageValueTxn,
+      plannedAmount: plannedAmountTxn,
+      absorbRoundingResidual: false,
+    });
+    const baseAmounts = clampPlannedAmount({
+      openingNbv: scheduleState.openingNbvBase,
+      salvageValue: salvageValueBase,
+      plannedAmount: plannedAmountBase,
+      absorbRoundingResidual: false,
+    });
+
+    scheduleState.openingNbvTxn = txnAmounts.closingNbv;
+    scheduleState.openingNbvBase = baseAmounts.closingNbv;
+    computedSegments.push({
+      allocationType: allocationSegment.allocationType || "OWNER_OU",
+      operatingUnitId: allocationSegment.operatingUnitId != null
+        ? Number(allocationSegment.operatingUnitId)
+        : null,
+      fromDate: allocationSegment.fromDate,
+      toDate: allocationSegment.toDate,
+      eligibleDays: Number(allocationSegment.eligibleDays || 0),
+      plannedAmountTxn: txnAmounts.plannedAmount,
+      plannedAmountBase: baseAmounts.plannedAmount,
+      effectiveMethod: computation.effectiveMethod,
+    });
+  }
+
+  applyImprovementEventsThrough(periodEndText);
+
+  const hasLifecycleEligibilityCutoff = Number(periodEligibility.lifecycleExcludedDays || 0) > 0;
+  const hasPostEligibleImprovement = computedSegments.length > 0
+    ? improvementEvents.some((event) => event.effectiveDate > computedSegments.at(-1).toDate)
+    : false;
+  const isFinalScheduleLine = Number(periodEligibility.eligibleDays || 0) > 0
+    && Math.max(Number(scheduleState.remainingPeriodsCounter || 0), 0) === 1;
+  if (
+    computedSegments.length > 0
+    && isFinalScheduleLine
+    && !hasLifecycleEligibilityCutoff
+    && !hasPostEligibleImprovement
+    && computedSegments.at(-1).effectiveMethod === "STRAIGHT_LINE"
+  ) {
+    const residualTxn = getRemainingDepreciableAmount(scheduleState.openingNbvTxn, salvageValueTxn);
+    const residualBase = getRemainingDepreciableAmount(scheduleState.openingNbvBase, salvageValueBase);
+    if (residualTxn > 0 || residualBase > 0) {
+      const lastSegment = computedSegments.at(-1);
+      lastSegment.plannedAmountTxn = roundAmount(Number(lastSegment.plannedAmountTxn || 0) + residualTxn);
+      lastSegment.plannedAmountBase = roundAmount(Number(lastSegment.plannedAmountBase || 0) + residualBase);
+      scheduleState.openingNbvTxn = roundAmount(salvageValueTxn || 0);
+      scheduleState.openingNbvBase = roundAmount(salvageValueBase || 0);
+    }
+  }
+
+  const plannedAmountTxn = roundAmount(
+    computedSegments.reduce((sum, segment) => sum + Number(segment.plannedAmountTxn || 0), 0)
+  );
+  const plannedAmountBase = roundAmount(
+    computedSegments.reduce((sum, segment) => sum + Number(segment.plannedAmountBase || 0), 0)
+  );
+
+  return {
+    allocationSegments: computedSegments.map((segment) => ({
+      allocationType: segment.allocationType,
+      operatingUnitId: segment.operatingUnitId,
+      fromDate: segment.fromDate,
+      toDate: segment.toDate,
+      eligibleDays: segment.eligibleDays,
+      plannedAmountTxn: roundAmount(segment.plannedAmountTxn || 0),
+      plannedAmountBase: roundAmount(segment.plannedAmountBase || 0),
+    })),
+    plannedAmountTxn,
+    plannedAmountBase,
+    closingNbvTxn: roundAmount(scheduleState.openingNbvTxn || 0),
+    closingNbvBase: roundAmount(scheduleState.openingNbvBase || 0),
+    remainingPeriodsCounter: Math.max(Number(scheduleState.remainingPeriodsCounter || 0), 0),
+    hasSwitchedToStraightLine: currentHasSwitchedToStraightLine,
+  };
+}
+
 function assertScheduleFoundationEligibility(asset) {
   if (!asset) {
     throw badRequest("Asset is required for depreciation schedule generation");
@@ -825,7 +1620,12 @@ function buildDepreciationScheduleRows(
   asset,
   periods,
   lifecycleHistory,
-  { requestedMonthCount = periods.length } = {}
+  {
+    requestedMonthCount = periods.length,
+    postedScheduleCount = 0,
+    initialRemainingUsefulLifeMonths = requestedMonthCount,
+    improvementHistory = [],
+  } = {}
 ) {
   if (!periods.length) {
     return [];
@@ -850,10 +1650,15 @@ function buildDepreciationScheduleRows(
   );
 
   const lifecycleTimeline = buildLifecycleTimeline(asset, lifecycleHistory, periods);
+  const improvementTimeline = buildImprovementTimeline(improvementHistory, periods);
   const lifecycleState = {
     ...lifecycleTimeline.initialState,
   };
-  let remainingPeriodsCounter = totalScheduledMonths;
+  let remainingPeriodsCounter = Math.max(
+    Number(initialRemainingUsefulLifeMonths ?? totalScheduledMonths),
+    0
+  );
+  let elapsedLifeMonths = Math.max(0, Number(postedScheduleCount || 0));
 
   const rows = [];
   for (let index = 0; index < periods.length; index += 1) {
@@ -869,6 +1674,7 @@ function buildDepreciationScheduleRows(
       break;
     }
 
+    const improvementEvents = improvementTimeline.eventsByPeriodKey.get(period.periodKey) || [];
     const daysInPeriod = countDaysInclusive(periodStart, periodEnd);
     const periodEligibility = buildPeriodEligibility(
       periodStart,
@@ -878,86 +1684,30 @@ function buildDepreciationScheduleRows(
       lifecycleState
     );
     const eligibleDays = periodEligibility.eligibleDays;
-    const remainingPeriods = Math.max(remainingPeriodsCounter, 0);
     const consumesUsefulLifePeriod = eligibleDays > 0;
-    const isFinalScheduleLine = consumesUsefulLifePeriod && remainingPeriodsCounter === 1;
-
-    const remainingDepreciableTxn = getRemainingDepreciableAmount(openingNbvTxn, salvageValueTxn);
-    const remainingDepreciableBase = getRemainingDepreciableAmount(openingNbvBase, salvageValueBase);
-
-    let effectiveMethod = depreciationMethod;
-    if (
-      depreciationMethod === "DECLINING_BALANCE"
-      && (
-        hasSwitchedToStraightLine
-        || shouldSwitchDecliningBalanceToStraightLine({
-          switchToStraightLine: asset.switchToStraightLine,
-          remainingPeriods,
-          monthlyRate: monthlyDecliningBalanceRate,
-        })
-      )
-    ) {
-      hasSwitchedToStraightLine = true;
-      effectiveMethod = "STRAIGHT_LINE";
-    }
-
-    let fullMonthAmountTxn = 0;
-    let fullMonthAmountBase = 0;
-    if (effectiveMethod === "STRAIGHT_LINE") {
-      fullMonthAmountTxn = calculateStraightLineFullMonthAmount(
-        remainingDepreciableTxn,
-        remainingPeriods
-      );
-      fullMonthAmountBase = calculateStraightLineFullMonthAmount(
-        remainingDepreciableBase,
-        remainingPeriods
-      );
-    } else if (effectiveMethod === "DECLINING_BALANCE") {
-      fullMonthAmountTxn = calculateDecliningBalanceFullMonthAmount(
-        remainingDepreciableTxn,
-        monthlyDecliningBalanceRate
-      );
-      fullMonthAmountBase = calculateDecliningBalanceFullMonthAmount(
-        remainingDepreciableBase,
-        monthlyDecliningBalanceRate
-      );
-    }
-
-    let plannedAmountTxn = roundAmount(fullMonthAmountTxn * (eligibleDays / daysInPeriod));
-    let plannedAmountBase = roundAmount(fullMonthAmountBase * (eligibleDays / daysInPeriod));
-
-    plannedAmountTxn = Math.min(plannedAmountTxn, remainingDepreciableTxn);
-    plannedAmountBase = Math.min(plannedAmountBase, remainingDepreciableBase);
-
     hasLifecycleEligibilityCutoff = hasLifecycleEligibilityCutoff
       || periodEligibility.lifecycleExcludedDays > 0;
-
-    if (
-      isFinalScheduleLine
-      && effectiveMethod === "STRAIGHT_LINE"
-      && !hasLifecycleEligibilityCutoff
-    ) {
-      plannedAmountTxn = remainingDepreciableTxn;
-      plannedAmountBase = remainingDepreciableBase;
-    }
-
-    const txnScheduleAmounts = clampPlannedAmount({
-      openingNbv: openingNbvTxn,
-      salvageValue: salvageValueTxn,
-      plannedAmount: plannedAmountTxn,
-      absorbRoundingResidual: isFinalScheduleLine && effectiveMethod !== "STRAIGHT_LINE",
+    const periodCalculation = calculatePeriodProratedSchedule({
+      asset,
+      period,
+      daysInPeriod,
+      periodEligibility,
+      periodImprovementEvents: improvementEvents,
+      depreciationMethod,
+      salvageValueTxn,
+      salvageValueBase,
+      monthlyDecliningBalanceRate,
+      hasSwitchedToStraightLine,
+      openingNbvTxn,
+      openingNbvBase,
+      remainingPeriodsCounter,
+      elapsedLifeMonths,
     });
-    const baseScheduleAmounts = clampPlannedAmount({
-      openingNbv: openingNbvBase,
-      salvageValue: salvageValueBase,
-      plannedAmount: plannedAmountBase,
-      absorbRoundingResidual: isFinalScheduleLine && effectiveMethod !== "STRAIGHT_LINE",
-    });
-
-    plannedAmountTxn = txnScheduleAmounts.plannedAmount;
-    plannedAmountBase = baseScheduleAmounts.plannedAmount;
-    const closingNbvTxn = txnScheduleAmounts.closingNbv;
-    const closingNbvBase = baseScheduleAmounts.closingNbv;
+    hasSwitchedToStraightLine = periodCalculation.hasSwitchedToStraightLine;
+    const plannedAmountTxn = periodCalculation.plannedAmountTxn;
+    const plannedAmountBase = periodCalculation.plannedAmountBase;
+    const closingNbvTxn = periodCalculation.closingNbvTxn;
+    const closingNbvBase = periodCalculation.closingNbvBase;
 
     rows.push({
       lineNo: rows.length + 1,
@@ -970,7 +1720,7 @@ function buildDepreciationScheduleRows(
       periodEndDate: period.endDate,
       daysInPeriod,
       eligibleDays,
-      allocationSegments: periodEligibility.allocationSegments,
+      allocationSegments: periodCalculation.allocationSegments,
       openingNbvTxn,
       openingNbvBase,
       plannedAmountTxn,
@@ -983,7 +1733,10 @@ function buildDepreciationScheduleRows(
     openingNbvTxn = closingNbvTxn;
     openingNbvBase = closingNbvBase;
     if (consumesUsefulLifePeriod) {
-      remainingPeriodsCounter = Math.max(remainingPeriodsCounter - 1, 0);
+      remainingPeriodsCounter = Math.max(periodCalculation.remainingPeriodsCounter - 1, 0);
+      elapsedLifeMonths += 1;
+    } else {
+      remainingPeriodsCounter = Math.max(periodCalculation.remainingPeriodsCounter, 0);
     }
 
     if (lifecycleState.isDisposed) {
@@ -1040,17 +1793,31 @@ function buildAllocationSnapshotsForRunRow(runRow) {
 
   let allocatedTxn = 0;
   let allocatedBase = 0;
+  const hasExplicitAmounts = segments.some((segment) => (
+    segment?.plannedAmountTxn != null || segment?.plannedAmountBase != null
+  ));
 
   return segments.map((segment, index) => {
     const isLastSegment = index === segments.length - 1;
     const segmentEligibleDays = Number(segment.eligibleDays || 0);
 
-    let plannedAmountTxn = isLastSegment
-      ? roundAmount(Number(runRow.plannedAmountTxn || 0) - allocatedTxn)
-      : roundAmount(Number(runRow.plannedAmountTxn || 0) * (segmentEligibleDays / totalEligibleDays));
-    let plannedAmountBase = isLastSegment
-      ? roundAmount(Number(runRow.plannedAmountBase || 0) - allocatedBase)
-      : roundAmount(Number(runRow.plannedAmountBase || 0) * (segmentEligibleDays / totalEligibleDays));
+    let plannedAmountTxn = 0;
+    let plannedAmountBase = 0;
+    if (hasExplicitAmounts) {
+      plannedAmountTxn = isLastSegment
+        ? roundAmount(Number(runRow.plannedAmountTxn || 0) - allocatedTxn)
+        : roundAmount(segment.plannedAmountTxn || 0);
+      plannedAmountBase = isLastSegment
+        ? roundAmount(Number(runRow.plannedAmountBase || 0) - allocatedBase)
+        : roundAmount(segment.plannedAmountBase || 0);
+    } else {
+      plannedAmountTxn = isLastSegment
+        ? roundAmount(Number(runRow.plannedAmountTxn || 0) - allocatedTxn)
+        : roundAmount(Number(runRow.plannedAmountTxn || 0) * (segmentEligibleDays / totalEligibleDays));
+      plannedAmountBase = isLastSegment
+        ? roundAmount(Number(runRow.plannedAmountBase || 0) - allocatedBase)
+        : roundAmount(Number(runRow.plannedAmountBase || 0) * (segmentEligibleDays / totalEligibleDays));
+    }
 
     plannedAmountTxn = Math.max(0, plannedAmountTxn);
     plannedAmountBase = Math.max(0, plannedAmountBase);
@@ -1488,6 +2255,16 @@ async function buildAssetDepreciationScheduleContext({
     assetId: asset.id,
     queryFn,
   });
+  const improvementHistory = await loadAssetDepreciationImprovementHistory({
+    tenantId,
+    assetId: asset.id,
+    queryFn,
+  });
+  const latestCatchUpDepreciation = await loadLatestPostedCatchUpDepreciationTransactionForAsset({
+    tenantId,
+    assetId: asset.id,
+    queryFn,
+  });
 
   if (isLowValueFullyExpensedAsset(asset)) {
     return {
@@ -1495,6 +2272,7 @@ async function buildAssetDepreciationScheduleContext({
       depreciationMethod,
       remainingUsefulLifeMonths,
       lifecycleHistory,
+      improvementHistory,
       periods: [],
       scheduleHorizon: null,
       rows: [],
@@ -1516,21 +2294,26 @@ async function buildAssetDepreciationScheduleContext({
       : null;
     if (lastPostedMonthStart) {
       scheduleStartDate = formatDateOnly(startOfMonth(addMonths(lastPostedMonthStart, 1)));
-      scheduleSeedAsset = {
-        ...asset,
-        scheduleOpeningNbvTxn: roundAmount(lastPostedScheduleLine.closingNbvTxn || 0),
-        scheduleOpeningNbvBase: roundAmount(lastPostedScheduleLine.closingNbvBase || 0),
-      };
     }
   }
+  const improvementAwareSeed = resolveImprovementAwareScheduleSeed({
+    asset,
+    currentPostedScheduleLines,
+    currentPostedScheduleCount,
+    baseRemainingUsefulLifeMonths: remainingUsefulLifeMonths,
+    scheduleStartDate,
+    improvementHistory,
+    latestCatchUpDepreciation,
+  });
+  scheduleSeedAsset = improvementAwareSeed.scheduleSeedAsset;
   if (
     (depreciationMethod === "STRAIGHT_LINE" || depreciationMethod === "DECLINING_BALANCE")
-    && remainingUsefulLifeMonths > 0
+    && improvementAwareSeed.requestedMonthCount > 0
   ) {
     const periodResolution = await loadSchedulePeriodsForRange({
       calendarId: book.calendar_id,
       startDate: scheduleStartDate,
-      monthCount: remainingUsefulLifeMonths,
+      monthCount: improvementAwareSeed.requestedMonthCount,
       queryFn,
     });
     periods = periodResolution.periods;
@@ -1539,7 +2322,12 @@ async function buildAssetDepreciationScheduleContext({
       scheduleSeedAsset,
       periods,
       lifecycleHistory,
-      { requestedMonthCount: remainingUsefulLifeMonths }
+      {
+        requestedMonthCount: improvementAwareSeed.requestedMonthCount,
+        postedScheduleCount: currentPostedScheduleCount,
+        initialRemainingUsefulLifeMonths: improvementAwareSeed.initialRemainingUsefulLifeMonths,
+        improvementHistory: improvementAwareSeed.futureImprovements,
+      }
     );
   }
 
@@ -1548,6 +2336,7 @@ async function buildAssetDepreciationScheduleContext({
     depreciationMethod,
     remainingUsefulLifeMonths,
     lifecycleHistory,
+    improvementHistory,
     periods,
     scheduleHorizon,
     rows,
@@ -1663,6 +2452,20 @@ async function buildDepreciationRunRowForAsset({
     }
 
     if (currentPostedPeriodKeys.has(period.periodKey)) {
+      if (normalizeUpperText(asset.status) === "DISPOSED") {
+        const periodStart = parseDateOnly(period.startDate, "period.startDate");
+        const periodEnd = parseDateOnly(period.endDate, "period.endDate");
+        return [buildSkippedRunRow({
+          asset,
+          period,
+          daysInPeriod: countDaysInclusive(periodStart, periodEnd),
+          eligibleDays: 0,
+          allocationSegments: [],
+          reasonCode: "PERIOD_ALREADY_PROCESSED_BY_DISPOSAL",
+          reasonText:
+            `Asset disposal-period depreciation is already posted for period ${period.periodKey}`,
+        })];
+      }
       return [buildErrorRunRow({
         asset,
         period,
@@ -3146,6 +3949,50 @@ async function loadCurrentPostedDepreciationScheduleLinesForAsset({
   }));
 }
 
+async function loadLatestPostedCatchUpDepreciationTransactionForAsset({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT id,
+            effective_date,
+            nbv_amount_txn,
+            nbv_amount_base
+       FROM fixed_asset_transactions
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'
+        AND transaction_type = 'DEPRECIATION'
+        AND depreciation_kind = 'CATCH_UP'
+        AND reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fixed_asset_transactions.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY effective_date DESC, id DESC
+      LIMIT 1`,
+    [tenantId, assetId]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    nbvAmountTxn: row.nbv_amount_txn != null ? Number(row.nbv_amount_txn) : null,
+    nbvAmountBase: row.nbv_amount_base != null ? Number(row.nbv_amount_base) : null,
+  };
+}
+
 async function loadCurrentSkippedDepreciationRunLinesForAsset({
   tenantId,
   assetId,
@@ -3452,7 +4299,7 @@ async function insertPostedDepreciationTransactionTx(tx, payload) {
        note,
        created_by_user_id
      ) VALUES (
-       ?, ?, ?, 'DEPRECIATION', 'POSTED', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?
+       ?, ?, ?, 'DEPRECIATION', 'POSTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
      )`,
     [
       payload.tenantId,
@@ -3465,6 +4312,9 @@ async function insertPostedDepreciationTransactionTx(tx, payload) {
       payload.currencyCode,
       depreciationKind,
       payload.journalEntryId,
+      payload.sourceRefType || null,
+      payload.sourceRefId || null,
+      payload.sourceRefLineId || null,
       payload.grossAmountTxn,
       payload.grossAmountBase,
       payload.accumDeprAmountTxn,
@@ -3483,6 +4333,447 @@ async function insertPostedDepreciationTransactionTx(tx, payload) {
     );
   }
   return transactionId;
+}
+
+function calculateInclusiveMonthCount(startDateText, endPeriodKey) {
+  const normalizedEndPeriodKey = String(endPeriodKey || "").trim();
+  if (!startDateText || !/^\d{4}-\d{2}$/.test(normalizedEndPeriodKey)) {
+    return 0;
+  }
+  const startMonth = startOfMonth(parseDateOnly(startDateText, "startDate"));
+  const endMonth = startOfMonth(parseDateOnly(`${normalizedEndPeriodKey}-01`, "endPeriodKey"));
+  return Math.max(
+    (endMonth.getUTCFullYear() - startMonth.getUTCFullYear()) * 12
+      + (endMonth.getUTCMonth() - startMonth.getUTCMonth())
+      + 1,
+    0
+  );
+}
+
+function buildRetroImprovementCatchUpAllocationSnapshots(scheduleRow, deltaTxn, deltaBase) {
+  const correctedAllocations = buildAllocationSnapshotsForRunRow(scheduleRow);
+  if (!correctedAllocations.length) {
+    return [];
+  }
+
+  const correctedTotalTxn = Number(scheduleRow?.plannedAmountTxn || 0);
+  const correctedTotalBase = Number(scheduleRow?.plannedAmountBase || 0);
+  const totalEligibleDays = correctedAllocations.reduce(
+    (sum, segment) => sum + Number(segment.eligibleDays || 0),
+    0
+  );
+  let allocatedTxn = 0;
+  let allocatedBase = 0;
+
+  return correctedAllocations.map((segment, index) => {
+    const isLastSegment = index === correctedAllocations.length - 1;
+    const ratioTxn = Math.abs(correctedTotalTxn) > ROUNDING_UNIT
+      ? Number(segment.plannedAmountTxn || 0) / correctedTotalTxn
+      : (
+        totalEligibleDays > 0
+          ? Number(segment.eligibleDays || 0) / totalEligibleDays
+          : 0
+      );
+    const ratioBase = Math.abs(correctedTotalBase) > ROUNDING_UNIT
+      ? Number(segment.plannedAmountBase || 0) / correctedTotalBase
+      : (
+        totalEligibleDays > 0
+          ? Number(segment.eligibleDays || 0) / totalEligibleDays
+          : 0
+      );
+    const plannedAmountTxn = isLastSegment
+      ? roundAmount(deltaTxn - allocatedTxn)
+      : roundAmount(deltaTxn * ratioTxn);
+    const plannedAmountBase = isLastSegment
+      ? roundAmount(deltaBase - allocatedBase)
+      : roundAmount(deltaBase * ratioBase);
+
+    allocatedTxn = roundAmount(allocatedTxn + plannedAmountTxn);
+    allocatedBase = roundAmount(allocatedBase + plannedAmountBase);
+
+    return {
+      allocationType: segment.allocationType || "OWNER_OU",
+      operatingUnitId: segment.operatingUnitId != null ? Number(segment.operatingUnitId) : null,
+      fromDate: segment.fromDate,
+      toDate: segment.toDate,
+      eligibleDays: Number(segment.eligibleDays || 0),
+      plannedAmountTxn,
+      plannedAmountBase,
+    };
+  });
+}
+
+function buildRetroImprovementCatchUpJournalLines({
+  assetSnapshot,
+  periodKey,
+  allocationSnapshots,
+  currencyCode,
+}) {
+  const journalLines = [];
+
+  for (const allocation of Array.isArray(allocationSnapshots) ? allocationSnapshots : []) {
+    const signedAmountTxn = roundAmount(allocation.plannedAmountTxn || 0);
+    const signedAmountBase = roundAmount(allocation.plannedAmountBase || 0);
+    if (
+      Math.abs(signedAmountTxn) <= ROUNDING_UNIT
+      && Math.abs(signedAmountBase) <= ROUNDING_UNIT
+    ) {
+      continue;
+    }
+
+    const isPositive = Math.abs(signedAmountBase) > ROUNDING_UNIT
+      ? signedAmountBase > 0
+      : signedAmountTxn > 0;
+    const amountTxn = Math.abs(signedAmountTxn);
+    const amountBase = Math.abs(signedAmountBase);
+    const operatingUnitId = allocation.operatingUnitId ?? assetSnapshot.ownerOperatingUnitId ?? null;
+    const assetLabel = String(assetSnapshot.assetNo || assetSnapshot.id || "").slice(0, 100);
+
+    journalLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: isPositive
+          ? assetSnapshot.deprExpenseAccountId
+          : assetSnapshot.accumDeprAccountId,
+        side: "DEBIT",
+        amountTxn,
+        amountBase,
+        lineDescription: `FA retro improvement catch-up ${assetLabel} ${periodKey}`.slice(0, 255),
+        subledgerReferenceNo: assetLabel,
+        currencyCode,
+        operatingUnitId,
+      })
+    );
+    journalLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: isPositive
+          ? assetSnapshot.accumDeprAccountId
+          : assetSnapshot.deprExpenseAccountId,
+        side: "CREDIT",
+        amountTxn,
+        amountBase,
+        lineDescription: `FA retro improvement catch-up offset ${assetLabel} ${periodKey}`.slice(0, 255),
+        subledgerReferenceNo: assetLabel,
+        currencyCode,
+        operatingUnitId,
+      })
+    );
+  }
+
+  return journalLines;
+}
+
+export async function postRetroImprovementCurrentPeriodCatchUpTx(tx, {
+  tenantId,
+  assetId,
+  improvementEffectiveDate,
+  postingDate,
+  postImprovementNbvTxn,
+  postImprovementNbvBase,
+  legalEntityId = null,
+  bookId = null,
+  fiscalPeriodId = null,
+  userId = null,
+  sourceRefType = null,
+  sourceRefId = null,
+  sourceRefLineId = null,
+}) {
+  if (!tx?.query) throw badRequest("tx is required");
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+  if (!improvementEffectiveDate) throw badRequest("improvementEffectiveDate is required");
+  if (!postingDate) throw badRequest("postingDate is required");
+
+  const asset = await loadAssetDepreciationSnapshot({
+    tenantId,
+    assetId,
+    queryFn: tx.query,
+  });
+  if (legalEntityId != null && Number(asset.legalEntityId) !== Number(legalEntityId)) {
+    throw badRequest(
+      `Asset ${assetId} does not belong to legalEntityId=${Number(legalEntityId)}`
+    );
+  }
+
+  const scope = await resolveDepreciationRunScope({
+    tenantId,
+    legalEntityId: asset.legalEntityId,
+    fiscalPeriodId,
+    bookId,
+    postingDate,
+    actionLabel: "post retro improvement catch-up depreciation",
+    queryFn: tx.query,
+  });
+  const effectivePeriodKey = derivePeriodKeyFromDate(improvementEffectiveDate);
+  if (!effectivePeriodKey) {
+    throw badRequest("improvementEffectiveDate must resolve to a fiscal period key");
+  }
+  if (comparePeriodKeys(effectivePeriodKey, scope.period.periodKey) >= 0) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "EFFECTIVE_PERIOD_IS_CURRENT_OR_FUTURE",
+    };
+  }
+
+  const currentPostedScheduleLines = await loadCurrentPostedDepreciationScheduleLinesForAsset({
+    tenantId,
+    assetId,
+    queryFn: tx.query,
+  });
+  const affectedPostedScheduleLines = currentPostedScheduleLines.filter((row) => (
+    comparePeriodKeys(row.periodKey, effectivePeriodKey) >= 0
+    && comparePeriodKeys(row.periodKey, scope.period.periodKey) < 0
+  ));
+  if (!affectedPostedScheduleLines.length) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "NO_POSTED_PERIODS_AFTER_EFFECTIVE_DATE",
+    };
+  }
+
+  const depreciationMethod = normalizeUpperText(asset.depreciationMethod);
+  const lifecycleHistory = await loadAssetDepreciationLifecycleHistory({
+    tenantId,
+    assetId,
+    queryFn: tx.query,
+  });
+  const improvementHistory = await loadAssetDepreciationImprovementHistory({
+    tenantId,
+    assetId,
+    queryFn: tx.query,
+  });
+  const lastAffectedScheduleLine = affectedPostedScheduleLines.at(-1) || null;
+  const monthCountToLastAffectedPeriod = calculateInclusiveMonthCount(
+    asset.inServiceDate,
+    lastAffectedScheduleLine?.periodKey
+  );
+  const improvementAwareSeed = resolveImprovementAwareScheduleSeed({
+    asset,
+    currentPostedScheduleLines: [],
+    currentPostedScheduleCount: 0,
+    baseRemainingUsefulLifeMonths: resolveAssetRemainingUsefulLifeMonths(
+      asset,
+      depreciationMethod
+    ),
+    scheduleStartDate: asset.inServiceDate,
+    improvementHistory,
+  });
+  const requestedMonthCount = Math.max(
+    Number(improvementAwareSeed.requestedMonthCount || 0),
+    monthCountToLastAffectedPeriod
+  );
+  const periodResolution = await loadSchedulePeriodsForRange({
+    calendarId: scope.book.calendar_id,
+    startDate: asset.inServiceDate,
+    monthCount: requestedMonthCount,
+    queryFn: tx.query,
+  });
+  const correctedRows = buildDepreciationScheduleRows(
+    improvementAwareSeed.scheduleSeedAsset,
+    periodResolution.periods,
+    lifecycleHistory,
+    {
+      requestedMonthCount,
+      postedScheduleCount: 0,
+      initialRemainingUsefulLifeMonths:
+        improvementAwareSeed.initialRemainingUsefulLifeMonths,
+      improvementHistory: improvementAwareSeed.futureImprovements,
+    }
+  );
+  const correctedRowsByPeriodKey = new Map(
+    correctedRows.map((row) => [row.periodKey, row])
+  );
+
+  const deltaRows = [];
+  let totalDeltaTxn = 0;
+  let totalDeltaBase = 0;
+
+  for (const actualRow of affectedPostedScheduleLines) {
+    const correctedRow = correctedRowsByPeriodKey.get(actualRow.periodKey) || null;
+    if (!correctedRow) {
+      throw badRequest(
+        `Missing corrected depreciation schedule row for asset ${assetId} period ${actualRow.periodKey}`
+      );
+    }
+
+    const deltaTxn = roundAmount(
+      Number(correctedRow.plannedAmountTxn || 0) - Number(actualRow.plannedAmountTxn || 0)
+    );
+    const deltaBase = roundAmount(
+      Number(correctedRow.plannedAmountBase || 0) - Number(actualRow.plannedAmountBase || 0)
+    );
+    if (Math.abs(deltaTxn) <= ROUNDING_UNIT && Math.abs(deltaBase) <= ROUNDING_UNIT) {
+      continue;
+    }
+
+    const allocationSnapshots = buildRetroImprovementCatchUpAllocationSnapshots(
+      correctedRow,
+      deltaTxn,
+      deltaBase
+    );
+    if (!allocationSnapshots.length) {
+      throw badRequest(
+        `Retro improvement catch-up requires allocation segments for asset ${assetId} period ${actualRow.periodKey}`
+      );
+    }
+
+    deltaRows.push({
+      periodKey: actualRow.periodKey,
+      periodEndDate: correctedRow.periodEndDate || null,
+      deltaTxn,
+      deltaBase,
+      correctedRow,
+      allocationSnapshots,
+    });
+    totalDeltaTxn = roundAmount(totalDeltaTxn + deltaTxn);
+    totalDeltaBase = roundAmount(totalDeltaBase + deltaBase);
+  }
+
+  if (!deltaRows.length) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "NO_CATCH_UP_DELTA",
+    };
+  }
+
+  const assetPostingSnapshots = await loadAssetDepreciationPostingSnapshots({
+    tenantId,
+    assetIds: [assetId],
+    queryFn: tx.query,
+  });
+  const assetSnapshot = assetPostingSnapshots[0] || null;
+  if (!assetSnapshot) {
+    throw badRequest(`Missing asset posting snapshot for assetId=${assetId}`);
+  }
+  if (!assetSnapshot.deprExpenseAccountId || !assetSnapshot.accumDeprAccountId) {
+    throw badRequest(`Asset ${assetId} is missing depreciation posting accounts`);
+  }
+
+  const journalLines = [];
+  for (const deltaRow of deltaRows) {
+    journalLines.push(
+      ...buildRetroImprovementCatchUpJournalLines({
+        assetSnapshot,
+        periodKey: deltaRow.periodKey,
+        allocationSnapshots: deltaRow.allocationSnapshots,
+        currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
+      })
+    );
+  }
+  if (!journalLines.length) {
+    return {
+      posted: false,
+      assetId,
+      reasonCode: "NO_JOURNAL_LINES",
+    };
+  }
+
+  const correctedCurrentNbvTxn = roundAmount(
+    Number(postImprovementNbvTxn || 0) - Number(totalDeltaTxn || 0)
+  );
+  const correctedCurrentNbvBase = roundAmount(
+    Number(postImprovementNbvBase || 0) - Number(totalDeltaBase || 0)
+  );
+  const lastDeltaRow = deltaRows.at(-1) || null;
+  const periodGrossAmounts = resolveDepreciationGrossAmountsForPeriod({
+    asset: assetSnapshot,
+    improvementHistory,
+    periodKey: lastDeltaRow?.periodKey,
+  });
+
+  const journalResult = await insertPostedJournalWithLinesTx(tx, {
+    tenantId,
+    legalEntityId: assetSnapshot.legalEntityId,
+    bookId: Number(scope.book.id),
+    fiscalPeriodId: Number(scope.period.id),
+    userId,
+    journalNo: buildFixedAssetCatchUpJournalNo(assetId),
+    entryDate: scope.postingDate,
+    documentDate: scope.postingDate,
+    currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
+    description:
+      `FA retro improvement catch-up ${assetSnapshot.assetNo || assetId} through ${lastDeltaRow?.periodKey || effectivePeriodKey}`.slice(0, 500),
+    referenceNo: String(assetSnapshot.assetNo || assetId).slice(0, 100),
+    lines: journalLines,
+    operatingUnitId: assetSnapshot.ownerOperatingUnitId ?? null,
+  });
+
+  const transactionId = await insertPostedDepreciationTransactionTx(tx, {
+    tenantId,
+    legalEntityId: assetSnapshot.legalEntityId,
+    assetId,
+    effectiveDate: lastDeltaRow?.periodEndDate || scope.postingDate,
+    postingDate: scope.postingDate,
+    bookId: Number(scope.book.id),
+    fiscalPeriodId: Number(scope.period.id),
+    currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
+    depreciationKind: "CATCH_UP",
+    journalEntryId: journalResult.journalEntryId,
+    sourceRefType,
+    sourceRefId,
+    sourceRefLineId,
+    grossAmountTxn: periodGrossAmounts.grossAmountTxn,
+    grossAmountBase: periodGrossAmounts.grossAmountBase,
+    accumDeprAmountTxn: roundAmount(
+      periodGrossAmounts.grossAmountTxn - correctedCurrentNbvTxn
+    ),
+    accumDeprAmountBase: roundAmount(
+      periodGrossAmounts.grossAmountBase - correctedCurrentNbvBase
+    ),
+    nbvAmountTxn: correctedCurrentNbvTxn,
+    nbvAmountBase: correctedCurrentNbvBase,
+    note:
+      `Retro improvement catch-up through ${lastDeltaRow?.periodKey || effectivePeriodKey}`.slice(0, 1000),
+    createdByUserId: userId,
+  });
+
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId: assetSnapshot.legalEntityId,
+    journalEntryId: journalResult.journalEntryId,
+    sourceRefType: FIXED_ASSET_TRANSACTION,
+    sourceRefId: transactionId,
+    linkRole: "PRIMARY",
+  });
+
+  const fullyDepreciated = (
+    correctedCurrentNbvTxn <= roundAmount(assetSnapshot.salvageValueTxn || 0)
+    && correctedCurrentNbvBase <= roundAmount(assetSnapshot.salvageValueBase || 0)
+  );
+  await tx.query(
+    `UPDATE fixed_assets
+        SET status = CASE
+              WHEN ? = 1 AND status <> 'DISPOSED' THEN 'FULLY_DEPRECIATED'
+              WHEN ? = 0 AND status = 'FULLY_DEPRECIATED' THEN 'ACTIVE'
+              ELSE status
+            END,
+            updated_by_user_id = ?
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [
+      fullyDepreciated ? 1 : 0,
+      fullyDepreciated ? 1 : 0,
+      userId,
+      tenantId,
+      assetId,
+    ]
+  );
+
+  return {
+    posted: true,
+    assetId,
+    transactionId,
+    journalEntryId: journalResult.journalEntryId,
+    postingDate: scope.postingDate,
+    effectiveDate: lastDeltaRow?.periodEndDate || scope.postingDate,
+    catchUpPeriodKeys: deltaRows.map((row) => row.periodKey),
+    totalAmountTxn: totalDeltaTxn,
+    totalAmountBase: totalDeltaBase,
+    nbvAmountTxn: correctedCurrentNbvTxn,
+    nbvAmountBase: correctedCurrentNbvBase,
+  };
 }
 
 export async function postLateAssetCatchUpDepreciationTx(tx, {
@@ -3593,6 +4884,11 @@ export async function postLateAssetCatchUpDepreciationTx(tx, {
   if (!assetSnapshot.deprExpenseAccountId || !assetSnapshot.accumDeprAccountId) {
     throw badRequest(`Asset ${assetId} is missing depreciation posting accounts`);
   }
+  const improvementHistory = await loadAssetDepreciationImprovementHistory({
+    tenantId,
+    assetId,
+    queryFn: tx.query,
+  });
 
   const journalLines = [];
   let totalCatchUpAmountTxn = 0;
@@ -3688,6 +4984,11 @@ export async function postLateAssetCatchUpDepreciationTx(tx, {
     operatingUnitId: assetSnapshot.ownerOperatingUnitId ?? null,
   });
 
+  const periodGrossAmounts = resolveDepreciationGrossAmountsForPeriod({
+    asset: assetSnapshot,
+    improvementHistory,
+    periodKey: lastCatchUpRow.periodKey,
+  });
   const transactionId = await insertPostedDepreciationTransactionTx(tx, {
     tenantId,
     legalEntityId: assetSnapshot.legalEntityId,
@@ -3699,10 +5000,14 @@ export async function postLateAssetCatchUpDepreciationTx(tx, {
     currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
     depreciationKind: "CATCH_UP",
     journalEntryId: journalResult.journalEntryId,
-    grossAmountTxn: assetSnapshot.originalCostTxn,
-    grossAmountBase: assetSnapshot.originalCostBase,
-    accumDeprAmountTxn: roundAmount(assetSnapshot.originalCostTxn - Number(lastCatchUpRow.closingNbvTxn || 0)),
-    accumDeprAmountBase: roundAmount(assetSnapshot.originalCostBase - Number(lastCatchUpRow.closingNbvBase || 0)),
+    grossAmountTxn: periodGrossAmounts.grossAmountTxn,
+    grossAmountBase: periodGrossAmounts.grossAmountBase,
+    accumDeprAmountTxn: roundAmount(
+      periodGrossAmounts.grossAmountTxn - Number(lastCatchUpRow.closingNbvTxn || 0)
+    ),
+    accumDeprAmountBase: roundAmount(
+      periodGrossAmounts.grossAmountBase - Number(lastCatchUpRow.closingNbvBase || 0)
+    ),
     nbvAmountTxn: roundAmount(lastCatchUpRow.closingNbvTxn || 0),
     nbvAmountBase: roundAmount(lastCatchUpRow.closingNbvBase || 0),
     note: `Late catch-up depreciation through ${lastCatchUpRow.periodKey}`.slice(0, 1000),
@@ -3884,6 +5189,11 @@ export async function postDepreciationRun({
       );
     }
     const assetSnapshotsById = new Map(assetSnapshots.map((asset) => [asset.id, asset]));
+    const improvementHistoryByAssetId = await loadAssetDepreciationImprovementHistoryByAssetIds({
+      tenantId,
+      assetIds: readyAssetIds,
+      queryFn: tx.query,
+    });
     const readyLinePeriodIds = getDistinctIds(readyLines.map((line) => line.fiscalPeriodId));
     const readyLinePeriodById = new Map();
     if (readyLinePeriodIds.length > 0) {
@@ -4044,8 +5354,17 @@ export async function postDepreciationRun({
       const assetSnapshot = assetSnapshotsById.get(readyLine.assetId);
       const scheduleLine = scheduleLinesById.get(readyLine.scheduleLineId);
       const depreciationKind = deriveRunRowDepreciationKind(readyLine, run.periodKey);
-      const accumDeprAmountTxn = roundAmount(assetSnapshot.originalCostTxn - scheduleLine.closingNbvTxn);
-      const accumDeprAmountBase = roundAmount(assetSnapshot.originalCostBase - scheduleLine.closingNbvBase);
+      const periodGrossAmounts = resolveDepreciationGrossAmountsForPeriod({
+        asset: assetSnapshot,
+        improvementHistory: improvementHistoryByAssetId.get(readyLine.assetId) || [],
+        periodKey: readyLine.periodKey,
+      });
+      const accumDeprAmountTxn = roundAmount(
+        periodGrossAmounts.grossAmountTxn - scheduleLine.closingNbvTxn
+      );
+      const accumDeprAmountBase = roundAmount(
+        periodGrossAmounts.grossAmountBase - scheduleLine.closingNbvBase
+      );
       const nbvAmountTxn = roundAmount(scheduleLine.closingNbvTxn);
       const nbvAmountBase = roundAmount(scheduleLine.closingNbvBase);
       const transactionEffectiveDate = (
@@ -4065,8 +5384,8 @@ export async function postDepreciationRun({
         currencyCode: assetSnapshot.currencyCode || scope.book.base_currency_code,
         depreciationKind,
         journalEntryId: journalResult.journalEntryId,
-        grossAmountTxn: assetSnapshot.originalCostTxn,
-        grossAmountBase: assetSnapshot.originalCostBase,
+        grossAmountTxn: periodGrossAmounts.grossAmountTxn,
+        grossAmountBase: periodGrossAmounts.grossAmountBase,
         accumDeprAmountTxn,
         accumDeprAmountBase,
         nbvAmountTxn,
@@ -4482,6 +5801,30 @@ export async function getAssetDepreciationSchedule({ tenantId, assetId }) {
   const currentPostedScheduleLines = scheduleContext.currentPostedScheduleLines || [];
   const currentPostedScheduleCount = scheduleContext.currentPostedScheduleCount
     ?? currentPostedScheduleLines.length;
+  const improvementHistory = scheduleContext.improvementHistory || [];
+  const postedCatchUpTransactions = await loadPostedCatchUpDepreciationTransactionsForAsset({
+    tenantId,
+    assetId: asset.id,
+  });
+  const correctedHistoricalPeriodKeys = resolveRetroImprovementCorrectedPeriodKeys({
+    improvementHistory,
+    catchUpTransactions: postedCatchUpTransactions,
+  });
+  let correctedHistoricalRowsByPeriodKey = new Map();
+  const lastCorrectedHistoricalPeriodKey = Array.from(correctedHistoricalPeriodKeys)
+    .sort(comparePeriodKeys)
+    .at(-1) || null;
+  if (lastCorrectedHistoricalPeriodKey) {
+    correctedHistoricalRowsByPeriodKey = await buildCorrectedHistoricalRowsByPeriodKey({
+      tenantId,
+      asset,
+      book,
+      depreciationMethod: scheduleContext.depreciationMethod,
+      lifecycleHistory: scheduleContext.lifecycleHistory,
+      improvementHistory,
+      throughPeriodKey: lastCorrectedHistoricalPeriodKey,
+    });
+  }
   const currentSkippedRunLines = await loadCurrentSkippedDepreciationRunLinesForAsset({
     tenantId,
     assetId: asset.id,
@@ -4494,10 +5837,10 @@ export async function getAssetDepreciationSchedule({ tenantId, assetId }) {
     || asset.lastDepreciationPeriod
     || null;
   const rowsByPeriodKey = new Map(
-    (scheduleContext.rows || []).map((row) => [row.periodKey, mapScheduleRowForDisplay(asset, row)])
+    (scheduleContext.rows || []).map((row) => [row.periodKey, row])
   );
   for (const postedLine of currentPostedScheduleLines) {
-    rowsByPeriodKey.set(postedLine.periodKey, mapScheduleRowForDisplay(asset, postedLine));
+    rowsByPeriodKey.set(postedLine.periodKey, postedLine);
   }
   for (const skippedRunLine of currentSkippedRunLines) {
     if (!rowsByPeriodKey.has(skippedRunLine.periodKey)) {
@@ -4518,17 +5861,36 @@ export async function getAssetDepreciationSchedule({ tenantId, assetId }) {
   const rows = [];
   for (let index = 0; index < sortedRows.length; index += 1) {
     const row = sortedRows[index];
+    const correctedHistoricalRow = correctedHistoricalRowsByPeriodKey.get(row.periodKey) || null;
+    const rowForDisplay = correctedHistoricalPeriodKeys.has(row.periodKey) && correctedHistoricalRow
+      ? {
+          ...row,
+          openingNbvTxn: correctedHistoricalRow.openingNbvTxn,
+          openingNbvBase: correctedHistoricalRow.openingNbvBase,
+          closingNbvTxn: correctedHistoricalRow.closingNbvTxn,
+          closingNbvBase: correctedHistoricalRow.closingNbvBase,
+          plannedAmountTxn: correctedHistoricalRow.plannedAmountTxn,
+          plannedAmountBase: correctedHistoricalRow.plannedAmountBase,
+          correctedByCatchUp: true,
+        }
+      : row;
     const skippedRunLine = skippedRunLinesByPeriodKey.get(row.periodKey);
+    const displayGrossAmounts = resolveDepreciationGrossAmountsForPeriod({
+      asset,
+      improvementHistory,
+      periodKey: row.periodKey,
+    });
     if (!skippedRunLine) {
-      rows.push(row);
+      rows.push(mapScheduleRowForDisplay(asset, rowForDisplay, displayGrossAmounts));
       continue;
     }
     const previousRow = rows.at(-1) || null;
     const skippedDisplayRow = mapSkippedScheduleRowForDisplay(
       asset,
       skippedRunLine,
-      row,
-      previousRow
+      rowForDisplay,
+      previousRow,
+      displayGrossAmounts
     );
     rows.push({
       ...skippedDisplayRow,

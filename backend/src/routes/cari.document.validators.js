@@ -339,6 +339,14 @@ function parseDocumentLines(value, options = {}) {
         `lines[${index}].fixedAssetTag`,
         100
       ) || null;
+    const improvementEffectiveDate =
+      parseOptionalDate(
+        pickPrimaryOrAlias(
+          row.improvementEffectiveDate,
+          row.improvement_effective_date
+        ),
+        `lines[${index}].improvementEffectiveDate`
+      ) || null;
     const revisedUsefulLifeMonths =
       parseOptionalPositiveIntField(
         row.revisedUsefulLifeMonths ??
@@ -393,6 +401,7 @@ function parseDocumentLines(value, options = {}) {
       fixedAssetOwnerOperatingUnitId ||
       fixedAssetLocationOperatingUnitId ||
       explicitFixedAssetMode ||
+      improvementEffectiveDate ||
       revisedUsefulLifeMonths ||
       lifeExtensionMonths;
 
@@ -424,6 +433,11 @@ function parseDocumentLines(value, options = {}) {
         if (explicitFixedAssetMode) {
           throw badRequest(
             `lines[${index}].fixedAssetMode is not allowed when subledgerType=FIXED_ASSET on AR documents`
+          );
+        }
+        if (improvementEffectiveDate) {
+          throw badRequest(
+            `lines[${index}].improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING`
           );
         }
         fixedAssetMode = "LINK_EXISTING";
@@ -462,6 +476,11 @@ function parseDocumentLines(value, options = {}) {
               `lines[${index}].revisedUsefulLifeMonths and lifeExtensionMonths are allowed only when fixedAssetMode=IMPROVE_EXISTING`
             );
           }
+          if (improvementEffectiveDate) {
+            throw badRequest(
+              `lines[${index}].improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING`
+            );
+          }
         } else if (fixedAssetMode === "LINK_EXISTING") {
           if (!targetFixedAssetId) {
             throw badRequest(
@@ -476,6 +495,11 @@ function parseDocumentLines(value, options = {}) {
           if (revisedUsefulLifeMonths || lifeExtensionMonths) {
             throw badRequest(
               `lines[${index}].revisedUsefulLifeMonths and lifeExtensionMonths are allowed only when fixedAssetMode=IMPROVE_EXISTING`
+            );
+          }
+          if (improvementEffectiveDate) {
+            throw badRequest(
+              `lines[${index}].improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING`
             );
           }
         } else if (fixedAssetMode === "IMPROVE_EXISTING") {
@@ -559,6 +583,7 @@ function parseDocumentLines(value, options = {}) {
       fixedAssetNameOverride,
       fixedAssetSerialNo,
       fixedAssetTag,
+      improvementEffectiveDate,
       revisedUsefulLifeMonths,
       lifeExtensionMonths,
     });

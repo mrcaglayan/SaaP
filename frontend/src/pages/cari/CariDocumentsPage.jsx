@@ -136,8 +136,15 @@ const FIXED_ASSET_AR_ELIGIBLE_STATUSES = [
   "SUSPENDED",
   "FULLY_DEPRECIATED",
 ];
+const FIXED_ASSET_AP_IMPROVEMENT_ELIGIBLE_STATUSES = [
+  "ACTIVE",
+  "FULLY_DEPRECIATED",
+];
 const FIXED_ASSET_AP_MODE_OPTIONS = DOCUMENT_LINE_FIXED_ASSET_MODES.filter(
-  (value) => value === "AUTO_CREATE" || value === "LINK_EXISTING"
+  (value) =>
+    value === "AUTO_CREATE"
+    || value === "LINK_EXISTING"
+    || value === "IMPROVE_EXISTING"
 );
 const DOCUMENT_RECURRING_TEMPLATE_CADENCES = [
   "NONE",
@@ -1084,6 +1091,7 @@ function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
     fixedAssetNameOverride: "",
     fixedAssetSerialNo: "",
     fixedAssetTag: "",
+    improvementEffectiveDate: "",
     revisedUsefulLifeMonths: "",
     lifeExtensionMonths: "",
   };
@@ -1136,30 +1144,68 @@ function resetDocumentLineTaxPreview(seed = {}) {
   });
 }
 
-function buildFixedAssetModeTransitionPatch(line, nextMode) {
+function buildFixedAssetModeTransitionPatch(line, nextMode, {
+  defaultImprovementEffectiveDate = "",
+} = {}) {
   const currentLine = createDocumentLineDraft(line);
-  const normalizedMode =
-    String(nextMode || "").trim().toUpperCase() === "LINK_EXISTING"
-      ? "LINK_EXISTING"
-      : "AUTO_CREATE";
+  const requestedMode = String(nextMode || "").trim().toUpperCase();
+  const normalizedMode = DOCUMENT_LINE_FIXED_ASSET_MODES.includes(requestedMode)
+    ? requestedMode
+    : "AUTO_CREATE";
   if (normalizedMode === "LINK_EXISTING") {
     return {
       fixedAssetMode: "LINK_EXISTING",
-      targetFixedAssetId: currentLine.targetFixedAssetId,
+      targetFixedAssetId:
+        currentLine.fixedAssetMode === "LINK_EXISTING"
+          ? currentLine.targetFixedAssetId
+          : "",
       fixedAssetCategoryId: "",
       fixedAssetOwnerOperatingUnitId: "",
       fixedAssetLocationOperatingUnitId: "",
       fixedAssetNameOverride: "",
       fixedAssetSerialNo: "",
       fixedAssetTag: "",
+      improvementEffectiveDate: "",
       revisedUsefulLifeMonths: "",
       lifeExtensionMonths: "",
+      quantity: "1",
+    };
+  }
+  if (normalizedMode === "IMPROVE_EXISTING") {
+    return {
+      fixedAssetMode: "IMPROVE_EXISTING",
+      targetFixedAssetId:
+        currentLine.fixedAssetMode === "IMPROVE_EXISTING"
+          ? currentLine.targetFixedAssetId
+          : "",
+      fixedAssetCategoryId: "",
+      fixedAssetOwnerOperatingUnitId: "",
+      fixedAssetLocationOperatingUnitId: "",
+      fixedAssetNameOverride: "",
+      fixedAssetSerialNo: "",
+      fixedAssetTag: "",
+      improvementEffectiveDate:
+        currentLine.fixedAssetMode === "IMPROVE_EXISTING"
+          ? currentLine.improvementEffectiveDate
+          : String(defaultImprovementEffectiveDate || "").trim(),
+      revisedUsefulLifeMonths:
+        currentLine.fixedAssetMode === "IMPROVE_EXISTING"
+          ? currentLine.revisedUsefulLifeMonths
+          : "",
+      lifeExtensionMonths:
+        currentLine.fixedAssetMode === "IMPROVE_EXISTING"
+          ? currentLine.lifeExtensionMonths
+          : "",
       quantity: "1",
     };
   }
   return {
     fixedAssetMode: "AUTO_CREATE",
     targetFixedAssetId: "",
+    fixedAssetCategoryId: currentLine.fixedAssetCategoryId,
+    fixedAssetOwnerOperatingUnitId: currentLine.fixedAssetOwnerOperatingUnitId,
+    fixedAssetLocationOperatingUnitId: currentLine.fixedAssetLocationOperatingUnitId,
+    improvementEffectiveDate: "",
     revisedUsefulLifeMonths: "",
     lifeExtensionMonths: "",
   };
@@ -1504,6 +1550,15 @@ function normalizeApiError(error, fallback = "Operation failed.") {
   const message = String(error?.response?.data?.message || error?.message || fallback).trim();
   const requestId = String(error?.response?.data?.requestId || "").trim();
   return requestId ? `${message} (requestId: ${requestId})` : message || fallback;
+}
+
+function normalizeTranslatedApiError(error, translateMessage, fallback = "Operation failed.") {
+  const rawMessage = String(error?.response?.data?.message || error?.message || fallback).trim();
+  const requestId = String(error?.response?.data?.requestId || "").trim();
+  const translatedMessage =
+    typeof translateMessage === "function" ? translateMessage(rawMessage) : rawMessage;
+  const resolvedMessage = String(translatedMessage || rawMessage || fallback).trim() || fallback;
+  return requestId ? `${resolvedMessage} (requestId: ${requestId})` : resolvedMessage;
 }
 
 function buildTaxCategoryOptions(ruleRows = [], legalEntityId, lines = []) {
@@ -2129,6 +2184,7 @@ function DocumentLineWorkbench({
   fixedAssetDraftLoading,
   fixedAssetDraftError,
   fixedAssetDraftRowsById,
+  fixedAssetImprovementOptions,
   fixedAssetSaleOptions,
   fixedAssetSaleLoading,
   fixedAssetSaleError,
@@ -2157,6 +2213,7 @@ function DocumentLineWorkbench({
 }) {
   const lines = Array.isArray(form?.lines) ? form.lines.map((row) => createDocumentLineDraft(row)) : [];
   const documentDirection = normalizeDirection(form?.direction);
+  const formDocumentDate = normalizeText(form?.documentDate);
   const totals = fxComputation?.lineTotals || getDocumentLineTotals(lines);
   const resolvedAmountBaseText = normalizeOptionalDecimalText(
     fxComputation?.resolvedAmountBase
@@ -2277,8 +2334,8 @@ function DocumentLineWorkbench({
       {fixedAssetSaleLoading ? (
         <p className="mt-2 text-xs text-slate-600">
           {l(
-            "Loading eligible sale assets...",
-            "Uygun satis varliklari yukleniyor..."
+            "Loading target fixed assets...",
+            "Hedef duran varliklar yukleniyor..."
           )}
         </p>
       ) : null}
@@ -2310,8 +2367,17 @@ function DocumentLineWorkbench({
           const isLinkExistingMode =
             isFixedAssetLine &&
             ((isApDocument && activeFixedAssetMode === "LINK_EXISTING") || isArDocument);
+          const isImproveExistingMode =
+            isFixedAssetLine && isApDocument && activeFixedAssetMode === "IMPROVE_EXISTING";
           const lockedQuantity = Boolean(
-            (isApDocument && activeFixedAssetMode === "LINK_EXISTING") || isArDocument
+            (
+              isApDocument
+              && (
+                activeFixedAssetMode === "LINK_EXISTING"
+                || activeFixedAssetMode === "IMPROVE_EXISTING"
+              )
+            )
+            || isArDocument
           );
           const unitCount = toPositiveInt(line.quantity);
           const canExpandAutoCreate = Boolean(
@@ -2342,6 +2408,50 @@ function DocumentLineWorkbench({
           const selectedTargetAsset = fixedAssetRowsById.get(
             toPositiveInt(line.targetFixedAssetId)
           ) || null;
+          const selectedTargetAssetNo = normalizeText(
+            selectedTargetAsset?.assetNo || selectedTargetAsset?.asset_no
+          );
+          const selectedTargetAssetName = normalizeText(selectedTargetAsset?.name);
+          const selectedTargetAssetLabel = selectedTargetAsset
+            ? selectedTargetAssetNo && selectedTargetAssetName
+              ? `${selectedTargetAssetNo} - ${selectedTargetAssetName}`
+              : selectedTargetAssetNo
+                || selectedTargetAssetName
+                || `#${toPositiveInt(line.targetFixedAssetId)}`
+            : toPositiveInt(line.targetFixedAssetId)
+              ? `#${toPositiveInt(line.targetFixedAssetId)}`
+              : "";
+          const selectedTargetAssetCategoryLabel = selectedTargetAsset
+            ? formatFixedAssetCategoryDisplayFromAssetRow(
+                selectedTargetAsset,
+                fixedAssetCategoriesById
+              )
+            : "-";
+          const selectedTargetAssetCurrencyCode =
+            normalizeCurrencyCode(
+              selectedTargetAsset?.currencyCode || selectedTargetAsset?.currency_code
+            ) || lineCurrencyCode;
+          const selectedTargetAssetStatusLabel = formatFixedAssetStatusLabel(
+            selectedTargetAsset?.status,
+            l
+          );
+          const selectedTargetAssetStatus =
+            normalizeText(selectedTargetAsset?.status).toUpperCase();
+          const selectedTargetAssetUsefulLifeText = formatFixedAssetLifeMonths(
+            selectedTargetAsset?.usefulLifeMonths ?? selectedTargetAsset?.useful_life_months,
+            l
+          );
+          const selectedTargetAssetRemainingLifeText = formatFixedAssetLifeMonths(
+            selectedTargetAsset?.remainingUsefulLifeMonths
+              ?? selectedTargetAsset?.remaining_useful_life_months,
+            l
+          );
+          const hasRevisedUsefulLifeValue = Boolean(
+            normalizeText(line.revisedUsefulLifeMonths)
+          );
+          const hasLifeExtensionValue = Boolean(
+            normalizeText(line.lifeExtensionMonths)
+          );
           const fixedAssetAccountId = resolveFixedAssetDisplayAccountId(
             line,
             fixedAssetCategoriesById,
@@ -2501,7 +2611,9 @@ function DocumentLineWorkbench({
                         <option key={`fa-mode-${line.rowId}-${mode}`} value={mode}>
                           {mode === "AUTO_CREATE"
                             ? l("Auto-Create", "Otomatik Olustur")
-                            : l("Link Existing", "Mevcut Taslagi Bagla")}
+                            : mode === "LINK_EXISTING"
+                              ? l("Link Existing", "Mevcut Taslagi Bagla")
+                              : l("Improve Existing", "Mevcut Varligi Iyilestir")}
                         </option>
                       ))}
                     </select>
@@ -2932,6 +3044,309 @@ function DocumentLineWorkbench({
                         </div>
                       </div>
                     ) : null}
+                  </>
+                ) : null}
+
+                {isFixedAssetLine && isImproveExistingMode ? (
+                  <>
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950 md:col-span-4">
+                      <p className="font-semibold">
+                        {l(
+                          "Improvement uses the line effective date. Open unposted months are day-prorated from that date; already-posted historical periods book an automatic current-period catch-up instead of rewriting history.",
+                          "Iyilestirme satir bazli etkinlik tarihini kullanir. Acik ve henuz kayda alinmamis aylarda bu tarihten itibaren gun esasli dagitilir; daha once kayda alinmis tarihsel donemler ise gecmisi degistirmek yerine cari donemde otomatik catch-up kaydi olusturur."
+                        )}
+                      </p>
+                      <p className="mt-1 text-xs text-amber-900">
+                        {l(
+                          "Document date remains the posting date. If the effective date is earlier than the document date, the system may post a separate catch-up depreciation journal in the current period for already-posted months.",
+                          "Belge tarihi kayit tarihi olarak kalir. Etkinlik tarihi belge tarihinden daha erkense, sistem daha once kayda alinmis aylar icin cari donemde ayri bir catch-up amortisman yevmiyesi olusturabilir."
+                        )}
+                      </p>
+                    </div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                      <label className="block">
+                        {l("Target Asset", "Hedef Varlik")}
+                        <Combobox
+                          className="mt-1"
+                          value={line.targetFixedAssetId}
+                          options={fixedAssetImprovementOptions}
+                          loading={fixedAssetSaleLoading}
+                          disabled={saving}
+                          placeholder={l(
+                            "Search improvement-eligible asset",
+                            "Iyilestirmeye uygun varlik ara"
+                          )}
+                          noOptionsText={l(
+                            "No improvement-eligible assets found.",
+                            "Iyilestirmeye uygun varlik bulunamadi."
+                          )}
+                          onChange={(nextValue) =>
+                            onSelectTargetFixedAsset(line.rowId, nextValue)
+                          }
+                        />
+                      </label>
+                    </div>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Quantity", "Miktar")}
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700"
+                        value="1"
+                        disabled
+                        readOnly
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Improvement Effective Date", "Iyilestirme Etkinlik Tarihi")}
+                      <input
+                        type="date"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.improvementEffectiveDate}
+                        onChange={(event) =>
+                          onPatchLine(line.rowId, {
+                            improvementEffectiveDate: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                        max={formDocumentDate || undefined}
+                      />
+                      <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
+                        {l(
+                          "Defaults to the bill document date. Use an earlier date only when the economic improvement happened before the bill was entered.",
+                          "Varsayilan olarak belge tarihini kullanir. Yalnizca ekonomik iyilestirme fatura girilmeden once gerceklesmisse daha erken bir tarih kullanin."
+                        )}
+                      </span>
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Unit Price", "Birim Fiyat")}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        value={line.unitPriceTxn}
+                        onChange={(event) =>
+                          onPatchTaxSensitiveLine(line.rowId, {
+                            unitPriceTxn: event.target.value,
+                          })
+                        }
+                        disabled={saving}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Tax Category", "Vergi Kategorisi")}
+                      {taxCategoryOptions.length > 0 ? (
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving || taxCategoryLoading}
+                        >
+                          <option value="">{l("Optional", "Opsiyonel")}</option>
+                          {taxCategoryOptions.map((option) => (
+                            <option
+                              key={`line-tax-category-${line.rowId}-${option.value}`}
+                              value={option.value}
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          maxLength={60}
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
+                          value={line.taxCategoryCode}
+                          onChange={(event) =>
+                            onPatchTaxSensitiveLine(line.rowId, {
+                              taxCategoryCode: event.target.value,
+                            })
+                          }
+                          disabled={saving}
+                          placeholder={l("Optional", "Opsiyonel")}
+                        />
+                      )}
+                    </label>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                      <p>{l("Resolved Asset Account", "Cozumlenen Varlik Hesabi")}</p>
+                      <div className="mt-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700">
+                        {formatPostableAccountDisplay(fixedAssetAccount, fixedAssetAccountId)}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3 md:col-span-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Target Context", "Hedef Baglam")}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {selectedTargetAssetLabel || l("Select an asset", "Bir varlik secin")}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-600">
+                            {l(
+                              "The selected asset category controls the capitalization account shown above.",
+                              "Secilen varlik kategorisi yukarida gosterilen aktiflestirme hesabini belirler."
+                            )}
+                          </p>
+                        </div>
+                        {selectedTargetAssetStatus === "FULLY_DEPRECIATED" ? (
+                          <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+                            {l(
+                              "Life change required to reactivate",
+                              "Yeniden aktiflestirme icin omur degisikligi gerekli"
+                            )}
+                          </span>
+                        ) : null}
+                      </div>
+                      {selectedTargetAsset ? (
+                        <div className="mt-3 grid gap-2 md:grid-cols-3">
+                          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {l("Asset No", "Varlik No")}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-800">
+                              {normalizeText(
+                                selectedTargetAsset.assetNo || selectedTargetAsset.asset_no
+                              ) || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {l("Asset Name", "Varlik Adi")}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-800">
+                              {normalizeText(selectedTargetAsset.name) || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {l("Status", "Durum")}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-800">
+                              {selectedTargetAssetStatusLabel}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {l("Category", "Kategori")}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-800">
+                              {selectedTargetAssetCategoryLabel}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {l("Current Cost", "Mevcut Maliyet")}
+                            </p>
+                            <div className="mt-1 text-sm font-semibold text-slate-800">
+                              <MoneyText
+                                amount={
+                                  selectedTargetAsset.originalCostTxn
+                                  ?? selectedTargetAsset.original_cost_txn
+                                }
+                                currencyCode={selectedTargetAssetCurrencyCode}
+                              />
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {l("Useful Life", "Faydali Omur")}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-800">
+                              {selectedTargetAssetUsefulLifeText}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-white px-3 py-2 md:col-span-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {l("Remaining Life", "Kalan Omur")}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-800">
+                              {selectedTargetAssetRemainingLifeText}
+                            </p>
+                          </div>
+                        </div>
+                      ) : line.targetFixedAssetId ? (
+                        <p className="mt-3 text-xs text-amber-700">
+                          {l(
+                            "The selected asset is outside the current lookup scope. Re-select the target asset to refresh its context.",
+                            "Secili varlik guncel arama kapsaminda degil. Baglami yenilemek icin hedef varligi yeniden secin."
+                          )}
+                        </p>
+                      ) : (
+                        <p className="mt-3 text-xs text-slate-600">
+                          {l(
+                            "Select an ACTIVE or FULLY_DEPRECIATED asset to review its current cost, life, and status before posting.",
+                            "Kayit oncesinde mevcut maliyet, omur ve durumu incelemek icin ACTIVE veya FULLY_DEPRECIATED bir varlik secin."
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Revised Useful Life (months)", "Revize Faydali Omur (ay)")}
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal disabled:bg-slate-50"
+                        value={line.revisedUsefulLifeMonths}
+                        onChange={(event) =>
+                          onPatchLine(line.rowId, {
+                            revisedUsefulLifeMonths: event.target.value,
+                            lifeExtensionMonths: event.target.value ? "" : line.lifeExtensionMonths,
+                          })
+                        }
+                        disabled={saving || hasLifeExtensionValue}
+                        placeholder={l("Leave blank to keep current life", "Mevcut omru korumak icin bos birakin")}
+                      />
+                      <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
+                        {l(
+                          "Use this for an absolute total life revision. Leave blank if you want to extend life instead.",
+                          "Toplam omru mutlak olarak revize etmek icin bunu kullanin. Bunun yerine omur uzatacaksaniz bos birakin."
+                        )}
+                      </span>
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Life Extension (months)", "Omur Uzatimi (ay)")}
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal disabled:bg-slate-50"
+                        value={line.lifeExtensionMonths}
+                        onChange={(event) =>
+                          onPatchLine(line.rowId, {
+                            lifeExtensionMonths: event.target.value,
+                            revisedUsefulLifeMonths: event.target.value ? "" : line.revisedUsefulLifeMonths,
+                          })
+                        }
+                        disabled={saving || hasRevisedUsefulLifeValue}
+                        placeholder={l("Leave blank to keep current life", "Mevcut omru korumak icin bos birakin")}
+                      />
+                      <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
+                        {l(
+                          "Use this for a relative extension on top of the current remaining life.",
+                          "Bunu mevcut kalan omrun uzerine goreli bir uzatma icin kullanin."
+                        )}
+                      </span>
+                    </label>
+                    <div className="rounded-md border border-slate-200 bg-white px-3 py-3 text-xs text-slate-700 md:col-span-2">
+                      <p className="font-semibold text-slate-800">
+                        {l("Life Input Rule", "Omur Giris Kurali")}
+                      </p>
+                      <p className="mt-1">
+                        {l(
+                          "Enter only one life field. Leave both blank to keep the current useful life and remaining life unchanged.",
+                          "Yalnizca bir omur alani girin. Mevcut faydali omru ve kalan omru degistirmemek icin ikisini de bos birakin."
+                        )}
+                      </p>
+                    </div>
                   </>
                 ) : null}
 
@@ -3590,6 +4005,55 @@ function formatWarehouseDisplay(warehouseId, warehouseCode, warehouseName) {
   return normalizedWarehouseId ? `#${normalizedWarehouseId}` : "-";
 }
 
+function formatFixedAssetStatusLabel(status, l) {
+  const normalized = normalizeText(status).toUpperCase();
+  switch (normalized) {
+    case "ACTIVE":
+      return l("Active", "Aktif");
+    case "DRAFT":
+      return l("Draft", "Taslak");
+    case "SUSPENDED":
+      return l("Suspended", "Askida");
+    case "FULLY_DEPRECIATED":
+      return l("Fully Depreciated", "Tam Amortismanli");
+    case "DISPOSED":
+      return l("Disposed", "Elden Cikarildi");
+    default:
+      return normalized || "-";
+  }
+}
+
+function formatFixedAssetLifeMonths(value, l) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return "-";
+  }
+  return l(`${parsed} month${parsed === 1 ? "" : "s"}`, `${parsed} ay`);
+}
+
+function formatFixedAssetCategoryDisplayFromAssetRow(
+  assetRow,
+  categoriesById = new Map()
+) {
+  const categoryId = toPositiveInt(assetRow?.categoryId ?? assetRow?.category_id);
+  const categoryRow = categoryId ? categoriesById.get(categoryId) || null : null;
+  if (categoryRow) {
+    return formatFixedAssetCategoryDisplay(categoryRow, categoryId);
+  }
+  const categoryCode = normalizeText(assetRow?.categoryCode || assetRow?.category_code);
+  const categoryName = normalizeText(assetRow?.categoryName || assetRow?.category_name);
+  if (categoryCode && categoryName) {
+    return `${categoryCode} - ${categoryName}`;
+  }
+  if (categoryCode) {
+    return categoryCode;
+  }
+  if (categoryName) {
+    return categoryName;
+  }
+  return categoryId ? `#${categoryId}` : "-";
+}
+
 function buildOperatingUnitsById(...collections) {
   const unitsById = new Map();
   for (const collection of collections) {
@@ -3897,7 +4361,47 @@ export default function CariDocumentsPage({ direction = "" }) {
               "Link-existing AP fixed-asset lines must use quantity 1.",
               "Mevcut taslaga baglanan AP duran varlik satirlari miktar 1 kullanmalidir."
             );
-          case "targetFixedAssetId is required for AR FIXED_ASSET lines.":
+          case "targetFixedAssetId is required when fixedAssetMode=IMPROVE_EXISTING.":
+            return l(
+              "Select the asset to improve on this AP fixed-asset line.",
+              "Bu AP duran varlik satirinda iyilestirilecek varligi secin."
+            );
+          case "quantity must equal 1 when fixedAssetMode=IMPROVE_EXISTING.":
+            return l(
+              "Improvement lines must use quantity 1.",
+              "Iyilestirme satirlari miktar 1 kullanmalidir."
+            );
+          case "revisedUsefulLifeMonths and lifeExtensionMonths cannot both be provided.":
+            return l(
+              "Choose either revised useful life or life extension, not both.",
+              "Hem revize faydali omur hem omur uzatimi birlikte girilemez."
+            );
+          case "fixedAssetCategoryId, fixedAssetOwnerOperatingUnitId, and fixedAssetLocationOperatingUnitId are not allowed when fixedAssetMode=IMPROVE_EXISTING.":
+            return l(
+              "Improvement lines inherit category and operating-unit context from the selected asset.",
+              "Iyilestirme satirlari kategori ve operasyon birimi baglamini secili varliktan alir."
+            );
+          case "revisedUsefulLifeMonths and lifeExtensionMonths are allowed only when fixedAssetMode=IMPROVE_EXISTING.":
+            return l(
+              "Life revision fields can only be used with Improve Existing mode.",
+              "Omur revizyon alanlari yalnizca Mevcut Varligi Iyilestir modunda kullanilabilir."
+            );
+          case "improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING.":
+            return l(
+              "Improvement effective date can only be used with Improve Existing mode.",
+              "Iyilestirme etkinlik tarihi yalnizca Mevcut Varligi Iyilestir modunda kullanilabilir."
+            );
+          case "improvementEffectiveDate must be a valid ISO date.":
+            return l(
+              "Enter a valid improvement effective date.",
+              "Gecerli bir iyilestirme etkinlik tarihi girin."
+            );
+          case "improvementEffectiveDate cannot be after documentDate.":
+            return l(
+              "Improvement effective date cannot be later than the bill document date.",
+              "Iyilestirme etkinlik tarihi belge tarihinden daha ileri olamaz."
+            );
+        case "targetFixedAssetId is required for AR FIXED_ASSET lines.":
             return l(
               "Select the asset being sold on this AR fixed-asset line.",
               "Bu AR duran varlik satirinda satilan varligi secin."
@@ -3997,6 +4501,115 @@ export default function CariDocumentsPage({ direction = "" }) {
           return l(
             "Selected asset category is missing its default useful life. Configure the category in Fixed Asset Settings and try again.",
             "Secili varlik kategorisinin varsayilan faydali omru eksik. Kategoriyi Demirbas Ayarlarinda yapilandirin ve tekrar deneyin."
+          );
+        }
+        const improvementMissingTargetPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId is required for IMPROVE_EXISTING posting$/;
+        if (improvementMissingTargetPattern.test(trimmedMessage)) {
+          return l(
+            "Select the asset to improve before posting.",
+            "Kayda almadan once iyilestirilecek varligi secin."
+          );
+        }
+        const improvementMissingAssetPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId must reference an existing fixed asset$/;
+        if (improvementMissingAssetPattern.test(trimmedMessage)) {
+          return l(
+            "Selected improvement asset no longer exists. Re-select the asset and try again.",
+            "Secili iyilestirme varligi artik mevcut degil. Varligi yeniden secip tekrar deneyin."
+          );
+        }
+        const improvementLegalEntityPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId must belong to legalEntityId$/;
+        if (improvementLegalEntityPattern.test(trimmedMessage)) {
+          return l(
+            "Selected improvement asset must belong to the same legal entity.",
+            "Secili iyilestirme varligi ayni tuzel kisilige ait olmalidir."
+          );
+        }
+        const improvementStatusPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId must reference an ACTIVE or FULLY_DEPRECIATED asset$/;
+        if (improvementStatusPattern.test(trimmedMessage)) {
+          return l(
+            "Only ACTIVE or FULLY_DEPRECIATED assets can be improved from this flow.",
+            "Bu akista yalnizca ACTIVE veya FULLY_DEPRECIATED durumundaki varliklar iyilestirilebilir."
+          );
+        }
+        const improvementNonDepreciablePattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId is only supported for depreciable assets$/;
+        if (improvementNonDepreciablePattern.test(trimmedMessage)) {
+          return l(
+            "Only depreciable assets support improvement capitalization.",
+            "Yalnizca amortismana tabi varliklar iyilestirme aktiflemesini destekler."
+          );
+        }
+        const improvementLaterActivityPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId conflicts with later fixed-asset activity \(transactionId=(\d+), type=([A-Z_]+), effectiveDate=([0-9-]+)\)$/;
+        const improvementLaterActivityMatch = trimmedMessage.match(
+          improvementLaterActivityPattern
+        );
+        if (improvementLaterActivityMatch) {
+          return l(
+            `A later fixed-asset transaction already exists (transactionId=${improvementLaterActivityMatch[1]}, type=${improvementLaterActivityMatch[2]}, effectiveDate=${improvementLaterActivityMatch[3]}). Reverse or move the later activity first.`,
+            `Daha sonraki bir demirbas hareketi zaten mevcut (transactionId=${improvementLaterActivityMatch[1]}, type=${improvementLaterActivityMatch[2]}, effectiveDate=${improvementLaterActivityMatch[3]}). Once sonraki hareketi tersleyin veya tarihini duzenleyin.`
+          );
+        }
+        const improvementDepreciationCurrentPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId requires depreciation to be current through ([0-9]{4}-[0-9]{2}) \(first missing period=([0-9]{4}-[0-9]{2})\)$/;
+        const improvementDepreciationCurrentMatch = trimmedMessage.match(
+          improvementDepreciationCurrentPattern
+        );
+        if (improvementDepreciationCurrentMatch) {
+          return l(
+            `Depreciation must be current through ${improvementDepreciationCurrentMatch[1]} before this improvement can be posted. First missing period: ${improvementDepreciationCurrentMatch[2]}.`,
+            `Bu iyilestirme kayda alinmadan once amortisman ${improvementDepreciationCurrentMatch[1]} donemi sonuna kadar guncel olmalidir. Ilk eksik donem: ${improvementDepreciationCurrentMatch[2]}.`
+          );
+        }
+        const improvementDraftRunPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId is blocked because the asset already appears in DRAFT depreciation run (\d+) \(([^)]+)\)$/;
+        const improvementDraftRunMatch = trimmedMessage.match(improvementDraftRunPattern);
+        if (improvementDraftRunMatch) {
+          return l(
+            `This asset already appears in draft depreciation run ${improvementDraftRunMatch[1]} (${improvementDraftRunMatch[2]}). Post or clear that run first.`,
+            `Bu varlik zaten ${improvementDraftRunMatch[1]} numarali taslak amortisman run'inda yer aliyor (${improvementDraftRunMatch[2]}). Once o run'i kayda alin veya temizleyin.`
+          );
+        }
+        const improvementFullyDepreciatedLifePattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId on a FULLY_DEPRECIATED asset requires revisedUsefulLifeMonths or lifeExtensionMonths$/;
+        if (improvementFullyDepreciatedLifePattern.test(trimmedMessage)) {
+          return l(
+            "Fully depreciated assets require revised useful life or life extension before improvement posting.",
+            "Tam amortismanli varliklarda iyilestirme kaydi icin revize faydali omur veya omur uzatimi gerekir."
+          );
+        }
+        const improvementPositiveLifePattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId must result in positive remaining useful life$/;
+        if (improvementPositiveLifePattern.test(trimmedMessage)) {
+          return l(
+            "The selected life change must leave the asset with positive remaining useful life.",
+            "Secilen omur degisikligi varligi pozitif kalan faydali omurle birakmalidir."
+          );
+        }
+        const improvementEffectiveAfterPostingPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId effectiveDate \(([0-9-]+)\) cannot be after postingDate \(([0-9-]+)\)$/;
+        const improvementEffectiveAfterPostingMatch = trimmedMessage.match(
+          improvementEffectiveAfterPostingPattern
+        );
+        if (improvementEffectiveAfterPostingMatch) {
+          return l(
+            `Improvement effective date ${improvementEffectiveAfterPostingMatch[1]} cannot be later than the bill posting date ${improvementEffectiveAfterPostingMatch[2]}.`,
+            `Iyilestirme etkinlik tarihi ${improvementEffectiveAfterPostingMatch[1]}, belge kayit tarihi ${improvementEffectiveAfterPostingMatch[2]}'den daha ileri olamaz.`
+          );
+        }
+        const improvementBeforeInServicePattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId effectiveDate \(([0-9-]+)\) cannot be before inServiceDate \(([0-9-]+)\)$/;
+        const improvementBeforeInServiceMatch = trimmedMessage.match(
+          improvementBeforeInServicePattern
+        );
+        if (improvementBeforeInServiceMatch) {
+          return l(
+            `Improvement effective date ${improvementBeforeInServiceMatch[1]} cannot be earlier than the asset in-service date ${improvementBeforeInServiceMatch[2]}.`,
+            `Iyilestirme etkinlik tarihi ${improvementBeforeInServiceMatch[1]}, varligin hizmete alim tarihi ${improvementBeforeInServiceMatch[2]}'den daha erken olamaz.`
           );
         }
         if (
@@ -5292,6 +5905,20 @@ export default function CariDocumentsPage({ direction = "" }) {
       ),
     [createFixedAssetSaleRows, createForm.lines, operatingUnitsById]
   );
+  const createFixedAssetImprovementOptions = useMemo(() => {
+    const improvementLines = normalizeDocumentFormLines(createForm.lines).filter(
+      (line) =>
+        line.subledgerType === "FIXED_ASSET" && line.fixedAssetMode === "IMPROVE_EXISTING"
+    );
+    return extendFixedAssetOptionsForSelectedLines(
+      mapFixedAssetLookupOptions(
+        createFixedAssetSaleRows,
+        operatingUnitsById,
+        FIXED_ASSET_AP_IMPROVEMENT_ELIGIBLE_STATUSES
+      ),
+      improvementLines
+    );
+  }, [createFixedAssetSaleRows, createForm.lines, operatingUnitsById]);
   const editFixedAssetSaleOptions = useMemo(
     () =>
       extendFixedAssetOptionsForSelectedLines(
@@ -5304,6 +5931,20 @@ export default function CariDocumentsPage({ direction = "" }) {
       ),
     [editFixedAssetSaleRows, editForm.lines, operatingUnitsById]
   );
+  const editFixedAssetImprovementOptions = useMemo(() => {
+    const improvementLines = normalizeDocumentFormLines(editForm.lines).filter(
+      (line) =>
+        line.subledgerType === "FIXED_ASSET" && line.fixedAssetMode === "IMPROVE_EXISTING"
+    );
+    return extendFixedAssetOptionsForSelectedLines(
+      mapFixedAssetLookupOptions(
+        editFixedAssetSaleRows,
+        operatingUnitsById,
+        FIXED_ASSET_AP_IMPROVEMENT_ELIGIBLE_STATUSES
+      ),
+      improvementLines
+    );
+  }, [editFixedAssetSaleRows, editForm.lines, operatingUnitsById]);
   const createCounterpartyLookupOptions = useMemo(
     () => {
       const selectedCounterpartyId = normalizeText(createForm.counterpartyId);
@@ -5793,7 +6434,9 @@ export default function CariDocumentsPage({ direction = "" }) {
     patchDraftFormLine(
       setCreateForm,
       rowId,
-      buildFixedAssetModeTransitionPatch(currentLine, nextMode),
+      buildFixedAssetModeTransitionPatch(currentLine, nextMode, {
+        defaultImprovementEffectiveDate: createForm.documentDate,
+      }),
       { resetTaxPreview: true }
     );
   }
@@ -6023,7 +6666,9 @@ export default function CariDocumentsPage({ direction = "" }) {
     patchDraftFormLine(
       setEditForm,
       rowId,
-      buildFixedAssetModeTransitionPatch(currentLine, nextMode),
+      buildFixedAssetModeTransitionPatch(currentLine, nextMode, {
+        defaultImprovementEffectiveDate: editForm.documentDate,
+      }),
       { resetTaxPreview: true }
     );
   }
@@ -8218,8 +8863,8 @@ export default function CariDocumentsPage({ direction = "" }) {
           normalizeApiError(
             error,
             l(
-              "Failed to load eligible sale assets.",
-              "Uygun satis varliklari yuklenemedi."
+              "Failed to load target fixed assets.",
+              "Hedef duran varliklar yuklenemedi."
             )
           )
         );
@@ -8522,8 +9167,8 @@ export default function CariDocumentsPage({ direction = "" }) {
           normalizeApiError(
             error,
             l(
-              "Failed to load eligible sale assets.",
-              "Uygun satis varliklari yuklenemedi."
+              "Failed to load target fixed assets.",
+              "Hedef duran varliklar yuklenemedi."
             )
           )
         );
@@ -9338,7 +9983,11 @@ export default function CariDocumentsPage({ direction = "" }) {
       if (response?.row?.id) setSelectedDocumentId(response.row.id);
     } catch (error) {
       setCreateError(
-        normalizeApiError(error, l("Failed to create draft document.", "Belge taslagi olusturulamadi."))
+        normalizeTranslatedApiError(
+          error,
+          translateDocumentMutationError,
+          l("Failed to create draft document.", "Belge taslagi olusturulamadi.")
+        )
       );
     } finally {
       setCreateSaving(false);
@@ -9383,7 +10032,11 @@ export default function CariDocumentsPage({ direction = "" }) {
       await loadDocuments(filters);
     } catch (error) {
       setEditError(
-        normalizeApiError(error, l("Failed to update draft document.", "Belge taslagi guncellenemedi."))
+        normalizeTranslatedApiError(
+          error,
+          translateDocumentMutationError,
+          l("Failed to update draft document.", "Belge taslagi guncellenemedi.")
+        )
       );
     } finally {
       setEditSaving(false);
@@ -9614,7 +10267,11 @@ export default function CariDocumentsPage({ direction = "" }) {
     } catch (error) {
       setPostTransferGuidance(extractTransferRequiredGuidanceFromError(error));
       setPostError(
-        normalizeApiError(error, l("Failed to post draft document.", "Belge taslagi kayda alinamadi."))
+        normalizeTranslatedApiError(
+          error,
+          translateDocumentMutationError,
+          l("Failed to post draft document.", "Belge taslagi kayda alinamadi.")
+        )
       );
     } finally {
       setPostSaving(false);
@@ -11392,6 +12049,7 @@ export default function CariDocumentsPage({ direction = "" }) {
               fixedAssetDraftLoading={createFixedAssetDraftLoading}
               fixedAssetDraftError={createFixedAssetDraftError}
               fixedAssetDraftRowsById={createFixedAssetDraftRowsById}
+              fixedAssetImprovementOptions={createFixedAssetImprovementOptions}
               fixedAssetSaleOptions={createFixedAssetSaleOptions}
               fixedAssetSaleLoading={createFixedAssetSaleLoading}
               fixedAssetSaleError={createFixedAssetSaleError}
@@ -12715,6 +13373,7 @@ export default function CariDocumentsPage({ direction = "" }) {
                     fixedAssetDraftLoading={editFixedAssetDraftLoading}
                     fixedAssetDraftError={editFixedAssetDraftError}
                     fixedAssetDraftRowsById={editFixedAssetDraftRowsById}
+                    fixedAssetImprovementOptions={editFixedAssetImprovementOptions}
                     fixedAssetSaleOptions={editFixedAssetSaleOptions}
                     fixedAssetSaleLoading={editFixedAssetSaleLoading}
                     fixedAssetSaleError={editFixedAssetSaleError}

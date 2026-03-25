@@ -420,6 +420,11 @@ export function parseActivateAssetInput(req) {
     body.postingDate ?? body.posting_date,
     "postingDate"
   );
+  if (effectiveDate > postingDate) {
+    throw badRequest(
+      `effectiveDate (${effectiveDate}) cannot be after postingDate (${postingDate})`
+    );
+  }
 
   const capitalizationDate = normalizeDateOnlyOptional(
     body.capitalizationDate ?? body.capitalization_date,
@@ -619,6 +624,11 @@ export function parseOwnershipTransferInput(req) {
     body.postingDate ?? body.posting_date,
     "postingDate"
   );
+  if (effectiveDate > postingDate) {
+    throw badRequest(
+      `effectiveDate (${effectiveDate}) cannot be after postingDate (${postingDate})`
+    );
+  }
 
   const targetOwnerOperatingUnitId = parsePositiveInt(
     body.targetOwnerOperatingUnitId ?? body.target_owner_operating_unit_id
@@ -665,6 +675,11 @@ export function parseWriteoffInput(req) {
     body.postingDate ?? body.posting_date,
     "postingDate"
   );
+  if (effectiveDate > postingDate) {
+    throw badRequest(
+      `effectiveDate (${effectiveDate}) cannot be after postingDate (${postingDate})`
+    );
+  }
 
   const note = body.note != null ? String(body.note).trim() || null : null;
   const userId = req.user?.userId || null;

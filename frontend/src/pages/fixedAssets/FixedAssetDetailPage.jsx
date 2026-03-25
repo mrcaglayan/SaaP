@@ -24,6 +24,7 @@ import {
   ownershipTransferAsset,
   physicalMoveAsset,
   reactivateFixedAsset,
+  reverseFixedAssetTransaction,
   saleCreateDraftAr,
   suspendFixedAsset,
   uploadFixedAssetEvidenceContent,
@@ -214,6 +215,62 @@ function buildWriteoffForm() {
     postingDate: todayIsoDate(),
     note: "",
   };
+}
+
+const NON_RUN_REVERSIBLE_TRANSACTION_TYPES = new Set([
+  "ACQUISITION",
+  "CAPITALIZATION",
+  "DEPRECIATION",
+  "IMPROVEMENT",
+  "OWNERSHIP_TRANSFER",
+  "WRITEOFF",
+  "SALE",
+]);
+
+const NON_RUN_REVERSIBLE_DEPRECIATION_KINDS = new Set([
+  "LOW_VALUE_FULL_EXPENSE",
+  "CATCH_UP",
+]);
+
+function canReverseFixedAssetTransactionRow(tx, {
+  canPost,
+  canDispose,
+  canTransfer,
+}) {
+  const transactionType = normalizeUpperText(tx?.transactionType || tx?.transaction_type);
+  const depreciationKind = normalizeUpperText(tx?.depreciationKind || tx?.depreciation_kind);
+  const status = normalizeUpperText(tx?.status);
+  const reversedTransactionId = parsePositiveInt(
+    tx?.reversedTransactionId ?? tx?.reversed_transaction_id
+  );
+  const reversalTransactionId = parsePositiveInt(
+    tx?.reversalTransactionId ?? tx?.reversal_transaction_id
+  );
+
+  if (!canPost || status !== "POSTED") {
+    return false;
+  }
+  if (
+    transactionType === "REVERSAL"
+    || reversedTransactionId
+    || reversalTransactionId
+    || !NON_RUN_REVERSIBLE_TRANSACTION_TYPES.has(transactionType)
+  ) {
+    return false;
+  }
+  if (
+    transactionType === "DEPRECIATION"
+    && !NON_RUN_REVERSIBLE_DEPRECIATION_KINDS.has(depreciationKind)
+  ) {
+    return false;
+  }
+  if (transactionType === "OWNERSHIP_TRANSFER") {
+    return canTransfer;
+  }
+  if (transactionType === "SALE" || transactionType === "WRITEOFF") {
+    return canDispose;
+  }
+  return true;
 }
 
 const CARI_DOCUMENTS_ROUTE = "/app/satis-faturalari";
@@ -419,6 +476,9 @@ export default function FixedAssetDetailPage() {
   const [transactions, setTransactions] = useState([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [transactionsError, setTransactionsError] = useState("");
+  const [reversingTransactionId, setReversingTransactionId] = useState(null);
+  const [transactionActionError, setTransactionActionError] = useState("");
+  const [transactionActionSuccess, setTransactionActionSuccess] = useState("");
 
   // Depreciation schedule state
   const [schedule, setSchedule] = useState([]);
@@ -572,6 +632,9 @@ export default function FixedAssetDetailPage() {
     setWriteoffOpen(false);
     setWriteoffForm(buildWriteoffForm());
     setWriteoffSaving(false);
+    setReversingTransactionId(null);
+    setTransactionActionError("");
+    setTransactionActionSuccess("");
     setAssetEvidenceRows([]);
     setAssetEvidenceLoading(false);
     setAssetEvidenceError("");
@@ -1029,6 +1092,91 @@ export default function FixedAssetDetailPage() {
       );
     } finally {
       setAssetEvidenceDownloadingId(null);
+    }
+  }
+
+  async function refreshTransactions(targetAssetId = asset?.id) {
+    const normalizedTargetAssetId = parsePositiveInt(targetAssetId);
+    if (!normalizedTargetAssetId) {
+      setTransactions([]);
+      return [];
+    }
+    const response = await listFixedAssetTransactions(normalizedTargetAssetId);
+    const rows = Array.isArray(response?.rows) ? response.rows : [];
+    setTransactions(rows);
+    return rows;
+  }
+
+  async function handleReverseTransaction(row) {
+    const transactionId = parsePositiveInt(row?.id);
+    if (!transactionId) {
+      setTransactionActionError(
+        l("Transaction record is missing.", "Hareket kaydi eksik.")
+      );
+      return;
+    }
+    if (!canReverseFixedAssetTransactionRow(row, {
+      canPost,
+      canDispose,
+      canTransfer,
+    })) {
+      setTransactionActionError(
+        l(
+          "You do not have permission to reverse this transaction, or the transaction is not eligible for standalone reversal.",
+          "Bu hareketi ters kayitlamak icin yetkiniz yok veya hareket tek basina ters kayit icin uygun degil."
+        )
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      l(
+        `Reverse fixed-asset transaction #${transactionId}?`,
+        `#${transactionId} numarali demirbas hareketi ters kayitlansin mi?`
+      )
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const noteInput = window.prompt(
+      l(
+        "Optional reversal note",
+        "Opsiyonel ters kayit notu"
+      ),
+      l("Mistaken transaction", "Yanlis hareket")
+    );
+    if (noteInput === null) {
+      return;
+    }
+
+    setReversingTransactionId(transactionId);
+    setTransactionActionError("");
+    setTransactionActionSuccess("");
+    try {
+      const response = await reverseFixedAssetTransaction(transactionId, {
+        note: normalizeText(noteInput) || null,
+      });
+      setAsset(response || null);
+      await refreshTransactions(normalizedAssetId);
+      setTransactionActionSuccess(
+        l(
+          `Transaction #${transactionId} reversed successfully.`,
+          `#${transactionId} numarali hareket basariyla ters kayitlandi.`
+        )
+      );
+    } catch (err) {
+      setTransactionActionError(
+        normalizeApiError(
+          err,
+          l(
+            "Failed to reverse fixed-asset transaction.",
+            "Demirbas hareketi ters kayitlanamadi."
+          )
+        )
+      );
+    } finally {
+      setReversingTransactionId(null);
     }
   }
 
@@ -2681,6 +2829,12 @@ export default function FixedAssetDetailPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">{l("Transaction List", "Hareket Listesi")}</h2>
+            {transactionActionSuccess ? (
+              <p className="mt-2 text-sm text-emerald-700">{transactionActionSuccess}</p>
+            ) : null}
+            {transactionActionError ? (
+              <p className="mt-2 text-sm text-rose-600">{transactionActionError}</p>
+            ) : null}
             {transactionsLoading ? (
               <p className="mt-2 text-sm text-slate-500">{l("Loading...", "Yukleniyor...")}</p>
             ) : transactionsError ? (
@@ -2701,12 +2855,25 @@ export default function FixedAssetDetailPage() {
                       <th className="px-2 py-2">{l("Posting Date", "Kayit Tarihi")}</th>
                       <th className="px-2 py-2 text-right">{l("Gross (Base)", "Brut (Baz)")}</th>
                       <th className="px-2 py-2 text-right">{l("NBV (Base)", "NBV (Baz)")}</th>
+                      <th className="px-2 py-2 text-right">{l("Actions", "Islemler")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {transactions.map((tx) => {
                       const txId = parsePositiveInt(tx.id);
                       const isFocused = focusedTransactionId && txId === focusedTransactionId;
+                      const canReverseRow = canReverseFixedAssetTransactionRow(tx, {
+                        canPost,
+                        canDispose,
+                        canTransfer,
+                      });
+                      const reversalTransactionId = parsePositiveInt(
+                        tx.reversalTransactionId ?? tx.reversal_transaction_id
+                      );
+                      const reversedTransactionId = parsePositiveInt(
+                        tx.reversedTransactionId ?? tx.reversed_transaction_id
+                      );
+                      const isReversingRow = txId && Number(reversingTransactionId) === Number(txId);
                       return (
                         <tr
                           key={tx.id}
@@ -2719,6 +2886,36 @@ export default function FixedAssetDetailPage() {
                           <td className="px-2 py-1.5">{formatDate(tx.postingDate || tx.posting_date)}</td>
                           <td className="px-2 py-1.5 text-right font-mono">{formatNumber(tx.grossAmountBase || tx.gross_amount_base)}</td>
                           <td className="px-2 py-1.5 text-right font-mono">{formatNumber(tx.nbvAmountBase || tx.nbv_amount_base)}</td>
+                          <td className="px-2 py-1.5 text-right">
+                            {canReverseRow ? (
+                              <button
+                                type="button"
+                                className="cursor-pointer rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={() => handleReverseTransaction(tx)}
+                                disabled={Boolean(isReversingRow)}
+                              >
+                                {isReversingRow
+                                  ? l("Reversing...", "Ters kayitlaniyor...")
+                                  : l("Reverse", "Ters Kayitla")}
+                              </button>
+                            ) : reversalTransactionId ? (
+                              <span className="text-xs text-slate-500">
+                                {l(
+                                  `Reversed by #${reversalTransactionId}`,
+                                  `#${reversalTransactionId} ile ters kayitlandi`
+                                )}
+                              </span>
+                            ) : reversedTransactionId ? (
+                              <span className="text-xs text-slate-500">
+                                {l(
+                                  `Reversal of #${reversedTransactionId}`,
+                                  `#${reversedTransactionId} hareketinin ters kaydi`
+                                )}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-400">-</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}

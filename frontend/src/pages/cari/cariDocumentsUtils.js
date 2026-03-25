@@ -236,6 +236,9 @@ export function createDocumentLineDraft(seed = {}) {
       seed?.fixedAssetSerialNo ?? seed?.fixed_asset_serial_no ?? ""
     ).trim(),
     fixedAssetTag: String(seed?.fixedAssetTag ?? seed?.fixed_asset_tag ?? "").trim(),
+    improvementEffectiveDate: String(
+      seed?.improvementEffectiveDate ?? seed?.improvement_effective_date ?? ""
+    ).trim(),
     revisedUsefulLifeMonths: String(
       seed?.revisedUsefulLifeMonths ??
         seed?.improvementRevisedUsefulLifeMonths ??
@@ -496,6 +499,12 @@ export function buildDocumentMutationPayload(form, options = {}) {
           fixedAssetNameOverride: normalizedLine.fixedAssetNameOverride || undefined,
           fixedAssetSerialNo: normalizedLine.fixedAssetSerialNo || undefined,
           fixedAssetTag: normalizedLine.fixedAssetTag || undefined,
+          improvementEffectiveDate:
+            isApFixedAssetLine &&
+            normalizedLine.fixedAssetMode === "IMPROVE_EXISTING" &&
+            String(normalizedLine.improvementEffectiveDate || "").trim()
+              ? String(normalizedLine.improvementEffectiveDate || "").trim()
+              : undefined,
           revisedUsefulLifeMonths:
             toPositiveInt(normalizedLine.revisedUsefulLifeMonths) || undefined,
           lifeExtensionMonths:
@@ -651,6 +660,13 @@ export function validateDocumentMutationForm(form, options = {}) {
                 "fixedAssetLocationOperatingUnitId is required for AP FIXED_ASSET AUTO_CREATE lines."
               );
             }
+            if (line.improvementEffectiveDate) {
+              pushLineError(
+                index,
+                rowId,
+                "improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING."
+              );
+            }
           } else if (fixedAssetMode === "LINK_EXISTING") {
             if (!line.targetFixedAssetId) {
               pushLineError(
@@ -666,6 +682,75 @@ export function validateDocumentMutationForm(form, options = {}) {
                 "quantity must equal 1 for AP FIXED_ASSET LINK_EXISTING lines."
               );
             }
+            if (line.revisedUsefulLifeMonths || line.lifeExtensionMonths) {
+              pushLineError(
+                index,
+                rowId,
+                "revisedUsefulLifeMonths and lifeExtensionMonths are allowed only when fixedAssetMode=IMPROVE_EXISTING."
+              );
+            }
+            if (line.improvementEffectiveDate) {
+              pushLineError(
+                index,
+                rowId,
+                "improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING."
+              );
+            }
+          } else if (fixedAssetMode === "IMPROVE_EXISTING") {
+            if (!line.targetFixedAssetId) {
+              pushLineError(
+                index,
+                rowId,
+                "targetFixedAssetId is required when fixedAssetMode=IMPROVE_EXISTING."
+              );
+            }
+            if (Number(line.quantity ?? 0) !== 1) {
+              pushLineError(
+                index,
+                rowId,
+                "quantity must equal 1 when fixedAssetMode=IMPROVE_EXISTING."
+              );
+            }
+            if (line.revisedUsefulLifeMonths && line.lifeExtensionMonths) {
+              pushLineError(
+                index,
+                rowId,
+                "revisedUsefulLifeMonths and lifeExtensionMonths cannot both be provided."
+              );
+            }
+            if (
+              line.fixedAssetCategoryId
+              || line.fixedAssetOwnerOperatingUnitId
+              || line.fixedAssetLocationOperatingUnitId
+            ) {
+              pushLineError(
+                index,
+                rowId,
+                "fixedAssetCategoryId, fixedAssetOwnerOperatingUnitId, and fixedAssetLocationOperatingUnitId are not allowed when fixedAssetMode=IMPROVE_EXISTING."
+              );
+            }
+            const improvementEffectiveDate = String(
+              sourceLine.improvementEffectiveDate || line.improvementEffectiveDate || ""
+            ).trim();
+            if (improvementEffectiveDate && !/^\d{4}-\d{2}-\d{2}$/.test(improvementEffectiveDate)) {
+              pushLineError(
+                index,
+                rowId,
+                "improvementEffectiveDate must be a valid ISO date."
+              );
+            }
+            if (
+              improvementEffectiveDate &&
+              payload.documentDate &&
+              /^\d{4}-\d{2}-\d{2}$/.test(improvementEffectiveDate) &&
+              improvementEffectiveDate > payload.documentDate
+            ) {
+              pushLineError(
+                index,
+                rowId,
+                "improvementEffectiveDate cannot be after documentDate."
+              );
+            }
           }
         } else if (payload.direction === "AR") {
           if (!line.targetFixedAssetId) {
@@ -673,6 +758,13 @@ export function validateDocumentMutationForm(form, options = {}) {
           }
           if (Number(line.quantity ?? 0) !== 1) {
             pushLineError(index, rowId, "quantity must equal 1 for AR FIXED_ASSET lines.");
+          }
+          if (line.improvementEffectiveDate) {
+            pushLineError(
+              index,
+              rowId,
+              "improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING."
+            );
           }
         }
       } else if (subledgerType === "STOCK") {
@@ -685,9 +777,23 @@ export function validateDocumentMutationForm(form, options = {}) {
         if (line.targetFixedAssetId) {
           pushLineError(index, rowId, "targetFixedAssetId must be empty for STOCK lines.");
         }
+        if (sourceLine.improvementEffectiveDate) {
+          pushLineError(
+            index,
+            rowId,
+            "improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING."
+          );
+        }
       } else {
         if (line.targetFixedAssetId) {
           pushLineError(index, rowId, "targetFixedAssetId must be empty for NONE lines.");
+        }
+        if (sourceLine.improvementEffectiveDate) {
+          pushLineError(
+            index,
+            rowId,
+            "improvementEffectiveDate is allowed only when fixedAssetMode=IMPROVE_EXISTING."
+          );
         }
       }
 

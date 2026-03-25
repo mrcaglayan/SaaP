@@ -38,6 +38,7 @@ import {
   applyCariSettlementTx,
   reverseCariSettlementTx,
 } from "./cari.settlement.service.js";
+import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
 import { FIXED_ASSET_TRANSACTION } from "../utils/source-ref-types.js";
 
 const DRAFT_STATUS = "DRAFT";
@@ -651,6 +652,9 @@ function mapDocumentLineRow(row, taxes = [], stockLinks = [], generatedFixedAsse
     fixedAssetNameOverride: row.fixed_asset_name_override || null,
     fixedAssetSerialNo: row.fixed_asset_serial_no || null,
     fixedAssetTag: row.fixed_asset_tag || null,
+    improvementEffectiveDate: row.improvement_effective_date
+      ? String(row.improvement_effective_date).slice(0, 10)
+      : null,
     revisedUsefulLifeMonths: parsePositiveInt(
       row.improvement_revised_useful_life_months
     ),
@@ -1224,6 +1228,7 @@ async function insertFixedAssetTransactionTx(tx, {
   sourceRefType = null,
   sourceRefId = null,
   sourceRefLineId = null,
+  reversedTransactionId = null,
   grossAmountTxn = null,
   grossAmountBase = null,
   accumDeprAmountTxn = null,
@@ -1260,9 +1265,9 @@ async function insertFixedAssetTransactionTx(tx, {
        improvement_pre_useful_life_months,
        improvement_pre_remaining_life_months,
        journal_entry_id,
-       source_ref_type, source_ref_id, source_ref_line_id,
-       reversed_transaction_id,
-       note, created_by_user_id
+      source_ref_type, source_ref_id, source_ref_line_id,
+      reversed_transaction_id,
+      note, created_by_user_id
      ) VALUES (
        ?, ?, ?,
        ?, 'POSTED', ?, ?,
@@ -1275,9 +1280,9 @@ async function insertFixedAssetTransactionTx(tx, {
        ?,
        ?, ?, ?, ?, ?, ?,
        ?,
-       ?, ?, ?,
-       NULL,
-       ?, ?
+      ?, ?, ?,
+      ?,
+      ?, ?
      )`,
     [
       tenantId,
@@ -1309,6 +1314,7 @@ async function insertFixedAssetTransactionTx(tx, {
       sourceRefType,
       sourceRefId,
       sourceRefLineId,
+      reversedTransactionId,
       note,
       createdByUserId,
     ]
@@ -1381,6 +1387,7 @@ async function listDocumentLineRows({
         l.fixed_asset_name_override,
         l.fixed_asset_serial_no,
         l.fixed_asset_tag,
+        l.improvement_effective_date,
         l.improvement_revised_useful_life_months,
         l.improvement_life_extension_months,
         w.code AS warehouse_code,
@@ -3024,6 +3031,12 @@ function normalizeExplicitDraftLines(linesInput, options = {}) {
         line.fixedAssetTag ?? line.fixed_asset_tag,
         100
       ),
+      improvementEffectiveDate: toDateOnlyString(
+        line.improvementEffectiveDate
+          ?? line.improvement_effective_date
+          ?? null,
+        `lines[${index}].improvementEffectiveDate`
+      ),
       revisedUsefulLifeMonths: parsePositiveInt(
         line.revisedUsefulLifeMonths ??
           line.revised_useful_life_months ??
@@ -3372,6 +3385,10 @@ function buildSyntheticDraftLines({
           100
         ),
         fixedAssetTag: toNullableString(existingSingleLine?.fixed_asset_tag, 100),
+        improvementEffectiveDate: toDateOnlyString(
+          existingSingleLine?.improvement_effective_date,
+          "existingLine.improvement_effective_date"
+        ),
         revisedUsefulLifeMonths: parsePositiveInt(
           existingSingleLine?.improvement_revised_useful_life_months
         ),
@@ -3538,7 +3555,8 @@ async function validateFixedAssetDraftLineBindings({
           tenantId,
           legalEntityId,
           assetId: targetFixedAssetId,
-          effectiveDate: documentDate,
+          effectiveDate: line.improvementEffectiveDate || documentDate,
+          postingDate: documentDate,
           revisedUsefulLifeMonths: parsePositiveInt(line.revisedUsefulLifeMonths),
           lifeExtensionMonths: parsePositiveInt(line.lifeExtensionMonths),
           queryFn: runQuery,
@@ -3629,10 +3647,11 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
           fixed_asset_name_override,
           fixed_asset_serial_no,
           fixed_asset_tag,
+          improvement_effective_date,
           improvement_revised_useful_life_months,
           improvement_life_extension_months
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
       [
         tenantId,
         legalEntityId,
@@ -3662,6 +3681,7 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
         line.fixedAssetNameOverride || null,
         line.fixedAssetSerialNo || null,
         line.fixedAssetTag || null,
+        line.improvementEffectiveDate || null,
         line.revisedUsefulLifeMonths || null,
         line.lifeExtensionMonths || null,
       ]
@@ -4586,6 +4606,10 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
 }) {
   const fieldPrefix = `storedLines[${lineIndex + 1}].`;
   const targetFixedAssetId = parsePositiveInt(line.targetFixedAssetId);
+  const improvementEffectiveDate = toDateOnlyString(
+    line.improvementEffectiveDate || documentDate,
+    `${fieldPrefix}improvementEffectiveDate`
+  );
   if (!targetFixedAssetId) {
     throw badRequest(
       `${fieldPrefix}targetFixedAssetId is required for IMPROVE_EXISTING posting`
@@ -4595,6 +4619,9 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
   const {
     prepareFixedAssetImprovementContext,
   } = await import("./fixed-assets.service.js");
+  const {
+    postRetroImprovementCurrentPeriodCatchUpTx,
+  } = await import("./fixed-assets.depreciation.service.js");
 
   const revisedUsefulLifeMonths = parsePositiveInt(line.revisedUsefulLifeMonths);
   const lifeExtensionMonths = parsePositiveInt(line.lifeExtensionMonths);
@@ -4602,7 +4629,8 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
     tenantId,
     legalEntityId,
     assetId: targetFixedAssetId,
-    effectiveDate: documentDate,
+    effectiveDate: improvementEffectiveDate,
+    postingDate: documentDate,
     revisedUsefulLifeMonths,
     lifeExtensionMonths,
     queryFn: tx.query,
@@ -4669,7 +4697,7 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
     legalEntityId,
     assetId: targetFixedAssetId,
     transactionType: "IMPROVEMENT",
-    effectiveDate: documentDate,
+    effectiveDate: improvementEffectiveDate,
     postingDate: documentDate,
     bookId,
     fiscalPeriodId,
@@ -4680,10 +4708,14 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
     sourceRefLineId: parsePositiveInt(line.id),
     grossAmountTxn: nextOriginalCostTxn,
     grossAmountBase: nextOriginalCostBase,
-    accumDeprAmountTxn: prepared.currentAccumDeprTxn,
-    accumDeprAmountBase: prepared.currentAccumDeprBase,
-    nbvAmountTxn: nextNbvTxn,
-    nbvAmountBase: nextNbvBase,
+    accumDeprAmountTxn: prepared.effectivePreAccumDeprTxn,
+    accumDeprAmountBase: prepared.effectivePreAccumDeprBase,
+    nbvAmountTxn: roundFixedAssetPostingAmount(
+      prepared.effectivePreNbvTxn + improvementAmountTxn
+    ),
+    nbvAmountBase: roundFixedAssetPostingAmount(
+      prepared.effectivePreNbvBase + improvementAmountBase
+    ),
     improvementRevisedUsefulLifeMonths: revisedUsefulLifeMonths,
     improvementLifeExtensionMonths: lifeExtensionMonths,
     improvementPreCostTxn: prepared.originalCostTxn,
@@ -4701,6 +4733,24 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
     sourceRefId: improvementTransactionId,
     linkRole: "SUPPORTING",
   });
+
+  if (prepared.retroCatchUpRequired) {
+    await postRetroImprovementCurrentPeriodCatchUpTx(tx, {
+      tenantId,
+      assetId: targetFixedAssetId,
+      improvementEffectiveDate,
+      postingDate: documentDate,
+      postImprovementNbvTxn: nextNbvTxn,
+      postImprovementNbvBase: nextNbvBase,
+      legalEntityId,
+      bookId,
+      fiscalPeriodId,
+      userId,
+      sourceRefType: "CARI_DOCUMENT",
+      sourceRefId: documentId,
+      sourceRefLineId: parsePositiveInt(line.id),
+    });
+  }
 }
 
 async function applyFixedAssetPostingSideEffectsTx({
@@ -5103,6 +5153,7 @@ async function listCariFixedAssetReverseTransactionsTx(tx, {
   const result = await tx.query(
     `SELECT
         fat.id,
+        fat.legal_entity_id,
         fat.asset_id,
         fat.transaction_type,
         fat.status,
@@ -5111,7 +5162,14 @@ async function listCariFixedAssetReverseTransactionsTx(tx, {
         fat.book_id,
         fat.fiscal_period_id,
         fat.currency_code,
+        fat.depreciation_kind,
         fat.journal_entry_id,
+        fat.gross_amount_txn,
+        fat.gross_amount_base,
+        fat.accum_depr_amount_txn,
+        fat.accum_depr_amount_base,
+        fat.nbv_amount_txn,
+        fat.nbv_amount_base,
         fat.pre_disposal_status,
         fa.asset_no,
         fa.status AS asset_status,
@@ -5142,6 +5200,7 @@ async function listCariFixedAssetReverseTransactionsTx(tx, {
 
   return (result.rows || []).map((row) => ({
     id: parsePositiveInt(row.id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
     assetId: parsePositiveInt(row.asset_id),
     transactionType: normalizeUpperText(row.transaction_type),
     status: normalizeUpperText(row.status),
@@ -5150,7 +5209,14 @@ async function listCariFixedAssetReverseTransactionsTx(tx, {
     bookId: parsePositiveInt(row.book_id),
     fiscalPeriodId: parsePositiveInt(row.fiscal_period_id),
     currencyCode: normalizeUpperText(row.currency_code || null),
+    depreciationKind: normalizeUpperText(row.depreciation_kind || null),
     journalEntryId: parsePositiveInt(row.journal_entry_id),
+    grossAmountTxn: toDecimalNumber(row.gross_amount_txn),
+    grossAmountBase: toDecimalNumber(row.gross_amount_base),
+    accumDeprAmountTxn: toDecimalNumber(row.accum_depr_amount_txn),
+    accumDeprAmountBase: toDecimalNumber(row.accum_depr_amount_base),
+    nbvAmountTxn: toDecimalNumber(row.nbv_amount_txn),
+    nbvAmountBase: toDecimalNumber(row.nbv_amount_base),
     preDisposalStatus: normalizeUpperText(row.pre_disposal_status),
     assetNo: row.asset_no || `ID-${Number(row.asset_id)}`,
     assetStatus: normalizeUpperText(row.asset_status),
@@ -5263,6 +5329,99 @@ async function markFixedAssetTransactionsReversedTx(tx, {
   );
 }
 
+function buildCariCatchUpReversalJournalNo(transactionId) {
+  return `FA-CARI-CATCHUP-REV-${parsePositiveInt(transactionId)}-${Date.now().toString(36).toUpperCase()}`
+    .slice(0, 40);
+}
+
+async function reverseCariLinkedCatchUpDepreciationTx(tx, {
+  tenantId,
+  transaction,
+  userId,
+}) {
+  const target = transaction || null;
+  if (
+    !target
+    || target.transactionType !== "DEPRECIATION"
+    || target.depreciationKind !== "CATCH_UP"
+  ) {
+    throw badRequest("reverseCariLinkedCatchUpDepreciationTx requires a CATCH_UP depreciation transaction");
+  }
+
+  let reversalJournalEntryId = null;
+  if (target.journalEntryId) {
+    const reversalJournal = await reverseJournalEntryTx(tx, {
+      tenantId,
+      journalId: target.journalEntryId,
+      userId,
+      reason: `Reversal of CARI-linked catch-up depreciation ${target.id}`.slice(0, 255),
+      journalNo: buildCariCatchUpReversalJournalNo(target.id),
+      autoPost: true,
+    });
+    reversalJournalEntryId = parsePositiveInt(reversalJournal?.reversalJournalId);
+  }
+
+  const reversalTransactionId = await insertFixedAssetTransactionTx(tx, {
+    tenantId,
+    legalEntityId: target.legalEntityId,
+    assetId: target.assetId,
+    transactionType: "REVERSAL",
+    effectiveDate: target.effectiveDate,
+    postingDate: target.postingDate,
+    bookId: target.bookId,
+    fiscalPeriodId: target.fiscalPeriodId,
+    currencyCode: target.currencyCode || "USD",
+    journalEntryId: reversalJournalEntryId,
+    grossAmountTxn: target.grossAmountTxn,
+    grossAmountBase: target.grossAmountBase,
+    accumDeprAmountTxn: target.accumDeprAmountTxn,
+    accumDeprAmountBase: target.accumDeprAmountBase,
+    nbvAmountTxn: target.nbvAmountTxn,
+    nbvAmountBase: target.nbvAmountBase,
+    reversedTransactionId: target.id,
+    note: `Reversal of CARI-linked catch-up depreciation ${target.id}`.slice(0, 1000),
+    createdByUserId: userId,
+  });
+  if (!reversalTransactionId) {
+    throw badRequest(
+      `Failed to create REVERSAL transaction for CARI-linked catch-up depreciation ${target.id}`
+    );
+  }
+
+  if (reversalJournalEntryId) {
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId: target.legalEntityId,
+      journalEntryId: reversalJournalEntryId,
+      sourceRefType: FIXED_ASSET_TRANSACTION,
+      sourceRefId: reversalTransactionId,
+      linkRole: "PRIMARY",
+    });
+  }
+
+  const updateResult = await tx.query(
+    `UPDATE fixed_asset_transactions
+        SET status = 'REVERSED',
+            reversal_transaction_id = ?
+      WHERE tenant_id = ?
+        AND id = ?
+        AND status = 'POSTED'
+        AND reversal_transaction_id IS NULL`,
+    [reversalTransactionId, tenantId, target.id]
+  );
+  if (Number(updateResult.rows?.affectedRows || 0) === 0) {
+    throw badRequest(
+      `CARI-linked catch-up depreciation transaction ${target.id} is already reversed`
+    );
+  }
+
+  return {
+    originalTransactionId: target.id,
+    reversalTransactionId,
+    reversalJournalEntryId,
+  };
+}
+
 async function cancelActivatedFixedAssetsForCariReverseTx(tx, {
   tenantId,
   userId,
@@ -5331,6 +5490,15 @@ async function prepareFixedAssetReverseSideEffectsTx(tx, {
 }) {
   const normalizedDirection = normalizeUpperText(direction);
   const linePlans = new Map();
+  let prepareFixedAssetImprovementReversalTxFn = null;
+
+  async function prepareFixedAssetImprovementReversal(input) {
+    if (!prepareFixedAssetImprovementReversalTxFn) {
+      ({ prepareFixedAssetImprovementReversalTx: prepareFixedAssetImprovementReversalTxFn } =
+        await import("./fixed-assets.service.js"));
+    }
+    return prepareFixedAssetImprovementReversalTxFn(tx, input);
+  }
 
   for (const line of Array.isArray(documentLines) ? documentLines : []) {
     if (normalizeUpperText(line?.subledgerType || "NONE") !== "FIXED_ASSET") {
@@ -5343,6 +5511,50 @@ async function prepareFixedAssetReverseSideEffectsTx(tx, {
     }
 
     if (normalizedDirection === "AP") {
+      const fixedAssetMode = normalizeUpperText(line.fixedAssetMode);
+      if (fixedAssetMode === "IMPROVE_EXISTING") {
+        const improvementTransactions = await listCariFixedAssetReverseTransactionsTx(tx, {
+          tenantId,
+          documentId,
+          documentLineId: lineId,
+          transactionTypes: ["IMPROVEMENT"],
+        });
+        const catchUpTransactions = (
+          await listCariFixedAssetReverseTransactionsTx(tx, {
+            tenantId,
+            documentId,
+            documentLineId: lineId,
+            transactionTypes: ["DEPRECIATION"],
+          })
+        ).filter((transaction) => transaction.depreciationKind === "CATCH_UP");
+        if (improvementTransactions.length === 0) {
+          continue;
+        }
+
+        const preparedImprovementReversals = [];
+        for (const improvementTransaction of improvementTransactions) {
+          preparedImprovementReversals.push(
+            // eslint-disable-next-line no-await-in-loop
+            await prepareFixedAssetImprovementReversal({
+              tenantId,
+              transactionId: improvementTransaction.id,
+              actionLabel:
+                `CARI document improvement reversal for asset ${improvementTransaction.assetNo}`,
+              allowSharedCariJournal: true,
+              ignoredLaterTransactionIds: catchUpTransactions.map((transaction) => transaction.id),
+            })
+          );
+        }
+
+        linePlans.set(lineId, {
+          direction: "AP",
+          fixedAssetMode,
+          catchUpTransactions,
+          preparedImprovementReversals,
+        });
+        continue;
+      }
+
       const capitalizationTransactions = await listCariFixedAssetReverseTransactionsTx(tx, {
         tenantId,
         documentId,
@@ -5374,7 +5586,7 @@ async function prepareFixedAssetReverseSideEffectsTx(tx, {
 
       linePlans.set(lineId, {
         direction: "AP",
-        fixedAssetMode: normalizeUpperText(line.fixedAssetMode),
+        fixedAssetMode,
         capitalizationTransactions,
       });
       continue;
@@ -5431,15 +5643,50 @@ async function applyFixedAssetReverseSideEffectsTx(tx, {
   tenantId,
   userId,
   linePlans,
+  reversalJournalEntryId = null,
 }) {
   if (!(linePlans instanceof Map) || linePlans.size === 0) {
     return;
   }
 
-  const { reverseDisposalCutoffPostedScheduleLinesTx } = await import("./fixed-assets.service.js");
+  const {
+    reverseDisposalCutoffPostedScheduleLinesTx,
+    reversePreparedFixedAssetImprovementTx,
+  } = await import("./fixed-assets.service.js");
 
   for (const linePlan of linePlans.values()) {
     if (linePlan?.direction === "AP") {
+      if (linePlan.fixedAssetMode === "IMPROVE_EXISTING") {
+        const catchUpTransactions = Array.isArray(linePlan.catchUpTransactions)
+          ? linePlan.catchUpTransactions
+          : [];
+        for (const catchUpTransaction of catchUpTransactions) {
+          // eslint-disable-next-line no-await-in-loop
+          await reverseCariLinkedCatchUpDepreciationTx(tx, {
+            tenantId,
+            transaction: catchUpTransaction,
+            userId,
+          });
+        }
+        const preparedImprovementReversals = Array.isArray(
+          linePlan.preparedImprovementReversals
+        )
+          ? linePlan.preparedImprovementReversals
+          : [];
+        for (const preparedTarget of preparedImprovementReversals) {
+          // eslint-disable-next-line no-await-in-loop
+          await reversePreparedFixedAssetImprovementTx(tx, {
+            preparedTarget,
+            userId,
+            note:
+              `Reversal of IMPROVEMENT transaction ${preparedTarget.id} ` +
+              "through CARI document reversal",
+            reversalJournalEntryId,
+          });
+        }
+        continue;
+      }
+
       const capitalizationTransactions = Array.isArray(linePlan.capitalizationTransactions)
         ? linePlan.capitalizationTransactions
         : [];
@@ -8065,6 +8312,7 @@ export async function reverseCariPostedDocumentById({
         tenantId,
         userId: payload.userId,
         linePlans: fixedAssetReversePlans,
+        reversalJournalEntryId: reversalJournalResult.journalEntryId,
       });
 
       const reversalRow = await fetchDocumentRow({
