@@ -1,12 +1,10 @@
 # 39 - CARI SUBLEDGER-AWARE LINES, IMMEDIATE CASH SETTLEMENT, AP/AR NAVIGATION, AND FA INTEGRATION
 
 ## Status
-
 - Planned
 - Depends on Track 38 (Fixed Assets foundation) being complete through at least STEP-FA52
 
 ## Purpose
-
 Make CARI document lines **subledger-aware** so that the document knows at entry time whether a line is a plain GL expense, an inventory receipt, or a fixed asset purchase/sale — exactly how SAP, Oracle, and Dynamics handle it.
 
 Today, CARI lines are generic: every line has an amount and a manual account. The fixed-asset capitalization flow works backwards — the bill is posted first as a plain expense, then a separate "capitalize from AP" step creates the asset after the fact. The sale flow uses a multi-step staging API (create draft AR → link → finalize). Neither is how real ERP works.
@@ -30,11 +28,11 @@ New ENUM column on `cari_document_lines`:
 subledger_type ENUM('NONE', 'STOCK', 'FIXED_ASSET') NOT NULL DEFAULT 'NONE'
 ```
 
-| Subledger type | Line behavior                                                                                                                                                                        | Existing analog                               |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| `NONE`         | Current default — manual account selection, plain GL posting, including today's service / non-stock item-card lines with `stock_impact_mode = 'NONE'`                                | Today's default                               |
-| `STOCK`        | References a stock-managed item card, account auto-resolved from product/warehouse config                                                                                            | Today's `stock_impact_mode != 'NONE'` pattern |
-| `FIXED_ASSET`  | For AP: either auto-generates new asset units from line quantity or links one draft asset; for AR: references one eligible existing asset. Account auto-resolved from asset category | NEW                                           |
+| Subledger type | Line behavior | Existing analog |
+|---|---|---|
+| `NONE` | Current default — manual account selection, plain GL posting, including today's service / non-stock item-card lines with `stock_impact_mode = 'NONE'` | Today's default |
+| `STOCK` | References a stock-managed item card, account auto-resolved from product/warehouse config | Today's `stock_impact_mode != 'NONE'` pattern |
+| `FIXED_ASSET` | For AP: either auto-generates new asset units from line quantity or links one draft asset; for AR: references one eligible existing asset. Account auto-resolved from asset category | NEW |
 
 Repo-specific rule: `itemCardId` is a shared commercial line-master reference in this codebase, not an inventory-only reference. `SERVICE`, `NON_STOCK_GOOD`, and `STOCK_ITEM` all use `itemCardId`; only `stock_impact_mode != 'NONE'` implies stock behavior. So `subledger_type` must not be inferred from `itemCardId` alone.
 
@@ -83,22 +81,22 @@ A single bill can have mixed lines:
 
 ### What This Replaces
 
-| Current flow                                                                        | New flow                                                                                                                    |
-| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Current flow | New flow |
+|---|---|
 | Post bill → go to FA module → capitalize from AP line → create asset after the fact | Enter bill with one FIXED_ASSET line (`qty = N`) → post bill → system creates and capitalizes `N` asset units automatically |
-| FA module creates draft AR → user edits → FA finalizes disposal via separate API    | User creates AR with FA line → post AR → disposal happens automatically                                                     |
-| User manually repeats identical lines or creates draft assets first                 | Supplier bill stays as one commercial line; asset system explodes it into per-unit assets underneath                        |
-| `postingAccountId` manually picked                                                  | Account auto-resolved from asset category                                                                                   |
+| FA module creates draft AR → user edits → FA finalizes disposal via separate API | User creates AR with FA line → post AR → disposal happens automatically |
+| User manually repeats identical lines or creates draft assets first | Supplier bill stays as one commercial line; asset system explodes it into per-unit assets underneath |
+| `postingAccountId` manually picked | Account auto-resolved from asset category |
 
 ### Purchase UX: Quantity-Based Auto-Create First, Link-Existing Second
 
 Real ERP systems handle the "asset doesn't exist yet" case in three ways:
 
-| Pattern                                                         | Used by                                         | How it works                                                                                                           |
-| --------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **A: Quantity-based auto-create with generated asset defaults** | Oracle, Business Central-style bulk asset flows | Enter one commercial line (`qty = N`) → provide category/defaults → posting creates `N` asset cards/units.             |
-| **B: Inline Create + Link Existing**                            | SAP, Dynamics, modern SaaS                      | "+" button on the bill line opens a dialog → create one draft asset → auto-select on line. User never leaves the bill. |
-| **C: Mass Additions Queue**                                     | Oracle                                          | Flag line as "capital" → lines queue up in FA module → admin reviews and creates assets. More steps.                   |
+| Pattern | Used by | How it works |
+|---|---|---|
+| **A: Quantity-based auto-create with generated asset defaults** | Oracle, Business Central-style bulk asset flows | Enter one commercial line (`qty = N`) → provide category/defaults → posting creates `N` asset cards/units. |
+| **B: Inline Create + Link Existing** | SAP, Dynamics, modern SaaS | "+" button on the bill line opens a dialog → create one draft asset → auto-select on line. User never leaves the bill. |
+| **C: Mass Additions Queue** | Oracle | Flag line as "capital" → lines queue up in FA module → admin reviews and creates assets. More steps. |
 
 This plan uses **Pattern A as the primary AP UX** and keeps **Pattern B** as the escape hatch.
 
@@ -142,12 +140,10 @@ This keeps the AP document close to the supplier invoice while letting the fixed
 - The expanded lines still follow the same accounting basis as the original purchase intent
 
 This solves real cases like:
-
 - `Laptop x 10`, but 6 go to HQ and 4 go to Branch
 - `Scanner x 5`, where finance wants serial numbers captured before posting
 
 Out of scope for this track:
-
 - per-unit category/accounting divergence inside one bulk-generated purchase flow
 - if different units need different categories or different accounting treatment, the user must split them into separate CARI lines before posting
 
@@ -157,10 +153,10 @@ Out of scope for this track:
 
 **How real ERP systems solve it**:
 
-| Pattern                            | Used by          | How it works                                                                                                   |
-| ---------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Immediate Payment flag on bill** | SAP, Dynamics    | Bill has a "pay now" toggle + payment source selector. Posting creates bill + payment + settlement atomically. |
-| **Separate "Expense" entry**       | QuickBooks, Xero | Simplified form distinct from "Bill". Under the hood still creates AP + payment.                               |
+| Pattern | Used by | How it works |
+|---|---|---|
+| **Immediate Payment flag on bill** | SAP, Dynamics | Bill has a "pay now" toggle + payment source selector. Posting creates bill + payment + settlement atomically. |
+| **Separate "Expense" entry** | QuickBooks, Xero | Simplified form distinct from "Bill". Under the hood still creates AP + payment. |
 
 **This plan uses the Immediate Payment pattern** — a `settlement_mode` field on the CARI document header:
 
@@ -170,9 +166,9 @@ For this track, the repo-ready scope is cash only; `IMMEDIATE_BANK` is deferred 
 settlement_mode  ENUM('ACCRUAL', 'IMMEDIATE_CASH')  DEFAULT 'ACCRUAL'
 ```
 
-| Settlement mode  | Behavior                                                                                                                   |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `ACCRUAL`        | Current default — bill posted, AP open item created, pay later                                                             |
+| Settlement mode | Behavior |
+|---|---|
+| `ACCRUAL` | Current default — bill posted, AP open item created, pay later |
 | `IMMEDIATE_CASH` | On posting: bill posted + cash payout auto-created + CARI settlement auto-applied. Requires `settlement_cash_register_id`. |
 
 **User experience for a cash purchase**:
@@ -229,7 +225,6 @@ Satis (Sales / Accounts Receivable)
 ```
 
 **Backend doesn't change** — the CARI module still handles both AP and AR. The frontend pages are either:
-
 - The same page pre-filtered (e.g., CariDocumentsPage with `direction=AP` prop)
 - Or thin wrapper pages that pass the direction filter
 
@@ -239,13 +234,13 @@ Satis (Sales / Accounts Receivable)
 
 **Problem**: After an asset is activated and in service, the business may incur additional capital expenditure that should be added to the asset's cost basis — not expensed. Examples:
 
-| Scenario                                     | Accounting treatment                                     | Subledger behavior |
-| -------------------------------------------- | -------------------------------------------------------- | ------------------ |
-| Building renovation that extends useful life | Capitalize → increase asset cost + revise remaining life | IMPROVE_EXISTING   |
-| Engine replacement on a vehicle              | Capitalize → increase asset cost                         | IMPROVE_EXISTING   |
-| Server memory upgrade                        | Capitalize → increase asset cost                         | IMPROVE_EXISTING   |
-| Routine cleaning / oil change                | Expense → NONE line                                      | Not an improvement |
-| Paint touch-up (no life extension)           | Expense → NONE line                                      | Not an improvement |
+| Scenario | Accounting treatment | Subledger behavior |
+|---|---|---|
+| Building renovation that extends useful life | Capitalize → increase asset cost + revise remaining life | IMPROVE_EXISTING |
+| Engine replacement on a vehicle | Capitalize → increase asset cost | IMPROVE_EXISTING |
+| Server memory upgrade | Capitalize → increase asset cost | IMPROVE_EXISTING |
+| Routine cleaning / oil change | Expense → NONE line | Not an improvement |
+| Paint touch-up (no life extension) | Expense → NONE line | Not an improvement |
 
 **How real ERP systems handle it**: SAP, Oracle, and Dynamics all support "subsequent acquisition" or "post-capitalization" transactions on active assets. The asset account is debited, the cost basis increases, and depreciation is **recalculated prospectively** from the improvement date without touching closed-period depreciation.
 
@@ -267,14 +262,12 @@ quantity = 1
 ```
 
 **Improvement life revision payload**:
-
 - `revisedUsefulLifeMonths` — absolute new total useful life (e.g., change from 60 to 84 months)
 - `lifeExtensionMonths` — relative extension (e.g., add 24 months to remaining life)
 - Only one of these may be provided; if neither is given, useful life stays unchanged
 - **FULLY_DEPRECIATED hard rule**: If the target asset is `FULLY_DEPRECIATED`, at least one of `revisedUsefulLifeMonths` or `lifeExtensionMonths` **MUST** be provided, and the resulting `remaining_useful_life_months` must be `> 0`. Rationale: a fully-depreciated asset has `remaining_useful_life_months = 0`; adding cost without extending life would leave undepreciated cost with no future depreciation periods — the schedule engine would have nowhere to allocate the new depreciable base.
 
 **On posting**:
-
 1. Debit the asset account (same account as original acquisition — resolved from category)
 2. Credit AP payable (normal AP posting)
 3. Create an `IMPROVEMENT` transaction on `fixed_asset_transactions` referencing the shared CARI `journal_entry_id`
@@ -289,7 +282,6 @@ quantity = 1
 **Multi-improvement support**: An asset can receive multiple improvements over its life. Each creates a separate IMPROVEMENT transaction. The cost basis accumulates. The depreciation schedule always reflects the latest cost.
 
 **Example**:
-
 ```
 Asset: Server Rack (original cost 50,000 TL, 60 months useful life)
 Year 1: Depreciation runs normally → 10,000 TL/year
@@ -322,7 +314,6 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 ### Master Tracker
 
 **Phase 1: Subledger-Aware Lines (Schema + Backend)**
-
 - [x] `STEP-SL01` — Migration: add `subledger_type`, fixed-asset target, and fixed-asset generation fields to `cari_document_lines`
 - [x] `STEP-SL02` — Backend validators: parse `subledgerType` with conditional required fields
 - [x] `STEP-SL03` — Backend CARI service: create/update document lines with subledger_type awareness
@@ -333,7 +324,6 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL08` — Backend FA service: adapt activation for assets already cost-posted via CARI
 
 **Phase 2: Subledger-Aware Lines (Frontend)**
-
 - [x] `STEP-SL10` — Frontend CARI form: add subledger_type selector to line entry
 - [x] `STEP-SL11` — Frontend CARI form: FIXED_ASSET conditional fields (auto-create defaults, link-existing picker, preview)
 - [x] `STEP-SL12` — Frontend CARI form: validation rules per subledger_type
@@ -341,14 +331,12 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL14` — Frontend FA sale flow: simplify to "create AR doc with FIXED_ASSET line" guidance
 
 **Phase 3: Immediate Cash/Bank Settlement**
-
 - [x] `STEP-SL15` — Migration: add `settlement_mode`, `settlement_cash_register_id`, and auto-settlement tracking to `cari_documents`
 - [x] `STEP-SL16` — 🔥 HOT — Backend CARI posting: immediate cash settlement (auto-create cash payout/receipt + auto-apply CARI settlement)
 - [x] `STEP-SL17` — Frontend CARI form: settlement mode selector (Accrual / Cash Purchase)
 - [x] `STEP-SL18` — 🔥 HOT — Backend CARI reversal: reverse immediate settlement when document is reversed
 
 **Phase 4: AP/AR Navigation Split**
-
 - [x] `STEP-SL19` — Sidebar restructure: replace "Cari Islemler" with "Satinalma" and "Satis" sections
 - [x] `STEP-SL20` — Frontend routing: AP-filtered and AR-filtered views for CARI documents, cards, settlements
 - [x] `STEP-SL21` — Frontend pages: direction-aware wrappers for bills (AP), invoices (AR), vendor cards, customer cards
@@ -356,13 +344,11 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 - [x] `STEP-SL23` — Remove old "Cari Islemler" routes, redirect legacy URLs, and make drillbacks direction-aware
 
 **Phase 5: Testing & Release**
-
 - [x] `STEP-SL24` — Smoke suite: subledger lines + immediate settlement + AP/AR navigation + mixed flows + reversals
 - [x] `STEP-SL25` — Release gates and backward-compatibility verification
 
 **Phase 6: Subsequent Acquisition / Improvement**
-
-- [ ] `STEP-SL26` — Migration: add IMPROVEMENT transaction type and improvement metadata columns
+- [x] `STEP-SL26` — Migration: add IMPROVEMENT transaction type and improvement metadata columns (implemented in `m151_fixed_asset_improvement_transaction_type.js`)
 - [ ] `STEP-SL27` — 🔥 HOT — Backend: IMPROVE_EXISTING mode — validators, posting, chronology gates, and prospective depreciation
 - [ ] `STEP-SL28` — Backend: reversal of improvement capitalization on active assets
 - [ ] `STEP-SL29` — Frontend: IMPROVE_EXISTING mode UI on CARI document form
@@ -373,11 +359,9 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 ## `STEP-SL01` — Migration: add `subledger_type`, fixed-asset target, and fixed-asset generation fields to `cari_document_lines`
 
 ### Patch target
-
 Add the schema foundation for subledger-aware lines.
 
 ### In scope
-
 - Add `subledger_type` ENUM('NONE', 'STOCK', 'FIXED_ASSET') NOT NULL DEFAULT 'NONE' to `cari_document_lines`
 - Add `target_fixed_asset_id` BIGINT UNSIGNED NULL to `cari_document_lines`
 - Add `fixed_asset_category_id` BIGINT UNSIGNED NULL to `cari_document_lines`
@@ -402,13 +386,11 @@ Add the schema foundation for subledger-aware lines.
 - Use the repo's idempotent migration pattern (safeExecute, addColumnIfMissing)
 
 ### Explicit non-goals
-
 - Do not backfill existing rows (not needed — DB starts clean with no legacy rows; SL02 validator inference ensures every new row gets the correct `subledger_type` at insertion time)
 - Do not modify any service or validator code
 - Do not change the ENUM values of `line_kind` or `stock_impact_mode`
 
 ### Definition of done
-
 - Migration runs without error on a fresh database and on an existing database
 - New columns exist with correct types and defaults
 - `fixed_asset_mode` column exists with correct ENUM values
@@ -424,11 +406,9 @@ Add the schema foundation for subledger-aware lines.
 ## `STEP-SL02` — Backend validators: parse `subledgerType` with conditional required fields
 
 ### Patch target
-
 Extend the CARI document line validator to accept and validate `subledgerType`, `fixedAssetMode`, `targetFixedAssetId`, and FIXED_ASSET auto-create metadata.
 
 ### In scope
-
 - Parse `subledgerType` from line payload
 - Parse `fixedAssetMode` from line payload for AP `FIXED_ASSET` lines
 - Parse `fixedAssetCategoryId`, `fixedAssetOwnerOperatingUnitId`, and `fixedAssetLocationOperatingUnitId` from line payload
@@ -452,13 +432,11 @@ Extend the CARI document line validator to accept and validate `subledgerType`, 
 - When `subledgerType = 'NONE'`: reject `targetFixedAssetId`, reject fixed-asset generation fields, allow normal fields including `itemCardId` so long as `stockImpactMode = 'NONE'`
 
 ### Explicit non-goals
-
 - Do not change existing validation logic for non-subledger fields
 - Do not validate whether the target asset exists (SL03/SL04 handle that)
 - Do not validate account resolution yet (SL04 handles that)
 
 ### Definition of done
-
 - Existing create/update document requests without subledgerType continue to work unchanged (inference rule auto-promotes to STOCK only when stock fields are present)
 - AP `subledgerType=FIXED_ASSET, fixedAssetMode=LINK_EXISTING` with `quantity != 1` returns 400
 - AP `subledgerType=FIXED_ASSET, fixedAssetMode=AUTO_CREATE` with `targetFixedAssetId` returns 400
@@ -476,11 +454,9 @@ Extend the CARI document line validator to accept and validate `subledgerType`, 
 ## `STEP-SL03` — Backend CARI service: create/update document lines with subledger_type awareness
 
 ### Patch target
-
 Persist `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, improvement life fields, and FIXED_ASSET auto-create metadata when creating or updating CARI document lines.
 
 ### In scope
-
 - **Update `replaceDocumentLinesTx`** (currently at line ~2497 in `cari.document.service.js`): add `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, `fixed_asset_category_id`, `fixed_asset_owner_operating_unit_id`, `fixed_asset_location_operating_unit_id`, `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`, `improvement_revised_useful_life_months`, and `improvement_life_extension_months` to the hardcoded INSERT statement
 - **Update line normalization** (currently at line ~2128): parse and pass through `subledgerType`, `fixedAssetMode`, `targetFixedAssetId`, `fixedAssetNameOverride`, `fixedAssetSerialNo`, `fixedAssetTag`, and generated-asset metadata from the validated input
 - **Extend `parseDocumentLines()` in `cari.document.validators.js`**: SL02 intentionally omits the pass-through metadata fields (`fixedAssetNameOverride`, `fixedAssetSerialNo`, `fixedAssetTag`) because they have no validation rules at the validator level. SL03 must add parsing of these three fields in `parseDocumentLines()` and include them in the output object — without this, the service-side line normalization at ~2128 cannot see them, since it reads exclusively from the validator output
@@ -495,12 +471,10 @@ Persist `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, improveme
 - For AP IMPROVE_EXISTING: validate target asset is ACTIVE or FULLY_DEPRECIATED (not DRAFT, not DISPOSED, not SUSPENDED)
 
 ### Explicit non-goals
-
 - Do not change posting logic yet (SL05/SL06)
 - Do not auto-resolve accounts yet (SL04)
 
 ### Definition of done
-
 - Creating a CARI AP document with a FIXED_ASSET auto-create line and valid generated-asset metadata succeeds
 - Creating a CARI AP document with a FIXED_ASSET link-existing line and valid draft asset ID succeeds
 - Creating a CARI AR document with a FIXED_ASSET line and valid active/suspended/fully-depreciated asset ID succeeds
@@ -515,11 +489,9 @@ Persist `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, improveme
 ## `STEP-SL04` — Backend CARI service: AP auto-resolve + AR proceeds-account rules for FIXED_ASSET lines
 
 ### Patch target
-
 For FIXED_ASSET lines, keep AP account resolution category-driven, but keep AR sale proceeds account explicit/manual in V1.
 
 ### In scope
-
 - For AP + FIXED_ASSET link-existing mode: resolve `posting_account_id` to the target asset's `default_asset_account_id` (from its category)
 - For AP + FIXED_ASSET auto-create mode: resolve `posting_account_id` to the selected `fixed_asset_category_id`'s `default_asset_account_id`
 - For AR + FIXED_ASSET: require an explicit/manual `postingAccountId` on the CARI line and treat it as the **sale proceeds account**
@@ -533,12 +505,10 @@ For FIXED_ASSET lines, keep AP account resolution category-driven, but keep AR s
   - This matches the current repo split where the AR line carries proceeds account, while FA disposal gain/loss uses asset/category disposal accounts
 
 ### Explicit non-goals
-
 - Do not change account resolution for STOCK or NONE lines
 - Do not change posting logic yet
 
 ### Definition of done
-
 - FIXED_ASSET AP auto-create and link-existing modes auto-resolve to the correct asset account
 - FIXED_ASSET AR line requires an explicit/manual sale proceeds account
 - Explicit postingAccountId on AP FIXED_ASSET line is rejected
@@ -550,11 +520,9 @@ For FIXED_ASSET lines, keep AP account resolution category-driven, but keep AR s
 ## `STEP-SL05` — Backend CARI posting: FIXED_ASSET AP line → auto-create or capitalize assets from the bill line
 
 ### Patch target
-
 When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` trigger the fixed-asset capitalization flow. The primary mode is quantity-based asset creation from one commercial bill line; linking one pre-existing draft asset remains the constrained advanced mode.
 
 ### In scope
-
 - Split FIXED_ASSET handling inside `postCariDocumentByIdTx()` into **two explicit phases**:
   - **Pre-journal FA augmentation** via `prepareFixedAssetPostingAugmentationsTx()`:
     - runs after normal CARI line/account resolution but **before** `ensureBalancedJournalLines()` and `insertPostedJournalWithLinesTx()`
@@ -581,23 +549,23 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
     - `sourceRefLineId`: line ID
     - `currencyCode`: document currency
 - **Auto-create mode**:
-  - Treat one supplier line with `quantity = N` as **N asset units/cards**
-  - Use an **SL05-specific quantity allocator** (new helper, not raw `computeFa06PerUnitAmounts()`) so `line net` / `line base` are allocated across `N` units and any rounding residual is assigned to the final unit
-  - Do **not** rely on the current FA06 equal-split helper alone; the current FA06 path separately requires source amounts to be evenly splittable and does not implement final-unit residual allocation
-  - Create `quantity` new DRAFT fixed-asset rows using:
-    - `fixed_asset_name_override` if set (from expanded lines), otherwise line `description` as the base asset name
-    - `fixed_asset_serial_no` and `fixed_asset_tag` if set (from expanded lines)
-    - `fixed_asset_category_id`
-    - `fixed_asset_owner_operating_unit_id`
-    - `fixed_asset_location_operating_unit_id`
-  - Apply numbering / labeling so the created units remain distinguishable (`Table #1`, `Table #2`, ... or equivalent asset-no driven naming)
-  - For each generated asset unit, create one CAPITALIZATION transaction and set:
-    - `grossAmountTxn/Base`, `accumDeprAmountTxn/Base`, `nbvAmountTxn/Base`
-    - `source_cari_document_id`
-    - `source_cari_document_line_id`
-    - `source_cari_document_line_unit_no = 1..N`
-  - Add `upsertJournalSourceLinkTx` links from the shared CARI journal to each generated FA transaction
-  - If the user used **Expand into individual asset lines** before posting, the backend does **not** need a special per-unit customization payload; it simply processes the resulting `quantity = 1` AUTO_CREATE lines independently
+    - Treat one supplier line with `quantity = N` as **N asset units/cards**
+    - Use an **SL05-specific quantity allocator** (new helper, not raw `computeFa06PerUnitAmounts()`) so `line net` / `line base` are allocated across `N` units and any rounding residual is assigned to the final unit
+    - Do **not** rely on the current FA06 equal-split helper alone; the current FA06 path separately requires source amounts to be evenly splittable and does not implement final-unit residual allocation
+    - Create `quantity` new DRAFT fixed-asset rows using:
+      - `fixed_asset_name_override` if set (from expanded lines), otherwise line `description` as the base asset name
+      - `fixed_asset_serial_no` and `fixed_asset_tag` if set (from expanded lines)
+      - `fixed_asset_category_id`
+      - `fixed_asset_owner_operating_unit_id`
+      - `fixed_asset_location_operating_unit_id`
+    - Apply numbering / labeling so the created units remain distinguishable (`Table #1`, `Table #2`, ... or equivalent asset-no driven naming)
+    - For each generated asset unit, create one CAPITALIZATION transaction and set:
+      - `grossAmountTxn/Base`, `accumDeprAmountTxn/Base`, `nbvAmountTxn/Base`
+      - `source_cari_document_id`
+      - `source_cari_document_line_id`
+      - `source_cari_document_line_unit_no = 1..N`
+    - Add `upsertJournalSourceLinkTx` links from the shared CARI journal to each generated FA transaction
+    - If the user used **Expand into individual asset lines** before posting, the backend does **not** need a special per-unit customization payload; it simply processes the resulting `quantity = 1` AUTO_CREATE lines independently
   - **Link-existing mode**:
     - Re-validate target asset is still DRAFT and in the same tenant/legal entity (`SELECT ... FOR UPDATE`)
     - Create one CAPITALIZATION transaction on the referenced draft asset
@@ -608,7 +576,6 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
 - If a link-existing target asset is no longer DRAFT at posting time, reject the posting with a clear error
 
 ### Explicit non-goals
-
 - Do not change posting logic for NONE or STOCK lines
 - Do not change the activation flow (SL08 handles that)
 - Do not create a separate journal — the CARI posting journal already has the correct debit/credit lines
@@ -616,7 +583,6 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
 - Do not support per-unit category/accounting divergence inside one unexpanded bulk AUTO_CREATE line; split into separate CARI lines instead
 
 ### Definition of done
-
 - Posting an AP doc with a FIXED_ASSET auto-create line and `quantity = N` creates `N` draft assets/cards and `N` CAPITALIZATION transactions
 - Posting an AP doc with a FIXED_ASSET link-existing line creates one CAPITALIZATION transaction on the referenced draft asset
 - The CAPITALIZATION transaction references the CARI posting journal (same `journal_entry_id`, no duplicate journal)
@@ -633,11 +599,9 @@ When posting a CARI AP document, lines with `subledger_type = 'FIXED_ASSET'` tri
 ## `STEP-SL06` — Backend CARI posting: FIXED_ASSET AR line → trigger disposal flow on target eligible asset
 
 ### Patch target
-
 When posting a CARI AR document, lines with `subledger_type = 'FIXED_ASSET'` trigger the fixed-asset disposal flow.
 
 ### In scope
-
 - **Important repo-specific framing**: SL06 is a **parallel CARI posting path**, not a reuse of the current FA39/FA40 staged sale orchestration.
   - The existing sale flow in `fixed-assets.service.js` depends on asset-level pending sale state (`pending_sale_cari_document_id`, `pending_sale_cari_document_line_id`), a dedicated linked AR line, and two separate journals (`cutoffDepreciationJournalEntryId` and `saleJournalEntryId`) before it clears the pending linkage.
   - SL06 should reuse only the portable parts of that implementation:
@@ -664,12 +628,10 @@ When posting a CARI AR document, lines with `subledger_type = 'FIXED_ASSET'` tri
 - Sale proceeds are the AR line amount; NBV is computed from asset records
 
 ### Explicit non-goals
-
 - Do not remove or retrofit the existing multi-step sale staging API (FA39) — it remains as an alternative path with its own orchestration
 - Do not handle write-off via CARI (write-off has no AR document — it stays as a standalone FA operation)
 
 ### Definition of done
-
 - Posting an AR doc with a FIXED_ASSET line disposes the asset in a single posting
 - Cutoff depreciation is calculated and posted
 - Gain/loss is correctly recognized
@@ -684,18 +646,15 @@ When posting a CARI AR document, lines with `subledger_type = 'FIXED_ASSET'` tri
 ## `STEP-SL07` — Backend CARI reversal: reverse CAPITALIZATION / disposal when CARI document is reversed
 
 ### Patch target
-
 When a CARI document containing FIXED_ASSET lines is reversed, undo the fixed-asset side effects.
 
 ### In scope
 
 **Prerequisite — reversal line copy must include new columns**:
-
 - The existing `reverseCariPostedDocumentById` (line ~4563 in `cari.document.service.js`) creates a reversal document by copying lines via `replaceDocumentLinesTx` (line ~2472). The current INSERT at line ~2497-2539 does NOT include the new FIXED_ASSET subledger fields. The line copy mapping at line ~4839-4916 also doesn't map them.
 - **Both must be updated**: add `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, `fixed_asset_category_id`, `fixed_asset_owner_operating_unit_id`, `fixed_asset_location_operating_unit_id`, `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`, `improvement_revised_useful_life_months`, and `improvement_life_extension_months` to the INSERT columns and the line-copy field mapping. Without this, the reversal document's lines lose their subledger context, mode, expanded-line per-unit metadata, and improvement payload, and the FA reversal hooks below can't determine which lines to process or what kind of reversal to perform.
 
 **Shared-journal constraint — do not call the generic FA reversal helper here**:
-
 - The existing `reverseFixedAssetTransaction()` in `fixed-assets.service.js` directly calls `reverseJournalEntryTx()` on `target.journalEntryId` when the target transaction has a journal.
 - Under SL05 and SL06, the new FA `CAPITALIZATION` / `SALE` rows intentionally reuse the already-posted CARI `journal_entry_id` instead of creating a dedicated FA journal.
 - Therefore the generic FA reversal helper must **not** be used for these shared-journal CARI-linked FA transactions. Doing so would reverse the whole posted CARI journal independently from the source CARI document reversal, which is incorrect.
@@ -723,11 +682,9 @@ When a CARI document containing FIXED_ASSET lines is reversed, undo the fixed-as
   - Restore the asset to its pre-disposal status using the SALE transaction's `pre_disposal_status` column (ACTIVE, SUSPENDED, or FULLY_DEPRECIATED — deterministic, no derivation needed)
 
 ### Explicit non-goals
-
 - Do not handle partial reversals (all-or-nothing document reversal is the existing pattern)
 
 ### Definition of done
-
 - Reversal document lines include `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, `fixed_asset_name_override`, `fixed_asset_serial_no`, `fixed_asset_tag`, improvement life fields, and generated-asset metadata (copied from original)
 - Reversing an AP doc with FIXED_ASSET auto-create lines hard-deletes untouched generated draft assets and their generated capitalization rows in the correct FK-safe order
 - Reversing an AP doc with FIXED_ASSET link-existing lines restores the linked draft asset to pre-capitalization state
@@ -742,7 +699,6 @@ When a CARI document containing FIXED_ASSET lines is reversed, undo the fixed-as
 ## `STEP-SL08` — Backend FA service: adapt activation for assets already cost-posted via CARI
 
 ### Patch target
-
 The activation flow must handle assets that already have cost posted via CARI (CAPITALIZATION transaction already exists) vs. manual acquisitions (ACQUISITION transaction created at activation time).
 
 ### In scope
@@ -770,7 +726,6 @@ The revalidation must detect which path created the asset and behave accordingly
 - **Detection**: Check if a CAPITALIZATION transaction exists on `fixed_asset_transactions` with `source_ref_type = 'CARI_DOCUMENT'` for this asset and whether its `journal_entry_id` belongs to the posted CARI document. If yes → SL05 path. If no → FA06/manual path.
 
 - **SL05 path (CARI-capitalized asset)**:
-
   - Validate source CARI document is still POSTED and direction = AP
   - Validate source line still exists
   - Read the source line's persisted `fixed_asset_mode` to determine which sub-path:
@@ -783,18 +738,15 @@ The revalidation must detect which path created the asset and behave accordingly
   - The activation becomes a metadata/schedule operation, not a new accounting or acquisition-lifecycle event
 
 - **FA06 path (unchanged)**:
-
   - Existing `revalidateSourceLinkageForActivation` behavior unchanged (unit-slot validation, per-unit cost recomputation)
 
 - Add a computed/exposed field `hasCariCapitalization` on asset detail so the frontend knows which path was taken
 
 ### Explicit non-goals
-
 - Do not change the manual acquisition activation path (assets without source linkage)
 - Do not force CARI capitalization — manual path remains valid
 
 ### Definition of done
-
 - Asset with CARI-posted CAPITALIZATION (SL05 path) activates without double-posting
 - Asset with CARI-posted CAPITALIZATION (SL05 path) does **not** get an extra activation-time `ACQUISITION` transaction
 - Auto-created quantity-split assets validate against per-unit slot cost correctly at activation time
@@ -808,11 +760,9 @@ The revalidation must detect which path created the asset and behave accordingly
 ## `STEP-SL10` — Frontend CARI form: add subledger_type selector to line entry
 
 ### Patch target
-
 Add a subledger type dropdown to each line in the CARI document entry form.
 
 ### In scope
-
 - Add `subledgerType` dropdown to line form: `NONE` (default), `STOCK`, `FIXED_ASSET`
 - Label: "Line Type" / "Satir Tipi" (or "Subledger" / "Alt Defter")
 - When changed, clear only fields that are incompatible with the new type:
@@ -823,14 +773,12 @@ Add a subledger type dropdown to each line in the CARI document entry form.
 - Position: first field on each line row (before description)
 
 ### Explicit non-goals
-
 - Do not implement conditional field rendering yet (SL11)
 - Do not add validation (SL12)
 
 Repo-specific i18n note: SL10 may use the existing inline `l(EN, TR)` pattern already used throughout `CariDocumentsPage` for the new selector label/options. Moving these labels into `frontend/src/i18n/messages.js` is optional at this step and is not required for SL10 completion.
 
 ### Definition of done
-
 - Subledger type dropdown appears on each line
 - Changing it clears cross-type fields
 - AP FIXED_ASSET lines default `fixedAssetMode` to `AUTO_CREATE`
@@ -842,11 +790,9 @@ Repo-specific i18n note: SL10 may use the existing inline `l(EN, TR)` pattern al
 ## `STEP-SL11` — Frontend CARI form: FIXED_ASSET conditional fields (auto-create defaults, link-existing picker, preview)
 
 ### Patch target
-
 When `subledgerType = 'FIXED_ASSET'` is selected on a line, show the correct purchase/sale UI for the chosen mode and surface the generated-asset preview.
 
 ### In scope
-
 - For **AP documents**, show an explicit `fixedAssetMode` choice inside FIXED_ASSET:
   - `AUTO_CREATE` (default)
   - `LINK_EXISTING` (advanced)
@@ -881,14 +827,12 @@ When `subledgerType = 'FIXED_ASSET'` is selected on a line, show the correct pur
   - The user never leaves the CARI document page — the modal closes and the line is populated
 
 ### Explicit non-goals
-
 - Do not replicate the full FixedAssetFormPage inside the modal — only essential fields (name, category, owner OU, location OU) plus header-derived fields (legalEntityId, acquisitionDate, currencyCode auto-filled from the CARI document); advanced fields like serial number, legacy onboarding, account overrides are edited on the asset detail page after creation
 - Do not force users into link-existing mode when the commercial bill is naturally one line with `quantity > 1`
 - Do not expose `fixedAssetMode` on AR lines; AR always selects an existing asset directly
 - Do not allow per-unit category/accounting divergence through the expand helper; users must split into separate CARI lines if accounting differs
 
 ### Definition of done
-
 - AP FIXED_ASSET line exposes explicit `fixedAssetMode`
 - AP FIXED_ASSET line defaults to `fixedAssetMode = AUTO_CREATE` and shows generated-asset defaults
 - AP `fixedAssetMode = AUTO_CREATE` shows preview text: **"Posting this line will create {quantity} assets at {perUnitAmount} each."**
@@ -906,11 +850,9 @@ When `subledgerType = 'FIXED_ASSET'` is selected on a line, show the correct pur
 ## `STEP-SL12` — Frontend CARI form: validation rules per subledger_type
 
 ### Patch target
-
 Enforce form-level validation rules based on the selected subledger type and AP `fixedAssetMode`.
 
 ### In scope
-
 - FIXED_ASSET AP requires explicit `fixedAssetMode`
 - FIXED_ASSET AP `fixedAssetMode = AUTO_CREATE`: `targetFixedAssetId` must be empty, `quantity` must be a whole positive integer, and generated-asset defaults (`fixedAssetCategoryId`, `fixedAssetOwnerOperatingUnitId`, `fixedAssetLocationOperatingUnitId`) are required
 - FIXED_ASSET AP `fixedAssetMode = LINK_EXISTING`: `targetFixedAssetId` required and `quantity = 1`
@@ -922,11 +864,9 @@ Enforce form-level validation rules based on the selected subledger type and AP 
 - Show inline validation messages per line
 
 ### Explicit non-goals
-
 - Do not duplicate backend validation — frontend validation is UX-only
 
 ### Definition of done
-
 - Cannot submit an AP FIXED_ASSET line without choosing `fixedAssetMode`
 - Cannot submit an AP FIXED_ASSET `AUTO_CREATE` line without generated-asset defaults
 - Cannot submit an AP FIXED_ASSET `LINK_EXISTING` line without selecting an asset
@@ -941,11 +881,9 @@ Enforce form-level validation rules based on the selected subledger type and AP 
 ## `STEP-SL13` — Frontend FA acquisitions page: show "linked from CARI" indicator, simplify capitalize section
 
 ### Patch target
-
 Update the acquisitions page to reflect the new CARI-integrated flow.
 
 ### In scope
-
 - Show a "Linked from CARI" indicator on assets that have `source_cari_document_id` set
 - Add a note: "Preferred flow: enter one vendor bill line with `FIXED_ASSET` and quantity, let posting create the asset units automatically. Use link-existing mode only when you already prepared a specific draft asset."
 - Add a second note: "If units need different owner/location or serial metadata before posting, use 'Expand into individual asset lines'. If accounting/category differs, split into separate CARI lines."
@@ -953,11 +891,9 @@ Update the acquisitions page to reflect the new CARI-integrated flow.
 - When an asset has a CAPITALIZATION transaction from CARI posting, show the source document link
 
 ### Explicit non-goals
-
 - Do not remove the existing capitalize-from-AP flow — it's the fallback for legacy bills
 
 ### Definition of done
-
 - Assets with CARI source show linked document indicator
 - Guidance text directs users to the new CARI-integrated flow
 - Existing capitalize flow still works as fallback
@@ -967,22 +903,18 @@ Update the acquisitions page to reflect the new CARI-integrated flow.
 ## `STEP-SL14` — Frontend FA sale flow: simplify to "create AR doc with FIXED_ASSET line" guidance
 
 ### Patch target
-
 Update the FA sale UI to guide users toward the new CARI-integrated sale flow.
 
 ### In scope
-
 - On the asset detail page sale action: instead of (or in addition to) the multi-step staging flow, show guidance: "Create a CARI AR document with a Fixed Asset line type pointing to this asset"
 - Add a "Create Sale Invoice" shortcut button that navigates to the current CARI document page and pre-populates the create form with `direction = 'AR'`, `subledgerType = 'FIXED_ASSET'`, and `targetFixedAssetId = {currentAssetId}`. Repo-specific execution note: this requires `CariDocumentsPage.jsx` to consume the prefill payload even though the initiating UX lives on the FA detail page. This is an intentionally narrow widening for SL14 only; AP/AR route split work still belongs to SL20-SL23.
 - Keep the existing multi-step sale staging API as a fallback
 - If the repo does not already expose a usable legacy fallback entry on the detail page, add a lightweight fallback starter there (no redesign of sale posting logic)
 
 ### Explicit non-goals
-
 - Do not remove the existing sale staging API endpoints (FA39)
 
 ### Definition of done
-
 - Users can reach the CARI AR document form from the asset detail page
 - The shortcut lands on the current CARI page with the AR FIXED_ASSET sale draft prefilled for the current asset
 - The new flow works end-to-end (create AR doc → FIXED_ASSET line → post → asset disposed)
@@ -993,11 +925,9 @@ Update the FA sale UI to guide users toward the new CARI-integrated sale flow.
 ## `STEP-SL15` — Migration: add settlement_mode, settlement_cash_register_id, and auto-settlement tracking to cari_documents
 
 ### Patch target
-
 Add the schema foundation for immediate cash settlement on CARI documents.
 
 ### In scope
-
 - Add `settlement_mode` ENUM('ACCRUAL', 'IMMEDIATE_CASH') NOT NULL DEFAULT 'ACCRUAL' to `cari_documents`
 - Add `settlement_cash_register_id` BIGINT UNSIGNED NULL to `cari_documents` — FK to `cash_registers(id)`
 - Add `auto_settlement_batch_id` BIGINT UNSIGNED NULL to `cari_documents` — tracks the settlement batch created by immediate settlement for reversal lookup (SL18 needs this)
@@ -1006,13 +936,11 @@ Add the schema foundation for immediate cash settlement on CARI documents.
 - Use the repo's idempotent migration pattern
 
 ### Explicit non-goals
-
 - Do not modify any service or validator code
 - Do not change posting logic
 - Do not add `IMMEDIATE_BANK` in this step; bank-side immediate payment is deferred to a later dedicated design/implementation step
 
 ### Definition of done
-
 - Migration runs without error on fresh and existing databases
 - New columns exist with correct types and defaults
 - All existing documents get `settlement_mode = 'ACCRUAL'` from DEFAULT
@@ -1024,7 +952,6 @@ Add the schema foundation for immediate cash settlement on CARI documents.
 ## `STEP-SL16` — Backend CARI posting: immediate cash settlement (auto-create cash payout/receipt + auto-apply CARI settlement)
 
 ### Patch target
-
 When posting a CARI document with `settlement_mode = 'IMMEDIATE_CASH'`, automatically create the cash transaction and apply the CARI settlement in the same database transaction.
 
 ### In scope
@@ -1034,7 +961,6 @@ When posting a CARI document with `settlement_mode = 'IMMEDIATE_CASH'`, automati
 The existing `applyCariSettlement()` (line ~4349 in `cari.settlement.service.js`) wraps its logic in its own `withTransaction()` call (line ~4493). The existing `createCashTransaction()` (line ~1931 in `cash.transaction.service.js`) also wraps in `withTransaction()` (line ~2033). But `postCariDocumentByIdTx()` already runs inside a `withTransaction()`. Calling these functions from within the CARI posting transaction would create nested `withTransaction` calls.
 
 **Fix**: Extract the core logic of each into **transaction-aware internal variants** that accept a `queryFn`/`tx` parameter and skip the `withTransaction()` wrapper:
-
 - `applyCariSettlementTx(tx, params)` — core settlement logic, receives an existing transaction handle
 - `createCashTransactionTx(tx, params)` — core cash transaction logic, receives an existing transaction handle
 - The public-facing functions remain unchanged (they wrap the `*Tx` variant in `withTransaction`)
@@ -1042,7 +968,6 @@ The existing `applyCariSettlement()` (line ~4349 in `cari.settlement.service.js`
 - `IMMEDIATE_BANK` is intentionally out of scope here because the repo does not yet expose an equivalent single-transaction bank payment creation/posting primitive that can safely participate in the same posting transaction
 
 **Posting flow**:
-
 - During `postCariDocumentByIdTx()`, after the normal AP/AR journal is posted and open item is created:
   - If `settlement_mode = 'IMMEDIATE_CASH'`:
     - Create a cash payout/receipt via `createCashTransactionTx(tx, ...)` (PAYOUT for AP, RECEIPT for AR) on the specified `settlement_cash_register_id`
@@ -1056,14 +981,12 @@ The existing `applyCariSettlement()` (line ~4349 in `cari.settlement.service.js`
 - All operations happen in the same transaction — if any step fails, the entire posting rolls back
 
 ### Explicit non-goals
-
 - Do not support partial immediate settlement (it's all or nothing — the full document amount is settled)
 - Do not change the existing manual settlement flow (users can still create AP docs in ACCRUAL mode and settle later)
 - Do not support mixed settlement (part cash, part credit) in this step
 - Do not implement `IMMEDIATE_BANK` in this step; that requires a separate bank-side posting design first
 
 ### Definition of done
-
 - Posting an AP doc with `settlement_mode = 'IMMEDIATE_CASH'` creates: AP journal + cash payout + settlement — AP open item balance = 0
 - Posting an AR doc with `settlement_mode = 'IMMEDIATE_CASH'` creates: AR journal + cash receipt + settlement — AR open item balance = 0
 - `settlement_mode = 'ACCRUAL'` (default) works exactly as before — no change
@@ -1076,11 +999,9 @@ The existing `applyCariSettlement()` (line ~4349 in `cari.settlement.service.js`
 ## `STEP-SL17` — Frontend CARI form: settlement mode selector (Accrual / Cash Purchase / Cash Sale)
 
 ### Patch target
-
 Add a settlement mode selector to the CARI document form header for both AP and AR documents.
 
 ### In scope
-
 - Add a **"Payment"** section to the document header form (both AP and AR):
   - Radio or dropdown: `On Credit (Accrual)` | `Cash Purchase` (AP) / `Cash Sale` (AR)
   - Default: `On Credit (Accrual)` — current behavior
@@ -1091,12 +1012,10 @@ Add a settlement mode selector to the CARI document form header for both AP and 
 - The settlement mode and payment source are sent as part of the document create/update payload
 
 ### Explicit non-goals
-
 - Do not implement split payment (part cash, part credit)
 - Do not expose `IMMEDIATE_BANK` in the UI in this step
 
 ### Definition of done
-
 - AP document form has a payment mode selector (label: "Cash Purchase" / "Nakit Alis")
 - AR document form has a payment mode selector (label: "Cash Sale" / "Nakit Satis")
 - Cash Purchase/Sale shows cash register dropdown
@@ -1108,11 +1027,9 @@ Add a settlement mode selector to the CARI document form header for both AP and 
 ## `STEP-SL18` — Backend CARI reversal: reverse immediate settlement when document is reversed
 
 ### Patch target
-
 When reversing a CARI document that was immediately settled, also reverse the auto-created payment and settlement.
 
 ### In scope
-
 - During CARI document reversal (within `reverseCariPostedDocumentById`), if the document has `settlement_mode != 'ACCRUAL'`:
   - **Lookup the auto-created settlement and cash transaction** using `auto_settlement_batch_id` and `auto_settlement_cash_transaction_id` stored on the document by SL16. These columns provide a reliable, direct FK-based lookup — no guessing or convention-based search needed.
   - **Do not call the current public reversal endpoints as-is**. The current standalone settlement reversal blocks while the linked cash transaction is still `POSTED`, so SL18 must use a **coordinated internal pair-reversal path** instead of naive sequential public calls.
@@ -1126,13 +1043,11 @@ When reversing a CARI document that was immediately settled, also reverse the au
 - If the cash register session has been closed since posting, the reversal creates a new cash transaction in the current active session (or fails if no session is active)
 
 ### Explicit non-goals
-
 - Do not handle partial reversal
 - Do not reverse if the settlement has been partially cleared by other transactions (block with error)
 - Do not rely on public standalone cash/settlement reversal ordering quirks for the immediate-settlement pair; SL18 must define its own coordinated internal path
 
 ### Definition of done
-
 - Reversing an immediately settled AP doc restores: AP open item cleared, cash payout reversed, settlement reversed
 - Reversing an immediately settled AR doc restores: AR open item cleared, cash receipt reversed, settlement reversed
 - Reversal finds the settlement/cash transaction via `auto_settlement_batch_id` / `auto_settlement_cash_transaction_id` (not by convention or search)
@@ -1145,11 +1060,9 @@ When reversing a CARI document that was immediately settled, also reverse the au
 ## `STEP-SL19` — Sidebar restructure: replace "Cari Islemler" with "Satinalma" and "Satis" sections
 
 ### Patch target
-
 Reorganize the sidebar from a single "Cari Islemler" bucket into separate "Satinalma" (Purchases/AP) and "Satis" (Sales/AR) top-level sections — matching standard ERP navigation.
 
 ### In scope
-
 - Remove the "Cari Islemler" section from `sidebarConfig.js`
 - Add **"Satinalma"** (Purchases) section with:
   - Alis Faturalari (Vendor Bills) → route to AP-filtered documents page
@@ -1170,13 +1083,11 @@ Reorganize the sidebar from a single "Cari Islemler" bucket into separate "Satin
 - Update sidebar icons to match the new sections
 
 ### Explicit non-goals
-
 - Do not change any backend route or endpoint
 - Do not rename internal permission strings (they stay as `cari.*`)
 - Do not change the CARI document data model
 
 ### Definition of done
-
 - "Cari Islemler" no longer appears in the sidebar
 - "Satinalma" and "Satis" appear as separate top-level sections
 - All existing pages are reachable from the new navigation
@@ -1187,20 +1098,17 @@ Reorganize the sidebar from a single "Cari Islemler" bucket into separate "Satin
 ## `STEP-SL20` — Frontend routing: AP-filtered and AR-filtered views for CARI documents, cards, settlements
 
 ### Patch target
-
 Create new frontend routes that present the existing CARI pages pre-filtered by direction (AP or AR).
 
 ### In scope
 
 **Actual codebase structure** (no `CariCardsPage` exists):
-
 - Card pages use **`CariCounterpartyPage`** with a `pageKey` prop (`buyerCreate`, `buyerList`, `vendorCreate`, `vendorList`)
 - Each `pageKey` maps to a `PAGE_CONFIG` entry with `mode` (create/list), `roleDefault` (CUSTOMER/VENDOR), and title
 - Routes are already role-split: `/app/alici-kart-listesi` (buyer) vs `/app/satici-kart-listesi` (vendor)
 - So card pages don't need a new `cardType` prop — they already filter by role via `pageKey`
 
 **New routes to add:**
-
 - `/app/alis-faturalari` → CariDocumentsPage with `direction="AP"` prop
 - `/app/satis-faturalari` → CariDocumentsPage with `direction="AR"` prop
 - `/app/tedarikci-kartlari` → CariCounterpartyPage with `pageKey="vendorList"` (reuses existing `PAGE_CONFIG`)
@@ -1218,13 +1126,11 @@ Create new frontend routes that present the existing CARI pages pre-filtered by 
 - CariReportsPage (existing reports page at `/app/cari-raporlari`) should accept an optional `direction` prop to pre-filter by AP/AR
 
 ### Explicit non-goals
-
 - Do not create entirely new page components — reuse existing pages with existing props
 - Do not remove the old routes yet (SL23 handles that)
 - Card pages need NO new prop — `pageKey` already handles role filtering
 
 ### Definition of done
-
 - `/app/alis-faturalari` shows only AP documents
 - `/app/satis-faturalari` shows only AR documents
 - `/app/tedarikci-kartlari` shows only vendors (via existing `pageKey="vendorList"`)
@@ -1240,11 +1146,9 @@ Create new frontend routes that present the existing CARI pages pre-filtered by 
 ## `STEP-SL21` — Frontend pages: direction-aware wrappers for bills (AP), invoices (AR), vendor cards, customer cards
 
 ### Patch target
-
 Create thin wrapper components or enhance existing pages to work cleanly with the direction-filtered routes.
 
 ### In scope
-
 - If CariDocumentsPage currently doesn't accept a `direction` prop, add it:
   - When `direction` is set, pre-filter the list and hide the direction dropdown
   - When creating a new document, pre-set the direction to the filtered value
@@ -1254,12 +1158,10 @@ Create thin wrapper components or enhance existing pages to work cleanly with th
 - Ensure the "Create New" button on filtered pages creates with the correct direction/type
 
 ### Explicit non-goals
-
 - Do not redesign the existing page layouts
 - Do not change any API endpoints
 
 ### Definition of done
-
 - AP-filtered page shows "Alis Faturalari" title and only AP documents
 - AR-filtered page shows "Satis Faturalari" title and only AR documents
 - "Create New" on AP page creates an AP document by default
@@ -1272,11 +1174,9 @@ Create thin wrapper components or enhance existing pages to work cleanly with th
 ## `STEP-SL22` — i18n: AP/AR-specific labels (Vendor Bills, Sales Invoices, AP Payments, AR Receipts)
 
 ### Patch target
-
 Add i18n labels for the new AP/AR-specific navigation and page titles.
 
 ### In scope
-
 - Add labels in both TR and EN for:
   - Sidebar sections: "Satinalma" / "Purchases", "Satis" / "Sales"
   - Page titles: "Alis Faturalari" / "Vendor Bills", "Satis Faturalari" / "Sales Invoices"
@@ -1287,11 +1187,9 @@ Add i18n labels for the new AP/AR-specific navigation and page titles.
 - Add labels for breadcrumbs if used
 
 ### Explicit non-goals
-
 - Do not change existing i18n keys — only add new ones
 
 ### Definition of done
-
 - All new pages and sidebar items have proper TR and EN labels
 - No hardcoded strings in the new navigation components
 
@@ -1300,7 +1198,6 @@ Add i18n labels for the new AP/AR-specific navigation and page titles.
 ## `STEP-SL23` — Remove old "Cari Islemler" routes, redirect legacy URLs, and make drillbacks direction-aware
 
 ### Patch target
-
 Clean up old routes, add simple convenience redirects, and — more importantly — make all internally generated drillback / source-link URLs direction-aware so new AP/AR pages receive the correct links.
 
 ### In scope
@@ -1309,14 +1206,14 @@ Clean up old routes, add simple convenience redirects, and — more importantly 
 
 The system is not live yet and the database will be clean-reset before go-live, so there are no real old bookmarks, shared URLs, or saved links to preserve. Legacy redirects are just developer convenience during the transition — they do not need entity-aware lookup (e.g., "look up document direction and redirect to the correct AP/AR page"). Simple fixed-target redirects are sufficient:
 
-- `/app/cari-belgeler` → `/app/alis-faturalari`
-- `/app/alici-kart-listesi` → `/app/musteri-kartlari`
-- `/app/satici-kart-listesi` → `/app/tedarikci-kartlari`
-- `/app/alici-kart-olustur` → `/app/musteri-kartlari/olustur`
-- `/app/satici-kart-olustur` → `/app/tedarikci-kartlari/olustur`
-- `/app/cari-settlements` → `/app/tedarikci-odemeler`
-- `/app/cari-raporlari` → `/app/tedarikci-raporlari`
-- `/app/cari-audit` → `/app/ayarlar/cari-denetim`
+  - `/app/cari-belgeler` → `/app/alis-faturalari`
+  - `/app/alici-kart-listesi` → `/app/musteri-kartlari`
+  - `/app/satici-kart-listesi` → `/app/tedarikci-kartlari`
+  - `/app/alici-kart-olustur` → `/app/musteri-kartlari/olustur`
+  - `/app/satici-kart-olustur` → `/app/tedarikci-kartlari/olustur`
+  - `/app/cari-settlements` → `/app/tedarikci-odemeler`
+  - `/app/cari-raporlari` → `/app/tedarikci-raporlari`
+  - `/app/cari-audit` → `/app/ayarlar/cari-denetim`
 - Remove old sidebar entries (already done in SL19, this step cleans up route registrations)
 - Remove or mark as deprecated any unused page wrappers
 
@@ -1325,19 +1222,16 @@ The system is not live yet and the database will be clean-reset before go-live, 
 The following files reference old `/app/cari-belgeler` and `/app/cari-settlements` routes for GL journal drillback (source link → clickable path) and reverse-block messaging. Without this fix, an AR document drillback would redirect to the AP-filtered page after the route redirects above are applied.
 
 - **`backend/src/services/gl.reverse-block-destination.service.js`**:
-
   - Move `CARI_DOCUMENT` and `CARI_SETTLEMENT_BATCH` from static `DESTINATION_REGISTRY` to dynamic resolution (same pattern FA types already use)
   - Add `CARI_DOCUMENT` and `CARI_SETTLEMENT_BATCH` to `DYNAMIC_DESTINATION_TYPES`
   - Add async resolver for `CARI_DOCUMENT`: look up the document's `direction` from DB → return `/app/alis-faturalari?documentId=X` (AP) or `/app/satis-faturalari?documentId=X` (AR)
   - Add async resolver for `CARI_SETTLEMENT_BATCH`: look up the settlement batch's direction from DB → return `/app/tedarikci-odemeler?settlementBatchId=X&...` (AP) or `/app/musteri-tahsilatlar?settlementBatchId=X&...` (AR)
 
 - **`frontend/src/utils/journalSourceLinkDestinations.js`**:
-
   - Add `CARI_DOCUMENT` and `CARI_SETTLEMENT_BATCH` to `BACKEND_OWNED_DESTINATION_TYPES` so when backend-enriched destination is present, the frontend uses the direction-aware URL as-is (no type-specific URL construction)
   - `LOCAL_DESTINATION_REGISTRY` fallback stays as-is — old routes still redirect via the route redirects above
 
 - **`frontend/src/pages/Dashboard.jsx`** (line 63):
-
   - Currently hardcodes `` `/app/cari-belgeler?documentId=${sourceRefId}` ``
   - Must use `resolveSourceLinkDestination()` helper (which prefers backend-enriched destination) instead of hardcoded route
 
@@ -1360,12 +1254,10 @@ The following `backend/scripts/` test scripts assert old CARI route paths and wi
 - **`test-ou-self-balancing-release-gate.js`** — update `/app/cari-settlements` token check to the new route
 
 ### Explicit non-goals
-
 - Do not remove the underlying CariDocumentsPage component — it's still used by the new routes
 - Do not change any HTTP API endpoint — the drillback changes are internal destination resolution only
 
 ### Definition of done
-
 - All old CARI URLs redirect to their new equivalents
 - No 404s for bookmarked old URLs
 - Old sidebar entries are gone
@@ -1383,13 +1275,10 @@ The following `backend/scripts/` test scripts assert old CARI route paths and wi
 ## `STEP-SL24` — Smoke suite: subledger lines + immediate settlement + AP/AR navigation + mixed flows + reversals
 
 ### Patch target
-
 Verify the complete subledger-aware line and immediate settlement flows end to end.
 
 ### In scope
-
 **Subledger line smokes:**
-
 - **Purchase auto-create smoke**: create AP doc with one FIXED_ASSET line (`qty = 10`) → post → verify 10 draft assets/cards created, each has CAPITALIZATION transaction, per-unit cost split is correct, and unit provenance is `1..10`
 - **Purchase link-existing smoke**: create one draft asset → create AP doc with FIXED_ASSET link-existing line (`qty = 1`) → post → verify referenced asset has CAPITALIZATION transaction
 - **Sale smoke**: create and activate asset → create AR doc with FIXED_ASSET line → post → verify asset is DISPOSED with correct gain/loss
@@ -1400,7 +1289,6 @@ Verify the complete subledger-aware line and immediate settlement flows end to e
 - **Preview/expand smoke**: on CARI form, select FIXED_ASSET with `qty > 1` → verify preview text shows "Posting this line will create N assets at X each", expand action is visible, and expanded `quantity = 1` lines allow different owner/location assignments before posting
 
 **Immediate settlement smokes:**
-
 - **Cash purchase smoke (AP)**: create AP doc with `settlement_mode = IMMEDIATE_CASH` → post → verify cash payout created + settlement applied + AP open item balance = 0
 - **Cash sale smoke (AR)**: create AR doc with `settlement_mode = IMMEDIATE_CASH` → post → verify cash receipt created + settlement applied + AR open item balance = 0
 - **Cash + FA combined smoke**: create AP doc with `settlement_mode = IMMEDIATE_CASH` + FIXED_ASSET line → post → verify asset capitalized AND cash settled in one operation
@@ -1411,11 +1299,9 @@ Verify the complete subledger-aware line and immediate settlement flows end to e
 **Frontend build:** `npm run build` passes
 
 ### Explicit non-goals
-
 - Do not create automated test scripts unless they follow existing repo patterns
 
 ### Definition of done
-
 - All smoke scenarios pass
 - Build clean
 - No regression in existing CARI, FA, or cash flows
@@ -1425,11 +1311,9 @@ Verify the complete subledger-aware line and immediate settlement flows end to e
 ## `STEP-SL25` — Release gates and backward-compatibility verification
 
 ### Patch target
-
 Final validation that all new flows work alongside existing flows without regression.
 
 ### In scope
-
 - Verify existing manual acquisition flow (FA20–FA23) works unchanged
 - Verify existing after-the-fact capitalize flow (FA24–FA27) works unchanged
 - Verify existing sale staging flow (FA39) works unchanged
@@ -1442,12 +1326,10 @@ Final validation that all new flows work alongside existing flows without regres
 - Verify regenerated OpenAPI spec includes new fields (subledger_type, target_fixed_asset_id, settlement_mode, settlement_cash_register_id)
 
 ### Explicit non-goals
-
 - Do not deprecate or remove any existing endpoint
 - Do not block deployment on fallback paths being removed
 
 ### Definition of done
-
 - Zero regression in existing flows (CARI, FA, cash, bank, inventory)
 - New subledger-aware flow documented as the recommended path
 - New immediate settlement flow documented as the recommended path for cash purchases
@@ -1460,11 +1342,9 @@ Final validation that all new flows work alongside existing flows without regres
 ## `STEP-SL26` — Migration: add IMPROVEMENT transaction type and improvement metadata columns
 
 ### Patch target
-
 `backend/src/migrations/` — new migration file
 
 ### In scope
-
 1. ALTER the `fixed_asset_transactions.transaction_type` ENUM to add `'IMPROVEMENT'` after `'SALE'`
    - Current values: ACQUISITION, CAPITALIZATION, DEPRECIATION, SUSPEND, REACTIVATE, PHYSICAL_MOVE, OWNERSHIP_TRANSFER, WRITEOFF, SALE, REVERSAL
    - New value: IMPROVEMENT (between SALE and REVERSAL or at end — order doesn't matter for ENUMs)
@@ -1478,12 +1358,10 @@ Final validation that all new flows work alongside existing flows without regres
 3. Use the repo's idempotent migration pattern (safeExecute, addColumnIfMissing)
 
 ### Explicit non-goals
-
 - Do not change any service logic — migration only
 - Do not add columns to `fixed_assets` table (improvement updates existing cost/life columns in place)
 
 ### Definition of done
-
 - Migration runs without error on fresh and existing databases
 - `IMPROVEMENT` is a valid transaction type
 - Pre-state columns exist for reversal restoration
@@ -1494,7 +1372,6 @@ Final validation that all new flows work alongside existing flows without regres
 ## `STEP-SL27` — 🔥 HOT — Backend: IMPROVE_EXISTING mode — validators, posting, chronology gates, and prospective depreciation
 
 ### Patch target
-
 - `backend/src/routes/cari.document.validators.js`
 - `backend/src/services/cari.document.service.js`
 - `backend/src/services/fixed-assets.service.js`
@@ -1503,7 +1380,6 @@ Final validation that all new flows work alongside existing flows without regres
 - `backend/scripts/generate-openapi.js`
 
 ### In scope
-
 1. Implement `fixedAssetMode = 'IMPROVE_EXISTING'` posting for AP `FIXED_ASSET` lines:
    - capitalize the line amount onto the target existing asset
    - create a dedicated `IMPROVEMENT` fixed-asset transaction row
@@ -1553,7 +1429,6 @@ Final validation that all new flows work alongside existing flows without regres
    - life-revision inputs and error cases
 
 ### Explicit non-goals
-
 - Do not allow `IMPROVE_EXISTING` on `DRAFT`, `DISPOSED`, or `SUSPENDED` assets
 - Do not allow `IMPROVE_EXISTING` on AR documents
 - Do not reuse `CATCH_UP` as the accounting type for improvement
@@ -1562,7 +1437,6 @@ Final validation that all new flows work alongside existing flows without regres
 - Do not introduce a separate one-off depreciation recalculation engine just for improvements
 
 ### Definition of done
-
 - AP `FIXED_ASSET` `IMPROVE_EXISTING` line with a valid active/fully-depreciated target asset passes validation
 - Improvement is blocked when depreciation chronology is dirty or when draft-run snapshots already exist
 - Posting creates an `IMPROVEMENT` transaction with correct amounts and pre-state snapshot
@@ -1581,7 +1455,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 ## `STEP-SL28` — Backend: reversal of improvement capitalization on active assets
 
 ### Patch target
-
 - `backend/src/services/cari.document.service.js`
 - `backend/src/services/fixed-assets.service.js`
 - `backend/src/services/fixed-assets.depreciation.service.js`
@@ -1589,7 +1462,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `backend/scripts/generate-openapi.js`
 
 ### In scope
-
 1. Implement deterministic reversal of an `IMPROVEMENT` transaction when the source CARI document is reversed or when the fixed-assets flow invokes improvement reversal directly under the locked policy.
 2. On reversal:
    - restore the target asset’s pre-improvement cost state
@@ -1612,14 +1484,12 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 7. Update OpenAPI / contract docs for reversal outcomes and blocker codes.
 
 ### Explicit non-goals
-
 - Do not allow partial improvement reversal
 - Do not auto-unwind and repost later depreciation runs in this step
 - Do not silently repair later lifecycle transactions during improvement reversal
 - Do not loosen chronology rules just because the original improvement came from a CARI document
 
 ### Definition of done
-
 - Reversing a CARI document with an `IMPROVE_EXISTING` line restores the asset cost and life to pre-improvement values when no later blockers exist
 - Reversal is blocked with deterministic reason codes when later depreciation or lifecycle activity makes it unsafe
 - `FULLY_DEPRECIATED → ACTIVE` status change caused by the improvement is correctly unwound when applicable
@@ -1632,13 +1502,11 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 ## `STEP-SL29` — Frontend: IMPROVE_EXISTING mode UI on CARI document form
 
 ### Patch target
-
 - `frontend/src/pages/cari/` — document form components
 - `frontend/src/api/fixedAssets.js`
 - `frontend/src/i18n/messages.js`
 
 ### In scope
-
 1. Add `IMPROVE_EXISTING` as an AP `FIXED_ASSET` line mode in the CARI document UI.
 2. Require target asset selection for `IMPROVE_EXISTING` and keep quantity locked to `1`.
 3. Show enough target-asset context to confirm the correct selection:
@@ -1670,7 +1538,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
    - disposal/sale flows
 
 ### Explicit non-goals
-
 - Do not show `IMPROVE_EXISTING` on AR documents
 - Do not replicate the full asset detail page in the picker
 - Do not add a depreciation preview simulator in this step
@@ -1678,7 +1545,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - Do not combine improvement and retro ownership correction in one form
 
 ### Definition of done
-
 - AP `FIXED_ASSET` mode selector shows `IMPROVE_EXISTING`
 - `IMPROVE_EXISTING` shows an eligible-asset picker and life-revision controls
 - UI enforces mutual exclusion for life-revision inputs
@@ -1691,22 +1557,23 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 ## `STEP-SL30` — Smoke suite: improvement flows, chronology gates, life revision, and reversal guards
 
 ### Patch target
-
 - `backend/src/tests/` or manual smoke scripts
 - `backend/openapi.yaml`
 - `backend/scripts/generate-openapi.js`
 
 ### In scope
-
 1. Add smoke coverage for successful improvement cases:
    - improve an eligible active asset with no life change
    - improve an eligible active asset with life extension
    - improve an eligible active asset with revised useful life
    - multiple sequential improvements on the same asset when chronology is clean
+   - improve an eligible asset that has prior suspend/reactivate history but is currently chronology-clean and improvement-eligible
 2. Add smoke coverage for chronology blockers:
    - improvement blocked when historical depreciation catch-up would still be required
    - improvement blocked when depreciation sequence gap / missed-period recovery exists
+   - improvement blocked when the gap/catch-up condition arises across suspend/reactivate chronology, including re-suspend / re-activate style history if present
    - improvement blocked when the asset is already included in a `DRAFT` depreciation run or equivalent frozen snapshot
+   - improvement blocked when the target asset is currently `SUSPENDED`
 3. Add smoke coverage for fully-depreciated behavior:
    - fully depreciated asset blocked when no valid life revision/extension is provided
    - fully depreciated asset allowed when valid remaining life is restored by the provided revision/extension
@@ -1714,25 +1581,27 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
    - posted historical depreciation remains unchanged after improvement
    - future eligible depreciation reflects the improvement under the locked chronology rules
    - no intra-period retrospective rewrite is performed
+   - prior suspend/reactivate history does not cause the improvement to leak backward into historical posted or catch-up periods
 5. Add smoke coverage for reversal guards:
    - reversal allowed when no later dependent activity exists
    - reversal blocked by later depreciation
    - reversal blocked by later improvement
-   - reversal blocked by later ownership transfer / disposal / other later lifecycle activity that depends on the improved state
+   - reversal blocked by later suspend/reactivate or re-suspend lifecycle activity that depends on the improved asset state
+   - reversal blocked by later ownership transfer
+   - reversal blocked by later disposal / write-off / sale
+   - reversal blocked when later disposal-side cutoff depreciation or disposal chronology already depends on the improved state
 6. Verify audit and contract shape:
    - `IMPROVEMENT` transaction row exists
    - pre/post improvement metadata is persisted for reversal
    - OpenAPI remains in sync with request/response and reason-code behavior
 
 ### Explicit non-goals
-
 - No performance/load testing
 - No E2E browser tests
 - No attempt to prove every future lifecycle combination in this phase
 
 ### Definition of done
-
-- Improvement happy paths and chronology blocker paths are covered by smoke tests
+- Improvement happy paths and chronology blocker paths are covered by smoke tests, including suspend/reactivate and cutoff-edge coverage called out above
 - Prospective-only depreciation behavior is verified
 - Reversal guards are verified across depreciation and later lifecycle blockers
 - OpenAPI/release-gate checks pass with the new improvement contract
@@ -1743,7 +1612,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 ## Codex Execution Matrix
 
 ### `STEP-SL01`
-
 - `AI size`: Small
 - `Allowed files`: `backend/src/migrations/m144_cari_document_lines_subledger_type.js`, `backend/src/migrations/index.js`
 - `Dependencies`: Track 38 STEP-FA09 to STEP-FA12 (FA tables must exist for FK)
@@ -1751,7 +1619,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL02`
-
 - `AI size`: Small
 - `Allowed files`: `backend/src/routes/cari.document.validators.js`
 - `Dependencies`: SL01
@@ -1759,7 +1626,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL03`
-
 - `AI size`: Medium
 - `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/routes/cari.document.validators.js`
 - `Dependencies`: SL01, SL02
@@ -1767,7 +1633,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Medium
 
 ### `STEP-SL04`
-
 - `AI size`: Medium
 - `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
 - `Dependencies`: SL03
@@ -1775,7 +1640,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Medium
 
 ### `STEP-SL05`
-
 - `AI size`: Large
 - `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
 - `Dependencies`: SL04, Track 38 FA24-FA27
@@ -1783,7 +1647,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: High — changes posting logic
 
 ### `STEP-SL06`
-
 - `AI size`: Large
 - `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
 - `Dependencies`: SL05, Track 38 FA39, Track 38 FA52
@@ -1791,7 +1654,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: High — changes posting logic + disposal accounting
 
 ### `STEP-SL07`
-
 - `AI size`: Medium
 - `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
 - `Dependencies`: SL05, SL06
@@ -1799,7 +1661,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: High — reversal must exactly mirror posting
 
 ### `STEP-SL08`
-
 - `AI size`: Small
 - `Allowed files`: `backend/src/services/fixed-assets.service.js`
 - `Dependencies`: SL05
@@ -1807,7 +1668,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Medium — must not break manual activation
 
 ### `STEP-SL10`
-
 - `AI size`: Small
 - `Allowed files`: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/cariDocumentsUtils.js`, `frontend/src/i18n/messages.js`
 - `Dependencies`: SL02
@@ -1815,7 +1675,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL11`
-
 - `AI size`: Medium
 - `Allowed files`: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/cariDocumentsUtils.js`, `frontend/src/api/fixedAssets.js`, `frontend/src/i18n/messages.js`
 - `Dependencies`: SL10
@@ -1823,7 +1682,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL12`
-
 - `AI size`: Small
 - `Allowed files`: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/cariDocumentsUtils.js`
 - `Dependencies`: SL11
@@ -1831,7 +1689,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL13`
-
 - `AI size`: Small
 - `Allowed files`: `frontend/src/pages/fixedAssets/FixedAssetAcquisitionsPage.jsx`, `frontend/src/i18n/messages.js`
 - `Dependencies`: SL05
@@ -1839,7 +1696,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL14`
-
 - `AI size`: Small
 - `Allowed files`: `frontend/src/pages/fixedAssets/FixedAssetDetailPage.jsx`, `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/i18n/messages.js`
 - `Dependencies`: SL06
@@ -1847,7 +1703,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL15`
-
 - `AI size`: Small
 - `Allowed files`: `backend/src/migrations/m146_cari_documents_settlement_mode.js`, `backend/src/migrations/index.js`
 - `Dependencies`: none beyond repo baseline (`cash_registers` table must exist)
@@ -1855,7 +1710,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL16`
-
 - `AI size`: Large
 - `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/cash.transaction.service.js`, `backend/src/services/cari.settlement.service.js`, `backend/src/routes/cari.document.validators.js`
 - `Dependencies`: SL15, SL05
@@ -1863,7 +1717,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: High — changes posting logic, touches cash + settlement
 
 ### `STEP-SL17`
-
 - `AI size`: Medium
 - `Allowed files`: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/cariDocumentsUtils.js`, `frontend/src/i18n/messages.js`
 - `Dependencies`: SL16
@@ -1871,7 +1724,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL18`
-
 - `AI size`: Medium
 - `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/cash.transaction.service.js`, `backend/src/services/cari.settlement.service.js`
 - `Dependencies`: SL16
@@ -1879,7 +1731,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: High — reversal must exactly mirror posting
 
 ### `STEP-SL19`
-
 - `AI size`: Medium
 - `Allowed files`: `frontend/src/layouts/sidebarConfig.js`, `frontend/src/i18n/messages.js`
 - `Dependencies`: none (can be done in parallel with Phase 1–3)
@@ -1887,7 +1738,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low — sidebar config only
 
 ### `STEP-SL20`
-
 - `AI size`: Medium
 - `Allowed files`: `frontend/src/App.jsx`, `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/CariCounterpartyPage.jsx`, `frontend/src/pages/cari/CariSettlementsPage.jsx`, `frontend/src/pages/cari/CariReportsPage.jsx`
 - `Dependencies`: SL19
@@ -1896,7 +1746,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Note`: Card pages use existing `pageKey` prop (not a new `cardType` prop) — no `CariCardsPage` exists. CariReportsPage needs `direction` prop for AP/AR pre-filtering.
 
 ### `STEP-SL21`
-
 - `AI size`: Medium
 - `Allowed files`: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/CariCounterpartyPage.jsx`, `frontend/src/pages/cari/CariSettlementsPage.jsx`
 - `Dependencies`: SL20
@@ -1904,7 +1753,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL22`
-
 - `AI size`: Small
 - `Allowed files`: `frontend/src/i18n/messages.js`
 - `Dependencies`: SL21
@@ -1912,7 +1760,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low — i18n only
 
 ### `STEP-SL23`
-
 - `AI size`: Large
 - `Allowed files`: `frontend/src/App.jsx`, `frontend/src/layouts/sidebarConfig.js`, `backend/src/services/gl.reverse-block-destination.service.js`, `frontend/src/utils/journalSourceLinkDestinations.js`, `frontend/src/pages/Dashboard.jsx`, `frontend/src/pages/JournalWorkbenchPage.jsx`, `backend/scripts/test-ux-rswire01-cross-file-wiring.js`, `backend/scripts/test-ux-rswire03-release-gate-smoke-coverage.js`, `backend/scripts/test-cari-pr11-frontend-routing-and-api-clients.js`, `backend/scripts/test-cari-pr12-frontend-documents-smoke.js`, `backend/scripts/test-cari-pr13-frontend-settlement-smoke.js`, `backend/scripts/test-cari-pr14-frontend-audit-smoke.js`, `backend/scripts/test-fa43-journal-source-link-destination-smoke.js`, `backend/scripts/test-cari-pr09-frontend-reports.js`, `backend/scripts/test-ou-self-balancing-release-gate.js`
 - `Dependencies`: SL20, SL21
@@ -1920,7 +1767,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Medium — removing old routes + changing drillback resolution + updating test baselines; must ensure redirects work and drillbacks land on correct AP/AR page
 
 ### `STEP-SL24`
-
 - `AI size`: Large
 - `Allowed files`: smoke test scripts, plan documents
 - `Dependencies`: SL01–SL23
@@ -1928,7 +1774,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low — test-only
 
 ### `STEP-SL25`
-
 - `AI size`: Small
 - `Allowed files`: plan documents, `backend/scripts/generate-openapi.js`, `backend/openapi.yaml`
 - `Dependencies`: SL24
@@ -1936,15 +1781,13 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low
 
 ### `STEP-SL26`
-
 - `AI size`: Small
-- `Allowed files`: `backend/src/migrations/m147_fixed_asset_improvement_transaction_type.js`, `backend/src/migrations/index.js`
+- `Allowed files`: `backend/src/migrations/m151_fixed_asset_improvement_transaction_type.js`, `backend/src/migrations/index.js`
 - `Dependencies`: Track 38 STEP-FA09 (FA transaction table exists)
 - `Blocked by`: none
 - `Rollback risk`: Low — additive schema change
 
 ### `STEP-SL27`
-
 - `AI size`: Large
 - `Allowed files`: `backend/src/routes/cari.document.validators.js`, `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
 - `Dependencies`: SL26, SL02, SL03, SL04, SL05
@@ -1952,7 +1795,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: High — extends posting logic for active asset modification
 
 ### `STEP-SL28`
-
 - `AI size`: Medium
 - `Allowed files`: `backend/src/services/cari.document.service.js`, `backend/src/services/fixed-assets.service.js`
 - `Dependencies`: SL27, SL07
@@ -1960,7 +1802,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: High — reversal must correctly restore pre-improvement state
 
 ### `STEP-SL29`
-
 - `AI size`: Medium
 - `Allowed files`: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/cariDocumentsUtils.js`, `frontend/src/api/fixedAssets.js`, `frontend/src/i18n/messages.js`
 - `Dependencies`: SL27, SL11
@@ -1968,7 +1809,6 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 - `Rollback risk`: Low — frontend-only
 
 ### `STEP-SL30`
-
 - `AI size`: Medium
 - `Allowed files`: smoke test scripts, plan documents
 - `Dependencies`: SL26–SL29
@@ -1980,9 +1820,7 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
 ## Dependencies
 
 ### On Track 38 (Fixed Assets)
-
 This track assumes Track 38 is complete through at least:
-
 - **FA09–FA12**: FA tables exist (FK target for `target_fixed_asset_id`)
 - **FA17–FA23**: Draft asset creation and manual activation work
 - **FA24–FA27**: Existing after-the-fact capitalization logic (reused/adapted in SL05)
@@ -1993,20 +1831,16 @@ This track assumes Track 38 is complete through at least:
 Track 38's existing capitalization flow (FA24–FA27, FA51) and sale staging flow (FA39) are **not removed** — they become fallback paths for legacy documents that were created without subledger_type awareness.
 
 ### On existing Cash module
-
 Phase 3 (SL15–SL18) depends on the cash module being operational:
-
 - **Cash registers** table and CRUD must exist
 - **Cash transactions** with PAYOUT/RECEIPT types must be creatable programmatically
 - **`applyCariSettlement()`** in `cari.settlement.service.js` must be callable from within a transaction
 - **Cash sessions** (if enforced) must be queryable for active session lookup
 
 ### On existing Bank module
-
 `IMMEDIATE_BANK` is **deferred from this track**. The current repo does not yet expose a clear bank-side equivalent to `createCashTransactionTx(...)` that can create and post an immediate bank payment inside the same posting transaction.
 
 If bank-immediate settlement is later added, it should be designed as a separate follow-up step with its own migration/service/reversal contract:
-
 - **Bank accounts** table and CRUD must exist
 - Bank payment creation must be invocable programmatically from the posting transaction
 - A bank-side `*Tx` primitive must exist before extending `settlement_mode`

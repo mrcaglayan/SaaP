@@ -137,6 +137,7 @@ import migration147FixedAssetRunSkippedStatus from "./m147_fixed_asset_run_skipp
 import migration148FixedAssetRunGuardSkipped from "./m148_fixed_asset_run_guard_skipped.js";
 import migration149FixedAssetCancelledStatus from "./m149_fixed_asset_cancelled_status.js";
 import migration150FixedAssetCatchUpDepreciationKind from "./m150_fixed_asset_catch_up_depreciation_kind.js";
+import migration151FixedAssetImprovementTransactionType from "./m151_fixed_asset_improvement_transaction_type.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -278,6 +279,7 @@ const migrations = [
   migration148FixedAssetRunGuardSkipped,
   migration149FixedAssetCancelledStatus,
   migration150FixedAssetCatchUpDepreciationKind,
+  migration151FixedAssetImprovementTransactionType,
 ];
 
 export default migrations;
