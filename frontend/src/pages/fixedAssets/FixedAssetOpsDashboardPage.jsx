@@ -1,9 +1,26 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getOpsFixedAssetDepreciationAttention } from "../../api/opsDashboard.js";
+import {
+  getOpsFixedAssetActivationAttention,
+  getOpsFixedAssetDepreciationAttention,
+  getOpsFixedAssetLateCatchUpAttention,
+} from "../../api/opsDashboard.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useI18n } from "../../i18n/useI18n.js";
+
+const EMPTY_ACTIVATION_ATTENTION = Object.freeze({
+  filters: {
+    legalEntityId: null,
+  },
+  affected_assets: {
+    pending_activation_assets: 0,
+  },
+  acquisition_dates: {
+    oldest_acquisition_date: null,
+    latest_acquisition_date: null,
+  },
+});
 
 const EMPTY_ATTENTION = Object.freeze({
   filters: {
@@ -19,16 +36,27 @@ const EMPTY_ATTENTION = Object.freeze({
   },
 });
 
-const FUTURE_WARNING_SLOTS = Object.freeze([
-  {
-    key: "lateCatchUp",
-    titleEn: "Late Catch-Up Pending",
-    titleTr: "Gecikmis Telafi Bekleyenler",
-    descriptionEn:
-      "Late-entered assets that still need same-period or current-period catch-up depreciation.",
-    descriptionTr:
-      "Gec girilen ve ayni donem ya da cari donem telafi amortismani halen bekleyen demirbaslar.",
+const EMPTY_LATE_CATCH_UP_ATTENTION = Object.freeze({
+  filters: {
+    legalEntityId: null,
   },
+  affected_assets: {
+    pending_late_catch_up_assets: 0,
+  },
+  periods: {
+    oldest_pending_period_key: null,
+    latest_pending_period_key: null,
+  },
+  acquisition_dates: {
+    oldest_acquisition_date: null,
+    latest_acquisition_date: null,
+  },
+  amounts: {
+    estimated_catch_up_base: 0,
+  },
+});
+
+const FUTURE_WARNING_SLOTS = Object.freeze([
   {
     key: "lifecycleConflicts",
     titleEn: "Lifecycle Conflict Checks",
@@ -71,6 +99,17 @@ function formatCount(value) {
   return toInt(value, 0).toLocaleString();
 }
 
+function formatAmount(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return "0.00";
+  }
+  return parsed.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function formatDateTime(value) {
   if (!value) return "-";
   const parsed = new Date(value);
@@ -78,6 +117,11 @@ function formatDateTime(value) {
     return String(value);
   }
   return parsed.toLocaleString();
+}
+
+function formatDate(value) {
+  const normalized = String(value || "").slice(0, 10);
+  return normalized || "-";
 }
 
 function buildScopeParams(workingContext) {
@@ -162,22 +206,65 @@ export default function FixedAssetOpsDashboardPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+  const [activationAttention, setActivationAttention] = useState(EMPTY_ACTIVATION_ATTENTION);
+  const [lateCatchUpAttention, setLateCatchUpAttention] = useState(EMPTY_LATE_CATCH_UP_ATTENTION);
   const [attention, setAttention] = useState(EMPTY_ATTENTION);
 
   const scopeParams = buildScopeParams(workingContext);
+  const pendingActivationAssetCount = toInt(
+    activationAttention?.affected_assets?.pending_activation_assets,
+    0
+  );
+  const lateCatchUpAssetCount = toInt(
+    lateCatchUpAttention?.affected_assets?.pending_late_catch_up_assets,
+    0
+  );
   const assetCount = toInt(attention?.affected_assets?.pending_skipped_assets, 0);
   const runCount = toInt(attention?.runs?.pending_skipped_runs, 0);
+  const hasPendingActivationWarning = pendingActivationAssetCount > 0;
+  const hasLateCatchUpWarning = lateCatchUpAssetCount > 0;
   const hasSkippedMonthWarning = assetCount > 0;
-  const activeWarningTypeCount = hasSkippedMonthWarning ? 1 : 0;
+  const activeWarningTypeCount =
+    Number(hasPendingActivationWarning)
+    + Number(hasLateCatchUpWarning)
+    + Number(hasSkippedMonthWarning);
   const legalEntityLabel = buildLegalEntityLabel(
     legalEntities,
     scopeParams.legalEntityId,
     l
   );
   const periodHint = buildPeriodHint(attention, l);
+  const activationOldestAcquisitionDate = String(
+    activationAttention?.acquisition_dates?.oldest_acquisition_date || ""
+  ).trim();
+  const activationLatestAcquisitionDate = String(
+    activationAttention?.acquisition_dates?.latest_acquisition_date || ""
+  ).trim();
+  const lateCatchUpOldestPendingPeriod = String(
+    lateCatchUpAttention?.periods?.oldest_pending_period_key || ""
+  ).trim();
+  const lateCatchUpLatestPendingPeriod = String(
+    lateCatchUpAttention?.periods?.latest_pending_period_key || ""
+  ).trim();
+  const lateCatchUpOldestAcquisitionDate = String(
+    lateCatchUpAttention?.acquisition_dates?.oldest_acquisition_date || ""
+  ).trim();
+  const lateCatchUpEstimatedBase = Number(
+    lateCatchUpAttention?.amounts?.estimated_catch_up_base || 0
+  );
+  const lateCatchUpPeriodHint =
+    lateCatchUpOldestPendingPeriod && lateCatchUpLatestPendingPeriod
+      ? lateCatchUpOldestPendingPeriod === lateCatchUpLatestPendingPeriod
+        ? lateCatchUpLatestPendingPeriod
+        : `${lateCatchUpOldestPendingPeriod} - ${lateCatchUpLatestPendingPeriod}`
+      : lateCatchUpLatestPendingPeriod
+        || lateCatchUpOldestPendingPeriod
+        || l("No pending periods", "Bekleyen donem yok");
 
   useEffect(() => {
     if (!canReadOps || !canReadFixedAssets) {
+      setActivationAttention(EMPTY_ACTIVATION_ATTENTION);
+      setLateCatchUpAttention(EMPTY_LATE_CATCH_UP_ATTENTION);
       setAttention(EMPTY_ATTENTION);
       setLoading(false);
       setError("");
@@ -189,12 +276,55 @@ export default function FixedAssetOpsDashboardPage() {
       setLoading(true);
       setError("");
       try {
-        const payload = await getOpsFixedAssetDepreciationAttention(scopeParams);
+        const settled = await Promise.allSettled([
+          getOpsFixedAssetActivationAttention(scopeParams),
+          getOpsFixedAssetLateCatchUpAttention(scopeParams),
+          getOpsFixedAssetDepreciationAttention(scopeParams),
+        ]);
         if (!active) return;
-        setAttention(payload || EMPTY_ATTENTION);
+
+        const [activationResult, lateCatchUpResult, depreciationResult] = settled;
+        if (activationResult.status === "fulfilled") {
+          setActivationAttention(activationResult.value || EMPTY_ACTIVATION_ATTENTION);
+        } else {
+          setActivationAttention(EMPTY_ACTIVATION_ATTENTION);
+        }
+        if (lateCatchUpResult.status === "fulfilled") {
+          setLateCatchUpAttention(
+            lateCatchUpResult.value || EMPTY_LATE_CATCH_UP_ATTENTION
+          );
+        } else {
+          setLateCatchUpAttention(EMPTY_LATE_CATCH_UP_ATTENTION);
+        }
+        if (depreciationResult.status === "fulfilled") {
+          setAttention(depreciationResult.value || EMPTY_ATTENTION);
+        } else {
+          setAttention(EMPTY_ATTENTION);
+        }
+
+        const failedSections = [];
+        if (activationResult.status !== "fulfilled") {
+          failedSections.push("activation");
+        }
+        if (lateCatchUpResult.status !== "fulfilled") {
+          failedSections.push("lateCatchUp");
+        }
+        if (depreciationResult.status !== "fulfilled") {
+          failedSections.push("depreciation");
+        }
+        if (failedSections.length > 0) {
+          setError(
+            l(
+              `Some fixed asset warning sections could not be loaded: ${failedSections.join(", ")}`,
+              `Bazi demirbas uyari bolumleri yuklenemedi: ${failedSections.join(", ")}`
+            )
+          );
+        }
         setLastRefreshedAt(new Date().toISOString());
       } catch (loadError) {
         if (!active) return;
+        setActivationAttention(EMPTY_ACTIVATION_ATTENTION);
+        setLateCatchUpAttention(EMPTY_LATE_CATCH_UP_ATTENTION);
         setAttention(EMPTY_ATTENTION);
         setError(
           normalizeApiError(
@@ -296,11 +426,11 @@ export default function FixedAssetOpsDashboardPage() {
             )}
           />
           <SummaryCard
-            label={l("Affected Assets", "Etkilenen Demirbas")}
-            value={formatCount(assetCount)}
+            label={l("Late Catch-Up Assets", "Gec Catch-Up Demirbaslari")}
+            value={formatCount(lateCatchUpAssetCount)}
             hint={l(
-              "Active assets currently flagged by the fixed asset warning feed.",
-              "Demirbas uyari beslemesinde su an isaretli aktif demirbaslar."
+              "Active assets entered after already-posted depreciation periods.",
+              "Amortismani zaten postalanmis donemlerden sonra girilen aktif demirbaslar."
             )}
           />
           <SummaryCard
@@ -314,6 +444,10 @@ export default function FixedAssetOpsDashboardPage() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+          <span>
+            {l("Late catch-up assets", "Gec catch-up demirbaslari")}:{" "}
+            {formatCount(lateCatchUpAssetCount)}
+          </span>
           <span>
             {l("Skipped runs in warning scope", "Uyari kapsamindaki atlanan runlar")}:{" "}
             {formatCount(runCount)}
@@ -352,6 +486,150 @@ export default function FixedAssetOpsDashboardPage() {
 
         <article
           className={`mt-4 rounded-xl border p-4 ${
+            hasPendingActivationWarning
+              ? "border-amber-200 bg-amber-50"
+              : "border-emerald-200 bg-emerald-50"
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-slate-900">
+                  {l("Assets Waiting Activation", "Aktiflestirme Bekleyen Demirbaslar")}
+                </h3>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    hasPendingActivationWarning
+                      ? "bg-amber-100 text-amber-900"
+                      : "bg-emerald-100 text-emerald-800"
+                  }`}
+                >
+                  {hasPendingActivationWarning
+                    ? l("Attention", "Dikkat")
+                    : l("Clear", "Temiz")}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-slate-700">
+                {l(
+                  "Tracks draft fixed assets that have been created from acquisition flow but still have not been activated into service.",
+                  "Alim akisindan olusturulmus ancak henuz hizmete alinip aktiflestirilmemis draft demirbaslari izler."
+                )}
+              </p>
+            </div>
+            <Link
+              to="/app/demirbas-alim-islemleri"
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {l("Open Acquisition Queue", "Alim Kuyrugunu Ac")}
+            </Link>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <SummaryCard
+              label={l("Pending Activation", "Bekleyen Aktiflestirme")}
+              value={formatCount(pendingActivationAssetCount)}
+              hint={l(
+                "Draft assets currently waiting activation.",
+                "Su anda aktiflestirme bekleyen draft demirbaslar."
+              )}
+            />
+            <SummaryCard
+              label={l("Oldest Acquisition", "En Eski Alim")}
+              value={formatDate(activationOldestAcquisitionDate)}
+              hint={l(
+                "Oldest acquisition date still sitting in draft status.",
+                "Halen draft durumda bekleyen en eski alim tarihi."
+              )}
+            />
+            <SummaryCard
+              label={l("Latest Acquisition", "En Yeni Alim")}
+              value={formatDate(activationLatestAcquisitionDate)}
+              hint={l(
+                "Most recent acquisition date currently waiting activation.",
+                "Su an aktiflestirme bekleyen en yeni alim tarihi."
+              )}
+            />
+          </div>
+        </article>
+
+        <article
+          className={`mt-4 rounded-xl border p-4 ${
+            hasLateCatchUpWarning
+              ? "border-amber-200 bg-amber-50"
+              : "border-emerald-200 bg-emerald-50"
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-slate-900">
+                  {l("Late Catch-Up Pending", "Gec Catch-Up Bekleyenler")}
+                </h3>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    hasLateCatchUpWarning
+                      ? "bg-amber-100 text-amber-900"
+                      : "bg-emerald-100 text-emerald-800"
+                  }`}
+                >
+                  {hasLateCatchUpWarning
+                    ? l("Attention", "Dikkat")
+                    : l("Clear", "Temiz")}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-slate-700">
+                {l(
+                  "Tracks late-entered active assets whose historical periods already have posted depreciation runs, so a catch-up posting must still be recognized without rewriting those old runs.",
+                  "Gec girilen aktif demirbaslari izler; bu demirbaslarin gecmis donemlerinde amortisman runlari zaten postalanmistir ve eski runlar yeniden yazilmadan catch-up kaydi alinmalidir."
+                )}
+              </p>
+            </div>
+            <Link
+              to="/app/demirbas-alim-islemleri"
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {l("Open Acquisition Queue", "Alim Kuyrugunu Ac")}
+            </Link>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <SummaryCard
+              label={l("Pending Assets", "Bekleyen Demirbaslar")}
+              value={formatCount(lateCatchUpAssetCount)}
+              hint={l(
+                "Assets currently waiting late catch-up depreciation handling.",
+                "Su anda gec catch-up amortisman islemi bekleyen demirbaslar."
+              )}
+            />
+            <SummaryCard
+              label={l("Pending Periods", "Bekleyen Donemler")}
+              value={lateCatchUpPeriodHint}
+              hint={l(
+                "Oldest to latest missed period currently detected.",
+                "Su an tespit edilen en eski ve en yeni eksik donem."
+              )}
+            />
+            <SummaryCard
+              label={l("Oldest Acquisition", "En Eski Alim")}
+              value={formatDate(lateCatchUpOldestAcquisitionDate)}
+              hint={l(
+                "Oldest acquisition date among current late catch-up cases.",
+                "Mevcut gec catch-up vakalari icindeki en eski alim tarihi."
+              )}
+            />
+            <SummaryCard
+              label={l("Est. Catch-Up Base", "Tahmini Catch-Up Baz")}
+              value={formatAmount(lateCatchUpEstimatedBase)}
+              hint={l(
+                "Estimated base-currency depreciation still missing from historical periods.",
+                "Gecmis donemlerde halen eksik olan tahmini baz para amortisman tutari."
+              )}
+            />
+          </div>
+        </article>
+
+        <article
+          className={`mt-4 rounded-xl border p-4 ${
             hasSkippedMonthWarning
               ? "border-amber-200 bg-amber-50"
               : "border-emerald-200 bg-emerald-50"
@@ -361,7 +639,7 @@ export default function FixedAssetOpsDashboardPage() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-base font-semibold text-slate-900">
-                  {l("Skipped Depreciation Months", "Atlanan Amortisman Ayleri")}
+                  {l("Skipped Depreciation Runs", "Atlanan Amortisman Runlari")}
                 </h3>
                 <span
                   className={`rounded-full px-2 py-0.5 text-xs font-semibold ${

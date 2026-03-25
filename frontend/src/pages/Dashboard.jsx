@@ -3,7 +3,9 @@ import { Link } from "react-router-dom";
 import {
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
+  getOpsFixedAssetActivationAttention,
   getOpsFixedAssetDepreciationAttention,
+  getOpsFixedAssetLateCatchUpAttention,
   getOpsJobsHealth,
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
@@ -221,12 +223,14 @@ export default function Dashboard() {
     bankReconciliation: null,
     bankPayments: null,
     payrollImports: null,
-      payrollClose: null,
-      jobs: null,
-      exceptions: null,
-      inventoryWorkQueue: null,
-      fixedAssetDepreciationAttention: null,
-    });
+    payrollClose: null,
+    jobs: null,
+    exceptions: null,
+    inventoryWorkQueue: null,
+    fixedAssetActivationAttention: null,
+    fixedAssetLateCatchUpAttention: null,
+    fixedAssetDepreciationAttention: null,
+  });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState("");
   const [notificationRows, setNotificationRows] = useState([]);
@@ -275,6 +279,14 @@ export default function Dashboard() {
 
     if (canReadOps && canReadFixedAssetRuns) {
       requestEntries.push({
+        key: "fixedAssetActivationAttention",
+        run: () => getOpsFixedAssetActivationAttention(scopeParams),
+      });
+      requestEntries.push({
+        key: "fixedAssetLateCatchUpAttention",
+        run: () => getOpsFixedAssetLateCatchUpAttention(scopeParams),
+      });
+      requestEntries.push({
         key: "fixedAssetDepreciationAttention",
         run: () => getOpsFixedAssetDepreciationAttention(scopeParams),
       });
@@ -312,6 +324,8 @@ export default function Dashboard() {
         jobs: null,
         exceptions: null,
         inventoryWorkQueue: null,
+        fixedAssetActivationAttention: null,
+        fixedAssetLateCatchUpAttention: null,
         fixedAssetDepreciationAttention: null,
       });
       setLastRefreshedAt(new Date().toISOString());
@@ -333,6 +347,8 @@ export default function Dashboard() {
         jobs: null,
         exceptions: null,
         inventoryWorkQueue: null,
+        fixedAssetActivationAttention: null,
+        fixedAssetLateCatchUpAttention: null,
         fixedAssetDepreciationAttention: null,
       };
 
@@ -533,6 +549,48 @@ export default function Dashboard() {
     }
     return latest || oldest;
   }, [snapshot.fixedAssetDepreciationAttention]);
+
+  const fixedAssetLateCatchUpCount = useMemo(
+    () =>
+      toInt(
+        snapshot.fixedAssetLateCatchUpAttention?.affected_assets?.pending_late_catch_up_assets,
+        0
+      ),
+    [snapshot.fixedAssetLateCatchUpAttention]
+  );
+
+  const fixedAssetLateCatchUpPeriodHint = useMemo(() => {
+    const oldest = String(
+      snapshot.fixedAssetLateCatchUpAttention?.periods?.oldest_pending_period_key || ""
+    ).trim();
+    const latest = String(
+      snapshot.fixedAssetLateCatchUpAttention?.periods?.latest_pending_period_key || ""
+    ).trim();
+    if (!oldest && !latest) {
+      return "";
+    }
+    if (oldest && latest && oldest !== latest) {
+      return `${oldest} - ${latest}`;
+    }
+    return latest || oldest;
+  }, [snapshot.fixedAssetLateCatchUpAttention]);
+
+  const fixedAssetPendingActivationCount = useMemo(
+    () =>
+      toInt(
+        snapshot.fixedAssetActivationAttention?.affected_assets?.pending_activation_assets,
+        0
+      ),
+    [snapshot.fixedAssetActivationAttention]
+  );
+
+  const fixedAssetPendingActivationOldestDate = useMemo(
+    () =>
+      String(
+        snapshot.fixedAssetActivationAttention?.acquisition_dates?.oldest_acquisition_date || ""
+      ).trim(),
+    [snapshot.fixedAssetActivationAttention]
+  );
 
   const inventoryQueueLinks = useMemo(() => {
     const legalEntityId = inventoryScopeParams.legalEntityId || "";
@@ -743,13 +801,57 @@ export default function Dashboard() {
           locked={!canReadOps && !canReadReadiness}
         />
         <MetricCard
-          title={t("dashboard.cards.fixedAssetSkippedMonths", "FA Skipped Months")}
+          title={t("dashboard.cards.fixedAssetPendingActivation", "FA Pending Activation")}
+          value={formatCount(fixedAssetPendingActivationCount)}
+          subtitle={
+            fixedAssetPendingActivationCount > 0
+              ? t(
+                  "dashboard.cards.fixedAssetPendingActivationHint",
+                  "{{assetCount}} draft assets are waiting activation. Oldest acquisition date: {{date}}.",
+                  {
+                    assetCount: formatCount(fixedAssetPendingActivationCount),
+                    date: fixedAssetPendingActivationOldestDate || "-",
+                  }
+                )
+              : t(
+                  "dashboard.cards.fixedAssetPendingActivationClear",
+                  "No draft assets are currently waiting activation."
+                )
+          }
+          to="/app/demirbas-alim-islemleri"
+          ctaLabel={t("dashboard.openQueue", "Open queue")}
+          locked={!canReadOps || !canReadFixedAssetRuns}
+        />
+        <MetricCard
+          title={t("dashboard.cards.fixedAssetLateCatchUp", "FA Late Catch-Up Pending")}
+          value={formatCount(fixedAssetLateCatchUpCount)}
+          subtitle={
+            fixedAssetLateCatchUpCount > 0
+              ? t(
+                  "dashboard.cards.fixedAssetLateCatchUpHint",
+                  "{{assetCount}} assets were entered after already-posted depreciation periods. Oldest pending period: {{period}}.",
+                  {
+                    assetCount: formatCount(fixedAssetLateCatchUpCount),
+                    period: fixedAssetLateCatchUpPeriodHint || "-",
+                  }
+                )
+              : t(
+                  "dashboard.cards.fixedAssetLateCatchUpClear",
+                  "No assets are currently waiting late catch-up depreciation review."
+                )
+          }
+          to="/app/demirbas-ops-dashboard"
+          ctaLabel={t("dashboard.openDashboard", "Open dashboard")}
+          locked={!canReadOps || !canReadFixedAssetRuns}
+        />
+        <MetricCard
+          title={t("dashboard.cards.fixedAssetSkippedMonths", "FA Skipped Runs")}
           value={formatCount(fixedAssetSkippedAttentionAssetCount)}
           subtitle={
             fixedAssetSkippedAttentionAssetCount > 0
               ? t(
                   "dashboard.cards.fixedAssetSkippedMonthsHint",
-                  "{{assetCount}} active assets need skipped-month depreciation review across {{runCount}} runs. Oldest period: {{period}}.",
+                  "{{assetCount}} active assets still need skipped-run depreciation review across {{runCount}} skipped runs. Oldest period: {{period}}.",
                   {
                     assetCount: formatCount(fixedAssetSkippedAttentionAssetCount),
                     runCount: formatCount(fixedAssetSkippedAttentionRunCount),
@@ -758,7 +860,7 @@ export default function Dashboard() {
                 )
               : t(
                   "dashboard.cards.fixedAssetSkippedMonthsClear",
-                  "No active assets currently need skipped-month depreciation review."
+                  "No active assets currently need skipped-run depreciation review."
                 )
           }
           to="/app/demirbas-ops-dashboard"

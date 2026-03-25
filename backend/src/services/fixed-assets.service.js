@@ -3902,17 +3902,6 @@ export async function createAssetsFromCariDocumentLineFa06(input) {
           sourceRefType: FIXED_ASSET_TRANSACTION,
           sourceRefId: depreciationTransactionId,
         });
-      } else {
-        const { postLateAssetCatchUpDepreciationTx } = await import("./fixed-assets.depreciation.service.js");
-        await postLateAssetCatchUpDepreciationTx(tx, {
-          tenantId,
-          assetId,
-          legalEntityId,
-          bookId: book.id,
-          fiscalPeriodId: period.id,
-          postingDate: capitalizationDate,
-          userId,
-        });
       }
 
       createdAssetIds.push(assetId);
@@ -4373,17 +4362,6 @@ export async function activateAsset(input) {
         nbvAmountBase: lowValueDepreciationNbvAmountBase,
         note: "Low-value same-period full expense",
         createdByUserId: userId,
-      });
-    } else if (!isLegacyOnboarding && normalizeUpperText(resolvedDepreciationMethod) !== "NONE") {
-      const { postLateAssetCatchUpDepreciationTx } = await import("./fixed-assets.depreciation.service.js");
-      await postLateAssetCatchUpDepreciationTx(tx, {
-        tenantId,
-        assetId,
-        legalEntityId,
-        bookId: book.id,
-        fiscalPeriodId: period.id,
-        postingDate,
-        userId,
       });
     }
 

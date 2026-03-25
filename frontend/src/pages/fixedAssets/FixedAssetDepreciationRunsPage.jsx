@@ -155,6 +155,7 @@ function RunRowsTable({ rows, l }) {
             <th className="px-2 py-2">{l("Line", "Satir")}</th>
             <th className="px-2 py-2">{l("Asset", "Demirbas")}</th>
             <th className="px-2 py-2">{l("Asset Status", "Demirbas Durumu")}</th>
+            <th className="px-2 py-2">{l("Kind", "Tur")}</th>
             <th className="px-2 py-2">{l("Run Status", "Run Durumu")}</th>
             <th className="px-2 py-2 text-right">{l("Eligible Days", "Hak Edilen Gun")}</th>
             <th className="px-2 py-2 text-right">{l("Planned Base", "Planlanan Baz")}</th>
@@ -165,9 +166,16 @@ function RunRowsTable({ rows, l }) {
           {rows.map((row, index) => {
             const lineNo = Number(row?.lineNo || index + 1);
             const status = normalizeText(row?.status).toUpperCase();
+            const depreciationKind = normalizeText(row?.depreciationKind).toUpperCase() || "RUN";
             const detailText =
               normalizeText(row?.errorMessage) ||
               normalizeText(row?.skipReasonText) ||
+              (depreciationKind === "CATCH_UP"
+                ? l(
+                    `Historical catch-up depreciation for ${row?.periodKey || "-"}`,
+                    `${row?.periodKey || "-"} donemi icin tarihsel catch-up amortismani`
+                  )
+                : "") ||
               (parsePositiveInt(row?.postedTransactionId)
                 ? `postedTransactionId=${parsePositiveInt(row?.postedTransactionId)}`
                 : "-");
@@ -188,6 +196,11 @@ function RunRowsTable({ rows, l }) {
                   </div>
                 </td>
                 <td className="px-2 py-2">{row?.assetStatus || "-"}</td>
+                <td className="px-2 py-2">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${depreciationKind === "CATCH_UP" ? "bg-cyan-100 text-cyan-800" : "bg-slate-100 text-slate-700"}`}>
+                    {depreciationKind}
+                  </span>
+                </td>
                 <td className="px-2 py-2">
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${buildStatusBadgeClass(status)}`}>
                     {status || "-"}
@@ -723,6 +736,11 @@ export default function FixedAssetDepreciationRunsPage() {
               <SummaryStat label={l("Ready", "Hazir")} value={previewResult.summary?.readyAssetCount ?? 0} />
               <SummaryStat label={l("Skipped", "Atlanan")} value={previewResult.summary?.skippedAssetCount ?? 0} />
               <SummaryStat label={l("Errors", "Hata")} value={previewResult.summary?.errorCount ?? 0} />
+              <SummaryStat label={l("Catch-Up Assets", "Catch-Up Demirbas")} value={previewResult.summary?.catchUpAssetCount ?? 0} />
+              <SummaryStat label={l("Catch-Up Base", "Catch-Up Baz")} value={formatNumber(previewResult.summary?.totalCatchUpAmountBase)} mono />
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+              <SummaryStat label={l("Lines", "Satir")} value={previewResult.summary?.lineCount ?? 0} />
               <SummaryStat label={l("Planned Txn", "Planlanan Islem")} value={formatNumber(previewResult.summary?.totalPlannedAmountTxn)} mono />
               <SummaryStat label={l("Planned Base", "Planlanan Baz")} value={formatNumber(previewResult.summary?.totalPlannedAmountBase)} mono />
             </div>
@@ -822,6 +840,19 @@ export default function FixedAssetDepreciationRunsPage() {
   const reversalJournalEntryId = parsePositiveInt(
     focusedRun.reversalJournalEntryId || focusedRun.reversal_journal_entry_id
   );
+  const focusedRunLines = Array.isArray(focusedRun.lines) ? focusedRun.lines : [];
+  const focusedCatchUpLines = focusedRunLines.filter(
+    (row) => normalizeText(row?.depreciationKind).toUpperCase() === "CATCH_UP"
+  );
+  const focusedCatchUpAssetCount = new Set(
+    focusedCatchUpLines
+      .map((row) => parsePositiveInt(row?.assetId))
+      .filter(Boolean)
+  ).size;
+  const focusedCatchUpBase = focusedCatchUpLines.reduce(
+    (sum, row) => sum + Number(row?.plannedAmountBase || 0),
+    0
+  );
   return (
     <div className="space-y-4">
       <Link to="/app/demirbas-amortisman-islemleri" className="text-sm text-cyan-700 hover:underline">
@@ -892,6 +923,10 @@ export default function FixedAssetDepreciationRunsPage() {
           <SummaryStat label={l("Posted", "Postalanan")} value={focusedRun.postedAssetCount ?? 0} />
           <SummaryStat label={l("Skipped", "Atlanan")} value={focusedRun.skippedAssetCount ?? 0} />
           <SummaryStat label={l("Errors", "Hata")} value={focusedRun.errorCount ?? 0} />
+          <SummaryStat label={l("Catch-Up Assets", "Catch-Up Demirbas")} value={focusedCatchUpAssetCount} />
+          <SummaryStat label={l("Catch-Up Base", "Catch-Up Baz")} value={formatNumber(focusedCatchUpBase)} mono />
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <SummaryStat label={l("Planned Base", "Planlanan Baz")} value={formatNumber(focusedRun.totalPlannedAmountBase)} mono />
           <SummaryStat label={l("Posted Base", "Postalanan Baz")} value={formatNumber(focusedRun.totalPostedAmountBase)} mono />
         </div>

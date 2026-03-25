@@ -1,5 +1,6 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { summarizeLateCatchUpPendingForLegalEntity } from "./fixed-assets.depreciation.service.js";
 
 function u(value) {
   return String(value || "").trim().toUpperCase();
@@ -839,6 +840,183 @@ export async function getOpsFixedAssetDepreciationAttention({
   };
 }
 
+export async function getOpsFixedAssetActivationAttention({
+  req,
+  tenantId,
+  filters = {},
+  buildScopeFilter,
+  assertScopeAccess,
+}) {
+  const params = [];
+  const where = buildScopedLegalEntityWhere({
+    req,
+    tenantId,
+    filters,
+    alias: "fa",
+    params,
+    buildScopeFilter,
+    assertScopeAccess,
+  });
+  where.push("fa.status = 'DRAFT'");
+  const whereSql = where.join(" AND ");
+
+  const summary = await querySingleRow(
+    `SELECT COUNT(*) AS pending_activation_asset_count,
+            MIN(fa.acquisition_date) AS oldest_acquisition_date,
+            MAX(fa.acquisition_date) AS latest_acquisition_date
+       FROM fixed_assets fa
+      WHERE ${whereSql}`,
+    params
+  );
+
+  return {
+    filters: {
+      legalEntityId: parsePositiveInt(filters.legalEntityId) || null,
+    },
+    affected_assets: {
+      pending_activation_assets: toInt(summary.pending_activation_asset_count, 0),
+    },
+    acquisition_dates: {
+      oldest_acquisition_date: summary.oldest_acquisition_date
+        ? String(summary.oldest_acquisition_date).slice(0, 10)
+        : null,
+      latest_acquisition_date: summary.latest_acquisition_date
+        ? String(summary.latest_acquisition_date).slice(0, 10)
+        : null,
+    },
+  };
+}
+
+export async function getOpsFixedAssetLateCatchUpAttention({
+  req,
+  tenantId,
+  filters = {},
+  buildScopeFilter,
+  assertScopeAccess,
+}) {
+  const params = [];
+  const where = buildScopedLegalEntityWhere({
+    req,
+    tenantId,
+    filters,
+    alias: "fa",
+    params,
+    buildScopeFilter,
+    assertScopeAccess,
+  });
+  where.push("fa.status NOT IN ('DRAFT', 'CANCELLED')");
+  const whereSql = where.join(" AND ");
+
+  const scopedLegalEntityResult = await query(
+    `SELECT DISTINCT fa.legal_entity_id
+       FROM fixed_assets fa
+      WHERE ${whereSql}
+      ORDER BY fa.legal_entity_id ASC`,
+    params
+  );
+
+  const scopedLegalEntityIds = (scopedLegalEntityResult.rows || [])
+    .map((row) => parsePositiveInt(row?.legal_entity_id))
+    .filter(Boolean);
+
+  if (!scopedLegalEntityIds.length) {
+    return {
+      filters: {
+        legalEntityId: parsePositiveInt(filters.legalEntityId) || null,
+      },
+      affected_assets: {
+        pending_late_catch_up_assets: 0,
+      },
+      periods: {
+        oldest_pending_period_key: null,
+        latest_pending_period_key: null,
+      },
+      acquisition_dates: {
+        oldest_acquisition_date: null,
+        latest_acquisition_date: null,
+      },
+      amounts: {
+        estimated_catch_up_base: 0,
+      },
+    };
+  }
+
+  const scopedSummaries = await Promise.all(
+    scopedLegalEntityIds.map((legalEntityId) =>
+      summarizeLateCatchUpPendingForLegalEntity({
+        tenantId,
+        legalEntityId,
+        queryFn: query,
+      })
+    )
+  );
+
+  let pendingLateCatchUpAssets = 0;
+  let oldestPendingPeriodKey = null;
+  let latestPendingPeriodKey = null;
+  let oldestAcquisitionDate = null;
+  let latestAcquisitionDate = null;
+  let estimatedCatchUpBase = 0;
+
+  for (const summary of scopedSummaries) {
+    pendingLateCatchUpAssets += toInt(summary?.affectedAssetCount, 0);
+
+    const nextOldestPendingPeriodKey = String(summary?.oldestPendingPeriodKey || "").trim();
+    const nextLatestPendingPeriodKey = String(summary?.latestPendingPeriodKey || "").trim();
+    const nextOldestAcquisitionDate = String(summary?.oldestAcquisitionDate || "").trim();
+    const nextLatestAcquisitionDate = String(summary?.latestAcquisitionDate || "").trim();
+
+    if (
+      nextOldestPendingPeriodKey
+      && (!oldestPendingPeriodKey || nextOldestPendingPeriodKey < oldestPendingPeriodKey)
+    ) {
+      oldestPendingPeriodKey = nextOldestPendingPeriodKey;
+    }
+    if (
+      nextLatestPendingPeriodKey
+      && (!latestPendingPeriodKey || nextLatestPendingPeriodKey > latestPendingPeriodKey)
+    ) {
+      latestPendingPeriodKey = nextLatestPendingPeriodKey;
+    }
+    if (
+      nextOldestAcquisitionDate
+      && (!oldestAcquisitionDate || nextOldestAcquisitionDate < oldestAcquisitionDate)
+    ) {
+      oldestAcquisitionDate = nextOldestAcquisitionDate;
+    }
+    if (
+      nextLatestAcquisitionDate
+      && (!latestAcquisitionDate || nextLatestAcquisitionDate > latestAcquisitionDate)
+    ) {
+      latestAcquisitionDate = nextLatestAcquisitionDate;
+    }
+
+    estimatedCatchUpBase = Number(
+      (estimatedCatchUpBase + toNum(summary?.estimatedCatchUpAmountBase, 0)).toFixed(4)
+    );
+  }
+
+  return {
+    filters: {
+      legalEntityId: parsePositiveInt(filters.legalEntityId) || null,
+    },
+    affected_assets: {
+      pending_late_catch_up_assets: pendingLateCatchUpAssets,
+    },
+    periods: {
+      oldest_pending_period_key: oldestPendingPeriodKey || null,
+      latest_pending_period_key: latestPendingPeriodKey || null,
+    },
+    acquisition_dates: {
+      oldest_acquisition_date: oldestAcquisitionDate || null,
+      latest_acquisition_date: latestAcquisitionDate || null,
+    },
+    amounts: {
+      estimated_catch_up_base: estimatedCatchUpBase,
+    },
+  };
+}
+
 export default {
   getOpsBankReconciliationSummary,
   getOpsBankPaymentBatchesHealth,
@@ -846,4 +1024,6 @@ export default {
   getOpsPayrollCloseStatus,
   getOpsJobsHealth,
   getOpsFixedAssetDepreciationAttention,
+  getOpsFixedAssetActivationAttention,
+  getOpsFixedAssetLateCatchUpAttention,
 };

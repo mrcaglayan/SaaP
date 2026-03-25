@@ -31,6 +31,16 @@ export async function getOpsBankPaymentBatchesHealth(params = {}) {
   return response.data;
 }
 
+export async function getOpsFixedAssetActivationAttention(params = {}) {
+  const response = await api.get("/api/v1/ops/fixed-assets/activation-attention", { params });
+  return response.data;
+}
+
+export async function getOpsFixedAssetLateCatchUpAttention(params = {}) {
+  const response = await api.get("/api/v1/ops/fixed-assets/late-catch-up-attention", { params });
+  return response.data;
+}
+
 export async function getOpsFixedAssetDepreciationAttention(params = {}) {
   const response = await api.get("/api/v1/ops/fixed-assets/depreciation-attention", { params });
   return response.data;

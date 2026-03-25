@@ -3,8 +3,13 @@ import { resolveOrPrepareSmokeContext } from "./_smoke-context.js";
 import {
   createAssetDraft,
   activateAsset,
-  reverseFixedAssetTransaction,
 } from "../src/services/fixed-assets.service.js";
+import {
+  previewDepreciationRun,
+  createDepreciationRunDraft,
+  postDepreciationRun,
+  reverseDepreciationRun,
+} from "../src/services/fixed-assets.depreciation.service.js";
 
 const KEEP_ARTIFACTS = parseBooleanEnv(
   process.env.FA45_SMOKE_KEEP_ARTIFACTS,
@@ -262,8 +267,53 @@ async function resolveActorUserId(tenantId) {
       LIMIT 1`,
     [tenantId]
   );
-  const userId = Number(result.rows?.[0]?.id || 0);
-  assert(userId > 0, `No tenant user found for tenant ${tenantId}`);
+  let userId = Number(result.rows?.[0]?.id || 0);
+  if (userId <= 0) {
+    const fallbackResult = await query(
+      `SELECT id,
+              password_hash
+         FROM users
+        ORDER BY id ASC
+        LIMIT 1`
+    );
+    const fallbackPasswordHash = String(fallbackResult.rows?.[0]?.password_hash || "").trim();
+    assert(fallbackPasswordHash, "Could not resolve a fallback password hash for smoke user bootstrap");
+    const smokeEmail = `fa45-smoke-tenant-${tenantId}@example.com`;
+    const insertResult = await query(
+      `INSERT INTO users (
+          tenant_id,
+          email,
+          password_hash,
+          name,
+          status
+       ) VALUES (
+          ?, ?, ?, ?, 'ACTIVE'
+       )
+       ON DUPLICATE KEY UPDATE
+          password_hash = VALUES(password_hash),
+          name = VALUES(name),
+          status = 'ACTIVE'`,
+      [
+        tenantId,
+        smokeEmail,
+        fallbackPasswordHash,
+        `FA45 Smoke Tenant ${tenantId}`,
+      ]
+    );
+    userId = Number(insertResult.rows?.insertId || 0);
+    if (userId <= 0) {
+      const createdResult = await query(
+        `SELECT id
+           FROM users
+          WHERE tenant_id = ?
+            AND email = ?
+          LIMIT 1`,
+        [tenantId, smokeEmail]
+      );
+      userId = Number(createdResult.rows?.[0]?.id || 0);
+    }
+  }
+  assert(userId > 0, `No actor user found for tenant ${tenantId}`);
   return userId;
 }
 
@@ -331,6 +381,74 @@ async function cleanupArtifacts({
   profileId,
   runIds,
 }) {
+  let runJournalIds = [];
+  const normalizedRunIds = Array.from(
+    new Set((Array.isArray(runIds) ? runIds : []).map((value) => Number(value)).filter(Boolean))
+  );
+
+  if (normalizedRunIds.length > 0) {
+    const runResult = await query(
+      `SELECT id,
+              posted_journal_entry_id,
+              reversal_journal_entry_id
+         FROM fixed_asset_depreciation_runs
+        WHERE tenant_id = ?
+          AND id IN (${normalizedRunIds.map(() => "?").join(", ")})`,
+      [tenantId, ...normalizedRunIds]
+    );
+    runJournalIds = Array.from(
+      new Set(
+        (runResult.rows || []).flatMap((row) => (
+          [Number(row.posted_journal_entry_id || 0), Number(row.reversal_journal_entry_id || 0)]
+        )).filter(Boolean)
+      )
+    );
+    const runLineResult = await query(
+      `SELECT id
+         FROM fixed_asset_depreciation_run_lines
+        WHERE tenant_id = ?
+          AND run_id IN (${normalizedRunIds.map(() => "?").join(", ")})`,
+      [tenantId, ...normalizedRunIds]
+    );
+    const runLineIds = (runLineResult.rows || []).map((row) => Number(row.id)).filter(Boolean);
+
+    if (runLineIds.length > 0) {
+      await query(
+        `UPDATE fixed_asset_depreciation_schedule_lines
+            SET posted_run_line_id = NULL
+          WHERE tenant_id = ?
+            AND posted_run_line_id IN (${runLineIds.map(() => "?").join(", ")})`,
+        [tenantId, ...runLineIds]
+      );
+      await query(
+        `DELETE FROM fixed_asset_depreciation_run_line_allocations
+          WHERE tenant_id = ?
+            AND run_line_id IN (${runLineIds.map(() => "?").join(", ")})`,
+        [tenantId, ...runLineIds]
+      );
+    }
+
+    await query(
+      `DELETE FROM fixed_asset_depreciation_run_lines
+        WHERE tenant_id = ?
+          AND run_id IN (${normalizedRunIds.map(() => "?").join(", ")})`,
+      [tenantId, ...normalizedRunIds]
+    );
+    await query(
+      `DELETE FROM journal_source_links
+        WHERE tenant_id = ?
+          AND source_ref_type = 'FIXED_ASSET_DEPRECIATION_RUN'
+          AND source_ref_id IN (${normalizedRunIds.map(() => "?").join(", ")})`,
+      [tenantId, ...normalizedRunIds]
+    );
+    await query(
+      `DELETE FROM fixed_asset_depreciation_runs
+        WHERE tenant_id = ?
+          AND id IN (${normalizedRunIds.map(() => "?").join(", ")})`,
+      [tenantId, ...normalizedRunIds]
+    );
+  }
+
   if (assetId) {
     const txResult = await query(
       `SELECT id, journal_entry_id
@@ -341,7 +459,10 @@ async function cleanupArtifacts({
     );
     const transactionIds = (txResult.rows || []).map((row) => Number(row.id)).filter(Boolean);
     const journalIds = Array.from(
-      new Set((txResult.rows || []).map((row) => Number(row.journal_entry_id || 0)).filter(Boolean))
+      new Set([
+        ...(txResult.rows || []).map((row) => Number(row.journal_entry_id || 0)).filter(Boolean),
+        ...runJournalIds,
+      ])
     );
 
     await query(
@@ -390,15 +511,6 @@ async function cleanupArtifacts({
         WHERE tenant_id = ?
           AND id = ?`,
       [tenantId, assetId]
-    );
-  }
-
-  if (Array.isArray(runIds) && runIds.length > 0) {
-    await query(
-      `DELETE FROM fixed_asset_depreciation_runs
-        WHERE tenant_id = ?
-          AND id IN (${runIds.map(() => "?").join(", ")})`,
-      [tenantId, ...runIds]
     );
   }
 
@@ -528,46 +640,129 @@ async function main() {
     });
 
     const afterActivation = await loadAssetCatchUpState(tenantId, assetId);
-    const catchUpTransaction = afterActivation.transactions.find((row) => (
+    const activationCatchUpTransactions = afterActivation.transactions.filter((row) => (
       row.transactionType === "DEPRECIATION"
       && row.depreciationKind === "CATCH_UP"
       && row.status === "POSTED"
-    )) || null;
-    assert(catchUpTransaction, "Late activation did not create a posted CATCH_UP depreciation transaction");
-
-    const postedScheduleLines = afterActivation.scheduleLines.filter((row) => (
-      row.status === "POSTED"
-      && row.postedTransactionId === catchUpTransaction.id
     ));
     assert(
-      postedScheduleLines.length === 2,
-      `Expected 2 posted catch-up schedule lines, found ${postedScheduleLines.length}`
+      activationCatchUpTransactions.length === 0,
+      `Late activation should not post catch-up immediately; found ${activationCatchUpTransactions.length} CATCH_UP transactions`
     );
     assert(
-      postedScheduleLines[0].periodKey === periods.firstPrior.periodKey
-      && postedScheduleLines[1].periodKey === periods.secondPrior.periodKey,
-      "Catch-up schedule lines do not match the missed posted periods"
+      afterActivation.scheduleLines.length === 0,
+      `Expected no posted schedule lines after activation-only step, found ${afterActivation.scheduleLines.length}`
     );
     assert(
-      String(afterActivation.asset?.last_depreciation_period || "") === periods.secondPrior.periodKey,
-      `Expected last_depreciation_period=${periods.secondPrior.periodKey}, got ${afterActivation.asset?.last_depreciation_period || "NULL"}`
-    );
-    assert(
-      Number(afterActivation.asset?.remaining_useful_life_months || 0) === 10,
-      `Expected remaining_useful_life_months=10 after catch-up, got ${afterActivation.asset?.remaining_useful_life_months || "NULL"}`
+      afterActivation.asset?.last_depreciation_period == null,
+      `Expected last_depreciation_period to remain NULL before the next run, got ${afterActivation.asset?.last_depreciation_period || "NULL"}`
     );
 
     summary.activation = {
       assetId,
-      catchUpTransactionId: catchUpTransaction.id,
-      catchUpPeriods: postedScheduleLines.map((row) => row.periodKey),
+      catchUpPending: true,
       lastDepreciationPeriod: afterActivation.asset?.last_depreciation_period || null,
       remainingUsefulLifeMonths: Number(afterActivation.asset?.remaining_useful_life_months || 0),
     };
 
-    const reversalResult = await reverseFixedAssetTransaction({
+    const preview = await previewDepreciationRun({
       tenantId,
-      transactionId: catchUpTransaction.id,
+      legalEntityId,
+      fiscalPeriodId: periods.current.id,
+      postingDate: periods.current.endDate,
+    });
+    const previewRows = Array.isArray(preview?.rows) ? preview.rows : [];
+    const catchUpPreviewRows = previewRows.filter((row) => row.depreciationKind === "CATCH_UP");
+    const currentRunRows = previewRows.filter((row) => row.depreciationKind === "RUN");
+    assert(
+      catchUpPreviewRows.length === 2,
+      `Expected 2 catch-up preview rows, found ${catchUpPreviewRows.length}`
+    );
+    assert(
+      catchUpPreviewRows[0].periodKey === periods.firstPrior.periodKey
+      && catchUpPreviewRows[1].periodKey === periods.secondPrior.periodKey,
+      "Catch-up preview rows do not match the missed historical periods"
+    );
+    assert(
+      currentRunRows.some((row) => row.periodKey === periods.current.periodKey && row.status === "READY"),
+      `Expected a READY current-period run row for ${periods.current.periodKey}`
+    );
+    assert(
+      Number(preview?.summary?.catchUpAssetCount || 0) === 1,
+      `Expected catchUpAssetCount=1 in preview, got ${preview?.summary?.catchUpAssetCount || 0}`
+    );
+
+    const createdRun = await createDepreciationRunDraft({
+      tenantId,
+      legalEntityId,
+      fiscalPeriodId: periods.current.id,
+      postingDate: periods.current.endDate,
+      userId: actorUserId,
+    });
+    const runId = Number(createdRun?.id || 0);
+    assert(runId > 0, "Failed to create next-run catch-up draft");
+    artifactState.runIds.push(runId);
+
+    await postDepreciationRun({
+      tenantId,
+      runId,
+      postingDate: periods.current.endDate,
+      userId: actorUserId,
+    });
+
+    const afterRunPost = await loadAssetCatchUpState(tenantId, assetId);
+    const postedCatchUpTransactions = afterRunPost.transactions.filter((row) => (
+      row.transactionType === "DEPRECIATION"
+      && row.depreciationKind === "CATCH_UP"
+      && row.status === "POSTED"
+    ));
+    const postedRunTransactions = afterRunPost.transactions.filter((row) => (
+      row.transactionType === "DEPRECIATION"
+      && row.depreciationKind === "RUN"
+      && row.status === "POSTED"
+    ));
+    const postedScheduleLines = afterRunPost.scheduleLines.filter((row) => row.status === "POSTED");
+    assert(
+      postedCatchUpTransactions.length === 2,
+      `Expected 2 posted catch-up transactions after run post, found ${postedCatchUpTransactions.length}`
+    );
+    assert(
+      postedRunTransactions.length === 1,
+      `Expected 1 posted RUN depreciation transaction after run post, found ${postedRunTransactions.length}`
+    );
+    assert(
+      postedScheduleLines.length === 3,
+      `Expected 3 posted schedule lines after run post, found ${postedScheduleLines.length}`
+    );
+    assert(
+      postedScheduleLines.map((row) => row.periodKey).join(",") === [
+        periods.firstPrior.periodKey,
+        periods.secondPrior.periodKey,
+        periods.current.periodKey,
+      ].join(","),
+      "Posted schedule lines do not match the expected catch-up plus current periods"
+    );
+    assert(
+      String(afterRunPost.asset?.last_depreciation_period || "") === periods.current.periodKey,
+      `Expected last_depreciation_period=${periods.current.periodKey}, got ${afterRunPost.asset?.last_depreciation_period || "NULL"}`
+    );
+    assert(
+      Number(afterRunPost.asset?.remaining_useful_life_months || 0) === 9,
+      `Expected remaining_useful_life_months=9 after next-run catch-up, got ${afterRunPost.asset?.remaining_useful_life_months || "NULL"}`
+    );
+
+    summary.runPost = {
+      runId,
+      catchUpTransactionIds: postedCatchUpTransactions.map((row) => row.id),
+      runTransactionIds: postedRunTransactions.map((row) => row.id),
+      postedPeriods: postedScheduleLines.map((row) => row.periodKey),
+      lastDepreciationPeriod: afterRunPost.asset?.last_depreciation_period || null,
+      remainingUsefulLifeMonths: Number(afterRunPost.asset?.remaining_useful_life_months || 0),
+    };
+
+    const reversalResult = await reverseDepreciationRun({
+      tenantId,
+      runId,
       userId: actorUserId,
     });
     const afterReversal = await loadAssetCatchUpState(tenantId, assetId);
@@ -575,29 +770,28 @@ async function main() {
       row.status === "REVERSED"
     ));
     assert(
-      reversedScheduleLines.length === 2,
-      `Expected 2 reversed catch-up schedule lines, found ${reversedScheduleLines.length}`
+      reversedScheduleLines.length === 3,
+      `Expected 3 reversed run schedule lines, found ${reversedScheduleLines.length}`
     );
     assert(
-      afterReversal.transactions.some((row) => (
-        row.id === catchUpTransaction.id
+      afterReversal.transactions.filter((row) => (
+        row.transactionType === "DEPRECIATION"
         && row.status === "REVERSED"
-      )),
-      "Catch-up depreciation transaction was not marked REVERSED"
+      )).length === 3,
+      "Expected all run-generated depreciation transactions to be marked REVERSED"
     );
     assert(
       Number(afterReversal.asset?.remaining_useful_life_months || 0) === 12,
-      `Expected remaining_useful_life_months=12 after reversal, got ${afterReversal.asset?.remaining_useful_life_months || "NULL"}`
+      `Expected remaining_useful_life_months=12 after run reversal, got ${afterReversal.asset?.remaining_useful_life_months || "NULL"}`
     );
     assert(
       afterReversal.asset?.last_depreciation_period == null,
-      `Expected last_depreciation_period to clear after catch-up reversal, got ${afterReversal.asset?.last_depreciation_period || "NULL"}`
+      `Expected last_depreciation_period to clear after run reversal, got ${afterReversal.asset?.last_depreciation_period || "NULL"}`
     );
 
     summary.reversal = {
-      reversalTransactionId: Number(reversalResult?.reversal?.reversalTransactionId || 0) || null,
-      reversedScheduleLineCount: Number(reversalResult?.reversal?.reversedScheduleLineCount || 0),
-      syncedRemainingUsefulLifeMonths: Number(reversalResult?.reversal?.syncedRemainingUsefulLifeMonths || 0),
+      runId,
+      reversalJournalEntryId: Number(reversalResult?.reversalJournalEntryId || reversalResult?.row?.reversalJournalEntryId || 0) || null,
       assetStatus: String(afterReversal.asset?.status || ""),
       lastDepreciationPeriod: afterReversal.asset?.last_depreciation_period || null,
       remainingUsefulLifeMonths: Number(afterReversal.asset?.remaining_useful_life_months || 0),

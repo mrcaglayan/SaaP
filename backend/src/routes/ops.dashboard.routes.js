@@ -5,7 +5,9 @@ import { resolveBankAccountScope } from "../services/bank.accounts.service.js";
 import {
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
+  getOpsFixedAssetActivationAttention,
   getOpsFixedAssetDepreciationAttention,
+  getOpsFixedAssetLateCatchUpAttention,
   getOpsJobsHealth,
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
@@ -115,6 +117,38 @@ router.get(
   asyncHandler(async (req, res) => {
     const filters = parseOpsCommonFilters(req);
     const result = await getOpsBankPaymentBatchesHealth({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({ tenantId: filters.tenantId, ...result });
+  })
+);
+
+router.get(
+  "/fixed-assets/activation-attention",
+  requirePermission("ops.dashboard.read", { resolveScope: resolveOpsScope }),
+  asyncHandler(async (req, res) => {
+    const filters = parseOpsCommonFilters(req);
+    const result = await getOpsFixedAssetActivationAttention({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({ tenantId: filters.tenantId, ...result });
+  })
+);
+
+router.get(
+  "/fixed-assets/late-catch-up-attention",
+  requirePermission("ops.dashboard.read", { resolveScope: resolveOpsScope }),
+  asyncHandler(async (req, res) => {
+    const filters = parseOpsCommonFilters(req);
+    const result = await getOpsFixedAssetLateCatchUpAttention({
       req,
       tenantId: filters.tenantId,
       filters,
