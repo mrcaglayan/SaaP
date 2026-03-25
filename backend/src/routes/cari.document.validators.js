@@ -494,6 +494,15 @@ function parseDocumentLines(value, options = {}) {
               `lines[${index}].revisedUsefulLifeMonths and lifeExtensionMonths cannot both be provided`
             );
           }
+          if (
+            fixedAssetCategoryId
+            || fixedAssetOwnerOperatingUnitId
+            || fixedAssetLocationOperatingUnitId
+          ) {
+            throw badRequest(
+              `lines[${index}].fixedAssetCategoryId, fixedAssetOwnerOperatingUnitId, and fixedAssetLocationOperatingUnitId are not allowed when fixedAssetMode=IMPROVE_EXISTING`
+            );
+          }
         }
       }
     } else if (subledgerType === "STOCK") {

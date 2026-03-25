@@ -673,10 +673,11 @@ function applyCariOperationOverrides(specObject) {
     },
     CariDocumentLineFixedAssetMode: {
       type: "string",
-      enum: ["AUTO_CREATE", "LINK_EXISTING"],
+      enum: ["AUTO_CREATE", "LINK_EXISTING", "IMPROVE_EXISTING"],
       description: [
         "`AUTO_CREATE` is the recommended AP acquisition flow for new bills because posting creates draft assets directly from the CARI line.",
         "`LINK_EXISTING` remains available when one specific target asset must be referenced.",
+        "`IMPROVE_EXISTING` capitalizes a post-activation improvement onto an existing ACTIVE or FULLY_DEPRECIATED asset.",
         "Legacy capitalize-from-AP and sale-staging flows remain supported fallback paths outside this document contract."
       ].join(" "),
     },
@@ -788,7 +789,7 @@ function applyCariOperationOverrides(specObject) {
           ...intId,
           nullable: true,
           description:
-            "Target asset for `LINK_EXISTING` AP lines and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`.",
+            "Target asset for `LINK_EXISTING` and `IMPROVE_EXISTING` AP lines, and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`.",
         },
         fixedAssetCategoryId: {
           ...intId,
@@ -807,6 +808,20 @@ function applyCariOperationOverrides(specObject) {
           nullable: true,
           description:
             "Location operating unit for `AUTO_CREATE` fixed-asset acquisition lines.",
+        },
+        revisedUsefulLifeMonths: {
+          type: "integer",
+          minimum: 1,
+          nullable: true,
+          description:
+            "Optional absolute useful-life revision for `IMPROVE_EXISTING` AP lines. Mutually exclusive with `lifeExtensionMonths`.",
+        },
+        lifeExtensionMonths: {
+          type: "integer",
+          minimum: 1,
+          nullable: true,
+          description:
+            "Optional remaining-life extension for `IMPROVE_EXISTING` AP lines. Mutually exclusive with `revisedUsefulLifeMonths`.",
         },
         fixedAssetNameOverride: {
           type: "string",
@@ -1130,7 +1145,7 @@ function applyCariOperationOverrides(specObject) {
           ...intId,
           nullable: true,
           description:
-            "Required for `LINK_EXISTING` AP lines and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`.",
+            "Required for `LINK_EXISTING` and `IMPROVE_EXISTING` AP lines, and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`.",
         },
         fixedAssetCategoryId: {
           ...intId,
@@ -1149,6 +1164,20 @@ function applyCariOperationOverrides(specObject) {
           nullable: true,
           description:
             "Location operating unit for the recommended `AUTO_CREATE` fixed-asset acquisition flow.",
+        },
+        revisedUsefulLifeMonths: {
+          type: "integer",
+          minimum: 1,
+          nullable: true,
+          description:
+            "Optional absolute useful-life revision for `IMPROVE_EXISTING` AP lines. Mutually exclusive with `lifeExtensionMonths`.",
+        },
+        lifeExtensionMonths: {
+          type: "integer",
+          minimum: 1,
+          nullable: true,
+          description:
+            "Optional remaining-life extension for `IMPROVE_EXISTING` AP lines. Mutually exclusive with `revisedUsefulLifeMonths`.",
         },
         fixedAssetNameOverride: {
           type: "string",

@@ -4490,6 +4490,463 @@ async function loadCurrentProcessedDepreciationPeriodKeysForAsset({
   ]);
 }
 
+const FIXED_ASSET_IMPROVEMENT_ELIGIBLE_STATUSES = new Set([
+  "ACTIVE",
+  "FULLY_DEPRECIATED",
+]);
+
+const FIXED_ASSET_IMPROVEMENT_REASON_CODES = Object.freeze({
+  ASSET_STATUS_INELIGIBLE: "FA_IMPROVEMENT_ASSET_STATUS_INELIGIBLE",
+  NON_DEPRECIABLE_ASSET: "FA_IMPROVEMENT_NON_DEPRECIABLE_ASSET",
+  LATER_FIXED_ASSET_ACTIVITY: "FA_IMPROVEMENT_LATER_FIXED_ASSET_ACTIVITY",
+  DEPRECIATION_NOT_CURRENT: "FA_IMPROVEMENT_DEPRECIATION_NOT_CURRENT",
+  DRAFT_RUN_EXISTS: "FA_IMPROVEMENT_DRAFT_RUN_EXISTS",
+  FULLY_DEPRECIATED_REQUIRES_LIFE_CHANGE:
+    "FA_IMPROVEMENT_FULLY_DEPRECIATED_REQUIRES_LIFE_CHANGE",
+  RESULTING_REMAINING_LIFE_NOT_POSITIVE:
+    "FA_IMPROVEMENT_RESULTING_REMAINING_LIFE_NOT_POSITIVE",
+});
+
+function buildFixedAssetImprovementError(message, details = null) {
+  return badRequest(message, details);
+}
+
+async function loadFixedAssetImprovementTargetRow({
+  tenantId,
+  assetId,
+  queryFn = query,
+  forUpdate = false,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT id,
+            tenant_id,
+            legal_entity_id,
+            category_id,
+            status,
+            asset_no,
+            name,
+            acquisition_date,
+            capitalization_date,
+            in_service_date,
+            currency_code,
+            original_cost_txn,
+            original_cost_base,
+            depreciation_method,
+            useful_life_months,
+            remaining_useful_life_months,
+            legacy_accum_depr_txn,
+            legacy_accum_depr_base,
+            legacy_nbv_txn,
+            legacy_nbv_base,
+            last_depreciation_period
+       FROM fixed_assets
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+    [tenantId, assetId]
+  );
+
+  return result.rows?.[0] || null;
+}
+
+async function loadDraftDepreciationRunBlockerForAsset({
+  tenantId,
+  assetId,
+  queryFn = query,
+  forUpdate = false,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT run.id AS run_id,
+            run.period_key,
+            line.id AS run_line_id,
+            line.status AS line_status
+       FROM fixed_asset_depreciation_runs run
+       JOIN fixed_asset_depreciation_run_lines line
+         ON line.tenant_id = run.tenant_id
+        AND line.run_id = run.id
+      WHERE run.tenant_id = ?
+        AND line.asset_id = ?
+        AND run.status = 'DRAFT'
+      ORDER BY run.period_key DESC, run.id DESC, line.id DESC
+      LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+    [tenantId, assetId]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    runId: Number(row.run_id),
+    runPeriodKey: row.period_key || null,
+    runLineId: Number(row.run_line_id),
+    lineStatus: normalizeUpperText(row.line_status),
+  };
+}
+
+async function loadPostedDepreciationScheduleCountForAsset({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT COUNT(*) AS posted_count
+       FROM fixed_asset_depreciation_schedule_lines
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = 'POSTED'`,
+    [tenantId, assetId]
+  );
+
+  return Number(result.rows?.[0]?.posted_count || 0);
+}
+
+function resolveImprovementCurrentRemainingUsefulLifeMonths(asset, postedScheduleCount) {
+  const assetStatus = normalizeUpperText(asset?.status);
+  if (assetStatus === "FULLY_DEPRECIATED") {
+    return 0;
+  }
+
+  const resolved = resolveRemainingUsefulLifeMonthsFromPostedCount(
+    asset,
+    postedScheduleCount
+  );
+  if (resolved == null) {
+    return null;
+  }
+  return Math.max(0, Number(resolved));
+}
+
+function resolveFixedAssetImprovementElapsedLifeMonths(
+  asset,
+  currentRemainingUsefulLifeMonths,
+  postedScheduleCount
+) {
+  const usefulLifeMonths = asset?.useful_life_months != null
+    ? Number(asset.useful_life_months)
+    : null;
+  if (
+    Number.isInteger(usefulLifeMonths)
+    && usefulLifeMonths >= 0
+    && currentRemainingUsefulLifeMonths != null
+  ) {
+    return Math.max(usefulLifeMonths - Number(currentRemainingUsefulLifeMonths), 0);
+  }
+
+  const depreciationMethod = normalizeUpperText(asset?.depreciation_method);
+  if (depreciationMethod !== "NONE" && !hasLegacyOnboardingValues(asset)) {
+    return Math.max(0, Number(postedScheduleCount || 0));
+  }
+
+  return 0;
+}
+
+function resolveFixedAssetImprovementLifeState({
+  asset,
+  postedScheduleCount,
+  revisedUsefulLifeMonths = null,
+  lifeExtensionMonths = null,
+}) {
+  const currentRemainingUsefulLifeMonths =
+    resolveImprovementCurrentRemainingUsefulLifeMonths(asset, postedScheduleCount);
+  const currentUsefulLifeMonths = asset?.useful_life_months != null
+    ? Number(asset.useful_life_months)
+    : null;
+  const elapsedLifeMonths = resolveFixedAssetImprovementElapsedLifeMonths(
+    asset,
+    currentRemainingUsefulLifeMonths,
+    postedScheduleCount
+  );
+
+  let nextUsefulLifeMonths = currentUsefulLifeMonths;
+  let nextRemainingUsefulLifeMonths = currentRemainingUsefulLifeMonths;
+
+  if (revisedUsefulLifeMonths != null) {
+    nextUsefulLifeMonths = Number(revisedUsefulLifeMonths);
+    nextRemainingUsefulLifeMonths = Math.max(
+      Number(revisedUsefulLifeMonths) - elapsedLifeMonths,
+      0
+    );
+  } else if (lifeExtensionMonths != null) {
+    nextRemainingUsefulLifeMonths = Math.max(
+      Number(currentRemainingUsefulLifeMonths || 0) + Number(lifeExtensionMonths),
+      0
+    );
+    nextUsefulLifeMonths = Math.max(
+      elapsedLifeMonths + nextRemainingUsefulLifeMonths,
+      0
+    );
+  }
+
+  return {
+    currentUsefulLifeMonths,
+    currentRemainingUsefulLifeMonths,
+    elapsedLifeMonths,
+    nextUsefulLifeMonths,
+    nextRemainingUsefulLifeMonths,
+  };
+}
+
+export async function prepareFixedAssetImprovementContext({
+  tenantId,
+  legalEntityId = null,
+  assetId,
+  effectiveDate,
+  revisedUsefulLifeMonths = null,
+  lifeExtensionMonths = null,
+  queryFn = query,
+  forUpdate = false,
+  actionLabel = "Fixed-asset improvement",
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+  const normalizedEffectiveDate = formatDateOnly(
+    parseDateOnlyStrict(effectiveDate, "effectiveDate")
+  );
+
+  const asset = await loadFixedAssetImprovementTargetRow({
+    tenantId,
+    assetId,
+    queryFn,
+    forUpdate,
+  });
+  if (!asset) {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} must reference an existing fixed asset`,
+      {
+        reasonCode:
+          FIXED_ASSET_IMPROVEMENT_REASON_CODES.ASSET_STATUS_INELIGIBLE,
+        assetId: Number(assetId),
+      }
+    );
+  }
+
+  const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
+  const assetLegalEntityId = Number(asset.legal_entity_id);
+  if (
+    normalizedLegalEntityId
+    && assetLegalEntityId !== normalizedLegalEntityId
+  ) {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} must belong to legalEntityId`,
+      {
+        reasonCode:
+          FIXED_ASSET_IMPROVEMENT_REASON_CODES.ASSET_STATUS_INELIGIBLE,
+        assetId: Number(asset.id),
+        legalEntityId: assetLegalEntityId,
+      }
+    );
+  }
+
+  const assetStatus = normalizeUpperText(asset.status);
+  if (!FIXED_ASSET_IMPROVEMENT_ELIGIBLE_STATUSES.has(assetStatus)) {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} must reference an ACTIVE or FULLY_DEPRECIATED asset`,
+      {
+        reasonCode:
+          FIXED_ASSET_IMPROVEMENT_REASON_CODES.ASSET_STATUS_INELIGIBLE,
+        assetId: Number(asset.id),
+        assetStatus,
+      }
+    );
+  }
+
+  const depreciationMethod = normalizeUpperText(asset.depreciation_method);
+  if (depreciationMethod === "NONE") {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} is only supported for depreciable assets`,
+      {
+        reasonCode:
+          FIXED_ASSET_IMPROVEMENT_REASON_CODES.NON_DEPRECIABLE_ASSET,
+        assetId: Number(asset.id),
+        depreciationMethod,
+      }
+    );
+  }
+
+  const postedTransactions = await loadPostedLifecycleTransactionsForAsset({
+    tenantId,
+    assetId: Number(asset.id),
+    queryFn,
+  });
+  const laterTransaction = postedTransactions.find((candidate) => (
+    String(candidate.effectiveDate || "") > normalizedEffectiveDate
+    || (
+      String(candidate.effectiveDate || "") === normalizedEffectiveDate
+      && candidate.transactionType === "DEPRECIATION"
+    )
+  ));
+  if (laterTransaction) {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} conflicts with later fixed-asset activity ` +
+      `(transactionId=${laterTransaction.transactionId}, type=${laterTransaction.transactionType}, effectiveDate=${laterTransaction.effectiveDate})`,
+      {
+        reasonCode:
+          FIXED_ASSET_IMPROVEMENT_REASON_CODES.LATER_FIXED_ASSET_ACTIVITY,
+        assetId: Number(asset.id),
+        blockingTransactionId: Number(laterTransaction.transactionId),
+        blockingTransactionType: laterTransaction.transactionType,
+        blockingEffectiveDate: laterTransaction.effectiveDate,
+      }
+    );
+  }
+
+  const inServiceDate = String(
+    asset.in_service_date
+    || asset.capitalization_date
+    || asset.acquisition_date
+    || ""
+  ).slice(0, 10);
+  const effectivePeriodKey = derivePeriodKeyFromDate(normalizedEffectiveDate);
+  const inServicePeriodKey = derivePeriodKeyFromDate(inServiceDate);
+  if (effectivePeriodKey && inServicePeriodKey) {
+    const priorMonthKey = derivePeriodKeyFromDate(
+      formatDateOnly(
+        addMonthsUtc(
+          startOfMonthUtc(
+            parseDateOnlyStrict(`${effectivePeriodKey}-01`, "effectivePeriodKey")
+          ),
+          -1
+        )
+      )
+    );
+
+    if (priorMonthKey && inServicePeriodKey <= priorMonthKey) {
+      const processedPeriodKeys = await loadCurrentProcessedDepreciationPeriodKeysForAsset({
+        tenantId,
+        assetId: Number(asset.id),
+        throughPeriodKey: priorMonthKey,
+        queryFn,
+      });
+      const firstMissingPeriodKey = findFirstMissingPeriodKeyInRange(
+        inServicePeriodKey,
+        priorMonthKey,
+        processedPeriodKeys
+      );
+      if (firstMissingPeriodKey) {
+        throw buildFixedAssetImprovementError(
+          `${actionLabel} requires depreciation to be current through ${priorMonthKey} ` +
+          `(first missing period=${firstMissingPeriodKey})`,
+          {
+            reasonCode:
+              FIXED_ASSET_IMPROVEMENT_REASON_CODES.DEPRECIATION_NOT_CURRENT,
+            assetId: Number(asset.id),
+            requiredThroughPeriodKey: priorMonthKey,
+            firstMissingPeriodKey,
+          }
+        );
+      }
+    }
+  }
+
+  const draftRunBlocker = await loadDraftDepreciationRunBlockerForAsset({
+    tenantId,
+    assetId: Number(asset.id),
+    queryFn,
+    forUpdate,
+  });
+  if (draftRunBlocker) {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} is blocked because the asset already appears in DRAFT depreciation run ` +
+      `${draftRunBlocker.runId} (${draftRunBlocker.runPeriodKey || "unknown period"})`,
+      {
+        reasonCode: FIXED_ASSET_IMPROVEMENT_REASON_CODES.DRAFT_RUN_EXISTS,
+        assetId: Number(asset.id),
+        draftRunId: draftRunBlocker.runId,
+        draftRunLineId: draftRunBlocker.runLineId,
+        draftRunPeriodKey: draftRunBlocker.runPeriodKey,
+      }
+    );
+  }
+
+  const postedScheduleCount = await loadPostedDepreciationScheduleCountForAsset({
+    tenantId,
+    assetId: Number(asset.id),
+    queryFn,
+  });
+  const lifeState = resolveFixedAssetImprovementLifeState({
+    asset,
+    postedScheduleCount,
+    revisedUsefulLifeMonths,
+    lifeExtensionMonths,
+  });
+
+  if (
+    assetStatus === "FULLY_DEPRECIATED"
+    && revisedUsefulLifeMonths == null
+    && lifeExtensionMonths == null
+  ) {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} on a FULLY_DEPRECIATED asset requires revisedUsefulLifeMonths or lifeExtensionMonths`,
+      {
+        reasonCode:
+          FIXED_ASSET_IMPROVEMENT_REASON_CODES
+            .FULLY_DEPRECIATED_REQUIRES_LIFE_CHANGE,
+        assetId: Number(asset.id),
+      }
+    );
+  }
+
+  if (Number(lifeState.nextRemainingUsefulLifeMonths || 0) <= 0) {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} must result in positive remaining useful life`,
+      {
+        reasonCode:
+          FIXED_ASSET_IMPROVEMENT_REASON_CODES
+            .RESULTING_REMAINING_LIFE_NOT_POSITIVE,
+        assetId: Number(asset.id),
+        resultingRemainingUsefulLifeMonths: Number(
+          lifeState.nextRemainingUsefulLifeMonths || 0
+        ),
+      }
+    );
+  }
+
+  const currentNbv = await resolveCurrentAssetNbv(
+    tenantId,
+    Number(asset.id),
+    queryFn
+  );
+  const originalCostTxn = roundTransferAmount(asset.original_cost_txn || 0);
+  const originalCostBase = roundTransferAmount(asset.original_cost_base || 0);
+  const currentNbvTxn = roundTransferAmount(currentNbv.nbvTxn || 0);
+  const currentNbvBase = roundTransferAmount(currentNbv.nbvBase || 0);
+
+  return {
+    assetId: Number(asset.id),
+    tenantId: Number(asset.tenant_id),
+    legalEntityId: assetLegalEntityId,
+    categoryId: parsePositiveInt(asset.category_id),
+    assetNo: asset.asset_no || `ID-${Number(asset.id)}`,
+    assetName: asset.name || null,
+    assetStatus,
+    depreciationMethod,
+    originalCostTxn,
+    originalCostBase,
+    currentUsefulLifeMonths: lifeState.currentUsefulLifeMonths,
+    currentRemainingUsefulLifeMonths:
+      lifeState.currentRemainingUsefulLifeMonths,
+    nextUsefulLifeMonths: lifeState.nextUsefulLifeMonths,
+    nextRemainingUsefulLifeMonths:
+      lifeState.nextRemainingUsefulLifeMonths,
+    postedScheduleCount,
+    currentNbvTxn,
+    currentNbvBase,
+    currentAccumDeprTxn: roundTransferAmount(originalCostTxn - currentNbvTxn),
+    currentAccumDeprBase: roundTransferAmount(originalCostBase - currentNbvBase),
+  };
+}
+
 async function assertLifecycleChangeDepreciationStateTx({
   tx,
   tenantId,

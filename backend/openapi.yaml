@@ -10529,6 +10529,36 @@
         }
       }
     },
+    "/api/v1/cari/settlements/open-items-preview": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariSettlementsOpenItemsPreview",
+        "summary": "Cari endpoint: GET /api/v1/cari/settlements/open-items-preview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/cari/settlements/{settlementBatchId}/reverse": {
       "post": {
         "tags": [
@@ -15769,6 +15799,58 @@
         }
       }
     },
+    "/api/v1/fixed-assets/runs/{runId}/reprocess": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postApiV1FixedAssetsRunsRunidReprocess",
+        "summary": "Auto-generated: POST /api/v1/fixed-assets/runs/{runId}/reprocess",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/fixed-assets/runs/{runId}/reverse": {
       "post": {
         "tags": [
@@ -19712,6 +19794,96 @@
         ],
         "operationId": "getApiV1OpsExportsUsageCsv",
         "summary": "Auto-generated: GET /api/v1/ops/exports/usage.csv",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/ops/fixed-assets/activation-attention": {
+      "get": {
+        "tags": [
+          "Ops"
+        ],
+        "operationId": "getApiV1OpsFixedAssetsActivationAttention",
+        "summary": "Auto-generated: GET /api/v1/ops/fixed-assets/activation-attention",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/ops/fixed-assets/depreciation-attention": {
+      "get": {
+        "tags": [
+          "Ops"
+        ],
+        "operationId": "getApiV1OpsFixedAssetsDepreciationAttention",
+        "summary": "Auto-generated: GET /api/v1/ops/fixed-assets/depreciation-attention",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/ops/fixed-assets/late-catch-up-attention": {
+      "get": {
+        "tags": [
+          "Ops"
+        ],
+        "operationId": "getApiV1OpsFixedAssetsLateCatchUpAttention",
+        "summary": "Auto-generated: GET /api/v1/ops/fixed-assets/late-catch-up-attention",
         "responses": {
           "200": {
             "description": "Successful response",
@@ -38580,9 +38752,10 @@
         "type": "string",
         "enum": [
           "AUTO_CREATE",
-          "LINK_EXISTING"
+          "LINK_EXISTING",
+          "IMPROVE_EXISTING"
         ],
-        "description": "`AUTO_CREATE` is the recommended AP acquisition flow for new bills because posting creates draft assets directly from the CARI line. `LINK_EXISTING` remains available when one specific target asset must be referenced. Legacy capitalize-from-AP and sale-staging flows remain supported fallback paths outside this document contract."
+        "description": "`AUTO_CREATE` is the recommended AP acquisition flow for new bills because posting creates draft assets directly from the CARI line. `LINK_EXISTING` remains available when one specific target asset must be referenced. `IMPROVE_EXISTING` capitalizes a post-activation improvement onto an existing ACTIVE or FULLY_DEPRECIATED asset. Legacy capitalize-from-AP and sale-staging flows remain supported fallback paths outside this document contract."
       },
       "CariDocumentOpenItemStatus": {
         "type": "string",
@@ -38967,7 +39140,7 @@
             "type": "integer",
             "minimum": 1,
             "nullable": true,
-            "description": "Target asset for `LINK_EXISTING` AP lines and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`."
+            "description": "Target asset for `LINK_EXISTING` and `IMPROVE_EXISTING` AP lines, and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`."
           },
           "fixedAssetCategoryId": {
             "type": "integer",
@@ -38986,6 +39159,18 @@
             "minimum": 1,
             "nullable": true,
             "description": "Location operating unit for `AUTO_CREATE` fixed-asset acquisition lines."
+          },
+          "revisedUsefulLifeMonths": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Optional absolute useful-life revision for `IMPROVE_EXISTING` AP lines. Mutually exclusive with `lifeExtensionMonths`."
+          },
+          "lifeExtensionMonths": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Optional remaining-life extension for `IMPROVE_EXISTING` AP lines. Mutually exclusive with `revisedUsefulLifeMonths`."
           },
           "fixedAssetNameOverride": {
             "type": "string",
@@ -39804,7 +39989,7 @@
             "type": "integer",
             "minimum": 1,
             "nullable": true,
-            "description": "Required for `LINK_EXISTING` AP lines and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`."
+            "description": "Required for `LINK_EXISTING` and `IMPROVE_EXISTING` AP lines, and for AR fixed-asset disposal lines. Persists to `target_fixed_asset_id`."
           },
           "fixedAssetCategoryId": {
             "type": "integer",
@@ -39823,6 +40008,18 @@
             "minimum": 1,
             "nullable": true,
             "description": "Location operating unit for the recommended `AUTO_CREATE` fixed-asset acquisition flow."
+          },
+          "revisedUsefulLifeMonths": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Optional absolute useful-life revision for `IMPROVE_EXISTING` AP lines. Mutually exclusive with `lifeExtensionMonths`."
+          },
+          "lifeExtensionMonths": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Optional remaining-life extension for `IMPROVE_EXISTING` AP lines. Mutually exclusive with `revisedUsefulLifeMonths`."
           },
           "fixedAssetNameOverride": {
             "type": "string",

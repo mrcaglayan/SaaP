@@ -88,10 +88,6 @@ const FIXED_ASSET_AR_ELIGIBLE_STATUSES = new Set([
   "SUSPENDED",
   "FULLY_DEPRECIATED",
 ]);
-const FIXED_ASSET_AP_IMPROVEMENT_ELIGIBLE_STATUSES = new Set([
-  "ACTIVE",
-  "FULLY_DEPRECIATED",
-]);
 
 function toDecimalNumber(value) {
   if (value === null || value === undefined) {
@@ -1237,6 +1233,12 @@ async function insertFixedAssetTransactionTx(tx, {
   proceedsAmountTxn = null,
   proceedsAmountBase = null,
   preDisposalStatus = null,
+  improvementRevisedUsefulLifeMonths = null,
+  improvementLifeExtensionMonths = null,
+  improvementPreCostTxn = null,
+  improvementPreCostBase = null,
+  improvementPreUsefulLifeMonths = null,
+  improvementPreRemainingLifeMonths = null,
   note = null,
   createdByUserId = null,
 }) {
@@ -1251,6 +1253,12 @@ async function insertFixedAssetTransactionTx(tx, {
        nbv_amount_txn, nbv_amount_base,
        proceeds_amount_txn, proceeds_amount_base,
        pre_disposal_status,
+       improvement_revised_useful_life_months,
+       improvement_life_extension_months,
+       improvement_pre_cost_txn,
+       improvement_pre_cost_base,
+       improvement_pre_useful_life_months,
+       improvement_pre_remaining_life_months,
        journal_entry_id,
        source_ref_type, source_ref_id, source_ref_line_id,
        reversed_transaction_id,
@@ -1265,6 +1273,7 @@ async function insertFixedAssetTransactionTx(tx, {
        ?, ?,
        ?, ?,
        ?,
+       ?, ?, ?, ?, ?, ?,
        ?,
        ?, ?, ?,
        NULL,
@@ -1290,6 +1299,12 @@ async function insertFixedAssetTransactionTx(tx, {
       proceedsAmountTxn,
       proceedsAmountBase,
       preDisposalStatus,
+      improvementRevisedUsefulLifeMonths,
+      improvementLifeExtensionMonths,
+      improvementPreCostTxn,
+      improvementPreCostBase,
+      improvementPreUsefulLifeMonths,
+      improvementPreRemainingLifeMonths,
       journalEntryId,
       sourceRefType,
       sourceRefId,
@@ -3410,6 +3425,7 @@ async function validateOperatingUnitReference({
 async function validateFixedAssetDraftLineBindings({
   tenantId,
   legalEntityId,
+  documentDate,
   direction,
   lines,
   fieldCollectionLabel = "lines",
@@ -3418,6 +3434,7 @@ async function validateFixedAssetDraftLineBindings({
   const assetCache = new Map();
   const categoryCache = new Map();
   const operatingUnitCache = new Map();
+  let prepareFixedAssetImprovementContextFn = null;
 
   async function getAssetRow(assetId) {
     const normalizedAssetId = parsePositiveInt(assetId);
@@ -3476,6 +3493,14 @@ async function validateFixedAssetDraftLineBindings({
     return operatingUnitCache.get(cacheKey);
   }
 
+  async function prepareFixedAssetImprovementContext(input) {
+    if (!prepareFixedAssetImprovementContextFn) {
+      ({ prepareFixedAssetImprovementContext: prepareFixedAssetImprovementContextFn } =
+        await import("./fixed-assets.service.js"));
+    }
+    return prepareFixedAssetImprovementContextFn(input);
+  }
+
   for (let index = 0; index < (lines || []).length; index += 1) {
     const line = lines[index] || {};
     if (normalizeUpperText(line.subledgerType || "NONE") !== "FIXED_ASSET") {
@@ -3509,11 +3534,16 @@ async function validateFixedAssetDraftLineBindings({
           );
         }
       } else if (normalizeUpperText(line.fixedAssetMode) === "IMPROVE_EXISTING") {
-        if (!FIXED_ASSET_AP_IMPROVEMENT_ELIGIBLE_STATUSES.has(assetStatus)) {
-          throw badRequest(
-            `${fieldPrefix}targetFixedAssetId must reference an ACTIVE or FULLY_DEPRECIATED asset when fixedAssetMode=IMPROVE_EXISTING`
-          );
-        }
+        await prepareFixedAssetImprovementContext({
+          tenantId,
+          legalEntityId,
+          assetId: targetFixedAssetId,
+          effectiveDate: documentDate,
+          revisedUsefulLifeMonths: parsePositiveInt(line.revisedUsefulLifeMonths),
+          lifeExtensionMonths: parsePositiveInt(line.lifeExtensionMonths),
+          queryFn: runQuery,
+          actionLabel: `${fieldPrefix}targetFixedAssetId`,
+        });
       }
     }
 
@@ -4541,6 +4571,138 @@ async function applyApFixedAssetLinkExistingPostingLineTx(tx, {
   });
 }
 
+async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
+  tenantId,
+  legalEntityId,
+  documentId,
+  documentDate,
+  currencyCode,
+  journalEntryId,
+  bookId,
+  fiscalPeriodId,
+  line,
+  lineIndex,
+  userId,
+}) {
+  const fieldPrefix = `storedLines[${lineIndex + 1}].`;
+  const targetFixedAssetId = parsePositiveInt(line.targetFixedAssetId);
+  if (!targetFixedAssetId) {
+    throw badRequest(
+      `${fieldPrefix}targetFixedAssetId is required for IMPROVE_EXISTING posting`
+    );
+  }
+
+  const {
+    prepareFixedAssetImprovementContext,
+  } = await import("./fixed-assets.service.js");
+
+  const revisedUsefulLifeMonths = parsePositiveInt(line.revisedUsefulLifeMonths);
+  const lifeExtensionMonths = parsePositiveInt(line.lifeExtensionMonths);
+  const prepared = await prepareFixedAssetImprovementContext({
+    tenantId,
+    legalEntityId,
+    assetId: targetFixedAssetId,
+    effectiveDate: documentDate,
+    revisedUsefulLifeMonths,
+    lifeExtensionMonths,
+    queryFn: tx.query,
+    forUpdate: true,
+    actionLabel: `${fieldPrefix}targetFixedAssetId`,
+  });
+
+  const improvementAmountTxn = normalizeAmount(
+    line?.lineNetAmountTxn,
+    `${fieldPrefix}lineNetAmountTxn`
+  );
+  const improvementAmountBase = normalizeAmount(
+    line?.lineNetAmountBase,
+    `${fieldPrefix}lineNetAmountBase`
+  );
+  const nextOriginalCostTxn = roundFixedAssetPostingAmount(
+    prepared.originalCostTxn + improvementAmountTxn
+  );
+  const nextOriginalCostBase = roundFixedAssetPostingAmount(
+    prepared.originalCostBase + improvementAmountBase
+  );
+  const nextNbvTxn = roundFixedAssetPostingAmount(
+    prepared.currentNbvTxn + improvementAmountTxn
+  );
+  const nextNbvBase = roundFixedAssetPostingAmount(
+    prepared.currentNbvBase + improvementAmountBase
+  );
+
+  const setClauses = [
+    "original_cost_txn = ?",
+    "original_cost_base = ?",
+    "updated_by_user_id = ?",
+  ];
+  const setParams = [
+    nextOriginalCostTxn,
+    nextOriginalCostBase,
+    userId,
+  ];
+
+  if (revisedUsefulLifeMonths != null || lifeExtensionMonths != null) {
+    setClauses.push("useful_life_months = ?");
+    setParams.push(prepared.nextUsefulLifeMonths);
+    setClauses.push("remaining_useful_life_months = ?");
+    setParams.push(prepared.nextRemainingUsefulLifeMonths);
+  }
+  if (
+    prepared.assetStatus === "FULLY_DEPRECIATED"
+    && Number(prepared.nextRemainingUsefulLifeMonths || 0) > 0
+  ) {
+    setClauses.push("status = 'ACTIVE'");
+  }
+  setParams.push(tenantId, targetFixedAssetId);
+
+  await tx.query(
+    `UPDATE fixed_assets
+        SET ${setClauses.join(", ")}
+      WHERE tenant_id = ?
+        AND id = ?`,
+    setParams
+  );
+
+  const improvementTransactionId = await insertFixedAssetTransactionTx(tx, {
+    tenantId,
+    legalEntityId,
+    assetId: targetFixedAssetId,
+    transactionType: "IMPROVEMENT",
+    effectiveDate: documentDate,
+    postingDate: documentDate,
+    bookId,
+    fiscalPeriodId,
+    currencyCode,
+    journalEntryId,
+    sourceRefType: "CARI_DOCUMENT",
+    sourceRefId: documentId,
+    sourceRefLineId: parsePositiveInt(line.id),
+    grossAmountTxn: nextOriginalCostTxn,
+    grossAmountBase: nextOriginalCostBase,
+    accumDeprAmountTxn: prepared.currentAccumDeprTxn,
+    accumDeprAmountBase: prepared.currentAccumDeprBase,
+    nbvAmountTxn: nextNbvTxn,
+    nbvAmountBase: nextNbvBase,
+    improvementRevisedUsefulLifeMonths: revisedUsefulLifeMonths,
+    improvementLifeExtensionMonths: lifeExtensionMonths,
+    improvementPreCostTxn: prepared.originalCostTxn,
+    improvementPreCostBase: prepared.originalCostBase,
+    improvementPreUsefulLifeMonths: prepared.currentUsefulLifeMonths,
+    improvementPreRemainingLifeMonths: prepared.currentRemainingUsefulLifeMonths,
+    note: "CARI AP FIXED_ASSET improvement capitalization",
+    createdByUserId: userId,
+  });
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId,
+    journalEntryId,
+    sourceRefType: FIXED_ASSET_TRANSACTION,
+    sourceRefId: improvementTransactionId,
+    linkRole: "SUPPORTING",
+  });
+}
+
 async function applyFixedAssetPostingSideEffectsTx({
   tx,
   tenantId,
@@ -4745,6 +4907,23 @@ async function applyFixedAssetPostingSideEffectsTx({
         lineIndex: index,
         userId,
       });
+      continue;
+    }
+
+    if (fixedAssetMode === "IMPROVE_EXISTING") {
+      await applyApFixedAssetImproveExistingPostingLineTx(tx, {
+        tenantId,
+        legalEntityId,
+        documentId,
+        documentDate,
+        currencyCode,
+        journalEntryId,
+        bookId: journalContext.bookId,
+        fiscalPeriodId: journalContext.fiscalPeriodId,
+        line,
+        lineIndex: index,
+        userId,
+      });
     }
   }
 }
@@ -4778,6 +4957,7 @@ async function resolveDraftDocumentWriteModel({
     await validateFixedAssetDraftLineBindings({
       tenantId,
       legalEntityId,
+      documentDate,
       direction,
       lines: normalizedLines,
       runQuery,
@@ -4859,6 +5039,7 @@ async function resolveDraftDocumentWriteModel({
   await validateFixedAssetDraftLineBindings({
     tenantId,
     legalEntityId,
+    documentDate,
     direction,
     lines: syntheticWriteModel.lines,
     runQuery,

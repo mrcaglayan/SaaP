@@ -349,7 +349,7 @@ Serialized steps `STEP-SL01` to `STEP-SL30`.
 
 **Phase 6: Subsequent Acquisition / Improvement**
 - [x] `STEP-SL26` — Migration: add IMPROVEMENT transaction type and improvement metadata columns (implemented in `m151_fixed_asset_improvement_transaction_type.js`)
-- [ ] `STEP-SL27` — 🔥 HOT — Backend: IMPROVE_EXISTING mode — validators, posting, chronology gates, and prospective depreciation
+- [x] `STEP-SL27` — 🔥 HOT — Backend: IMPROVE_EXISTING mode — validators, posting, chronology gates, and prospective depreciation
 - [ ] `STEP-SL28` — Backend: reversal of improvement capitalization on active assets
 - [ ] `STEP-SL29` — Frontend: IMPROVE_EXISTING mode UI on CARI document form
 - [ ] `STEP-SL30` — Smoke suite: improvement flows, chronology gates, life revision, and reversal guards
