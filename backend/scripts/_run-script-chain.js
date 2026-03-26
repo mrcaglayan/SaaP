@@ -5,12 +5,12 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function runNodeScript(scriptFile) {
+function runNodeScript(scriptFile, envOverrides = null) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.resolve(__dirname, scriptFile);
     const child = spawn(process.execPath, [scriptPath], {
       cwd: process.cwd(),
-      env: { ...process.env },
+      env: { ...process.env, ...(envOverrides || {}) },
       stdio: "inherit",
     });
 
@@ -29,7 +29,7 @@ function runNodeScript(scriptFile) {
   });
 }
 
-export async function runScriptChain({ title, scripts }) {
+export async function runScriptChain({ title, scripts, envOverrides = null }) {
   if (!Array.isArray(scripts) || scripts.length === 0) {
     throw new Error("scripts must be a non-empty array");
   }
@@ -38,7 +38,7 @@ export async function runScriptChain({ title, scripts }) {
   for (const scriptFile of scripts) {
     // Keep execution sequential to avoid DB deadlocks between integration suites.
     // eslint-disable-next-line no-await-in-loop
-    await runNodeScript(scriptFile);
+    await runNodeScript(scriptFile, envOverrides);
   }
   console.log(`${title} passed.`);
 }

@@ -611,6 +611,45 @@ function sameSourceReference(left, right) {
     && Number(left?.sourceRefLineId || 0) === Number(right?.sourceRefLineId || 0);
 }
 
+function resolveCurrentRetroImprovementTransactionId({
+  improvementHistory = [],
+  improvementTransactionId = null,
+  improvementEffectiveDate = null,
+  postingDate = null,
+  sourceRefType = null,
+  sourceRefId = null,
+  sourceRefLineId = null,
+}) {
+  const normalizedTransactionId = parsePositiveInt(improvementTransactionId);
+  if (normalizedTransactionId) {
+    return normalizedTransactionId;
+  }
+
+  const sourceIdentity = {
+    sourceRefType,
+    sourceRefId,
+    sourceRefLineId,
+  };
+  const normalizedEffectiveDate = String(improvementEffectiveDate || "").slice(0, 10);
+  const normalizedPostingDate = String(postingDate || "").slice(0, 10);
+  const candidates = (Array.isArray(improvementHistory) ? improvementHistory : [])
+    .filter((historyRow) => {
+      if (!sameSourceReference(historyRow, sourceIdentity)) {
+        return false;
+      }
+      if (normalizedEffectiveDate && String(historyRow?.effectiveDate || "").slice(0, 10) !== normalizedEffectiveDate) {
+        return false;
+      }
+      if (normalizedPostingDate && String(historyRow?.postingDate || "").slice(0, 10) !== normalizedPostingDate) {
+        return false;
+      }
+      return true;
+    })
+    .sort(compareLifecycleEvents);
+
+  return parsePositiveInt(candidates.at(-1)?.transactionId);
+}
+
 function buildPeriodKeyRangeSet(startPeriodKey, endPeriodKey) {
   const periodKeys = new Set();
   const normalizedStartPeriodKey = String(startPeriodKey || "").trim();
@@ -779,6 +818,104 @@ function deriveImprovementCostDelta(historyRow, fieldLabel) {
     );
   }
   return roundAmount(Number(nextValue) - Number(preValue));
+}
+
+function applyImprovementLifeChangeToScheduleSnapshot({
+  currentUsefulLifeMonths = null,
+  currentRemainingUsefulLifeMonths = null,
+  revisedUsefulLifeMonths = null,
+  lifeExtensionMonths = null,
+}) {
+  let nextUsefulLifeMonths = currentUsefulLifeMonths;
+  let nextRemainingUsefulLifeMonths = currentRemainingUsefulLifeMonths;
+  const elapsedLifeMonths = (
+    currentUsefulLifeMonths != null
+    && currentRemainingUsefulLifeMonths != null
+  )
+    ? Math.max(
+      Number(currentUsefulLifeMonths) - Number(currentRemainingUsefulLifeMonths),
+      0
+    )
+    : 0;
+
+  if (revisedUsefulLifeMonths != null) {
+    nextUsefulLifeMonths = Number(revisedUsefulLifeMonths);
+    nextRemainingUsefulLifeMonths = Math.max(
+      Number(revisedUsefulLifeMonths) - elapsedLifeMonths,
+      0
+    );
+  } else if (lifeExtensionMonths != null) {
+    nextRemainingUsefulLifeMonths = Math.max(
+      Number(currentRemainingUsefulLifeMonths || 0) + Number(lifeExtensionMonths),
+      0
+    );
+    nextUsefulLifeMonths = Math.max(
+      elapsedLifeMonths + nextRemainingUsefulLifeMonths,
+      0
+    );
+  }
+
+  return {
+    usefulLifeMonths: nextUsefulLifeMonths,
+    remainingUsefulLifeMonths: nextRemainingUsefulLifeMonths,
+  };
+}
+
+function buildAssetSnapshotBeforeImprovement(
+  asset,
+  improvementHistoryRow,
+  improvementHistory = []
+) {
+  if (!improvementHistoryRow) {
+    return asset;
+  }
+
+  const costDeltaTxn = deriveImprovementCostDelta(
+    improvementHistoryRow,
+    "grossAmountTxn"
+  );
+  const costDeltaBase = deriveImprovementCostDelta(
+    improvementHistoryRow,
+    "grossAmountBase"
+  );
+  let usefulLifeMonths = asset.usefulLifeMonths;
+  let remainingUsefulLifeMonths = asset.remainingUsefulLifeMonths;
+
+  if (
+    improvementHistoryRow.revisedUsefulLifeMonths != null
+    || improvementHistoryRow.lifeExtensionMonths != null
+  ) {
+    usefulLifeMonths = improvementHistoryRow.preUsefulLifeMonths != null
+      ? Number(improvementHistoryRow.preUsefulLifeMonths)
+      : asset.usefulLifeMonths;
+    remainingUsefulLifeMonths = improvementHistoryRow.preRemainingUsefulLifeMonths != null
+      ? Number(improvementHistoryRow.preRemainingUsefulLifeMonths)
+      : asset.remainingUsefulLifeMonths;
+
+    const laterImprovements = (Array.isArray(improvementHistory) ? improvementHistory : [])
+      .filter((historyRow) => (
+        compareLifecycleEvents(historyRow, improvementHistoryRow) > 0
+      ));
+
+    for (const laterImprovement of laterImprovements) {
+      const replayedLifeState = applyImprovementLifeChangeToScheduleSnapshot({
+        currentUsefulLifeMonths: usefulLifeMonths,
+        currentRemainingUsefulLifeMonths: remainingUsefulLifeMonths,
+        revisedUsefulLifeMonths: laterImprovement.revisedUsefulLifeMonths,
+        lifeExtensionMonths: laterImprovement.lifeExtensionMonths,
+      });
+      usefulLifeMonths = replayedLifeState.usefulLifeMonths;
+      remainingUsefulLifeMonths = replayedLifeState.remainingUsefulLifeMonths;
+    }
+  }
+
+  return {
+    ...asset,
+    originalCostTxn: roundAmount(Number(asset.originalCostTxn || 0) - costDeltaTxn),
+    originalCostBase: roundAmount(Number(asset.originalCostBase || 0) - costDeltaBase),
+    usefulLifeMonths,
+    remainingUsefulLifeMonths,
+  };
 }
 
 function resolveImprovementSchedulePeriodKey(effectiveDate) {
@@ -4469,6 +4606,7 @@ export async function postRetroImprovementCurrentPeriodCatchUpTx(tx, {
   postingDate,
   postImprovementNbvTxn,
   postImprovementNbvBase,
+  improvementTransactionId = null,
   legalEntityId = null,
   bookId = null,
   fiscalPeriodId = null,
@@ -4543,47 +4681,60 @@ export async function postRetroImprovementCurrentPeriodCatchUpTx(tx, {
     assetId,
     queryFn: tx.query,
   });
-  const lastAffectedScheduleLine = affectedPostedScheduleLines.at(-1) || null;
-  const monthCountToLastAffectedPeriod = calculateInclusiveMonthCount(
-    asset.inServiceDate,
-    lastAffectedScheduleLine?.periodKey
-  );
-  const improvementAwareSeed = resolveImprovementAwareScheduleSeed({
-    asset,
-    currentPostedScheduleLines: [],
-    currentPostedScheduleCount: 0,
-    baseRemainingUsefulLifeMonths: resolveAssetRemainingUsefulLifeMonths(
-      asset,
-      depreciationMethod
-    ),
-    scheduleStartDate: asset.inServiceDate,
+  const currentImprovementTransactionId = resolveCurrentRetroImprovementTransactionId({
     improvementHistory,
+    improvementTransactionId,
+    improvementEffectiveDate,
+    postingDate,
+    sourceRefType,
+    sourceRefId,
+    sourceRefLineId,
   });
-  const requestedMonthCount = Math.max(
-    Number(improvementAwareSeed.requestedMonthCount || 0),
-    monthCountToLastAffectedPeriod
-  );
-  const periodResolution = await loadSchedulePeriodsForRange({
-    calendarId: scope.book.calendar_id,
-    startDate: asset.inServiceDate,
-    monthCount: requestedMonthCount,
+  if (!currentImprovementTransactionId) {
+    throw badRequest(
+      `Unable to resolve the posted improvement transaction for retro catch-up ` +
+      `(assetId=${assetId}, effectiveDate=${String(improvementEffectiveDate).slice(0, 10)})`
+    );
+  }
+  const currentImprovementHistoryRow = improvementHistory.find((historyRow) => (
+    Number(historyRow.transactionId || 0) === Number(currentImprovementTransactionId)
+  )) || null;
+  if (!currentImprovementHistoryRow) {
+    throw badRequest(
+      `Posted improvement transaction ${currentImprovementTransactionId} was not found ` +
+      `in depreciation history for assetId=${assetId}`
+    );
+  }
+  const baselineImprovementHistory = improvementHistory.filter((historyRow) => (
+    Number(historyRow.transactionId || 0) !== Number(currentImprovementTransactionId)
+  ));
+  const lastAffectedScheduleLine = affectedPostedScheduleLines.at(-1) || null;
+  const throughPeriodKey = lastAffectedScheduleLine?.periodKey || null;
+  const correctedRowsByPeriodKey = await buildCorrectedHistoricalRowsByPeriodKey({
+    tenantId,
+    asset,
+    book: scope.book,
+    depreciationMethod,
+    lifecycleHistory,
+    improvementHistory,
+    throughPeriodKey,
     queryFn: tx.query,
   });
-  const correctedRows = buildDepreciationScheduleRows(
-    improvementAwareSeed.scheduleSeedAsset,
-    periodResolution.periods,
+  const baselineAsset = buildAssetSnapshotBeforeImprovement(
+    asset,
+    currentImprovementHistoryRow,
+    improvementHistory
+  );
+  const baselineRowsByPeriodKey = await buildCorrectedHistoricalRowsByPeriodKey({
+    tenantId,
+    asset: baselineAsset,
+    book: scope.book,
+    depreciationMethod,
     lifecycleHistory,
-    {
-      requestedMonthCount,
-      postedScheduleCount: 0,
-      initialRemainingUsefulLifeMonths:
-        improvementAwareSeed.initialRemainingUsefulLifeMonths,
-      improvementHistory: improvementAwareSeed.futureImprovements,
-    }
-  );
-  const correctedRowsByPeriodKey = new Map(
-    correctedRows.map((row) => [row.periodKey, row])
-  );
+    improvementHistory: baselineImprovementHistory,
+    throughPeriodKey,
+    queryFn: tx.query,
+  });
 
   const deltaRows = [];
   let totalDeltaTxn = 0;
@@ -4591,17 +4742,23 @@ export async function postRetroImprovementCurrentPeriodCatchUpTx(tx, {
 
   for (const actualRow of affectedPostedScheduleLines) {
     const correctedRow = correctedRowsByPeriodKey.get(actualRow.periodKey) || null;
+    const baselineRow = baselineRowsByPeriodKey.get(actualRow.periodKey) || null;
     if (!correctedRow) {
       throw badRequest(
         `Missing corrected depreciation schedule row for asset ${assetId} period ${actualRow.periodKey}`
       );
     }
+    if (!baselineRow) {
+      throw badRequest(
+        `Missing baseline depreciation schedule row for asset ${assetId} period ${actualRow.periodKey}`
+      );
+    }
 
     const deltaTxn = roundAmount(
-      Number(correctedRow.plannedAmountTxn || 0) - Number(actualRow.plannedAmountTxn || 0)
+      Number(correctedRow.plannedAmountTxn || 0) - Number(baselineRow.plannedAmountTxn || 0)
     );
     const deltaBase = roundAmount(
-      Number(correctedRow.plannedAmountBase || 0) - Number(actualRow.plannedAmountBase || 0)
+      Number(correctedRow.plannedAmountBase || 0) - Number(baselineRow.plannedAmountBase || 0)
     );
     if (Math.abs(deltaTxn) <= ROUNDING_UNIT && Math.abs(deltaBase) <= ROUNDING_UNIT) {
       continue;

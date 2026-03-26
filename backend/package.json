@@ -177,6 +177,7 @@
     "test:fa37:ownership-transfer-smoke": "node scripts/test-fa37-ownership-transfer-smoke.js",
     "test:fa38:writeoff-smoke": "node scripts/test-fa38-writeoff-smoke.js",
     "test:fa39:sale-staging-smoke": "node scripts/test-fa39-sale-staging-smoke.js",
+    "test:fa46-fa47:improvement-gate": "node scripts/test-fa46-fa47-improvement-release-gate.js",
     "test:ux:prcore02": "node scripts/test-ux-prcore02-idempotency-standardization.js",
     "test:ux:prcore03": "node scripts/test-ux-prcore03-optimistic-locking-row-version.js",
     "test:ux:prcore04": "node scripts/test-ux-prcore04-job-progress-retry-ux.js",

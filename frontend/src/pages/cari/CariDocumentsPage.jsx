@@ -312,6 +312,66 @@ function extractTransferRequiredGuidanceFromError(error) {
   };
 }
 
+function extractFixedAssetImprovementGuidanceFromError(error) {
+  const responseData = error?.response?.data || {};
+  const details = responseData?.details || {};
+  const directReason = normalizeText(details?.reasonCode || details?.reason).toUpperCase();
+  const hasDirectBlocker =
+    directReason === "FA_IMPROVEMENT_LATER_FIXED_ASSET_ACTIVITY"
+    || directReason === "FA_IMPROVEMENT_SAME_DAY_LIFE_CHANGE_CONFLICT";
+  const rawMessage = String(responseData?.message || error?.message || "").trim();
+  const rawMessageMatch = rawMessage.match(
+    /targetFixedAssetId conflicts with later fixed-asset activity \(transactionId=(\d+), type=([A-Z_]+), effectiveDate=([0-9-]+)\)$/
+  );
+  const sameDayLifeConflictMatch = rawMessage.match(
+    /targetFixedAssetId cannot apply another useful-life change on ([0-9-]+) because posted improvement transaction (\d+) already changes life on that date$/
+  );
+  if (!hasDirectBlocker && !rawMessageMatch && !sameDayLifeConflictMatch) {
+    return null;
+  }
+
+  return {
+    reasonCode: directReason || (
+      sameDayLifeConflictMatch
+        ? "FA_IMPROVEMENT_SAME_DAY_LIFE_CHANGE_CONFLICT"
+        : "FA_IMPROVEMENT_LATER_FIXED_ASSET_ACTIVITY"
+    ),
+    assetId: toPositiveInt(details?.assetId),
+    blockingTransactionId: toPositiveInt(
+      details?.blockingTransactionId ?? rawMessageMatch?.[1] ?? sameDayLifeConflictMatch?.[2]
+    ),
+    blockingTransactionType: normalizeText(
+      details?.blockingTransactionType ?? rawMessageMatch?.[2] ?? "IMPROVEMENT"
+    ).toUpperCase(),
+    blockingEffectiveDate: normalizeText(
+      details?.blockingEffectiveDate ?? rawMessageMatch?.[3] ?? sameDayLifeConflictMatch?.[1]
+    ),
+  };
+}
+
+function formatFixedAssetTransactionTypeLabel(transactionType, l) {
+  switch (normalizeText(transactionType).toUpperCase()) {
+    case "IMPROVEMENT":
+      return l("Improvement", "Iyilestirme");
+    case "OWNERSHIP_TRANSFER":
+      return l("Ownership transfer", "Sahiplik devri");
+    case "PHYSICAL_MOVE":
+      return l("Physical move", "Fiziksel tasima");
+    case "SUSPEND":
+      return l("Suspend", "Askiya alma");
+    case "REACTIVATE":
+      return l("Reactivate", "Yeniden aktiflestirme");
+    case "SALE":
+      return l("Sale", "Satis");
+    case "WRITEOFF":
+      return l("Write-off", "Hurdaya ayirma");
+    case "DEPRECIATION":
+      return l("Depreciation", "Amortisman");
+    default:
+      return normalizeText(transactionType).toUpperCase() || "-";
+  }
+}
+
 const INTERNAL_COMMENT_MENTION_REGEX = /(^|[\s(])@([A-Za-z0-9._%+\-@]*)$/;
 
 function getInternalCommentMentionDraft(value, selectionStart) {
@@ -3282,8 +3342,8 @@ function DocumentLineWorkbench({
                       ) : (
                         <p className="mt-3 text-xs text-slate-600">
                           {l(
-                            "Select an ACTIVE or FULLY_DEPRECIATED asset to review its current cost, life, and status before posting.",
-                            "Kayit oncesinde mevcut maliyet, omur ve durumu incelemek icin ACTIVE veya FULLY_DEPRECIATED bir varlik secin."
+                            "Select an ACTIVE, SUSPENDED, or FULLY_DEPRECIATED asset to review its current cost, life, and status before posting.",
+                            "Kayit oncesinde mevcut maliyet, omur ve durumu incelemek icin ACTIVE, SUSPENDED veya FULLY_DEPRECIATED bir varlik secin."
                           )}
                         </p>
                       )}
@@ -4528,11 +4588,11 @@ export default function CariDocumentsPage({ direction = "" }) {
           );
         }
         const improvementStatusPattern =
-          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId must reference an ACTIVE or FULLY_DEPRECIATED asset$/;
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId must reference an ACTIVE, SUSPENDED, or FULLY_DEPRECIATED asset$/;
         if (improvementStatusPattern.test(trimmedMessage)) {
           return l(
-            "Only ACTIVE or FULLY_DEPRECIATED assets can be improved from this flow.",
-            "Bu akista yalnizca ACTIVE veya FULLY_DEPRECIATED durumundaki varliklar iyilestirilebilir."
+            "Only ACTIVE, SUSPENDED, or FULLY_DEPRECIATED assets can be improved from this flow.",
+            "Bu akista yalnizca ACTIVE, SUSPENDED veya FULLY_DEPRECIATED durumundaki varliklar iyilestirilebilir."
           );
         }
         const improvementNonDepreciablePattern =
@@ -4550,8 +4610,19 @@ export default function CariDocumentsPage({ direction = "" }) {
         );
         if (improvementLaterActivityMatch) {
           return l(
-            `A later fixed-asset transaction already exists (transactionId=${improvementLaterActivityMatch[1]}, type=${improvementLaterActivityMatch[2]}, effectiveDate=${improvementLaterActivityMatch[3]}). Reverse or move the later activity first.`,
-            `Daha sonraki bir demirbas hareketi zaten mevcut (transactionId=${improvementLaterActivityMatch[1]}, type=${improvementLaterActivityMatch[2]}, effectiveDate=${improvementLaterActivityMatch[3]}). Once sonraki hareketi tersleyin veya tarihini duzenleyin.`
+            `A later fixed-asset transaction already exists (transactionId=${improvementLaterActivityMatch[1]}, type=${improvementLaterActivityMatch[2]}, effectiveDate=${improvementLaterActivityMatch[3]}). Open the asset transactions, reverse or correct that later transaction first, then save or post this earlier improvement again.`,
+            `Daha sonraki bir demirbas hareketi zaten mevcut (transactionId=${improvementLaterActivityMatch[1]}, type=${improvementLaterActivityMatch[2]}, effectiveDate=${improvementLaterActivityMatch[3]}). Demirbas hareketlerini acin, once sonraki hareketi tersleyin veya duzeltin, sonra bu daha erken iyilestirmeyi tekrar kaydedin ya da kayda alin.`
+          );
+        }
+        const improvementSameDayLifeConflictPattern =
+          /^(?:storedLines|lines)\[\d+\]\.targetFixedAssetId cannot apply another useful-life change on ([0-9-]+) because posted improvement transaction (\d+) already changes life on that date$/;
+        const improvementSameDayLifeConflictMatch = trimmedMessage.match(
+          improvementSameDayLifeConflictPattern
+        );
+        if (improvementSameDayLifeConflictMatch) {
+          return l(
+            `Another posted improvement on ${improvementSameDayLifeConflictMatch[1]} already changes useful life (transactionId=${improvementSameDayLifeConflictMatch[2]}). Only one life-changing improvement is allowed per asset on the same effective date. Reverse or revise the other same-day improvement first.`,
+            `${improvementSameDayLifeConflictMatch[1]} tarihinde kayitli baska bir iyilestirme faydali omru zaten degistiriyor (transactionId=${improvementSameDayLifeConflictMatch[2]}). Ayni etkinlik tarihinde varlik basina yalnizca bir omur degistiren iyilestirmeye izin verilir. Once diger ayni gun iyilestirmesini tersleyin veya duzeltin.`
           );
         }
         const improvementDepreciationCurrentPattern =
@@ -4816,6 +4887,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   const [postSaving, setPostSaving] = useState(false);
   const [postError, setPostError] = useState("");
   const [postTransferGuidance, setPostTransferGuidance] = useState(null);
+  const [postFixedAssetImprovementGuidance, setPostFixedAssetImprovementGuidance] = useState(null);
   const [postMessage, setPostMessage] = useState("");
 
   const [reverseForm, setReverseForm] = useState(() => ({
@@ -10114,6 +10186,7 @@ export default function CariDocumentsPage({ direction = "" }) {
 
   async function handlePostDraft() {
     setPostTransferGuidance(null);
+    setPostFixedAssetImprovementGuidance(null);
     if (cariPostingNotReady) {
       setPostError(
         l(
@@ -10251,6 +10324,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     setPostSaving(true);
     setPostError("");
     setPostTransferGuidance(null);
+    setPostFixedAssetImprovementGuidance(null);
     setPostMessage("");
     try {
       const response = await postCariDocument(selectedDocumentId, payload);
@@ -10262,10 +10336,14 @@ export default function CariDocumentsPage({ direction = "" }) {
       );
       setSelectedDetail(response?.row || null);
       setPostTransferGuidance(null);
+      setPostFixedAssetImprovementGuidance(null);
       await loadDocuments(filters);
       await loadDocumentDetail(selectedDocumentId);
     } catch (error) {
       setPostTransferGuidance(extractTransferRequiredGuidanceFromError(error));
+      setPostFixedAssetImprovementGuidance(
+        extractFixedAssetImprovementGuidanceFromError(error)
+      );
       setPostError(
         normalizeTranslatedApiError(
           error,
@@ -13806,6 +13884,71 @@ export default function CariDocumentsPage({ direction = "" }) {
                         "ile contextler arasi ikmali olusturun, sonra taslagi yeniden kayda alin."
                       )}
                     </p>
+                  </div>
+                ) : null}
+                {postFixedAssetImprovementGuidance ? (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <p className="font-semibold">
+                      {postFixedAssetImprovementGuidance.reasonCode === "FA_IMPROVEMENT_SAME_DAY_LIFE_CHANGE_CONFLICT"
+                        ? l(
+                            "Another same-day life-changing improvement blocks this entry.",
+                            "Ayni gun tarihli baska bir omur degistiren iyilestirme bu kaydi blokluyor."
+                          )
+                        : l(
+                            "A later fixed-asset transaction blocks this earlier improvement.",
+                            "Daha sonraki bir demirbas hareketi bu daha erken iyilestirmeyi blokluyor."
+                          )}
+                    </p>
+                    <p className="mt-1 text-xs">
+                      {[
+                        postFixedAssetImprovementGuidance.assetId
+                          ? `${l("Asset", "Varlik")}: #${postFixedAssetImprovementGuidance.assetId}`
+                          : "",
+                        postFixedAssetImprovementGuidance.blockingTransactionId
+                          ? `${l("Blocking transaction", "Bloklayan hareket")}: #${postFixedAssetImprovementGuidance.blockingTransactionId}`
+                          : "",
+                        postFixedAssetImprovementGuidance.blockingTransactionType
+                          ? `${l("Type", "Tur")}: ${formatFixedAssetTransactionTypeLabel(
+                              postFixedAssetImprovementGuidance.blockingTransactionType,
+                              l
+                            )}`
+                          : "",
+                        postFixedAssetImprovementGuidance.blockingEffectiveDate
+                          ? `${l("Effective date", "Etkinlik tarihi")}: ${postFixedAssetImprovementGuidance.blockingEffectiveDate}`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" | ")}
+                    </p>
+                    <p className="mt-2 text-xs">
+                      {postFixedAssetImprovementGuidance.reasonCode === "FA_IMPROVEMENT_SAME_DAY_LIFE_CHANGE_CONFLICT"
+                        ? l(
+                            "Only one useful-life-changing improvement is allowed per asset on the same effective date. Open the asset transaction list, reverse or revise the other same-day improvement, then return and post this line again.",
+                            "Ayni etkinlik tarihinde varlik basina yalnizca bir faydali omur degistiren iyilestirmeye izin verilir. Demirbas hareket listesini acin, diger ayni gun iyilestirmesini tersleyin veya duzeltin, sonra geri donup bu satiri yeniden kayda alin."
+                          )
+                        : l(
+                            "Do this in order: open the asset transaction list, reverse or correct the later transaction, then return and post this earlier improvement again.",
+                            "Sirayla sunu yapin: demirbas hareket listesini acin, daha sonraki hareketi tersleyin veya duzeltin, sonra geri donup bu daha erken iyilestirmeyi yeniden kayda alin."
+                          )}
+                    </p>
+                    {postFixedAssetImprovementGuidance.assetId ? (
+                      <p className="mt-2 text-xs">
+                        <Link
+                          to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${postFixedAssetImprovementGuidance.assetId}?tab=transactions${
+                            postFixedAssetImprovementGuidance.blockingTransactionId
+                              ? `&transactionId=${postFixedAssetImprovementGuidance.blockingTransactionId}`
+                              : ""
+                          }`}
+                          className="font-semibold underline underline-offset-2"
+                        >
+                          {l("Open asset transactions", "Demirbas hareketlerini ac")}
+                        </Link>{" "}
+                        {l(
+                          "to review the blocker and continue from there.",
+                          "ile bloklayan kaydi inceleyip oradan devam edin."
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
                 {postMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{postMessage}</div> : null}

@@ -469,7 +469,7 @@ Persist `subledger_type`, `fixed_asset_mode`, `target_fixed_asset_id`, improveme
 - For AR documents: validate target asset is in `ACTIVE`, `SUSPENDED`, or `FULLY_DEPRECIATED` status — **not just ACTIVE**. The existing `SALE_STAGING_ELIGIBLE_STATUSES` (line ~5360 in `fixed-assets.service.js`) allows all three. Fully-depreciated assets being sold is a common real-world scenario.
 - **Persist `fixed_asset_mode`** on the line — read responses return the stored value directly, no inference needed
 - Return `subledgerType`, `fixedAssetMode`, `targetFixedAssetId`, `fixedAssetNameOverride`, `fixedAssetSerialNo`, `fixedAssetTag`, improvement life fields, and generated-asset metadata in document line read responses
-- For AP IMPROVE_EXISTING: validate target asset is ACTIVE or FULLY_DEPRECIATED (not DRAFT, not DISPOSED, not SUSPENDED)
+- For AP IMPROVE_EXISTING: validate target asset is `ACTIVE`, `SUSPENDED`, or `FULLY_DEPRECIATED` (not `DRAFT`, not `DISPOSED`). If the asset is currently suspended, the improvement is still allowed, but depreciation effect starts on the later of `improvementEffectiveDate` and the next `REACTIVATE` date.
 
 ### Explicit non-goals
 - Do not change posting logic yet (SL05/SL06)
@@ -1435,15 +1435,16 @@ Final validation that all new flows work alongside existing flows without regres
    - life-revision inputs and error cases
 
 ### Explicit non-goals
-- Do not allow `IMPROVE_EXISTING` on `DRAFT`, `DISPOSED`, or `SUSPENDED` assets
+- Do not allow `IMPROVE_EXISTING` on `DRAFT` or `DISPOSED` assets
+- Do not start depreciation effect during a suspended interval; when the target asset is currently `SUSPENDED`, the improved basis becomes eligible only from the later of `improvementEffectiveDate` and `reactivationDate`
 - Do not allow `IMPROVE_EXISTING` on AR documents
-- Do not reuse `CATCH_UP` as the accounting type for improvement
+- Do not collapse the capital improvement itself into a fake `CATCH_UP` transaction type; the capital event remains `IMPROVEMENT`, while any late-entered depreciation delta is recognized as `DEPRECIATION/CATCH_UP`
 - Do not let improvement retroactively rewrite already-posted depreciation rows
 - Do not silently refresh or mutate existing `DRAFT` depreciation runs after improvement posting
 - Do not introduce a separate one-off depreciation recalculation engine just for improvements
 
 ### Definition of done
-- AP `FIXED_ASSET` `IMPROVE_EXISTING` line with a valid active/fully-depreciated target asset passes validation
+- AP `FIXED_ASSET` `IMPROVE_EXISTING` line with a valid active/suspended/fully-depreciated target asset passes validation
 - Improvement is blocked when depreciation chronology is dirty or when draft-run snapshots already exist
 - Posting creates an `IMPROVEMENT` transaction with correct amounts and pre-state snapshot
 - Asset capitalized cost increases by the improvement amount
@@ -1581,7 +1582,7 @@ The existing FA Additions report (`fixed-assets.reporting.service.js`) filters `
    - improvement blocked when depreciation sequence gap / missed-period recovery exists
    - improvement blocked when the gap/catch-up condition arises across suspend/reactivate chronology, including re-suspend / re-activate style history if present
    - improvement blocked when the asset is already included in a `DRAFT` depreciation run or equivalent frozen snapshot
-   - improvement blocked when the target asset is currently `SUSPENDED`
+   - improvement allowed when the target asset is currently `SUSPENDED`, with depreciation still paused until `REACTIVATE`
 3. Add smoke coverage for fully-depreciated behavior:
    - fully depreciated asset blocked when no valid life revision/extension is provided
    - fully depreciated asset allowed when valid remaining life is restored by the provided revision/extension

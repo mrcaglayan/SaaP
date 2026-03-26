@@ -4618,6 +4618,7 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
 
   const {
     prepareFixedAssetImprovementContext,
+    resequenceLaterSamePeriodImprovementTransactionsTx,
   } = await import("./fixed-assets.service.js");
   const {
     postRetroImprovementCurrentPeriodCatchUpTx,
@@ -4646,11 +4647,23 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
     line?.lineNetAmountBase,
     `${fieldPrefix}lineNetAmountBase`
   );
-  const nextOriginalCostTxn = roundFixedAssetPostingAmount(
-    prepared.originalCostTxn + improvementAmountTxn
+  const nextAssetOriginalCostTxn = roundFixedAssetPostingAmount(
+    prepared.assetCurrentOriginalCostTxn + improvementAmountTxn
   );
-  const nextOriginalCostBase = roundFixedAssetPostingAmount(
-    prepared.originalCostBase + improvementAmountBase
+  const nextAssetOriginalCostBase = roundFixedAssetPostingAmount(
+    prepared.assetCurrentOriginalCostBase + improvementAmountBase
+  );
+  const insertedImprovementGrossAmountTxn = roundFixedAssetPostingAmount(
+    prepared.improvementPreCostTxn + improvementAmountTxn
+  );
+  const insertedImprovementGrossAmountBase = roundFixedAssetPostingAmount(
+    prepared.improvementPreCostBase + improvementAmountBase
+  );
+  const insertedImprovementNbvAmountTxn = roundFixedAssetPostingAmount(
+    prepared.effectivePreNbvTxn + improvementAmountTxn
+  );
+  const insertedImprovementNbvAmountBase = roundFixedAssetPostingAmount(
+    prepared.effectivePreNbvBase + improvementAmountBase
   );
   const nextNbvTxn = roundFixedAssetPostingAmount(
     prepared.currentNbvTxn + improvementAmountTxn
@@ -4665,8 +4678,8 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
     "updated_by_user_id = ?",
   ];
   const setParams = [
-    nextOriginalCostTxn,
-    nextOriginalCostBase,
+    nextAssetOriginalCostTxn,
+    nextAssetOriginalCostBase,
     userId,
   ];
 
@@ -4706,22 +4719,18 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
     sourceRefType: "CARI_DOCUMENT",
     sourceRefId: documentId,
     sourceRefLineId: parsePositiveInt(line.id),
-    grossAmountTxn: nextOriginalCostTxn,
-    grossAmountBase: nextOriginalCostBase,
+    grossAmountTxn: insertedImprovementGrossAmountTxn,
+    grossAmountBase: insertedImprovementGrossAmountBase,
     accumDeprAmountTxn: prepared.effectivePreAccumDeprTxn,
     accumDeprAmountBase: prepared.effectivePreAccumDeprBase,
-    nbvAmountTxn: roundFixedAssetPostingAmount(
-      prepared.effectivePreNbvTxn + improvementAmountTxn
-    ),
-    nbvAmountBase: roundFixedAssetPostingAmount(
-      prepared.effectivePreNbvBase + improvementAmountBase
-    ),
+    nbvAmountTxn: insertedImprovementNbvAmountTxn,
+    nbvAmountBase: insertedImprovementNbvAmountBase,
     improvementRevisedUsefulLifeMonths: revisedUsefulLifeMonths,
     improvementLifeExtensionMonths: lifeExtensionMonths,
-    improvementPreCostTxn: prepared.originalCostTxn,
-    improvementPreCostBase: prepared.originalCostBase,
-    improvementPreUsefulLifeMonths: prepared.currentUsefulLifeMonths,
-    improvementPreRemainingLifeMonths: prepared.currentRemainingUsefulLifeMonths,
+    improvementPreCostTxn: prepared.improvementPreCostTxn,
+    improvementPreCostBase: prepared.improvementPreCostBase,
+    improvementPreUsefulLifeMonths: prepared.improvementPreUsefulLifeMonths,
+    improvementPreRemainingLifeMonths: prepared.improvementPreRemainingUsefulLifeMonths,
     note: "CARI AP FIXED_ASSET improvement capitalization",
     createdByUserId: userId,
   });
@@ -4734,6 +4743,26 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
     linkRole: "SUPPORTING",
   });
 
+  if (Number(prepared.reorderableLaterSamePeriodImprovementCount || 0) > 0) {
+    await resequenceLaterSamePeriodImprovementTransactionsTx(tx, {
+      tenantId,
+      assetId: targetFixedAssetId,
+      effectivePeriodKey: prepared.effectivePeriodKey,
+      currentImprovementTransactionId: improvementTransactionId,
+      currentImprovementEffectiveDate: improvementEffectiveDate,
+      currentImprovementGrossAmountTxn: insertedImprovementGrossAmountTxn,
+      currentImprovementGrossAmountBase: insertedImprovementGrossAmountBase,
+      currentImprovementAccumDeprAmountTxn: prepared.effectivePreAccumDeprTxn,
+      currentImprovementAccumDeprAmountBase: prepared.effectivePreAccumDeprBase,
+      currentImprovementNbvAmountTxn: insertedImprovementNbvAmountTxn,
+      currentImprovementNbvAmountBase: insertedImprovementNbvAmountBase,
+      currentImprovementUsefulLifeMonths:
+        prepared.currentImprovementNextUsefulLifeMonths,
+      currentImprovementRemainingUsefulLifeMonths:
+        prepared.currentImprovementNextRemainingUsefulLifeMonths,
+    });
+  }
+
   if (prepared.retroCatchUpRequired) {
     await postRetroImprovementCurrentPeriodCatchUpTx(tx, {
       tenantId,
@@ -4742,6 +4771,7 @@ async function applyApFixedAssetImproveExistingPostingLineTx(tx, {
       postingDate: documentDate,
       postImprovementNbvTxn: nextNbvTxn,
       postImprovementNbvBase: nextNbvBase,
+      improvementTransactionId,
       legalEntityId,
       bookId,
       fiscalPeriodId,

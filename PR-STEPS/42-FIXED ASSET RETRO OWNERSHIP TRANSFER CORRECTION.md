@@ -1,8 +1,9 @@
-# 40 - FIXED ASSET RETRO OWNERSHIP TRANSFER CORRECTION
+# 42 - FIXED ASSET RETRO OWNERSHIP TRANSFER CORRECTION
 
 ## Status
 - Planned
 - Follow-up track after Track 38 fixed-assets lifecycle/depreciation MVP
+- Refreshed to account for Track 39 `IMPROVE_EXISTING` behavior and Track 40 line-charge allocation interaction
 
 ## Purpose
 Add a proper SaaS-grade correction workflow for **late-entered ownership transfers** when depreciation for one or more impacted periods has already been posted.
@@ -10,6 +11,22 @@ Add a proper SaaS-grade correction workflow for **late-entered ownership transfe
 Today, the strict accounting-safe answer in the repo is to unwind posted depreciation, reverse any late-posted transfer, and then repost everything in the right chronology. That is valid as a control model, but it is not a good day-to-day end-user workflow.
 
 This track introduces a dedicated **retro ownership transfer correction** flow so users can record the real historical transfer date, keep already-posted depreciation history immutable where appropriate, and book a current-period correction / true-up instead of forcing broad depreciation-run reversals.
+
+## Interaction With Track 40
+
+Track 40 (`LINE CHARGES AND ANCILLARY COST ALLOCATION`) is upstream of this track, but once it lands it can materially change the asset basis that retro ownership correction must reason over.
+
+Locked interaction rule:
+
+- if a fixed-asset improvement line received allocated charges in Track 40, Track 41 must treat the resulting posted improvement amount as the ordinary asset basis increase
+- Track 41 must **not** read `cari_document_line_charge_targets` directly to rebuild owner-attribution history
+- retro ownership transfer correction must instead consume the already-posted `IMPROVEMENT`, depreciation, and schedule history that Track 39/40 produced
+
+Practical meaning:
+
+- charge allocation is upstream cost formation
+- retro ownership transfer correction is downstream owner-attribution correction
+- the correction engine should see only the final improvement/depreciation basis, not duplicate charge math itself
 
 ## Why a Separate Track
 
@@ -49,7 +66,7 @@ This workflow must:
 
 - capture the real historical ownership effective date
 - determine which already-posted depreciation periods are affected
-- calculate the owner-OU attribution delta
+- calculate the owner-OU attribution delta using the effective posted depreciation basis, including any earlier `IMPROVEMENT` amounts that may already include Track 40 allocated charges
 - persist corrected ownership history for future depreciation attribution
 - post a **current-period correction / true-up**
 - post any required current-period balance-sheet owner move using current carrying values on the correction posting date
@@ -91,6 +108,7 @@ Future-attribution lock:
 - future depreciation attribution must read a correction-aware owner-history source
 - the current-period carrying-value owner move must not be the only source of owner-timeline logic
 - patch `loadAssetDepreciationLifecycleHistory(...)` or introduce a correction-aware equivalent consumed by both preview and future depreciation generation
+- that lifecycle/history reader must remain charge-agnostic: if Track 40 has already augmented an `IMPROVEMENT`, consume the resulting fixed-asset state/transactions rather than re-reading CARI charge tables
 
 ## Decision Lock
 
@@ -461,6 +479,7 @@ The backend must not:
 3. Build a deterministic impacted-period discovery engine that:
    - reads ownership transfer history
    - reads posted depreciation runs and run allocations
+   - reads improvement/lifecycle history using the same correction-aware fixed-asset timeline the depreciation engine consumes, so any charge-augmented `IMPROVEMENT` basis coming from Track 40 is already reflected without separate charge-table joins
    - identifies the first impacted posted month from `actualEffectiveDate`
    - stops at the earliest of the next posted owner-changing lifecycle boundary, a terminal disposal boundary, owner-history alignment, or the current open-period cutoff
 4. Reuse existing depreciation owner-split logic where possible so day-split behavior stays aligned with `DAILY_PRORATA` and current owner-allocation semantics.
@@ -524,6 +543,9 @@ The backend must not:
    - repost the affected run(s)
    - persist a correction header showing that the chosen resolution mode was unwind/repost, not current-period true-up
 8. Enforce current-period open-period checks for any correction posting and any carrying-value owner move.
+9. Keep the journal logic decoupled from Track 40 internals:
+   - if an impacted period includes depreciation on a charge-augmented improvement, reclass the already-posted depreciation attribution delta only
+   - do not generate any extra charge-allocation journal lines or re-open CARI charge math in this track
 
 ### Explicit non-goals
 - Do not post a misleading historical carrying-value move dated with `actualEffectiveDate`
@@ -654,6 +676,7 @@ The backend must not:
 1. Add smoke coverage for at least these cases:
    - scenario 1: one posted month impacted, preview result correct, chosen resolution path behaves as designed
    - scenario 2: multiple posted months impacted, current-period true-up posted correctly
+   - owner correction after a posted `IMPROVEMENT` that already includes Track 40 allocated charges still computes the correct owner-attribution delta from the effective depreciation basis
    - plain ownership transfer blocked and rerouted when chronology is unsafe
    - closed-year correction blocked or routed according to locked policy
    - owner-based reporting includes persisted correction rows in the chosen corrected mode

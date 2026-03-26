@@ -1,8 +1,9 @@
-# 41 - LINE CHARGES AND ANCILLARY COST ALLOCATION
+# 40 - LINE CHARGES AND ANCILLARY COST ALLOCATION
 
 ## Status
 - Planned
-- Depends on Track 39 (Subledger-Aware Lines) being complete through at least SL05
+- Refreshed for the post-SL27 / SL29 fixed-asset improvement behavior in Track 39
+- Depends on Track 39 (Subledger-Aware Lines) being complete through at least SL05, SL07, SL27, and SL29
 
 ## Purpose
 Enable **ancillary cost distribution** across CARI document lines — so that service/freight/installation charges on a purchase bill can be allocated to FIXED_ASSET or STOCK lines before posting, exactly how SAP Item Charges, Dynamics 365 Charges, and Oracle Landed Costs handle it.
@@ -93,6 +94,15 @@ Key rules:
 - A charge line **cannot target another charge line** (no cascading)
 - A charge line **must have at least one target** — validation rejects orphan charges
 
+### Refresh Note: Track 39 Improvements
+
+This plan was drafted before Track 39's `IMPROVE_EXISTING` flow grew into a richer fixed-asset path. The current dependency assumptions for this track are:
+
+- Track 39 is effectively a 30-step track now, not 25
+- ancillary charges may target not only `FIXED_ASSET + AUTO_CREATE`, but also `FIXED_ASSET + LINK_EXISTING` and `FIXED_ASSET + IMPROVE_EXISTING`
+- if a charge targets `IMPROVE_EXISTING`, the allocated amount becomes part of the **effective improvement amount** and must feed the existing `improvementEffectiveDate`, same-month day-proration, suspended/reactivated-asset handling, and late-entry current-period `CATCH_UP` behavior already implemented in Track 39
+- if Track 42 later introduces retro ownership transfer correction, that track should consume the resulting posted improvement/depreciation basis from fixed-asset history; it should not depend on charge-target rows or duplicate charge-allocation math
+
 ### Multi-Target Distribution
 
 A single charge line can target multiple lines:
@@ -145,7 +155,7 @@ Result:
 ## `STEP-LC01` — Migration: add charge allocation columns and charge targets table
 
 ### Patch target
-`backend/src/migrations/` — new migration file
+`backend/src/migrations/` — new migration file (expected next slot after `m152`, and add it to `backend/src/migrations/index.js`)
 
 ### In scope
 1. Add `charge_allocation_method` ENUM('NONE','EQUAL','BY_AMOUNT','BY_QTY','MANUAL') NOT NULL DEFAULT 'NONE' to `cari_document_lines`
@@ -167,6 +177,7 @@ Result:
 - Migration runs cleanly on existing database
 - New column defaults preserve existing line behavior
 - Rollback drops the table and column cleanly
+- Migration is wired into `backend/src/migrations/index.js`
 
 ---
 
@@ -180,6 +191,7 @@ Result:
 2. Accept `chargeTargets` array on charge lines: `[{ targetLineNo, allocatedAmountTxn? }]`
    - `targetLineNo` references another line's `line_no` on the same document (not DB id — lines may not be persisted yet)
    - `allocatedAmountTxn` required only when method = `MANUAL`, optional otherwise (computed by engine)
+   - frontend note: the UI may keep target selections by stable client `rowId`, but the mutation payload sent to the backend serializes them as `targetLineNo`
 3. Validation rules:
    - If `chargeAllocationMethod != 'NONE'`:
      - `subledgerType` must be `'NONE'` (or absent → inferred NONE)
@@ -193,6 +205,12 @@ Result:
    - If method != `MANUAL` and method != `NONE`:
      - `allocatedAmountTxn` on targets is ignored (computed by engine)
 4. Reject `chargeAllocationMethod` on AR documents (AP-only in V1)
+5. Add an explicit second-pass cross-line validation phase after single-line parsing:
+   - target line exists on the same payload
+   - target is not the same line
+   - target is not another charge line
+   - duplicate target rows are rejected
+   - manual allocations sum to the charge line net within tolerance
 
 ### Explicit non-goals
 - No BY_WEIGHT validation
@@ -226,6 +244,9 @@ Result:
    - Re-create from the updated line data
 3. On document deletion:
    - CASCADE handles cleanup (FK ON DELETE CASCADE)
+4. Extend the document read/reload path:
+   - load persisted charge target rows alongside lines/taxes/stock links/generated fixed assets
+   - expose `chargeAllocationMethod` and `chargeTargets` back through the document payload so draft save/reload preserves the charge graph
 
 ### Explicit non-goals
 - No standalone charge target API — targets are managed as part of the document lines payload
@@ -236,13 +257,14 @@ Result:
 - Editing a draft document recalculates charge allocations
 - Deleting a document removes all charge target rows
 - Rounding residual is deterministically assigned to the last target line
+- Reloading an existing draft returns the same charge configuration the user saved
 
 ---
 
 ## `STEP-LC04` — Backend CARI posting: charge allocation engine and cost augmentation
 
 ### Patch target
-`backend/src/services/cari.posting.service.js`
+`backend/src/services/cari.document.service.js`
 
 ### In scope
 1. **New pre-posting phase**: Before the existing subledger side-effects (SL05/SL06), run the charge allocation engine:
@@ -253,10 +275,12 @@ Result:
    - For each target line in `augmentedCosts`:
      - `effective_net_txn = line_net_amount_txn + allocated_charge_txn`
      - `effective_net_base = line_net_amount_base + allocated_charge_base`
-   - Pass `effective_net` values to SL05 (FA capitalization) and stock posting
+   - Pass `effective_net` values to SL05 (FA capitalization), stock posting, and Track 39's `IMPROVE_EXISTING` posting path
+   - If the target line uses `fixedAssetMode = IMPROVE_EXISTING`, the allocated charge becomes part of the effective improvement amount that feeds the existing `improvementEffectiveDate`, same-month day-proration, suspended/reactivated-asset handling, and late-entry current-period `CATCH_UP` logic
 3. **Journal entry treatment for charge lines**:
    - Charge lines do NOT generate their own debit journal line
    - Their amount is absorbed into target lines' debit entries
+   - patch the existing line-driven journal builder so it skips standalone debit generation for charge lines and uses augmented amounts when constructing target-line debit entries
    - The credit side (AP payable) includes the full document total (charge amounts still owed to vendor)
    - Charge line tax (if any) posts normally as a separate tax journal line
 4. **Validation at posting time**:
@@ -270,6 +294,7 @@ Result:
 
 ### Definition of done
 - Posting a bill with charge lines creates assets/stock at augmented costs
+- Posting a bill with a charge line targeting `FIXED_ASSET + IMPROVE_EXISTING` uses the augmented improvement amount end to end
 - Charge lines produce no standalone debit journal entry
 - Document total and AP payable amount are correct (include charge amounts)
 - Tax on charge lines posts correctly
@@ -280,7 +305,8 @@ Result:
 ## `STEP-LC05` — Frontend: charge line UI (allocation method selector, target line picker)
 
 ### Patch target
-`frontend/src/pages/cari/` — document form components
+`frontend/src/pages/cari/CariDocumentsPage.jsx`
+`frontend/src/pages/cari/cariDocumentsUtils.js`
 
 ### In scope
 1. **Charge toggle on line entry**: When user selects a STANDARD line with `subledger_type = 'NONE'`, show an optional "Distribute as charge" toggle
@@ -289,11 +315,15 @@ Result:
    - Display: line number, description, amount, subledger type badge
    - Pre-select all eligible lines by default (user can deselect)
    - Disable other charge lines in the picker (no cascading)
+   - keep target selection in UI state by stable line `rowId`; serialize to `targetLineNo` only when building the mutation payload
 4. **Manual allocation inputs**: When method = MANUAL, show per-target amount fields
    - Running total vs charge line amount with difference indicator
    - Validation: sum must match charge line net amount
 5. **Computed allocation preview**: For non-MANUAL methods, show read-only per-target amounts
 6. **AP-only guard**: Charge UI elements hidden on AR documents
+7. **Posting-account UX behavior**: When a line is marked as a charge line:
+   - hide or visually disable misleading normal posting-account input/defaults for that line
+   - make it clear the line's debit effect will be absorbed into target lines at posting time
 
 ### Explicit non-goals
 - No drag-and-drop allocation
@@ -305,6 +335,7 @@ Result:
 - Computed allocations display correctly for EQUAL/BY_AMOUNT/BY_QTY
 - Manual entry validates sum matches
 - Charge UI is hidden on AR documents
+- Charge-line UX does not imply that a normal standalone posting account will be used for the debit side
 - Non-charge lines are unaffected by the new UI elements
 
 ---
@@ -312,7 +343,8 @@ Result:
 ## `STEP-LC06` — Frontend: allocation preview summary on document form
 
 ### Patch target
-`frontend/src/pages/cari/` — document form components
+`frontend/src/pages/cari/CariDocumentsPage.jsx`
+`frontend/src/pages/cari/cariDocumentsUtils.js`
 
 ### In scope
 1. **Allocation summary panel**: Below the line grid (or as an expandable section), show a table:
@@ -324,6 +356,7 @@ Result:
 3. **Asset preview update**: If target line is FIXED_ASSET with AUTO_CREATE, update the existing preview text to show effective per-unit cost:
    - Before: "Posting will create 10 assets at 10,000 TL each"
    - After: "Posting will create 10 assets at 11,000 TL each (includes 10,000 TL allocated charges)"
+   - If target line is FIXED_ASSET with `IMPROVE_EXISTING`, show that the improvement amount already includes allocated charges before the existing improvement-effective-date logic runs
 4. Show summary only when at least one charge line exists on the document
 
 ### Explicit non-goals
@@ -341,16 +374,17 @@ Result:
 ## `STEP-LC07` — Backend reversal: unwind charge allocations when document is reversed
 
 ### Patch target
-`backend/src/services/cari.posting.service.js` (reversal path)
+`backend/src/services/cari.document.service.js` (reversal path)
 
 ### In scope
 1. **Reversal must use augmented costs**: When reversing a posted document that had charge lines:
    - The reversal journal must reverse the **augmented** amounts (not the original line amounts)
    - Target assets were capitalized at augmented cost → reversal must decapitalize at the same augmented cost
+   - Target asset improvements posted at augmented cost → reversal must undo the same augmented improvement amount and any linked late-entry depreciation delta created from it
    - Target stock was received at augmented cost → reversal must issue at the same augmented cost
 2. **Charge target rows preservation**: Charge target rows with `allocated_amount` values are preserved on reversal (they're part of the document's audit trail)
    - The document status moves to REVERSED, but the charge allocation data remains queryable
-3. **Integration with SL07**: Track 39's reversal logic (SL07) already handles FA decapitalization and stock reversal — this step ensures the amounts passed to SL07 are the augmented amounts, not the raw line amounts
+3. **Integration with SL07 / SL28**: Track 39's reversal logic already handles FA decapitalization, improvement reversal, linked `CATCH_UP` reversal, and stock reversal — this step ensures the amounts passed into those paths are the augmented amounts, not the raw line amounts
 4. **Reversal journal structure**:
    - Charge lines still produce no standalone reversal debit — their reversal is embedded in target line reversals
    - AP payable reversal uses the full document total (includes charges)
@@ -362,6 +396,7 @@ Result:
 ### Definition of done
 - Reversing a posted bill with charges correctly reverses augmented asset/stock costs
 - FA assets created at augmented cost are decapitalized at augmented cost
+- FA improvements posted at augmented cost are reversed at the same augmented amount, including any linked late-entry depreciation delta
 - Stock received at augmented cost is reversed at augmented cost
 - Charge target rows preserved for audit
 - AP payable fully reversed
@@ -371,12 +406,15 @@ Result:
 ## `STEP-LC08` — Backend: STOCK integration — landed cost impact on inventory valuation
 
 ### Patch target
-`backend/src/services/inventory.service.js` (or equivalent stock costing path)
+`backend/src/services/cari.document.service.js`
+`backend/src/services/inventory.service.js`
 
 ### In scope
 1. **Augmented cost passthrough to inventory**: When a STOCK line receives allocated charges, the stock receipt must use the **effective cost** (original + charges), not the raw line amount
    - This affects the item's weighted-average cost or FIFO layer cost
 2. **Stock link amounts**: `cari_document_line_stock_links.posted_net_amount_txn/base` must reflect the augmented amount
+   - patch the CARI stock-link write/update path so pending stock links are seeded from augmented amounts rather than raw `line_net_amount_*`
+   - lock one source of truth: the same augmented amounts used by posting must also be the amounts written to stock links, so preview, pending-link state, and posted valuation cannot diverge
 3. **Inventory valuation report impact**: No report changes needed — reports already read from stock movement amounts, which will now include allocated charges
 4. **Audit trail**: The stock movement record should include a reference or note that the cost includes allocated charges (for transparency in cost analysis)
 
@@ -396,7 +434,7 @@ Result:
 ## `STEP-LC09` — Smoke suite: charge allocation + mixed flows
 
 ### Patch target
-`backend/src/tests/` or `tests/`
+`backend/scripts/` — add dedicated CARI/FA/Inventory smoke scripts following existing repo convention
 
 ### In scope
 1. **Unit tests for allocation engine**:
@@ -408,10 +446,13 @@ Result:
    - MANUAL allocation with sum mismatch → rejection
 2. **Integration tests**:
    - AP bill with 1 charge line + 1 FIXED_ASSET line → assets created at augmented cost
+   - AP bill with 1 charge line targeting a `FIXED_ASSET + IMPROVE_EXISTING` line → existing asset improvement posts at augmented cost
+   - AP bill with retro `improvementEffectiveDate` + charge line targeting that improvement → current-period `CATCH_UP` uses the augmented improvement amount
    - AP bill with 1 charge line + 1 STOCK line → stock received at augmented cost
    - AP bill with 1 charge line + 2 targets (mixed FIXED_ASSET + STOCK) → correct split
    - AP bill with 2 charge lines targeting the same line → amounts stack correctly
    - AP bill with charge line + NONE target line → charge distributes to expense
+   - Draft line reorder after selecting charge targets → UI still serializes correct `targetLineNo` values and reload preserves the intended target graph
    - Reversal of posted bill with charges → full unwind
    - Edit draft bill with charges → recalculates allocations
 3. **Validation tests**:
@@ -429,6 +470,7 @@ Result:
 - All validation rejection cases covered
 - Mixed-subledger charge flows tested end-to-end
 - Reversal flows tested
+- Smoke scripts follow the existing `backend/scripts/test-*.js` pattern and are suitable for release-gate chaining
 
 ---
 
@@ -451,6 +493,10 @@ Multiple files — verification checklist
 4. **Documentation**:
    - API changelog documents new fields
    - User-facing help text for charge allocation methods
+5. **Repo-shape release checks**:
+   - migration file is added to `backend/src/migrations/index.js`
+   - `backend/openapi.yaml` is regenerated through `backend/scripts/generate-openapi.js`
+   - any charge-specific smoke scripts can be chained through the existing `backend/scripts/` release-gate pattern
 
 ### Explicit non-goals
 - No migration of historical bills to use charge allocation retroactively
@@ -482,32 +528,32 @@ Multiple files — verification checklist
 - Risk: Medium — touches `replaceDocumentLinesTx` which Track 39 SL03 also modifies
 
 ### `STEP-LC04`
-- Modifies: `backend/src/services/cari.posting.service.js`
-- Depends on: LC03, Track 39 SL05 (FA posting hooks exist)
+- Modifies: `backend/src/services/cari.document.service.js`
+- Depends on: LC03, Track 39 SL05 (FA capitalization hooks exist), Track 39 SL27 (IMPROVE_EXISTING posting and catch-up path exist)
 - Risk: High — core posting path augmentation, must not break non-charge posting
 
 ### `STEP-LC05`
-- Modifies: `frontend/src/pages/cari/` (document form components)
+- Modifies: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/cariDocumentsUtils.js`
 - Depends on: LC02 (validator accepts charge fields), Track 39 SL10/SL11 (subledger UI exists)
 - Risk: Medium — new UI elements on existing form
 
 ### `STEP-LC06`
-- Modifies: `frontend/src/pages/cari/` (document form components)
+- Modifies: `frontend/src/pages/cari/CariDocumentsPage.jsx`, `frontend/src/pages/cari/cariDocumentsUtils.js`
 - Depends on: LC05
 - Risk: Low — read-only display component
 
 ### `STEP-LC07`
-- Modifies: `backend/src/services/cari.posting.service.js` (reversal path)
-- Depends on: LC04, Track 39 SL07 (reversal logic exists)
+- Modifies: `backend/src/services/cari.document.service.js` (reversal path)
+- Depends on: LC04, Track 39 SL07 (subledger reversal hooks exist), Track 39 SL28 (improvement reversal path exists)
 - Risk: High — reversal amounts must exactly match posting amounts
 
 ### `STEP-LC08`
-- Modifies: `backend/src/services/inventory.service.js` or equivalent
+- Modifies: `backend/src/services/cari.document.service.js`, `backend/src/services/inventory.service.js`
 - Depends on: LC04
 - Risk: Medium — affects inventory costing, must preserve existing valuation logic
 
 ### `STEP-LC09`
-- Modifies: `backend/src/tests/` or `tests/`
+- Modifies: `backend/scripts/`
 - Depends on: LC01–LC08
 - Risk: Low — test-only
 
@@ -523,13 +569,18 @@ This track assumes Track 39 is complete through at least:
 - **SL01**: `subledger_type` column exists on `cari_document_lines`
 - **SL02**: Subledger validation logic exists (charge validation extends it)
 - **SL03**: `replaceDocumentLinesTx` handles subledger columns (charge target CRUD hooks into same function)
-- **SL05**: AP FIXED_ASSET posting hooks exist (charge augmentation runs before them)
-- **SL07**: Reversal logic handles subledger lines (charge reversal integrates with it)
+- **SL05**: AP FIXED_ASSET capitalization hooks exist (charge augmentation runs before them)
+- **SL07**: Reversal logic handles subledger lines
+- **SL27**: `IMPROVE_EXISTING` exists with `improvementEffectiveDate`, same-month day-proration, suspended/reactivated-asset support, and current-period `CATCH_UP`
+- **SL29**: The CARI form already understands the richer FA line modes and target-asset UI patterns the charge UI now needs to coexist with
 
-Track 39's existing posting flow is **not changed** — charge allocation is a **pre-processing step** that augments line amounts before the existing SL05/SL06 hooks run.
+Track 39's existing posting flow is **not redesigned** — charge allocation remains a **pre-processing step** that augments line amounts before the existing SL05 / SL06 / SL27 hooks run.
 
 ### On Track 38 (Fixed Assets)
-No direct dependency beyond what Track 39 already requires. Charge allocation is transparent to the FA module — it just sees higher `acquisition_cost` values on the assets created by SL05.
+No direct dependency beyond what Track 39 already requires. Charge allocation is transparent to the FA module — it only changes the effective amount seen by FA posting:
+
+- higher acquisition cost on `AUTO_CREATE` / `LINK_EXISTING`
+- higher improvement amount on `IMPROVE_EXISTING`
 
 ### On existing Inventory module
 LC08 requires the stock receipt costing path to accept an external `effective_cost` override rather than always computing cost from the raw line amount. This may require a minor interface change in the inventory service.

@@ -4981,13 +4981,22 @@ async function loadLatestPostedDepreciationScheduleLineBeforePeriod({
 
 const FIXED_ASSET_IMPROVEMENT_ELIGIBLE_STATUSES = new Set([
   "ACTIVE",
+  "SUSPENDED",
   "FULLY_DEPRECIATED",
+]);
+
+const FIXED_ASSET_IMPROVEMENT_COMPATIBLE_LATER_TRANSACTION_TYPES = new Set([
+  "SUSPEND",
+  "REACTIVATE",
+  "PHYSICAL_MOVE",
 ]);
 
 const FIXED_ASSET_IMPROVEMENT_REASON_CODES = Object.freeze({
   ASSET_STATUS_INELIGIBLE: "FA_IMPROVEMENT_ASSET_STATUS_INELIGIBLE",
   NON_DEPRECIABLE_ASSET: "FA_IMPROVEMENT_NON_DEPRECIABLE_ASSET",
   LATER_FIXED_ASSET_ACTIVITY: "FA_IMPROVEMENT_LATER_FIXED_ASSET_ACTIVITY",
+  SAME_DAY_LIFE_CHANGE_CONFLICT:
+    "FA_IMPROVEMENT_SAME_DAY_LIFE_CHANGE_CONFLICT",
   DEPRECIATION_NOT_CURRENT: "FA_IMPROVEMENT_DEPRECIATION_NOT_CURRENT",
   DRAFT_RUN_EXISTS: "FA_IMPROVEMENT_DRAFT_RUN_EXISTS",
   FULLY_DEPRECIATED_REQUIRES_LIFE_CHANGE:
@@ -4998,6 +5007,152 @@ const FIXED_ASSET_IMPROVEMENT_REASON_CODES = Object.freeze({
 
 function buildFixedAssetImprovementError(message, details = null) {
   return badRequest(message, details);
+}
+
+function hasImprovementLifeChange(input) {
+  return input?.revisedUsefulLifeMonths != null || input?.lifeExtensionMonths != null;
+}
+
+function resolveImprovementElapsedLifeMonthsFromSnapshot(
+  usefulLifeMonths,
+  remainingUsefulLifeMonths,
+  fallbackElapsedLifeMonths = 0
+) {
+  if (
+    usefulLifeMonths != null
+    && remainingUsefulLifeMonths != null
+  ) {
+    return Math.max(
+      Number(usefulLifeMonths) - Number(remainingUsefulLifeMonths),
+      0
+    );
+  }
+  return Math.max(0, Number(fallbackElapsedLifeMonths || 0));
+}
+
+function applyImprovementLifeChangeToSnapshot({
+  currentUsefulLifeMonths = null,
+  currentRemainingUsefulLifeMonths = null,
+  elapsedLifeMonths = 0,
+  revisedUsefulLifeMonths = null,
+  lifeExtensionMonths = null,
+}) {
+  let nextUsefulLifeMonths = currentUsefulLifeMonths;
+  let nextRemainingUsefulLifeMonths = currentRemainingUsefulLifeMonths;
+
+  if (revisedUsefulLifeMonths != null) {
+    nextUsefulLifeMonths = Number(revisedUsefulLifeMonths);
+    nextRemainingUsefulLifeMonths = Math.max(
+      Number(revisedUsefulLifeMonths) - Math.max(0, Number(elapsedLifeMonths || 0)),
+      0
+    );
+  } else if (lifeExtensionMonths != null) {
+    nextRemainingUsefulLifeMonths = Math.max(
+      Number(currentRemainingUsefulLifeMonths || 0) + Number(lifeExtensionMonths),
+      0
+    );
+    nextUsefulLifeMonths = currentUsefulLifeMonths != null
+      ? Math.max(
+        Math.max(0, Number(elapsedLifeMonths || 0)) + nextRemainingUsefulLifeMonths,
+        0
+      )
+      : currentUsefulLifeMonths;
+  }
+
+  return {
+    usefulLifeMonths: nextUsefulLifeMonths,
+    remainingUsefulLifeMonths: nextRemainingUsefulLifeMonths,
+  };
+}
+
+function mapImprovementChainTransactionRow(row) {
+  return {
+    id: Number(row.id),
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    grossAmountTxn: row.gross_amount_txn != null ? Number(row.gross_amount_txn) : null,
+    grossAmountBase: row.gross_amount_base != null ? Number(row.gross_amount_base) : null,
+    accumDeprAmountTxn: row.accum_depr_amount_txn != null ? Number(row.accum_depr_amount_txn) : null,
+    accumDeprAmountBase: row.accum_depr_amount_base != null ? Number(row.accum_depr_amount_base) : null,
+    nbvAmountTxn: row.nbv_amount_txn != null ? Number(row.nbv_amount_txn) : null,
+    nbvAmountBase: row.nbv_amount_base != null ? Number(row.nbv_amount_base) : null,
+    improvementPreCostTxn: row.improvement_pre_cost_txn != null
+      ? Number(row.improvement_pre_cost_txn)
+      : null,
+    improvementPreCostBase: row.improvement_pre_cost_base != null
+      ? Number(row.improvement_pre_cost_base)
+      : null,
+    revisedUsefulLifeMonths: row.improvement_revised_useful_life_months != null
+      ? Number(row.improvement_revised_useful_life_months)
+      : null,
+    lifeExtensionMonths: row.improvement_life_extension_months != null
+      ? Number(row.improvement_life_extension_months)
+      : null,
+    improvementPreUsefulLifeMonths: row.improvement_pre_useful_life_months != null
+      ? Number(row.improvement_pre_useful_life_months)
+      : null,
+    improvementPreRemainingLifeMonths: row.improvement_pre_remaining_life_months != null
+      ? Number(row.improvement_pre_remaining_life_months)
+      : null,
+  };
+}
+
+async function loadPostedImprovementTransactionsForAssetInPeriod({
+  tenantId,
+  assetId,
+  periodKey,
+  queryFn = query,
+  forUpdate = false,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+  if (!periodKey) {
+    return [];
+  }
+
+  const periodStart = startOfMonthUtc(
+    parseDateOnlyStrict(`${periodKey}-01`, "periodKey")
+  );
+  const periodEnd = endOfMonthUtc(periodStart);
+  const lockClause = forUpdate ? " FOR UPDATE" : "";
+  const result = await queryFn(
+    `SELECT fat.id,
+            fat.effective_date,
+            fat.gross_amount_txn,
+            fat.gross_amount_base,
+            fat.accum_depr_amount_txn,
+            fat.accum_depr_amount_base,
+            fat.nbv_amount_txn,
+            fat.nbv_amount_base,
+            fat.improvement_pre_cost_txn,
+            fat.improvement_pre_cost_base,
+            fat.improvement_revised_useful_life_months,
+            fat.improvement_life_extension_months,
+            fat.improvement_pre_useful_life_months,
+            fat.improvement_pre_remaining_life_months
+       FROM fixed_asset_transactions fat
+      WHERE fat.tenant_id = ?
+        AND fat.asset_id = ?
+        AND fat.transaction_type = 'IMPROVEMENT'
+        AND fat.status = 'POSTED'
+        AND fat.reversal_transaction_id IS NULL
+        AND fat.effective_date >= ?
+        AND fat.effective_date <= ?
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY fat.effective_date ASC, fat.id ASC${lockClause}`,
+    [
+      tenantId,
+      assetId,
+      formatDateOnly(periodStart),
+      formatDateOnly(periodEnd),
+    ]
+  );
+
+  return (result.rows || []).map(mapImprovementChainTransactionRow);
 }
 
 async function loadFixedAssetImprovementTargetRow({
@@ -5256,7 +5411,7 @@ export async function prepareFixedAssetImprovementContext({
   const assetStatus = normalizeUpperText(asset.status);
   if (!FIXED_ASSET_IMPROVEMENT_ELIGIBLE_STATUSES.has(assetStatus)) {
     throw buildFixedAssetImprovementError(
-      `${actionLabel} must reference an ACTIVE or FULLY_DEPRECIATED asset`,
+      `${actionLabel} must reference an ACTIVE, SUSPENDED, or FULLY_DEPRECIATED asset`,
       {
         reasonCode:
           FIXED_ASSET_IMPROVEMENT_REASON_CODES.ASSET_STATUS_INELIGIBLE,
@@ -5303,6 +5458,41 @@ export async function prepareFixedAssetImprovementContext({
     assetId: Number(asset.id),
     queryFn,
   });
+  const effectivePeriodKey = derivePeriodKeyFromDate(normalizedEffectiveDate);
+  const postingPeriodKey = derivePeriodKeyFromDate(normalizedPostingDate);
+  const samePeriodImprovementRows = effectivePeriodKey
+    ? await loadPostedImprovementTransactionsForAssetInPeriod({
+      tenantId,
+      assetId: Number(asset.id),
+      periodKey: effectivePeriodKey,
+      queryFn,
+      forUpdate,
+    })
+    : [];
+  const inputHasLifeChange = hasImprovementLifeChange({
+    revisedUsefulLifeMonths,
+    lifeExtensionMonths,
+  });
+  const sameDayLifeChangeBlocker = inputHasLifeChange
+    ? samePeriodImprovementRows.find((row) => (
+      row.effectiveDate === normalizedEffectiveDate
+      && hasImprovementLifeChange(row)
+    )) || null
+    : null;
+  if (sameDayLifeChangeBlocker) {
+    throw buildFixedAssetImprovementError(
+      `${actionLabel} cannot apply another useful-life change on ${normalizedEffectiveDate} ` +
+      `because posted improvement transaction ${sameDayLifeChangeBlocker.id} already changes life on that date`,
+      {
+        reasonCode:
+          FIXED_ASSET_IMPROVEMENT_REASON_CODES.SAME_DAY_LIFE_CHANGE_CONFLICT,
+        assetId: Number(asset.id),
+        blockingTransactionId: Number(sameDayLifeChangeBlocker.id),
+        blockingTransactionType: "IMPROVEMENT",
+        blockingEffectiveDate: normalizedEffectiveDate,
+      }
+    );
+  }
   const laterTransactions = postedTransactions.filter((candidate) => (
     String(candidate.effectiveDate || "") > normalizedEffectiveDate
     || (
@@ -5310,10 +5500,22 @@ export async function prepareFixedAssetImprovementContext({
       && candidate.transactionType === "DEPRECIATION"
     )
   ));
-  const effectivePeriodKey = derivePeriodKeyFromDate(normalizedEffectiveDate);
-  const postingPeriodKey = derivePeriodKeyFromDate(normalizedPostingDate);
+  const reorderableLaterSamePeriodImprovements = samePeriodImprovementRows.filter((row) => (
+    String(row.effectiveDate || "") > normalizedEffectiveDate
+  ));
   const laterNonDepreciationTransaction = laterTransactions.find(
-    (candidate) => candidate.transactionType !== "DEPRECIATION"
+    (candidate) => {
+      if (candidate.transactionType === "DEPRECIATION") {
+        return false;
+      }
+      if (FIXED_ASSET_IMPROVEMENT_COMPATIBLE_LATER_TRANSACTION_TYPES.has(candidate.transactionType)) {
+        return false;
+      }
+      return !(
+        candidate.transactionType === "IMPROVEMENT"
+        && derivePeriodKeyFromDate(candidate.effectiveDate) === effectivePeriodKey
+      );
+    }
   );
   const disallowedLaterDepreciation = laterTransactions.find((candidate) => {
     if (candidate.transactionType !== "DEPRECIATION") {
@@ -5407,17 +5609,59 @@ export async function prepareFixedAssetImprovementContext({
     assetId: Number(asset.id),
     queryFn,
   });
-  const lifeState = resolveFixedAssetImprovementLifeState({
+  const currentLifeState = resolveFixedAssetImprovementLifeState({
     asset,
     postedScheduleCount,
+  });
+  const firstLaterSamePeriodImprovement =
+    reorderableLaterSamePeriodImprovements[0] || null;
+  const improvementPreCostTxn = firstLaterSamePeriodImprovement?.improvementPreCostTxn != null
+    ? roundTransferAmount(firstLaterSamePeriodImprovement.improvementPreCostTxn)
+    : roundTransferAmount(asset.original_cost_txn || 0);
+  const improvementPreCostBase = firstLaterSamePeriodImprovement?.improvementPreCostBase != null
+    ? roundTransferAmount(firstLaterSamePeriodImprovement.improvementPreCostBase)
+    : roundTransferAmount(asset.original_cost_base || 0);
+  const improvementPreUsefulLifeMonths =
+    firstLaterSamePeriodImprovement?.improvementPreUsefulLifeMonths != null
+      ? Number(firstLaterSamePeriodImprovement.improvementPreUsefulLifeMonths)
+      : currentLifeState.currentUsefulLifeMonths;
+  const improvementPreRemainingUsefulLifeMonths =
+    firstLaterSamePeriodImprovement?.improvementPreRemainingLifeMonths != null
+      ? Number(firstLaterSamePeriodImprovement.improvementPreRemainingLifeMonths)
+      : currentLifeState.currentRemainingUsefulLifeMonths;
+  const improvementElapsedLifeMonths = resolveImprovementElapsedLifeMonthsFromSnapshot(
+    improvementPreUsefulLifeMonths,
+    improvementPreRemainingUsefulLifeMonths,
+    currentLifeState.elapsedLifeMonths
+  );
+  const currentImprovementLifeState = applyImprovementLifeChangeToSnapshot({
+    currentUsefulLifeMonths: improvementPreUsefulLifeMonths,
+    currentRemainingUsefulLifeMonths: improvementPreRemainingUsefulLifeMonths,
+    elapsedLifeMonths: improvementElapsedLifeMonths,
     revisedUsefulLifeMonths,
     lifeExtensionMonths,
   });
+  let finalUsefulLifeMonths = currentImprovementLifeState.usefulLifeMonths;
+  let finalRemainingUsefulLifeMonths =
+    currentImprovementLifeState.remainingUsefulLifeMonths;
+  for (const laterImprovement of reorderableLaterSamePeriodImprovements) {
+    const replayedLifeState = applyImprovementLifeChangeToSnapshot({
+      currentUsefulLifeMonths: finalUsefulLifeMonths,
+      currentRemainingUsefulLifeMonths: finalRemainingUsefulLifeMonths,
+      elapsedLifeMonths: improvementElapsedLifeMonths,
+      revisedUsefulLifeMonths: laterImprovement.revisedUsefulLifeMonths,
+      lifeExtensionMonths: laterImprovement.lifeExtensionMonths,
+    });
+    finalUsefulLifeMonths = replayedLifeState.usefulLifeMonths;
+    finalRemainingUsefulLifeMonths = replayedLifeState.remainingUsefulLifeMonths;
+  }
+  const hasAnyLifeChangeInChain =
+    inputHasLifeChange
+    || reorderableLaterSamePeriodImprovements.some((row) => hasImprovementLifeChange(row));
 
   if (
     assetStatus === "FULLY_DEPRECIATED"
-    && revisedUsefulLifeMonths == null
-    && lifeExtensionMonths == null
+    && !hasAnyLifeChangeInChain
   ) {
     throw buildFixedAssetImprovementError(
       `${actionLabel} on a FULLY_DEPRECIATED asset requires revisedUsefulLifeMonths or lifeExtensionMonths`,
@@ -5430,7 +5674,7 @@ export async function prepareFixedAssetImprovementContext({
     );
   }
 
-  if (Number(lifeState.nextRemainingUsefulLifeMonths || 0) <= 0) {
+  if (Number(finalRemainingUsefulLifeMonths || 0) <= 0) {
     throw buildFixedAssetImprovementError(
       `${actionLabel} must result in positive remaining useful life`,
       {
@@ -5439,7 +5683,7 @@ export async function prepareFixedAssetImprovementContext({
             .RESULTING_REMAINING_LIFE_NOT_POSITIVE,
         assetId: Number(asset.id),
         resultingRemainingUsefulLifeMonths: Number(
-          lifeState.nextRemainingUsefulLifeMonths || 0
+          finalRemainingUsefulLifeMonths || 0
         ),
       }
     );
@@ -5456,19 +5700,19 @@ export async function prepareFixedAssetImprovementContext({
     beforePeriodKey: effectivePeriodKey,
     queryFn,
   });
-  const originalCostTxn = roundTransferAmount(asset.original_cost_txn || 0);
-  const originalCostBase = roundTransferAmount(asset.original_cost_base || 0);
+  const assetCurrentOriginalCostTxn = roundTransferAmount(asset.original_cost_txn || 0);
+  const assetCurrentOriginalCostBase = roundTransferAmount(asset.original_cost_base || 0);
   const currentNbvTxn = roundTransferAmount(currentNbv.nbvTxn || 0);
   const currentNbvBase = roundTransferAmount(currentNbv.nbvBase || 0);
   const effectivePreNbvTxn = priorPostedScheduleLine
     ? roundTransferAmount(priorPostedScheduleLine.closingNbvTxn || 0)
     : roundTransferAmount(
-      asset.legacy_nbv_txn != null ? asset.legacy_nbv_txn : originalCostTxn
+      asset.legacy_nbv_txn != null ? asset.legacy_nbv_txn : improvementPreCostTxn
     );
   const effectivePreNbvBase = priorPostedScheduleLine
     ? roundTransferAmount(priorPostedScheduleLine.closingNbvBase || 0)
     : roundTransferAmount(
-      asset.legacy_nbv_base != null ? asset.legacy_nbv_base : originalCostBase
+      asset.legacy_nbv_base != null ? asset.legacy_nbv_base : improvementPreCostBase
     );
   const retroCatchUpRequired = laterTransactions.some(
     (candidate) => candidate.transactionType === "DEPRECIATION"
@@ -5491,14 +5735,24 @@ export async function prepareFixedAssetImprovementContext({
     assetName: asset.name || null,
     assetStatus,
     depreciationMethod,
-    originalCostTxn,
-    originalCostBase,
-    currentUsefulLifeMonths: lifeState.currentUsefulLifeMonths,
+    originalCostTxn: assetCurrentOriginalCostTxn,
+    originalCostBase: assetCurrentOriginalCostBase,
+    assetCurrentOriginalCostTxn,
+    assetCurrentOriginalCostBase,
+    currentUsefulLifeMonths: currentLifeState.currentUsefulLifeMonths,
     currentRemainingUsefulLifeMonths:
-      lifeState.currentRemainingUsefulLifeMonths,
-    nextUsefulLifeMonths: lifeState.nextUsefulLifeMonths,
+      currentLifeState.currentRemainingUsefulLifeMonths,
+    improvementPreCostTxn,
+    improvementPreCostBase,
+    improvementPreUsefulLifeMonths,
+    improvementPreRemainingUsefulLifeMonths,
+    currentImprovementNextUsefulLifeMonths:
+      currentImprovementLifeState.usefulLifeMonths,
+    currentImprovementNextRemainingUsefulLifeMonths:
+      currentImprovementLifeState.remainingUsefulLifeMonths,
+    nextUsefulLifeMonths: finalUsefulLifeMonths,
     nextRemainingUsefulLifeMonths:
-      lifeState.nextRemainingUsefulLifeMonths,
+      finalRemainingUsefulLifeMonths,
     postedScheduleCount,
     effectiveDate: normalizedEffectiveDate,
     postingDate: normalizedPostingDate,
@@ -5506,16 +5760,153 @@ export async function prepareFixedAssetImprovementContext({
     postingPeriodKey,
     currentNbvTxn,
     currentNbvBase,
-    currentAccumDeprTxn: roundTransferAmount(originalCostTxn - currentNbvTxn),
-    currentAccumDeprBase: roundTransferAmount(originalCostBase - currentNbvBase),
+    currentAccumDeprTxn: roundTransferAmount(assetCurrentOriginalCostTxn - currentNbvTxn),
+    currentAccumDeprBase: roundTransferAmount(assetCurrentOriginalCostBase - currentNbvBase),
     effectivePreNbvTxn,
     effectivePreNbvBase,
     effectivePreAccumDeprTxn:
-      roundTransferAmount(originalCostTxn - effectivePreNbvTxn),
+      roundTransferAmount(improvementPreCostTxn - effectivePreNbvTxn),
     effectivePreAccumDeprBase:
-      roundTransferAmount(originalCostBase - effectivePreNbvBase),
+      roundTransferAmount(improvementPreCostBase - effectivePreNbvBase),
     retroCatchUpRequired,
     retroCatchUpThroughPeriodKey,
+    reorderableLaterSamePeriodImprovementCount:
+      reorderableLaterSamePeriodImprovements.length,
+  };
+}
+
+export async function resequenceLaterSamePeriodImprovementTransactionsTx(tx, {
+  tenantId,
+  assetId,
+  effectivePeriodKey,
+  currentImprovementTransactionId,
+  currentImprovementEffectiveDate,
+  currentImprovementGrossAmountTxn,
+  currentImprovementGrossAmountBase,
+  currentImprovementAccumDeprAmountTxn,
+  currentImprovementAccumDeprAmountBase,
+  currentImprovementNbvAmountTxn,
+  currentImprovementNbvAmountBase,
+  currentImprovementUsefulLifeMonths = null,
+  currentImprovementRemainingUsefulLifeMonths = null,
+}) {
+  if (!tx?.query) throw badRequest("tx is required");
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+  if (!effectivePeriodKey) {
+    return {
+      updatedTransactionCount: 0,
+    };
+  }
+
+  const samePeriodImprovementRows = await loadPostedImprovementTransactionsForAssetInPeriod({
+    tenantId,
+    assetId,
+    periodKey: effectivePeriodKey,
+    queryFn: tx.query,
+    forUpdate: true,
+  });
+  const laterSamePeriodImprovements = samePeriodImprovementRows.filter((row) => (
+    Number(row.id || 0) !== Number(currentImprovementTransactionId || 0)
+    && String(row.effectiveDate || "") > String(currentImprovementEffectiveDate || "")
+  ));
+  if (!laterSamePeriodImprovements.length) {
+    return {
+      updatedTransactionCount: 0,
+      finalUsefulLifeMonths: currentImprovementUsefulLifeMonths,
+      finalRemainingUsefulLifeMonths: currentImprovementRemainingUsefulLifeMonths,
+    };
+  }
+
+  const elapsedLifeMonths = resolveImprovementElapsedLifeMonthsFromSnapshot(
+    currentImprovementUsefulLifeMonths,
+    currentImprovementRemainingUsefulLifeMonths,
+    0
+  );
+  let rollingGrossTxn = roundTransferAmount(currentImprovementGrossAmountTxn || 0);
+  let rollingGrossBase = roundTransferAmount(currentImprovementGrossAmountBase || 0);
+  let rollingAccumTxn = roundTransferAmount(currentImprovementAccumDeprAmountTxn || 0);
+  let rollingAccumBase = roundTransferAmount(currentImprovementAccumDeprAmountBase || 0);
+  let rollingNbvTxn = roundTransferAmount(currentImprovementNbvAmountTxn || 0);
+  let rollingNbvBase = roundTransferAmount(currentImprovementNbvAmountBase || 0);
+  let rollingUsefulLifeMonths = currentImprovementUsefulLifeMonths;
+  let rollingRemainingUsefulLifeMonths = currentImprovementRemainingUsefulLifeMonths;
+  let updatedTransactionCount = 0;
+
+  for (const laterImprovement of laterSamePeriodImprovements) {
+    const costDeltaTxn = roundTransferAmount(
+      Number(laterImprovement.grossAmountTxn || 0)
+      - Number(laterImprovement.improvementPreCostTxn || 0)
+    );
+    const costDeltaBase = roundTransferAmount(
+      Number(laterImprovement.grossAmountBase || 0)
+      - Number(laterImprovement.improvementPreCostBase || 0)
+    );
+    const nextGrossTxn = roundTransferAmount(rollingGrossTxn + costDeltaTxn);
+    const nextGrossBase = roundTransferAmount(rollingGrossBase + costDeltaBase);
+    const nextNbvTxn = roundTransferAmount(rollingNbvTxn + costDeltaTxn);
+    const nextNbvBase = roundTransferAmount(rollingNbvBase + costDeltaBase);
+    const nextAccumTxn = roundTransferAmount(nextGrossTxn - nextNbvTxn);
+    const nextAccumBase = roundTransferAmount(nextGrossBase - nextNbvBase);
+    const replayedLifeState = applyImprovementLifeChangeToSnapshot({
+      currentUsefulLifeMonths: rollingUsefulLifeMonths,
+      currentRemainingUsefulLifeMonths: rollingRemainingUsefulLifeMonths,
+      elapsedLifeMonths,
+      revisedUsefulLifeMonths: laterImprovement.revisedUsefulLifeMonths,
+      lifeExtensionMonths: laterImprovement.lifeExtensionMonths,
+    });
+
+    await tx.query(
+      `UPDATE fixed_asset_transactions
+          SET gross_amount_txn = ?,
+              gross_amount_base = ?,
+              accum_depr_amount_txn = ?,
+              accum_depr_amount_base = ?,
+              nbv_amount_txn = ?,
+              nbv_amount_base = ?,
+              improvement_pre_cost_txn = ?,
+              improvement_pre_cost_base = ?,
+              improvement_pre_useful_life_months = ?,
+              improvement_pre_remaining_life_months = ?
+        WHERE tenant_id = ?
+          AND id = ?`,
+      [
+        nextGrossTxn,
+        nextGrossBase,
+        nextAccumTxn,
+        nextAccumBase,
+        nextNbvTxn,
+        nextNbvBase,
+        rollingGrossTxn,
+        rollingGrossBase,
+        rollingUsefulLifeMonths,
+        rollingRemainingUsefulLifeMonths,
+        tenantId,
+        Number(laterImprovement.id),
+      ]
+    );
+
+    rollingGrossTxn = nextGrossTxn;
+    rollingGrossBase = nextGrossBase;
+    rollingAccumTxn = nextAccumTxn;
+    rollingAccumBase = nextAccumBase;
+    rollingNbvTxn = nextNbvTxn;
+    rollingNbvBase = nextNbvBase;
+    rollingUsefulLifeMonths = replayedLifeState.usefulLifeMonths;
+    rollingRemainingUsefulLifeMonths = replayedLifeState.remainingUsefulLifeMonths;
+    updatedTransactionCount += 1;
+  }
+
+  return {
+    updatedTransactionCount,
+    finalGrossAmountTxn: rollingGrossTxn,
+    finalGrossAmountBase: rollingGrossBase,
+    finalAccumDeprAmountTxn: rollingAccumTxn,
+    finalAccumDeprAmountBase: rollingAccumBase,
+    finalNbvAmountTxn: rollingNbvTxn,
+    finalNbvAmountBase: rollingNbvBase,
+    finalUsefulLifeMonths: rollingUsefulLifeMonths,
+    finalRemainingUsefulLifeMonths: rollingRemainingUsefulLifeMonths,
   };
 }
 
