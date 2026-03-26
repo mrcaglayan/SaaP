@@ -19,6 +19,7 @@ import {
   FIXED_ASSET_DEPRECIATION_RUN,
   PAYMENT_BATCH,
   PAYROLL_RUN,
+  STOCK_LANDED_COST_VOUCHER,
 } from "../utils/source-ref-types.js";
 import { parsePositiveInt } from "../routes/_utils.js";
 import { query } from "../db.js";
@@ -47,6 +48,7 @@ const DYNAMIC_DESTINATION_TYPES = Object.freeze(
     CARI_SETTLEMENT_BATCH,
     FIXED_ASSET_TRANSACTION,
     FIXED_ASSET_DEPRECIATION_RUN,
+    STOCK_LANDED_COST_VOUCHER,
   ])
 );
 
@@ -189,6 +191,14 @@ async function resolveFixedAssetRunDestination(sourceRefId) {
   return { route: `/app/demirbas-amortisman-islemleri?runId=${id}` };
 }
 
+async function resolveStockLandedCostVoucherDestination(sourceRefId) {
+  const id = parsePositiveInt(sourceRefId);
+  if (!id) {
+    return { route: "/app/stok-maliyet-voucherleri", isFallback: true };
+  }
+  return { route: `/app/stok-maliyet-voucherleri/${id}` };
+}
+
 // ── Public API ────────────────────────────────────────────────────────
 
 /**
@@ -226,6 +236,9 @@ export async function resolveDestinationAsync(sourceRefType, sourceRefId) {
   }
   if (normalized === FIXED_ASSET_DEPRECIATION_RUN) {
     return resolveFixedAssetRunDestination(sourceRefId);
+  }
+  if (normalized === STOCK_LANDED_COST_VOUCHER) {
+    return resolveStockLandedCostVoucherDestination(sourceRefId);
   }
 
   return null;

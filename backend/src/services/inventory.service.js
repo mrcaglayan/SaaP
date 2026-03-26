@@ -25,6 +25,13 @@ import {
   deriveStockLinkReadState,
 } from "./stock.link.read-state.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
+import {
+  applyLandedCostIssueOverlayPlanTx,
+  buildLandedCostIssueOverlayPlanTx,
+  mergeIssueValuationPlanWithLandedCostOverlay,
+  restoreLandedCostConsumptionForMovementReversalTx,
+  unwindTransferReceiptLandedCostCarryForwardTx,
+} from "./inventory.landed-cost.runtime.service.js";
 
 const AMOUNT_SCALE = 6;
 const BALANCE_EPSILON = 0.000001;
@@ -3314,6 +3321,22 @@ async function materializeInventoryMovementFromStockLinkInternal({
         ownershipContext,
         runQuery: tx.query,
       });
+      const landedCostOverlayPlan = await buildLandedCostIssueOverlayPlanTx({
+        tx,
+        tenantId,
+        legalEntityId,
+        issueValuationPlan,
+      });
+      issueValuationPlan = mergeIssueValuationPlanWithLandedCostOverlay({
+        issueValuationPlan,
+        overlayPlan: landedCostOverlayPlan,
+        quantity,
+        baseCurrencyCode: await fetchLegalEntityBaseCurrencyCode({
+          tenantId,
+          legalEntityId,
+          runQuery: tx.query,
+        }),
+      });
       currencyCode = issueValuationPlan.currencyCode;
       totalCostTxn = issueValuationPlan.totalCostTxn;
       totalCostBase = issueValuationPlan.totalCostBase;
@@ -3457,6 +3480,13 @@ async function materializeInventoryMovementFromStockLinkInternal({
           ]
         );
       }
+      await applyLandedCostIssueOverlayPlanTx({
+        tx,
+        tenantId,
+        legalEntityId,
+        consumingInventoryMovementId: movementId,
+        overlayPlan: issueValuationPlan?.landedCostOverlay,
+      });
       const movementRow = await fetchInventoryMovementDbRowById({
         movementId,
         runQuery: tx.query,
@@ -3587,7 +3617,7 @@ export async function reverseInventoryMovementTx(
         movementRow,
         reversalDate: normalizedReversalDate,
       });
-      await ensureIssueUndoMovementTx({
+      const reversalMovementRow = await ensureIssueUndoMovementTx({
         tx,
         tenantId: normalizedTenantId,
         legalEntityId,
@@ -3595,14 +3625,28 @@ export async function reverseInventoryMovementTx(
         reversalDate: normalizedReversalDate,
         reason: normalizedReason,
       });
+      await restoreLandedCostConsumptionForMovementReversalTx({
+        tx,
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        consumingInventoryMovementId: normalizedMovementId,
+        restoredByInventoryMovementId: parsePositiveInt(reversalMovementRow?.id),
+      });
     } else if (movementType === "ISSUE") {
-      await ensureIssueUndoMovementTx({
+      const reversalMovementRow = await ensureIssueUndoMovementTx({
         tx,
         tenantId: normalizedTenantId,
         legalEntityId,
         originalMovementRow: movementRow,
         reversalDate: normalizedReversalDate,
         reason: normalizedReason,
+      });
+      await restoreLandedCostConsumptionForMovementReversalTx({
+        tx,
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        consumingInventoryMovementId: normalizedMovementId,
+        restoredByInventoryMovementId: parsePositiveInt(reversalMovementRow?.id),
       });
     } else if (movementType === "RECEIPT") {
       const receiptCostLayerRow = await fetchReceiptCostLayerBySourceMovementId({
@@ -3621,6 +3665,12 @@ export async function reverseInventoryMovementTx(
           stockLinkRow,
           reversalDate: normalizedReversalDate,
           reason: normalizedReason,
+        });
+        await unwindTransferReceiptLandedCostCarryForwardTx({
+          tx,
+          tenantId: normalizedTenantId,
+          legalEntityId,
+          receiptMovementId: normalizedMovementId,
         });
       }
     }
@@ -3662,6 +3712,12 @@ export async function reverseInventoryMovementTx(
       stockLinkRow,
       reversalDate: normalizedReversalDate,
       reason: normalizedReason,
+    });
+    await unwindTransferReceiptLandedCostCarryForwardTx({
+      tx,
+      tenantId: normalizedTenantId,
+      legalEntityId,
+      receiptMovementId: normalizedMovementId,
     });
 
     await tx.query(
@@ -3847,13 +3903,20 @@ export async function reverseInventoryMovementTx(
     [reversalJournalEntryId, normalizedMovementId]
   );
 
-  await ensureIssueUndoMovementTx({
+  const reversalMovementRow = await ensureIssueUndoMovementTx({
     tx,
     tenantId: normalizedTenantId,
     legalEntityId,
     originalMovementRow: movementRow,
     reversalDate: normalizedReversalDate,
     reason: normalizedReason,
+  });
+  await restoreLandedCostConsumptionForMovementReversalTx({
+    tx,
+    tenantId: normalizedTenantId,
+    legalEntityId,
+    consumingInventoryMovementId: normalizedMovementId,
+    restoredByInventoryMovementId: parsePositiveInt(reversalMovementRow?.id),
   });
 
   if (stockLinkRow) {

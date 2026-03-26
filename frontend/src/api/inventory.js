@@ -170,3 +170,49 @@ export async function listInventoryCostLayers(params = {}) {
   const response = await api.get(`/api/v1/inventory/cost-layers${toQueryString(params)}`);
   return response.data;
 }
+
+export async function listInventoryLandedCostVouchers(params = {}) {
+  const response = await api.get(
+    `/api/v1/inventory/landed-cost-vouchers${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function getInventoryLandedCostVoucher(voucherId, params = {}) {
+  const response = await api.get(
+    `/api/v1/inventory/landed-cost-vouchers/${voucherId}${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function listInventoryLandedCostSourceLineLookup(params = {}) {
+  const response = await api.get(
+    `/api/v1/inventory/landed-cost-vouchers/lookups/source-lines${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function listInventoryLandedCostTargetLookup(params = {}) {
+  const response = await api.get(
+    `/api/v1/inventory/landed-cost-vouchers/lookups/receipt-targets${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function previewInventoryLandedCostVoucher(payload) {
+  const response = await api.post("/api/v1/inventory/landed-cost-vouchers/preview", payload);
+  return response.data;
+}
+
+export async function createInventoryLandedCostVoucher(payload) {
+  const response = await api.post("/api/v1/inventory/landed-cost-vouchers", payload);
+  return response.data;
+}
+
+export async function reverseInventoryLandedCostVoucher(voucherId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/inventory/landed-cost-vouchers/${voucherId}/reverse`,
+    payload
+  );
+  return response.data;
+}

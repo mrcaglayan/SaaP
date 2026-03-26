@@ -420,6 +420,12 @@ export const sidebarItems = [
         implemented: true,
       },
       {
+        label: "Stok Maliyet Voucherleri",
+        to: "/app/stok-maliyet-voucherleri",
+        requiredPermissions: ["inventory.read"],
+        implemented: true,
+      },
+      {
         label: "Stok Karti Listesi",
         to: "/app/stok-karti-listesi",
         requiredPermissions: ["item.card.read"],

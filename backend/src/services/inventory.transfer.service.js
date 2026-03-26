@@ -14,6 +14,12 @@ import {
 import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import {
+  applyLandedCostIssueOverlayPlanTx,
+  buildLandedCostIssueOverlayPlanTx,
+  mergeIssueValuationPlanWithLandedCostOverlay,
+  recreateTransferReceiptLandedCostCarryForwardTx,
+} from "./inventory.landed-cost.runtime.service.js";
+import {
   buildTransferWarehousesMustDifferMessage,
   deriveWarehouseOwnershipContext,
   sameOwnershipContext,
@@ -451,6 +457,18 @@ async function consumeTransferShipmentCostLayersTx(tx, payload) {
       warehouseRow: sourceWarehouseRow,
       baseCurrencyCode,
     });
+    const landedCostOverlayPlan = await buildLandedCostIssueOverlayPlanTx({
+      tx,
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      issueValuationPlan,
+    });
+    const adjustedIssueValuationPlan = mergeIssueValuationPlanWithLandedCostOverlay({
+      issueValuationPlan,
+      overlayPlan: landedCostOverlayPlan,
+      quantity: transferLineRow.quantityRequested,
+      baseCurrencyCode,
+    });
     const inventoryAssetAccount = await resolveInventoryPostingAccount({
       tenantId: payload.tenantId,
       legalEntityId: payload.legalEntityId,
@@ -479,10 +497,18 @@ async function consumeTransferShipmentCostLayersTx(tx, payload) {
       transferLineId: transferLineRow.id,
       movementDate: payload.transferRow.transferDate,
       quantity: quantityRequested,
-      issueValuationPlan,
+      issueValuationPlan: adjustedIssueValuationPlan,
       note: `Transfer shipment ${payload.transferRow.transferNo || payload.transferRow.id} line ${
         lineNo || "?"
       }`.slice(0, 255),
+    });
+    await applyLandedCostIssueOverlayPlanTx({
+      tx,
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      consumingInventoryMovementId: movementId,
+      consumingInventoryTransferId: payload.transferRow.id,
+      overlayPlan: adjustedIssueValuationPlan?.landedCostOverlay,
     });
 
     await tx.query(
@@ -499,33 +525,33 @@ async function consumeTransferShipmentCostLayersTx(tx, payload) {
           AND id = ?`,
       [
         quantityRequested,
-        issueValuationPlan.currencyCode,
-        issueValuationPlan.unitCostTxn,
-        issueValuationPlan.unitCostBase,
-        issueValuationPlan.totalCostTxn,
-        issueValuationPlan.totalCostBase,
+        adjustedIssueValuationPlan.currencyCode,
+        adjustedIssueValuationPlan.unitCostTxn,
+        adjustedIssueValuationPlan.unitCostBase,
+        adjustedIssueValuationPlan.totalCostTxn,
+        adjustedIssueValuationPlan.totalCostBase,
         movementId,
         payload.tenantId,
         transferLineRow.id,
       ]
     );
 
-    totalCostBase = roundAmount(totalCostBase + issueValuationPlan.totalCostBase);
+    totalCostBase = roundAmount(totalCostBase + adjustedIssueValuationPlan.totalCostBase);
     lineResults.push({
       transferLineId: transferLineRow.id,
       lineNo,
       itemCardId: transferLineRow.itemCardId,
       itemLabel,
       quantityShipped: quantityRequested,
-      shippedCurrencyCode: issueValuationPlan.currencyCode,
-      shippedUnitCostTxn: issueValuationPlan.unitCostTxn,
-      shippedUnitCostBase: issueValuationPlan.unitCostBase,
-      shippedTotalCostTxn: issueValuationPlan.totalCostTxn,
-      shippedTotalCostBase: issueValuationPlan.totalCostBase,
+      shippedCurrencyCode: adjustedIssueValuationPlan.currencyCode,
+      shippedUnitCostTxn: adjustedIssueValuationPlan.unitCostTxn,
+      shippedUnitCostBase: adjustedIssueValuationPlan.unitCostBase,
+      shippedTotalCostTxn: adjustedIssueValuationPlan.totalCostTxn,
+      shippedTotalCostBase: adjustedIssueValuationPlan.totalCostBase,
       sourceIssueMovementId: movementId,
       inventoryAssetAccount,
       transitAccount,
-      consumptions: issueValuationPlan.consumptions || [],
+      consumptions: adjustedIssueValuationPlan.consumptions || [],
     });
   }
 
@@ -655,23 +681,110 @@ async function createTransferShipmentJournalTx(tx, payload) {
   return journalResult;
 }
 
+async function fetchPhysicalIssueValuationTotalsTx(tx, payload) {
+  const normalizedIssueMovementId = parsePositiveInt(payload?.issueMovementId);
+  if (!normalizedIssueMovementId) {
+    throw badRequest("issueMovementId is required to resolve transfer receipt physical cost");
+  }
+
+  const result = await tx.query(
+    `SELECT
+        quantity_consumed,
+        total_cost_txn,
+        total_cost_base,
+        currency_code
+       FROM inventory_issue_layer_consumptions
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+        AND issue_movement_id = ?
+      ORDER BY consumption_no ASC`,
+    [payload.tenantId, payload.legalEntityId, normalizedIssueMovementId]
+  );
+
+  const rows = result.rows || [];
+  if (rows.length === 0) {
+    throw badRequest("Transfer shipment physical issue consumptions not found");
+  }
+
+  let totalQuantity = 0;
+  let totalCostTxn = 0;
+  let totalCostBase = 0;
+  let firstCurrencyCode = null;
+  let isMixedSourceCurrency = false;
+
+  for (const row of rows) {
+    totalQuantity = roundAmount(totalQuantity + Number(row.quantity_consumed || 0));
+    totalCostTxn = roundAmount(totalCostTxn + Number(row.total_cost_txn || 0));
+    totalCostBase = roundAmount(totalCostBase + Number(row.total_cost_base || 0));
+    const currencyCode = normalizeUpperText(row.currency_code || "", 3, { required: true });
+    if (!firstCurrencyCode) {
+      firstCurrencyCode = currencyCode;
+    } else if (firstCurrencyCode !== currencyCode) {
+      isMixedSourceCurrency = true;
+    }
+  }
+
+  const resolvedCurrencyCode = isMixedSourceCurrency
+    ? await fetchLegalEntityBaseCurrencyCode({
+        tenantId: payload.tenantId,
+        legalEntityId: payload.legalEntityId,
+        runQuery: tx.query,
+      })
+    : firstCurrencyCode;
+  const resolvedTotalCostTxn = isMixedSourceCurrency ? totalCostBase : totalCostTxn;
+
+  return {
+    quantity: totalQuantity,
+    currencyCode: resolvedCurrencyCode,
+    totalCostTxn: resolvedTotalCostTxn,
+    totalCostBase,
+    unitCostTxn: roundAmount(resolvedTotalCostTxn / totalQuantity),
+    unitCostBase: roundAmount(totalCostBase / totalQuantity),
+  };
+}
+
 async function createTransferReceiptMovementTx(tx, payload) {
   const quantity = normalizeAmount(payload?.quantity, "receiptQuantity");
-  const currencyCode = normalizeUpperText(payload?.currencyCode, 3, {
+  const movementCurrencyCode = normalizeUpperText(payload?.currencyCode, 3, {
     required: true,
   });
-  const unitCostTxn = normalizeAmount(payload?.unitCostTxn, "receiptUnitCostTxn", {
+  const movementUnitCostTxn = normalizeAmount(payload?.unitCostTxn, "receiptUnitCostTxn", {
     allowZero: true,
   });
-  const unitCostBase = normalizeAmount(payload?.unitCostBase, "receiptUnitCostBase", {
+  const movementUnitCostBase = normalizeAmount(payload?.unitCostBase, "receiptUnitCostBase", {
     allowZero: true,
   });
-  const totalCostTxn = normalizeAmount(payload?.totalCostTxn, "receiptTotalCostTxn", {
+  const movementTotalCostTxn = normalizeAmount(payload?.totalCostTxn, "receiptTotalCostTxn", {
     allowZero: true,
   });
-  const totalCostBase = normalizeAmount(payload?.totalCostBase, "receiptTotalCostBase", {
+  const movementTotalCostBase = normalizeAmount(payload?.totalCostBase, "receiptTotalCostBase", {
     allowZero: true,
   });
+  const layerCurrencyCode = normalizeUpperText(
+    payload?.layerCurrencyCode || movementCurrencyCode,
+    3,
+    { required: true }
+  );
+  const layerUnitCostTxn = normalizeAmount(
+    payload?.layerUnitCostTxn ?? movementUnitCostTxn,
+    "layerUnitCostTxn",
+    { allowZero: true }
+  );
+  const layerUnitCostBase = normalizeAmount(
+    payload?.layerUnitCostBase ?? movementUnitCostBase,
+    "layerUnitCostBase",
+    { allowZero: true }
+  );
+  const layerTotalCostTxn = normalizeAmount(
+    payload?.layerTotalCostTxn ?? movementTotalCostTxn,
+    "layerTotalCostTxn",
+    { allowZero: true }
+  );
+  const layerTotalCostBase = normalizeAmount(
+    payload?.layerTotalCostBase ?? movementTotalCostBase,
+    "layerTotalCostBase",
+    { allowZero: true }
+  );
   const note = normalizeText(payload?.note, 255) || null;
 
   const insertResult = await tx.query(
@@ -705,11 +818,11 @@ async function createTransferReceiptMovementTx(tx, payload) {
       payload.transferLineId,
       payload.movementDate,
       quantity,
-      unitCostTxn,
-      unitCostBase,
-      totalCostTxn,
-      totalCostBase,
-      currencyCode,
+      movementUnitCostTxn,
+      movementUnitCostBase,
+      movementTotalCostTxn,
+      movementTotalCostBase,
+      movementCurrencyCode,
       note,
     ]
   );
@@ -718,7 +831,7 @@ async function createTransferReceiptMovementTx(tx, payload) {
     throw new Error("Transfer receipt movement create failed");
   }
 
-  await tx.query(
+  const layerInsertResult = await tx.query(
     `INSERT INTO inventory_cost_layers (
         tenant_id,
         legal_entity_id,
@@ -741,17 +854,20 @@ async function createTransferReceiptMovementTx(tx, payload) {
       payload.warehouseId,
       payload.itemCardId,
       movementId,
-      currencyCode,
+      layerCurrencyCode,
       quantity,
       quantity,
-      unitCostTxn,
-      unitCostBase,
-      totalCostTxn,
-      totalCostBase,
+      layerUnitCostTxn,
+      layerUnitCostBase,
+      layerTotalCostTxn,
+      layerTotalCostBase,
     ]
   );
-
-  return movementId;
+  const costLayerId = parsePositiveInt(layerInsertResult.rows?.insertId);
+  return {
+    movementId,
+    costLayerId,
+  };
 }
 
 async function materializeTransferReceiptTx(tx, payload) {
@@ -825,6 +941,11 @@ async function materializeTransferReceiptTx(tx, payload) {
       `lines[${lineNo || "?"}].shippedTotalCostBase`,
       { allowZero: true }
     );
+    const physicalIssueTotals = await fetchPhysicalIssueValuationTotalsTx(tx, {
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      issueMovementId: transferLineRow.sourceIssueMovementId,
+    });
 
     const inventoryAssetAccount = await resolveInventoryPostingAccount({
       tenantId: payload.tenantId,
@@ -841,7 +962,7 @@ async function materializeTransferReceiptTx(tx, payload) {
       runQuery: tx.query,
     });
 
-    const movementId = await createTransferReceiptMovementTx(tx, {
+    const movementResult = await createTransferReceiptMovementTx(tx, {
       tenantId: payload.tenantId,
       legalEntityId: payload.legalEntityId,
       warehouseId: payload.transferRow.targetWarehouseId,
@@ -855,9 +976,22 @@ async function materializeTransferReceiptTx(tx, payload) {
       unitCostBase: shippedUnitCostBase,
       totalCostTxn: shippedTotalCostTxn,
       totalCostBase: shippedTotalCostBase,
+      layerCurrencyCode: physicalIssueTotals.currencyCode,
+      layerUnitCostTxn: physicalIssueTotals.unitCostTxn,
+      layerUnitCostBase: physicalIssueTotals.unitCostBase,
+      layerTotalCostTxn: physicalIssueTotals.totalCostTxn,
+      layerTotalCostBase: physicalIssueTotals.totalCostBase,
       note: `Transfer receipt ${payload.transferRow.transferNo || payload.transferRow.id} line ${
         lineNo || "?"
       }`.slice(0, 255),
+    });
+    await recreateTransferReceiptLandedCostCarryForwardTx({
+      tx,
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      sourceIssueMovementId: transferLineRow.sourceIssueMovementId,
+      destinationReceiptMovementId: movementResult.movementId,
+      destinationCostLayerId: movementResult.costLayerId,
     });
 
     await tx.query(
@@ -867,7 +1001,7 @@ async function materializeTransferReceiptTx(tx, payload) {
               updated_at = CURRENT_TIMESTAMP
         WHERE tenant_id = ?
           AND id = ?`,
-      [quantityShipped, movementId, payload.tenantId, transferLineRow.id]
+      [quantityShipped, movementResult.movementId, payload.tenantId, transferLineRow.id]
     );
 
     totalCostBase = roundAmount(totalCostBase + shippedTotalCostBase);
@@ -882,7 +1016,7 @@ async function materializeTransferReceiptTx(tx, payload) {
       receiptUnitCostBase: shippedUnitCostBase,
       receiptTotalCostTxn: shippedTotalCostTxn,
       receiptTotalCostBase: shippedTotalCostBase,
-      targetReceiptMovementId: movementId,
+      targetReceiptMovementId: movementResult.movementId,
       inventoryAssetAccount,
       transitAccount,
     });

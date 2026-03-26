@@ -63,6 +63,9 @@ import CariReportsPage from "./pages/cari/CariReportsPage.jsx";
 import CariSettlementsPage from "./pages/cari/CariSettlementsPage.jsx";
 import CariAuditPage from "./pages/cari/CariAuditPage.jsx";
 import ItemCardsPage from "./pages/inventory/ItemCardsPage.jsx";
+import InventoryLandedCostVoucherDetailPage from "./pages/inventory/InventoryLandedCostVoucherDetailPage.jsx";
+import InventoryLandedCostVoucherNewPage from "./pages/inventory/InventoryLandedCostVoucherNewPage.jsx";
+import InventoryLandedCostVouchersPage from "./pages/inventory/InventoryLandedCostVouchersPage.jsx";
 import InventoryMovementsPage from "./pages/inventory/InventoryMovementsPage.jsx";
 import InventoryTransfersPage from "./pages/inventory/InventoryTransfersPage.jsx";
 import ContractsPage from "./pages/contracts/ContractsPage.jsx";
@@ -415,6 +418,23 @@ const implementedRoutes = [
     appPath: "/app/stok-yansitma-islemleri",
     childPath: "stok-yansitma-islemleri",
     element: <InventoryMovementsPage />,
+  },
+  {
+    appPath: "/app/stok-maliyet-voucherleri",
+    childPath: "stok-maliyet-voucherleri",
+    element: <InventoryLandedCostVouchersPage />,
+  },
+  {
+    appPath: "/app/stok-maliyet-voucherleri/yeni",
+    childPath: "stok-maliyet-voucherleri/yeni",
+    permissionPath: "/app/stok-maliyet-voucherleri",
+    element: <InventoryLandedCostVoucherNewPage />,
+  },
+  {
+    appPath: "/app/stok-maliyet-voucherleri/:voucherId",
+    childPath: "stok-maliyet-voucherleri/:voucherId",
+    permissionPath: "/app/stok-maliyet-voucherleri",
+    element: <InventoryLandedCostVoucherDetailPage />,
   },
   {
     appPath: "/app/stok-transferleri",

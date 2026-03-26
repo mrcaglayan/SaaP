@@ -106,7 +106,7 @@ This plan was drafted before Track 39's `IMPROVE_EXISTING` flow grew into a rich
 - Track 39 is effectively a 30-step track now, not 25
 - ancillary charges may target not only `FIXED_ASSET + AUTO_CREATE`, but also `FIXED_ASSET + LINK_EXISTING` and `FIXED_ASSET + IMPROVE_EXISTING`
 - if a charge targets `IMPROVE_EXISTING`, the allocated amount becomes part of the **effective improvement amount** and must feed the existing `improvementEffectiveDate`, same-month day-proration, suspended/reactivated-asset handling, and late-entry current-period `CATCH_UP` behavior already implemented in Track 39
-- if Track 42 later introduces retro ownership transfer correction, that track should consume the resulting posted improvement/depreciation basis from fixed-asset history; it should not depend on charge-target rows or duplicate charge-allocation math
+- if Track 43 later introduces retro ownership transfer correction, that track should consume the resulting posted improvement/depreciation basis from fixed-asset history; it should not depend on charge-target rows or duplicate charge-allocation math
 
 ### Multi-Target Distribution
 

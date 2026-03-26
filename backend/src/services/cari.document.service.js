@@ -39,7 +39,10 @@ import {
   reverseCariSettlementTx,
 } from "./cari.settlement.service.js";
 import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
-import { FIXED_ASSET_TRANSACTION } from "../utils/source-ref-types.js";
+import {
+  FIXED_ASSET_TRANSACTION,
+  STOCK_LANDED_COST_VOUCHER,
+} from "../utils/source-ref-types.js";
 
 const DRAFT_STATUS = "DRAFT";
 const CANCELLED_STATUS = "CANCELLED";
@@ -1084,6 +1087,66 @@ function documentReverseBlockedByInventoryError(documentId, inventoryBlocks) {
       reason: "ACTIVE_LINKED_INVENTORY_MOVEMENTS",
       documentId: parsePositiveInt(documentId),
       inventoryBlocks,
+    }
+  );
+}
+
+async function buildDocumentReverseLandedCostVoucherBlocks({
+  tenantId,
+  legalEntityId,
+  documentId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        s.source_cari_document_line_id,
+        l.line_no,
+        l.description AS line_description,
+        v.id AS voucher_id,
+        v.voucher_no,
+        v.status,
+        v.posting_date
+       FROM stock_landed_cost_voucher_sources s
+       JOIN stock_landed_cost_vouchers v
+         ON v.tenant_id = s.tenant_id
+        AND v.legal_entity_id = s.legal_entity_id
+        AND v.id = s.voucher_id
+       LEFT JOIN cari_document_lines l
+         ON l.tenant_id = s.tenant_id
+        AND l.legal_entity_id = s.legal_entity_id
+        AND l.cari_document_id = s.source_cari_document_id
+        AND l.id = s.source_cari_document_line_id
+      WHERE s.tenant_id = ?
+        AND s.legal_entity_id = ?
+        AND s.source_cari_document_id = ?
+        AND v.status IN ('DRAFT', 'POSTED')
+      ORDER BY v.id ASC, s.source_cari_document_line_id ASC`,
+    [tenantId, legalEntityId, documentId]
+  );
+
+  return (result.rows || []).map((row) => ({
+    voucherId: parsePositiveInt(row.voucher_id),
+    voucherNo: row.voucher_no || null,
+    voucherStatus: row.status || null,
+    voucherPostingDate: row.posting_date || null,
+    documentLineId: parsePositiveInt(row.source_cari_document_line_id),
+    documentLineNo: Number(row.line_no || 0),
+    documentLineDescription: row.line_description || null,
+    sourceRefType: STOCK_LANDED_COST_VOUCHER,
+  }));
+}
+
+function documentReverseBlockedByLandedCostVoucherError(documentId, landedCostVoucherBlocks) {
+  const count = Array.isArray(landedCostVoucherBlocks) ? landedCostVoucherBlocks.length : 0;
+  return conflictError(
+    `Document reverse is blocked by ${count} active landed-cost voucher source application${
+      count === 1 ? "" : "s"
+    }.`,
+    "CARI_DOCUMENT_REVERSE_BLOCKED_BY_LANDED_COST_VOUCHER",
+    {
+      reason: "ACTIVE_LANDED_COST_VOUCHER_SOURCE_APPLICATIONS",
+      documentId: parsePositiveInt(documentId),
+      landedCostVoucherBlocks,
     }
   );
 }
@@ -8635,6 +8698,18 @@ export async function reverseCariPostedDocumentById({
         throw documentReverseBlockedByInventoryError(
           documentId,
           inventoryReverseBlocks
+        );
+      }
+      const landedCostVoucherBlocks = await buildDocumentReverseLandedCostVoucherBlocks({
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        documentId,
+        runQuery: tx.query,
+      });
+      if (landedCostVoucherBlocks.length > 0) {
+        throw documentReverseBlockedByLandedCostVoucherError(
+          documentId,
+          landedCostVoucherBlocks
         );
       }
       const fixedAssetReversePlans = await prepareFixedAssetReverseSideEffectsTx(tx, {
