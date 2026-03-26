@@ -3429,6 +3429,310 @@ function applyInventoryOperationOverrides(specObject) {
       },
       required: ["tenantId", "rows"],
     },
+    InventoryLandedCostVoucherStatus: {
+      type: "string",
+      enum: ["DRAFT", "POSTED", "REVERSED", "CANCELED"],
+    },
+    InventoryLandedCostVoucherUiStatus: {
+      type: "string",
+      enum: ["DRAFT", "POSTED", "REVERSED", "CANCELED", "REVERSAL_BLOCKED"],
+    },
+    InventoryLandedCostAllocationMethod: {
+      type: "string",
+      enum: ["EQUAL", "BY_AMOUNT", "BY_QTY", "MANUAL"],
+    },
+    InventoryLandedCostSourceLookupRow: {
+      type: "object",
+      properties: {
+        sourceCariDocumentId: { ...intId, nullable: true },
+        sourceCariDocumentLineId: { ...intId, nullable: true },
+        billNo: { type: "string", nullable: true },
+        billDate: { type: "string", format: "date", nullable: true },
+        vendorCode: { type: "string", nullable: true },
+        vendorName: { type: "string", nullable: true },
+        currencyCode,
+        lineDescription: { type: "string", nullable: true },
+        remainingUnappliedAmountBase: { type: "number", nullable: true },
+        eligible: { type: "boolean", nullable: true },
+        disabledReasonCode: { type: "string", nullable: true },
+      },
+      required: ["sourceCariDocumentId", "sourceCariDocumentLineId", "eligible"],
+    },
+    InventoryLandedCostSourceLookupResponse: {
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryLandedCostSourceLookupRow" },
+        },
+      },
+      required: ["rows"],
+    },
+    InventoryLandedCostTargetLookupRow: {
+      type: "object",
+      properties: {
+        sourceStockLinkId: { ...intId, nullable: true },
+        sourceAnchorInventoryMovementId: { ...intId, nullable: true },
+        receiptRef: { type: "string", nullable: true },
+        receiptDate: { type: "string", format: "date", nullable: true },
+        itemCardId: { ...intId, nullable: true },
+        itemCode: { type: "string", nullable: true },
+        itemName: { type: "string", nullable: true },
+        warehouseId: { ...intId, nullable: true },
+        warehouseCode: { type: "string", nullable: true },
+        warehouseName: { type: "string", nullable: true },
+        currentOnHandQuantity: { type: "number", nullable: true },
+        currentConsumedQuantity: { type: "number", nullable: true },
+        ownershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        operatingUnitId: { ...intId, nullable: true },
+        blockedReasonCodes: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
+      required: ["sourceStockLinkId", "sourceAnchorInventoryMovementId", "blockedReasonCodes"],
+    },
+    InventoryLandedCostTargetLookupResponse: {
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryLandedCostTargetLookupRow" },
+        },
+      },
+      required: ["rows"],
+    },
+    InventoryLandedCostVoucherSourceLineInput: {
+      type: "object",
+      properties: {
+        sourceCariDocumentLineId: intId,
+        appliedAmountBase: { type: "number", nullable: true },
+      },
+      required: ["sourceCariDocumentLineId"],
+    },
+    InventoryLandedCostVoucherTargetInput: {
+      type: "object",
+      properties: {
+        sourceStockLinkId: intId,
+        allocatedAmountBase: { type: "number", nullable: true },
+      },
+      required: ["sourceStockLinkId"],
+    },
+    InventoryLandedCostVoucherPreviewRequest: {
+      type: "object",
+      properties: {
+        legalEntityId: intId,
+        postingDate: { type: "string", format: "date", nullable: true },
+        allocationMethod: { $ref: "#/components/schemas/InventoryLandedCostAllocationMethod" },
+        ownershipScope: { $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" },
+        operatingUnitId: { ...intId, nullable: true },
+        sourceLines: {
+          type: "array",
+          minItems: 1,
+          items: { $ref: "#/components/schemas/InventoryLandedCostVoucherSourceLineInput" },
+        },
+        targets: {
+          type: "array",
+          minItems: 1,
+          items: { $ref: "#/components/schemas/InventoryLandedCostVoucherTargetInput" },
+        },
+      },
+      required: ["legalEntityId", "allocationMethod", "ownershipScope", "sourceLines", "targets"],
+    },
+    InventoryLandedCostVoucherCreateRequest: {
+      type: "object",
+      properties: {
+        legalEntityId: intId,
+        postingDate: { type: "string", format: "date" },
+        allocationMethod: { $ref: "#/components/schemas/InventoryLandedCostAllocationMethod" },
+        ownershipScope: { $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" },
+        operatingUnitId: { ...intId, nullable: true },
+        note: { type: "string", maxLength: 500, nullable: true },
+        sourceLines: {
+          type: "array",
+          minItems: 1,
+          items: { $ref: "#/components/schemas/InventoryLandedCostVoucherSourceLineInput" },
+        },
+        targets: {
+          type: "array",
+          minItems: 1,
+          items: { $ref: "#/components/schemas/InventoryLandedCostVoucherTargetInput" },
+        },
+      },
+      required: ["legalEntityId", "postingDate", "allocationMethod", "ownershipScope", "sourceLines", "targets"],
+    },
+    InventoryLandedCostVoucherReverseRequest: {
+      type: "object",
+      properties: {
+        reversalDate: { type: "string", format: "date", nullable: true },
+        reverseReason: { type: "string", maxLength: 255, nullable: true },
+      },
+    },
+    InventoryLandedCostVoucherPreviewResponse: {
+      type: "object",
+      properties: {
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        postingDate: { type: "string", format: "date", nullable: true },
+        allocationMethod: {
+          allOf: [{ $ref: "#/components/schemas/InventoryLandedCostAllocationMethod" }],
+          nullable: true,
+        },
+        ownershipContext: { $ref: "#/components/schemas/AnyObject" },
+        sourceSummary: { $ref: "#/components/schemas/AnyObject" },
+        targetSummary: { $ref: "#/components/schemas/AnyObject" },
+        targets: {
+          type: "array",
+          items: { $ref: "#/components/schemas/AnyObject" },
+        },
+      },
+      required: ["sourceSummary", "targetSummary", "targets"],
+    },
+    InventoryLandedCostVoucherListRow: {
+      type: "object",
+      properties: {
+        voucherId: { ...intId, nullable: true },
+        voucherNo: { type: "string", nullable: true },
+        status: {
+          allOf: [{ $ref: "#/components/schemas/InventoryLandedCostVoucherStatus" }],
+          nullable: true,
+        },
+        postingDate: { type: "string", format: "date", nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        legalEntityCode: { type: "string", nullable: true },
+        legalEntityName: { type: "string", nullable: true },
+        ownershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        operatingUnitId: { ...intId, nullable: true },
+        sourceAmountBase: { type: "number", nullable: true },
+        capitalizedAmountBase: { type: "number", nullable: true },
+        consumedAmountBase: { type: "number", nullable: true },
+        sourceBillCount: { type: "integer", nullable: true },
+        targetCount: { type: "integer", nullable: true },
+        hasReversalDependencies: { type: "boolean", nullable: true },
+        uiStatus: {
+          allOf: [{ $ref: "#/components/schemas/InventoryLandedCostVoucherUiStatus" }],
+          nullable: true,
+        },
+      },
+      required: ["voucherId", "voucherNo", "uiStatus"],
+    },
+    InventoryLandedCostVoucherListResponse: {
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryLandedCostVoucherListRow" },
+        },
+      },
+      required: ["rows"],
+    },
+    InventoryLandedCostVoucherDetailResponse: {
+      type: "object",
+      properties: {
+        voucherId: { ...intId, nullable: true },
+        voucherNo: { type: "string", nullable: true },
+        status: {
+          allOf: [{ $ref: "#/components/schemas/InventoryLandedCostVoucherStatus" }],
+          nullable: true,
+        },
+        postingDate: { type: "string", format: "date", nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        ownershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        operatingUnitId: { ...intId, nullable: true },
+        currencyCode,
+        note: { type: "string", nullable: true },
+        sourceSummary: { $ref: "#/components/schemas/AnyObject" },
+        targetSummary: { $ref: "#/components/schemas/AnyObject" },
+        sources: {
+          type: "array",
+          items: { $ref: "#/components/schemas/AnyObject" },
+        },
+        targets: {
+          type: "array",
+          items: { $ref: "#/components/schemas/AnyObject" },
+        },
+        layerAllocations: {
+          type: "array",
+          items: { $ref: "#/components/schemas/AnyObject" },
+        },
+        landedCostConsumptions: {
+          type: "array",
+          items: { $ref: "#/components/schemas/AnyObject" },
+        },
+        reversalDependencies: {
+          type: "array",
+          items: { $ref: "#/components/schemas/AnyObject" },
+        },
+        hasReversalDependencies: { type: "boolean", nullable: true },
+        journalAudit: { $ref: "#/components/schemas/AnyObject" },
+        uiStatus: {
+          allOf: [{ $ref: "#/components/schemas/InventoryLandedCostVoucherUiStatus" }],
+          nullable: true,
+        },
+      },
+      required: [
+        "voucherId",
+        "voucherNo",
+        "sources",
+        "targets",
+        "layerAllocations",
+        "landedCostConsumptions",
+        "reversalDependencies",
+        "journalAudit",
+        "uiStatus",
+      ],
+    },
+    InventoryLandedCostVoucherCreateResponse: {
+      type: "object",
+      properties: {
+        voucherId: intId,
+        voucherNo: { type: "string", nullable: true },
+        status: { $ref: "#/components/schemas/InventoryLandedCostVoucherStatus" },
+        postingDate: { type: "string", format: "date", nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        ownershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        operatingUnitId: { ...intId, nullable: true },
+        postedJournalEntryId: { ...intId, nullable: true },
+        sourceSummary: { $ref: "#/components/schemas/AnyObject" },
+        targetSummary: { $ref: "#/components/schemas/AnyObject" },
+        targetIdsByStockLinkId: {
+          type: "object",
+          additionalProperties: intId,
+        },
+      },
+      required: ["voucherId", "status", "sourceSummary", "targetSummary", "targetIdsByStockLinkId"],
+    },
+    InventoryLandedCostVoucherReverseResponse: {
+      type: "object",
+      properties: {
+        voucherId: intId,
+        voucherNo: { type: "string", nullable: true },
+        status: { $ref: "#/components/schemas/InventoryLandedCostVoucherStatus" },
+        postingDate: { type: "string", format: "date", nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        ownershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        operatingUnitId: { ...intId, nullable: true },
+        postedJournalEntryId: { ...intId, nullable: true },
+        reversalJournalEntryId: { ...intId, nullable: true },
+        reversedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: ["voucherId", "status"],
+    },
   });
 
   paths["/api/v1/items/cards"] = {
@@ -3955,6 +4259,157 @@ function applyInventoryOperationOverrides(specObject) {
         "200",
         "Inventory cost-layer list",
         "#/components/schemas/InventoryCostLayerListResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/landed-cost-vouchers/lookups/source-lines"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryLandedCostSourceLines",
+      summary: "List eligible posted AP source lines for landed-cost vouchers",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", true, "Legal entity filter"),
+        queryParam("postingDateFrom", { type: "string", format: "date" }, false, "Posted bill date from"),
+        queryParam("postingDateTo", { type: "string", format: "date" }, false, "Posted bill date to"),
+        queryParam("vendor", { type: "string", maxLength: 255 }, false, "Vendor code/name filter"),
+        queryParam("currencyCode", { ...currencyCode, nullable: true }, false, "Source bill currency"),
+        queryParam("search", { type: "string", maxLength: 255 }, false, "Bill/document/line search"),
+        queryParam("onlyRemainingUnapplied", { type: "boolean" }, false, "Show only source lines with unapplied base amount remaining"),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 500 }, false, "Page size"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Landed-cost eligible source-line lookup",
+        "#/components/schemas/InventoryLandedCostSourceLookupResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/landed-cost-vouchers/lookups/receipt-targets"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryLandedCostReceiptTargets",
+      summary: "List posted receipt anchors available for landed-cost targeting",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", true, "Legal entity filter"),
+        queryParam(
+          "ownershipScope",
+          { $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" },
+          false,
+          "Ownership context filter"
+        ),
+        queryParamInt("operatingUnitId", false, "Operating-unit filter when ownershipScope=OPERATING_UNIT"),
+        queryParam("receiptDateFrom", { type: "string", format: "date" }, false, "Receipt date from"),
+        queryParam("receiptDateTo", { type: "string", format: "date" }, false, "Receipt date to"),
+        queryParamInt("itemCardId", false, "Item-card filter"),
+        queryParamInt("warehouseId", false, "Anchor warehouse filter"),
+        queryParam("search", { type: "string", maxLength: 255 }, false, "Receipt/item/warehouse search"),
+        queryParam("matchSelectedContextOnly", { type: "boolean" }, false, "Restrict rows to the selected ownership context"),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 500 }, false, "Page size"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Landed-cost receipt target lookup",
+        "#/components/schemas/InventoryLandedCostTargetLookupResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/landed-cost-vouchers"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryLandedCostVouchers",
+      summary: "List stock landed-cost vouchers with workflow totals and derived reversal state",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", false, "Legal entity filter"),
+        queryParam(
+          "ownershipScope",
+          { $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" },
+          false,
+          "Voucher ownership scope filter"
+        ),
+        queryParamInt("operatingUnitId", false, "Voucher operating-unit filter"),
+        queryParam(
+          "status",
+          { $ref: "#/components/schemas/InventoryLandedCostVoucherStatus" },
+          false,
+          "Persisted voucher status filter"
+        ),
+        queryParam("postingDateFrom", { type: "string", format: "date" }, false, "Posting date from"),
+        queryParam("postingDateTo", { type: "string", format: "date" }, false, "Posting date to"),
+        queryParam("vendor", { type: "string", maxLength: 255 }, false, "Vendor code/name filter"),
+        queryParam("search", { type: "string", maxLength: 255 }, false, "Voucher/source/receipt search"),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 500 }, false, "Page size"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Landed-cost voucher list",
+        "#/components/schemas/InventoryLandedCostVoucherListResponse"
+      ),
+    },
+    post: {
+      tags: ["Inventory"],
+      operationId: "createInventoryLandedCostVoucher",
+      summary: "Post a stock landed-cost voucher from AP source lines onto posted receipt targets",
+      requestBody: bodyFromRef("#/components/schemas/InventoryLandedCostVoucherCreateRequest"),
+      responses: {
+        "201": jsonResponse(
+          "#/components/schemas/InventoryLandedCostVoucherCreateResponse",
+          "Landed-cost voucher posted"
+        ),
+        "400": errorResponseRef,
+        "401": errorResponseRef,
+        "403": errorResponseRef,
+      },
+    },
+  };
+
+  paths["/api/v1/inventory/landed-cost-vouchers/preview"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "previewInventoryLandedCostVoucher",
+      summary: "Preview landed-cost allocation over posted receipt targets before posting",
+      requestBody: bodyFromRef("#/components/schemas/InventoryLandedCostVoucherPreviewRequest"),
+      responses: withStandardResponses(
+        "200",
+        "Landed-cost voucher preview",
+        "#/components/schemas/InventoryLandedCostVoucherPreviewResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/landed-cost-vouchers/{voucherId}"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "getInventoryLandedCostVoucher",
+      summary: "Get stock landed-cost voucher detail with source, target, layer, consumption, and journal audit sections",
+      parameters: [
+        pathParam("voucherId", "Landed-cost voucher identifier"),
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Landed-cost voucher detail",
+        "#/components/schemas/InventoryLandedCostVoucherDetailResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/landed-cost-vouchers/{voucherId}/reverse"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "reverseInventoryLandedCostVoucher",
+      summary: "Reverse a posted stock landed-cost voucher when no downstream dependency remains",
+      parameters: [pathParam("voucherId", "Landed-cost voucher identifier")],
+      requestBody: bodyFromRef("#/components/schemas/InventoryLandedCostVoucherReverseRequest", false),
+      responses: withStandardResponses(
+        "200",
+        "Landed-cost voucher reversed",
+        "#/components/schemas/InventoryLandedCostVoucherReverseResponse"
       ),
     },
   };

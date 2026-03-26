@@ -498,3 +498,403 @@ On inventory screens:
 - Fixed asset and stock targets receive augmented costs
 - Activation and reversal do not lose allocated-charge basis
 - UI guard rails prevent hidden stock/charge mixed state
+
+# Track 41 Cross-Document Landed Cost Voucher Regression Notes
+
+This section is added on top of the existing FA/LC40 notes so all plan scenarios stay in one file.
+
+## Goal
+
+- test the full Track 41 workflow from first receipt to downstream valuation and reversal
+- keep Track 40 same-document charges and Track 41 cross-document vouchers clearly separate
+- cover both happy path and rejection/blocking cases
+
+## 0. Base Setup / Readiness
+
+Scenario:
+- create one legal entity with base currency
+- create at least two warehouses under `CENTRAL`
+- create at least two warehouses under different `OPERATING_UNIT`s
+- create one stock item with inventory asset + COGS/purchase fallback accounts
+- create one vendor
+- ensure the test user has `inventory.read` and `inventory.upsert`
+
+Expected:
+- stock receipts can be posted
+- AP bills can be posted
+- inventory transfers can be approved, shipped, received, and reversed
+- landed-cost voucher list page and new voucher page open without permission errors
+
+## 1. Simple Separate Freight Bill After Receipt
+
+Business story:
+- receive stock on Day 1
+- freight AP bill arrives on Day 5
+- freight is allocated to one posted receipt
+
+Steps:
+1. Post AP receipt invoice with one `STOCK` line.
+2. Materialize the inventory receipt.
+3. Post a separate AP invoice with one `GENERAL` freight line.
+4. Open `/app/stok-maliyet-voucherleri/yeni`.
+5. Select the freight line as source.
+6. Select the posted receipt as target.
+7. Preview with `BY_AMOUNT` or `BY_QTY`.
+8. Post the voucher.
+
+Expected:
+- voucher posts successfully
+- source AP line is reclassed, not double-expensed
+- inventory value increases in current period
+- receipt history stays intact
+- voucher detail shows source, target, journal, and layer allocation rows
+
+## 2. One Voucher Targeting Multiple Receipts
+
+Business story:
+- one freight bill covers two receipts from the same ownership context
+
+Steps:
+1. Post two separate stock receipts for the same vendor or shipment batch.
+2. Post one later AP freight bill.
+3. Create one landed-cost voucher using that source line.
+4. Select both receipt targets.
+5. Preview with `BY_QTY`.
+
+Expected:
+- one voucher can target both receipts
+- allocation splits across both targets
+- target count and totals on list/detail are correct
+- journal debit side reflects total capitalized plus consumed split if any
+
+## 3. Partial Consumption Split: On-Hand + Consumed
+
+Business story:
+- part of the receipt is already sold/issued before customs bill arrives
+
+Steps:
+1. Post receipt for quantity 10.
+2. Issue/sell quantity 4.
+3. Post later customs AP bill.
+4. Create landed-cost voucher against the original receipt.
+
+Expected:
+- preview shows on-hand quantity 6 and consumed quantity 4
+- voucher splits cost into:
+  - capitalized inventory portion
+  - consumed adjustment portion
+- posting debits inventory for remaining stock only
+- posting debits consumed adjustment/COGS path for already-consumed slice
+
+## 4. Same-Context Transfer-Aware Targeting
+
+Business story:
+- goods are received into one central warehouse and later transferred to another central warehouse before the freight bill arrives
+
+Steps:
+1. Post original receipt in central warehouse A.
+2. Transfer part or all stock to central warehouse B.
+3. Receive the transfer.
+4. Post later AP freight/customs bill.
+5. Create voucher against the original receipt anchor.
+
+Expected:
+- preview follows descendant receipt layers
+- on-hand quantity can resolve in warehouse B instead of warehouse A
+- voucher still posts because ownership context is the same
+- layer allocation detail shows original anchor and descendant path clearly
+
+## 5. Cross-Context Split Required
+
+Business story:
+- HQ receives stock centrally
+- later some stock is transferred to an operating-unit-owned warehouse
+- customs bill arrives after that movement
+
+Steps:
+1. Post original central receipt.
+2. Transfer quantity to an OU warehouse and receive it.
+3. Try to create one voucher covering both central and OU state together.
+
+Expected:
+- mixed ownership-context selection is blocked
+- UI shows a clear banner to split into separate vouchers
+- one voucher cannot mix `CENTRAL` and `OPERATING_UNIT`
+
+## 6. Future Issue Must Consume Landed-Cost Uplift
+
+Business story:
+- voucher is posted while stock is still on hand
+- later sale/issue happens
+
+Steps:
+1. Post landed-cost voucher on open stock.
+2. After voucher posting, issue some of that stock.
+
+Expected:
+- later issue valuation includes original layer cost plus landed-cost uplift
+- landed-cost consumption rows are created
+- open landed-cost balance decreases accordingly
+
+## 7. Future Transfer Shipment Must Consume Landed-Cost Uplift
+
+Business story:
+- voucher is posted on open stock
+- later a transfer shipment moves that stock out
+
+Steps:
+1. Post landed-cost voucher on still-open stock.
+2. Create and ship a transfer for part of that stock.
+
+Expected:
+- shipment consumes open landed-cost balance additively
+- landed-cost consumption rows link to the shipment movement
+- transfer shipment is not treated as final expense; it is carry-forward behavior
+
+## 8. Transfer Receipt Must Recreate Carried-Forward Open Balance
+
+Business story:
+- stock with landed-cost uplift is transferred and received into another warehouse/context-valid descendant layer
+
+Steps:
+1. Complete Scenario 7 through shipment.
+2. Receive the transfer.
+
+Expected:
+- destination receipt movement gets carried-forward landed-cost balance rows
+- new open landed-cost balance ties to destination receipt movement/cost layer
+- detail/audit can show carry-forward source and destination lineage
+
+## 9. Issue Reversal Must Restore Landed-Cost Open Balance
+
+Business story:
+- issued stock is reversed after landed-cost uplift was consumed
+
+Steps:
+1. Post landed-cost voucher.
+2. Issue stock that consumes uplift.
+3. Reverse that inventory issue.
+
+Expected:
+- landed-cost consumption is restored deterministically
+- remaining adjusted quantity and amount reopen correctly
+- no orphaned landed-cost consumption rows remain active after reversal
+
+## 10. Transfer Reversal Must Restore Origin Open Balance
+
+Business story:
+- a transfer using landed-cost uplift is reversed
+
+Steps:
+1. Post landed-cost voucher.
+2. Ship and receive transfer that carries forward uplift.
+3. Reverse the transfer.
+
+Expected:
+- destination carry-forward landed-cost balance is unwound
+- origin landed-cost open balance is restored
+- no duplicate or stranded open balances remain
+
+## 11. Duplicate Source AP Line Application Guard
+
+Business story:
+- the same freight line is accidentally selected twice or reused after full application
+
+Steps:
+1. Post one freight AP line.
+2. Use it fully on voucher A.
+3. Try to use the same line again on voucher B.
+
+Expected:
+- lookup shows no remaining unapplied amount or disabled state
+- preview/post blocks over-application
+- remaining unapplied amount stays accurate
+
+## 12. Source Eligibility Rejections
+
+Test these AP source rows separately:
+- tax line
+- Track 40 charge line
+- stock-affecting line
+- fixed-asset line
+- comment/rounding/adjustment line
+- reversed or reversal-blocked source document line
+- line with zero remaining unapplied amount
+
+Expected:
+- each row is not selectable as a valid landed-cost source
+- UI shows disabled reason badge
+- backend rejects invalid payload even if frontend is bypassed
+
+## 13. Cross-Legal-Entity Rejection
+
+Business story:
+- user tries to apply a source AP line from one legal entity to a receipt in another legal entity
+
+Steps:
+1. Create source AP line in legal entity A.
+2. Create stock receipt in legal entity B.
+3. Attempt preview/post.
+
+Expected:
+- preview blocks before posting
+- source/target legal entity mismatch is rejected clearly
+
+## 14. Track 40 and Track 41 Separation
+
+Business story:
+- a receipt already had same-document charge allocation
+- later another separate freight/customs bill arrives
+
+Steps:
+1. Post a Track 40 receipt with same-document charge lines.
+2. Materialize the receipt.
+3. Post a separate later AP freight/customs bill.
+4. Create Track 41 landed-cost voucher on that receipt.
+
+Expected:
+- both costs stack additively
+- original receipt cost, Track 40 charge cost, and Track 41 voucher cost stay distinguishable
+- no Track 40 behavior regresses
+
+## 15. Cross-Currency Source With Base-Authoritative Allocation
+
+Business story:
+- base currency is USD
+- freight bill is in EUR
+- receipt layer may also carry different txn currency context
+
+Steps:
+1. Post stock receipt.
+2. Post later AP source line in foreign currency.
+3. Create landed-cost voucher.
+
+Expected:
+- preview and posting are authoritative in base currency
+- transaction currency remains audit-only where applicable
+- no descendant layer txn-currency restatement is attempted
+
+## 16. Source Document Reversal Blocker
+
+Business story:
+- user tries to reverse the AP freight/customs bill after its source line has been applied to an active voucher
+
+Steps:
+1. Post landed-cost voucher from posted AP source line.
+2. Try to reverse the AP source document.
+
+Expected:
+- AP document reversal is blocked
+- blocker identifies active landed-cost voucher dependency
+- after voucher reversal, source document reversal becomes available again
+
+## 17. Voucher Reversal While Still Eligible
+
+Business story:
+- voucher was posted but nothing downstream consumed the capitalized slice yet
+
+Steps:
+1. Post landed-cost voucher on open stock.
+2. Do not issue or transfer that stock.
+3. Reverse the voucher from detail page drawer.
+
+Expected:
+- reversal succeeds
+- journal reverses cleanly
+- source application is released
+- inventory uplift and consumed adjustment unwind symmetrically
+- voucher history remains visible
+
+## 18. Voucher Reversal Blocked After Downstream Dependency
+
+Business story:
+- voucher was posted
+- later issue or transfer consumed the capitalized slice
+- user tries to reverse the voucher
+
+Steps:
+1. Post voucher.
+2. Issue or transfer stock that consumes open landed-cost balance.
+3. Try to reverse the voucher.
+
+Expected:
+- reversal is blocked
+- detail drawer shows precise dependency detail:
+  - resolved cost layer
+  - dependent movement
+  - dependency type
+  - date
+- no partial unwind occurs
+
+## 19. Journal Drillback and Audit Lineage
+
+Business story:
+- finance opens journal from voucher detail or GL drillback
+
+Steps:
+1. Post landed-cost voucher.
+2. Open the posted journal.
+3. Follow the source link drillback.
+
+Expected:
+- source link type is `STOCK_LANDED_COST_VOUCHER`
+- drillback lands on landed-cost voucher page
+- journal lines show correct inventory vs consumed adjustment vs AP reclass behavior
+- context and operating unit visibility are preserved
+
+## 20. List, Wizard, Detail, and Permission Behavior
+
+Steps:
+1. Open list page with `inventory.read`.
+2. Confirm filter bar works by legal entity, context, OU, status, vendor, search.
+3. Open new wizard with `inventory.upsert`.
+4. Walk through source selection, target selection, preview, review, and post.
+5. Open detail page with `inventory.read`.
+6. Test reverse action visibility with and without `inventory.upsert`.
+
+Expected:
+- list/detail/preview are readable with `inventory.read`
+- mutating actions require `inventory.upsert`
+- missing mutating permission is shown inline, not hidden silently
+- summary totals stay visible during wizard flow
+
+## 21. Suggested Full End-to-End UAT Flow
+
+Use this as the final real-life acceptance run:
+
+1. Post one stock receipt with Track 40 same-document charge.
+2. Materialize inventory receipt.
+3. Transfer part of stock to another valid warehouse.
+4. Post later freight/customs AP bill with `GENERAL` source line.
+5. Create Track 41 voucher and preview transfer-aware split.
+6. Post the voucher.
+7. Issue some of the now-uplifted stock.
+8. Review list page, detail page, layer allocations, and consumptions.
+9. Try reversing source AP document and confirm blocker.
+10. Try reversing voucher and confirm blocked state because of downstream issue.
+11. Reverse the downstream issue.
+12. Reverse voucher successfully.
+13. Reverse the source AP document successfully afterward.
+
+Expected:
+- every major Track 41 lock is exercised in one business story
+- Track 40 and Track 41 remain separate but additive
+- source, target, journal, lineage, consumption, carry-forward, and reversal behavior all stay coherent
+
+## Minimum Release Signoff Checklist
+
+Before calling Track 41 done, confirm:
+- separate-bill landed cost can be posted after receipt
+- same-document Track 40 still works unchanged
+- partial-consumption split is explicit and correct
+- transfer-aware lineage works
+- future issue consumes uplift
+- future transfer carries uplift forward
+- issue/transfer reversal restores uplift state
+- duplicate source application is blocked
+- ineligible source lines are rejected
+- cross-legal-entity use is rejected
+- source-document reversal blocker works
+- voucher reversal works when eligible and blocks when not eligible
+- journal drillback resolves to voucher workflow
+- list, wizard, and detail pages are usable end to end

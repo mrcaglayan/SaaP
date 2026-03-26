@@ -14,6 +14,7 @@ export const PAYMENT_BATCH = "PAYMENT_BATCH";
 export const PAYROLL_RUN = "PAYROLL_RUN";
 export const INVENTORY_MOVEMENT = "INVENTORY_MOVEMENT";
 export const INVENTORY_TRANSFER = "INVENTORY_TRANSFER";
+export const STOCK_LANDED_COST_VOUCHER = "STOCK_LANDED_COST_VOUCHER";
 
 // ── fixed-assets source-ref types ───────────────────────────────────
 export const FIXED_ASSET = "FIXED_ASSET";
@@ -32,6 +33,7 @@ export const SOURCE_REF_TYPES = Object.freeze(
     PAYROLL_RUN,
     INVENTORY_MOVEMENT,
     INVENTORY_TRANSFER,
+    STOCK_LANDED_COST_VOUCHER,
     FIXED_ASSET,
     FIXED_ASSET_TRANSACTION,
     FIXED_ASSET_DEPRECIATION_RUN,

@@ -26,6 +26,11 @@
       "packageScriptName": "test:cash:exf04"
     },
     {
+      "routePath": "/app/demirbas-ops-dashboard",
+      "smokeScriptPath": "backend/scripts/test-fa-ops-dashboard-release-gate.js",
+      "packageScriptName": "test:fa:ops-dashboard"
+    },
+    {
       "routePath": "/app/kasa-kur-raporlari",
       "smokeScriptPath": "backend/scripts/test-cash-exf01-position-lots-realized-fx.js",
       "packageScriptName": "test:cash:exf01"
@@ -59,6 +64,16 @@
       "routePath": "/app/stok-transferleri",
       "smokeScriptPath": "backend/scripts/test-ou-self-balancing-release-gate.js",
       "packageScriptName": "test:ou:self-balancing:release-gate"
+    },
+    {
+      "routePath": "/app/stok-maliyet-voucherleri",
+      "smokeScriptPath": "backend/scripts/test-inventory-lcv07-release-gate.js",
+      "packageScriptName": "test:inventory:lcv07-release-gate"
+    },
+    {
+      "routePath": "/app/stok-maliyet-voucherleri/yeni",
+      "smokeScriptPath": "backend/scripts/test-inventory-lcv07-release-gate.js",
+      "packageScriptName": "test:inventory:lcv07-release-gate"
     }
   ]
 }

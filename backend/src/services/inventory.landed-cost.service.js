@@ -12,13 +12,20 @@ import {
   resolveInventoryPostingAccount,
 } from "./inventory.service.js";
 import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
-import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
+import {
+  listJournalSourceLinksByJournalIds,
+  upsertJournalSourceLinkTx,
+} from "./journal.source-link.service.js";
 import {
   buildOwnershipContext,
   sameOwnershipContext,
 } from "./ownership.context.policy.service.js";
 import { STOCK_LANDED_COST_VOUCHER } from "../utils/source-ref-types.js";
 import { listVoucherReversalDependenciesTx } from "./inventory.landed-cost.runtime.service.js";
+import {
+  enrichSourceLinksWithDestinationsAsync,
+  resolveReverseBlockAsync,
+} from "./gl.reverse-block-destination.service.js";
 
 const AMOUNT_SCALE = 6;
 const BALANCE_EPSILON = 0.000001;
@@ -978,9 +985,13 @@ function mapVoucherHeaderRow(row) {
     note: row.note || null,
     postedJournalEntryId: parsePositiveInt(row.posted_journal_entry_id),
     reversalJournalEntryId: parsePositiveInt(row.reversal_journal_entry_id),
+    reversalOfVoucherId: parsePositiveInt(row.reversal_of_voucher_id),
+    reversedByVoucherId: parsePositiveInt(row.reversed_by_voucher_id),
     postedBookId: parsePositiveInt(row.posted_book_id),
     postedAt: row.posted_at || null,
     reversedAt: row.reversed_at || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
   };
 }
 
@@ -1087,6 +1098,8 @@ function mapVoucherTargetDetailRow(row) {
   return {
     voucherTargetId: parsePositiveInt(row.id),
     sourceStockLinkId: parsePositiveInt(row.source_stock_link_id),
+    sourceCariDocumentId: parsePositiveInt(row.source_cari_document_id),
+    sourceCariDocumentLineId: parsePositiveInt(row.source_cari_document_line_id),
     sourceAnchorInventoryMovementId: parsePositiveInt(row.source_anchor_inventory_movement_id),
     receiptRef: row.document_no || null,
     receiptDate: row.document_date || null,
@@ -1106,6 +1119,152 @@ function mapVoucherTargetDetailRow(row) {
     allocatedAmountBase: roundAmount(row.allocated_amount_base || 0),
     onHandAllocatedAmountBase: roundAmount(row.on_hand_allocated_amount_base || 0),
     consumedAllocatedAmountBase: roundAmount(row.consumed_allocated_amount_base || 0),
+  };
+}
+
+function buildMovementReferenceFromRow(row, prefix) {
+  const documentNo = row?.[`${prefix}_document_no`] || null;
+  const transferNo = row?.[`${prefix}_transfer_no`] || null;
+  const movementType = row?.[`${prefix}_movement_type`] || null;
+  const movementId = parsePositiveInt(row?.[`${prefix}_movement_id`]);
+  return documentNo || transferNo || (movementType && movementId ? `${movementType} #${movementId}` : null);
+}
+
+function mapVoucherLayerAllocationDetailRow(row) {
+  if (!row) {
+    return null;
+  }
+  const sourceAnchorInventoryMovementId = parsePositiveInt(row.source_anchor_inventory_movement_id);
+  const resolvedInventoryMovementId = parsePositiveInt(row.resolved_inventory_movement_id);
+  const sourceAnchorRef = buildMovementReferenceFromRow(row, "source_anchor");
+  const resolvedMovementRef = buildMovementReferenceFromRow(row, "resolved");
+  const descendantKind =
+    sourceAnchorInventoryMovementId && sourceAnchorInventoryMovementId === resolvedInventoryMovementId
+      ? "ANCHOR"
+      : "TRANSFER_DESCENDANT";
+
+  return {
+    voucherLayerAllocationId: parsePositiveInt(row.id),
+    voucherTargetId: parsePositiveInt(row.voucher_target_id),
+    sourceStockLinkId: parsePositiveInt(row.source_stock_link_id),
+    sourceAnchorInventoryMovementId,
+    sourceAnchorMovementType: row.source_anchor_movement_type || null,
+    sourceAnchorMovementDate: row.source_anchor_movement_date || null,
+    sourceAnchorMovementRef: sourceAnchorRef,
+    sourceAnchorWarehouseCode: row.source_anchor_warehouse_code || null,
+    sourceAnchorWarehouseName: row.source_anchor_warehouse_name || null,
+    resolvedInventoryMovementId,
+    resolvedMovementType: row.resolved_movement_type || null,
+    resolvedMovementDate: row.resolved_movement_date || null,
+    resolvedMovementRef,
+    resolvedWarehouseCode: row.resolved_warehouse_code || null,
+    resolvedWarehouseName: row.resolved_warehouse_name || null,
+    resolvedCostLayerId: parsePositiveInt(row.resolved_cost_layer_id),
+    originLayerAllocationId: parsePositiveInt(row.origin_layer_allocation_id),
+    allocationRole: normalizeUpperText(row.allocation_role || "ON_HAND"),
+    quantitySnapshot: roundAmount(row.quantity_snapshot || 0),
+    allocatedAmountBase: roundAmount(row.allocated_amount_base || 0),
+    remainingAdjustedQuantity: roundAmount(row.remaining_adjusted_quantity || 0),
+    remainingAdjustedAmountBase: roundAmount(row.remaining_adjusted_amount_base || 0),
+    openStatus: normalizeUpperText(row.open_status || "CLOSED"),
+    descendantKind,
+    descendantPath:
+      sourceAnchorRef && resolvedMovementRef && sourceAnchorRef !== resolvedMovementRef
+        ? `${sourceAnchorRef} -> ${resolvedMovementRef}`
+        : resolvedMovementRef || sourceAnchorRef || null,
+    itemCode: row.item_card_code || null,
+    itemName: row.item_card_name || null,
+    linkedConsumptionCount: Number(row.linked_consumption_count || 0),
+  };
+}
+
+function mapLandedCostConsumptionDetailRow(row) {
+  if (!row) {
+    return null;
+  }
+  const restoredByInventoryMovementId = parsePositiveInt(row.restored_by_inventory_movement_id);
+  const carryForwardReceiptMovementId = parsePositiveInt(row.carry_forward_receipt_movement_id);
+  return {
+    landedCostConsumptionId: parsePositiveInt(row.id),
+    voucherLayerAllocationId: parsePositiveInt(row.voucher_layer_allocation_id),
+    voucherTargetId: parsePositiveInt(row.voucher_target_id),
+    allocationRole: normalizeUpperText(row.allocation_role || "ON_HAND"),
+    sourceAnchorInventoryMovementId: parsePositiveInt(row.source_anchor_inventory_movement_id),
+    resolvedInventoryMovementId: parsePositiveInt(row.resolved_inventory_movement_id),
+    resolvedCostLayerId: parsePositiveInt(row.resolved_cost_layer_id),
+    consumingInventoryMovementId: parsePositiveInt(row.consuming_inventory_movement_id),
+    consumingMovementType: row.consuming_movement_type || null,
+    consumingMovementDate: row.consuming_movement_date || null,
+    consumingMovementRef: buildMovementReferenceFromRow(row, "consuming"),
+    consumingInventoryTransferId: parsePositiveInt(row.consuming_inventory_transfer_id),
+    transferNo: row.transfer_no || null,
+    quantityConsumed: roundAmount(row.quantity_consumed || 0),
+    allocatedAmountBaseConsumed: roundAmount(row.allocated_amount_base_consumed || 0),
+    carryForwardReceiptMovementId,
+    carryForwardReceiptMovementRef: buildMovementReferenceFromRow(row, "carry_forward"),
+    carryForwardCostLayerId: parsePositiveInt(row.carry_forward_cost_layer_id),
+    carryForwardLayerAllocationId: parsePositiveInt(row.carry_forward_layer_allocation_id),
+    restoredByInventoryMovementId,
+    restoredByMovementRef: buildMovementReferenceFromRow(row, "restored_by"),
+    status: restoredByInventoryMovementId
+      ? "RESTORED"
+      : carryForwardReceiptMovementId
+        ? "CARRY_FORWARDED"
+        : "ACTIVE",
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function mapVoucherJournalRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    journalEntryId: parsePositiveInt(row.id),
+    journalNo: row.journal_no || null,
+    status: normalizeUpperText(row.status || "POSTED"),
+    entryDate: row.entry_date || null,
+    documentDate: row.document_date || null,
+    description: row.description || null,
+    referenceNo: row.reference_no || null,
+    totalDebitBase: roundAmount(row.total_debit_base || 0),
+    totalCreditBase: roundAmount(row.total_credit_base || 0),
+    bookId: parsePositiveInt(row.book_id),
+    bookCode: row.book_code || null,
+    bookName: row.book_name || null,
+    actorUserId: parsePositiveInt(row.actor_user_id),
+    actorName: row.actor_name || null,
+    postedAt: row.posted_at || null,
+    reversedAt: row.reversed_at || null,
+  };
+}
+
+function mapVoucherJournalLineRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    journalLineId: parsePositiveInt(row.id),
+    journalEntryId: parsePositiveInt(row.journal_entry_id),
+    lineNo: Number(row.line_no || 0),
+    accountId: parsePositiveInt(row.account_id),
+    accountCode: row.account_code || null,
+    accountName: row.account_name || null,
+    operatingUnitId: parsePositiveInt(row.operating_unit_id),
+    operatingUnitCode: row.operating_unit_code || null,
+    operatingUnitName: row.operating_unit_name || null,
+    counterpartyLegalEntityId: parsePositiveInt(row.counterparty_legal_entity_id),
+    counterpartyLegalEntityCode: row.counterparty_legal_entity_code || null,
+    counterpartyLegalEntityName: row.counterparty_legal_entity_name || null,
+    description: row.description || null,
+    subledgerReferenceNo: row.subledger_reference_no || null,
+    currencyCode: row.currency_code || null,
+    amountTxn: roundAmount(row.amount_txn || 0),
+    debitBase: roundAmount(row.debit_base || 0),
+    creditBase: roundAmount(row.credit_base || 0),
+    taxCode: row.tax_code || null,
+    createdAt: row.created_at || null,
   };
 }
 
@@ -1376,11 +1535,39 @@ export async function getInventoryLandedCostVoucherById({
   voucherId,
   runQuery = query,
 }) {
-  const header = await fetchInventoryLandedCostVoucherHeader({
-    tenantId,
-    voucherId,
-    runQuery,
-  });
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedVoucherId = parsePositiveInt(voucherId);
+  if (!normalizedTenantId || !normalizedVoucherId) {
+    return null;
+  }
+
+  const headerResult = await runQuery(
+    `SELECT
+        v.*,
+        le.code AS legal_entity_code,
+        le.name AS legal_entity_name,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
+        pj.journal_no AS posted_journal_no,
+        rj.journal_no AS reversal_journal_no
+       FROM stock_landed_cost_vouchers v
+       JOIN legal_entities le
+         ON le.tenant_id = v.tenant_id
+        AND le.id = v.legal_entity_id
+       LEFT JOIN operating_units ou
+         ON ou.tenant_id = v.tenant_id
+        AND ou.id = v.operating_unit_id
+       LEFT JOIN journal_entries pj
+         ON pj.id = v.posted_journal_entry_id
+       LEFT JOIN journal_entries rj
+         ON rj.id = v.reversal_journal_entry_id
+      WHERE v.tenant_id = ?
+        AND v.id = ?
+      LIMIT 1`,
+    [normalizedTenantId, normalizedVoucherId]
+  );
+  const headerRow = headerResult.rows?.[0] || null;
+  const header = mapVoucherHeaderRow(headerRow);
   if (!header) {
     return null;
   }
@@ -1431,18 +1618,21 @@ export async function getInventoryLandedCostVoucherById({
            svs.source_cari_document_line_id
        ) active_source_usage
          ON active_source_usage.tenant_id = s.tenant_id
-        AND active_source_usage.legal_entity_id = s.legal_entity_id
+       AND active_source_usage.legal_entity_id = s.legal_entity_id
         AND active_source_usage.source_cari_document_line_id = s.source_cari_document_line_id
       WHERE s.tenant_id = ?
         AND s.legal_entity_id = ?
         AND s.voucher_id = ?
       ORDER BY s.id ASC`,
-    [...ACTIVE_SOURCE_VOUCHER_STATUSES, tenantId, header.legalEntityId, header.voucherId]
+    [...ACTIVE_SOURCE_VOUCHER_STATUSES, normalizedTenantId, header.legalEntityId, header.voucherId]
   );
 
   const targetRowsResult = await runQuery(
     `SELECT
         t.*,
+        sl.cari_document_id AS source_cari_document_id,
+        sl.cari_document_line_id AS source_cari_document_line_id,
+        sl.item_card_id,
         d.document_no,
         d.document_date,
         l.line_no,
@@ -1481,32 +1671,313 @@ export async function getInventoryLandedCostVoucherById({
         AND t.legal_entity_id = ?
         AND t.voucher_id = ?
       ORDER BY t.id ASC`,
-    [tenantId, header.legalEntityId, header.voucherId]
+    [normalizedTenantId, header.legalEntityId, header.voucherId]
   );
 
-  const reversalDependencyResult = await runQuery(
-    `SELECT COUNT(*) AS reversal_dependency_count
-       FROM stock_landed_cost_voucher_targets t
-       JOIN stock_landed_cost_voucher_layer_allocations la
-         ON la.tenant_id = t.tenant_id
-        AND la.legal_entity_id = t.legal_entity_id
-        AND la.voucher_target_id = t.id
-       JOIN stock_landed_cost_layer_consumptions c
-         ON c.tenant_id = la.tenant_id
-        AND c.legal_entity_id = la.legal_entity_id
-        AND c.voucher_layer_allocation_id = la.id
-      WHERE t.tenant_id = ?
-        AND t.legal_entity_id = ?
+  const layerAllocationRowsResult = await runQuery(
+    `SELECT
+        la.id,
+        la.voucher_target_id,
+        la.source_anchor_inventory_movement_id,
+        la.resolved_inventory_movement_id,
+        la.resolved_cost_layer_id,
+        la.origin_layer_allocation_id,
+        la.allocation_role,
+        la.quantity_snapshot,
+        la.allocated_amount_base,
+        la.remaining_adjusted_quantity,
+        la.remaining_adjusted_amount_base,
+        la.open_status,
+        t.source_stock_link_id,
+        source_anchor_m.id AS source_anchor_movement_id,
+        source_anchor_m.movement_type AS source_anchor_movement_type,
+        source_anchor_m.movement_date AS source_anchor_movement_date,
+        source_anchor_doc.document_no AS source_anchor_document_no,
+        source_anchor_transfer.transfer_no AS source_anchor_transfer_no,
+        source_anchor_wh.code AS source_anchor_warehouse_code,
+        source_anchor_wh.name AS source_anchor_warehouse_name,
+        resolved_m.id AS resolved_movement_id,
+        resolved_m.movement_type AS resolved_movement_type,
+        resolved_m.movement_date AS resolved_movement_date,
+        resolved_doc.document_no AS resolved_document_no,
+        resolved_transfer.transfer_no AS resolved_transfer_no,
+        resolved_wh.code AS resolved_warehouse_code,
+        resolved_wh.name AS resolved_warehouse_name,
+        ic.code AS item_card_code,
+        ic.name AS item_card_name,
+        COALESCE(consumption_usage.linked_consumption_count, 0) AS linked_consumption_count
+       FROM stock_landed_cost_voucher_layer_allocations la
+       JOIN stock_landed_cost_voucher_targets t
+         ON t.tenant_id = la.tenant_id
+        AND t.legal_entity_id = la.legal_entity_id
+        AND t.id = la.voucher_target_id
+       JOIN inventory_movements source_anchor_m
+         ON source_anchor_m.id = la.source_anchor_inventory_movement_id
+       LEFT JOIN cari_documents source_anchor_doc
+         ON source_anchor_m.source_document_type = 'CARI_DOCUMENT'
+        AND source_anchor_doc.tenant_id = source_anchor_m.tenant_id
+        AND source_anchor_doc.legal_entity_id = source_anchor_m.legal_entity_id
+        AND source_anchor_doc.id = source_anchor_m.source_document_id
+       LEFT JOIN inventory_transfers source_anchor_transfer
+         ON source_anchor_m.source_document_type = 'INVENTORY_TRANSFER'
+        AND source_anchor_transfer.tenant_id = source_anchor_m.tenant_id
+        AND source_anchor_transfer.id = source_anchor_m.source_document_id
+       LEFT JOIN inventory_warehouses source_anchor_wh
+         ON source_anchor_wh.tenant_id = source_anchor_m.tenant_id
+        AND source_anchor_wh.id = source_anchor_m.warehouse_id
+       JOIN inventory_movements resolved_m
+         ON resolved_m.id = la.resolved_inventory_movement_id
+       LEFT JOIN cari_documents resolved_doc
+         ON resolved_m.source_document_type = 'CARI_DOCUMENT'
+        AND resolved_doc.tenant_id = resolved_m.tenant_id
+        AND resolved_doc.legal_entity_id = resolved_m.legal_entity_id
+        AND resolved_doc.id = resolved_m.source_document_id
+       LEFT JOIN inventory_transfers resolved_transfer
+         ON resolved_m.source_document_type = 'INVENTORY_TRANSFER'
+        AND resolved_transfer.tenant_id = resolved_m.tenant_id
+        AND resolved_transfer.id = resolved_m.source_document_id
+       LEFT JOIN inventory_warehouses resolved_wh
+         ON resolved_wh.tenant_id = resolved_m.tenant_id
+        AND resolved_wh.id = resolved_m.warehouse_id
+       LEFT JOIN item_cards ic
+         ON ic.tenant_id = resolved_m.tenant_id
+        AND ic.id = resolved_m.item_card_id
+       LEFT JOIN (
+         SELECT
+           tenant_id,
+           legal_entity_id,
+           voucher_layer_allocation_id,
+           COUNT(*) AS linked_consumption_count
+          FROM stock_landed_cost_layer_consumptions
+         GROUP BY tenant_id, legal_entity_id, voucher_layer_allocation_id
+       ) consumption_usage
+         ON consumption_usage.tenant_id = la.tenant_id
+        AND consumption_usage.legal_entity_id = la.legal_entity_id
+        AND consumption_usage.voucher_layer_allocation_id = la.id
+      WHERE la.tenant_id = ?
+        AND la.legal_entity_id = ?
         AND t.voucher_id = ?
-        AND la.allocation_role = 'ON_HAND'
-        AND c.restored_by_inventory_movement_id IS NULL`,
-    [tenantId, header.legalEntityId, header.voucherId]
+      ORDER BY t.id ASC, la.id ASC`,
+    [normalizedTenantId, header.legalEntityId, header.voucherId]
+  );
+
+  const consumptionRowsResult = await runQuery(
+    `SELECT
+        c.*,
+        la.voucher_target_id,
+        la.allocation_role,
+        la.source_anchor_inventory_movement_id,
+        la.resolved_inventory_movement_id,
+        la.resolved_cost_layer_id,
+        consuming_m.id AS consuming_movement_id,
+        consuming_m.movement_type AS consuming_movement_type,
+        consuming_m.movement_date AS consuming_movement_date,
+        consuming_doc.document_no AS consuming_document_no,
+        consuming_source_transfer.transfer_no AS consuming_transfer_no,
+        consuming_transfer.transfer_no,
+        carry_forward_m.id AS carry_forward_movement_id,
+        carry_forward_m.movement_type AS carry_forward_movement_type,
+        carry_forward_m.movement_date AS carry_forward_movement_date,
+        carry_forward_doc.document_no AS carry_forward_document_no,
+        carry_forward_transfer.transfer_no AS carry_forward_transfer_no,
+        restored_by_m.id AS restored_by_movement_id,
+        restored_by_m.movement_type AS restored_by_movement_type,
+        restored_by_m.movement_date AS restored_by_movement_date,
+        restored_by_doc.document_no AS restored_by_document_no,
+        restored_by_transfer.transfer_no AS restored_by_transfer_no
+       FROM stock_landed_cost_layer_consumptions c
+       JOIN stock_landed_cost_voucher_layer_allocations la
+         ON la.tenant_id = c.tenant_id
+        AND la.legal_entity_id = c.legal_entity_id
+        AND la.id = c.voucher_layer_allocation_id
+       JOIN stock_landed_cost_voucher_targets t
+         ON t.tenant_id = la.tenant_id
+        AND t.legal_entity_id = la.legal_entity_id
+        AND t.id = la.voucher_target_id
+       JOIN inventory_movements consuming_m
+         ON consuming_m.id = c.consuming_inventory_movement_id
+       LEFT JOIN cari_documents consuming_doc
+         ON consuming_m.source_document_type = 'CARI_DOCUMENT'
+        AND consuming_doc.tenant_id = consuming_m.tenant_id
+        AND consuming_doc.legal_entity_id = consuming_m.legal_entity_id
+        AND consuming_doc.id = consuming_m.source_document_id
+       LEFT JOIN inventory_transfers consuming_source_transfer
+         ON consuming_m.source_document_type = 'INVENTORY_TRANSFER'
+        AND consuming_source_transfer.tenant_id = consuming_m.tenant_id
+        AND consuming_source_transfer.id = consuming_m.source_document_id
+       LEFT JOIN inventory_transfers consuming_transfer
+         ON consuming_transfer.id = c.consuming_inventory_transfer_id
+       LEFT JOIN inventory_movements carry_forward_m
+         ON carry_forward_m.id = c.carry_forward_receipt_movement_id
+       LEFT JOIN cari_documents carry_forward_doc
+         ON carry_forward_m.source_document_type = 'CARI_DOCUMENT'
+        AND carry_forward_doc.tenant_id = carry_forward_m.tenant_id
+        AND carry_forward_doc.legal_entity_id = carry_forward_m.legal_entity_id
+        AND carry_forward_doc.id = carry_forward_m.source_document_id
+       LEFT JOIN inventory_transfers carry_forward_transfer
+         ON carry_forward_m.source_document_type = 'INVENTORY_TRANSFER'
+        AND carry_forward_transfer.tenant_id = carry_forward_m.tenant_id
+        AND carry_forward_transfer.id = carry_forward_m.source_document_id
+       LEFT JOIN inventory_movements restored_by_m
+         ON restored_by_m.id = c.restored_by_inventory_movement_id
+       LEFT JOIN cari_documents restored_by_doc
+         ON restored_by_m.source_document_type = 'CARI_DOCUMENT'
+        AND restored_by_doc.tenant_id = restored_by_m.tenant_id
+        AND restored_by_doc.legal_entity_id = restored_by_m.legal_entity_id
+        AND restored_by_doc.id = restored_by_m.source_document_id
+       LEFT JOIN inventory_transfers restored_by_transfer
+         ON restored_by_m.source_document_type = 'INVENTORY_TRANSFER'
+        AND restored_by_transfer.tenant_id = restored_by_m.tenant_id
+        AND restored_by_transfer.id = restored_by_m.source_document_id
+      WHERE c.tenant_id = ?
+        AND c.legal_entity_id = ?
+        AND t.voucher_id = ?
+      ORDER BY c.id ASC`,
+    [normalizedTenantId, header.legalEntityId, header.voucherId]
   );
 
   const sources = (sourceRowsResult.rows || []).map(mapVoucherSourceDetailRow).filter(Boolean);
   const targets = (targetRowsResult.rows || []).map(mapVoucherTargetDetailRow).filter(Boolean);
-  const hasReversalDependencies =
-    Number(reversalDependencyResult.rows?.[0]?.reversal_dependency_count || 0) > 0;
+  const layerAllocations = (layerAllocationRowsResult.rows || [])
+    .map(mapVoucherLayerAllocationDetailRow)
+    .filter(Boolean);
+  const landedCostConsumptions = (consumptionRowsResult.rows || [])
+    .map(mapLandedCostConsumptionDetailRow)
+    .filter(Boolean);
+
+  const reversalDependencies = landedCostConsumptions
+    .filter(
+      (row) =>
+        row.allocationRole === "ON_HAND"
+        && !parsePositiveInt(row.restoredByInventoryMovementId)
+    )
+    .map((row) => ({
+      voucherLayerAllocationId: row.voucherLayerAllocationId,
+      resolvedCostLayerId: row.resolvedCostLayerId,
+      resolvedInventoryMovementId: row.resolvedInventoryMovementId,
+      dependentMovementId: row.consumingInventoryMovementId,
+      dependentMovementType: row.consumingMovementType,
+      dependencyType: row.consumingInventoryTransferId ? "TRANSFER" : "ISSUE",
+      dependentMovementDate: row.consumingMovementDate || null,
+      transferId: row.consumingInventoryTransferId,
+      transferNo: row.transferNo || null,
+    }));
+  const hasReversalDependencies = reversalDependencies.length > 0;
+
+  const journalIds = uniquePositiveIds([
+    header.postedJournalEntryId,
+    header.reversalJournalEntryId,
+  ]);
+  const journalsById = new Map();
+  if (journalIds.length > 0) {
+    const journalInClause = makeInClause(journalIds);
+    const journalRowsResult = await runQuery(
+      `SELECT
+          je.id,
+          je.book_id,
+          je.journal_no,
+          je.status,
+          je.entry_date,
+          je.document_date,
+          je.description,
+          je.reference_no,
+          je.total_debit_base,
+          je.total_credit_base,
+          je.created_by_user_id AS actor_user_id,
+          je.posted_at,
+          je.reversed_at,
+          b.code AS book_code,
+          b.name AS book_name,
+          u.name AS actor_name
+         FROM journal_entries je
+         JOIN books b
+           ON b.id = je.book_id
+         LEFT JOIN users u
+           ON u.id = je.created_by_user_id
+        WHERE je.tenant_id = ?
+          AND je.id IN (${journalInClause})
+        ORDER BY je.id ASC`,
+      [normalizedTenantId, ...journalIds]
+    );
+
+    const lineRowsResult = await runQuery(
+      `SELECT
+          jl.id,
+          jl.journal_entry_id,
+          jl.line_no,
+          jl.account_id,
+          jl.operating_unit_id,
+          jl.counterparty_legal_entity_id,
+          jl.description,
+          jl.subledger_reference_no,
+          jl.currency_code,
+          jl.amount_txn,
+          jl.debit_base,
+          jl.credit_base,
+          jl.tax_code,
+          jl.created_at,
+          a.code AS account_code,
+          a.name AS account_name,
+          ou.code AS operating_unit_code,
+          ou.name AS operating_unit_name,
+          cle.code AS counterparty_legal_entity_code,
+          cle.name AS counterparty_legal_entity_name
+         FROM journal_lines jl
+         JOIN accounts a
+           ON a.id = jl.account_id
+         LEFT JOIN operating_units ou
+           ON ou.id = jl.operating_unit_id
+         LEFT JOIN legal_entities cle
+           ON cle.id = jl.counterparty_legal_entity_id
+        WHERE jl.journal_entry_id IN (${journalInClause})
+        ORDER BY jl.journal_entry_id ASC, jl.line_no ASC`,
+      journalIds
+    );
+
+    const journalSourceLinksById = await listJournalSourceLinksByJournalIds({
+      tenantId: normalizedTenantId,
+      journalEntryIds: journalIds,
+      runQuery,
+    });
+    const linesByJournalId = new Map();
+    for (const row of lineRowsResult.rows || []) {
+      const journalEntryId = parsePositiveInt(row.journal_entry_id);
+      if (!journalEntryId) {
+        continue;
+      }
+      const bucket = linesByJournalId.get(journalEntryId) || [];
+      bucket.push(mapVoucherJournalLineRow(row));
+      linesByJournalId.set(journalEntryId, bucket);
+    }
+
+    for (const row of journalRowsResult.rows || []) {
+      const journalEntryId = parsePositiveInt(row.id);
+      if (!journalEntryId) {
+        continue;
+      }
+      const rawSourceLinks = journalSourceLinksById.get(journalEntryId) || [];
+      const enrichedSourceLinks = await enrichSourceLinksWithDestinationsAsync(rawSourceLinks);
+      const reverseBlock = await resolveReverseBlockAsync(rawSourceLinks);
+      journalsById.set(journalEntryId, {
+        ...mapVoucherJournalRow(row),
+        lines: linesByJournalId.get(journalEntryId) || [],
+        sourceLinks: enrichedSourceLinks,
+        reverseBlock,
+      });
+    }
+  }
+
+  const uniqueSourceDocumentIds = uniquePositiveIds(
+    sources.map((row) => row.sourceCariDocumentId)
+  );
+  const totalRemainingUnappliedAmountBase = roundAmount(
+    sources.reduce(
+      (sum, row) => sum + Number(row.remainingUnappliedAmountBase || 0),
+      0
+    )
+  );
+  const sourceDocumentBlockerActive =
+    ACTIVE_SOURCE_VOUCHER_STATUSES.includes(header.status) && uniqueSourceDocumentIds.length > 0;
 
   return {
     voucherId: header.voucherId,
@@ -1514,19 +1985,32 @@ export async function getInventoryLandedCostVoucherById({
     status: header.status,
     postingDate: header.postingDate,
     legalEntityId: header.legalEntityId,
+    legalEntityCode: headerRow.legal_entity_code || null,
+    legalEntityName: headerRow.legal_entity_name || null,
     ownershipScope: header.ownershipScope,
     operatingUnitId: header.operatingUnitId,
+    operatingUnitCode: headerRow.operating_unit_code || null,
+    operatingUnitName: headerRow.operating_unit_name || null,
     currencyCode: header.currencyCode,
     note: header.note,
+    createdAt: header.createdAt,
+    updatedAt: header.updatedAt,
     postedJournalEntryId: header.postedJournalEntryId,
+    postedJournalNo: headerRow.posted_journal_no || null,
     reversalJournalEntryId: header.reversalJournalEntryId,
+    reversalJournalNo: headerRow.reversal_journal_no || null,
     postedAt: header.postedAt,
     reversedAt: header.reversedAt,
+    createdByUserId: journalsById.get(header.postedJournalEntryId)?.actorUserId || null,
+    createdByName: journalsById.get(header.postedJournalEntryId)?.actorName || null,
+    reversedByUserId: journalsById.get(header.reversalJournalEntryId)?.actorUserId || null,
+    reversedByName: journalsById.get(header.reversalJournalEntryId)?.actorName || null,
     sourceSummary: {
       lineCount: sources.length,
       totalAppliedAmountBase: roundAmount(
         sources.reduce((sum, row) => sum + Number(row.appliedAmountBase || 0), 0)
       ),
+      totalRemainingUnappliedAmountBase,
     },
     targetSummary: {
       targetCount: targets.length,
@@ -1542,7 +2026,28 @@ export async function getInventoryLandedCostVoucherById({
     },
     sources,
     targets,
+    layerAllocations,
+    landedCostConsumptions,
+    reversalDependencies,
     hasReversalDependencies,
+    journalAudit: {
+      sourceLinkType: STOCK_LANDED_COST_VOUCHER,
+      postedJournal: journalsById.get(header.postedJournalEntryId) || null,
+      reversalJournal: journalsById.get(header.reversalJournalEntryId) || null,
+      sourceDocumentBlockerState: {
+        isBlocked: sourceDocumentBlockerActive,
+        activeVoucherStatus: header.status,
+        blockedDocumentCount: sourceDocumentBlockerActive ? uniqueSourceDocumentIds.length : 0,
+        blockedSourceLineCount: sourceDocumentBlockerActive ? sources.length : 0,
+        blockedSourceDocumentIds: sourceDocumentBlockerActive ? uniqueSourceDocumentIds : [],
+      },
+      auditTimestamps: {
+        createdAt: header.createdAt,
+        updatedAt: header.updatedAt,
+        postedAt: header.postedAt,
+        reversedAt: header.reversedAt,
+      },
+    },
     uiStatus:
       header.status === "POSTED" && hasReversalDependencies
         ? "REVERSAL_BLOCKED"

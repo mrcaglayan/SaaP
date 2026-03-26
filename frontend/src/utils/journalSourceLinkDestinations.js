@@ -20,6 +20,7 @@ import {
   FIXED_ASSET_DEPRECIATION_RUN,
   PAYMENT_BATCH,
   PAYROLL_RUN,
+  STOCK_LANDED_COST_VOUCHER,
 } from "./sourceRefTypes.js";
 
 // ── local fallback registry (mirrors backend DESTINATION_REGISTRY) ───
@@ -31,6 +32,7 @@ const LOCAL_DESTINATION_REGISTRY = Object.freeze({
   [CASH_TRANSACTION]: "/app/kasa-islemleri",
   [PAYMENT_BATCH]: "/app/odeme-batchleri",
   [PAYROLL_RUN]: "/app/payroll-runs",
+  [STOCK_LANDED_COST_VOUCHER]: "/app/stok-maliyet-voucherleri",
   [FIXED_ASSET_TRANSACTION]: "/app/demirbas",
   [FIXED_ASSET_DEPRECIATION_RUN]: "/app/demirbas-amortisman-islemleri",
 });
@@ -131,6 +133,10 @@ export function resolveSourceLinkDestination(
   }
 
   if (sourceRefType === "PAYMENT_BATCH") {
+    return `${baseRoute}/${sourceRefId}`;
+  }
+
+  if (sourceRefType === STOCK_LANDED_COST_VOUCHER) {
     return `${baseRoute}/${sourceRefId}`;
   }
 

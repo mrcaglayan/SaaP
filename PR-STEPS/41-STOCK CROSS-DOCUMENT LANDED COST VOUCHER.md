@@ -279,10 +279,10 @@ The voucher must resolve target lineage through inventory transfers where needed
 
 **Phase 3: Frontend + Audit Exposure**
 - [x] `STEP-LCV05` - Frontend voucher workflow / target picker / preview
-- [ ] `STEP-LCV06` - Voucher read model, drillback, and inventory audit exposure
+- [x] `STEP-LCV06` - Voucher read model, drillback, and inventory audit exposure
 
 **Phase 4: Testing + Release**
-- [ ] `STEP-LCV07` - Smoke coverage, OpenAPI, and release gates for source/lineage/reversal cases
+- [x] `STEP-LCV07` - Smoke coverage, OpenAPI, and release gates for source/lineage/reversal cases
 
 ### Sequence Notes
 
