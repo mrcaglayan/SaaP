@@ -273,3 +273,228 @@ On `Depreciation Schedule`:
 - All manual scenarios behave as expected
 - No raw chronology blocker leaves the user without guidance
 - Reordered same-month retro improvements produce the same depreciation result as chronological control
+
+# LC40 Inline Charge Regression Notes
+
+## Automated Smoke
+
+Scripts:
+- `backend/scripts/test-cari-lc40-charge-allocation-smoke.js`
+
+Run:
+
+```powershell
+node backend/scripts/test-cari-lc40-charge-allocation-smoke.js
+```
+
+Or from `backend/`:
+
+```powershell
+npm run test:cari:lc40
+```
+
+Optional cleanup mode:
+
+```powershell
+$env:LC40_SMOKE_KEEP_ARTIFACTS='0'
+node backend/scripts/test-cari-lc40-charge-allocation-smoke.js
+Remove-Item Env:LC40_SMOKE_KEEP_ARTIFACTS
+```
+
+What `LC40` covers:
+- Charge lines reject stock-item defaulting that would reintroduce stock behavior
+- AP charge draft cannot be flipped to AR through header-only update without replacing lines
+- `FIXED_ASSET + AUTO_CREATE` draft assets keep charge-augmented original cost through activation
+- `FIXED_ASSET + IMPROVE_EXISTING` uses augmented improvement amount and skips standalone charge debit
+- Reversal restores fixed-asset basis and preserves the charge graph
+- `STOCK` charge allocation persists computed targets and lands in inventory cost
+
+Expected result:
+- Console prints `LC40 smoke passed`
+
+## Manual UI Test Guide
+
+### Preconditions
+
+- Restart backend and frontend before testing
+- Use a legal entity with CARI, inventory, and fixed asset permissions
+- Ensure at least one active warehouse exists in the selected ownership context for stock scenarios
+- Use a fresh AP draft for each scenario unless the scenario explicitly reuses one
+- Use positive whole quantities for `AUTO_CREATE` fixed-asset scenarios
+
+### Scenario 1: AP-Only Charge Line Creation
+
+Purpose:
+- Verify charge allocation is available only on AP drafts
+- Verify charge line itself remains a General/`NONE` line
+
+Steps:
+1. Open `Vendor Bills`.
+2. Add one normal target line.
+3. Add one General line and enable `Distribute as charge`.
+4. Confirm allocation controls appear.
+5. Switch the document direction or route to AR / customer invoice flow.
+
+Expected:
+- Charge controls are available on AP only
+- Charge line remains General/`NONE`
+- AR flow does not allow charge allocation UI
+
+### Scenario 2: Draft Save, Reload, And Target Persistence
+
+Purpose:
+- Verify inline charge targets survive save/reload and line reorder
+
+Steps:
+1. Create an AP draft with:
+   - line 1 target
+   - line 2 target
+   - line 3 charge line
+2. Choose `EQUAL`, `BY_AMOUNT`, `BY_QTY`, or `MANUAL`.
+3. Save the draft.
+4. Reopen the draft.
+5. Reorder target lines and save again.
+6. Reopen the draft again.
+
+Expected:
+- Charge line still shows the saved method
+- Target selections remain attached to the intended lines
+- Manual allocations remain preserved
+- Reordered lines do not silently retarget the charge graph
+
+### Scenario 3: Fixed Asset Auto-Create With Charge
+
+Purpose:
+- Verify auto-created draft assets and later activation keep the augmented basis
+
+Steps:
+1. Create an AP bill with:
+   - one `FIXED_ASSET + AUTO_CREATE` line
+   - quantity greater than 1
+   - one General charge line targeting that FA line
+2. Post the document.
+3. Open `Fixed Asset List`.
+4. Check the created draft assets.
+5. Activate one of the draft assets.
+6. Return to `Fixed Asset List`.
+
+Expected:
+- Draft assets are created at per-unit cost including allocated charge
+- Activation does not drop `Original Cost` back to the raw pre-charge amount
+- Asset remains consistent before and after activation
+
+### Scenario 4: Improve Existing With Charge
+
+Purpose:
+- Verify allocated charge becomes part of the improvement amount
+
+Steps:
+1. Prepare an active asset.
+2. Create an AP bill with:
+   - one `FIXED_ASSET + IMPROVE_EXISTING` line
+   - one General charge line targeting that improvement line
+3. Post the document.
+4. Open fixed asset detail.
+5. Check `Original Cost`, transactions, and linked journal if needed.
+
+Expected:
+- Improvement posts successfully
+- Asset `Original Cost` increases by base line amount plus allocated charge
+- No standalone debit is posted for the charge line
+- Improvement transaction amount reflects the augmented cost
+
+### Scenario 5: Stock Receipt With Charge
+
+Purpose:
+- Verify allocated charge lands in stock receipt cost
+
+Steps:
+1. Create an AP bill with:
+   - one or more `STOCK` lines
+   - one General charge line targeting those stock lines
+2. Bind each stock line to a warehouse in the same ownership context.
+3. Post the document.
+4. Materialize the pending stock movement if your flow requires it.
+5. Open inventory movement / valuation detail.
+
+Expected:
+- Stock lines post successfully
+- Stock link amount includes allocated charge
+- Inventory receipt total cost and unit cost include allocated charge
+- Audit note indicates allocated charges were included
+
+### Scenario 6: Reversal Of Posted Charged Document
+
+Purpose:
+- Verify posted augmented costs unwind correctly
+
+Steps:
+1. Use a posted AP document from Scenario 3, 4, or 5.
+2. Reverse the posted document.
+3. Reopen the related fixed asset or stock detail.
+4. Open the reversal document.
+
+Expected:
+- Reversal succeeds
+- Asset basis or stock cost is restored to the pre-document state
+- Charge line still has no standalone reversal debit
+- Reversal document preserves charge allocation method and target graph for audit
+
+### Scenario 7: Charge-Line Guard Rails In UI
+
+Purpose:
+- Verify incompatible state transitions are cleaned up instead of being hidden
+
+Steps:
+1. Start with a General charge line.
+2. Select a stock item card on that line.
+3. Observe whether charge state remains.
+4. Start with a stock line.
+5. Change it back to General.
+6. Turn on `Distribute as charge`.
+
+Expected:
+- Selecting a stock item card clears charge allocation state
+- Demoting a stock line to General clears the incompatible stock item-card state
+- User does not end up with hidden charge targets or hidden stock defaults
+
+### Scenario 8: AP-Only Service-Layer Guard
+
+Purpose:
+- Verify charge lines cannot survive under AR through edit tricks
+
+Steps:
+1. Create an AP draft with a charge line and save it.
+2. Attempt to switch the header to AR without replacing lines.
+3. Reopen the draft.
+
+Expected:
+- Update is rejected
+- Draft remains AP
+- Charge graph is not partially mutated or stranded
+
+## What To Check In UI
+
+On `Vendor Bills` / `CARI Documents`:
+- `Distribute as charge` appears only on General/`NONE` lines
+- Charge target picker lists only eligible non-charge lines
+- Method preview and manual totals are mathematically correct
+- Stock and fixed-asset target lines show effective augmented amounts
+- Stock warehouse choices respect the effective document ownership context
+
+On `Fixed Asset List` / `Fixed Asset Detail`:
+- Auto-created draft assets show augmented per-unit basis
+- Activation keeps the same basis
+- Improvement transactions reflect augmented amounts
+
+On inventory screens:
+- Stock link amounts match augmented amounts
+- Inventory movement note indicates allocated charges were included
+
+## Pass Criteria
+
+- `LC40` smoke passes
+- Manual AP charge scenarios behave as expected
+- Fixed asset and stock targets receive augmented costs
+- Activation and reversal do not lose allocated-charge basis
+- UI guard rails prevent hidden stock/charge mixed state

@@ -1,8 +1,13 @@
 # 40 - LINE CHARGES AND ANCILLARY COST ALLOCATION
 
 ## Status
-- Planned
+- Implemented
+- Verified with `npm --prefix backend run test:cari:lc40`
+- Contract/build checks passed via `npm --prefix backend run openapi:generate`, `npm --prefix backend run check:openapi:parse`, and `npm --prefix frontend run build`
 - Refreshed for the post-SL27 / SL29 fixed-asset improvement behavior in Track 39
+- Post-implementation hardening applied for item-card/default interactions so charge lines cannot be mutated back into stock-affecting lines and stock-item selection clears stale charge state in the draft UI
+- Follow-up hardening applied so AP charge drafts cannot be flipped to AR through header-only updates, and STOCK -> General transitions clear incompatible stock item-card state before charge mode is enabled
+- Fixed-asset AP source reads now use charge-augmented line amounts for eligible-line previews, source-linked draft creation, and activation-time revalidation, so auto-created asset original cost stays aligned with the posted charge allocation
 - Depends on Track 39 (Subledger-Aware Lines) being complete through at least SL05, SL07, SL27, and SL29
 
 ## Purpose
@@ -136,19 +141,19 @@ Result:
 | Step | Scope | Status |
 |---|---|---|
 | **Phase 1 — Schema & Allocation Engine** | | |
-| LC01 | Migration: charge columns + targets table | Not started |
-| LC02 | Backend validators: charge line rules | Not started |
-| LC03 | Backend CARI service: charge target CRUD | Not started |
-| LC04 | Backend CARI posting: allocation engine + cost augmentation | Not started |
+| LC01 | Migration: charge columns + targets table | Completed |
+| LC02 | Backend validators: charge line rules | Completed |
+| LC03 | Backend CARI service: charge target CRUD | Completed |
+| LC04 | Backend CARI posting: allocation engine + cost augmentation | Completed |
 | **Phase 2 — Frontend** | | |
-| LC05 | Frontend: charge line UI (method selector, target picker) | Not started |
-| LC06 | Frontend: allocation preview summary | Not started |
+| LC05 | Frontend: charge line UI (method selector, target picker) | Completed |
+| LC06 | Frontend: allocation preview summary | Completed |
 | **Phase 3 — Reversal & Integration** | | |
-| LC07 | Backend reversal: unwind charge allocations | Not started |
-| LC08 | Backend: STOCK landed cost — adjust inventory unit cost | Not started |
+| LC07 | Backend reversal: unwind charge allocations | Completed |
+| LC08 | Backend: STOCK landed cost - adjust inventory unit cost | Completed |
 | **Phase 4 — Testing & Release** | | |
-| LC09 | Smoke suite: charge allocation + mixed flows | Not started |
-| LC10 | Release gates and backward-compatibility verification | Not started |
+| LC09 | Smoke suite: charge allocation + mixed flows | Completed |
+| LC10 | Release gates and backward-compatibility verification | Completed |
 
 ---
 
@@ -247,6 +252,9 @@ Result:
 4. Extend the document read/reload path:
    - load persisted charge target rows alongside lines/taxes/stock links/generated fixed assets
    - expose `chargeAllocationMethod` and `chargeTargets` back through the document payload so draft save/reload preserves the charge graph
+5. Reassert charge-line invariants after service-side item-card / account default resolution so a charge line cannot be mutated back into STOCK behavior by derived defaults before draft save or posting
+6. Enforce the AP-only charge rule in service-layer draft update flows as well, including header-only updates where `direction` / `documentType` change without a replacement `lines` payload
+7. When fixed-asset flows reload a source AP document, consume charge-augmented line amounts so FA06 eligibility, source-linked draft creation, and activation refresh do not drift back to raw pre-allocation line cost
 
 ### Explicit non-goals
 - No standalone charge target API — targets are managed as part of the document lines payload
@@ -258,6 +266,8 @@ Result:
 - Deleting a document removes all charge target rows
 - Rounding residual is deterministically assigned to the last target line
 - Reloading an existing draft returns the same charge configuration the user saved
+- Service-side defaulting cannot reintroduce stock-affecting charge lines
+- Header-only draft updates cannot strand charge lines under AR documents
 
 ---
 
@@ -324,6 +334,8 @@ Result:
 7. **Posting-account UX behavior**: When a line is marked as a charge line:
    - hide or visually disable misleading normal posting-account input/defaults for that line
    - make it clear the line's debit effect will be absorbed into target lines at posting time
+8. **Item-card transition guard**: if item-card selection promotes a line to `STOCK`, clear charge allocation method / targets in the draft so hidden charge state cannot survive the subledger transition
+9. **STOCK -> General guard**: when a stock line is demoted back to General/`NONE`, clear the incompatible stock item-card selection so the user does not carry a hidden stock-item state into charge mode
 
 ### Explicit non-goals
 - No drag-and-drop allocation
@@ -337,6 +349,8 @@ Result:
 - Charge UI is hidden on AR documents
 - Charge-line UX does not imply that a normal standalone posting account will be used for the debit side
 - Non-charge lines are unaffected by the new UI elements
+- Switching a charge line onto a stock item-card clears charge allocation state instead of leaving hidden stale targets
+- Switching a STOCK line back to General clears the stock item-card before the line can be used as a charge line
 
 ---
 
@@ -455,11 +469,15 @@ Result:
    - Draft line reorder after selecting charge targets → UI still serializes correct `targetLineNo` values and reload preserves the intended target graph
    - Reversal of posted bill with charges → full unwind
    - Edit draft bill with charges → recalculates allocations
+   - AP bill with `FIXED_ASSET + AUTO_CREATE` plus 1 charge line -> draft assets and later activation both keep the same augmented original cost
 3. **Validation tests**:
    - Charge on AR document → rejected
    - Charge targeting another charge → rejected
    - Charge with empty targets → rejected
    - Charge line with subledgerType STOCK or FIXED_ASSET → rejected
+
+   - Charge line + `STOCK_ITEM` item-card default path -> rejected even if incoming payload said `stockImpactMode = NONE`
+   - AP charge draft header update -> AR without `lines` replacement is rejected
 
 ### Explicit non-goals
 - No performance/load testing
@@ -471,6 +489,8 @@ Result:
 - Mixed-subledger charge flows tested end-to-end
 - Reversal flows tested
 - Smoke scripts follow the existing `backend/scripts/test-*.js` pattern and are suitable for release-gate chaining
+- Service-side post-validation defaulting regressions are covered by smoke coverage
+- AP-only charge enforcement is covered even on header-only draft update paths
 
 ---
 

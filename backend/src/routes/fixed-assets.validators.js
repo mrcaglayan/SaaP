@@ -420,21 +420,26 @@ export function parseActivateAssetInput(req) {
     body.postingDate ?? body.posting_date,
     "postingDate"
   );
-  if (effectiveDate > postingDate) {
-    throw badRequest(
-      `effectiveDate (${effectiveDate}) cannot be after postingDate (${postingDate})`
-    );
-  }
 
   const capitalizationDate = normalizeDateOnlyOptional(
     body.capitalizationDate ?? body.capitalization_date,
     "capitalizationDate"
   );
+  if (capitalizationDate && capitalizationDate > postingDate) {
+    throw badRequest(
+      `capitalizationDate (${capitalizationDate}) cannot be after postingDate (${postingDate})`
+    );
+  }
 
   const inServiceDate = normalizeDateOnlyOptional(
     body.inServiceDate ?? body.in_service_date,
     "inServiceDate"
   );
+  if (inServiceDate && inServiceDate > postingDate) {
+    throw badRequest(
+      `inServiceDate (${inServiceDate}) cannot be after postingDate (${postingDate})`
+    );
+  }
 
   const assetTagInput = pickBodyValue(body, "assetTag", "asset_tag");
   const assetTag = assetTagInput.present

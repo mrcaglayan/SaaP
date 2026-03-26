@@ -37,9 +37,17 @@ const FIXED_ASSET_MODE_VALUES = [
   "LINK_EXISTING",
   "IMPROVE_EXISTING",
 ];
+const CHARGE_ALLOCATION_METHOD_VALUES = [
+  "NONE",
+  "EQUAL",
+  "BY_AMOUNT",
+  "BY_QTY",
+  "MANUAL",
+];
 const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 const MAX_POSTING_LINES = 200;
 const MAX_DOCUMENT_LINES = 500;
+const CHARGE_ALLOCATION_SUM_TOLERANCE = 0.01;
 
 function parseOptionalDate(value, label) {
   if (value === undefined) {
@@ -138,6 +146,45 @@ function parseOptionalEnumField(value, label, allowedValues) {
     return undefined;
   }
   return normalizeEnum(normalized, label, allowedValues);
+}
+
+function parseOptionalChargeTargets(value, label, method) {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null || value === "") {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw badRequest(`${label} must be an array`);
+  }
+  return value.map((row, index) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw badRequest(`${label}[${index}] must be an object`);
+    }
+    const targetLineNo = parseRequiredPositiveIntField(
+      pickPrimaryOrAlias(row.targetLineNo, row.target_line_no),
+      `${label}[${index}].targetLineNo`
+    );
+    const rawAllocatedAmountTxn = pickPrimaryOrAlias(
+      row.allocatedAmountTxn,
+      row.allocated_amount_txn
+    );
+    const allocatedAmountTxn =
+      rawAllocatedAmountTxn === undefined
+        ? null
+        : parseRequiredNonNegativeAmount(
+            rawAllocatedAmountTxn,
+            `${label}[${index}].allocatedAmountTxn`
+          );
+    if (method === "MANUAL" && allocatedAmountTxn === null) {
+      throw badRequest(`${label}[${index}].allocatedAmountTxn is required`);
+    }
+    return {
+      targetLineNo,
+      allocatedAmountTxn,
+    };
+  });
 }
 
 function isWholePositiveQuantity(value) {
@@ -289,6 +336,21 @@ function parseDocumentLines(value, options = {}) {
         row.warehouseId ?? row.warehouse_id,
         `lines[${index}].warehouseId`
       ) || null;
+    const chargeAllocationMethod =
+      parseOptionalEnumField(
+        pickPrimaryOrAlias(
+          row.chargeAllocationMethod,
+          row.charge_allocation_method
+        ),
+        `lines[${index}].chargeAllocationMethod`,
+        CHARGE_ALLOCATION_METHOD_VALUES
+      ) || "NONE";
+    const chargeTargets =
+      parseOptionalChargeTargets(
+        pickPrimaryOrAlias(row.chargeTargets, row.charge_targets),
+        `lines[${index}].chargeTargets`,
+        chargeAllocationMethod
+      ) || [];
     const explicitSubledgerType = parseOptionalEnumField(
       row.subledgerType ?? row.subledger_type,
       `lines[${index}].subledgerType`,
@@ -394,6 +456,33 @@ function parseDocumentLines(value, options = {}) {
         : stockImpactMode !== "NONE"
           ? "STOCK"
           : "NONE");
+
+    if (chargeAllocationMethod !== "NONE") {
+      if (direction === "AR") {
+        throw badRequest(
+          `lines[${index}].chargeAllocationMethod is supported only on AP documents`
+        );
+      }
+      if (subledgerType !== "NONE") {
+        throw badRequest(
+          `lines[${index}].subledgerType must be NONE when chargeAllocationMethod != NONE`
+        );
+      }
+      if (stockImpactMode !== "NONE") {
+        throw badRequest(
+          `lines[${index}].stockImpactMode must be NONE when chargeAllocationMethod != NONE`
+        );
+      }
+      if (!Array.isArray(chargeTargets) || chargeTargets.length === 0) {
+        throw badRequest(
+          `lines[${index}].chargeTargets must be a non-empty array when chargeAllocationMethod != NONE`
+        );
+      }
+    } else if (Array.isArray(chargeTargets) && chargeTargets.length > 0) {
+      throw badRequest(
+        `lines[${index}].chargeTargets is allowed only when chargeAllocationMethod != NONE`
+      );
+    }
 
     const hasAnyFixedAssetPayload =
       targetFixedAssetId ||
@@ -574,6 +663,8 @@ function parseDocumentLines(value, options = {}) {
       taxCategoryCode,
       stockImpactMode,
       warehouseId,
+      chargeAllocationMethod,
+      chargeTargets,
       subledgerType,
       fixedAssetMode,
       targetFixedAssetId,
@@ -588,6 +679,73 @@ function parseDocumentLines(value, options = {}) {
       lifeExtensionMonths,
     });
   }
+
+  const lineByLineNo = new Map(rows.map((row) => [Number(row.lineNo || 0), row]));
+  rows.forEach((row, index) => {
+    const chargeAllocationMethod = row.chargeAllocationMethod || "NONE";
+    const chargeTargets = Array.isArray(row.chargeTargets) ? row.chargeTargets : [];
+    if (chargeAllocationMethod === "NONE") {
+      return;
+    }
+
+    const seenTargetLineNos = new Set();
+    let manualAllocatedTotal = 0;
+    chargeTargets.forEach((targetRow, targetIndex) => {
+      const targetLineNo = Number(targetRow?.targetLineNo || 0);
+      if (!targetLineNo) {
+        throw badRequest(
+          `lines[${index}].chargeTargets[${targetIndex}].targetLineNo is required`
+        );
+      }
+      if (seenTargetLineNos.has(targetLineNo)) {
+        throw badRequest(
+          `lines[${index}].chargeTargets[${targetIndex}].targetLineNo duplicates another target`
+        );
+      }
+      seenTargetLineNos.add(targetLineNo);
+      if (targetLineNo === Number(row.lineNo || 0)) {
+        throw badRequest(
+          `lines[${index}].chargeTargets[${targetIndex}].targetLineNo cannot reference the same line`
+        );
+      }
+
+      const targetLine = lineByLineNo.get(targetLineNo);
+      if (!targetLine) {
+        throw badRequest(
+          `lines[${index}].chargeTargets[${targetIndex}].targetLineNo must reference another line on the same document`
+        );
+      }
+      if (normalizeEnum(targetLine.lineKind, "lineKind", LINE_KIND_VALUES) !== "STANDARD") {
+        throw badRequest(
+          `lines[${index}].chargeTargets[${targetIndex}].targetLineNo must reference a STANDARD line`
+        );
+      }
+      if ((targetLine.chargeAllocationMethod || "NONE") !== "NONE") {
+        throw badRequest(
+          `lines[${index}].chargeTargets[${targetIndex}].targetLineNo cannot reference another charge line`
+        );
+      }
+
+      if (chargeAllocationMethod === "MANUAL") {
+        if (targetRow?.allocatedAmountTxn === null || targetRow?.allocatedAmountTxn === undefined) {
+          throw badRequest(
+            `lines[${index}].chargeTargets[${targetIndex}].allocatedAmountTxn is required`
+          );
+        }
+        manualAllocatedTotal += Number(targetRow.allocatedAmountTxn || 0);
+      }
+    });
+
+    if (
+      chargeAllocationMethod === "MANUAL"
+      && Math.abs(manualAllocatedTotal - Number(row.lineNetAmountTxn || 0))
+        > CHARGE_ALLOCATION_SUM_TOLERANCE
+    ) {
+      throw badRequest(
+        `lines[${index}].chargeTargets manual allocation total must equal lineNetAmountTxn within tolerance 0.01`
+      );
+    }
+  });
 
   return rows;
 }

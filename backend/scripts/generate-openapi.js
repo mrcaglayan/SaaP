@@ -681,6 +681,15 @@ function applyCariOperationOverrides(specObject) {
         "Legacy capitalize-from-AP and sale-staging flows remain supported fallback paths outside this document contract."
       ].join(" "),
     },
+    CariDocumentLineChargeAllocationMethod: {
+      type: "string",
+      enum: ["NONE", "EQUAL", "BY_AMOUNT", "BY_QTY", "MANUAL"],
+      description: [
+        "Persists to `charge_allocation_method`.",
+        "AP-only landed-cost flow for CARI line charges.",
+        "When this is not `NONE`, the line stays `subledgerType = NONE`, its standalone debit is suppressed, and its net amount is absorbed into the selected target lines before posting."
+      ].join(" "),
+    },
     CariDocumentOpenItemStatus: {
       type: "string",
       enum: ["OPEN", "PARTIALLY_SETTLED", "SETTLED"],
@@ -707,6 +716,46 @@ function applyCariOperationOverrides(specObject) {
         updatedAt: { type: "string", format: "date-time", nullable: true },
       },
       required: ["id", "tenantId", "legalEntityId", "documentId", "documentLineId", "componentNo"],
+    },
+    CariDocumentLineChargeTargetRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        chargeLineId: { ...intId, nullable: true },
+        targetLineId: { ...intId, nullable: true },
+        targetLineNo: { type: "integer", nullable: true },
+        allocatedAmountTxn: { type: "number", nullable: true },
+        allocatedAmountBase: { type: "number", nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "chargeLineId",
+        "targetLineId",
+      ],
+    },
+    CariDocumentLineChargeTargetInput: {
+      type: "object",
+      properties: {
+        targetLineNo: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "Required same-document line reference for charge allocation. Frontend state may keep row ids internally, but the API serializes charge targets by `targetLineNo`.",
+        },
+        allocatedAmountTxn: {
+          type: "number",
+          minimum: 0,
+          nullable: true,
+          description:
+            "Required only when `chargeAllocationMethod = MANUAL`; ignored for computed allocation methods.",
+        },
+      },
+      required: ["targetLineNo"],
     },
     CariDocumentLineStockLinkRow: {
       type: "object",
@@ -768,6 +817,10 @@ function applyCariOperationOverrides(specObject) {
         itemCardId: { ...intId, nullable: true },
         subledgerType: {
           allOf: [{ $ref: "#/components/schemas/CariDocumentLineSubledgerType" }],
+          nullable: true,
+        },
+        chargeAllocationMethod: {
+          allOf: [{ $ref: "#/components/schemas/CariDocumentLineChargeAllocationMethod" }],
           nullable: true,
         },
         quantity: { type: "number", nullable: true },
@@ -855,6 +908,10 @@ function applyCariOperationOverrides(specObject) {
         taxes: {
           type: "array",
           items: { $ref: "#/components/schemas/CariDocumentLineTaxRow" },
+        },
+        chargeTargets: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentLineChargeTargetRow" },
         },
         stockLinks: {
           type: "array",
@@ -1137,6 +1194,16 @@ function applyCariOperationOverrides(specObject) {
         description: { type: "string", maxLength: 500, nullable: true },
         itemCardId: { ...intId, nullable: true },
         subledgerType: { $ref: "#/components/schemas/CariDocumentLineSubledgerType" },
+        chargeAllocationMethod: {
+          $ref: "#/components/schemas/CariDocumentLineChargeAllocationMethod",
+        },
+        chargeTargets: {
+          type: "array",
+          nullable: true,
+          items: { $ref: "#/components/schemas/CariDocumentLineChargeTargetInput" },
+          description:
+            "Required non-empty array when `chargeAllocationMethod != NONE`. Targets must reference other STANDARD lines on the same AP document.",
+        },
         quantity: { type: "number", minimum: 0, nullable: true },
         unitPriceTxn: { type: "number", minimum: 0, nullable: true },
         lineNetAmountTxn: { type: "number", minimum: 0 },

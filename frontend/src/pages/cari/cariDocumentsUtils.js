@@ -35,10 +35,20 @@ export const DOCUMENT_LINE_FIXED_ASSET_MODES = [
   "LINK_EXISTING",
   "IMPROVE_EXISTING",
 ];
+export const DOCUMENT_LINE_CHARGE_ALLOCATION_METHODS = [
+  "NONE",
+  "EQUAL",
+  "BY_AMOUNT",
+  "BY_QTY",
+  "MANUAL",
+];
 const DOCUMENT_LINE_STOCK_AFFECTING_MODES = new Set(
   DOCUMENT_LINE_STOCK_IMPACT_MODES.filter((value) => value !== "NONE")
 );
 const DOCUMENT_LINE_SUBMISSION_LIMIT = 500;
+const DOCUMENT_LINE_CHARGE_ALLOCATION_NONE = "NONE";
+const DOCUMENT_LINE_CHARGE_MANUAL = "MANUAL";
+const DOCUMENT_LINE_CHARGE_SUM_TOLERANCE = 0.01;
 
 export const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 const DOCUMENT_AMOUNT_PRECISION = 6;
@@ -57,6 +67,12 @@ function roundDocumentAmount(value) {
   return Number.isFinite(value) ? Number(value.toFixed(DOCUMENT_AMOUNT_PRECISION)) : null;
 }
 
+function roundChargeAllocationAmount(value) {
+  return Number.isFinite(Number(value))
+    ? Number(Number(value).toFixed(DOCUMENT_AMOUNT_PRECISION))
+    : 0;
+}
+
 function createDocumentLineRowId() {
   return (
     globalThis.crypto?.randomUUID?.() ||
@@ -71,10 +87,79 @@ function normalizeEnum(value, allowedValues, fallbackValue) {
   return allowedValues.includes(normalized) ? normalized : fallbackValue;
 }
 
+function normalizeChargeAllocationMethod(value) {
+  return normalizeEnum(
+    value,
+    DOCUMENT_LINE_CHARGE_ALLOCATION_METHODS,
+    DOCUMENT_LINE_CHARGE_ALLOCATION_NONE
+  );
+}
+
+function isChargeAllocationLine(line) {
+  return (
+    normalizeChargeAllocationMethod(
+      line?.chargeAllocationMethod ?? line?.charge_allocation_method
+    ) !== DOCUMENT_LINE_CHARGE_ALLOCATION_NONE
+  );
+}
+
 function isStockAffectingLineMode(value) {
   return DOCUMENT_LINE_STOCK_AFFECTING_MODES.has(
     normalizeEnum(value, DOCUMENT_LINE_STOCK_IMPACT_MODES, "NONE")
   );
+}
+
+function allocateResidualAmountSplit(totalAmount, partCount) {
+  const normalizedPartCount = Number(partCount || 0);
+  if (!Number.isInteger(normalizedPartCount) || normalizedPartCount <= 0) {
+    return [];
+  }
+  const normalizedTotal = roundChargeAllocationAmount(totalAmount);
+  if (normalizedPartCount === 1) {
+    return [normalizedTotal];
+  }
+  const scaledTotal = Math.round(normalizedTotal * 1_000_000);
+  const scaledBaseShare = Math.floor(scaledTotal / normalizedPartCount);
+  const allocations = [];
+  let allocatedScaled = 0;
+  for (let index = 0; index < normalizedPartCount; index += 1) {
+    if (index === normalizedPartCount - 1) {
+      allocations.push((scaledTotal - allocatedScaled) / 1_000_000);
+    } else {
+      allocations.push(scaledBaseShare / 1_000_000);
+      allocatedScaled += scaledBaseShare;
+    }
+  }
+  return allocations.map((value) => roundChargeAllocationAmount(value));
+}
+
+function allocateResidualProportionalSplit(totalAmount, sourceAmounts) {
+  const weights = Array.isArray(sourceAmounts)
+    ? sourceAmounts.map((value) => Number(value || 0))
+    : [];
+  if (weights.length === 0) {
+    return [];
+  }
+  if (weights.length === 1) {
+    return [roundChargeAllocationAmount(totalAmount)];
+  }
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  if (!(totalWeight > 0)) {
+    return [];
+  }
+  const scaledTotal = Math.round(roundChargeAllocationAmount(totalAmount) * 1_000_000);
+  const allocations = [];
+  let allocatedScaled = 0;
+  for (let index = 0; index < weights.length; index += 1) {
+    if (index === weights.length - 1) {
+      allocations.push((scaledTotal - allocatedScaled) / 1_000_000);
+      continue;
+    }
+    const scaledShare = Math.floor((scaledTotal * weights[index]) / totalWeight);
+    allocations.push(scaledShare / 1_000_000);
+    allocatedScaled += scaledShare;
+  }
+  return allocations.map((value) => roundChargeAllocationAmount(value));
 }
 
 function inferDocumentLineSubledgerType(seed, stockImpactMode) {
@@ -166,6 +251,258 @@ export function computeDocumentLineAmounts(line) {
   };
 }
 
+function normalizeDocumentLineChargeTargets(targets = []) {
+  if (!Array.isArray(targets)) {
+    return [];
+  }
+  return targets
+    .map((target) => {
+      const targetRowId = String(target?.targetRowId || "").trim();
+      const targetLineNo = toPositiveInt(target?.targetLineNo ?? target?.target_line_no);
+      const allocatedAmountTxn = toOptionalNumber(
+        target?.allocatedAmountTxn ?? target?.allocated_amount_txn
+      );
+      const targetLineDescription = String(
+        target?.targetLineDescription ?? target?.target_line_description ?? ""
+      ).trim();
+      if (!targetRowId && !targetLineNo) {
+        return null;
+      }
+      return {
+        targetRowId,
+        targetLineNo,
+        targetLineDescription,
+        allocatedAmountTxn:
+          allocatedAmountTxn === null || allocatedAmountTxn === undefined
+            ? ""
+            : String(roundChargeAllocationAmount(allocatedAmountTxn)),
+      };
+    })
+    .filter(Boolean);
+}
+
+export function listEligibleChargeTargetLines(lines, chargeLineRowId) {
+  const normalizedLines = Array.isArray(lines)
+    ? lines.map((row) => createDocumentLineDraft(row))
+    : [];
+  return normalizedLines
+    .map((line, index) => ({
+      ...line,
+      lineNo: index + 1,
+    }))
+    .filter((line) => {
+      if (String(line.rowId || "") === String(chargeLineRowId || "")) {
+        return false;
+      }
+      if (String(line.lineKind || "STANDARD").trim().toUpperCase() !== "STANDARD") {
+        return false;
+      }
+      if (isChargeAllocationLine(line)) {
+        return false;
+      }
+      return true;
+    });
+}
+
+export function reconcileDocumentChargeTargets(lines) {
+  const normalizedLines = Array.isArray(lines)
+    ? lines.map((row) => createDocumentLineDraft(row))
+    : [];
+  const linesByRowId = new Map(
+    normalizedLines.map((line, index) => [String(line.rowId), { ...line, lineNo: index + 1 }])
+  );
+  const rowIdByLineNo = new Map(
+    normalizedLines.map((line, index) => [index + 1, String(line.rowId)])
+  );
+
+  return normalizedLines.map((line) => {
+    const chargeAllocationMethod = normalizeChargeAllocationMethod(
+      line.chargeAllocationMethod
+    );
+    if (chargeAllocationMethod === DOCUMENT_LINE_CHARGE_ALLOCATION_NONE) {
+      return {
+        ...line,
+        chargeAllocationMethod: DOCUMENT_LINE_CHARGE_ALLOCATION_NONE,
+        chargeTargets: [],
+      };
+    }
+    const reconciledTargets = normalizeDocumentLineChargeTargets(line.chargeTargets)
+      .map((target) => {
+        const resolvedTargetRowId =
+          target.targetRowId || rowIdByLineNo.get(target.targetLineNo) || "";
+        const targetLine = linesByRowId.get(resolvedTargetRowId) || null;
+        if (!resolvedTargetRowId || !targetLine) {
+          return null;
+        }
+        if (resolvedTargetRowId === String(line.rowId)) {
+          return null;
+        }
+        if (String(targetLine.lineKind || "STANDARD").trim().toUpperCase() !== "STANDARD") {
+          return null;
+        }
+        if (isChargeAllocationLine(targetLine)) {
+          return null;
+        }
+        return {
+          targetRowId: resolvedTargetRowId,
+          targetLineNo: targetLine.lineNo,
+          targetLineDescription:
+            target.targetLineDescription || String(targetLine.description || "").trim(),
+          allocatedAmountTxn: String(target.allocatedAmountTxn || "").trim(),
+        };
+      })
+      .filter(Boolean);
+
+    const seenTargetRowIds = new Set();
+    return {
+      ...line,
+      chargeAllocationMethod,
+      chargeTargets: reconciledTargets.filter((target) => {
+        const key = String(target.targetRowId || "").trim();
+        if (!key || seenTargetRowIds.has(key)) {
+          return false;
+        }
+        seenTargetRowIds.add(key);
+        return true;
+      }),
+    };
+  });
+}
+
+export function computeDocumentChargeAllocationPreview(lines) {
+  const normalizedLines = reconcileDocumentChargeTargets(lines);
+  const linesByRowId = new Map(
+    normalizedLines.map((line, index) => [String(line.rowId), { ...line, lineNo: index + 1 }])
+  );
+  const allocationsByTargetRowId = new Map();
+  const chargeLines = [];
+
+  normalizedLines.forEach((line, index) => {
+    const chargeAllocationMethod = normalizeChargeAllocationMethod(
+      line.chargeAllocationMethod
+    );
+    if (chargeAllocationMethod === DOCUMENT_LINE_CHARGE_ALLOCATION_NONE) {
+      return;
+    }
+    const targetSelections = normalizeDocumentLineChargeTargets(line.chargeTargets)
+      .map((target) => {
+        const targetRowId = String(target.targetRowId || "").trim();
+        const targetLine = linesByRowId.get(targetRowId) || null;
+        if (!targetRowId || !targetLine) {
+          return null;
+        }
+        return {
+          targetRowId,
+          targetLine,
+          targetLineNo: targetLine.lineNo,
+          allocatedAmountTxn: toOptionalNumber(target.allocatedAmountTxn),
+        };
+      })
+      .filter(Boolean);
+
+    let allocations = [];
+    const chargeNetAmountTxn = Number(line.lineNetAmountTxn || 0);
+    if (targetSelections.length > 0) {
+      if (chargeAllocationMethod === DOCUMENT_LINE_CHARGE_MANUAL) {
+        allocations = targetSelections.map((target) =>
+          roundChargeAllocationAmount(target.allocatedAmountTxn || 0)
+        );
+      } else if (chargeAllocationMethod === "EQUAL") {
+        allocations = allocateResidualAmountSplit(chargeNetAmountTxn, targetSelections.length);
+      } else if (chargeAllocationMethod === "BY_AMOUNT") {
+        allocations = allocateResidualProportionalSplit(
+          chargeNetAmountTxn,
+          targetSelections.map((target) => Number(target.targetLine.lineNetAmountTxn || 0))
+        );
+      } else if (chargeAllocationMethod === "BY_QTY") {
+        allocations = allocateResidualProportionalSplit(
+          chargeNetAmountTxn,
+          targetSelections.map((target) => Number(target.targetLine.quantity || 0))
+        );
+      }
+    }
+
+    const resolvedAllocations = targetSelections.map((target, targetIndex) => {
+      const allocatedAmountTxn = roundChargeAllocationAmount(allocations[targetIndex] || 0);
+      const currentAllocation =
+        allocationsByTargetRowId.get(target.targetRowId) || {
+          additionalAmountTxn: 0,
+        };
+      currentAllocation.additionalAmountTxn = roundChargeAllocationAmount(
+        currentAllocation.additionalAmountTxn + allocatedAmountTxn
+      );
+      allocationsByTargetRowId.set(target.targetRowId, currentAllocation);
+      return {
+        targetRowId: target.targetRowId,
+        targetLineNo: target.targetLineNo,
+        targetDescription: String(target.targetLine.description || "").trim(),
+        targetSubledgerType: target.targetLine.subledgerType || "NONE",
+        allocatedAmountTxn,
+      };
+    });
+
+    chargeLines.push({
+      chargeLineRowId: String(line.rowId),
+      chargeLineNo: index + 1,
+      chargeLineDescription: String(line.description || "").trim(),
+      chargeLineNetAmountTxn: chargeNetAmountTxn,
+      chargeAllocationMethod,
+      allocations: resolvedAllocations,
+      manualTotalTxn: roundChargeAllocationAmount(
+        resolvedAllocations.reduce(
+          (sum, target) => sum + Number(target.allocatedAmountTxn || 0),
+          0
+        )
+      ),
+    });
+  });
+
+  const targetSummaries = normalizedLines
+    .map((line, index) => {
+      const allocation = allocationsByTargetRowId.get(String(line.rowId)) || null;
+      if (!allocation) {
+        return null;
+      }
+      const originalAmountTxn = Number(line.lineNetAmountTxn || 0);
+      const allocatedChargeAmountTxn = roundChargeAllocationAmount(
+        allocation.additionalAmountTxn || 0
+      );
+      const effectiveAmountTxn = roundChargeAllocationAmount(
+        originalAmountTxn + allocatedChargeAmountTxn
+      );
+      const quantity = Number(line.quantity || 0);
+      return {
+        rowId: String(line.rowId),
+        lineNo: index + 1,
+        description: String(line.description || "").trim(),
+        subledgerType: line.subledgerType || "NONE",
+        fixedAssetMode: line.fixedAssetMode || "",
+        quantity,
+        originalAmountTxn,
+        allocatedChargeAmountTxn,
+        effectiveAmountTxn,
+        effectiveUnitAmountTxn:
+          quantity > 0
+            ? roundChargeAllocationAmount(effectiveAmountTxn / quantity)
+            : null,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    hasChargeLines: chargeLines.length > 0,
+    chargeLines,
+    allocationsByTargetRowId,
+    targetSummaries,
+    targetSummaryByRowId: new Map(
+      targetSummaries.map((summary) => [String(summary.rowId), summary])
+    ),
+    chargeLinesByRowId: new Map(
+      chargeLines.map((entry) => [String(entry.chargeLineRowId), entry])
+    ),
+  };
+}
+
 export function createDocumentLineDraft(seed = {}) {
   const amounts = computeDocumentLineAmounts(seed);
   const stockImpactMode = normalizeEnum(
@@ -208,6 +545,12 @@ export function createDocumentLineDraft(seed = {}) {
       .toUpperCase(),
     stockImpactMode,
     subledgerType,
+    chargeAllocationMethod: normalizeChargeAllocationMethod(
+      seed?.chargeAllocationMethod ?? seed?.charge_allocation_method
+    ),
+    chargeTargets: normalizeDocumentLineChargeTargets(
+      seed?.chargeTargets ?? seed?.charge_targets
+    ),
     fixedAssetMode: normalizeEnum(
       seed?.fixedAssetMode ?? seed?.fixed_asset_mode ?? "",
       DOCUMENT_LINE_FIXED_ASSET_MODES,
@@ -263,7 +606,7 @@ export function normalizeDocumentFormLines(lines, fallback = {}) {
     ? lines.map((row) => createDocumentLineDraft(row))
     : [];
   if (normalizedLines.length > 0) {
-    return normalizedLines;
+    return reconcileDocumentChargeTargets(normalizedLines);
   }
   const fallbackAmountTxn = toOptionalNumber(fallback?.amountTxn);
   if (fallbackAmountTxn !== null && fallbackAmountTxn > 0) {
@@ -463,16 +806,49 @@ export function buildDocumentMutationPayload(form, options = {}) {
       ? documentDate
       : dueDate;
   const currencyCode = normalizeCurrencyCode(form.currencyCode);
-  const lines = Array.isArray(form?.lines)
-    ? form.lines.map((row, index) => {
+  const normalizedLines = normalizeDocumentFormLines(form?.lines);
+  const rowIdToLineNo = new Map(
+    normalizedLines.map((row, index) => [String(row.rowId), index + 1])
+  );
+  const lines = Array.isArray(normalizedLines)
+    ? normalizedLines.map((row, index) => {
         const normalizedLine = createDocumentLineDraft(row);
         const isFixedAssetLine = normalizedLine.subledgerType === "FIXED_ASSET";
         const isApFixedAssetLine = isFixedAssetLine && direction === "AP";
+        const chargeAllocationMethod = normalizeChargeAllocationMethod(
+          normalizedLine.chargeAllocationMethod
+        );
+        const isChargeLine =
+          chargeAllocationMethod !== DOCUMENT_LINE_CHARGE_ALLOCATION_NONE;
+        const serializedChargeTargets = isChargeLine
+          ? normalizeDocumentLineChargeTargets(normalizedLine.chargeTargets)
+              .map((target) => {
+                const targetLineNo =
+                  rowIdToLineNo.get(String(target.targetRowId || "").trim())
+                  || toPositiveInt(target.targetLineNo);
+                if (!targetLineNo) {
+                  return null;
+                }
+                return {
+                  targetLineNo,
+                  allocatedAmountTxn:
+                    chargeAllocationMethod === DOCUMENT_LINE_CHARGE_MANUAL
+                    && String(target.allocatedAmountTxn || "").trim()
+                      ? toOptionalNumber(target.allocatedAmountTxn)
+                      : undefined,
+                };
+              })
+              .filter(Boolean)
+          : [];
         return {
           lineNo: index + 1,
           lineKind: normalizedLine.lineKind,
           description: String(normalizedLine.description || "").trim() || undefined,
           subledgerType: normalizedLine.subledgerType || undefined,
+          chargeAllocationMethod: isChargeLine ? chargeAllocationMethod : undefined,
+          chargeTargets: isChargeLine && serializedChargeTargets.length > 0
+            ? serializedChargeTargets
+            : undefined,
           fixedAssetMode:
             isApFixedAssetLine && normalizedLine.fixedAssetMode
               ? normalizedLine.fixedAssetMode
@@ -484,7 +860,9 @@ export function buildDocumentMutationPayload(form, options = {}) {
           lineTaxAmountTxn: toOptionalNumber(normalizedLine.lineTaxAmountTxn) ?? 0,
           lineGrossAmountTxn: toOptionalNumber(normalizedLine.lineGrossAmountTxn) ?? 0,
           postingAccountId:
-            isApFixedAssetLine || !toPositiveInt(normalizedLine.postingAccountId)
+            isApFixedAssetLine
+            || isChargeLine
+            || !toPositiveInt(normalizedLine.postingAccountId)
               ? undefined
               : toPositiveInt(normalizedLine.postingAccountId),
           warehouseId: toPositiveInt(normalizedLine.warehouseId) || undefined,
@@ -510,7 +888,10 @@ export function buildDocumentMutationPayload(form, options = {}) {
           lifeExtensionMonths:
             toPositiveInt(normalizedLine.lifeExtensionMonths) || undefined,
           taxCategoryCode: normalizedLine.taxCategoryCode || undefined,
-          stockImpactMode: normalizedLine.stockImpactMode || undefined,
+          stockImpactMode:
+            isChargeLine
+              ? "NONE"
+              : normalizedLine.stockImpactMode || undefined,
         };
       })
     : [];
@@ -607,6 +988,12 @@ export function validateDocumentMutationForm(form, options = {}) {
       const rowId = sourceLine.rowId;
       const subledgerType = sourceLine.subledgerType;
       const fixedAssetMode = sourceLine.fixedAssetMode;
+      const chargeAllocationMethod = normalizeChargeAllocationMethod(
+        sourceLine.chargeAllocationMethod
+      );
+      const chargeTargets = normalizeDocumentLineChargeTargets(sourceLine.chargeTargets);
+      const isChargeLine =
+        chargeAllocationMethod !== DOCUMENT_LINE_CHARGE_ALLOCATION_NONE;
 
       if ((line.quantity ?? 0) <= 0) {
         pushLineError(index, rowId, "quantity must be > 0.");
@@ -619,6 +1006,42 @@ export function validateDocumentMutationForm(form, options = {}) {
       }
       if ((line.lineTaxAmountTxn ?? 0) > 0 && !line.taxCategoryCode) {
         pushLineError(index, rowId, "taxCategoryCode is required when lineTaxAmountTxn > 0.");
+      }
+      if (isChargeLine) {
+        if (payload.direction !== "AP") {
+          pushLineError(
+            index,
+            rowId,
+            `chargeAllocationMethod is supported only on AP documents`
+          );
+        }
+        if (subledgerType !== "NONE") {
+          pushLineError(
+            index,
+            rowId,
+            "subledgerType must be NONE when chargeAllocationMethod != NONE"
+          );
+        }
+        if ((line.stockImpactMode || "NONE") !== "NONE") {
+          pushLineError(
+            index,
+            rowId,
+            "stockImpactMode must be NONE when chargeAllocationMethod != NONE"
+          );
+        }
+        if (!Array.isArray(chargeTargets) || chargeTargets.length === 0) {
+          pushLineError(
+            index,
+            rowId,
+            "chargeTargets must be a non-empty array when chargeAllocationMethod != NONE"
+          );
+        }
+      } else if (Array.isArray(chargeTargets) && chargeTargets.length > 0) {
+        pushLineError(
+          index,
+          rowId,
+          "chargeTargets is allowed only when chargeAllocationMethod != NONE"
+        );
       }
       if (subledgerType === "FIXED_ASSET") {
         if (payload.direction === "AP") {
@@ -796,7 +1219,106 @@ export function validateDocumentMutationForm(form, options = {}) {
           );
         }
       }
+    });
 
+    const rowByLineNo = new Map(
+      normalizedLines.map((row, index) => [index + 1, row])
+    );
+    const lineNoByRowId = new Map(
+      normalizedLines.map((row, index) => [String(row.rowId), index + 1])
+    );
+    payload.lines.forEach((line, index) => {
+      const sourceLine = normalizedLines[index] || createDocumentLineDraft();
+      const rowId = sourceLine.rowId;
+      const chargeAllocationMethod = normalizeChargeAllocationMethod(
+        sourceLine.chargeAllocationMethod
+      );
+      const isChargeLine =
+        chargeAllocationMethod !== DOCUMENT_LINE_CHARGE_ALLOCATION_NONE;
+      if (!isChargeLine) {
+        return;
+      }
+
+      const normalizedChargeTargets = normalizeDocumentLineChargeTargets(sourceLine.chargeTargets);
+      const seenTargetLineNos = new Set();
+      let manualAllocationSum = 0;
+      normalizedChargeTargets.forEach((target, targetIndex) => {
+        const targetLineNo =
+          lineNoByRowId.get(String(target.targetRowId || "").trim())
+          || toPositiveInt(target.targetLineNo);
+        if (!targetLineNo) {
+          pushLineError(
+            index,
+            rowId,
+            `chargeTargets[${targetIndex}].targetLineNo must reference another line on the same document`
+          );
+          return;
+        }
+        if (seenTargetLineNos.has(targetLineNo)) {
+          pushLineError(
+            index,
+            rowId,
+            `chargeTargets[${targetIndex}].targetLineNo duplicates another target`
+          );
+        }
+        seenTargetLineNos.add(targetLineNo);
+        if (targetLineNo === index + 1) {
+          pushLineError(
+            index,
+            rowId,
+            `chargeTargets[${targetIndex}].targetLineNo cannot reference the same line`
+          );
+        }
+        const targetLine = rowByLineNo.get(targetLineNo) || null;
+        if (!targetLine) {
+          pushLineError(
+            index,
+            rowId,
+            `chargeTargets[${targetIndex}].targetLineNo must reference another line on the same document`
+          );
+          return;
+        }
+        if (String(targetLine.lineKind || "STANDARD").trim().toUpperCase() !== "STANDARD") {
+          pushLineError(
+            index,
+            rowId,
+            `chargeTargets[${targetIndex}].targetLineNo must reference a STANDARD line`
+          );
+        }
+        if (isChargeAllocationLine(targetLine)) {
+          pushLineError(
+            index,
+            rowId,
+            `chargeTargets[${targetIndex}].targetLineNo cannot reference another charge line`
+          );
+        }
+        if (chargeAllocationMethod === DOCUMENT_LINE_CHARGE_MANUAL) {
+          const allocatedAmountTxn = toOptionalNumber(target.allocatedAmountTxn);
+          if (allocatedAmountTxn === null || allocatedAmountTxn === undefined) {
+            pushLineError(
+              index,
+              rowId,
+              `chargeTargets[${targetIndex}].allocatedAmountTxn is required`
+            );
+            return;
+          }
+          manualAllocationSum = roundChargeAllocationAmount(
+            manualAllocationSum + allocatedAmountTxn
+          );
+        }
+      });
+
+      if (
+        chargeAllocationMethod === DOCUMENT_LINE_CHARGE_MANUAL
+        && Math.abs(manualAllocationSum - Number(line.lineNetAmountTxn || 0))
+          > DOCUMENT_LINE_CHARGE_SUM_TOLERANCE
+      ) {
+        pushLineError(
+          index,
+          rowId,
+          "chargeTargets manual allocation total must equal lineNetAmountTxn within tolerance 0.01"
+        );
+      }
     });
   }
   if (payload.amountTxn === null || payload.amountTxn <= 0) {

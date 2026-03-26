@@ -89,6 +89,15 @@ const FIXED_ASSET_AR_ELIGIBLE_STATUSES = new Set([
   "SUSPENDED",
   "FULLY_DEPRECIATED",
 ]);
+const CHARGE_ALLOCATION_METHOD_NONE = "NONE";
+const CHARGE_ALLOCATION_METHOD_VALUES = new Set([
+  CHARGE_ALLOCATION_METHOD_NONE,
+  "EQUAL",
+  "BY_AMOUNT",
+  "BY_QTY",
+  "MANUAL",
+]);
+const CHARGE_ALLOCATION_SUM_TOLERANCE = 0.01;
 
 function toDecimalNumber(value) {
   if (value === null || value === undefined) {
@@ -145,6 +154,27 @@ function normalizeUpperText(value) {
     .toUpperCase();
 }
 
+function normalizeChargeAllocationMethod(
+  value,
+  defaultValue = CHARGE_ALLOCATION_METHOD_NONE
+) {
+  const normalized = normalizeUpperText(value);
+  if (!normalized) {
+    return defaultValue;
+  }
+  return CHARGE_ALLOCATION_METHOD_VALUES.has(normalized)
+    ? normalized
+    : defaultValue;
+}
+
+function isChargeLine(line) {
+  return (
+    normalizeChargeAllocationMethod(
+      line?.chargeAllocationMethod ?? line?.charge_allocation_method
+    ) !== CHARGE_ALLOCATION_METHOD_NONE
+  );
+}
+
 function normalizeAmount(value, label = "amount", { allowZero = false } = {}) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -182,6 +212,434 @@ function normalizeOptionalPositiveDecimal(value, label) {
 
 function amountsAreEqual(left, right, epsilon = 0.0000001) {
   return Math.abs(Number(left || 0) - Number(right || 0)) <= epsilon;
+}
+
+function roundChargeAllocationAmount(value) {
+  if (!Number.isFinite(Number(value))) {
+    return 0;
+  }
+  return Number(Number(value).toFixed(AMOUNT_PRECISION_SCALE));
+}
+
+function allocateResidualAmountSplit(totalAmount, partCount) {
+  const normalizedPartCount = Number(partCount || 0);
+  if (!Number.isInteger(normalizedPartCount) || normalizedPartCount <= 0) {
+    throw badRequest("Charge allocation requires at least one target");
+  }
+  const normalizedTotal = roundChargeAllocationAmount(totalAmount);
+  if (normalizedPartCount === 1) {
+    return [normalizedTotal];
+  }
+  const scaledTotal = Math.round(normalizedTotal * 1_000_000);
+  const scaledBaseShare = Math.floor(scaledTotal / normalizedPartCount);
+  const allocations = [];
+  let allocatedScaled = 0;
+  for (let index = 0; index < normalizedPartCount; index += 1) {
+    if (index === normalizedPartCount - 1) {
+      allocations.push((scaledTotal - allocatedScaled) / 1_000_000);
+    } else {
+      allocations.push(scaledBaseShare / 1_000_000);
+      allocatedScaled += scaledBaseShare;
+    }
+  }
+  return allocations.map((value) => roundChargeAllocationAmount(value));
+}
+
+function allocateResidualProportionalSplit(totalAmount, sourceAmounts, label) {
+  const weights = Array.isArray(sourceAmounts)
+    ? sourceAmounts.map((value) => Number(value || 0))
+    : [];
+  if (weights.length === 0) {
+    throw badRequest("Charge allocation requires at least one target");
+  }
+  if (weights.length === 1) {
+    return [roundChargeAllocationAmount(totalAmount)];
+  }
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  if (!(totalWeight > 0)) {
+    throw badRequest(`${label} must be greater than 0 for charge allocation`);
+  }
+  const scaledTotal = Math.round(roundChargeAllocationAmount(totalAmount) * 1_000_000);
+  const allocations = [];
+  let allocatedScaled = 0;
+  for (let index = 0; index < weights.length; index += 1) {
+    if (index === weights.length - 1) {
+      allocations.push((scaledTotal - allocatedScaled) / 1_000_000);
+      continue;
+    }
+    const scaledShare = Math.floor((scaledTotal * weights[index]) / totalWeight);
+    allocations.push(scaledShare / 1_000_000);
+    allocatedScaled += scaledShare;
+  }
+  return allocations.map((value) => roundChargeAllocationAmount(value));
+}
+
+function normalizeLineChargeTargets(targetsInput = [], fieldPrefix = "chargeTargets") {
+  if (!Array.isArray(targetsInput)) {
+    return [];
+  }
+  return targetsInput.map((target, index) => {
+    const targetLineNo = parsePositiveInt(
+      target?.targetLineNo ?? target?.target_line_no
+    );
+    if (!targetLineNo) {
+      throw badRequest(`${fieldPrefix}[${index}].targetLineNo is required`);
+    }
+    const rawAllocatedAmountTxn =
+      target?.allocatedAmountTxn ?? target?.allocated_amount_txn;
+    return {
+      targetLineNo,
+      allocatedAmountTxn:
+        rawAllocatedAmountTxn === undefined ||
+        rawAllocatedAmountTxn === null ||
+        rawAllocatedAmountTxn === ""
+          ? null
+          : normalizeAmount(
+              rawAllocatedAmountTxn,
+              `${fieldPrefix}[${index}].allocatedAmountTxn`,
+              { allowZero: true }
+            ),
+    };
+  });
+}
+
+function assertChargeLineDraftInvariants(
+  lines = [],
+  { fieldCollectionLabel = "lines", requireTargets = true, direction = null } = {}
+) {
+  const normalizedDirection = normalizeUpperText(direction);
+  for (let index = 0; index < (lines || []).length; index += 1) {
+    const line = lines[index] || {};
+    const fieldPrefix = `${fieldCollectionLabel}[${index + 1}]`;
+    const chargeAllocationMethod = normalizeChargeAllocationMethod(
+      line?.chargeAllocationMethod ?? line?.charge_allocation_method
+    );
+    if (chargeAllocationMethod === CHARGE_ALLOCATION_METHOD_NONE) {
+      continue;
+    }
+    if (normalizedDirection === "AR") {
+      throw badRequest(
+        `${fieldPrefix}.chargeAllocationMethod is supported only on AP documents`
+      );
+    }
+
+    const subledgerType =
+      normalizeUpperText(line?.subledgerType ?? line?.subledger_type) || "NONE";
+    if (subledgerType !== "NONE") {
+      throw badRequest(
+        `${fieldPrefix}.subledgerType must be NONE when chargeAllocationMethod != NONE`
+      );
+    }
+
+    const stockImpactMode = normalizeStockImpactMode(
+      line?.stockImpactMode ?? line?.stock_impact_mode ?? "NONE"
+    );
+    if (stockImpactMode !== "NONE") {
+      throw badRequest(
+        `${fieldPrefix}.stockImpactMode must be NONE when chargeAllocationMethod != NONE`
+      );
+    }
+
+    const chargeTargets = line?.chargeTargets ?? line?.charge_targets;
+    if (requireTargets && (!Array.isArray(chargeTargets) || chargeTargets.length === 0)) {
+      throw badRequest(
+        `${fieldPrefix}.chargeTargets must be a non-empty array when chargeAllocationMethod != NONE`
+      );
+    }
+  }
+  return lines;
+}
+
+function buildPersistedChargeTargetAllocations({
+  chargeLine,
+  targetLines,
+  fieldPrefix,
+}) {
+  const method = normalizeChargeAllocationMethod(chargeLine?.chargeAllocationMethod);
+  if (method === CHARGE_ALLOCATION_METHOD_NONE) {
+    return [];
+  }
+  const normalizedTargets = normalizeLineChargeTargets(
+    chargeLine?.chargeTargets,
+    `${fieldPrefix}.chargeTargets`
+  );
+  if (!normalizedTargets.length) {
+    throw badRequest(
+      `${fieldPrefix}.chargeTargets must contain at least one target when chargeAllocationMethod != NONE`
+    );
+  }
+
+  const targetRowsByLineNo = new Map(
+    (targetLines || []).map((row) => [Number(row?.lineNo || 0), row])
+  );
+  const targetRows = normalizedTargets.map((target, index) => {
+    const targetRow = targetRowsByLineNo.get(Number(target.targetLineNo || 0));
+    if (!targetRow) {
+      throw badRequest(
+        `${fieldPrefix}.chargeTargets[${index}].targetLineNo must reference another line on the same document`
+      );
+    }
+    if (Number(targetRow.lineNo || 0) === Number(chargeLine?.lineNo || 0)) {
+      throw badRequest(
+        `${fieldPrefix}.chargeTargets[${index}].targetLineNo cannot reference the same line`
+      );
+    }
+    if (normalizeUpperText(targetRow.lineKind || "STANDARD") !== "STANDARD") {
+      throw badRequest(
+        `${fieldPrefix}.chargeTargets[${index}].targetLineNo must reference a STANDARD line`
+      );
+    }
+    if (isChargeLine(targetRow)) {
+      throw badRequest(
+        `${fieldPrefix}.chargeTargets[${index}].targetLineNo cannot reference another charge line`
+      );
+    }
+    return {
+      target,
+      targetRow,
+    };
+  });
+
+  const seenTargetLineNos = new Set();
+  targetRows.forEach(({ target }, index) => {
+    if (seenTargetLineNos.has(target.targetLineNo)) {
+      throw badRequest(
+        `${fieldPrefix}.chargeTargets[${index}].targetLineNo duplicates another target`
+      );
+    }
+    seenTargetLineNos.add(target.targetLineNo);
+  });
+
+  const chargeAmountTxn = normalizeAmount(
+    chargeLine?.lineNetAmountTxn,
+    `${fieldPrefix}.lineNetAmountTxn`,
+    { allowZero: true }
+  );
+  const chargeAmountBase =
+    chargeLine?.lineNetAmountBase === null || chargeLine?.lineNetAmountBase === undefined
+      ? null
+      : normalizeAmount(
+          chargeLine?.lineNetAmountBase,
+          `${fieldPrefix}.lineNetAmountBase`,
+          { allowZero: true }
+        );
+
+  let allocatedTxnAmounts;
+  if (method === "MANUAL") {
+    allocatedTxnAmounts = targetRows.map(({ target }, index) => {
+      if (target.allocatedAmountTxn === null || target.allocatedAmountTxn === undefined) {
+        throw badRequest(
+          `${fieldPrefix}.chargeTargets[${index}].allocatedAmountTxn is required`
+        );
+      }
+      return roundChargeAllocationAmount(target.allocatedAmountTxn);
+    });
+    const manualTotal = roundChargeAllocationAmount(
+      allocatedTxnAmounts.reduce((sum, value) => sum + Number(value || 0), 0)
+    );
+    if (Math.abs(manualTotal - chargeAmountTxn) > CHARGE_ALLOCATION_SUM_TOLERANCE) {
+      throw badRequest(
+        `${fieldPrefix}.chargeTargets manual allocation total must equal lineNetAmountTxn within tolerance 0.01`
+      );
+    }
+  } else if (method === "EQUAL") {
+    allocatedTxnAmounts = allocateResidualAmountSplit(
+      chargeAmountTxn,
+      targetRows.length
+    );
+  } else if (method === "BY_AMOUNT") {
+    allocatedTxnAmounts = allocateResidualProportionalSplit(
+      chargeAmountTxn,
+      targetRows.map(({ targetRow }) => Number(targetRow?.lineNetAmountTxn || 0)),
+      `${fieldPrefix}.chargeTargets target net amount sum`
+    );
+  } else if (method === "BY_QTY") {
+    allocatedTxnAmounts = allocateResidualProportionalSplit(
+      chargeAmountTxn,
+      targetRows.map(({ targetRow }) => Number(targetRow?.quantity || 0)),
+      `${fieldPrefix}.chargeTargets target quantity sum`
+    );
+  } else {
+    throw badRequest(`${fieldPrefix}.chargeAllocationMethod is invalid`);
+  }
+
+  const allocatedBaseAmounts =
+    chargeAmountBase === null
+      ? new Array(targetRows.length).fill(null)
+      : allocateResidualProportionalSplit(
+          chargeAmountBase,
+          allocatedTxnAmounts,
+          `${fieldPrefix}.chargeTargets allocatedAmountTxn sum`
+        );
+
+  return targetRows.map(({ target, targetRow }, index) => ({
+    targetLineNo: target.targetLineNo,
+    targetLineId: parsePositiveInt(targetRow?.id),
+    allocatedAmountTxn: allocatedTxnAmounts[index],
+    allocatedAmountBase:
+      allocatedBaseAmounts[index] === null ? null : allocatedBaseAmounts[index],
+  }));
+}
+
+function buildDocumentChargeAllocationState(documentLines = []) {
+  const linesById = new Map();
+  for (const line of documentLines || []) {
+    const lineId = parsePositiveInt(line?.id);
+    if (lineId) {
+      linesById.set(lineId, line);
+    }
+  }
+
+  const augmentedCostsByTargetLineId = new Map();
+  const chargeLines = [];
+
+  for (const line of documentLines || []) {
+    const chargeAllocationMethod = normalizeChargeAllocationMethod(
+      line?.chargeAllocationMethod ?? line?.charge_allocation_method
+    );
+    if (chargeAllocationMethod === CHARGE_ALLOCATION_METHOD_NONE) {
+      continue;
+    }
+
+    const lineId = parsePositiveInt(line?.id);
+    const chargeTargets = Array.isArray(line?.chargeTargets) ? line.chargeTargets : [];
+    if (!lineId || chargeTargets.length === 0) {
+      throw badRequest(
+        `Charge line ${Number(line?.lineNo || 0) || "?"} has no effective targets`
+      );
+    }
+
+    let allocatedTxnTotal = 0;
+    let allocatedBaseTotal = 0;
+    const resolvedTargets = [];
+    chargeTargets.forEach((target, index) => {
+      const targetLineId = parsePositiveInt(target?.targetLineId);
+      const targetLine = targetLineId ? linesById.get(targetLineId) : null;
+      if (!targetLine) {
+        throw badRequest(
+          `Charge line ${Number(line?.lineNo || 0) || "?"} target ${index + 1} is invalid or missing`
+        );
+      }
+      if (isChargeLine(targetLine)) {
+        throw badRequest(
+          `Charge line ${Number(line?.lineNo || 0) || "?"} cannot target another charge line`
+        );
+      }
+      const allocatedAmountTxn = roundChargeAllocationAmount(
+        target?.allocatedAmountTxn ?? target?.allocated_amount_txn ?? 0
+      );
+      const allocatedAmountBase = roundChargeAllocationAmount(
+        target?.allocatedAmountBase ?? target?.allocated_amount_base ?? 0
+      );
+      allocatedTxnTotal = roundChargeAllocationAmount(allocatedTxnTotal + allocatedAmountTxn);
+      allocatedBaseTotal = roundChargeAllocationAmount(allocatedBaseTotal + allocatedAmountBase);
+      resolvedTargets.push({
+        targetLineId,
+        targetLineNo: Number(target?.targetLineNo || target?.target_line_no || targetLine?.lineNo || 0),
+        allocatedAmountTxn,
+        allocatedAmountBase,
+      });
+      const current = augmentedCostsByTargetLineId.get(targetLineId) || {
+        additionalAmountTxn: 0,
+        additionalAmountBase: 0,
+      };
+      current.additionalAmountTxn = roundChargeAllocationAmount(
+        current.additionalAmountTxn + allocatedAmountTxn
+      );
+      current.additionalAmountBase = roundChargeAllocationAmount(
+        current.additionalAmountBase + allocatedAmountBase
+      );
+      augmentedCostsByTargetLineId.set(targetLineId, current);
+    });
+
+    const chargeLineNetTxn = normalizeAmount(
+      line?.lineNetAmountTxn,
+      `storedLines[${Number(line?.lineNo || 0) || 0}].lineNetAmountTxn`,
+      { allowZero: true }
+    );
+    if (Math.abs(allocatedTxnTotal - chargeLineNetTxn) > CHARGE_ALLOCATION_SUM_TOLERANCE) {
+      throw badRequest(
+        `Charge line ${Number(line?.lineNo || 0) || "?"} allocations do not equal lineNetAmountTxn`
+      );
+    }
+    const chargeLineNetBase =
+      line?.lineNetAmountBase === null || line?.lineNetAmountBase === undefined
+        ? null
+        : normalizeAmount(
+            line?.lineNetAmountBase,
+            `storedLines[${Number(line?.lineNo || 0) || 0}].lineNetAmountBase`,
+            { allowZero: true }
+          );
+    if (
+      chargeLineNetBase !== null
+      && Math.abs(allocatedBaseTotal - chargeLineNetBase) > CHARGE_ALLOCATION_SUM_TOLERANCE
+    ) {
+      throw badRequest(
+        `Charge line ${Number(line?.lineNo || 0) || "?"} base allocations do not equal lineNetAmountBase`
+      );
+    }
+
+    chargeLines.push({
+      lineId,
+      lineNo: Number(line?.lineNo || 0),
+      chargeAllocationMethod,
+      targets: resolvedTargets,
+    });
+  }
+
+  return {
+    chargeLines,
+    augmentedCostsByTargetLineId,
+  };
+}
+
+function applyDocumentChargeAugmentation(documentLines = [], chargeAllocationState = null) {
+  const augmentedCostsByTargetLineId =
+    chargeAllocationState?.augmentedCostsByTargetLineId instanceof Map
+      ? chargeAllocationState.augmentedCostsByTargetLineId
+      : new Map();
+  return (documentLines || []).map((line) => {
+    const lineId = parsePositiveInt(line?.id);
+    const augmentedAmounts = lineId
+      ? augmentedCostsByTargetLineId.get(lineId) || null
+      : null;
+    if (!augmentedAmounts) {
+      return {
+        ...line,
+        allocatedChargeAmountTxn: 0,
+        allocatedChargeAmountBase: 0,
+        effectiveLineNetAmountTxn: toDecimalNumber(line?.lineNetAmountTxn) ?? 0,
+        effectiveLineNetAmountBase: toDecimalNumber(line?.lineNetAmountBase) ?? 0,
+      };
+    }
+    const lineNetAmountTxn = normalizeAmount(
+      line?.lineNetAmountTxn ?? 0,
+      "lineNetAmountTxn",
+      { allowZero: true }
+    );
+    const lineNetAmountBase = normalizeAmount(
+      line?.lineNetAmountBase ?? 0,
+      "lineNetAmountBase",
+      { allowZero: true }
+    );
+    return {
+      ...line,
+      allocatedChargeAmountTxn: augmentedAmounts.additionalAmountTxn,
+      allocatedChargeAmountBase: augmentedAmounts.additionalAmountBase,
+      lineNetAmountTxn: roundChargeAllocationAmount(
+        lineNetAmountTxn + augmentedAmounts.additionalAmountTxn
+      ),
+      lineNetAmountBase: roundChargeAllocationAmount(
+        lineNetAmountBase + augmentedAmounts.additionalAmountBase
+      ),
+      effectiveLineNetAmountTxn: roundChargeAllocationAmount(
+        lineNetAmountTxn + augmentedAmounts.additionalAmountTxn
+      ),
+      effectiveLineNetAmountBase: roundChargeAllocationAmount(
+        lineNetAmountBase + augmentedAmounts.additionalAmountBase
+      ),
+    };
+  });
 }
 
 function ensureBalancedJournalLines(lines) {
@@ -541,6 +999,21 @@ function mapDocumentLineStockLinkRow(row) {
   };
 }
 
+function mapDocumentLineChargeTargetRow(row) {
+  return {
+    id: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    chargeLineId: parsePositiveInt(row.charge_line_id),
+    targetLineId: parsePositiveInt(row.target_line_id),
+    targetLineNo: Number(row.target_line_no || 0),
+    targetLineDescription: row.target_line_description || null,
+    allocatedAmountTxn: toDecimalNumber(row.allocated_amount_txn),
+    allocatedAmountBase: toDecimalNumber(row.allocated_amount_base),
+    createdAt: row.created_at || null,
+  };
+}
+
 function isActiveInventoryMovementForDocumentReverse(stockLinkRow) {
   if (!parsePositiveInt(stockLinkRow?.inventoryMovementId)) {
     return false;
@@ -641,6 +1114,9 @@ function mapDocumentLineRow(row, taxes = [], stockLinks = [], generatedFixedAsse
     warehouseName: row.warehouse_name || null,
     subledgerType: row.subledger_type || "NONE",
     fixedAssetMode: row.fixed_asset_mode || null,
+    chargeAllocationMethod: normalizeChargeAllocationMethod(
+      row.charge_allocation_method
+    ),
     targetFixedAssetId: parsePositiveInt(row.target_fixed_asset_id),
     fixedAssetCategoryId: parsePositiveInt(row.fixed_asset_category_id),
     fixedAssetOwnerOperatingUnitId: parsePositiveInt(
@@ -666,6 +1142,7 @@ function mapDocumentLineRow(row, taxes = [], stockLinks = [], generatedFixedAsse
     generatedFixedAssets: Array.isArray(generatedFixedAssets)
       ? generatedFixedAssets
       : [],
+    chargeTargets: [],
   };
 }
 
@@ -1380,6 +1857,7 @@ async function listDocumentLineRows({
         l.warehouse_id,
         l.subledger_type,
         l.fixed_asset_mode,
+        l.charge_allocation_method,
         l.target_fixed_asset_id,
         l.fixed_asset_category_id,
         l.fixed_asset_owner_operating_unit_id,
@@ -1403,6 +1881,42 @@ async function listDocumentLineRows({
        AND l.legal_entity_id = ?
        AND l.cari_document_id = ?
      ORDER BY l.line_no ASC, l.id ASC`,
+    [tenantId, legalEntityId, documentId]
+  );
+  return result.rows || [];
+}
+
+async function listDocumentLineChargeTargetRows({
+  tenantId,
+  legalEntityId,
+  documentId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        ct.id,
+        ct.tenant_id,
+        ct.legal_entity_id,
+        ct.charge_line_id,
+        ct.target_line_id,
+        target.line_no AS target_line_no,
+        target.description AS target_line_description,
+        ct.allocated_amount_txn,
+        ct.allocated_amount_base,
+        ct.created_at
+     FROM cari_document_line_charge_targets ct
+     JOIN cari_document_lines charge
+       ON charge.tenant_id = ct.tenant_id
+      AND charge.legal_entity_id = ct.legal_entity_id
+      AND charge.id = ct.charge_line_id
+     JOIN cari_document_lines target
+       ON target.tenant_id = ct.tenant_id
+      AND target.legal_entity_id = ct.legal_entity_id
+      AND target.id = ct.target_line_id
+     WHERE ct.tenant_id = ?
+       AND ct.legal_entity_id = ?
+       AND charge.cari_document_id = ?
+     ORDER BY ct.charge_line_id ASC, target.line_no ASC, ct.id ASC`,
     [tenantId, legalEntityId, documentId]
   );
   return result.rows || [];
@@ -1563,6 +2077,12 @@ async function loadDocumentLinesForDocument({
     documentId,
     runQuery,
   });
+  const chargeTargetRows = await listDocumentLineChargeTargetRows({
+    tenantId,
+    legalEntityId,
+    documentId,
+    runQuery,
+  });
   const generatedFixedAssetRows = await listDocumentLineGeneratedFixedAssetRows({
     tenantId,
     legalEntityId,
@@ -1588,6 +2108,15 @@ async function loadDocumentLinesForDocument({
     }
     stockLinksByLineId.get(lineId).push(mappedStockLink);
   }
+  const chargeTargetsByChargeLineId = new Map();
+  for (const chargeTargetRow of chargeTargetRows) {
+    const mappedChargeTarget = mapDocumentLineChargeTargetRow(chargeTargetRow);
+    const chargeLineId = mappedChargeTarget.chargeLineId;
+    if (!chargeTargetsByChargeLineId.has(chargeLineId)) {
+      chargeTargetsByChargeLineId.set(chargeLineId, []);
+    }
+    chargeTargetsByChargeLineId.get(chargeLineId).push(mappedChargeTarget);
+  }
   const generatedFixedAssetsByLineId = new Map();
   for (const assetRow of generatedFixedAssetRows) {
     const lineId = parsePositiveInt(assetRow.source_cari_document_line_id);
@@ -1610,12 +2139,16 @@ async function loadDocumentLinesForDocument({
   }
 
   return lineRows.map((lineRow) =>
-    mapDocumentLineRow(
+    ({
+      ...mapDocumentLineRow(
       lineRow,
       taxesByLineId.get(parsePositiveInt(lineRow.id)) || [],
       stockLinksByLineId.get(parsePositiveInt(lineRow.id)) || [],
       generatedFixedAssetsByLineId.get(parsePositiveInt(lineRow.id)) || []
-    )
+      ),
+      chargeTargets:
+        chargeTargetsByChargeLineId.get(parsePositiveInt(lineRow.id)) || [],
+    })
   );
 }
 
@@ -2966,6 +3499,9 @@ function normalizeExplicitDraftLines(linesInput, options = {}) {
           });
 
     const stockImpactMode = normalizeStockImpactMode(line.stockImpactMode);
+    const chargeAllocationMethod = normalizeChargeAllocationMethod(
+      line.chargeAllocationMethod ?? line.charge_allocation_method
+    );
     const explicitSubledgerType = normalizeUpperText(
       line.subledgerType ?? line.subledger_type
     );
@@ -3008,6 +3544,11 @@ function normalizeExplicitDraftLines(linesInput, options = {}) {
       taxCode: toNullableString(line.taxCode, 40),
       taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
       stockImpactMode,
+      chargeAllocationMethod,
+      chargeTargets: normalizeLineChargeTargets(
+        line.chargeTargets ?? line.charge_targets,
+        `lines[${index}].chargeTargets`
+      ),
       warehouseId: parsePositiveInt(line.warehouseId),
       subledgerType,
       fixedAssetMode,
@@ -3616,7 +4157,11 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
     [tenantId, legalEntityId, documentId]
   );
 
+  const insertedLinesByLineNo = new Map();
   for (const line of lines || []) {
+    const normalizedChargeAllocationMethod = normalizeChargeAllocationMethod(
+      line.chargeAllocationMethod ?? line.charge_allocation_method
+    );
     const insertResult = await tx.query(
       `INSERT INTO cari_document_lines (
           tenant_id,
@@ -3640,6 +4185,7 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
           warehouse_id,
           subledger_type,
           fixed_asset_mode,
+          charge_allocation_method,
           target_fixed_asset_id,
           fixed_asset_category_id,
           fixed_asset_owner_operating_unit_id,
@@ -3651,7 +4197,7 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
           improvement_revised_useful_life_months,
           improvement_life_extension_months
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
       [
         tenantId,
         legalEntityId,
@@ -3674,6 +4220,7 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
         line.warehouseId || null,
         line.subledgerType || "NONE",
         line.fixedAssetMode || null,
+        normalizedChargeAllocationMethod,
         line.targetFixedAssetId || null,
         line.fixedAssetCategoryId || null,
         line.fixedAssetOwnerOperatingUnitId || null,
@@ -3687,6 +4234,15 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
       ]
     );
     const insertedLineId = parsePositiveInt(insertResult.rows?.insertId);
+    insertedLinesByLineNo.set(Number(line.lineNo || 0), {
+      ...line,
+      id: insertedLineId,
+      chargeAllocationMethod: normalizedChargeAllocationMethod,
+      chargeTargets: normalizeLineChargeTargets(
+        line.chargeTargets ?? line.charge_targets,
+        `lines[${Number(line.lineNo || 0) || 0}].chargeTargets`
+      ),
+    });
     for (const taxRow of line.taxes || []) {
       await tx.query(
         `INSERT INTO cari_document_line_taxes (
@@ -3725,6 +4281,53 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
       );
     }
   }
+
+  const persistedLines = Array.from(insertedLinesByLineNo.values());
+  for (const line of persistedLines) {
+    if (!isChargeLine(line)) {
+      continue;
+    }
+    const fieldPrefix = `lines[${Number(line.lineNo || 0) || 0}]`;
+    const targetAllocations = buildPersistedChargeTargetAllocations({
+      chargeLine: line,
+      targetLines: persistedLines,
+      fieldPrefix,
+    });
+    if (!targetAllocations.length) {
+      throw badRequest(`${fieldPrefix}.chargeTargets must contain at least one target`);
+    }
+    for (const targetAllocation of targetAllocations) {
+      await tx.query(
+        `INSERT INTO cari_document_line_charge_targets (
+            tenant_id,
+            legal_entity_id,
+            charge_line_id,
+            target_line_id,
+            allocated_amount_txn,
+            allocated_amount_base
+         )
+         VALUES (?, ?, ?, ?, ?, ?)` ,
+        [
+          tenantId,
+          legalEntityId,
+          parsePositiveInt(line.id),
+          parsePositiveInt(targetAllocation.targetLineId),
+          normalizeAmount(
+            targetAllocation.allocatedAmountTxn,
+            `${fieldPrefix}.allocatedAmountTxn`,
+            { allowZero: true }
+          ),
+          targetAllocation.allocatedAmountBase === null
+            ? null
+            : normalizeAmount(
+                targetAllocation.allocatedAmountBase,
+                `${fieldPrefix}.allocatedAmountBase`,
+                { allowZero: true }
+              ),
+        ]
+      );
+    }
+  }
 }
 
 async function syncStoredDocumentLinesForPostingTx({
@@ -3738,6 +4341,9 @@ async function syncStoredDocumentLinesForPostingTx({
   const workingLines = (documentLines || []).map((line) => ({
     ...line,
     taxes: Array.isArray(line?.taxes) ? line.taxes.map((tax) => ({ ...tax })) : [],
+    chargeTargets: Array.isArray(line?.chargeTargets)
+      ? line.chargeTargets.map((target) => ({ ...target }))
+      : [],
   }));
   const { mutated: itemCardMutated } = await applyItemCardDefaultsToLines({
     tenantId,
@@ -3755,6 +4361,10 @@ async function syncStoredDocumentLinesForPostingTx({
     lines: workingLines,
     runQuery: tx.query,
     fieldCollectionLabel: "storedLines",
+  });
+  assertChargeLineDraftInvariants(workingLines, {
+    fieldCollectionLabel: "storedLines",
+    direction,
   });
   if (!itemCardMutated && !fixedAssetAccountMutated) {
     return workingLines;
@@ -5057,6 +5667,7 @@ async function resolveDraftDocumentWriteModel({
       runQuery,
       applyTaxCategoryDefaults: true,
     });
+    assertChargeLineDraftInvariants(normalizedLines, { direction });
     await assertDraftLineWarehouseBindingsForDocumentContext({
       tenantId,
       legalEntityId,
@@ -5139,6 +5750,7 @@ async function resolveDraftDocumentWriteModel({
     runQuery,
     applyTaxCategoryDefaults: false,
   });
+  assertChargeLineDraftInvariants(syntheticWriteModel.lines, { direction });
   await assertDraftLineWarehouseBindingsForDocumentContext({
     tenantId,
     legalEntityId,
@@ -6087,18 +6699,25 @@ export async function getCariDocumentByIdForTenant({
   documentId,
   assertScopeAccess,
   runQuery = query,
+  includeChargeAugmentedLines = false,
 }) {
   const row = await fetchDocumentRow({ tenantId, documentId, runQuery });
   if (!row) {
     throw badRequest("Document not found");
   }
   assertDocumentScopeAccess(req, assertScopeAccess, row, "documentId");
-  const lines = await loadDocumentLinesForDocument({
+  let lines = await loadDocumentLinesForDocument({
     tenantId,
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     documentId,
     runQuery,
   });
+  if (includeChargeAugmentedLines) {
+    lines = applyDocumentChargeAugmentation(
+      lines,
+      buildDocumentChargeAllocationState(lines)
+    );
+  }
   return mapDocumentRow(row, { lines });
 }
 
@@ -6505,6 +7124,13 @@ export async function updateCariDraftDocumentById({
       throw badRequest(
         "lines is required when updating amount/fx fields on a multi-line document"
       );
+    }
+    if (!hasExplicitLines) {
+      assertChargeLineDraftInvariants(existingLineRows, {
+        fieldCollectionLabel: "lines",
+        requireTargets: false,
+        direction: nextDirection,
+      });
     }
 
     const shouldReplaceLines =
@@ -6933,6 +7559,12 @@ async function postCariDocumentByIdTx(
       ownerLabel: "document",
       runQuery: tx.query,
     });
+    const chargeAllocationState = buildDocumentChargeAllocationState(documentLines);
+    const postingDocumentLines = applyDocumentChargeAugmentation(
+      documentLines,
+      chargeAllocationState
+    );
+    const hasChargeAllocatedLines = chargeAllocationState.chargeLines.length > 0;
     const postedNumbering = await reservePostedSequence({
       tenantId,
       legalEntityId: lockedLegalEntityId,
@@ -6941,15 +7573,20 @@ async function postCariDocumentByIdTx(
       documentDate,
       runQuery: tx.query,
     });
+    const postingLineRows = Array.isArray(payload.postingLines) ? payload.postingLines : null;
     const usesStoredLineTaxes = documentLines.some(
       (line) => Array.isArray(line?.taxes) && line.taxes.length > 0
     );
     if (
       usesStoredLineTaxes &&
-      Array.isArray(payload.postingLines) &&
-      payload.postingLines.length > 0
+      postingLineRows?.length
     ) {
       throw badRequest("postingLines are not supported for line-taxed documents yet");
+    }
+    if (hasChargeAllocatedLines && postingLineRows?.length) {
+      throw badRequest(
+        "postingLines are not supported for charge-allocated documents yet"
+      );
     }
 
     const documentNetAmountTxn = normalizeAmount(
@@ -6966,7 +7603,6 @@ async function postCariDocumentByIdTx(
     );
     const subledgerReferenceNo = `${CARI_SUBLEDGER_REFERENCE_PREFIX}${documentId}`;
     const defaultLineDescription = `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`;
-    const postingLineRows = Array.isArray(payload.postingLines) ? payload.postingLines : null;
     const postingSides = resolveCariPostingSides({ direction, documentType });
     const postingLineSummary = [];
     const postingLines = [];
@@ -7063,12 +7699,12 @@ async function postCariDocumentByIdTx(
           "postingLines totals must equal draft net/subtotal amountTxn and amountBase"
         );
       }
-    } else if (documentLines.length > 0) {
+    } else if (postingDocumentLines.length > 0) {
       let lineDrivenTotalTxn = 0;
       let lineDrivenTotalBase = 0;
 
-      for (let index = 0; index < documentLines.length; index += 1) {
-        const line = documentLines[index] || {};
+      for (let index = 0; index < postingDocumentLines.length; index += 1) {
+        const line = postingDocumentLines[index] || {};
         const lineAmountTxn = normalizeAmount(
           line.lineNetAmountTxn ?? 0,
           `documentLines[${index}].lineNetAmountTxn`,
@@ -7083,6 +7719,9 @@ async function postCariDocumentByIdTx(
           lineAmountTxn <= AMOUNT_BALANCE_EPSILON &&
           lineAmountBase <= AMOUNT_BALANCE_EPSILON
         ) {
+          continue;
+        }
+        if (isChargeLine(line)) {
           continue;
         }
 
@@ -7116,7 +7755,7 @@ async function postCariDocumentByIdTx(
           baseDescription: defaultLineDescription,
           lineDescription: line.description,
           lineIndex: index,
-          lineCount: documentLines.length,
+          lineCount: postingDocumentLines.length,
         });
         postingLineSummary.push({
           lineNo: Number(line.lineNo || index + 1),
@@ -7260,7 +7899,7 @@ async function postCariDocumentByIdTx(
       documentDate,
       currencyCode,
       counterpartyId,
-      documentLines,
+      documentLines: postingDocumentLines,
       postingLines,
       journalContext,
     });
@@ -7523,7 +8162,7 @@ async function postCariDocumentByIdTx(
       legalEntityId: lockedLegalEntityId,
       documentId,
       direction,
-      lines: documentLines,
+      lines: postingDocumentLines,
     });
     await applyFixedAssetPostingSideEffectsTx({
       tx,
@@ -7535,7 +8174,7 @@ async function postCariDocumentByIdTx(
       direction,
       currencyCode,
       counterpartyId,
-      documentLines,
+      documentLines: postingDocumentLines,
       journalEntryId: journalResult.journalEntryId,
       journalContext,
       userId: payload.userId,
@@ -8247,6 +8886,9 @@ export async function reverseCariPostedDocumentById({
             warehouseId: parsePositiveInt(line.warehouseId),
             subledgerType: normalizeUpperText(line.subledgerType || "NONE") || "NONE",
             fixedAssetMode: normalizeUpperText(line.fixedAssetMode),
+            chargeAllocationMethod: normalizeChargeAllocationMethod(
+              line.chargeAllocationMethod
+            ),
             targetFixedAssetId: parsePositiveInt(line.targetFixedAssetId),
             fixedAssetCategoryId: parsePositiveInt(line.fixedAssetCategoryId),
             fixedAssetOwnerOperatingUnitId: parsePositiveInt(
@@ -8258,8 +8900,30 @@ export async function reverseCariPostedDocumentById({
             fixedAssetNameOverride: toNullableString(line.fixedAssetNameOverride, 255),
             fixedAssetSerialNo: toNullableString(line.fixedAssetSerialNo, 100),
             fixedAssetTag: toNullableString(line.fixedAssetTag, 100),
+            improvementEffectiveDate: line.improvementEffectiveDate
+              ? toDateOnlyString(
+                  line.improvementEffectiveDate,
+                  "reversalLine.improvementEffectiveDate"
+                )
+              : null,
             revisedUsefulLifeMonths: parsePositiveInt(line.revisedUsefulLifeMonths),
             lifeExtensionMonths: parsePositiveInt(line.lifeExtensionMonths),
+            chargeTargets: Array.isArray(line.chargeTargets)
+              ? line.chargeTargets.map((target) => ({
+                  targetLineNo: parsePositiveInt(target.targetLineNo),
+                  allocatedAmountTxn:
+                    target.allocatedAmountTxn === null ||
+                    target.allocatedAmountTxn === undefined
+                      ? null
+                      : normalizeAmount(
+                          target.allocatedAmountTxn,
+                          "reversalLine.chargeTargets.allocatedAmountTxn",
+                          {
+                            allowZero: true,
+                          }
+                        ),
+                }))
+              : [],
             taxes: (line.taxes || []).map((tax) => ({
               componentNo: Number(tax.componentNo || 0),
               taxCode: toNullableString(tax.taxCode, 40),

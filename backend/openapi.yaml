@@ -38757,6 +38757,17 @@
         ],
         "description": "`AUTO_CREATE` is the recommended AP acquisition flow for new bills because posting creates draft assets directly from the CARI line. `LINK_EXISTING` remains available when one specific target asset must be referenced. `IMPROVE_EXISTING` capitalizes a post-activation improvement onto an existing ACTIVE or FULLY_DEPRECIATED asset. Legacy capitalize-from-AP and sale-staging flows remain supported fallback paths outside this document contract."
       },
+      "CariDocumentLineChargeAllocationMethod": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "EQUAL",
+          "BY_AMOUNT",
+          "BY_QTY",
+          "MANUAL"
+        ],
+        "description": "Persists to `charge_allocation_method`. AP-only landed-cost flow for CARI line charges. When this is not `NONE`, the line stays `subledgerType = NONE`, its standalone debit is suppressed, and its net amount is absorbed into the selected target lines before posting."
+      },
       "CariDocumentOpenItemStatus": {
         "type": "string",
         "enum": [
@@ -38852,6 +38863,79 @@
           "documentId",
           "documentLineId",
           "componentNo"
+        ]
+      },
+      "CariDocumentLineChargeTargetRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "chargeLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetLineNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "allocatedAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "allocatedAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "chargeLineId",
+          "targetLineId"
+        ]
+      },
+      "CariDocumentLineChargeTargetInput": {
+        "type": "object",
+        "properties": {
+          "targetLineNo": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Required same-document line reference for charge allocation. Frontend state may keep row ids internally, but the API serializes charge targets by `targetLineNo`."
+          },
+          "allocatedAmountTxn": {
+            "type": "number",
+            "minimum": 0,
+            "nullable": true,
+            "description": "Required only when `chargeAllocationMethod = MANUAL`; ignored for computed allocation methods."
+          }
+        },
+        "required": [
+          "targetLineNo"
         ]
       },
       "CariDocumentLineStockLinkRow": {
@@ -39084,6 +39168,14 @@
             ],
             "nullable": true
           },
+          "chargeAllocationMethod": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CariDocumentLineChargeAllocationMethod"
+              }
+            ],
+            "nullable": true
+          },
           "quantity": {
             "type": "number",
             "nullable": true
@@ -39220,6 +39312,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CariDocumentLineTaxRow"
+            }
+          },
+          "chargeTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentLineChargeTargetRow"
             }
           },
           "stockLinks": {
@@ -39940,6 +40038,17 @@
           },
           "subledgerType": {
             "$ref": "#/components/schemas/CariDocumentLineSubledgerType"
+          },
+          "chargeAllocationMethod": {
+            "$ref": "#/components/schemas/CariDocumentLineChargeAllocationMethod"
+          },
+          "chargeTargets": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentLineChargeTargetInput"
+            },
+            "description": "Required non-empty array when `chargeAllocationMethod != NONE`. Targets must reference other STANDARD lines on the same AP document."
           },
           "quantity": {
             "type": "number",

@@ -483,6 +483,7 @@ async function main() {
         postingDate: pw.postingDate,
         capitalizationDate: pw.capitalizationDate,
         inServiceDate: pw.inServiceDate,
+        assetTag: `FA27-ACT-${assetId}`,
         userId: smokeUser.userId,
       });
 
@@ -556,7 +557,7 @@ async function main() {
       try {
         await activateAsset({
           tenantId: ctx.tenantId, assetId,
-          postingDate: pw.postingDate, userId: smokeUser.userId,
+          postingDate: pw.postingDate, assetTag: `FA27-BLK-${assetId}`, userId: smokeUser.userId,
         });
       } catch (err) {
         blocked = err.message.includes("no longer POSTED");
@@ -640,7 +641,7 @@ async function main() {
       try {
         await activateAsset({
           tenantId: ctx.tenantId, assetId: asset2Id,
-          postingDate: pw.postingDate, userId: smokeUser.userId,
+          postingDate: pw.postingDate, assetTag: `FA27-BLK-${asset2Id}`, userId: smokeUser.userId,
         });
       } catch (err) {
         blocked = err.message.includes("exceeds current source line quantity")
@@ -698,7 +699,7 @@ async function main() {
       try {
         await activateAsset({
           tenantId: ctx.tenantId, assetId,
-          postingDate: pw.postingDate, userId: smokeUser.userId,
+          postingDate: pw.postingDate, assetTag: `FA27-BLK-${assetId}`, userId: smokeUser.userId,
         });
       } catch (err) {
         blocked = err.message.includes("activation path");
@@ -763,6 +764,7 @@ async function main() {
         postingDate: pw.postingDate,
         capitalizationDate: pw.capitalizationDate,
         inServiceDate: pw.inServiceDate,
+        assetTag: `FA27-ACT-${assetId}`,
         userId: smokeUser.userId,
       });
 

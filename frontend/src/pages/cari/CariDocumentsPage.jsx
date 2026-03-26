@@ -67,8 +67,10 @@ import InlineFixedAssetCategoryCreateModal from "./InlineFixedAssetCategoryCreat
 import {
   buildDocumentListQuery,
   buildDocumentMutationPayload,
+  computeDocumentChargeAllocationPreview,
   computeDocumentLineAmounts,
   createDocumentLineDraft,
+  DOCUMENT_LINE_CHARGE_ALLOCATION_METHODS,
   DOCUMENT_LINE_FIXED_ASSET_MODES,
   DOCUMENT_LINE_KINDS,
   DOCUMENT_LINE_STOCK_IMPACT_MODES,
@@ -81,6 +83,7 @@ import {
   DOCUMENT_TYPES,
   getDocumentFxComputation,
   mapDocumentRowToForm,
+  listEligibleChargeTargetLines,
   requiresDueDate,
   validateDocumentMutationForm,
 } from "./cariDocumentsUtils.js";
@@ -1135,6 +1138,106 @@ function getDefaultStockImpactModeForDirection(direction) {
   return "NONE";
 }
 
+function normalizeChargeAllocationMethod(value) {
+  const normalized = normalizeText(value).toUpperCase();
+  return DOCUMENT_LINE_CHARGE_ALLOCATION_METHODS.includes(normalized)
+    ? normalized
+    : "NONE";
+}
+
+function buildChargeTargetDrafts(lines, chargeLineRowId, allocationPreview = null) {
+  const eligibleTargets = listEligibleChargeTargetLines(lines, chargeLineRowId);
+  const previewAllocations =
+    allocationPreview?.chargeLinesByRowId instanceof Map
+      ? allocationPreview.chargeLinesByRowId.get(String(chargeLineRowId))?.allocations || []
+      : [];
+  const previewAllocationByTargetRowId = new Map(
+    previewAllocations.map((entry) => [String(entry.targetRowId || ""), entry])
+  );
+  return eligibleTargets.map((target) => {
+    const previewAllocation =
+      previewAllocationByTargetRowId.get(String(target.rowId || "")) || null;
+    return {
+      targetRowId: String(target.rowId || ""),
+      targetLineNo: Number(target.lineNo || 0) || null,
+      targetLineDescription: normalizeText(target.description),
+      allocatedAmountTxn: previewAllocation
+        ? String(roundDocumentUiAmount(previewAllocation.allocatedAmountTxn || 0))
+        : "",
+    };
+  });
+}
+
+function buildChargeAllocationMethodTransitionPatch(currentLine, nextMethod, lines) {
+  const normalizedMethod = normalizeChargeAllocationMethod(nextMethod);
+  if (normalizedMethod === "NONE") {
+    return {
+      chargeAllocationMethod: "NONE",
+      chargeTargets: [],
+    };
+  }
+  const allocationPreview = computeDocumentChargeAllocationPreview(lines);
+  const currentTargets = Array.isArray(currentLine?.chargeTargets)
+    ? currentLine.chargeTargets
+    : [];
+  const existingTargetByRowId = new Map(
+    currentTargets
+      .map((target) => [String(target?.targetRowId || ""), target])
+      .filter(([rowId]) => rowId)
+  );
+  const targetDefaults = buildChargeTargetDrafts(
+    lines,
+    currentLine?.rowId,
+    allocationPreview
+  );
+  const nextTargets = targetDefaults.map((target) => {
+    const existingTarget = existingTargetByRowId.get(String(target.targetRowId || "")) || null;
+    return {
+      ...target,
+      allocatedAmountTxn:
+        normalizedMethod === "MANUAL"
+          ? String(
+              existingTarget?.allocatedAmountTxn
+              || target.allocatedAmountTxn
+              || ""
+            ).trim()
+          : String(existingTarget?.allocatedAmountTxn || "").trim(),
+    };
+  });
+  return {
+    chargeAllocationMethod: normalizedMethod,
+    chargeTargets: nextTargets,
+    subledgerType: "NONE",
+    stockImpactMode: "NONE",
+    warehouseId: "",
+    warehouseCode: "",
+    warehouseName: "",
+  };
+}
+
+function buildItemCardSelectionTransitionPatch(currentLine, itemCard, direction) {
+  const currentDraftLine = createDocumentLineDraft(currentLine);
+  if (currentDraftLine.subledgerType === "FIXED_ASSET") {
+    return null;
+  }
+  const lineDefaults = resolveLineDefaultsFromItemCard(itemCard, direction);
+  const nextSubledgerType = lineDefaults.stockImpactMode === "NONE" ? "NONE" : "STOCK";
+  return lineDefaults.stockImpactMode === "NONE"
+    ? {
+        ...lineDefaults,
+        subledgerType: nextSubledgerType,
+        warehouseId: "",
+        warehouseCode: "",
+        warehouseName: "",
+      }
+    : {
+        ...lineDefaults,
+        subledgerType: nextSubledgerType,
+        chargeAllocationMethod: "NONE",
+        chargeTargets: [],
+      };
+}
+
 function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
   const currentLine = createDocumentLineDraft(line);
   const normalizedNextSubledgerType = DOCUMENT_LINE_SUBLEDGER_TYPES.includes(
@@ -1155,9 +1258,14 @@ function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
     revisedUsefulLifeMonths: "",
     lifeExtensionMonths: "",
   };
+  const chargeResetPatch = {
+    chargeAllocationMethod: "NONE",
+    chargeTargets: [],
+  };
   if (normalizedNextSubledgerType === "FIXED_ASSET") {
     return {
       ...fixedAssetResetPatch,
+      ...chargeResetPatch,
       subledgerType: "FIXED_ASSET",
       itemCardId: "",
       postingAccountId: "",
@@ -1172,6 +1280,7 @@ function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
   if (normalizedNextSubledgerType === "STOCK") {
     return {
       ...fixedAssetResetPatch,
+      ...chargeResetPatch,
       subledgerType: "STOCK",
       ...(currentLine.subledgerType === "FIXED_ASSET"
         ? {
@@ -1185,7 +1294,13 @@ function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
   }
   return {
     ...fixedAssetResetPatch,
+    ...chargeResetPatch,
     subledgerType: "NONE",
+    ...(currentLine.subledgerType === "STOCK"
+      ? {
+          itemCardId: "",
+        }
+      : {}),
     warehouseId: "",
     warehouseCode: "",
     warehouseName: "",
@@ -2261,6 +2376,9 @@ function DocumentLineWorkbench({
   onPatchTaxSensitiveLine,
   onChangeSubledgerType,
   onChangeFixedAssetMode,
+  onChangeChargeAllocationMethod,
+  onToggleChargeTarget,
+  onChangeChargeTargetAmount,
   onSelectFixedAssetCategory,
   onSelectTargetFixedAsset,
   onSelectItemCard,
@@ -2280,6 +2398,10 @@ function DocumentLineWorkbench({
   );
   const resolvedAmountTxnText = normalizeOptionalDecimalText(
     fxComputation?.resolvedAmountTxn
+  );
+  const chargeAllocationPreview = useMemo(
+    () => computeDocumentChargeAllocationPreview(lines),
+    [lines]
   );
   const lineAccountsById = useMemo(
     () =>
@@ -2302,6 +2424,14 @@ function DocumentLineWorkbench({
       ]),
     [fixedAssetDraftRowsById, fixedAssetSaleRowsById]
   );
+  const targetChargeSummaryByRowId =
+    chargeAllocationPreview?.targetSummaryByRowId instanceof Map
+      ? chargeAllocationPreview.targetSummaryByRowId
+      : new Map();
+  const chargeLinePreviewByRowId =
+    chargeAllocationPreview?.chargeLinesByRowId instanceof Map
+      ? chargeAllocationPreview.chargeLinesByRowId
+      : new Map();
 
   return (
     <div className={`${gridSpanClass} rounded-md border border-slate-200 bg-slate-50 px-3 py-3`}>
@@ -2418,6 +2548,25 @@ function DocumentLineWorkbench({
           const isNoneLine = !isFixedAssetLine && !isStockLine;
           const isApDocument = documentDirection === "AP";
           const isArDocument = documentDirection === "AR";
+          const chargeAllocationMethod = normalizeChargeAllocationMethod(
+            line.chargeAllocationMethod
+          );
+          const isChargeLine = chargeAllocationMethod !== "NONE";
+          const chargeLinePreview =
+            chargeLinePreviewByRowId.get(String(line.rowId || "")) || null;
+          const chargeTargetSummary =
+            targetChargeSummaryByRowId.get(String(line.rowId || "")) || null;
+          const eligibleChargeTargets =
+            isApDocument && isNoneLine
+              ? listEligibleChargeTargetLines(lines, line.rowId)
+              : [];
+          const selectedChargeTargetRowIds = new Set(
+            Array.isArray(line.chargeTargets)
+              ? line.chargeTargets
+                  .map((target) => String(target?.targetRowId || "").trim())
+                  .filter(Boolean)
+              : []
+          );
           const activeFixedAssetMode =
             isFixedAssetLine && isApDocument
               ? line.fixedAssetMode || "AUTO_CREATE"
@@ -2519,10 +2668,22 @@ function DocumentLineWorkbench({
           );
           const fixedAssetAccount = lineAccountsById.get(fixedAssetAccountId) || null;
           const fixedAssetPreviewAmounts = computeDocumentLineAmounts(line);
+          const effectiveLineNetAmountTxn =
+            chargeTargetSummary?.effectiveAmountTxn
+            ?? fixedAssetPreviewAmounts.lineNetAmountTxn;
+          const allocatedChargeAmountTxn =
+            chargeTargetSummary?.allocatedChargeAmountTxn || 0;
           const perUnitAmount =
             isAutoCreateMode && unitCount
               ? roundDocumentUiAmount(
-                  Number(fixedAssetPreviewAmounts.lineNetAmountTxn || 0) / unitCount
+                  Number(effectiveLineNetAmountTxn || 0) / unitCount
+                )
+              : null;
+          const chargeManualDifference =
+            isChargeLine && chargeAllocationMethod === "MANUAL"
+              ? roundDocumentUiAmount(
+                  Number(line.lineNetAmountTxn || 0)
+                    - Number(chargeLinePreview?.manualTotalTxn || 0)
                 )
               : null;
           const showPerUnitMetadata = Boolean(isAutoCreateMode && unitCount === 1);
@@ -2912,6 +3073,18 @@ function DocumentLineWorkbench({
                           className="inline font-semibold"
                         />{" "}
                         {l("each.", "olacak.")}
+                        {allocatedChargeAmountTxn > 0 ? (
+                          <>
+                            {" "}
+                            {l("(includes", "(icerir")}{" "}
+                            <MoneyText
+                              amount={allocatedChargeAmountTxn}
+                              currencyCode={lineCurrencyCode}
+                              className="inline font-semibold"
+                            />{" "}
+                            {l("allocated charges)", "dagitilan masraf)")}
+                          </>
+                        ) : null}
                       </p>
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <button
@@ -3122,6 +3295,19 @@ function DocumentLineWorkbench({
                           "Belge tarihi kayit tarihi olarak kalir. Etkinlik tarihi belge tarihinden daha erkense, sistem daha once kayda alinmis aylar icin cari donemde ayri bir catch-up amortisman yevmiyesi olusturabilir."
                         )}
                       </p>
+                      {allocatedChargeAmountTxn > 0 ? (
+                        <p className="mt-2 text-xs text-amber-900">
+                          {l(
+                            "This improvement amount already includes allocated charges before the effective-date and catch-up logic runs.",
+                            "Bu iyilestirme tutari, etkinlik tarihi ve catch-up mantigi calismadan once dagitilan masraflari zaten icerir."
+                          )}{" "}
+                          <MoneyText
+                            amount={allocatedChargeAmountTxn}
+                            currencyCode={lineCurrencyCode}
+                            className="inline font-semibold"
+                          />
+                        </p>
+                      ) : null}
                     </div>
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
                       <label className="block">
@@ -3648,9 +3834,226 @@ function DocumentLineWorkbench({
                         />
                       )}
                     </label>
+                    {isApDocument ? (
+                      <div className="rounded-md border border-slate-200 bg-white px-3 py-3 md:col-span-2">
+                        <label className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4 rounded border-slate-300"
+                            checked={isChargeLine}
+                            onChange={(event) =>
+                              onChangeChargeAllocationMethod(
+                                line.rowId,
+                                event.target.checked ? "EQUAL" : "NONE"
+                              )
+                            }
+                            disabled={saving}
+                          />
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                              {l("Distribute as Charge", "Masraf Olarak Dagit")}
+                            </p>
+                            <p className="mt-1 text-xs font-normal normal-case text-slate-600">
+                              {l(
+                                "Charge lines do not post their own debit. Their net amount is absorbed into the selected target lines at posting time.",
+                                "Masraf satirlari kendi borc kaydini olusturmaz. Net tutar, kayit aninda secilen hedef satirlara dagitilir."
+                              )}
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+                    ) : null}
+                    {isChargeLine ? (
+                      <>
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                          {l("Charge Allocation Method", "Masraf Dagitim Metodu")}
+                          <select
+                            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                            value={chargeAllocationMethod}
+                            onChange={(event) =>
+                              onChangeChargeAllocationMethod(line.rowId, event.target.value)
+                            }
+                            disabled={saving}
+                          >
+                            {DOCUMENT_LINE_CHARGE_ALLOCATION_METHODS.filter(
+                              (value) => value !== "NONE"
+                            ).map((method) => (
+                              <option
+                                key={`line-charge-method-${line.rowId}-${method}`}
+                                value={method}
+                              >
+                                {method === "EQUAL"
+                                  ? l("Equal", "Esit")
+                                  : method === "BY_AMOUNT"
+                                    ? l("By Amount", "Tutara Gore")
+                                    : method === "BY_QTY"
+                                      ? l("By Quantity", "Miktara Gore")
+                                      : l("Manual", "Manuel")}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-3 text-sm text-cyan-950 md:col-span-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
+                                {l("Charge Targets", "Masraf Hedefleri")}
+                              </p>
+                              <p className="mt-1 text-xs text-cyan-900">
+                                {l(
+                                  "Pick one or more non-charge STANDARD lines on this bill.",
+                                  "Bu faturadaki charge olmayan STANDARD satirlardan bir veya daha fazlasini secin."
+                                )}
+                              </p>
+                            </div>
+                            <p className="text-xs text-cyan-900">
+                              {l(
+                                "Tax still posts normally on the charge line.",
+                                "Masraf satirinin vergisi normal sekilde kayda gider."
+                              )}
+                            </p>
+                          </div>
+                          {eligibleChargeTargets.length > 0 ? (
+                            <div className="mt-3 space-y-2">
+                              {eligibleChargeTargets.map((target) => {
+                                const targetRowId = String(target.rowId || "");
+                                const isTargetSelected = selectedChargeTargetRowIds.has(targetRowId);
+                                const previewAllocation =
+                                  chargeLinePreview?.allocations?.find(
+                                    (entry) =>
+                                      String(entry?.targetRowId || "") === targetRowId
+                                  ) || null;
+                                return (
+                                  <div
+                                    key={`charge-target-${line.rowId}-${targetRowId}`}
+                                    className={`rounded-md border px-3 py-3 ${
+                                      isTargetSelected
+                                        ? "border-cyan-300 bg-white"
+                                        : "border-cyan-100 bg-cyan-25"
+                                    }`}
+                                  >
+                                    <label className="flex items-start gap-3">
+                                      <input
+                                        type="checkbox"
+                                        className="mt-1 h-4 w-4 rounded border-slate-300"
+                                        checked={isTargetSelected}
+                                        onChange={() =>
+                                          onToggleChargeTarget(line.rowId, targetRowId)
+                                        }
+                                        disabled={saving}
+                                      />
+                                      <div className="flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                            {l("Line", "Satir")} {target.lineNo}
+                                          </span>
+                                          <span className="text-sm font-semibold text-slate-900">
+                                            {target.description || l("No description", "Aciklama yok")}
+                                          </span>
+                                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                                            {target.subledgerType === "FIXED_ASSET"
+                                              ? l("Fixed Asset", "Duran Varlik")
+                                              : target.subledgerType === "STOCK"
+                                                ? l("Stock", "Stok")
+                                                : l("General", "Genel")}
+                                          </span>
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-slate-600">
+                                          <span>
+                                            {l("Original", "Orijinal")}:{" "}
+                                            <MoneyText
+                                              amount={target.lineNetAmountTxn}
+                                              currencyCode={lineCurrencyCode}
+                                              className="inline"
+                                            />
+                                          </span>
+                                          {previewAllocation ? (
+                                            <span>
+                                              {chargeAllocationMethod === "MANUAL"
+                                                ? l("Manual split", "Manuel dagitim")
+                                                : l("Computed split", "Hesaplanan dagitim")}
+                                              :{" "}
+                                              <MoneyText
+                                                amount={previewAllocation.allocatedAmountTxn}
+                                                currencyCode={lineCurrencyCode}
+                                                className="inline"
+                                              />
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    </label>
+                                    {isTargetSelected && chargeAllocationMethod === "MANUAL" ? (
+                                      <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                        {l("Allocated Amount", "Dagitilan Tutar")}
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="0.000001"
+                                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                                          value={
+                                            Array.isArray(line.chargeTargets)
+                                              ? line.chargeTargets.find(
+                                                  (targetRow) =>
+                                                    String(targetRow?.targetRowId || "")
+                                                      === targetRowId
+                                                )?.allocatedAmountTxn || ""
+                                              : ""
+                                          }
+                                          onChange={(event) =>
+                                            onChangeChargeTargetAmount(
+                                              line.rowId,
+                                              targetRowId,
+                                              event.target.value
+                                            )
+                                          }
+                                          disabled={saving}
+                                        />
+                                      </label>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="mt-3 text-xs text-amber-800">
+                              {l(
+                                "No eligible STANDARD target lines are available yet. Add another non-charge line first.",
+                                "Henuz uygun STANDARD hedef satir yok. Once charge olmayan baska bir satir ekleyin."
+                              )}
+                            </p>
+                          )}
+                          {chargeAllocationMethod === "MANUAL" ? (
+                            <p className="mt-3 text-xs text-cyan-900">
+                              {l("Allocated total", "Dagitilan toplam")}:{" "}
+                              <MoneyText
+                                amount={chargeLinePreview?.manualTotalTxn || 0}
+                                currencyCode={lineCurrencyCode}
+                                className="inline font-semibold"
+                              />{" "}
+                              | {l("Difference", "Fark")}:{" "}
+                              <MoneyText
+                                amount={chargeManualDifference}
+                                currencyCode={lineCurrencyCode}
+                                className={`inline font-semibold ${
+                                  Math.abs(Number(chargeManualDifference || 0)) > 0.01
+                                    ? "text-rose-700"
+                                    : "text-emerald-700"
+                                }`}
+                              />
+                            </p>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : null}
                     {canReadGlAccounts ? (
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                        {l("Posting Account (optional)", "Kayit Hesabi (opsiyonel)")}
+                        {isChargeLine
+                          ? l(
+                              "Posting Account (ignored for charge lines)",
+                              "Kayit Hesabi (masraf satirinda yok sayilir)"
+                            )
+                          : l("Posting Account (optional)", "Kayit Hesabi (opsiyonel)")}
                         <select
                           className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
                           value={line.postingAccountId}
@@ -3659,7 +4062,7 @@ function DocumentLineWorkbench({
                               postingAccountId: event.target.value,
                             })
                           }
-                          disabled={saving || lineAccountsLoading}
+                          disabled={saving || lineAccountsLoading || isChargeLine}
                         >
                           <option value="">
                             {l(
@@ -3673,10 +4076,23 @@ function DocumentLineWorkbench({
                             </option>
                           ))}
                         </select>
+                        {isChargeLine ? (
+                          <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
+                            {l(
+                              "The charge line debit is absorbed into its selected target lines.",
+                              "Masraf satirinin borc kaydi secilen hedef satirlara dagitilir."
+                            )}
+                          </span>
+                        ) : null}
                       </label>
                     ) : (
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                        {l("Posting Account ID (optional)", "Kayit Hesabi ID (opsiyonel)")}
+                        {isChargeLine
+                          ? l(
+                              "Posting Account ID (ignored for charge lines)",
+                              "Kayit Hesabi ID (masraf satirinda yok sayilir)"
+                            )
+                          : l("Posting Account ID (optional)", "Kayit Hesabi ID (opsiyonel)")}
                         <input
                           type="number"
                           min="1"
@@ -3687,8 +4103,16 @@ function DocumentLineWorkbench({
                               postingAccountId: event.target.value,
                             })
                           }
-                          disabled={saving}
+                          disabled={saving || isChargeLine}
                         />
+                        {isChargeLine ? (
+                          <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
+                            {l(
+                              "The charge line debit is absorbed into its selected target lines.",
+                              "Masraf satirinin borc kaydi secilen hedef satirlara dagitilir."
+                            )}
+                          </span>
+                        ) : null}
                       </label>
                     )}
                   </>
@@ -3757,13 +4181,27 @@ function DocumentLineWorkbench({
                 ) : (
                   <>
                     <span>
-                      {l("Stock impact", "Stok etkisi")}: {line.stockImpactMode || "NONE"}
+                      {isChargeLine
+                        ? l("Charge method", "Masraf metodu")
+                        : l("Stock impact", "Stok etkisi")}
+                      :{" "}
+                      {isChargeLine ? chargeAllocationMethod : line.stockImpactMode || "NONE"}
                     </span>
                     <span>
-                      {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
+                      {isChargeLine
+                        ? l("Charge targets", "Masraf hedefleri")
+                        : l("Item card", "Urun karti")}
+                      :{" "}
+                      {isChargeLine
+                        ? chargeLinePreview?.allocations?.length || 0
+                        : line.itemCardId || "-"}
                     </span>
                     <span>
-                      {l("Warehouse", "Depo")}: {warehouseLabel}
+                      {isChargeLine
+                        ? l("Absorbed debit", "Dagitilan borc")
+                        : l("Warehouse", "Depo")}
+                      :{" "}
+                      {isChargeLine ? l("Yes", "Evet") : warehouseLabel}
                     </span>
                   </>
                 )}
@@ -3805,6 +4243,114 @@ function DocumentLineWorkbench({
           );
         })}
       </div>
+
+      {chargeAllocationPreview.hasChargeLines ? (
+        <div className="mt-4 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
+                {l("Charge Allocation Summary", "Masraf Dagitim Ozeti")}
+              </p>
+              <p className="mt-1 text-xs text-cyan-900">
+                {l(
+                  "Effective amounts below already include the allocated charge lines.",
+                  "Asagidaki efektif tutarlar, dagitilan masraf satirlarini zaten icerir."
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {chargeAllocationPreview.targetSummaries.map((summary) => (
+              <div
+                key={`charge-summary-target-${summary.rowId}`}
+                className="rounded-md border border-cyan-100 bg-white px-3 py-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {l("Line", "Satir")} {summary.lineNo}:{" "}
+                      {summary.description || l("No description", "Aciklama yok")}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {summary.subledgerType === "FIXED_ASSET"
+                        ? l("Fixed Asset", "Duran Varlik")
+                        : summary.subledgerType === "STOCK"
+                          ? l("Stock", "Stok")
+                          : l("General", "Genel")}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-slate-600">
+                    <p>
+                      {l("Original", "Orijinal")}:{" "}
+                      <MoneyText
+                        amount={summary.originalAmountTxn}
+                        currencyCode={normalizeCurrencyCode(currencyCode) || currencyCode || "USD"}
+                        className="inline font-semibold"
+                      />
+                    </p>
+                    <p className="mt-1">
+                      {l("Allocated Charges", "Dagitilan Masraf")}:{" "}
+                      <MoneyText
+                        amount={summary.allocatedChargeAmountTxn}
+                        currencyCode={normalizeCurrencyCode(currencyCode) || currencyCode || "USD"}
+                        className="inline font-semibold"
+                      />
+                    </p>
+                    <p className="mt-1">
+                      {l("Effective", "Efektif")}:{" "}
+                      <MoneyText
+                        amount={summary.effectiveAmountTxn}
+                        currencyCode={normalizeCurrencyCode(currencyCode) || currencyCode || "USD"}
+                        className="inline font-semibold"
+                      />
+                    </p>
+                    {summary.effectiveUnitAmountTxn !== null ? (
+                      <p className="mt-1">
+                        {l("Per Unit", "Birim Basina")}:{" "}
+                        <MoneyText
+                          amount={summary.effectiveUnitAmountTxn}
+                          currencyCode={normalizeCurrencyCode(currencyCode) || currencyCode || "USD"}
+                          className="inline font-semibold"
+                        />
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 space-y-2">
+            {chargeAllocationPreview.chargeLines.map((chargeLine) => (
+              <div
+                key={`charge-summary-flow-${chargeLine.chargeLineRowId}`}
+                className="rounded-md border border-cyan-100 bg-white px-3 py-3 text-xs text-slate-700"
+              >
+                <p className="font-semibold text-slate-900">
+                  {l("Line", "Satir")} {chargeLine.chargeLineNo}:{" "}
+                  {chargeLine.chargeLineDescription || l("Charge line", "Masraf satiri")}
+                </p>
+                <p className="mt-1">
+                  <MoneyText
+                    amount={chargeLine.chargeLineNetAmountTxn}
+                    currencyCode={normalizeCurrencyCode(currencyCode) || currencyCode || "USD"}
+                    className="inline font-semibold"
+                  />{" "}
+                  {l("flows to", "su satirlara dagilir")}:{" "}
+                  {chargeLine.allocations.length > 0
+                    ? chargeLine.allocations
+                        .map((allocation) =>
+                          `${l("Line", "Satir")} ${allocation.targetLineNo}: ${
+                            allocation.targetDescription || "-"
+                          } (${roundDocumentUiAmount(allocation.allocatedAmountTxn || 0)})`
+                        )
+                        .join(" | ")
+                    : l("No targets selected yet.", "Henuz hedef secilmedi.")}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
@@ -4481,6 +5027,36 @@ export default function CariDocumentsPage({ direction = "" }) {
               "Stock impact is required for stock lines.",
               "Stok satirlari icin stok etkisi zorunludur."
             );
+          case "chargeAllocationMethod is supported only on AP documents":
+            return l(
+              "Charge allocation is available only on AP documents.",
+              "Masraf dagitimi yalnizca AP belgelerinde kullanilabilir."
+            );
+          case "subledgerType must be NONE when chargeAllocationMethod != NONE":
+            return l(
+              "Charge lines must stay on the General line type.",
+              "Masraf satirlari Genel satir tipinde kalmalidir."
+            );
+          case "stockImpactMode must be NONE when chargeAllocationMethod != NONE":
+            return l(
+              "Charge lines cannot create stock movement directly.",
+              "Masraf satirlari dogrudan stok hareketi olusturamaz."
+            );
+          case "chargeTargets must be a non-empty array when chargeAllocationMethod != NONE":
+            return l(
+              "Select at least one target line for the charge allocation.",
+              "Masraf dagitimi icin en az bir hedef satir secin."
+            );
+          case "chargeTargets is allowed only when chargeAllocationMethod != NONE":
+            return l(
+              "Target lines can only be stored when charge allocation is enabled.",
+              "Hedef satirlar yalnizca masraf dagitimi acikken tutulabilir."
+            );
+          case "chargeTargets manual allocation total must equal lineNetAmountTxn within tolerance 0.01":
+            return l(
+              "Manual charge split must match the line net amount.",
+              "Manuel masraf dagitimi satirin net tutariyla eslesmelidir."
+            );
           case "targetFixedAssetId must be empty for STOCK lines.":
             return l(
               "Stock lines cannot target a fixed asset.",
@@ -4537,6 +5113,54 @@ export default function CariDocumentsPage({ direction = "" }) {
           return l(
             "Selected warehouse must be active.",
             "Secili depo aktif olmalidir."
+          );
+        }
+        const chargeTargetSameDocumentPattern =
+          /^chargeTargets\[\d+\]\.targetLineNo must reference another line on the same document$/;
+        if (chargeTargetSameDocumentPattern.test(coreMessage)) {
+          return l(
+            "Select another line on the same document as the charge target.",
+            "Masraf hedefi olarak ayni belgedeki baska bir satiri secin."
+          );
+        }
+        const chargeTargetDuplicatePattern =
+          /^chargeTargets\[\d+\]\.targetLineNo duplicates another target$/;
+        if (chargeTargetDuplicatePattern.test(coreMessage)) {
+          return l(
+            "The same target line cannot be selected twice.",
+            "Ayni hedef satir iki kez secilemez."
+          );
+        }
+        const chargeTargetSelfPattern =
+          /^chargeTargets\[\d+\]\.targetLineNo cannot reference the same line$/;
+        if (chargeTargetSelfPattern.test(coreMessage)) {
+          return l(
+            "A charge line cannot target itself.",
+            "Masraf satiri kendisini hedefleyemez."
+          );
+        }
+        const chargeTargetStandardPattern =
+          /^chargeTargets\[\d+\]\.targetLineNo must reference a STANDARD line$/;
+        if (chargeTargetStandardPattern.test(coreMessage)) {
+          return l(
+            "Charge targets must be STANDARD lines.",
+            "Masraf hedefleri STANDARD satirlar olmalidir."
+          );
+        }
+        const chargeTargetChargePattern =
+          /^chargeTargets\[\d+\]\.targetLineNo cannot reference another charge line$/;
+        if (chargeTargetChargePattern.test(coreMessage)) {
+          return l(
+            "Charge lines cannot target another charge line.",
+            "Masraf satirlari baska bir masraf satirini hedefleyemez."
+          );
+        }
+        const chargeTargetManualRequiredPattern =
+          /^chargeTargets\[\d+\]\.allocatedAmountTxn is required$/;
+        if (chargeTargetManualRequiredPattern.test(coreMessage)) {
+          return l(
+            "Enter a manual allocation amount for each selected target line.",
+            "Secilen her hedef satir icin manuel dagitim tutari girin."
           );
         }
         const missingCategoryAccountPattern =
@@ -6128,6 +6752,9 @@ export default function CariDocumentsPage({ direction = "" }) {
         normalizeText(createForm.operatingUnitId) ===
           selectedCreateCounterpartyPrimaryOperatingUnitId)
   );
+  const effectiveCreateOperatingUnitId = createOperatingUnitDerivedFromCounterpartyPrimary
+    ? selectedCreateCounterpartyPrimaryOperatingUnitId
+    : normalizePositiveIntText(createForm.operatingUnitId);
   const editCounterpartyLookupOptions = useMemo(
     () => (editCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [editCounterpartyOptions]
@@ -6442,34 +7069,18 @@ export default function CariDocumentsPage({ direction = "" }) {
       });
       return;
     }
-    const lineDefaults = resolveLineDefaultsFromItemCard(
+    const nextPatch = buildItemCardSelectionTransitionPatch(
+      currentLine,
       selectedItemCard,
       createForm.direction
     );
-    if (createDocumentLineDraft(currentLine).subledgerType === "FIXED_ASSET") {
+    if (!nextPatch) {
       return;
     }
-    const nextSubledgerType =
-      createDocumentLineDraft(currentLine).subledgerType === "FIXED_ASSET"
-        ? "FIXED_ASSET"
-        : lineDefaults.stockImpactMode === "NONE"
-          ? "NONE"
-          : "STOCK";
     patchDraftFormLine(
       setCreateForm,
       rowId,
-      lineDefaults.stockImpactMode === "NONE"
-        ? {
-            ...lineDefaults,
-            subledgerType: nextSubledgerType,
-            warehouseId: "",
-            warehouseCode: "",
-            warehouseName: "",
-          }
-        : {
-            ...lineDefaults,
-            subledgerType: nextSubledgerType,
-          },
+      nextPatch,
       { resetTaxPreview: true }
     );
   }
@@ -6510,6 +7121,29 @@ export default function CariDocumentsPage({ direction = "" }) {
         defaultImprovementEffectiveDate: createForm.documentDate,
       }),
       { resetTaxPreview: true }
+    );
+  }
+
+  function changeCreateDocumentLineChargeAllocationMethod(rowId, nextMethod) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    changeDraftFormLineChargeAllocationMethod(setCreateForm, rowId, nextMethod);
+  }
+
+  function toggleCreateDocumentLineChargeTarget(rowId, targetRowId) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    toggleDraftFormLineChargeTarget(setCreateForm, rowId, targetRowId);
+  }
+
+  function patchCreateDocumentLineChargeTargetAmount(rowId, targetRowId, nextAmount) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    patchDraftFormLineChargeTargetAmount(
+      setCreateForm,
+      rowId,
+      targetRowId,
+      nextAmount
     );
   }
 
@@ -6674,34 +7308,18 @@ export default function CariDocumentsPage({ direction = "" }) {
       });
       return;
     }
-    const lineDefaults = resolveLineDefaultsFromItemCard(
+    const nextPatch = buildItemCardSelectionTransitionPatch(
+      currentLine,
       selectedItemCard,
       editForm.direction
     );
-    if (createDocumentLineDraft(currentLine).subledgerType === "FIXED_ASSET") {
+    if (!nextPatch) {
       return;
     }
-    const nextSubledgerType =
-      createDocumentLineDraft(currentLine).subledgerType === "FIXED_ASSET"
-        ? "FIXED_ASSET"
-        : lineDefaults.stockImpactMode === "NONE"
-          ? "NONE"
-          : "STOCK";
     patchDraftFormLine(
       setEditForm,
       rowId,
-      lineDefaults.stockImpactMode === "NONE"
-        ? {
-            ...lineDefaults,
-            subledgerType: nextSubledgerType,
-            warehouseId: "",
-            warehouseCode: "",
-            warehouseName: "",
-          }
-        : {
-            ...lineDefaults,
-            subledgerType: nextSubledgerType,
-          },
+      nextPatch,
       { resetTaxPreview: true }
     );
   }
@@ -6742,6 +7360,29 @@ export default function CariDocumentsPage({ direction = "" }) {
         defaultImprovementEffectiveDate: editForm.documentDate,
       }),
       { resetTaxPreview: true }
+    );
+  }
+
+  function changeEditDocumentLineChargeAllocationMethod(rowId, nextMethod) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    changeDraftFormLineChargeAllocationMethod(setEditForm, rowId, nextMethod);
+  }
+
+  function toggleEditDocumentLineChargeTarget(rowId, targetRowId) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    toggleDraftFormLineChargeTarget(setEditForm, rowId, targetRowId);
+  }
+
+  function patchEditDocumentLineChargeTargetAmount(rowId, targetRowId, nextAmount) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    patchDraftFormLineChargeTargetAmount(
+      setEditForm,
+      rowId,
+      targetRowId,
+      nextAmount
     );
   }
 
@@ -7348,6 +7989,100 @@ export default function CariDocumentsPage({ direction = "" }) {
         return resetTaxPreview
           ? resetDocumentLineTaxPreview(nextSeed)
           : createDocumentLineDraft(nextSeed);
+      })
+    );
+  }
+
+  function changeDraftFormLineChargeAllocationMethod(setForm, rowId, nextMethod) {
+    replaceDraftFormLines(setForm, (currentLines) => {
+      const currentLine = currentLines.find((row) => row?.rowId === rowId);
+      if (!currentLine) {
+        return currentLines;
+      }
+      const patch = buildChargeAllocationMethodTransitionPatch(
+        currentLine,
+        nextMethod,
+        currentLines
+      );
+      return currentLines.map((row) =>
+        row?.rowId === rowId ? createDocumentLineDraft({ ...row, ...patch }) : row
+      );
+    });
+  }
+
+  function toggleDraftFormLineChargeTarget(setForm, chargeLineRowId, targetRowId) {
+    replaceDraftFormLines(setForm, (currentLines) => {
+      const currentLine = currentLines.find((row) => row?.rowId === chargeLineRowId);
+      if (!currentLine) {
+        return currentLines;
+      }
+      const normalizedMethod = normalizeChargeAllocationMethod(
+        currentLine?.chargeAllocationMethod
+      );
+      if (normalizedMethod === "NONE") {
+        return currentLines;
+      }
+      const targetDefaults = buildChargeTargetDrafts(currentLines, chargeLineRowId);
+      const targetDraft =
+        targetDefaults.find((target) => target.targetRowId === String(targetRowId || "")) || null;
+      if (!targetDraft) {
+        return currentLines;
+      }
+      const existingTargets = Array.isArray(currentLine?.chargeTargets)
+        ? currentLine.chargeTargets
+        : [];
+      const hasTarget = existingTargets.some(
+        (target) => String(target?.targetRowId || "") === String(targetRowId || "")
+      );
+      const nextTargets = hasTarget
+        ? existingTargets.filter(
+            (target) => String(target?.targetRowId || "") !== String(targetRowId || "")
+          )
+        : [
+            ...existingTargets,
+            {
+              ...targetDraft,
+              allocatedAmountTxn:
+                normalizedMethod === "MANUAL"
+                  ? String(targetDraft.allocatedAmountTxn || "").trim()
+                  : "",
+            },
+          ];
+      return currentLines.map((row) =>
+        row?.rowId === chargeLineRowId
+          ? createDocumentLineDraft({
+              ...row,
+              chargeTargets: nextTargets,
+            })
+          : row
+      );
+    });
+  }
+
+  function patchDraftFormLineChargeTargetAmount(
+    setForm,
+    chargeLineRowId,
+    targetRowId,
+    nextAmount
+  ) {
+    replaceDraftFormLines(setForm, (currentLines) =>
+      currentLines.map((row) => {
+        if (row?.rowId !== chargeLineRowId) {
+          return row;
+        }
+        return createDocumentLineDraft({
+          ...row,
+          chargeTargets: Array.isArray(row?.chargeTargets)
+            ? row.chargeTargets.map((target) =>
+                String(target?.targetRowId || "") === String(targetRowId || "")
+                  ? {
+                      ...target,
+                      allocatedAmountTxn: String(nextAmount || "").trim(),
+                    }
+                  : target
+              )
+            : [],
+        });
       })
     );
   }
@@ -8954,7 +9689,7 @@ export default function CariDocumentsPage({ direction = "" }) {
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
-    const operatingUnitId = toPositiveInt(createForm.operatingUnitId);
+    const operatingUnitId = toPositiveInt(effectiveCreateOperatingUnitId);
     setCreateWarehousesError("");
     if (!canRead || !legalEntityId) {
       setCreateWarehouseRows([]);
@@ -8998,7 +9733,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     return () => {
       active = false;
     };
-  }, [canRead, createForm.legalEntityId, createForm.operatingUnitId, l]);
+  }, [canRead, createForm.legalEntityId, effectiveCreateOperatingUnitId, l]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
@@ -12145,6 +12880,9 @@ export default function CariDocumentsPage({ direction = "" }) {
               onPatchTaxSensitiveLine={patchCreateDocumentLineWithTaxReset}
               onChangeSubledgerType={changeCreateDocumentLineSubledgerType}
               onChangeFixedAssetMode={changeCreateDocumentLineFixedAssetMode}
+              onChangeChargeAllocationMethod={changeCreateDocumentLineChargeAllocationMethod}
+              onToggleChargeTarget={toggleCreateDocumentLineChargeTarget}
+              onChangeChargeTargetAmount={patchCreateDocumentLineChargeTargetAmount}
               onSelectFixedAssetCategory={selectCreateDocumentLineFixedAssetCategory}
               onSelectTargetFixedAsset={selectCreateDocumentLineTargetFixedAsset}
               onSelectItemCard={selectCreateDocumentLineItemCard}
@@ -12359,6 +13097,13 @@ export default function CariDocumentsPage({ direction = "" }) {
                   <div className="mt-2 space-y-2">
                     {selectedSnapshot.lines.map((line) => {
                       const isFixedAssetLine = line.subledgerType === "FIXED_ASSET";
+                      const chargeAllocationMethod = normalizeChargeAllocationMethod(
+                        line.chargeAllocationMethod
+                      );
+                      const isChargeLine = chargeAllocationMethod !== "NONE";
+                      const chargeTargets = Array.isArray(line.chargeTargets)
+                        ? line.chargeTargets
+                        : [];
                       const targetFixedAssetId = toPositiveInt(line.targetFixedAssetId);
                       const generatedFixedAssets = Array.isArray(line.generatedFixedAssets)
                         ? line.generatedFixedAssets
@@ -12381,7 +13126,12 @@ export default function CariDocumentsPage({ direction = "" }) {
                             {l("Line", "Satir")} {line.lineNo || "-"} | {line.lineKind || "STANDARD"}
                           </span>
                           <span>
-                            {l("Posting account", "Kayit hesabi")} #{line.postingAccountId || "-"}
+                            {isChargeLine
+                              ? l(
+                                  "Posting account ignored for charge lines",
+                                  "Gider dagitim satirlarinda kayit hesabi yok sayilir"
+                                )
+                              : `${l("Posting account", "Kayit hesabi")} #${line.postingAccountId || "-"}`}
                           </span>
                         </div>
                         <div className="mt-1 text-slate-700">
@@ -12439,7 +13189,63 @@ export default function CariDocumentsPage({ direction = "" }) {
                               line.warehouseName
                             )}
                           </span>
+                          {isChargeLine ? (
+                            <span>
+                              {l("Charge allocation", "Gider dagitimi")}: {chargeAllocationMethod}
+                            </span>
+                          ) : null}
                         </div>
+                        {isChargeLine ? (
+                          <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-slate-700">
+                            <p className="font-semibold text-amber-900">
+                              {l("Charge targets", "Gider hedefleri")}
+                            </p>
+                            {chargeTargets.length === 0 ? (
+                              <p className="mt-1 text-[11px] text-amber-900">
+                                {l("No stored targets.", "Kayitli hedef yok.")}
+                              </p>
+                            ) : (
+                              <div className="mt-1 flex flex-wrap gap-2">
+                                {chargeTargets.map((target, targetIndex) => {
+                                  const targetLineNo = toPositiveInt(target?.targetLineNo);
+                                  const targetLine = (selectedSnapshot.lines || []).find(
+                                    (candidate) =>
+                                      toPositiveInt(candidate?.lineNo) === targetLineNo
+                                  );
+                                  const targetLabel = [
+                                    `${l("Line", "Satir")} ${targetLineNo || "-"}`,
+                                    normalizeText(targetLine?.description) || null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" | ");
+                                  return (
+                                    <span
+                                      key={`detail-line-${line.id || line.lineNo}-charge-target-${targetLineNo || targetIndex}`}
+                                      className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] text-amber-900"
+                                    >
+                                      {targetLabel}
+                                      {target?.allocatedAmountTxn != null ? (
+                                        <>
+                                          {" | "}
+                                          <MoneyText
+                                            amount={target.allocatedAmountTxn}
+                                            currencyCode={
+                                              selectedSnapshot.currencyCodeSnapshot ||
+                                              selectedSnapshot.currencyCode
+                                            }
+                                            className="inline"
+                                          />
+                                        </>
+                                      ) : (
+                                        ` | ${l("Calculated on post", "Kayitta hesaplanir")}`
+                                      )}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
                         {isFixedAssetLine &&
                         line.fixedAssetMode === "AUTO_CREATE" &&
                         generatedFixedAssets.length > 0 ? (
@@ -13469,6 +14275,9 @@ export default function CariDocumentsPage({ direction = "" }) {
                     onPatchTaxSensitiveLine={patchEditDocumentLineWithTaxReset}
                     onChangeSubledgerType={changeEditDocumentLineSubledgerType}
                     onChangeFixedAssetMode={changeEditDocumentLineFixedAssetMode}
+                    onChangeChargeAllocationMethod={changeEditDocumentLineChargeAllocationMethod}
+                    onToggleChargeTarget={toggleEditDocumentLineChargeTarget}
+                    onChangeChargeTargetAmount={patchEditDocumentLineChargeTargetAmount}
                     onSelectFixedAssetCategory={selectEditDocumentLineFixedAssetCategory}
                     onSelectTargetFixedAsset={selectEditDocumentLineTargetFixedAsset}
                     onSelectItemCard={selectEditDocumentLineItemCard}

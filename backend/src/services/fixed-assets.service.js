@@ -68,6 +68,23 @@ function assertEffectiveDateNotAfterPostingDate(
   };
 }
 
+async function getCariDocumentByIdForFixedAssetSource({
+  req,
+  tenantId,
+  documentId,
+  assertScopeAccess,
+  runQuery = query,
+}) {
+  return getCariDocumentByIdForTenant({
+    req,
+    tenantId,
+    documentId,
+    assertScopeAccess,
+    runQuery,
+    includeChargeAugmentedLines: true,
+  });
+}
+
 // ── Account-type expectations per default-account field ───────────
 const ACCOUNT_TYPE_RULES = [
   { field: "defaultAssetAccountId",        column: "default_asset_account_id",         expectedType: "ASSET",   label: "default asset account" },
@@ -1069,7 +1086,7 @@ export async function listCariEligibleApLinesForFa06({
     throw badRequest("sourceCariDocumentId is required");
   }
 
-  const document = await getCariDocumentByIdForTenant({
+  const document = await getCariDocumentByIdForFixedAssetSource({
     req,
     tenantId,
     documentId: sourceCariDocumentId,
@@ -2019,7 +2036,7 @@ async function revalidateSourceLinkageForActivation({
   }
 
   // ── Reload current source document/line under transaction ─────
-  const document = await getCariDocumentByIdForTenant({
+  const document = await getCariDocumentByIdForFixedAssetSource({
     req: req || {
       requestId: "fa27-revalidation",
       headers: {},
@@ -3842,7 +3859,7 @@ export async function createAssetsFromCariDocumentLineFa06(input) {
   } = input;
 
   return withTransaction(async (tx) => {
-    const document = await getCariDocumentByIdForTenant({
+  const document = await getCariDocumentByIdForFixedAssetSource({
       req,
       tenantId,
       documentId: sourceCariDocumentId,

@@ -76,6 +76,10 @@ function roundAmount(value) {
   return Number(Number(value || 0).toFixed(AMOUNT_SCALE));
 }
 
+function amountsAreEqual(left, right, epsilon = BALANCE_EPSILON) {
+  return Math.abs(Number(left || 0) - Number(right || 0)) <= epsilon;
+}
+
 function toInt(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
@@ -170,6 +174,8 @@ function mapPendingStockLinkRow(row) {
     remainingQuantity: toDecimalNumber(row.remaining_quantity),
     postedNetAmountTxn: toDecimalNumber(row.posted_net_amount_txn),
     postedNetAmountBase: toDecimalNumber(row.posted_net_amount_base),
+    sourceLineNetAmountTxn: toDecimalNumber(row.source_line_net_amount_txn),
+    sourceLineNetAmountBase: toDecimalNumber(row.source_line_net_amount_base),
     currencyCode: row.currency_code || null,
     boundWarehouseId: parsePositiveInt(row.bound_warehouse_id),
     boundWarehouseCode: row.bound_warehouse_code || null,
@@ -475,6 +481,8 @@ async function fetchPendingStockLinkById({
         d.currency_code,
         l.line_no,
         l.description AS line_description,
+        l.line_net_amount_txn AS source_line_net_amount_txn,
+        l.line_net_amount_base AS source_line_net_amount_base,
         sl.warehouse_id AS bound_warehouse_id,
         bw.code AS bound_warehouse_code,
         bw.name AS bound_warehouse_name,
@@ -532,6 +540,8 @@ async function fetchSuccessorStockLinkByOriginalId({
         d.currency_code,
         l.line_no,
         l.description AS line_description,
+        l.line_net_amount_txn AS source_line_net_amount_txn,
+        l.line_net_amount_base AS source_line_net_amount_base,
         sl.warehouse_id AS bound_warehouse_id,
         bw.code AS bound_warehouse_code,
         bw.name AS bound_warehouse_name,
@@ -3252,6 +3262,20 @@ async function materializeInventoryMovementFromStockLinkInternal({
         allowZero: true,
       }
     );
+    const sourceLineNetAmountTxn = normalizeAmount(
+      stockLinkRow.source_line_net_amount_txn ?? stockLinkRow.sourceLineNetAmountTxn ?? 0,
+      "sourceLineNetAmountTxn",
+      {
+        allowZero: true,
+      }
+    );
+    const sourceLineNetAmountBase = normalizeAmount(
+      stockLinkRow.source_line_net_amount_base ?? stockLinkRow.sourceLineNetAmountBase ?? 0,
+      "sourceLineNetAmountBase",
+      {
+        allowZero: true,
+      }
+    );
     const stockLinkCurrencyCode = normalizeText(stockLinkRow.currency_code, 3, {
       required: true,
     }).toUpperCase();
@@ -3296,6 +3320,18 @@ async function materializeInventoryMovementFromStockLinkInternal({
       unitCostTxn = issueValuationPlan.unitCostTxn;
       unitCostBase = issueValuationPlan.unitCostBase;
     }
+    const includesAllocatedCharges =
+      movementType === "RECEIPT"
+      && (
+        !amountsAreEqual(postedNetAmountTxn, sourceLineNetAmountTxn)
+        || !amountsAreEqual(postedNetAmountBase, sourceLineNetAmountBase)
+      );
+    const movementNote = normalizeText(
+      [note, includesAllocatedCharges ? "Includes allocated charges from CARI line charges" : null]
+        .filter(Boolean)
+        .join(" | "),
+      255
+    );
 
     const movementInsert = await tx.query(
       `INSERT INTO inventory_movements (
@@ -3338,7 +3374,7 @@ async function materializeInventoryMovementFromStockLinkInternal({
         totalCostBase,
         currencyCode,
         "VALUED",
-        note,
+        movementNote,
       ]
     );
     const movementId = parsePositiveInt(movementInsert.rows?.insertId);

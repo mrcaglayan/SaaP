@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   bootstrapCompany,
   previewCompanyBootstrapCurrentAccountEligibility,
@@ -914,6 +914,8 @@ const [result, setResult] = useState(null);
 const [showAllPolicyPackOptions, setShowAllPolicyPackOptions] = useState(false);
 const [selectedAccountIdByEntityId, setSelectedAccountIdByEntityId] = useState({});
 const [currentAccountEligibilityRows, setCurrentAccountEligibilityRows] = useState([]);
+const branchCodeInputRefs = useRef(new Map());
+const pendingBranchFocusRef = useRef(null);
 const [currentAccountEligibilityLoading, setCurrentAccountEligibilityLoading] =
   useState(false);
 const [currentAccountEligibilityWarning, setCurrentAccountEligibilityWarning] =
@@ -1042,6 +1044,23 @@ useEffect(() => {
     active = false;
   };
 }, [canSetupCompany]);
+useEffect(() => {
+  const pendingBranchFocus = pendingBranchFocusRef.current;
+  if (!pendingBranchFocus || activeStep.key !== "branches") {
+    return;
+  }
+  const input = branchCodeInputRefs.current.get(
+    `${pendingBranchFocus.entityId}:${pendingBranchFocus.branchId}`
+  );
+  if (!input) {
+    return;
+  }
+  input.focus();
+  if (typeof input.select === "function") {
+    input.select();
+  }
+  pendingBranchFocusRef.current = null;
+}, [activeStep.key, form.legalEntities]);
 useEffect(() => {
   if (!canSetupCompany || activeStep.key !== "currentAccounts") {
     return undefined;
@@ -1395,11 +1414,16 @@ function setAllDefaultAccountsAllowPosting(entityId, allowPosting) {
   }));
 }
 function addBranch(entityId) {
+  const nextBranch = createBranchDraft();
+  pendingBranchFocusRef.current = {
+    entityId,
+    branchId: nextBranch.id,
+  };
   setForm((prev) => ({
     ...prev,
     legalEntities: prev.legalEntities.map((entity) =>
       entity.id === entityId
-        ? { ...entity, branches: [...entity.branches, createBranchDraft()] }
+        ? { ...entity, branches: [...entity.branches, nextBranch] }
         : entity
     ),
   }));
@@ -2693,18 +2717,11 @@ return (
                 key={entity.id}
                 className="rounded-xl border border-slate-200 bg-slate-50/40 p-3"
               >
-                <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="mb-2">
                   <h3 className="text-sm font-semibold text-slate-700">
                     {l("Entity", "Birim")} {entityIndex + 1} -{" "}
                     {entity.code || l("No code", "Kod yok")}
                   </h3>
-                  <button
-                    type="button"
-                    onClick={() => addBranch(entity.id)}
-                    className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    {l("Add Branch", "Sube Ekle")}
-                  </button>
                 </div>
                 <div className="space-y-2">
                   {entity.branches.map((branch) => (
@@ -2713,6 +2730,14 @@ return (
                       className="grid gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-12"
                     >
                       <input
+                        ref={(node) => {
+                          const refKey = `${entity.id}:${branch.id}`;
+                          if (node) {
+                            branchCodeInputRefs.current.set(refKey, node);
+                            return;
+                          }
+                          branchCodeInputRefs.current.delete(refKey);
+                        }}
                         value={branch.code}
                         onChange={(event) =>
                           setBranchField(
@@ -2781,6 +2806,13 @@ return (
                       </button>
                     </div>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => addBranch(entity.id)}
+                    className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    {l("Add Branch", "Sube Ekle")}
+                  </button>
                 </div>
               </article>
             ))}
