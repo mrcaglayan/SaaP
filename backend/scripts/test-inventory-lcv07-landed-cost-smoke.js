@@ -233,6 +233,51 @@ async function createSmokeItemCard({
   assert(toPositiveInt(row?.id), `Failed to create item card ${code}`);
   return row;
 }
+async function ensureSmokeFixedAssetCategory({
+  tenantId,
+  legalEntityId,
+  userId,
+  stamp,
+}) {
+  const existing = await query(
+    `SELECT id
+       FROM fixed_asset_categories
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+      ORDER BY id ASC
+      LIMIT 1`,
+    [tenantId, legalEntityId]
+  );
+  const existingCategoryId = toPositiveInt(existing.rows?.[0]?.id);
+  if (existingCategoryId) {
+    return existingCategoryId;
+  }
+
+  const insert = await query(
+    `INSERT INTO fixed_asset_categories (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        status,
+        description,
+        created_by_user_id,
+        updated_by_user_id
+     ) VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?)`,
+    [
+      tenantId,
+      legalEntityId,
+      `LCV07CT${stamp.slice(-6)}`.toUpperCase(),
+      `LCV07 Fixed Asset Category ${stamp}`,
+      "LCV07 lookup fixture category",
+      userId,
+      userId,
+    ]
+  );
+  const categoryId = toPositiveInt(insert.rows?.insertId);
+  assert(categoryId, "Failed to create LCV07 fixed-asset category");
+  return categoryId;
+}
 async function insertFxRate({
   tenantId,
   rateDate,
@@ -617,14 +662,12 @@ async function createSourceLookupFixtureBill({
   const stockLine = findLineByDescription(postedRow?.lines, descriptions.stock);
   const fixedAssetLine = findLineByDescription(postedRow?.lines, descriptions.fixedAsset);
   assert(eligibleLine?.id && chargeLine?.id && stockLine?.id && fixedAssetLine?.id, "Source lookup fixture lines missing");
-  const categoryResult = await query(
-    `SELECT id
-       FROM fixed_asset_categories
-      ORDER BY id ASC
-      LIMIT 1`
-  );
-  const fixedAssetCategoryId = toPositiveInt(categoryResult.rows?.[0]?.id);
-  assert(fixedAssetCategoryId, "A fixed_asset_categories row is required for the fixed-asset lookup fixture");
+  const fixedAssetCategoryId = await ensureSmokeFixedAssetCategory({
+    tenantId,
+    legalEntityId,
+    userId,
+    stamp,
+  });
   await query(
     `UPDATE cari_document_lines
         SET charge_allocation_method = 'BY_QTY'
