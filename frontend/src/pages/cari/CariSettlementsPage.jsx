@@ -5,7 +5,6 @@ import {
   attachCariBankReference,
   applyCariBankSettlement,
   describeCariSettlementContext,
-  getCariSettlementOpenItemsPreview,
   getCariSettlementErrorHint,
   reverseCariSettlement,
 } from "../../api/cariSettlements.js";
@@ -19,7 +18,10 @@ import {
 } from "../../api/cariCounterparty.js";
 import { listFxRates } from "../../api/fxAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
-import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
+import {
+  getCariCounterpartyStatementReport,
+  getCariOpenItemsReport,
+} from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import Combobox from "../../components/Combobox.jsx";
 import MoneyText from "../../components/MoneyText.jsx";
@@ -1390,10 +1392,11 @@ export default function CariSettlementsPage({ direction = "" }) {
       setPreviewLoading(true);
       setPreviewError("");
       try {
-        const payload = await getCariSettlementOpenItemsPreview({
+        const payload = await getCariOpenItemsReport({
           legalEntityId: previewLegalEntityId,
           counterpartyId: previewCounterpartyId,
           direction: previewDirection || undefined,
+          asOfDate: applyForm.settlementDate || todayIsoDate(),
           limit: 500,
         });
         if (!active) {
@@ -1427,6 +1430,7 @@ export default function CariSettlementsPage({ direction = "" }) {
     previewCounterpartyId,
     previewDirection,
     previewRefreshToken,
+    applyForm.settlementDate,
   ]);
 
   useEffect(() => {
