@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readCariDocumentsFeatureSource } from "./_cariDocumentsFeatureSource.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -14,13 +15,8 @@ async function main() {
     root,
     "frontend/src/lifecycle/lifecycleRules.js"
   );
-  const documentsPagePath = path.resolve(
-    root,
-    "frontend/src/pages/cari/CariDocumentsPage.jsx"
-  );
-
   const lifecycleModule = await import(pathToFileURL(lifecycleRulesPath).href);
-  const documentsSource = await readFile(documentsPagePath, "utf8");
+  const documentsSource = await readCariDocumentsFeatureSource(root);
 
   const { getLifecycleStatusMeta, getLifecycleAllowedActions, buildLifecycleTimelineSteps } =
     lifecycleModule;

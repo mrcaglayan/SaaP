@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readCariDocumentsFeatureSource } from "./_cariDocumentsFeatureSource.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -15,10 +16,7 @@ async function main() {
     path.resolve(root, "frontend/src/utils/csvExport.js"),
     "utf8"
   );
-  const cariDocumentsPageSource = await readFile(
-    path.resolve(root, "frontend/src/pages/cari/CariDocumentsPage.jsx"),
-    "utf8"
-  );
+  const cariDocumentsPageSource = await readCariDocumentsFeatureSource(root);
   const cashTransactionsPageSource = await readFile(
     path.resolve(root, "frontend/src/pages/cash/CashTransactionsPage.jsx"),
     "utf8"

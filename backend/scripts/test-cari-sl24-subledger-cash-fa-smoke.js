@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closePool, query } from "../src/db.js";
+import { readCariDocumentsFeatureSource } from "./_cariDocumentsFeatureSource.js";
 import { resolveOrPrepareSmokeContext } from "./_smoke-context.js";
 import {
   createCariDraftDocument,
@@ -1072,10 +1073,7 @@ async function runFrontendContractChecks() {
       path.resolve(REPO_ROOT, "frontend/src/layouts/sidebarConfig.js"),
       "utf8"
     );
-    const pageSource = readFileSync(
-      path.resolve(REPO_ROOT, "frontend/src/pages/cari/CariDocumentsPage.jsx"),
-      "utf8"
-    );
+    const pageSource = await readCariDocumentsFeatureSource(REPO_ROOT);
     const utilsSource = readFileSync(
       path.resolve(REPO_ROOT, "frontend/src/pages/cari/cariDocumentsUtils.js"),
       "utf8"

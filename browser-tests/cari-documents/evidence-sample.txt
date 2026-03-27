@@ -1,0 +1,1 @@
+Smoke evidence sample for CARI document browser tests.

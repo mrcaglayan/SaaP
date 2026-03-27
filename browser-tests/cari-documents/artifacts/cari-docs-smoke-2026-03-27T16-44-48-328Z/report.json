@@ -1,0 +1,133 @@
+{
+  "generatedAt": "2026-03-27T16:45:31.512Z",
+  "status": "ok",
+  "baseUrl": "http://localhost:5173",
+  "loginEmail": "tmv@gmail.com",
+  "fixtureBootstrapEnabled": true,
+  "fixtureBootstrap": {
+    "scriptName": "seed-cari-documents-fixtures.mjs",
+    "stdout": "[dotenv@17.3.1] injecting env (0) from .env -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2\n{\n  \"ok\": true,\n  \"reportPath\": \"C:\\\\Users\\\\Maarif\\\\Desktop\\\\my-app\\\\browser-tests\\\\cari-documents\\\\cari-documents-fixtures-report.json\",\n  \"legalEntityId\": 121,\n  \"customerId\": 41,\n  \"vendorId\": 42,\n  \"warehouseId\": 88,\n  \"itemCardId\": 35,\n  \"fixedAssetCategoryId\": 2,\n  \"fixedAssetDraftId\": 6,\n  \"fixedAssetActiveId\": 7,\n  \"apDraftId\": 131,\n  \"arDraftId\": 132\n}\n",
+    "stderr": ""
+  },
+  "fixtureReportPath": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\cari-documents-fixtures-report.json",
+  "fixtureSummary": {
+    "status": "ok",
+    "legalEntityCode": "SMOKE_CARI_LE",
+    "customerCode": "SMOKE_CUSTOMER",
+    "vendorCode": "SMOKE_VENDOR",
+    "apDraftId": 131,
+    "arDraftId": 132
+  },
+  "headless": true,
+  "selectedSteps": [
+    "S1",
+    "S2",
+    "S14"
+  ],
+  "selectedDirections": [
+    "AP",
+    "AR"
+  ],
+  "cleanupEnabled": false,
+  "artifactsDir": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z",
+  "results": [
+    {
+      "name": "login",
+      "status": "ok",
+      "url": "http://localhost:5173/app",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z\\01-login.png",
+      "loginEmail": "tmv@gmail.com"
+    },
+    {
+      "name": "legacy-redirect",
+      "status": "ok",
+      "url": "http://localhost:5173/app/alis-faturalari",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z\\02-legacy-redirect.png",
+      "finalPath": "/app/alis-faturalari"
+    },
+    {
+      "name": "AP-S1-list-loads",
+      "status": "ok",
+      "url": "http://localhost:5173/app/alis-faturalari",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z\\03-AP-S1-list-loads.png",
+      "currentPage": 1,
+      "totalPages": 1,
+      "paginationExercised": false
+    },
+    {
+      "name": "AR-S1-list-loads",
+      "status": "ok",
+      "url": "http://localhost:5173/app/satis-faturalari",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z\\04-AR-S1-list-loads.png",
+      "currentPage": 1,
+      "totalPages": 1,
+      "paginationExercised": false
+    },
+    {
+      "name": "AP-S2-saved-views",
+      "status": "ok",
+      "url": "http://localhost:5173/app/alis-faturalari",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z\\05-AP-S2-saved-views.png",
+      "direction": "AP",
+      "savedViewName": "cari-smoke-2026-03-27T16-44-48-328Z-ap-saved-view",
+      "filterToken": "__cari-smoke-s2-ap-cari-smoke-2026-03-27T16-44-48-328Z__",
+      "createDialogType": "prompt",
+      "deleteDialogType": "confirm",
+      "applyRestoredSearch": true,
+      "deleted": true
+    },
+    {
+      "name": "AR-S2-saved-views",
+      "status": "ok",
+      "url": "http://localhost:5173/app/satis-faturalari",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z\\06-AR-S2-saved-views.png",
+      "direction": "AR",
+      "savedViewName": "cari-smoke-2026-03-27T16-44-48-328Z-ar-saved-view",
+      "filterToken": "__cari-smoke-s2-ar-cari-smoke-2026-03-27T16-44-48-328Z__",
+      "createDialogType": "prompt",
+      "deleteDialogType": "confirm",
+      "applyRestoredSearch": true,
+      "deleted": true
+    },
+    {
+      "name": "AP-S14-url-deep-link",
+      "status": "ok",
+      "url": "http://localhost:5173/app/alis-faturalari?documentId=131",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z\\07-AP-S14-url-deep-link.png",
+      "direction": "AP",
+      "deepLinkedDocumentId": "131",
+      "deepLinkedDocumentNo": "DRAFT-AP-2026-000001",
+      "clickedDocumentId": "131",
+      "clickedDocumentNo": "DRAFT-AP-2026-000001",
+      "actionColumnChanged": false,
+      "legalEntityAligned": true,
+      "changedSelection": false
+    },
+    {
+      "name": "AR-S14-url-deep-link",
+      "status": "ok",
+      "url": "http://localhost:5173/app/satis-faturalari?documentId=132",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-smoke-2026-03-27T16-44-48-328Z\\08-AR-S14-url-deep-link.png",
+      "direction": "AR",
+      "deepLinkedDocumentId": "132",
+      "deepLinkedDocumentNo": "DRAFT-AR-2026-000001",
+      "clickedDocumentId": "132",
+      "clickedDocumentNo": "DRAFT-AR-2026-000001",
+      "actionColumnChanged": false,
+      "legalEntityAligned": true,
+      "changedSelection": false
+    }
+  ],
+  "cleanupResults": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "pageErrors": [],
+  "summary": {
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0
+  }
+}

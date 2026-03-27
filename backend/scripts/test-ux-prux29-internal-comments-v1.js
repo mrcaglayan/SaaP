@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readCariDocumentsFeatureSource } from "./_cariDocumentsFeatureSource.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -35,10 +36,7 @@ async function main() {
     path.resolve(root, "frontend/src/api/cariDocuments.js"),
     "utf8"
   );
-  const documentsPageSource = await readFile(
-    path.resolve(root, "frontend/src/pages/cari/CariDocumentsPage.jsx"),
-    "utf8"
-  );
+  const documentsPageSource = await readCariDocumentsFeatureSource(root);
 
   assert(
     migrationSource.includes("CREATE TABLE IF NOT EXISTS internal_comments") &&

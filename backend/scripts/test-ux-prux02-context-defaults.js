@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readCariDocumentsFeatureSource } from "./_cariDocumentsFeatureSource.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -10,6 +11,7 @@ function assert(condition, message) {
 
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const cariDocumentsFeatureSource = await readCariDocumentsFeatureSource(root);
 
   const hookSource = await readFile(
     path.resolve(root, "frontend/src/context/useWorkingContextDefaults.js"),
@@ -35,11 +37,11 @@ async function main() {
 
   const pagesToCheck = [
     {
-      file: "frontend/src/pages/cari/CariDocumentsPage.jsx",
+      sourceId: "cariDocumentsFeature",
       needle: "useWorkingContextDefaults(setFilters, DOCUMENT_FILTER_CONTEXT_MAPPINGS",
     },
     {
-      file: "frontend/src/pages/cari/CariDocumentsPage.jsx",
+      sourceId: "cariDocumentsFeature",
       needle: "useWorkingContextDefaults(setCreateForm, DOCUMENT_CREATE_CONTEXT_MAPPINGS",
     },
     {
@@ -69,10 +71,14 @@ async function main() {
   ];
 
   for (const check of pagesToCheck) {
-    const pageSource = await readFile(path.resolve(root, check.file), "utf8");
+    const pageSource =
+      check.sourceId === "cariDocumentsFeature"
+        ? cariDocumentsFeatureSource
+        : await readFile(path.resolve(root, check.file), "utf8");
+    const sourceLabel = check.file || "frontend/src/pages/cari/(documents feature)";
     assert(
       pageSource.includes(check.needle),
-      `Context-default wiring missing in ${check.file}: expected ${check.needle}`
+      `Context-default wiring missing in ${sourceLabel}: expected ${check.needle}`
     );
   }
 
@@ -85,4 +91,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

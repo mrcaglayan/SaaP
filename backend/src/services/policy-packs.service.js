@@ -2044,7 +2044,22 @@ const TR_UNIFORM_DEFAULT_NON_POSTING_CODES = Object.freeze(
 );
 
 const TR_UNIFORM_POSTABLE_EXCEPTION_CODES = Object.freeze(
-  new Set(["600", "632", "646", "656", "770"])
+  new Set([
+    "153",
+    "157",
+    "191",
+    "255",
+    "257",
+    "391",
+    "600",
+    "621",
+    "632",
+    "646",
+    "656",
+    "679",
+    "689",
+    "770",
+  ])
 );
 
 function shouldForceTrUniformNonPostingByCode(code) {
@@ -2052,11 +2067,11 @@ function shouldForceTrUniformNonPostingByCode(code) {
   if (!normalizedCode) {
     return false;
   }
-  if (TR_UNIFORM_DEFAULT_NON_POSTING_CODES.has(normalizedCode)) {
-    return true;
-  }
   if (TR_UNIFORM_POSTABLE_EXCEPTION_CODES.has(normalizedCode)) {
     return false;
+  }
+  if (TR_UNIFORM_DEFAULT_NON_POSTING_CODES.has(normalizedCode)) {
+    return true;
   }
   if (!/^\d+$/.test(normalizedCode)) {
     return false;

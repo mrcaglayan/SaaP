@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readCariDocumentsFeatureSource } from "./_cariDocumentsFeatureSource.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -763,10 +764,7 @@ async function main() {
   );
   assertDocs(cariRunbookSource, supportGuideSource, inventoryRolloutSource, regressionSource);
 
-  const cariPageSource = await readFile(
-    path.resolve(repoRoot, "frontend", "src", "pages", "cari", "CariDocumentsPage.jsx"),
-    "utf8"
-  );
+  const cariPageSource = await readCariDocumentsFeatureSource(repoRoot);
   const cariRouteSource = await readFile(
     path.resolve(repoRoot, "backend", "src", "routes", "cari.document.routes.js"),
     "utf8"

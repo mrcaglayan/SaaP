@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readCariDocumentsFeatureSource } from "./_cariDocumentsFeatureSource.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -28,7 +29,7 @@ function getImplementedRoutesBlock(source) {
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const app = await readFile(path.resolve(root, "frontend/src/App.jsx"), "utf8");
-  const page = await readFile(path.resolve(root, "frontend/src/pages/cari/CariDocumentsPage.jsx"), "utf8");
+  const page = await readCariDocumentsFeatureSource(root);
   const utils = await readFile(
     path.resolve(root, "frontend/src/pages/cari/cariDocumentsUtils.js"),
     "utf8"

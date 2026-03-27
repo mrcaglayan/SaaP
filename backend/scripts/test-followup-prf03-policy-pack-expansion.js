@@ -22,6 +22,18 @@ function findByPurposeCode(rows, purposeCode) {
   return (rows || []).find((row) => toUpper(row?.purposeCode) === normalized) || null;
 }
 
+const TR_UNIFORM_EXPECTED_POSTABLE_CODES = Object.freeze([
+  "153",
+  "157",
+  "191",
+  "255",
+  "257",
+  "391",
+  "621",
+  "679",
+  "689",
+]);
+
 function assertPackExpansion(pack) {
   assert(Array.isArray(pack?.starterAccountTree), `${pack?.packId} starterAccountTree missing`);
   assert(
@@ -124,6 +136,15 @@ async function main() {
     String(usBank?.recommendedCode || "") === "1150",
     "US_GAAP_STARTER_V1 BANK_CONTROL_PARENT should recommend 1150"
   );
+
+  for (const code of TR_UNIFORM_EXPECTED_POSTABLE_CODES) {
+    const row = findByCode(trPack?.starterAccountTree, code);
+    assert(Boolean(row), `TR_UNIFORM_V1 starter tree missing code ${code}`);
+    assert(
+      row.allowPosting === true,
+      `TR_UNIFORM_V1 code ${code} must stay postable by default`
+    );
+  }
 
   console.log("PR-F03 policy pack expansion test passed.");
 }

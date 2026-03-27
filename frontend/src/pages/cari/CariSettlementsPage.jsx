@@ -35,7 +35,7 @@ import {
 } from "../../readiness/ouCurrentAccountReadiness.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import { formatMoneyText } from "../../utils/money.js";
-import InlineCounterpartyCreateModal from "./InlineCounterpartyCreateModal.jsx";
+import InlineCounterpartyCreateModal from "./components/InlineCounterpartyCreateModal.jsx";
 import {
   buildAutoAllocatePreview,
   buildSettlementApplyPayload,

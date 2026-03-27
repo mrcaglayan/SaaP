@@ -1,0 +1,439 @@
+{
+  "generatedAt": "2026-03-27T20:45:15.776Z",
+  "status": "ok",
+  "apiUrl": "http://localhost:3000",
+  "loginEmail": "tmv@gmail.com",
+  "artifactsDir": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\cari-documents\\artifacts\\cari-docs-fixtures-2026-03-27T20-45-14-213Z",
+  "bootstrap": {
+    "groupCompany": {
+      "source": "existing",
+      "created": false
+    },
+    "legalEntity": {
+      "source": "upsert-existing",
+      "created": false,
+      "provisioning": {
+        "calendarId": 96,
+        "calendarCode": "MAIN",
+        "coaId": 113,
+        "coaCode": "COA-SMOKE_CARI_LE",
+        "bookId": 100,
+        "bookCode": "BOOK-SMOKE_CARI_LE",
+        "created": {
+          "fiscalCalendars": 0,
+          "fiscalPeriods": 0,
+          "chartsOfAccounts": 0,
+          "accounts": 0,
+          "books": 0
+        }
+      },
+      "paymentTermsProvisioning": {
+        "defaultsUsed": false,
+        "createdCount": 0,
+        "skippedCount": 1,
+        "templateCount": 1
+      }
+    },
+    "operatingUnit": {
+      "source": "existing",
+      "created": false
+    },
+    "paymentTerm": {
+      "source": "existing",
+      "created": false
+    },
+    "cariPurposeMappings": {
+      "source": "existing",
+      "created": false,
+      "updatedCount": 0
+    },
+    "depreciationProfile": {
+      "source": "existing",
+      "created": false
+    },
+    "fixedAssetCategory": {
+      "source": "existing",
+      "created": false
+    },
+    "warehouse": {
+      "source": "existing",
+      "created": false
+    },
+    "itemCard": {
+      "source": "existing",
+      "created": false
+    },
+    "fixedAssetDraft": {
+      "source": "existing",
+      "created": false
+    },
+    "fixedAssetActive": {
+      "source": "existing",
+      "created": false,
+      "activated": false
+    }
+  },
+  "groupCompany": {
+    "id": 107,
+    "code": "SMOKE_GRP",
+    "name": "Smoke Group"
+  },
+  "legalEntity": {
+    "id": 121,
+    "code": "SMOKE_CARI_LE",
+    "name": "Smoke Cari Legal Entity",
+    "functionalCurrencyCode": "AFN"
+  },
+  "operatingUnit": {
+    "id": 162,
+    "code": "SMOKE_OU",
+    "name": "Smoke Operating Unit",
+    "status": "ACTIVE"
+  },
+  "paymentTerm": {
+    "id": 74,
+    "code": "SMOKE_NET_15",
+    "name": "Smoke Net 15",
+    "status": "ACTIVE"
+  },
+  "accountSelections": {
+    "customerControlAccount": {
+      "id": 2081,
+      "code": "1100",
+      "name": "Accounts Receivable",
+      "accountType": "ASSET",
+      "normalSide": "DEBIT"
+    },
+    "vendorControlAccount": {
+      "id": 2082,
+      "code": "2000",
+      "name": "Accounts Payable",
+      "accountType": "LIABILITY",
+      "normalSide": "CREDIT"
+    },
+    "apLinePostingAccount": {
+      "id": 2085,
+      "code": "5000",
+      "name": "Operating Expense",
+      "accountType": "EXPENSE",
+      "normalSide": "DEBIT"
+    },
+    "arLinePostingAccount": {
+      "id": 2084,
+      "code": "4000",
+      "name": "Revenue",
+      "accountType": "REVENUE",
+      "normalSide": "CREDIT"
+    },
+    "assetOffsetAccount": {
+      "id": 2080,
+      "code": "1000",
+      "name": "Cash and Cash Equivalents",
+      "accountType": "ASSET",
+      "normalSide": "DEBIT"
+    }
+  },
+  "purposeMappings": {
+    "cari": [
+      {
+        "purposeCode": "CARI_AR_CONTROL",
+        "accountId": 2081,
+        "accountCode": "1100",
+        "accountName": "Accounts Receivable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2081
+      },
+      {
+        "purposeCode": "CARI_AR_OFFSET",
+        "accountId": 2084,
+        "accountCode": "4000",
+        "accountName": "Revenue",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2084
+      },
+      {
+        "purposeCode": "CARI_AP_CONTROL",
+        "accountId": 2082,
+        "accountCode": "2000",
+        "accountName": "Accounts Payable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2082
+      },
+      {
+        "purposeCode": "CARI_AP_OFFSET",
+        "accountId": 2085,
+        "accountCode": "5000",
+        "accountName": "Operating Expense",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2085
+      },
+      {
+        "purposeCode": "CARI_SETTLEMENT_FX_GAIN",
+        "accountId": 2084,
+        "accountCode": "4000",
+        "accountName": "Revenue",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2084
+      },
+      {
+        "purposeCode": "CARI_SETTLEMENT_FX_LOSS",
+        "accountId": 2085,
+        "accountCode": "5000",
+        "accountName": "Operating Expense",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2085
+      },
+      {
+        "purposeCode": "CARI_AR_CONTROL_CASH",
+        "accountId": 2081,
+        "accountCode": "1100",
+        "accountName": "Accounts Receivable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2081
+      },
+      {
+        "purposeCode": "CARI_AR_OFFSET_CASH",
+        "accountId": 2080,
+        "accountCode": "1000",
+        "accountName": "Cash and Cash Equivalents",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2080
+      },
+      {
+        "purposeCode": "CARI_AP_CONTROL_CASH",
+        "accountId": 2082,
+        "accountCode": "2000",
+        "accountName": "Accounts Payable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2082
+      },
+      {
+        "purposeCode": "CARI_AP_OFFSET_CASH",
+        "accountId": 2080,
+        "accountCode": "1000",
+        "accountName": "Cash and Cash Equivalents",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2080
+      },
+      {
+        "purposeCode": "CARI_AR_CONTROL_MANUAL",
+        "accountId": 2081,
+        "accountCode": "1100",
+        "accountName": "Accounts Receivable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2081
+      },
+      {
+        "purposeCode": "CARI_AR_OFFSET_MANUAL",
+        "accountId": 2080,
+        "accountCode": "1000",
+        "accountName": "Cash and Cash Equivalents",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2080
+      },
+      {
+        "purposeCode": "CARI_AP_CONTROL_MANUAL",
+        "accountId": 2082,
+        "accountCode": "2000",
+        "accountName": "Accounts Payable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2082
+      },
+      {
+        "purposeCode": "CARI_AP_OFFSET_MANUAL",
+        "accountId": 2080,
+        "accountCode": "1000",
+        "accountName": "Cash and Cash Equivalents",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2080
+      },
+      {
+        "purposeCode": "CARI_AR_CONTROL_ON_ACCOUNT",
+        "accountId": 2081,
+        "accountCode": "1100",
+        "accountName": "Accounts Receivable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2081
+      },
+      {
+        "purposeCode": "CARI_AR_OFFSET_ON_ACCOUNT",
+        "accountId": 2082,
+        "accountCode": "2000",
+        "accountName": "Accounts Payable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2082
+      },
+      {
+        "purposeCode": "CARI_AP_CONTROL_ON_ACCOUNT",
+        "accountId": 2082,
+        "accountCode": "2000",
+        "accountName": "Accounts Payable",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2082
+      },
+      {
+        "purposeCode": "CARI_AP_OFFSET_ON_ACCOUNT",
+        "accountId": 2080,
+        "accountCode": "1000",
+        "accountName": "Cash and Cash Equivalents",
+        "validForPurposeMapping": true,
+        "desiredAccountId": 2080
+      }
+    ]
+  },
+  "inventory": {
+    "warehouse": {
+      "source": "existing",
+      "created": false,
+      "id": 88,
+      "code": "SMOKE_WH",
+      "name": "Smoke Warehouse",
+      "ownershipScope": "CENTRAL",
+      "operatingUnitId": null,
+      "status": "ACTIVE"
+    },
+    "itemCard": {
+      "source": "existing",
+      "created": false,
+      "id": 35,
+      "code": "SMOKE_STOCK_ITEM",
+      "name": "Smoke Stock Item",
+      "itemType": "STOCK_ITEM",
+      "defaultSalesAccountId": 2084,
+      "defaultPurchaseAccountId": 2085,
+      "inventoryAssetAccountId": 2080,
+      "inventoryTransitAccountId": 2080,
+      "defaultCogsAccountId": 2085,
+      "status": "ACTIVE"
+    }
+  },
+  "fixedAssets": {
+    "depreciationProfile": {
+      "source": "existing",
+      "created": false,
+      "id": 2,
+      "code": "SMOKE_FA_SL",
+      "name": "Smoke Straight Line",
+      "method": "STRAIGHT_LINE",
+      "status": "ACTIVE"
+    },
+    "category": {
+      "source": "existing",
+      "created": false,
+      "id": 2,
+      "code": "SMOKE_FA_CAT",
+      "name": "Smoke Asset Category",
+      "defaultDepreciationProfileId": 2,
+      "defaultAssetAccountId": 2080,
+      "defaultAccumDeprAccountId": 2081,
+      "defaultDeprExpenseAccountId": 2085,
+      "defaultDisposalGainAccountId": 2084,
+      "defaultDisposalLossAccountId": 2085,
+      "status": "ACTIVE"
+    },
+    "draftAsset": {
+      "source": "existing",
+      "created": false,
+      "activated": false,
+      "id": 6,
+      "assetNo": "FA-000001",
+      "assetTag": null,
+      "name": "Smoke Draft Asset",
+      "status": "DRAFT",
+      "categoryId": 2,
+      "counterpartyId": 42,
+      "ownerOperatingUnitId": 162,
+      "locationOperatingUnitId": 162,
+      "currencyCode": "AFN",
+      "originalCostTxn": 333.33,
+      "acquisitionDate": "2026-03-27",
+      "capitalizationDate": null,
+      "inServiceDate": null
+    },
+    "activeAsset": {
+      "source": "existing",
+      "created": false,
+      "activated": false,
+      "id": 7,
+      "assetNo": "FA-000002",
+      "assetTag": "SMOKE-ACTIVE-001",
+      "name": "Smoke Active Asset",
+      "status": "ACTIVE",
+      "categoryId": 2,
+      "counterpartyId": 42,
+      "ownerOperatingUnitId": 162,
+      "locationOperatingUnitId": 162,
+      "currencyCode": "AFN",
+      "originalCostTxn": 444.44,
+      "acquisitionDate": "2026-03-27",
+      "capitalizationDate": "2026-03-27",
+      "inServiceDate": "2026-03-27"
+    }
+  },
+  "counterparties": {
+    "customer": {
+      "source": "existing",
+      "created": false,
+      "id": 41,
+      "code": "SMOKE_CUSTOMER",
+      "name": "Smoke Customer",
+      "isCustomer": true,
+      "isVendor": false,
+      "defaultCurrencyCode": "AFN",
+      "arAccountId": 2081,
+      "apAccountId": null,
+      "defaultPaymentTermId": 74,
+      "primaryOperatingUnitId": 162
+    },
+    "vendor": {
+      "source": "existing",
+      "created": false,
+      "id": 42,
+      "code": "SMOKE_VENDOR",
+      "name": "Smoke Vendor",
+      "isCustomer": false,
+      "isVendor": true,
+      "defaultCurrencyCode": "AFN",
+      "arAccountId": null,
+      "apAccountId": 2082,
+      "defaultPaymentTermId": 74,
+      "primaryOperatingUnitId": 162
+    }
+  },
+  "documents": {
+    "apDraft": {
+      "source": "existing",
+      "created": false,
+      "id": 131,
+      "documentNo": "DRAFT-AP-2026-000001",
+      "status": "DRAFT",
+      "direction": "AP",
+      "documentType": "INVOICE",
+      "counterpartyId": 42,
+      "paymentTermId": 74,
+      "operatingUnitId": 162,
+      "amountTxn": 111.11,
+      "documentDate": "2026-03-27",
+      "dueDate": "2026-04-11",
+      "firstLineDescription": "CARI SMOKE AP DRAFT",
+      "firstLinePostingAccountId": 2085
+    },
+    "arDraft": {
+      "source": "existing",
+      "created": false,
+      "id": 132,
+      "documentNo": "DRAFT-AR-2026-000001",
+      "status": "DRAFT",
+      "direction": "AR",
+      "documentType": "INVOICE",
+      "counterpartyId": 41,
+      "paymentTermId": 74,
+      "operatingUnitId": 162,
+      "amountTxn": 222.22,
+      "documentDate": "2026-03-27",
+      "dueDate": "2026-04-11",
+      "firstLineDescription": "CARI SMOKE AR DRAFT",
+      "firstLinePostingAccountId": 2084
+    }
+  }
+}

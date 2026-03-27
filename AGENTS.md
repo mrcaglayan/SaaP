@@ -9,3 +9,8 @@
 - In sidebar or route config files, translate only visible labels; never change route or permission structure.
 - For ambiguous finance terms like `cari`, `fiş`, `mahsup`, and `mutabakat`, prefer existing repo terminology over generic translation.
 - Do not refactor mixed code while translating.
+
+## Documentation policy
+- Add JSDoc to exported non-trivial functions, hooks, route handlers, validators, and service methods you create or materially modify.
+- Add inline comments for non-obvious business rules, accounting logic, readiness gates, reversal paths, rollout guards, and compatibility branches.
+- Do not add comments for obvious code.
