@@ -475,6 +475,14 @@ Possible report modes:
 
 MVP does not need every report variant immediately, but the correction design must not leave owner-based reporting ambiguous.
 
+V1 reporting lock:
+
+- `reportDepreciationByOwnerOu` supports only `AS_POSTED` and `INCLUDE_RETRO_CORRECTIONS` in V1
+- `OPERATIONALLY_CORRECTED` is reserved for a future track and is not implemented in Track 43
+- requesting `OPERATIONALLY_CORRECTED` in V1 returns `400` with stable `reasonCode = UNSUPPORTED_REPORT_BASIS`
+- corrected V1 export must include the explicit `UNRESOLVED` row/bucket output and must not silently omit unresolved attribution
+- `reportByOwnerOu` remains a current-owner snapshot surface in V1 rather than a corrected historical owner report
+
 ## UX Direction
 
 Provide a bounded wizard or guided form, not a raw backdated transfer form.
@@ -612,7 +620,7 @@ The original 7-step tracker is too dense in three places for a single focused im
    - introduce a correction-aware wrapper `loadCorrectionAwareOwnerTimeline(...)` that calls the existing `loadAssetDepreciationLifecycleHistory(...)` unchanged, then merges posted retro-correction events from `fixed_asset_retro_transfer_corrections` as synthetic ownership-transfer entries at their `actual_effective_date` position
    - filter out raw `RETRO_OWNERSHIP_CORRECTION` transaction entries from the base timeline (they carry NULL owner columns via the LEFT JOIN)
    - synthetic events must carry `fromOwnerOperatingUnitId`, `toOwnerOperatingUnitId`, `transactionId`, `effectiveDate`, and `kind: "OWNERSHIP_TRANSFER"` (see locked decision #43)
-   - **all owner-timeline consumers** must use the correction-aware wrapper, not the raw `loadAssetDepreciationLifecycleHistory` directly — this includes the depreciation engine, preview engine, future depreciation runs, reversal state-restoration logic, and any disposal/sale preview logic that reasons over owner chronology
+   - **all owner-timeline consumers** must use the correction-aware wrapper, not the raw `loadAssetDepreciationLifecycleHistory` directly — this includes the preview engine, normal depreciation schedule building, future depreciation runs, retro-improvement catch-up recalculation, reversal state-restoration logic, and any disposal/sale preview or cutoff logic that reasons over owner chronology
    - do not rely only on the current-period carrying-value owner move for future owner allocation
    - do not let the supporting current-period owner-move transaction masquerade as a plain chronology ownership-transfer event in lifecycle reads
 6. Define persisted status/state transitions for the correction record:
@@ -652,6 +660,8 @@ The original 7-step tracker is too dense in three places for a single focused im
 - `backend/src/routes/fixed-assets.validators.js`
 - `backend/src/routes/fixed-assets.routes.js`
 - `backend/src/services/fixed-assets.service.js`
+- `backend/openapi.yaml`
+- `backend/scripts/generate-openapi.js`
 - `backend/src/services/fixed-assets.depreciation.service.js`
 - `backend/openapi.yaml`
 - `backend/scripts/generate-openapi.js`
@@ -696,8 +706,13 @@ For actual step sizing, stop `ROT02A` at the blocker/eligibility decision shell.
    - a flag that any location change remains a separate physical-move workflow in V1
    - the derived source OU (`from_owner_operating_unit_id`) resolved from the lifecycle timeline at `actualEffectiveDate` (see locked decision #44)
    - whether the mandatory current-period carrying-value owner move will be posted
-   - `currentOwnerChanged`: whether the correction will update the asset master owner (always `true` in V1 per decision #30/#16, see locked decision #39)
+   - `currentOwnerChanged: true` confirming the correction updates the asset master owner in V1 (see locked decision #39)
 7. Return stable machine-readable reason codes so the frontend and plain transfer endpoint can share the same decision surface.
+8. Lock preview HTTP semantics:
+   - malformed input / validator failures return `400`
+   - business-state blockers return `409`
+   - every `409` preview response carries stable `reasonCode`
+   - frontend branching must use `status + reasonCode`, not free-text messages
 
 ### Explicit non-goals
 - No posting in preview endpoint
@@ -822,6 +837,10 @@ For actual step sizing, keep `ROT03A` to the no-overlap happy path. Replacement/
 12. Keep the journal logic decoupled from Track 40 internals:
    - if an impacted period includes depreciation on a charge-augmented improvement, reclass the already-posted depreciation attribution delta only
    - do not generate any extra charge-allocation journal lines or re-open CARI charge math in this track
+13. Lock post HTTP semantics:
+   - malformed input / contract mismatch returns `400`
+   - stale preview and other business-state conflicts return `409`
+   - `STALE_PREVIEW` is returned as `409` with stable machine-readable metadata so the frontend can force a fresh preview
 
 ### Explicit non-goals
 - Do not post a misleading historical carrying-value move dated with `actualEffectiveDate`
@@ -900,6 +919,12 @@ The current `ownershipTransferAsset()` has zero chronology validation — a user
    - no later posted lifecycle activity conflicts
    - the posting period is open
 5. Ensure the detail page can detect this reroute and open the retro-correction path instead of leaving the user at a dead end.
+6. Lock plain-transfer HTTP semantics:
+   - malformed input / validator failures return `400`
+   - chronology reroute, blocked business-state responses, and mixed-request separation responses return `409`
+   - reroute-capable `409` responses must include the structured `reroute` object
+   - the frontend must treat `409 + reasonCode` as a business-state branch, not a generic form-validation failure
+7. Regenerate and commit the plain-transfer endpoint contract so the documented response set includes the reroute/blocker `409` shape, stable `reasonCode`, and `reroute` payload.
 
 ### Explicit non-goals
 - Do not remove the existing ownership transfer capability
@@ -923,7 +948,10 @@ The current `ownershipTransferAsset()` has zero chronology validation — a user
 ### Patch target
 - `backend/src/services/fixed-assets.service.js`
 - `backend/src/services/fixed-assets.reporting.service.js`
-- `backend/src/routes/fixed-assets.validators.js` - add `reportBasis` / `reportMode` field to `parseReportFilters()` for corrected report modes
+- `backend/src/routes/fixed-assets.validators.js` - add `reportBasis` field to `parseReportFilters()` for basis-aware corrected report handling
+- `backend/src/routes/fixed-assets.routes.js` - expand fixed-asset transaction read payload for retro-correction feed metadata
+- `backend/openapi.yaml`
+- `backend/scripts/generate-openapi.js`
 
 ### Implementation boundary
 
@@ -938,20 +966,32 @@ For actual step sizing, keep `ROT05A` backend-only. The asset-detail JSX section
    - impacted periods
    - posted correction transaction ids
    - replacement / supersession linkage when one correction safely replaces an earlier overlapping correction
-   - `currentOwnerChanged` flag indicating whether the correction updated the asset master owner or only historical attribution (see locked decision #39)
+   - `currentOwnerChanged: true` confirming the correction updated the asset master owner in V1 (see locked decision #39)
    - retro-corrected historical owner timeline as a distinct view alongside the current owner from asset master
 2. Add an asset-detail audit/history section showing retro corrections separately from normal ownership transfers so users can see the difference. Use the grouped parent/child layout: one correction record with two nested child transactions (see locked decision #38).
-3. Surface `RETRO_OWNERSHIP_CORRECTION` coherently in the standard asset transaction feed and drillback paths without treating it as a normal ownership-transfer lifecycle event. Use `source_ref_type` to produce distinct display labels for the true-up and owner-move transactions (see locked decision #38). The "Reverse" button must not appear for these transactions in the frontend (see locked decision #37).
+3. Expand fixed-asset transaction read surfaces so `RETRO_OWNERSHIP_CORRECTION` rows can be labeled and grouped coherently in the standard transaction feed and drillback paths without being treated as normal ownership-transfer lifecycle events. At minimum expose:
+   - `sourceRefType`
+   - `retroCorrectionId` or an explicitly-defined correction-header linkage field
+   - optional convenience `displayLabel`
+   - the "Reverse" button must not appear for these transactions in the frontend (see locked decision #37)
 4. Update owner-based reporting treatment so correction-aware results do not rely only on the asset master's current owner. Specifically address each existing report's gap (see locked decision #31):
    - `reportTransfers`: reads `fixed_asset_ownership_transfer_details` — retro corrections are invisible because they do not write there (decision #12). This is intentional for V1: transfer report remains plain-transfer-only (see locked decision #40). No correction-aware union query needed in this report.
-   - `reportByOwnerOu`: groups by asset master `owner_operating_unit_id` — only reflects current owner. Must support a corrected-history mode or document the limitation.
-   - `reportDepreciationByOwnerOu`: reads depreciation allocation table with fallback to current owner — does not include correction true-up reclassifications. Must include correction journal amounts in the corrected mode, and the current-owner fallback must be blocked in corrected mode (see locked decision #35).
+   - `reportByOwnerOu`: remains a current-owner snapshot report in V1. It groups by the asset master's current owner after correction and must expose its basis explicitly; it does **not** attempt corrected historical owner attribution in this track.
+   - `reportDepreciationByOwnerOu`: reads depreciation allocation table with fallback to current owner — does not include correction true-up reclassifications. V1 ships `INCLUDE_RETRO_CORRECTIONS` as the only correction-aware basis for this report. It must include correction journal amounts in that mode, must block the current-owner fallback in that mode, and must surface incomplete legacy data as an explicit `UNRESOLVED` row/bucket in both API rows and export output rather than silently guessing owner attribution (see locked decisions #35 and #49/#50).
+   - `reportRollforward`: remains an entity-level economic movement report in V1. `RETRO_OWNERSHIP_CORRECTION` rows are excluded from rollforward output and must not affect opening or closing NBV (see locked decision #45).
 5. Introduce or reserve report modes such as:
    - `AS_POSTED`
    - `INCLUDE_RETRO_CORRECTIONS`
    - `OPERATIONALLY_CORRECTED`
 6. Treat corrected owner-based reporting as mandatory for this track, not optional follow-up.
-7. For V1, it is acceptable if only one corrected mode is wired to the report service, but the service contract must make the reporting basis explicit.
+7. For V1, only `INCLUDE_RETRO_CORRECTIONS` is wired as the correction-aware mode on `reportDepreciationByOwnerOu`; `OPERATIONALLY_CORRECTED` remains reserved and unsupported in this track.
+8. Validate `reportBasis` per report name at the request-contract level:
+   - unsupported combinations return `400`
+   - requesting `reportBasis = OPERATIONALLY_CORRECTED` on `reportDepreciationByOwnerOu` in V1 returns `400` with stable `reasonCode = UNSUPPORTED_REPORT_BASIS`
+   - do not silently ignore unsupported basis values
+   - `reportByOwnerOu` must reject corrected-history basis values in V1 rather than pretending to support them
+   - the backend/API/query-param name is `reportBasis`; UI copy may still label the selector as `Report Mode`
+9. Regenerate and commit the affected report/read contracts so the documented query params, response metadata, and transaction-read payload shapes match the implemented backend behavior.
 
 ### Explicit non-goals
 - No requirement to retrofit every fixed-assets report in this step
@@ -960,8 +1000,10 @@ For actual step sizing, keep `ROT05A` backend-only. The asset-detail JSX section
 
 ### Definition of done
 - Asset detail payload exposes the correction history and corrected owner timeline needed by the frontend
+- Transaction-feed payload exposes the metadata required to label and visually group retro-correction rows
 - At least one owner-based reporting path can include persisted retro corrections explicitly
 - Reporting semantics are documented in code and API shape
+- OpenAPI reflects the new report-basis contract, transaction-read payload fields, and unsupported-combination validation behavior
 
 ---
 
@@ -988,11 +1030,12 @@ For actual step sizing, keep `ROT05A` backend-only. The asset-detail JSX section
    - per-period delta
    - cumulative correction amount
    - that the mandatory current-period carrying-value owner move will also be posted
-   - whether the correction will change the current owner on the asset master or only correct historical attribution (see locked decision #39)
+   - that the correction updates the current owner on the asset master (`currentOwnerChanged: true` in V1, see locked decision #39)
    - whether the post would replace an earlier overlapping correction
 4. If the plain ownership-transfer endpoint returns a retro-correction reroute reason, guide the user into this wizard with the relevant context prefilled where possible.
    - if the reroute response includes `mixedRequestRejected: true` and `locationChangeMustBeSeparate: true`, display a notice that the location change must be submitted separately via physical move after the retro correction is posted (see locked decision #36)
    - preserve the originally requested `targetLocationOperatingUnitId` from the reroute response as informational guidance only — do NOT pass it to the retro correction preview/post endpoints
+   - distinguish malformed-input failures from business-state reroute/conflict responses by branching on `400` vs `409` plus `reasonCode`
 5. Keep the existing normal ownership transfer form for safe cases; do not collapse both workflows into one ambiguous form.
 6. Reuse `fixed_assets.transfer` permission in V1 unless product later requests a stricter split.
 
@@ -1018,11 +1061,15 @@ For actual step sizing, keep `ROT05A` backend-only. The asset-detail JSX section
 
 ### In scope
 1. Add the asset-detail correction history section using the grouped parent/child layout for one correction with two child transactions.
-2. Introduce a shared transaction display-label formatter so true-up and owner-move rows render distinctly anywhere `RETRO_OWNERSHIP_CORRECTION` appears.
+2. Introduce a shared transaction display-label formatter so true-up and owner-move rows render distinctly anywhere `RETRO_OWNERSHIP_CORRECTION` appears, using the backend-provided `sourceRefType` and correction-linkage metadata from `ROT05A`.
 3. Add corrected owner-report UI plumbing:
-   - forward `reportBasis` / `reportMode`
-   - add a report-mode selector for owner-based reports
+   - forward `reportBasis`
+   - add a report-mode selector only where the backend actually supports selectable `reportBasis` values in V1
+   - `reportDepreciationByOwnerOu` exposes `AS_POSTED` vs `INCLUDE_RETRO_CORRECTIONS`
    - keep corrected-mode semantics visible in the UI
+   - keep `reportByOwnerOu` visibly labeled as a current-owner snapshot basis in V1
+   - show `UNRESOLVED` warning state when corrected `reportDepreciationByOwnerOu` returns incomplete attribution data
+   - do not offer unsupported corrected modes or unsupported basis selectors on unaffected reports
 4. Keep retro-correction rows non-reversible in the frontend presentation.
 
 ### Explicit non-goals
@@ -1061,6 +1108,13 @@ For actual step sizing, keep `ROT05A` backend-only. The asset-detail JSX section
    - dual-currency amounts (`_txn`/`_base`) computed independently and stored correctly (see locked decision #23)
    - draft depreciation run in progress blocks correction (see locked decision #28)
    - journal source links exist for both correction journals (see locked decision #27)
+   - `reportRollforward` excludes `RETRO_OWNERSHIP_CORRECTION` rows and closing NBV does not change solely because of the correction posting
+   - fixed-asset transaction feed rows for retro correction expose `sourceRefType` plus correction-linkage metadata so the two child rows can be labeled and grouped reliably
+   - corrected `reportDepreciationByOwnerOu` returns `UNRESOLVED` rather than current-owner fallback when required historical owner attribution data is missing
+   - corrected `reportDepreciationByOwnerOu` export includes the explicit `UNRESOLVED` row/bucket when unresolved attribution exists in the requested result set
+   - requesting `reportBasis = OPERATIONALLY_CORRECTED` on `reportDepreciationByOwnerOu` in V1 returns `400` with stable `reasonCode = UNSUPPORTED_REPORT_BASIS`
+   - unsupported `reportBasis` combinations return `400` rather than being silently ignored
+   - plain-transfer reroute / blocker responses and stale-preview post failures return `409`, while malformed input remains `400`
 2. Verify transaction linkage and audit rows:
    - correction header/detail rows persisted
    - linked posted transaction ids exist
@@ -1121,7 +1175,7 @@ Locked decisions from planning:
 32. Reversal of a posted retro correction is out of scope for V1.
 33. Preview must validate self-balancing account configuration before returning eligible.
 34. Period breakdown table stores aggregated run-level amounts, not raw day-level segments.
-35. `reportDepreciationByOwnerOu` current-owner fallback must be blocked in corrected reporting mode; missing allocations → block or mark `UNRESOLVED`.
+35. `reportDepreciationByOwnerOu` current-owner fallback must be blocked in corrected reporting mode; missing allocations must surface as `UNRESOLVED`, never as current-owner fallback.
 36. Mixed owner+location plain transfer requests must be rejected outright when chronology is unsafe; user must re-submit owner and location changes separately.
 37. Retro-correction reversal is an internal replacement-only engine path, not exposed through the generic user-triggered reversal workflow in V1.
 38. Transaction feed display must use `source_ref_type` to produce distinct human-readable labels; asset detail shows one grouped correction record with two child transactions.
@@ -1131,6 +1185,13 @@ Locked decisions from planning:
 42. `RETRO_OWNERSHIP_CORRECTION` transactions are "sealing" events — they block generic reversal of earlier transactions on the same asset (V1 intended behavior).
 43. Synthetic timeline events injected by the correction-aware wrapper must carry `fromOwnerOperatingUnitId`, `toOwnerOperatingUnitId`, and `transactionId`.
 44. Source OU (`from_owner_operating_unit_id`) is derived from the lifecycle timeline at `actualEffectiveDate`, not from the asset master.
+45. `reportRollforward` remains an entity-level economic movement report in V1; `RETRO_OWNERSHIP_CORRECTION` rows are excluded and must not affect opening or closing NBV.
+46. Any fixed-asset transaction read surface that can return `RETRO_OWNERSHIP_CORRECTION` rows must expose `sourceRefType` plus correction-linkage identity (`retroCorrectionId` or explicitly-defined equivalent); convenience `displayLabel` is optional and not a substitute for linkage identity.
+47. `reportByOwnerOu` remains a current-owner snapshot report in V1; it groups by the asset master's current owner after correction and does not attempt corrected historical owner attribution.
+48. HTTP semantics are locked: `400` for malformed input, `409` for chronology reroute / blocked business-state responses / stale preview conflicts; all `409` responses must include stable machine-readable `reasonCode`, and reroute-capable responses must include the structured `reroute` object.
+49. `reportDepreciationByOwnerOu` supports only `AS_POSTED` and `INCLUDE_RETRO_CORRECTIONS` in V1; `OPERATIONALLY_CORRECTED` remains reserved and requesting it must return `400` with stable `reasonCode = UNSUPPORTED_REPORT_BASIS`.
+50. In corrected `reportDepreciationByOwnerOu`, unresolved attribution must surface as an explicit `UNRESOLVED` row/bucket in API rows and export output; report metadata should also expose unresolved totals/flags.
+51. `reportBasis` is the only backend/API/query-param name for report basis selection in Track 43; unsupported basis combinations must be rejected with `400` and stable reason codes, and must not be silently ignored.
 
 ### Ordering guidance for combined catch-up + transfer scenarios
 
@@ -1168,7 +1229,7 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
       2. Queries `fixed_asset_retro_transfer_corrections` for POSTED corrections on the asset
       3. Merges the correction's `actual_effective_date` as a synthetic ownership-transfer event into the timeline at the correct chronological position
       4. Filters out the correction's own `RETRO_OWNERSHIP_CORRECTION` transaction entries from the base timeline (so they don't appear as lifecycle events with NULL owner data)
-    - **All owner-timeline consumers** must use the correction-aware wrapper, not the raw `loadAssetDepreciationLifecycleHistory` directly. This includes the depreciation engine, preview engine, future depreciation runs, reversal state-restoration logic (which reads lifecycle history to determine the owner to restore), and any disposal/sale preview logic that reasons over owner chronology. Leaving any consumer on the raw reader after a retro correction would create internal inconsistency.
+    - **All owner-timeline consumers** must use the correction-aware wrapper, not the raw `loadAssetDepreciationLifecycleHistory` directly. This includes the preview engine, normal depreciation schedule building, future depreciation runs, retro-improvement catch-up recalculation, reversal state-restoration logic (which reads lifecycle history to determine the owner to restore), and any disposal/sale preview or cutoff logic that reasons over owner chronology. Leaving any consumer on the raw reader after a retro correction would create internal inconsistency.
 
 14. **Gross cost for the owner-move journal uses the asset master's current `original_cost_txn`.**
     - After Track 39 improvements, the `fixed_assets.original_cost_txn` field is updated in place to reflect the cumulative gross cost (original + all posted improvements). This is the correct source for the owner-move journal's gross cost lines.
@@ -1202,6 +1263,10 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
 20. **ROT04 is a behavioral change that blocks previously-allowed backdated transfers.**
     - The current `ownershipTransferAsset()` has zero chronology validation — a user can today post a backdated ownership transfer regardless of posted depreciation. ROT04 introduces net-new blocking logic.
     - The blocking response must include a `reroute` object with enough context for the frontend to pivot into the retro-correction wizard without a dead end.
+    - HTTP contract lock for ROT04:
+      - malformed input / validator failures return `400`
+      - chronology reroute and blocked business-state responses return `409`
+      - reroute-capable `409` responses include stable `reasonCode` plus the structured `reroute` object
     - No migration-time feature toggle is required; the blocking behavior activates when the ROT04 code is deployed.
 
 21. **Overlap replacement reversal mechanics are an explicit sub-step within ROT03B.**
@@ -1297,7 +1362,11 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
 
 38. **Transaction feed display must use `source_ref_type` to produce distinct human-readable labels; asset detail shows one grouped correction record with two child transactions.**
     - The frontend currently renders `tx.transactionType` raw in the transaction feed (e.g., `FixedAssetDetailPage.jsx` line ~2883, `FixedAssetDisposalsPage.jsx` line ~334, `FixedAssetReportsPage.jsx` line ~76). Two rows both displaying "RETRO_OWNERSHIP_CORRECTION" with no differentiation would be confusing.
-    - Hard lock on display labels — the backend must return a computed `displayLabel` field (or the frontend must map `source_ref_type`) so the feed shows distinct labels:
+    - Hard lock on transaction-read contract — any fixed-asset transaction read surface that can return `RETRO_OWNERSHIP_CORRECTION` rows must expose:
+      - `sourceRefType`
+      - `retroCorrectionId` or an explicitly-defined correction-header linkage field
+      - optional convenience `displayLabel`
+    - Hard lock on display labels — the backend may return a computed `displayLabel`, but the frontend shared formatter must still have access to raw `transactionType + sourceRefType` so the feed shows distinct labels:
       - `RETRO_CORRECTION_TRUE_UP` → display as "Retro Ownership Correction – True-up"
       - `RETRO_CORRECTION_OWNER_MOVE` → display as "Retro Ownership Correction – Owner Move"
     - Hard lock on asset detail layout — the correction history section (`ROT05B`) must show:
@@ -1337,7 +1406,11 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
     - `reportDepreciationByOwnerOu` (line ~745 in `fixed-assets.reporting.service.js`) has a two-query design: first it reads persisted `OWNER_OU` allocations, then for run lines with no persisted allocations it falls back to `fa.owner_operating_unit_id` (the asset master's current owner). After a retro correction, this fallback silently misattributes depreciation to the wrong OU.
     - For corrected reporting mode (`INCLUDE_RETRO_CORRECTIONS` or `OPERATIONALLY_CORRECTED`):
       - do NOT use the asset master's current owner as fallback
-      - if persisted allocation or correction detail is missing for a run line, either block the corrected mode for that asset or mark the row as `UNRESOLVED` in the report output
+      - Track 43 V1 wires `INCLUDE_RETRO_CORRECTIONS` as the only supported corrected basis for this report
+      - if persisted allocation or correction detail is missing for a run line, mark the row or bucket as `UNRESOLVED` in the report output rather than blocking the whole report by default
+      - unresolved amounts must not be assigned to any OU total
+      - the response should surface report-level incomplete-data metadata such as `hasUnresolvedRows`, `unresolvedAmountTxn`, and `unresolvedAmountBase`
+      - export output must preserve the same unresolved-attribution visibility by including an explicit `UNRESOLVED` row/bucket rather than dropping unresolved amounts from CSV
     - The fallback is acceptable in `AS_POSTED` mode (it represents what was originally posted) but must be suppressed or flagged in any correction-aware mode.
     - Pre-Track-43 assets that never had persisted allocations (legacy data before `DAILY_PRORATA` was introduced) are expected to hit this — the corrected report mode must not silently guess their owner attribution.
 
@@ -1387,7 +1460,58 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
 
 44. **Source OU (`from_owner_operating_unit_id`) is derived from the lifecycle timeline at `actualEffectiveDate`, not from the asset master.**
     - The correction header stores `from_owner_operating_unit_id`. During preview, this must be derived by running the correction-aware lifecycle reader (without this correction) and resolving which OU owned the asset at `actualEffectiveDate`.
-    - Derivation method: call `loadAssetDepreciationLifecycleHistory` (the raw reader, not the correction-aware wrapper, since this correction doesn't exist yet), build the lifecycle timeline via `buildLifecycleTimeline`, apply events up to `actualEffectiveDate` via `applyLifecycleEventToState`, and read `state.ownerOperatingUnitId`. This is the source OU.
+    - Derivation method: call the correction-aware lifecycle reader for the asset's already-posted history (the candidate correction itself is not yet persisted, so it is naturally absent), build the lifecycle timeline via `buildLifecycleTimeline`, apply events up to `actualEffectiveDate` via `applyLifecycleEventToState`, and read `state.ownerOperatingUnitId`. This is the source OU.
     - Do NOT use `fixed_assets.owner_operating_unit_id` from the asset master — this reflects the current owner, not the owner at `actualEffectiveDate`.
     - The derived source OU must equal the asset master's current owner in V1 (because decision #30 blocks the correction when later owner-changing events exist). If they differ, it indicates an inconsistency that should be surfaced as a validation error.
     - The preview must return the derived source OU so the user can confirm it before posting.
+
+45. **`reportRollforward` remains an entity-level economic movement report in V1.**
+    - The current report groups posted transaction rows broadly by `transaction_type`, so a new `RETRO_OWNERSHIP_CORRECTION` type would otherwise start appearing there automatically.
+    - Hard lock for V1: exclude `RETRO_OWNERSHIP_CORRECTION` rows from rollforward output entirely.
+    - `RETRO_OWNERSHIP_CORRECTION` must not affect opening NBV, movement math, or closing NBV in `reportRollforward`.
+    - Retro corrections remain visible through correction history, transaction feed / drillback, and corrected owner-based reporting surfaces rather than the entity rollforward.
+
+46. **Transaction-feed contract must expose retro-correction linkage metadata.**
+    - The flat fixed-asset transaction feed and related drillback read surfaces must expose enough raw metadata to distinguish and group the two correction child rows reliably.
+    - Hard lock for V1:
+      - return `sourceRefType`
+      - return `retroCorrectionId` or an explicitly-defined equivalent correction-header linkage field
+      - `displayLabel` is optional convenience, not a substitute for linkage identity
+    - The frontend must not infer grouping only from `transactionType`.
+
+47. **`reportByOwnerOu` remains a current-owner snapshot report in V1.**
+    - `reportByOwnerOu` groups by `fixed_assets.owner_operating_unit_id` and naturally reflects the asset master's current owner after correction.
+    - Hard lock for V1: do not attempt corrected historical owner attribution in this report.
+    - The API/UI must label its basis clearly as a current-owner snapshot.
+    - Corrected historical owner analysis is provided through correction history, corrected owner timeline on asset detail, and corrected `reportDepreciationByOwnerOu` modes.
+
+48. **HTTP status contract is explicit for preview, reroute, blocker, and stale-preview flows.**
+    - Use `400 Bad Request` for malformed input / contract validation failures.
+    - Use `409 Conflict` for well-formed requests rejected because of business state or concurrency state, including chronology reroute, period/lifecycle blockers, draft-run blockers, and `STALE_PREVIEW`.
+    - Every `409` response must include a stable machine-readable `reasonCode`.
+    - Reroute-capable `409` responses must include the structured `reroute` object expected by the frontend pivot flow.
+
+49. **V1 corrected depreciation-by-owner reporting ships only `INCLUDE_RETRO_CORRECTIONS`.**
+    - The repo currently has one concrete depreciation-by-owner report path and one CSV export shape; Track 43 should not split that into multiple corrected-history semantics in V1.
+    - Hard lock for V1:
+      - `reportDepreciationByOwnerOu` supports `AS_POSTED`
+      - `reportDepreciationByOwnerOu` supports `INCLUDE_RETRO_CORRECTIONS`
+      - `OPERATIONALLY_CORRECTED` stays reserved for a future track
+      - requesting `OPERATIONALLY_CORRECTED` in V1 returns `400` with stable `reasonCode = UNSUPPORTED_REPORT_BASIS`
+
+50. **`UNRESOLVED` must be export-visible, not metadata-only.**
+    - The repo's report export path writes CSV from `rows`, so unresolved attribution cannot live only in top-level metadata if it must survive export.
+    - Hard lock for V1:
+      - unresolved attribution appears as an explicit `UNRESOLVED` row/bucket in API `rows`
+      - the same `UNRESOLVED` row/bucket is included in CSV export output
+      - corrected V1 export must not silently omit unresolved attribution
+      - report-level metadata may additionally expose `hasUnresolvedRows`, `unresolvedAmountTxn`, and `unresolvedAmountBase`
+
+51. **`reportBasis` is the only backend/API/query-param name, and it is validated per report.**
+    - Once Track 43 introduces basis-aware report filters, the backend must not silently ignore unsupported `reportBasis` values because that would create misleading UI/report behavior.
+    - Hard lock for V1:
+      - use `reportBasis` consistently in validators, routes, OpenAPI, frontend API helpers, and report requests
+      - UI copy may still label the control as `Report Mode`, but that is presentation only and not a second contract name
+      - unsupported `reportBasis` combinations return `400` with stable reason codes; `UNSUPPORTED_REPORT_BASIS` is used when the requested basis exists conceptually but is not implemented for V1
+      - `reportByOwnerOu` rejects corrected-history basis values and remains current-owner snapshot only
+      - unaffected reports such as transfers and rollforward do not silently accept correction-aware basis values
