@@ -8099,7 +8099,9 @@ async function loadOwnershipTransferDepreciationImpactSummary({
   queryFn = query,
 }) {
   const result = await queryFn(
-    `SELECT DISTINCT rl.period_key,
+    // We keep row ordering deterministic for chronology checks and dedupe period keys
+    // in JS below, so SQL-level DISTINCT would only break on MySQL strict ORDER BY rules.
+    `SELECT rl.period_key,
             fat.effective_date
        FROM fixed_asset_transactions fat
        LEFT JOIN fixed_asset_depreciation_run_lines rl

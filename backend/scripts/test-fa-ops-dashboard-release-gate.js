@@ -7,12 +7,16 @@ async function main() {
       "test-fa21-manual-activation-smoke.js",
       "test-fa45-late-activation-catchup-smoke.js",
       "test-fa46-fa47-improvement-release-gate.js",
+      "test-fa50-retro-correction-release-gate.js",
     ],
     envOverrides: {
       FA21_SMOKE_KEEP_ARTIFACTS: "0",
       FA45_SMOKE_KEEP_ARTIFACTS: "0",
       FA46_SMOKE_KEEP_ARTIFACTS: "0",
       FA47_SMOKE_KEEP_ARTIFACTS: "0",
+      FA48_SMOKE_KEEP_ARTIFACTS: "0",
+      FA49_SMOKE_KEEP_ARTIFACTS: "0",
+      FA50_SMOKE_KEEP_ARTIFACTS: "0",
     },
   });
 }

@@ -565,7 +565,7 @@ The original 7-step tracker is too dense in three places for a single focused im
 | ROT06 | Frontend retro correction wizard and preview UX | Completed |
 | ROT05B | Frontend asset-detail correction history and owner-report UI | Completed |
 | **Phase 4 - Test and release control** | | |
-| ROT07 | Smoke coverage, readiness gates, and rollback verification | Not started |
+| ROT07 | Smoke coverage, readiness gates, and rollback verification | Completed |
 
 ### Sequence Notes
 
@@ -582,6 +582,7 @@ The original 7-step tracker is too dense in three places for a single focused im
 
 - `backend/scripts/test-fa48-retro-correction-focused-smoke.js` is the reusable focused verification script for the highest-risk Track 43 preview/posting seams discovered before `ROT03B`
 - `backend/scripts/test-fa49-retro-correction-replacement-smoke.js` is the reusable focused verification script for the `ROT03B` replacement/supersession branch and explicit retro-correction reversal rejection path
+- `backend/scripts/test-fa50-retro-correction-release-gate.js` is the broader Track 43 readiness gate that reruns the focused retro correction suites, re-verifies plain ownership transfer continuity, and asserts OpenAPI/release-gate wiring
 - it is not a separate tracker step, but it is expected to be rerun before overlap-replacement work and again as part of `ROT07` readiness
 - the current focused script covers:
   - one-month preview success
