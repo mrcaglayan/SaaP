@@ -15171,10 +15171,10 @@
           "FixedAssets"
         ],
         "operationId": "getApiV1FixedAssetsReportsReportname",
-        "summary": "Auto-generated: GET /api/v1/fixed-assets/reports/{reportName}",
+        "summary": "Run fixed asset report with Track 43 reportBasis validation for owner-report modes",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Fixed asset report result",
             "content": {
               "application/json": {
                 "schema": {
@@ -15202,6 +15202,20 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "reportBasis",
+            "required": false,
+            "description": "Track 43 report basis. V1 wires AS_POSTED and INCLUDE_RETRO_CORRECTIONS only on depreciation-by-owner-ou; OPERATIONALLY_CORRECTED or unsupported report/reportBasis combinations return 400.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "AS_POSTED",
+                "INCLUDE_RETRO_CORRECTIONS",
+                "OPERATIONALLY_CORRECTED"
+              ]
             }
           }
         ]
@@ -15213,10 +15227,10 @@
           "FixedAssets"
         ],
         "operationId": "getApiV1FixedAssetsReportsReportnameExport",
-        "summary": "Auto-generated: GET /api/v1/fixed-assets/reports/{reportName}/export",
+        "summary": "Export fixed asset report with Track 43 reportBasis validation for owner-report modes",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Fixed asset report export",
             "content": {
               "application/json": {
                 "schema": {
@@ -15244,6 +15258,20 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "reportBasis",
+            "required": false,
+            "description": "Track 43 report basis. V1 wires AS_POSTED and INCLUDE_RETRO_CORRECTIONS only on depreciation-by-owner-ou; OPERATIONALLY_CORRECTED or unsupported report/reportBasis combinations return 400.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "AS_POSTED",
+                "INCLUDE_RETRO_CORRECTIONS",
+                "OPERATIONALLY_CORRECTED"
+              ]
             }
           }
         ]
@@ -16269,10 +16297,10 @@
           "FixedAssets"
         ],
         "operationId": "getApiV1FixedAssetsAssetid",
-        "summary": "Auto-generated: GET /api/v1/fixed-assets/{assetId}",
+        "summary": "Get fixed asset detail with retro correction history and corrected owner timeline",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Fixed asset detail",
             "content": {
               "application/json": {
                 "schema": {
@@ -16296,7 +16324,7 @@
             "in": "path",
             "name": "assetId",
             "required": true,
-            "description": "assetId identifier",
+            "description": "Fixed asset identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -16763,10 +16791,10 @@
           "FixedAssets"
         ],
         "operationId": "postApiV1FixedAssetsAssetidOwnershipTransfer",
-        "summary": "Auto-generated: POST /api/v1/fixed-assets/{assetId}/ownership-transfer",
+        "summary": "Post a plain ownership transfer when chronology is still safe; otherwise return a structured Track 43 reroute/blocker response",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Ownership transfer posted",
             "content": {
               "application/json": {
                 "schema": {
@@ -16783,6 +16811,16 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
+          },
+          "409": {
+            "description": "Ownership transfer blocked or rerouted to retro correction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
           }
         },
         "parameters": [
@@ -16790,7 +16828,7 @@
             "in": "path",
             "name": "assetId",
             "required": true,
-            "description": "assetId identifier",
+            "description": "Fixed asset identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -16903,6 +16941,130 @@
         ],
         "requestBody": {
           "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/retro-ownership-transfer-correction": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "postFixedAssetRetroOwnershipTransferCorrection",
+        "summary": "Post a preview-backed retro ownership transfer correction with the current-period true-up, mandatory owner move, and replacement-only overlap handling",
+        "responses": {
+          "200": {
+            "description": "Retro ownership transfer correction posted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "409": {
+            "description": "Retro ownership transfer correction blocked, stale, or unable to replace an overlapping correction safely",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "Fixed asset identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fixed-assets/{assetId}/retro-ownership-transfer-correction/preview": {
+      "post": {
+        "tags": [
+          "FixedAssets"
+        ],
+        "operationId": "previewFixedAssetRetroOwnershipTransferCorrection",
+        "summary": "Preview retro ownership transfer correction deltas, overlap metadata, and blocker/reroute decision",
+        "responses": {
+          "200": {
+            "description": "Retro ownership transfer correction preview with period-by-period delta output",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "409": {
+            "description": "Retro ownership transfer correction preview blocked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assetId",
+            "required": true,
+            "description": "Fixed asset identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -17179,10 +17341,10 @@
           "FixedAssets"
         ],
         "operationId": "getApiV1FixedAssetsAssetidTransactions",
-        "summary": "Auto-generated: GET /api/v1/fixed-assets/{assetId}/transactions",
+        "summary": "List fixed asset transactions with retro correction linkage metadata and display labels",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Fixed asset transactions",
             "content": {
               "application/json": {
                 "schema": {
@@ -17206,7 +17368,7 @@
             "in": "path",
             "name": "assetId",
             "required": true,
-            "description": "assetId identifier",
+            "description": "Fixed asset identifier",
             "schema": {
               "type": "integer",
               "minimum": 1

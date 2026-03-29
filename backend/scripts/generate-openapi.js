@@ -4415,6 +4415,167 @@ function applyInventoryOperationOverrides(specObject) {
   };
 }
 
+function applyFixedAssetsOperationOverrides(specObject) {
+  ensureTagPresent(specObject, "FixedAssets");
+  const paths = specObject.paths || {};
+
+  const assetDetailOperation =
+    paths["/api/v1/fixed-assets/{assetId}"]?.get;
+  if (assetDetailOperation) {
+    assetDetailOperation.tags = ["FixedAssets"];
+    assetDetailOperation.summary =
+      "Get fixed asset detail with retro correction history and corrected owner timeline";
+    assetDetailOperation.parameters = [
+      pathParam("assetId", "Fixed asset identifier"),
+    ];
+    assetDetailOperation.responses = withStandardResponses(
+      "200",
+      "Fixed asset detail",
+      "#/components/schemas/AnyObject"
+    );
+  }
+
+  const assetTransactionsOperation =
+    paths["/api/v1/fixed-assets/{assetId}/transactions"]?.get;
+  if (assetTransactionsOperation) {
+    assetTransactionsOperation.tags = ["FixedAssets"];
+    assetTransactionsOperation.summary =
+      "List fixed asset transactions with retro correction linkage metadata and display labels";
+    assetTransactionsOperation.parameters = [
+      pathParam("assetId", "Fixed asset identifier"),
+    ];
+    assetTransactionsOperation.responses = withStandardResponses(
+      "200",
+      "Fixed asset transactions",
+      "#/components/schemas/AnyObject"
+    );
+  }
+
+  const reportBasisParameter = queryParam(
+    "reportBasis",
+    {
+      type: "string",
+      enum: ["AS_POSTED", "INCLUDE_RETRO_CORRECTIONS", "OPERATIONALLY_CORRECTED"],
+    },
+    false,
+    "Track 43 report basis. V1 wires AS_POSTED and INCLUDE_RETRO_CORRECTIONS only on depreciation-by-owner-ou; OPERATIONALLY_CORRECTED or unsupported report/reportBasis combinations return 400."
+  );
+
+  const reportsOperation =
+    paths["/api/v1/fixed-assets/reports/{reportName}"]?.get;
+  if (reportsOperation) {
+    reportsOperation.tags = ["FixedAssets"];
+    reportsOperation.summary =
+      "Run fixed asset report with Track 43 reportBasis validation for owner-report modes";
+    mergeOperationParameters(reportsOperation, [reportBasisParameter]);
+    reportsOperation.responses = withStandardResponses(
+      "200",
+      "Fixed asset report result",
+      "#/components/schemas/AnyObject"
+    );
+  }
+
+  const exportReportOperation =
+    paths["/api/v1/fixed-assets/reports/{reportName}/export"]?.get;
+  if (exportReportOperation) {
+    exportReportOperation.tags = ["FixedAssets"];
+    exportReportOperation.summary =
+      "Export fixed asset report with Track 43 reportBasis validation for owner-report modes";
+    mergeOperationParameters(exportReportOperation, [reportBasisParameter]);
+    exportReportOperation.responses = withStandardResponses(
+      "200",
+      "Fixed asset report export",
+      "#/components/schemas/AnyObject"
+    );
+  }
+
+  const ownershipTransferOperation =
+    paths["/api/v1/fixed-assets/{assetId}/ownership-transfer"]?.post;
+  if (ownershipTransferOperation) {
+    ownershipTransferOperation.tags = ["FixedAssets"];
+    ownershipTransferOperation.summary =
+      "Post a plain ownership transfer when chronology is still safe; otherwise return a structured Track 43 reroute/blocker response";
+    ownershipTransferOperation.parameters = [
+      pathParam("assetId", "Fixed asset identifier"),
+    ];
+    ownershipTransferOperation.requestBody = bodyFromRef(
+      "#/components/schemas/AnyObject",
+      false
+    );
+    ownershipTransferOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/AnyObject",
+        "Ownership transfer posted"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+      "409": jsonResponse(
+        "#/components/schemas/AnyObject",
+        "Ownership transfer blocked or rerouted to retro correction"
+      ),
+    };
+  }
+
+  const retroCorrectionPreviewOperation =
+    paths["/api/v1/fixed-assets/{assetId}/retro-ownership-transfer-correction/preview"]?.post;
+  if (retroCorrectionPreviewOperation) {
+    retroCorrectionPreviewOperation.tags = ["FixedAssets"];
+    retroCorrectionPreviewOperation.operationId =
+      "previewFixedAssetRetroOwnershipTransferCorrection";
+    retroCorrectionPreviewOperation.summary =
+      "Preview retro ownership transfer correction deltas, overlap metadata, and blocker/reroute decision";
+    retroCorrectionPreviewOperation.parameters = [
+      pathParam("assetId", "Fixed asset identifier"),
+    ];
+    retroCorrectionPreviewOperation.requestBody = bodyFromRef(
+      "#/components/schemas/AnyObject"
+    );
+    retroCorrectionPreviewOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/AnyObject",
+        "Retro ownership transfer correction preview with period-by-period delta output"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+      "409": jsonResponse(
+        "#/components/schemas/AnyObject",
+        "Retro ownership transfer correction preview blocked"
+      ),
+    };
+  }
+
+  const retroCorrectionPostOperation =
+    paths["/api/v1/fixed-assets/{assetId}/retro-ownership-transfer-correction"]?.post;
+  if (retroCorrectionPostOperation) {
+    retroCorrectionPostOperation.tags = ["FixedAssets"];
+    retroCorrectionPostOperation.operationId =
+      "postFixedAssetRetroOwnershipTransferCorrection";
+    retroCorrectionPostOperation.summary =
+      "Post a preview-backed retro ownership transfer correction with the current-period true-up, mandatory owner move, and replacement-only overlap handling";
+    retroCorrectionPostOperation.parameters = [
+      pathParam("assetId", "Fixed asset identifier"),
+    ];
+    retroCorrectionPostOperation.requestBody = bodyFromRef(
+      "#/components/schemas/AnyObject"
+    );
+    retroCorrectionPostOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/AnyObject",
+        "Retro ownership transfer correction posted"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+      "409": jsonResponse(
+        "#/components/schemas/AnyObject",
+        "Retro ownership transfer correction blocked, stale, or unable to replace an overlapping correction safely"
+      ),
+    };
+  }
+}
+
 function applyContractsOperationOverrides(specObject) {
   ensureTagPresent(specObject, "Contracts");
   const paths = specObject.paths || {};
@@ -14512,6 +14673,7 @@ const autoDocumentedOperationCount = await appendUndocumentedRoutes(
 applyCariOperationOverrides(spec);
 applyCashOperationOverrides(spec);
 applyInventoryOperationOverrides(spec);
+applyFixedAssetsOperationOverrides(spec);
 applyContractsOperationOverrides(spec);
 applyRevenueRecognitionOperationOverrides(spec);
 applyBankAccountOperationOverrides(spec);

@@ -61,6 +61,30 @@ export async function ownershipTransferAsset(assetId, payload = {}) {
   return response.data;
 }
 
+/**
+ * Preview the Track 43 retro ownership transfer correction workflow for a
+ * fixed asset.
+ */
+export async function previewRetroOwnershipTransferCorrection(assetId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/fixed-assets/${assetId}/retro-ownership-transfer-correction/preview`,
+    payload
+  );
+  return response.data;
+}
+
+/**
+ * Post the Track 43 retro ownership transfer correction workflow for a fixed
+ * asset from a preview-backed payload.
+ */
+export async function postRetroOwnershipTransferCorrection(assetId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/fixed-assets/${assetId}/retro-ownership-transfer-correction`,
+    payload
+  );
+  return response.data;
+}
+
 export async function writeoffAsset(assetId, payload = {}) {
   const response = await api.post(`/api/v1/fixed-assets/${assetId}/writeoff`, payload);
   return response.data;

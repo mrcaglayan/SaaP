@@ -47,6 +47,8 @@ import {
   parseReactivateAssetInput,
   parsePhysicalMoveInput,
   parseOwnershipTransferInput,
+  parseRetroOwnershipTransferCorrectionPreviewInput,
+  parseRetroOwnershipTransferCorrectionPostInput,
   parseWriteoffInput,
   parseSaleCreateDraftArInput,
   parseSaleLinkArInput,
@@ -68,12 +70,16 @@ import {
 import {
   listAssets,
   getAssetDetail,
+  listAssetTransactions,
   listCariEligibleApLinesForFa06,
   createAssetsFromCariDocumentLineFa06,
   activateAsset,
   suspendAsset,
   reactivateAsset,
   physicalMoveAsset,
+  previewRetroOwnershipTransferCorrection,
+  postRetroOwnershipTransferCorrection,
+  evaluateOwnershipTransferChronologySafety,
   ownershipTransferAsset,
   writeoffAsset,
   saleCreateDraftArDocument,
@@ -579,21 +585,8 @@ router.get(
   }),
   asyncHandler(async (req, res) => {
     const { tenantId, assetId } = parseAssetDetailParams(req);
-    const result = await query(
-      `SELECT id, asset_id, legal_entity_id, transaction_type, status,
-              effective_date, posting_date, book_id, fiscal_period_id,
-              currency_code, depreciation_kind,
-              gross_amount_txn, gross_amount_base,
-              accum_depr_amount_txn, accum_depr_amount_base,
-              nbv_amount_txn, nbv_amount_base,
-              reversed_transaction_id, reversal_transaction_id,
-              journal_entry_id, note, created_at
-         FROM fixed_asset_transactions
-        WHERE tenant_id = ? AND asset_id = ?
-        ORDER BY effective_date DESC, id DESC`,
-      [tenantId, assetId]
-    );
-    return res.json({ rows: result.rows, total: result.rows.length });
+    const result = await listAssetTransactions({ tenantId, assetId });
+    return res.json(result);
   })
 );
 
@@ -660,12 +653,60 @@ router.post(
 );
 
 router.post(
+  "/:assetId/retro-ownership-transfer-correction/preview",
+  requirePermission("fixed_assets.transfer", {
+    resolveScope: resolveFixedAssetRouteScope,
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseRetroOwnershipTransferCorrectionPreviewInput(req);
+    const decision = await previewRetroOwnershipTransferCorrection(input);
+    const responseBody = {
+      ...decision,
+      requestId: req.requestId || null,
+    };
+    if (decision.resolutionMode === "BLOCKED") {
+      return res.status(409).json(responseBody);
+    }
+    return res.json(responseBody);
+  })
+);
+
+router.post(
+  "/:assetId/retro-ownership-transfer-correction",
+  requirePermission("fixed_assets.transfer", {
+    resolveScope: resolveFixedAssetRouteScope,
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseRetroOwnershipTransferCorrectionPostInput(req);
+    const result = await postRetroOwnershipTransferCorrection(input);
+    const responseBody = {
+      ...result,
+      requestId: req.requestId || null,
+    };
+    if (result.posted === false) {
+      return res.status(409).json(responseBody);
+    }
+    return res.json(responseBody);
+  })
+);
+
+router.post(
   "/:assetId/ownership-transfer",
   requirePermission("fixed_assets.transfer", {
     resolveScope: resolveFixedAssetRouteScope,
   }),
   asyncHandler(async (req, res) => {
     const input = parseOwnershipTransferInput(req);
+    const chronologyDecision = await evaluateOwnershipTransferChronologySafety(input);
+    if (!chronologyDecision.safe) {
+      return res.status(409).json({
+        message: chronologyDecision.message,
+        reasonCode: chronologyDecision.reasonCode,
+        reroute: chronologyDecision.reroute,
+        details: chronologyDecision.details,
+        requestId: req.requestId || null,
+      });
+    }
     const result = await ownershipTransferAsset(input);
     return res.json(result);
   })

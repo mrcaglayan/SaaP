@@ -18,7 +18,7 @@ import {
 } from "../utils/source-ref-types.js";
 import {
   loadAssetDepreciationSnapshot,
-  loadAssetDepreciationLifecycleHistory,
+  loadCorrectionAwareOwnerTimeline,
   listDepreciationRunAssetSnapshots,
   resolveSupportedFixedAssetFiscalPeriod,
   resolveBookForLegalEntity,
@@ -2387,7 +2387,7 @@ async function buildAssetDepreciationScheduleContext({
   const remainingUsefulLifeMonths = currentPostedScheduleCount > 0
     ? currentRemainingUsefulLifeMonths
     : resolveAssetRemainingUsefulLifeMonths(asset, depreciationMethod);
-  const lifecycleHistory = await loadAssetDepreciationLifecycleHistory({
+  const lifecycleHistory = await loadCorrectionAwareOwnerTimeline({
     tenantId,
     assetId: asset.id,
     queryFn,
@@ -4671,7 +4671,7 @@ export async function postRetroImprovementCurrentPeriodCatchUpTx(tx, {
   }
 
   const depreciationMethod = normalizeUpperText(asset.depreciationMethod);
-  const lifecycleHistory = await loadAssetDepreciationLifecycleHistory({
+  const lifecycleHistory = await loadCorrectionAwareOwnerTimeline({
     tenantId,
     assetId,
     queryFn: tx.query,

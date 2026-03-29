@@ -6,47 +6,38 @@ import {
   getFixedAssetReport,
   exportFixedAssetReport,
 } from "../../api/fixedAssets.js";
-
-// ── Report definitions ───────────────────────────────────────────
+import { formatFixedAssetTransactionDisplayLabel } from "./fixedAssetTransactionDisplay.js";
 
 const REPORT_LIST = [
-  { key: "register",                 i18nKey: "register" },
-  { key: "depreciation-schedule",    i18nKey: "depreciationSchedule" },
-  { key: "additions",                i18nKey: "additions" },
-  { key: "disposals",                i18nKey: "disposals" },
-  { key: "transfers",                i18nKey: "transfers" },
-  { key: "by-owner-ou",              i18nKey: "byOwnerOu" },
-  { key: "by-location-ou",           i18nKey: "byLocationOu" },
-  { key: "by-custodian",             i18nKey: "byCustodian" },
+  { key: "register", i18nKey: "register" },
+  { key: "depreciation-schedule", i18nKey: "depreciationSchedule" },
+  { key: "additions", i18nKey: "additions" },
+  { key: "disposals", i18nKey: "disposals" },
+  { key: "transfers", i18nKey: "transfers" },
+  { key: "by-owner-ou", i18nKey: "byOwnerOu" },
+  { key: "by-location-ou", i18nKey: "byLocationOu" },
+  { key: "by-custodian", i18nKey: "byCustodian" },
   { key: "depreciation-by-owner-ou", i18nKey: "depreciationByOwnerOu" },
-  { key: "rollforward",              i18nKey: "rollforward" },
+  { key: "rollforward", i18nKey: "rollforward" },
 ];
 
-// Reports that use date range filters
 const DATE_RANGE_REPORTS = new Set([
-  "additions", "disposals", "transfers", "rollforward",
+  "additions",
+  "disposals",
+  "transfers",
+  "rollforward",
   "depreciation-by-owner-ou",
 ]);
 
-// Reports that use register-style filters (status, category, OU, custodian)
 const REGISTER_STYLE_REPORTS = new Set([
-  "register", "by-owner-ou", "by-location-ou", "by-custodian",
+  "register",
+  "by-owner-ou",
+  "by-location-ou",
+  "by-custodian",
 ]);
 
-// ── Helpers ──────────────────────────────────────────────────────
-
-function buildFilterParams(filters) {
-  const params = {};
-  if (filters.legalEntityId) params.legalEntityId = filters.legalEntityId;
-  if (filters.dateFrom) params.dateFrom = filters.dateFrom;
-  if (filters.dateTo) params.dateTo = filters.dateTo;
-  if (filters.categoryId) params.categoryId = filters.categoryId;
-  if (filters.status) params.status = filters.status;
-  if (filters.periodKey) params.periodKey = filters.periodKey;
-  return params;
-}
-
-// ── Column configs per report ────────────────────────────────────
+const DEPRECIATION_BY_OWNER_OU_REPORT = "depreciation-by-owner-ou";
+const BY_OWNER_OU_REPORT = "by-owner-ou";
 
 const COLUMN_CONFIGS = {
   register: [
@@ -138,7 +129,22 @@ const COLUMN_CONFIGS = {
   ],
 };
 
-// ── Totals renderers ─────────────────────────────────────────────
+function buildFilterParams(reportName, filters) {
+  const params = {};
+  if (filters.legalEntityId) params.legalEntityId = filters.legalEntityId;
+  if (filters.dateFrom) params.dateFrom = filters.dateFrom;
+  if (filters.dateTo) params.dateTo = filters.dateTo;
+  if (filters.categoryId) params.categoryId = filters.categoryId;
+  if (filters.status) params.status = filters.status;
+  if (filters.periodKey) params.periodKey = filters.periodKey;
+  if (
+    reportName === DEPRECIATION_BY_OWNER_OU_REPORT
+    && filters.reportBasis
+  ) {
+    params.reportBasis = filters.reportBasis;
+  }
+  return params;
+}
 
 function renderTotals(reportKey, totals, rf) {
   if (!totals) return null;
@@ -192,7 +198,7 @@ function renderTotals(reportKey, totals, rf) {
   return (
     <div className="mt-3 flex flex-wrap gap-4">
       {items.map(([label, value], idx) => (
-        <div key={idx} className="rounded-md bg-slate-50 border border-slate-200 px-3 py-2">
+        <div key={idx} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
           <span className="text-xs text-slate-500">{label}</span>
           <span className="ml-2 text-sm font-semibold text-slate-900">{value}</span>
         </div>
@@ -203,8 +209,11 @@ function renderTotals(reportKey, totals, rf) {
 
 function fmt(val) {
   const n = Number(val);
-  if (!Number.isFinite(n)) return "0";
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (!Number.isFinite(n)) return "0.00";
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function fmtCell(value, numeric) {
@@ -214,8 +223,35 @@ function fmtCell(value, numeric) {
   return String(value);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+function formatReportRowCell(row, col) {
+  if (col.key === "transactionType") {
+    return formatFixedAssetTransactionDisplayLabel(
+      row.transactionType,
+      row.sourceRefType || row.source_ref_type,
+      row.displayLabel || row.display_label
+    );
+  }
+  return fmtCell(row[col.key], col.numeric);
+}
 
+function resolveDepreciationReportBasisLabel(value, l) {
+  if (value === "INCLUDE_RETRO_CORRECTIONS") {
+    return l(
+      "Include Retro Corrections",
+      "Retro Duzeltmeleri Dahil Et"
+    );
+  }
+  return l("As Posted", "Kaydedildigi Gibi");
+}
+
+function isUnresolvedOwnerRow(row) {
+  return Boolean(row?.isUnresolved) || String(row?.ownerOuCode || "").trim().toUpperCase() === "UNRESOLVED";
+}
+
+/**
+ * Render fixed-asset reports with the Track 43 owner-report basis controls and
+ * unresolved-attribution warning state without exposing unsupported V1 modes.
+ */
 export default function FixedAssetReportsPage() {
   const { l, t } = useI18n();
   const { hasPermission } = useAuth();
@@ -224,7 +260,6 @@ export default function FixedAssetReportsPage() {
 
   const rf = (key) => t(["fixedAssets", "reports", key]);
 
-  // ── State ──────────────────────────────────────────────────────
   const [selectedReport, setSelectedReport] = useState("");
   const [filters, setFilters] = useState({
     legalEntityId: "",
@@ -233,20 +268,27 @@ export default function FixedAssetReportsPage() {
     categoryId: "",
     status: "",
     periodKey: "",
+    reportBasis: "AS_POSTED",
   });
   const [reportData, setReportData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
 
-  // Sync LE from working context
   const effectiveLegalEntityId = filters.legalEntityId || legalEntity?.id || "";
+  const showDateRange = DATE_RANGE_REPORTS.has(selectedReport);
+  const showRegisterFilters = REGISTER_STYLE_REPORTS.has(selectedReport);
+  const showPeriodKey = selectedReport === DEPRECIATION_BY_OWNER_OU_REPORT;
+  const showDepreciationReportBasis = selectedReport === DEPRECIATION_BY_OWNER_OU_REPORT;
+  const columns = COLUMN_CONFIGS[selectedReport] || [];
+  const rows = reportData?.rows || [];
+  const totals = reportData?.totals || null;
+  const effectiveReportBasis = reportData?.reportBasis || filters.reportBasis || "AS_POSTED";
+  const hasUnresolvedRows = Boolean(reportData?.hasUnresolvedRows);
 
   const setFilter = (key, value) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
   };
-
-  // ── Handlers ───────────────────────────────────────────────────
 
   async function handleRun() {
     if (!selectedReport) return;
@@ -254,7 +296,7 @@ export default function FixedAssetReportsPage() {
     setError("");
     setReportData(null);
     try {
-      const params = buildFilterParams({
+      const params = buildFilterParams(selectedReport, {
         ...filters,
         legalEntityId: effectiveLegalEntityId,
       });
@@ -272,7 +314,7 @@ export default function FixedAssetReportsPage() {
     if (!selectedReport) return;
     setExporting(true);
     try {
-      const params = buildFilterParams({
+      const params = buildFilterParams(selectedReport, {
         ...filters,
         legalEntityId: effectiveLegalEntityId,
       });
@@ -285,7 +327,6 @@ export default function FixedAssetReportsPage() {
     }
   }
 
-  // ── Permission guard ───────────────────────────────────────────
   if (!canRead) {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -296,33 +337,22 @@ export default function FixedAssetReportsPage() {
     );
   }
 
-  // ── Filter visibility ──────────────────────────────────────────
-  const showDateRange = DATE_RANGE_REPORTS.has(selectedReport);
-  const showRegisterFilters = REGISTER_STYLE_REPORTS.has(selectedReport);
-  const showPeriodKey = selectedReport === "depreciation-by-owner-ou";
-
-  const columns = COLUMN_CONFIGS[selectedReport] || [];
-  const rows = reportData?.rows || [];
-  const totals = reportData?.totals || null;
-
   return (
     <div className="space-y-6">
-      {/* Header */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h1 className="text-xl font-semibold text-slate-900">{rf("title")}</h1>
       </section>
 
-      {/* Report selector + filters */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid gap-3 md:grid-cols-4">
-          {/* Report picker */}
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
             {rf("selectReport")}
             <select
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
               value={selectedReport}
               onChange={(e) => {
-                setSelectedReport(e.target.value);
+                const nextReport = e.target.value;
+                setSelectedReport(nextReport);
                 setReportData(null);
                 setError("");
               }}
@@ -336,7 +366,6 @@ export default function FixedAssetReportsPage() {
             </select>
           </label>
 
-          {/* Legal entity */}
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
             {rf("filterLegalEntity")}
             <input
@@ -348,7 +377,6 @@ export default function FixedAssetReportsPage() {
             />
           </label>
 
-          {/* Date range filters */}
           {showDateRange ? (
             <>
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -372,7 +400,6 @@ export default function FixedAssetReportsPage() {
             </>
           ) : null}
 
-          {/* Register-style filters */}
           {showRegisterFilters ? (
             <>
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -403,7 +430,6 @@ export default function FixedAssetReportsPage() {
             </>
           ) : null}
 
-          {/* Period key for depreciation-by-owner-ou */}
           {showPeriodKey ? (
             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
               {rf("filterPeriodKey")}
@@ -416,9 +442,24 @@ export default function FixedAssetReportsPage() {
               />
             </label>
           ) : null}
+
+          {showDepreciationReportBasis ? (
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {l("Report Basis", "Rapor Bazı")}
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={filters.reportBasis}
+                onChange={(e) => setFilter("reportBasis", e.target.value)}
+              >
+                <option value="AS_POSTED">{l("As Posted", "Kaydedildigi Gibi")}</option>
+                <option value="INCLUDE_RETRO_CORRECTIONS">
+                  {l("Include Retro Corrections", "Retro Duzeltmeleri Dahil Et")}
+                </option>
+              </select>
+            </label>
+          ) : null}
         </div>
 
-        {/* Action buttons */}
         <div className="mt-4 flex gap-2">
           <button
             type="button"
@@ -443,10 +484,64 @@ export default function FixedAssetReportsPage() {
         ) : null}
       </section>
 
-      {/* Results */}
       {reportData ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          {/* Totals bar */}
+          {selectedReport === BY_OWNER_OU_REPORT ? (
+            <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">
+                {l("Report Basis", "Rapor Bazı")}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">
+                {l("Current Owner Snapshot", "Guncel Sahip Anlik Gorunumu")}
+              </p>
+              <p className="mt-1 text-xs text-sky-900/90">
+                {l(
+                  "This V1 report groups assets by the current owner on the asset master and does not restate historical owner attribution.",
+                  "Bu V1 raporu demirbas kartindaki guncel sahibe gore gruplar; tarihsel sahip dagilimini yeniden yazmaz."
+                )}
+              </p>
+            </div>
+          ) : null}
+
+          {selectedReport === DEPRECIATION_BY_OWNER_OU_REPORT ? (
+            <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                {l("Report Basis", "Rapor Bazı")}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">
+                {resolveDepreciationReportBasisLabel(effectiveReportBasis, l)}
+              </p>
+              <p className="mt-1 text-xs text-emerald-900/90">
+                {effectiveReportBasis === "INCLUDE_RETRO_CORRECTIONS"
+                  ? l(
+                      "Owner-based depreciation includes posted retro correction true-up reclassifications and suppresses current-owner fallback.",
+                      "Sahip bazli amortisman, kaydedilmis retro duzeltme true-up siniflamalarini dahil eder ve guncel-sahip fallback yolunu kapatir."
+                    )
+                  : l(
+                      "Owner-based depreciation reflects the originally posted attribution only.",
+                      "Sahip bazli amortisman sadece ilk kaydedilen dagilimi gosterir."
+                    )}
+              </p>
+            </div>
+          ) : null}
+
+          {selectedReport === DEPRECIATION_BY_OWNER_OU_REPORT && hasUnresolvedRows ? (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                {l("Unresolved Attribution", "Cozulemeyen Dagilim")}
+              </p>
+              <p className="mt-1 text-sm text-amber-950">
+                {l(
+                  "Some corrected owner-attribution rows could not be assigned deterministically and remain in the explicit UNRESOLVED bucket.",
+                  "Bazi duzeltilmis sahip dagilimi satirlari deterministik olarak atanamadi ve acik UNRESOLVED kovasinda tutuldu."
+                )}
+              </p>
+              <p className="mt-2 text-xs font-mono text-amber-900">
+                txn={fmt(reportData.unresolvedAmountTxn)} / base={fmt(reportData.unresolvedAmountBase)}
+              </p>
+            </div>
+          ) : null}
+
           {totals ? (
             <div className="mb-4">
               <h2 className="text-sm font-semibold text-slate-700">{rf("totalsLabel")}</h2>
@@ -454,7 +549,6 @@ export default function FixedAssetReportsPage() {
             </div>
           ) : null}
 
-          {/* Data table */}
           {rows.length === 0 ? (
             <p className="text-sm text-slate-500">{rf("noResults")}</p>
           ) : (
@@ -475,23 +569,32 @@ export default function FixedAssetReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, idx) => (
-                    <tr
-                      key={idx}
-                      className={idx % 2 === 0 ? "bg-white" : "bg-slate-50"}
-                    >
-                      {columns.map((col) => (
-                        <td
-                          key={col.key}
-                          className={`px-3 py-2 text-slate-700 ${
-                            col.numeric ? "text-right font-mono" : "text-left"
-                          }`}
-                        >
-                          {fmtCell(row[col.key], col.numeric)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {rows.map((row, idx) => {
+                    const unresolvedRow = isUnresolvedOwnerRow(row);
+                    return (
+                      <tr
+                        key={idx}
+                        className={
+                          unresolvedRow
+                            ? "bg-amber-50"
+                            : idx % 2 === 0
+                              ? "bg-white"
+                              : "bg-slate-50"
+                        }
+                      >
+                        {columns.map((col) => (
+                          <td
+                            key={col.key}
+                            className={`px-3 py-2 text-slate-700 ${
+                              col.numeric ? "text-right font-mono" : "text-left"
+                            } ${unresolvedRow ? "font-semibold text-amber-950" : ""}`}
+                          >
+                            {formatReportRowCell(row, col)}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

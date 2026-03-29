@@ -662,6 +662,143 @@ export function parseOwnershipTransferInput(req) {
   };
 }
 
+/**
+ * Parse the Track 43 retro ownership transfer correction preview input.
+ */
+export function parseRetroOwnershipTransferCorrectionPreviewInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  if (
+    body.targetLocationOperatingUnitId != null
+    || body.target_location_operating_unit_id != null
+  ) {
+    throw badRequest(
+      "targetLocationOperatingUnitId is not supported in retro ownership transfer correction preview; submit location changes separately via physical move"
+    );
+  }
+
+  const actualEffectiveDate = normalizeDateOnlyRequired(
+    body.actualEffectiveDate ?? body.actual_effective_date,
+    "actualEffectiveDate"
+  );
+
+  const correctionPostingDate = normalizeDateOnlyRequired(
+    body.correctionPostingDate ?? body.correction_posting_date,
+    "correctionPostingDate"
+  );
+
+  if (actualEffectiveDate > correctionPostingDate) {
+    throw badRequest(
+      `actualEffectiveDate (${actualEffectiveDate}) cannot be after correctionPostingDate (${correctionPostingDate})`
+    );
+  }
+
+  const targetOwnerOperatingUnitId = parsePositiveInt(
+    body.targetOwnerOperatingUnitId ?? body.target_owner_operating_unit_id
+  );
+  if (!targetOwnerOperatingUnitId) {
+    throw badRequest("targetOwnerOperatingUnitId is required");
+  }
+
+  const note = body.note != null ? String(body.note).trim() || null : null;
+  const userId = req.user?.userId || null;
+
+  return {
+    tenantId,
+    assetId,
+    actualEffectiveDate,
+    correctionPostingDate,
+    targetOwnerOperatingUnitId,
+    note,
+    userId,
+  };
+}
+
+/**
+ * Parse the Track 43 retro ownership transfer correction post input.
+ */
+export function parseRetroOwnershipTransferCorrectionPostInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw badRequest("tenantId is required");
+
+  const assetId = parsePositiveInt(req.params?.assetId);
+  if (!assetId) throw badRequest("assetId is required");
+
+  const body = req.body || {};
+
+  if (
+    body.targetLocationOperatingUnitId != null
+    || body.target_location_operating_unit_id != null
+  ) {
+    throw badRequest(
+      "targetLocationOperatingUnitId is not supported in retro ownership transfer correction; submit location changes separately via physical move"
+    );
+  }
+
+  const actualEffectiveDate = normalizeDateOnlyRequired(
+    body.actualEffectiveDate ?? body.actual_effective_date,
+    "actualEffectiveDate"
+  );
+
+  const correctionPostingDate = normalizeDateOnlyRequired(
+    body.correctionPostingDate ?? body.correction_posting_date,
+    "correctionPostingDate"
+  );
+
+  if (actualEffectiveDate > correctionPostingDate) {
+    throw badRequest(
+      `actualEffectiveDate (${actualEffectiveDate}) cannot be after correctionPostingDate (${correctionPostingDate})`
+    );
+  }
+
+  const targetOwnerOperatingUnitId = parsePositiveInt(
+    body.targetOwnerOperatingUnitId ?? body.target_owner_operating_unit_id
+  );
+  if (!targetOwnerOperatingUnitId) {
+    throw badRequest("targetOwnerOperatingUnitId is required");
+  }
+
+  const previewFingerprint = String(
+    body.previewFingerprint ?? body.preview_fingerprint ?? ""
+  ).trim();
+  if (!previewFingerprint) {
+    throw badRequest("previewFingerprint is required");
+  }
+
+  const resolutionMode = normalizeUpperText(
+    body.resolutionMode ?? body.resolution_mode
+  );
+  if (!resolutionMode) {
+    throw badRequest("resolutionMode is required");
+  }
+  if (resolutionMode !== "CURRENT_PERIOD_TRUE_UP_REQUIRED") {
+    throw badRequest(
+      "resolutionMode must be CURRENT_PERIOD_TRUE_UP_REQUIRED"
+    );
+  }
+
+  const note = body.note != null ? String(body.note).trim() || null : null;
+  const userId = req.user?.userId || null;
+
+  return {
+    tenantId,
+    assetId,
+    actualEffectiveDate,
+    correctionPostingDate,
+    targetOwnerOperatingUnitId,
+    previewFingerprint,
+    resolutionMode,
+    note,
+    userId,
+  };
+}
+
 export function parseWriteoffInput(req) {
   const tenantId = resolveTenantId(req);
   if (!tenantId) throw badRequest("tenantId is required");
@@ -1217,17 +1354,29 @@ export function parseRegisterListFilters(req) {
 // Report validators
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Parse fixed-asset report filters, including the Track 43 `reportBasis`
+ * query contract used by basis-aware owner reporting.
+ */
 export function parseReportFilters(req) {
   const tenantId = resolveTenantId(req);
   if (!tenantId) throw badRequest("tenantId is required");
 
-  const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-  const ownerOperatingUnitId = parsePositiveInt(req.query?.ownerOperatingUnitId);
-  const locationOperatingUnitId = parsePositiveInt(req.query?.locationOperatingUnitId);
-  const categoryId = parsePositiveInt(req.query?.categoryId);
-  const custodianId = parsePositiveInt(req.query?.custodianId);
-  const assetId = parsePositiveInt(req.query?.assetId);
-  const fiscalPeriodId = parsePositiveInt(req.query?.fiscalPeriodId);
+  const legalEntityId = parsePositiveInt(
+    req.query?.legalEntityId ?? req.query?.legal_entity_id
+  );
+  const ownerOperatingUnitId = parsePositiveInt(
+    req.query?.ownerOperatingUnitId ?? req.query?.owner_operating_unit_id
+  );
+  const locationOperatingUnitId = parsePositiveInt(
+    req.query?.locationOperatingUnitId ?? req.query?.location_operating_unit_id
+  );
+  const categoryId = parsePositiveInt(req.query?.categoryId ?? req.query?.category_id);
+  const custodianId = parsePositiveInt(req.query?.custodianId ?? req.query?.custodian_id);
+  const assetId = parsePositiveInt(req.query?.assetId ?? req.query?.asset_id);
+  const fiscalPeriodId = parsePositiveInt(
+    req.query?.fiscalPeriodId ?? req.query?.fiscal_period_id
+  );
 
   const status = normalizeUpperText(req.query?.status);
   if (status && !VALID_ASSET_STATUSES.has(status)) {
@@ -1239,12 +1388,30 @@ export function parseReportFilters(req) {
 
   const periodKey = req.query?.periodKey
     ? String(req.query.periodKey).trim() || null
-    : null;
+    : (
+      req.query?.period_key
+        ? String(req.query.period_key).trim() || null
+        : null
+    );
+  const reportBasis = req.query?.reportBasis != null
+    ? String(req.query.reportBasis).trim() || null
+    : (
+      req.query?.report_basis != null
+        ? String(req.query.report_basis).trim() || null
+        : null
+    );
   const departmentCode = req.query?.departmentCode
     ? String(req.query.departmentCode).trim() || null
     : null;
   const costCenterCode = req.query?.costCenterCode
     ? String(req.query.costCenterCode).trim() || null
+    : (
+      req.query?.cost_center_code
+        ? String(req.query.cost_center_code).trim() || null
+        : null
+    );
+  const normalizedReportBasis = reportBasis
+    ? normalizeUpperText(reportBasis)
     : null;
 
   let disposed = undefined;
@@ -1271,6 +1438,7 @@ export function parseReportFilters(req) {
     dateFrom,
     dateTo,
     periodKey,
+    reportBasis: normalizedReportBasis,
     departmentCode,
     costCenterCode,
     disposed,

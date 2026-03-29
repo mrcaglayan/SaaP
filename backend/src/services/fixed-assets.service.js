@@ -7,6 +7,7 @@
  * Later STEP-FA steps add real asset implementations here.
  */
 
+import { createHash } from "node:crypto";
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
@@ -23,6 +24,54 @@ import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
 import { FIXED_ASSET, FIXED_ASSET_TRANSACTION } from "../utils/source-ref-types.js";
 
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_TRANSACTION_TYPE =
+  "RETRO_OWNERSHIP_CORRECTION";
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_POSTED = "POSTED";
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_SUPERSEDED = "SUPERSEDED";
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_RESOLUTION_MODE_CURRENT_PERIOD_TRUE_UP =
+  "CURRENT_PERIOD_TRUE_UP";
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_TRUE_UP =
+  "RETRO_CORRECTION_TRUE_UP";
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_OWNER_MOVE =
+  "RETRO_CORRECTION_OWNER_MOVE";
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_NORMAL_TRANSFER_ALLOWED =
+  "NORMAL_TRANSFER_ALLOWED";
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_CURRENT_PERIOD_TRUE_UP_REQUIRED =
+  "CURRENT_PERIOD_TRUE_UP_REQUIRED";
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_BLOCKED =
+  "BLOCKED";
+
+export const FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES = Object.freeze({
+  PRIOR_FISCAL_YEAR: "PRIOR_FISCAL_YEAR",
+  CORRECTION_POSTING_PERIOD_CLOSED: "CORRECTION_POSTING_PERIOD_CLOSED",
+  DRAFT_DEPRECIATION_RUN_IN_PROGRESS: "DRAFT_DEPRECIATION_RUN_IN_PROGRESS",
+  SELF_BALANCING_ACCOUNTS_NOT_CONFIGURED: "SELF_BALANCING_ACCOUNTS_NOT_CONFIGURED",
+  ASSET_DISPOSED: "ASSET_DISPOSED",
+  LATER_OWNER_CHANGING_EVENT_EXISTS: "LATER_OWNER_CHANGING_EVENT_EXISTS",
+  MISSING_OWNER_ALLOCATION_DETAIL: "MISSING_OWNER_ALLOCATION_DETAIL",
+  UNSUPPORTED_OWNER_ALLOCATION_OPERATING_UNIT:
+    "UNSUPPORTED_OWNER_ALLOCATION_OPERATING_UNIT",
+  STALE_PREVIEW: "STALE_PREVIEW",
+  OVERLAPPING_CORRECTION_REQUIRES_REPLACEMENT:
+    "OVERLAPPING_CORRECTION_REQUIRES_REPLACEMENT",
+  NEGATIVE_CORRECTED_SOURCE_CARRYING_VALUE:
+    "NEGATIVE_CORRECTED_SOURCE_CARRYING_VALUE",
+  ASSET_ACCOUNTING_SETUP_INCOMPLETE: "ASSET_ACCOUNTING_SETUP_INCOMPLETE",
+});
+
+export const FIXED_ASSET_REVERSAL_REASON_CODES = Object.freeze({
+  RETRO_CORRECTION_NOT_INDIVIDUALLY_REVERSIBLE:
+    "RETRO_CORRECTION_NOT_INDIVIDUALLY_REVERSIBLE",
+});
+
+export const OWNERSHIP_TRANSFER_CHRONOLOGY_REASON_CODES = Object.freeze({
+  RETRO_CORRECTION_REQUIRED: "RETRO_CORRECTION_REQUIRED",
+  PERIOD_CLOSED: "PERIOD_CLOSED",
+  LATER_LIFECYCLE_CONFLICT: "LATER_LIFECYCLE_CONFLICT",
+  MIXED_OWNER_LOCATION_REQUIRES_SEPARATE_SUBMISSION:
+    "MIXED_OWNER_LOCATION_REQUIRES_SEPARATE_SUBMISSION",
+});
+
 // ── Local helpers ─────────────────────────────────────────────────
 
 function normalizeUpperText(value) {
@@ -32,6 +81,576 @@ function normalizeUpperText(value) {
 
 function formatDateOnly(date) {
   return date.toISOString().slice(0, 10);
+}
+
+function buildRetroOwnershipTransferCorrectionDecision(base, overrides = {}) {
+  const resolutionMode = overrides.resolutionMode || base.resolutionMode;
+  const chronologyBlockers = Array.isArray(overrides.chronologyBlockers)
+    ? overrides.chronologyBlockers
+    : (Array.isArray(base.chronologyBlockers) ? base.chronologyBlockers : []);
+  const hasImpactedPostedPeriodsOverride = Array.isArray(overrides.impactedPostedPeriods);
+  const impactedPostedPeriods = Array.isArray(overrides.impactedPostedPeriods)
+    ? overrides.impactedPostedPeriods
+    : (Array.isArray(base.impactedPostedPeriods) ? base.impactedPostedPeriods : []);
+  const cumulativeDelta = overrides.cumulativeDelta || base.cumulativeDelta || {
+    amountTxn: 0,
+    amountBase: 0,
+    sourceAmountTxn: 0,
+    sourceAmountBase: 0,
+    targetAmountTxn: 0,
+    targetAmountBase: 0,
+  };
+
+  return {
+    assetId: Number(base.assetId),
+    actualEffectiveDate: base.actualEffectiveDate,
+    correctionPostingDate: base.correctionPostingDate,
+    targetOwnerOperatingUnitId: Number(base.targetOwnerOperatingUnitId),
+    fromOwnerOperatingUnitId: base.fromOwnerOperatingUnitId != null
+      ? Number(base.fromOwnerOperatingUnitId)
+      : null,
+    resolutionMode,
+    reasonCode: overrides.reasonCode ?? base.reasonCode ?? null,
+    message: overrides.message ?? base.message ?? null,
+    chronologyBlockers,
+    impactedPostedPeriods,
+    firstImpactedPeriodKey: overrides.firstImpactedPeriodKey
+      ?? base.firstImpactedPeriodKey
+      ?? (impactedPostedPeriods[0]?.periodKey || null),
+    impactedPostedPeriodCount: overrides.impactedPostedPeriodCount
+      ?? (hasImpactedPostedPeriodsOverride ? impactedPostedPeriods.length : undefined)
+      ?? base.impactedPostedPeriodCount
+      ?? impactedPostedPeriods.length,
+    cumulativeDelta,
+    previewFingerprint: overrides.previewFingerprint ?? base.previewFingerprint ?? null,
+    replacementRequired: Boolean(
+      overrides.replacementRequired ?? base.replacementRequired ?? false
+    ),
+    replacementSupported: Boolean(
+      overrides.replacementSupported ?? base.replacementSupported ?? false
+    ),
+    replacesCorrectionId: overrides.replacesCorrectionId
+      ?? base.replacesCorrectionId
+      ?? null,
+    locationChangeMustBeSeparate: true,
+    mandatoryCurrentPeriodOwnerMoveWillPost:
+      resolutionMode
+        === FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_CURRENT_PERIOD_TRUE_UP_REQUIRED,
+    currentOwnerChanged: true,
+  };
+}
+
+function buildRetroOwnershipTransferCorrectionBlocker(base, {
+  reasonCode,
+  message,
+  blockerDetails = {},
+}) {
+  return buildRetroOwnershipTransferCorrectionDecision(base, {
+    resolutionMode:
+      FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_BLOCKED,
+    reasonCode,
+    message,
+    chronologyBlockers: [
+      {
+        reasonCode,
+        ...blockerDetails,
+      },
+    ],
+  });
+}
+
+function formatFixedAssetTransactionDisplayLabel(transactionType, sourceRefType) {
+  const normalizedTransactionType = normalizeUpperText(transactionType);
+  const normalizedSourceRefType = normalizeUpperText(sourceRefType);
+
+  if (
+    normalizedTransactionType
+    !== FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_TRANSACTION_TYPE
+  ) {
+    return normalizedTransactionType || null;
+  }
+
+  if (
+    normalizedSourceRefType
+    === FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_TRUE_UP
+  ) {
+    return "Retro Ownership Correction - True-up";
+  }
+
+  if (
+    normalizedSourceRefType
+    === FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_OWNER_MOVE
+  ) {
+    return "Retro Ownership Correction - Owner Move";
+  }
+
+  return "Retro Ownership Correction";
+}
+
+function resolveOwnerTimelineInitialOwnerOperatingUnitId(
+  currentOwnerOperatingUnitId,
+  ownershipTransferHistory
+) {
+  if (!ownershipTransferHistory.length) {
+    return currentOwnerOperatingUnitId != null
+      ? Number(currentOwnerOperatingUnitId)
+      : null;
+  }
+
+  const reversedTransferHistory = [...ownershipTransferHistory].sort((left, right) => (
+    compareAssetLifecycleHistoryRows(right, left)
+  ));
+
+  let inferredOwnerOperatingUnitId = currentOwnerOperatingUnitId != null
+    ? Number(currentOwnerOperatingUnitId)
+    : (
+      ownershipTransferHistory.at(-1)?.toOwnerOperatingUnitId
+      ?? ownershipTransferHistory.at(-1)?.fromOwnerOperatingUnitId
+      ?? null
+    );
+
+  for (const transferEvent of reversedTransferHistory) {
+    if (
+      transferEvent.fromOwnerOperatingUnitId == null
+      || transferEvent.toOwnerOperatingUnitId == null
+    ) {
+      throw badRequest(
+        `Ownership transfer transaction ${transferEvent.transactionId} is missing persisted owner-OU detail`
+      );
+    }
+    inferredOwnerOperatingUnitId = Number(transferEvent.fromOwnerOperatingUnitId);
+  }
+
+  return inferredOwnerOperatingUnitId;
+}
+
+async function loadOperatingUnitLookupMap({
+  operatingUnitIds,
+  queryFn = query,
+}) {
+  const normalizedOperatingUnitIds = [...new Set(
+    (operatingUnitIds || [])
+      .map((value) => parsePositiveInt(value))
+      .filter(Boolean)
+  )];
+
+  if (!normalizedOperatingUnitIds.length) {
+    return new Map();
+  }
+
+  const placeholders = normalizedOperatingUnitIds.map(() => "?").join(", ");
+  const result = await queryFn(
+    `SELECT id, code, name
+       FROM operating_units
+      WHERE id IN (${placeholders})`,
+    normalizedOperatingUnitIds
+  );
+
+  return new Map((result.rows || []).map((row) => ([
+    Number(row.id),
+    {
+      id: Number(row.id),
+      code: row.code || null,
+      name: row.name || null,
+    },
+  ])));
+}
+
+function mapRetroCorrectionChildTransactionRow(row) {
+  return {
+    id: Number(row.id),
+    transactionType: normalizeUpperText(row.transaction_type),
+    status: normalizeUpperText(row.status),
+    effectiveDate: row.effective_date ? String(row.effective_date).slice(0, 10) : null,
+    postingDate: row.posting_date ? String(row.posting_date).slice(0, 10) : null,
+    fiscalPeriodId: parsePositiveInt(row.fiscal_period_id),
+    currencyCode: row.currency_code || null,
+    sourceRefType: normalizeUpperText(row.source_ref_type),
+    retroCorrectionId: parsePositiveInt(row.retro_correction_id),
+    displayLabel: formatFixedAssetTransactionDisplayLabel(
+      row.transaction_type,
+      row.source_ref_type
+    ),
+    journalEntryId: parsePositiveInt(row.journal_entry_id),
+    note: row.note || null,
+    grossAmountTxn: row.gross_amount_txn != null ? Number(row.gross_amount_txn) : null,
+    grossAmountBase: row.gross_amount_base != null ? Number(row.gross_amount_base) : null,
+    accumDeprAmountTxn: row.accum_depr_amount_txn != null
+      ? Number(row.accum_depr_amount_txn)
+      : null,
+    accumDeprAmountBase: row.accum_depr_amount_base != null
+      ? Number(row.accum_depr_amount_base)
+      : null,
+    nbvAmountTxn: row.nbv_amount_txn != null ? Number(row.nbv_amount_txn) : null,
+    nbvAmountBase: row.nbv_amount_base != null ? Number(row.nbv_amount_base) : null,
+    reversedTransactionId: parsePositiveInt(row.reversed_transaction_id),
+    reversalTransactionId: parsePositiveInt(row.reversal_transaction_id),
+  };
+}
+
+async function listAssetRetroOwnershipCorrections({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  const correctionHeadersResult = await queryFn(
+    `SELECT correction.id,
+            correction.status,
+            correction.actual_effective_date,
+            correction.correction_posting_date,
+            correction.balance_sheet_transfer_posting_date,
+            correction.resolution_mode,
+            correction.note,
+            correction.posted_by_user_id,
+            correction.replaces_correction_id,
+            correction.replaced_by_correction_id,
+            correction.true_up_transaction_id,
+            correction.true_up_journal_entry_id,
+            correction.owner_move_transaction_id,
+            correction.owner_move_journal_entry_id,
+            fromOu.code AS from_owner_ou_code,
+            fromOu.name AS from_owner_ou_name,
+            toOu.code AS to_owner_ou_code,
+            toOu.name AS to_owner_ou_name,
+            correction.from_owner_operating_unit_id,
+            correction.to_owner_operating_unit_id,
+            replaces.actual_effective_date AS replaces_actual_effective_date,
+            replaces.correction_posting_date AS replaces_correction_posting_date,
+            replacedBy.actual_effective_date AS replaced_by_actual_effective_date,
+            replacedBy.correction_posting_date AS replaced_by_correction_posting_date
+       FROM fixed_asset_retro_transfer_corrections correction
+       LEFT JOIN operating_units fromOu
+         ON fromOu.id = correction.from_owner_operating_unit_id
+       LEFT JOIN operating_units toOu
+         ON toOu.id = correction.to_owner_operating_unit_id
+       LEFT JOIN fixed_asset_retro_transfer_corrections replaces
+         ON replaces.id = correction.replaces_correction_id
+       LEFT JOIN fixed_asset_retro_transfer_corrections replacedBy
+         ON replacedBy.id = correction.replaced_by_correction_id
+      WHERE correction.tenant_id = ?
+        AND correction.asset_id = ?
+      ORDER BY correction.correction_posting_date DESC, correction.id DESC`,
+    [tenantId, assetId]
+  );
+
+  const corrections = (correctionHeadersResult.rows || []).map((row) => ({
+    id: Number(row.id),
+    status: normalizeUpperText(row.status),
+    actualEffectiveDate: row.actual_effective_date
+      ? String(row.actual_effective_date).slice(0, 10)
+      : null,
+    correctionPostingDate: row.correction_posting_date
+      ? String(row.correction_posting_date).slice(0, 10)
+      : null,
+    balanceSheetTransferPostingDate: row.balance_sheet_transfer_posting_date
+      ? String(row.balance_sheet_transfer_posting_date).slice(0, 10)
+      : null,
+    resolutionMode: normalizeUpperText(row.resolution_mode),
+    note: row.note || null,
+    postedByUserId: parsePositiveInt(row.posted_by_user_id),
+    fromOwnerOperatingUnitId: parsePositiveInt(row.from_owner_operating_unit_id),
+    fromOwnerOuCode: row.from_owner_ou_code || null,
+    fromOwnerOuName: row.from_owner_ou_name || null,
+    toOwnerOperatingUnitId: parsePositiveInt(row.to_owner_operating_unit_id),
+    toOwnerOuCode: row.to_owner_ou_code || null,
+    toOwnerOuName: row.to_owner_ou_name || null,
+    trueUpTransactionId: parsePositiveInt(row.true_up_transaction_id),
+    trueUpJournalEntryId: parsePositiveInt(row.true_up_journal_entry_id),
+    ownerMoveTransactionId: parsePositiveInt(row.owner_move_transaction_id),
+    ownerMoveJournalEntryId: parsePositiveInt(row.owner_move_journal_entry_id),
+    replacesCorrectionId: parsePositiveInt(row.replaces_correction_id),
+    replacedByCorrectionId: parsePositiveInt(row.replaced_by_correction_id),
+    replacement: {
+      replacesCorrectionId: parsePositiveInt(row.replaces_correction_id),
+      replacedByCorrectionId: parsePositiveInt(row.replaced_by_correction_id),
+      replacesActualEffectiveDate: row.replaces_actual_effective_date
+        ? String(row.replaces_actual_effective_date).slice(0, 10)
+        : null,
+      replacesCorrectionPostingDate: row.replaces_correction_posting_date
+        ? String(row.replaces_correction_posting_date).slice(0, 10)
+        : null,
+      replacedByActualEffectiveDate: row.replaced_by_actual_effective_date
+        ? String(row.replaced_by_actual_effective_date).slice(0, 10)
+        : null,
+      replacedByCorrectionPostingDate: row.replaced_by_correction_posting_date
+        ? String(row.replaced_by_correction_posting_date).slice(0, 10)
+        : null,
+    },
+    postedTransactionIds: [
+      parsePositiveInt(row.true_up_transaction_id),
+      parsePositiveInt(row.owner_move_transaction_id),
+    ].filter(Boolean),
+    impactedPeriods: [],
+    childTransactions: [],
+    currentOwnerChanged: true,
+  }));
+
+  if (!corrections.length) {
+    return [];
+  }
+
+  const correctionIds = corrections.map((correction) => correction.id);
+  const correctionIdPlaceholders = correctionIds.map(() => "?").join(", ");
+
+  const periodsResult = await queryFn(
+    `SELECT correction_id,
+            period_key,
+            posted_depreciation_run_id,
+            from_owner_operating_unit_id,
+            to_owner_operating_unit_id,
+            source_eligible_days,
+            target_eligible_days,
+            originally_posted_source_amount_txn,
+            originally_posted_source_amount_base,
+            originally_posted_target_amount_txn,
+            originally_posted_target_amount_base,
+            corrected_source_amount_txn,
+            corrected_source_amount_base,
+            corrected_target_amount_txn,
+            corrected_target_amount_base,
+            delta_amount_txn,
+            delta_amount_base
+       FROM fixed_asset_retro_transfer_correction_periods
+      WHERE tenant_id = ?
+        AND correction_id IN (${correctionIdPlaceholders})
+      ORDER BY period_key ASC, id ASC`,
+    [tenantId, ...correctionIds]
+  );
+
+  const childTransactionsResult = await queryFn(
+    `SELECT transactionRow.id,
+            transactionRow.transaction_type,
+            transactionRow.status,
+            transactionRow.effective_date,
+            transactionRow.posting_date,
+            transactionRow.fiscal_period_id,
+            transactionRow.currency_code,
+            transactionRow.source_ref_type,
+            transactionRow.journal_entry_id,
+            transactionRow.note,
+            transactionRow.gross_amount_txn,
+            transactionRow.gross_amount_base,
+            transactionRow.accum_depr_amount_txn,
+            transactionRow.accum_depr_amount_base,
+            transactionRow.nbv_amount_txn,
+            transactionRow.nbv_amount_base,
+            transactionRow.reversed_transaction_id,
+            transactionRow.reversal_transaction_id,
+            correction.id AS retro_correction_id
+       FROM fixed_asset_transactions transactionRow
+       JOIN fixed_asset_retro_transfer_corrections correction
+         ON correction.tenant_id = transactionRow.tenant_id
+        AND (
+          correction.true_up_transaction_id = transactionRow.id
+          OR correction.owner_move_transaction_id = transactionRow.id
+        )
+      WHERE transactionRow.tenant_id = ?
+        AND correction.id IN (${correctionIdPlaceholders})
+      ORDER BY correction.correction_posting_date DESC,
+               correction.id DESC,
+               transactionRow.id ASC`,
+    [tenantId, ...correctionIds]
+  );
+
+  const correctionsById = new Map(corrections.map((correction) => [correction.id, correction]));
+  for (const row of periodsResult.rows || []) {
+    const correction = correctionsById.get(Number(row.correction_id));
+    if (!correction) {
+      continue;
+    }
+    correction.impactedPeriods.push({
+      periodKey: row.period_key || null,
+      postedDepreciationRunId: parsePositiveInt(row.posted_depreciation_run_id),
+      fromOwnerOperatingUnitId: parsePositiveInt(row.from_owner_operating_unit_id),
+      toOwnerOperatingUnitId: parsePositiveInt(row.to_owner_operating_unit_id),
+      sourceEligibleDays: Number(row.source_eligible_days || 0),
+      targetEligibleDays: Number(row.target_eligible_days || 0),
+      originallyPostedSourceAmountTxn: row.originally_posted_source_amount_txn != null
+        ? Number(row.originally_posted_source_amount_txn)
+        : 0,
+      originallyPostedSourceAmountBase: row.originally_posted_source_amount_base != null
+        ? Number(row.originally_posted_source_amount_base)
+        : 0,
+      originallyPostedTargetAmountTxn: row.originally_posted_target_amount_txn != null
+        ? Number(row.originally_posted_target_amount_txn)
+        : 0,
+      originallyPostedTargetAmountBase: row.originally_posted_target_amount_base != null
+        ? Number(row.originally_posted_target_amount_base)
+        : 0,
+      correctedSourceAmountTxn: row.corrected_source_amount_txn != null
+        ? Number(row.corrected_source_amount_txn)
+        : 0,
+      correctedSourceAmountBase: row.corrected_source_amount_base != null
+        ? Number(row.corrected_source_amount_base)
+        : 0,
+      correctedTargetAmountTxn: row.corrected_target_amount_txn != null
+        ? Number(row.corrected_target_amount_txn)
+        : 0,
+      correctedTargetAmountBase: row.corrected_target_amount_base != null
+        ? Number(row.corrected_target_amount_base)
+        : 0,
+      deltaAmountTxn: row.delta_amount_txn != null ? Number(row.delta_amount_txn) : 0,
+      deltaAmountBase: row.delta_amount_base != null ? Number(row.delta_amount_base) : 0,
+    });
+  }
+
+  for (const row of childTransactionsResult.rows || []) {
+    const correction = correctionsById.get(Number(row.retro_correction_id));
+    if (!correction) {
+      continue;
+    }
+    correction.childTransactions.push(mapRetroCorrectionChildTransactionRow(row));
+  }
+
+  for (const correction of corrections) {
+    correction.childTransactions.sort((left, right) => {
+      const leftWeight =
+        left.sourceRefType === FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_TRUE_UP
+          ? 0
+          : 1;
+      const rightWeight =
+        right.sourceRefType === FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_TRUE_UP
+          ? 0
+          : 1;
+      if (leftWeight !== rightWeight) {
+        return leftWeight - rightWeight;
+      }
+      return Number(left.id || 0) - Number(right.id || 0);
+    });
+  }
+
+  return corrections;
+}
+
+async function buildAssetRetroCorrectedOwnerTimeline({
+  asset,
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  const lifecycleHistory = await loadCorrectionAwareOwnerTimeline({
+    tenantId,
+    assetId,
+    queryFn,
+  });
+
+  const ownershipTransferHistory = (lifecycleHistory || [])
+    .filter((row) => (
+      normalizeUpperText(row.transactionType) === "OWNERSHIP_TRANSFER"
+      && row.effectiveDate
+    ))
+    .sort(compareAssetLifecycleHistoryRows);
+
+  const initialOwnerOperatingUnitId = resolveOwnerTimelineInitialOwnerOperatingUnitId(
+    asset.ownerOperatingUnitId,
+    ownershipTransferHistory
+  );
+
+  const operatingUnitLookup = await loadOperatingUnitLookupMap({
+    operatingUnitIds: [
+      asset.ownerOperatingUnitId,
+      initialOwnerOperatingUnitId,
+      ...ownershipTransferHistory.flatMap((row) => [
+        row.fromOwnerOperatingUnitId,
+        row.toOwnerOperatingUnitId,
+      ]),
+    ],
+    queryFn,
+  });
+
+  const rangeStartFallback =
+    asset.acquisitionDate
+    || asset.capitalizationDate
+    || asset.inServiceDate
+    || ownershipTransferHistory[0]?.effectiveDate
+    || null;
+
+  const ranges = [];
+  let currentOwnerOperatingUnitId = initialOwnerOperatingUnitId;
+  let currentFromDate = rangeStartFallback;
+
+  for (const transferEvent of ownershipTransferHistory) {
+    const transferEffectiveDate = String(transferEvent.effectiveDate || "").slice(0, 10);
+    if (!transferEffectiveDate) {
+      continue;
+    }
+
+    const previousOwnerToDate = addDaysToDateText(transferEffectiveDate, -1);
+    if (
+      currentOwnerOperatingUnitId != null
+      && currentFromDate
+      && currentFromDate <= previousOwnerToDate
+    ) {
+      const ownerReference = operatingUnitLookup.get(Number(currentOwnerOperatingUnitId)) || {};
+      ranges.push({
+        ownerOperatingUnitId: Number(currentOwnerOperatingUnitId),
+        ownerOuCode: ownerReference.code || null,
+        ownerOuName: ownerReference.name || null,
+        fromDate: currentFromDate,
+        toDate: previousOwnerToDate,
+        openEnded: false,
+      });
+    }
+
+    currentOwnerOperatingUnitId = parsePositiveInt(
+      transferEvent.toOwnerOperatingUnitId
+    );
+    currentFromDate = transferEffectiveDate;
+  }
+
+  if (currentOwnerOperatingUnitId != null && currentFromDate) {
+    const ownerReference = operatingUnitLookup.get(Number(currentOwnerOperatingUnitId)) || {};
+    const terminalDate = asset.disposalDate
+      ? String(asset.disposalDate).slice(0, 10)
+      : null;
+    ranges.push({
+      ownerOperatingUnitId: Number(currentOwnerOperatingUnitId),
+      ownerOuCode: ownerReference.code || null,
+      ownerOuName: ownerReference.name || null,
+      fromDate: currentFromDate,
+      toDate: terminalDate,
+      openEnded: !terminalDate,
+    });
+  }
+
+  const events = ownershipTransferHistory.map((transferEvent) => {
+    const fromOwnerReference = operatingUnitLookup.get(
+      Number(transferEvent.fromOwnerOperatingUnitId)
+    ) || {};
+    const toOwnerReference = operatingUnitLookup.get(
+      Number(transferEvent.toOwnerOperatingUnitId)
+    ) || {};
+    return {
+      transactionId: Number(transferEvent.transactionId),
+      retroCorrectionId: parsePositiveInt(transferEvent.retroCorrectionId),
+      effectiveDate: String(transferEvent.effectiveDate || "").slice(0, 10) || null,
+      sourceType: transferEvent.retroCorrectionId
+        ? FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_TRANSACTION_TYPE
+        : "OWNERSHIP_TRANSFER",
+      actualEffectiveDate: transferEvent.actualEffectiveDate || null,
+      correctionPostingDate: transferEvent.correctionPostingDate || null,
+      fromOwnerOperatingUnitId: parsePositiveInt(transferEvent.fromOwnerOperatingUnitId),
+      fromOwnerOuCode: fromOwnerReference.code || null,
+      fromOwnerOuName: fromOwnerReference.name || null,
+      toOwnerOperatingUnitId: parsePositiveInt(transferEvent.toOwnerOperatingUnitId),
+      toOwnerOuCode: toOwnerReference.code || null,
+      toOwnerOuName: toOwnerReference.name || null,
+    };
+  });
+
+  const currentOwnerReference = operatingUnitLookup.get(
+    Number(asset.ownerOperatingUnitId)
+  ) || {};
+
+  return {
+    currentOwnerOperatingUnitId: asset.ownerOperatingUnitId != null
+      ? Number(asset.ownerOperatingUnitId)
+      : null,
+    currentOwnerOuCode: currentOwnerReference.code || null,
+    currentOwnerOuName: currentOwnerReference.name || null,
+    ranges,
+    events,
+  };
 }
 
 function parseDateOnlyStrict(dateText, label) {
@@ -309,8 +928,12 @@ function mapAssetRow(row) {
     status: row.status,
     ownerOperatingUnitId: row.owner_operating_unit_id != null
       ? Number(row.owner_operating_unit_id) : null,
+    ownerOperatingUnitCode: row.owner_ou_code || null,
+    ownerOperatingUnitName: row.owner_ou_name || null,
     locationOperatingUnitId: row.location_operating_unit_id != null
       ? Number(row.location_operating_unit_id) : null,
+    locationOperatingUnitCode: row.location_ou_code || null,
+    locationOperatingUnitName: row.location_ou_name || null,
     departmentCode: row.department_code || null,
     costCenterCode: row.cost_center_code || null,
     custodianEmployeeId: row.custodian_employee_id != null
@@ -441,6 +1064,10 @@ export async function listAssets(filters) {
 // Asset detail
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Get fixed-asset detail with Track 43 correction history and the
+ * correction-aware historical owner timeline needed by later UI/report work.
+ */
 export async function getAssetDetail({ tenantId, assetId }) {
   if (!tenantId) throw badRequest("tenantId is required");
   if (!assetId) throw badRequest("assetId is required");
@@ -452,11 +1079,17 @@ export async function getAssetDetail({ tenantId, assetId }) {
             cat.name                  AS category_name,
             cust.display_name         AS custodian_display_name,
             cust.employee_code        AS custodian_employee_code,
+            ownerOu.code              AS owner_ou_code,
+            ownerOu.name              AS owner_ou_name,
+            locationOu.code           AS location_ou_code,
+            locationOu.name           AS location_ou_name,
             dp.code                   AS profile_code,
             dp.name                   AS profile_name
        FROM fixed_assets fa
        LEFT JOIN fixed_asset_categories cat    ON cat.id  = fa.category_id
        LEFT JOIN fixed_asset_custodian_employees cust ON cust.id = fa.custodian_employee_id
+       LEFT JOIN operating_units ownerOu       ON ownerOu.id = fa.owner_operating_unit_id
+       LEFT JOIN operating_units locationOu    ON locationOu.id = fa.location_operating_unit_id
        LEFT JOIN fixed_asset_depreciation_profiles dp ON dp.id = fa.depreciation_profile_id
       WHERE fa.tenant_id = ? AND fa.id = ?
       LIMIT 1`,
@@ -586,6 +1219,29 @@ export async function getAssetDetail({ tenantId, assetId }) {
     skippedDepreciationRow?.skipped_count ?? 0
   );
 
+  const [
+    retroOwnershipCorrectionHistory,
+    retroCorrectedOwnerTimeline,
+  ] = await Promise.all([
+    listAssetRetroOwnershipCorrections({
+      tenantId,
+      assetId,
+    }),
+    buildAssetRetroCorrectedOwnerTimeline({
+      tenantId,
+      assetId,
+      asset: {
+        acquisitionDate: row.acquisition_date || null,
+        capitalizationDate: row.capitalization_date || null,
+        inServiceDate: row.in_service_date || null,
+        disposalDate: row.disposal_date || null,
+        ownerOperatingUnitId: row.owner_operating_unit_id != null
+          ? Number(row.owner_operating_unit_id)
+          : null,
+      },
+    }),
+  ]);
+
   // ── Build detail payload ────────────────────────────────────────
   return {
     // ── Identity ──────────────────────────────────────────────────
@@ -610,8 +1266,12 @@ export async function getAssetDetail({ tenantId, assetId }) {
     // ── Owner / Location / Custodian (separate & independent) ────
     ownerOperatingUnitId: row.owner_operating_unit_id != null
       ? Number(row.owner_operating_unit_id) : null,
+    ownerOperatingUnitCode: row.owner_ou_code || null,
+    ownerOperatingUnitName: row.owner_ou_name || null,
     locationOperatingUnitId: row.location_operating_unit_id != null
       ? Number(row.location_operating_unit_id) : null,
+    locationOperatingUnitCode: row.location_ou_code || null,
+    locationOperatingUnitName: row.location_ou_name || null,
     departmentCode: row.department_code || null,
     costCenterCode: row.cost_center_code || null,
     custodianEmployeeId: row.custodian_employee_id != null
@@ -722,12 +1382,80 @@ export async function getAssetDetail({ tenantId, assetId }) {
     evidenceSummary: {
       totalCount: Number(evidenceRow?.total_count ?? 0),
     },
+    retroOwnershipCorrectionHistory,
+    retroCorrectedOwnerTimeline,
 
     // ── Audit trail ──────────────────────────────────────────────
     createdByUserId: row.created_by_user_id,
     updatedByUserId: row.updated_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * List asset transactions with Track 43 retro-correction linkage metadata
+ * so frontend feeds can label and group the two correction child rows.
+ */
+export async function listAssetTransactions({
+  tenantId,
+  assetId,
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const result = await queryFn(
+    `SELECT transactionRow.id,
+            transactionRow.asset_id,
+            transactionRow.legal_entity_id,
+            transactionRow.transaction_type,
+            transactionRow.status,
+            transactionRow.effective_date,
+            transactionRow.posting_date,
+            transactionRow.book_id,
+            transactionRow.fiscal_period_id,
+            transactionRow.currency_code,
+            transactionRow.depreciation_kind,
+            transactionRow.gross_amount_txn,
+            transactionRow.gross_amount_base,
+            transactionRow.accum_depr_amount_txn,
+            transactionRow.accum_depr_amount_base,
+            transactionRow.nbv_amount_txn,
+            transactionRow.nbv_amount_base,
+            transactionRow.reversed_transaction_id,
+            transactionRow.reversal_transaction_id,
+            transactionRow.journal_entry_id,
+            transactionRow.note,
+            transactionRow.created_at,
+            transactionRow.source_ref_type,
+            correction.id AS retro_correction_id
+       FROM fixed_asset_transactions transactionRow
+       LEFT JOIN fixed_asset_retro_transfer_corrections correction
+         ON correction.tenant_id = transactionRow.tenant_id
+        AND (
+          correction.true_up_transaction_id = transactionRow.id
+          OR correction.owner_move_transaction_id = transactionRow.id
+        )
+      WHERE transactionRow.tenant_id = ?
+        AND transactionRow.asset_id = ?
+      ORDER BY transactionRow.effective_date DESC, transactionRow.id DESC`,
+    [tenantId, assetId]
+  );
+
+  const rows = (result.rows || []).map((row) => ({
+    ...row,
+    sourceRefType: normalizeUpperText(row.source_ref_type),
+    retroCorrectionId: parsePositiveInt(row.retro_correction_id),
+    displayLabel: formatFixedAssetTransactionDisplayLabel(
+      row.transaction_type,
+      row.source_ref_type
+    ),
+  }));
+
+  return {
+    rows,
+    total: rows.length,
   };
 }
 
@@ -882,6 +1610,48 @@ function mapAssetDepreciationLifecycleRow(row) {
   };
 }
 
+function compareAssetLifecycleHistoryRows(left, right) {
+  const leftEffectiveDate = String(left?.effectiveDate || "");
+  const rightEffectiveDate = String(right?.effectiveDate || "");
+  if (leftEffectiveDate < rightEffectiveDate) return -1;
+  if (leftEffectiveDate > rightEffectiveDate) return 1;
+  return Number(left?.transactionId || 0) - Number(right?.transactionId || 0);
+}
+
+function mapRetroOwnershipCorrectionTimelineRow(row) {
+  const retroCorrectionId = Number(row.id);
+  return {
+    transactionId: parsePositiveInt(row.true_up_transaction_id)
+      || parsePositiveInt(row.owner_move_transaction_id)
+      || retroCorrectionId,
+    retroCorrectionId,
+    transactionType: "OWNERSHIP_TRANSFER",
+    status: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_POSTED,
+    effectiveDate: row.actual_effective_date ? String(row.actual_effective_date).slice(0, 10) : null,
+    actualEffectiveDate: row.actual_effective_date
+      ? String(row.actual_effective_date).slice(0, 10)
+      : null,
+    correctionPostingDate: row.correction_posting_date
+      ? String(row.correction_posting_date).slice(0, 10)
+      : null,
+    depreciationKind: null,
+    fromOwnerOperatingUnitId: row.from_owner_operating_unit_id != null
+      ? Number(row.from_owner_operating_unit_id)
+      : null,
+    toOwnerOperatingUnitId: row.to_owner_operating_unit_id != null
+      ? Number(row.to_owner_operating_unit_id)
+      : null,
+    resolutionMode: normalizeUpperText(row.resolution_mode),
+    kind: "OWNERSHIP_TRANSFER",
+  };
+}
+
+/**
+ * Raw fixed-asset lifecycle reader backed directly by posted transactions.
+ *
+ * Owner-chronology consumers that must account for Track 43 retro
+ * ownership corrections should prefer `loadCorrectionAwareOwnerTimeline(...)`.
+ */
 export async function loadAssetDepreciationLifecycleHistory({
   tenantId,
   assetId,
@@ -917,6 +1687,97 @@ export async function loadAssetDepreciationLifecycleHistory({
   );
 
   return (result.rows || []).map(mapAssetDepreciationLifecycleRow);
+}
+
+/**
+ * Load active posted retro ownership corrections for a single asset.
+ */
+export async function listPostedRetroOwnershipTransferCorrections({
+  tenantId,
+  assetId,
+  excludeCorrectionIds = [],
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const normalizedExcludedCorrectionIds = Array.from(
+    new Set(
+      (Array.isArray(excludeCorrectionIds) ? excludeCorrectionIds : [])
+        .map((value) => parsePositiveInt(value))
+        .filter(Boolean)
+    )
+  );
+  const excludedSql = normalizedExcludedCorrectionIds.length > 0
+    ? `AND id NOT IN (${normalizedExcludedCorrectionIds.map(() => "?").join(", ")})`
+    : "";
+
+  const result = await queryFn(
+    `SELECT id,
+            actual_effective_date,
+            correction_posting_date,
+            from_owner_operating_unit_id,
+            to_owner_operating_unit_id,
+            resolution_mode,
+            true_up_transaction_id,
+            owner_move_transaction_id
+       FROM fixed_asset_retro_transfer_corrections
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = ?
+        ${excludedSql}
+      ORDER BY actual_effective_date ASC, id ASC`,
+    [
+      tenantId,
+      assetId,
+      FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_POSTED,
+      ...normalizedExcludedCorrectionIds,
+    ]
+  );
+
+  return (result.rows || []).map(mapRetroOwnershipCorrectionTimelineRow);
+}
+
+/**
+ * Merge posted retro ownership corrections into the owner timeline as
+ * synthetic ownership-transfer events at actualEffectiveDate.
+ */
+export async function loadCorrectionAwareOwnerTimeline({
+  tenantId,
+  assetId,
+  excludeRetroCorrectionIds = [],
+  queryFn = query,
+}) {
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const [rawLifecycleHistory, retroCorrections] = await Promise.all([
+    loadAssetDepreciationLifecycleHistory({
+      tenantId,
+      assetId,
+      queryFn,
+    }),
+    listPostedRetroOwnershipTransferCorrections({
+      tenantId,
+      assetId,
+      excludeCorrectionIds: excludeRetroCorrectionIds,
+      queryFn,
+    }),
+  ]);
+
+  // Current-period retro correction transactions are drillback lineage only;
+  // owner chronology must come from the persisted correction header.
+  const filteredRawLifecycleHistory = (rawLifecycleHistory || []).filter((row) => (
+    normalizeUpperText(row.transactionType)
+      !== FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_TRANSACTION_TYPE
+  ));
+
+  if (!retroCorrections.length) {
+    return filteredRawLifecycleHistory;
+  }
+
+  return [...filteredRawLifecycleHistory, ...retroCorrections]
+    .sort(compareAssetLifecycleHistoryRows);
 }
 
 const FA06_REQUIRED_DOCUMENT_DIRECTION = "AP";
@@ -2382,6 +3243,18 @@ async function ensurePeriodOpen(bookId, fiscalPeriodId, queryFn = query) {
   }
 }
 
+async function loadPeriodPostingStatus(bookId, fiscalPeriodId, queryFn = query) {
+  const result = await queryFn(
+    `SELECT status
+       FROM period_statuses
+      WHERE book_id = ?
+        AND fiscal_period_id = ?
+      LIMIT 1`,
+    [bookId, fiscalPeriodId]
+  );
+  return normalizeUpperText(result.rows?.[0]?.status || "OPEN");
+}
+
 export async function ensurePeriodOpenForFixedAssets(
   bookId,
   fiscalPeriodId,
@@ -2627,6 +3500,19 @@ const FIXED_ASSET_IMPROVEMENT_REVERSAL_REASON_CODES = Object.freeze({
 
 function buildFixedAssetImprovementReversalError(message, details = null) {
   return badRequest(message, details);
+}
+
+function buildFixedAssetRetroCorrectionNonReversibleError(target) {
+  const err = badRequest(
+    "Retro corrections cannot be reversed individually. Use the retro correction replacement workflow instead.",
+    {
+      transactionId: Number(target?.id || 0) || null,
+      transactionType: normalizeUpperText(target?.transactionType) || null,
+    }
+  );
+  err.code =
+    FIXED_ASSET_REVERSAL_REASON_CODES.RETRO_CORRECTION_NOT_INDIVIDUALLY_REVERSIBLE;
+  return err;
 }
 
 function isLaterFixedAssetTransaction(candidate, target) {
@@ -3068,6 +3954,10 @@ function assertSupportedFixedAssetReversalTarget(target) {
       `Only POSTED non-run fixed-asset transactions can be reversed ` +
       `(transactionId=${target.id}, status=${target.status})`
     );
+  }
+
+  if (target.transactionType === FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_TRANSACTION_TYPE) {
+    throw buildFixedAssetRetroCorrectionNonReversibleError(target);
   }
 
   if (!NON_RUN_REVERSIBLE_TRANSACTION_TYPES.has(target.transactionType)) {
@@ -3675,7 +4565,7 @@ async function restoreAssetStateAfterFixedAssetReversalTx(tx, {
     );
 
     if (latestActiveTransaction) {
-      const lifecycleHistory = await loadAssetDepreciationLifecycleHistory({
+      const lifecycleHistory = await loadCorrectionAwareOwnerTimeline({
         tenantId: target.tenantId,
         assetId: target.assetId,
         queryFn: tx.query,
@@ -4886,10 +5776,12 @@ async function loadPostedLifecycleTransactionsForAsset({
   tenantId,
   assetId,
   queryFn = query,
+  forUpdate = true,
 }) {
   if (!tenantId) throw badRequest("tenantId is required");
   if (!assetId) throw badRequest("assetId is required");
 
+  const lockClause = forUpdate ? " FOR UPDATE" : "";
   const result = await queryFn(
     `SELECT fat.id,
             fat.transaction_type,
@@ -4908,7 +5800,7 @@ async function loadPostedLifecycleTransactionsForAsset({
              AND rev.status = 'POSTED'
         )
       ORDER BY fat.effective_date ASC, fat.id ASC
-      FOR UPDATE`,
+      ${lockClause}`,
     [tenantId, assetId]
   );
 
@@ -6290,6 +7182,14 @@ function buildOwnershipTransferJournalNo(assetId) {
   return `FA-TXN-XFER-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
 }
 
+function buildRetroOwnershipTransferCorrectionTrueUpJournalNo(assetId) {
+  return `FA-TXN-ROT-TRU-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
+}
+
+function buildRetroOwnershipTransferCorrectionOwnerMoveJournalNo(assetId) {
+  return `FA-TXN-ROT-MOV-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
+}
+
 function roundTransferAmount(value) {
   return Math.round(Number(value || 0) * 10000) / 10000;
 }
@@ -6324,6 +7224,860 @@ export async function resolveCurrentAssetNbv(tenantId, assetId, queryFn) {
   };
 }
 
+async function loadRetroOwnershipTransferCorrectionAssetSnapshot({
+  tenantId,
+  assetId,
+  queryFn = query,
+  forUpdate = false,
+}) {
+  const result = await queryFn(
+    `SELECT fa.id AS id,
+            fa.tenant_id,
+            fa.legal_entity_id,
+            fa.status,
+            fa.asset_no,
+            fa.category_id,
+            fa.owner_operating_unit_id,
+            fa.location_operating_unit_id,
+            fa.acquisition_date,
+            fa.capitalization_date,
+            fa.in_service_date,
+            fa.currency_code,
+            fa.original_cost_txn,
+            fa.original_cost_base,
+            COALESCE(fa.asset_account_id, cat.default_asset_account_id) AS asset_account_id,
+            COALESCE(fa.accum_depr_account_id, cat.default_accum_depr_account_id) AS accum_depr_account_id,
+            COALESCE(fa.depr_expense_account_id, cat.default_depr_expense_account_id) AS depr_expense_account_id
+       FROM fixed_assets fa
+       LEFT JOIN fixed_asset_categories cat
+         ON cat.id = fa.category_id
+      WHERE fa.tenant_id = ?
+        AND fa.id = ?
+      LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+    [tenantId, assetId]
+  );
+
+  return result.rows?.[0] || null;
+}
+
+async function loadRetroOwnershipTransferCorrectionPostedDepreciationShell({
+  tenantId,
+  assetId,
+  fromPeriodKey,
+  throughPeriodKey,
+  queryFn = query,
+}) {
+  if (!fromPeriodKey) {
+    return {
+      lines: [],
+      impactedPostedPeriods: [],
+      missingOwnerAllocationBlocker: null,
+    };
+  }
+
+  const result = await queryFn(
+    `SELECT rl.id AS run_line_id,
+            rl.run_id,
+            rl.period_key,
+            rl.posted_transaction_id,
+            fat.depreciation_kind,
+            EXISTS (
+              SELECT 1
+                FROM fixed_asset_depreciation_run_line_allocations alloc
+               WHERE alloc.run_line_id = rl.id
+                 AND alloc.allocation_type = 'OWNER_OU'
+            ) AS has_owner_ou_allocation
+       FROM fixed_asset_depreciation_run_lines rl
+       JOIN fixed_asset_depreciation_runs run
+         ON run.id = rl.run_id
+        AND run.tenant_id = rl.tenant_id
+       JOIN fixed_asset_transactions fat
+         ON fat.id = rl.posted_transaction_id
+        AND fat.tenant_id = rl.tenant_id
+      WHERE rl.tenant_id = ?
+        AND rl.asset_id = ?
+        AND rl.status = 'POSTED'
+        AND run.status = 'POSTED'
+        AND fat.status = 'POSTED'
+        AND fat.transaction_type = 'DEPRECIATION'
+        AND fat.depreciation_kind IN ('RUN', 'CATCH_UP')
+        AND fat.reversal_transaction_id IS NULL
+        AND rl.period_key >= ?
+        AND (? IS NULL OR rl.period_key <= ?)
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY rl.period_key ASC, rl.run_id ASC, rl.id ASC`,
+    [
+      tenantId,
+      assetId,
+      fromPeriodKey,
+      throughPeriodKey || null,
+      throughPeriodKey || null,
+    ]
+  );
+
+  const lines = (result.rows || []).map((row) => ({
+    runLineId: Number(row.run_line_id),
+    runId: Number(row.run_id),
+    periodKey: row.period_key || null,
+    postedTransactionId: Number(row.posted_transaction_id),
+    depreciationKind: normalizeUpperText(row.depreciation_kind),
+    hasOwnerOuAllocation:
+      row.has_owner_ou_allocation === 1
+      || row.has_owner_ou_allocation === true
+      || row.has_owner_ou_allocation === "1",
+  }));
+
+  const impactedPostedPeriods = [...new Set(
+    lines.map((row) => row.periodKey).filter(Boolean)
+  )].map((periodKey) => ({ periodKey }));
+
+  return {
+    lines,
+    impactedPostedPeriods,
+    missingOwnerAllocationBlocker:
+      lines.find((row) => !row.hasOwnerOuAllocation) || null,
+  };
+}
+
+async function loadRetroOwnershipTransferCorrectionPostedDepreciationAllocations({
+  tenantId,
+  runLineIds,
+  queryFn = query,
+}) {
+  const normalizedRunLineIds = Array.from(
+    new Set((runLineIds || []).map((value) => Number(value)).filter(Boolean))
+  );
+  if (!normalizedRunLineIds.length) {
+    return new Map();
+  }
+
+  const placeholders = normalizedRunLineIds.map(() => "?").join(", ");
+  const result = await queryFn(
+    `SELECT alloc.run_line_id,
+            alloc.allocation_type,
+            alloc.operating_unit_id,
+            alloc.from_date,
+            alloc.to_date,
+            alloc.eligible_days,
+            alloc.planned_amount_txn,
+            alloc.planned_amount_base
+       FROM fixed_asset_depreciation_run_line_allocations alloc
+      WHERE alloc.tenant_id = ?
+        AND alloc.run_line_id IN (${placeholders})
+      ORDER BY alloc.run_line_id ASC, alloc.from_date ASC, alloc.id ASC`,
+    [tenantId, ...normalizedRunLineIds]
+  );
+
+  const allocationsByRunLineId = new Map();
+  for (const row of result.rows || []) {
+    const runLineId = Number(row.run_line_id || 0);
+    if (!runLineId) {
+      continue;
+    }
+    const existing = allocationsByRunLineId.get(runLineId) || [];
+    existing.push({
+      allocationType: row.allocation_type || null,
+      operatingUnitId: row.operating_unit_id != null ? Number(row.operating_unit_id) : null,
+      fromDate: row.from_date ? String(row.from_date).slice(0, 10) : null,
+      toDate: row.to_date ? String(row.to_date).slice(0, 10) : null,
+      eligibleDays: Number(row.eligible_days || 0),
+      plannedAmountTxn: roundTransferAmount(row.planned_amount_txn || 0),
+      plannedAmountBase: roundTransferAmount(row.planned_amount_base || 0),
+    });
+    allocationsByRunLineId.set(runLineId, existing);
+  }
+
+  return allocationsByRunLineId;
+}
+
+function comparePeriodKeys(left, right) {
+  const normalizedLeft = String(left || "").trim();
+  const normalizedRight = String(right || "").trim();
+  if (!normalizedLeft && !normalizedRight) return 0;
+  if (!normalizedLeft) return -1;
+  if (!normalizedRight) return 1;
+  if (normalizedLeft < normalizedRight) return -1;
+  if (normalizedLeft > normalizedRight) return 1;
+  return 0;
+}
+
+function countRetroOwnershipTransferCorrectionOverlapDays(
+  segmentStartDateText,
+  segmentEndDateText,
+  rangeStartDateText,
+  rangeEndDateText
+) {
+  if (!segmentStartDateText || !segmentEndDateText || !rangeStartDateText || !rangeEndDateText) {
+    return 0;
+  }
+
+  const startDate = parseDateOnlyStrict(segmentStartDateText, "allocation.fromDate");
+  const endDate = parseDateOnlyStrict(segmentEndDateText, "allocation.toDate");
+  const rangeStartDate = parseDateOnlyStrict(rangeStartDateText, "rangeStartDate");
+  const rangeEndDate = parseDateOnlyStrict(rangeEndDateText, "rangeEndDate");
+  const overlapStart = startDate.getTime() > rangeStartDate.getTime() ? startDate : rangeStartDate;
+  const overlapEnd = endDate.getTime() < rangeEndDate.getTime() ? endDate : rangeEndDate;
+  if (overlapStart.getTime() > overlapEnd.getTime()) {
+    return 0;
+  }
+  return countDaysInclusiveUtc(overlapStart, overlapEnd);
+}
+
+function splitRetroOwnershipTransferCorrectionAllocationSegment(
+  allocation,
+  actualEffectiveDate,
+  sourceOwnerOperatingUnitId,
+  targetOwnerOperatingUnitId
+) {
+  if (
+    normalizeUpperText(allocation?.allocationType) !== "OWNER_OU"
+    || !allocation?.fromDate
+    || !allocation?.toDate
+    || Number(allocation?.eligibleDays || 0) <= 0
+  ) {
+    return [];
+  }
+
+  const segmentStartDate = allocation.fromDate;
+  const segmentEndDate = allocation.toDate;
+  const totalEligibleDays = Number(allocation.eligibleDays || 0);
+  const sourceRangeEndDate = addDaysToDateText(actualEffectiveDate, -1);
+  const sourceEligibleDays = actualEffectiveDate <= segmentStartDate
+    ? 0
+    : countRetroOwnershipTransferCorrectionOverlapDays(
+      segmentStartDate,
+      segmentEndDate,
+      segmentStartDate,
+      sourceRangeEndDate
+    );
+  const targetEligibleDays = Math.max(totalEligibleDays - sourceEligibleDays, 0);
+
+  if (sourceEligibleDays <= 0) {
+    return [{
+      allocationType: "OWNER_OU",
+      operatingUnitId: Number(targetOwnerOperatingUnitId),
+      fromDate: segmentStartDate,
+      toDate: segmentEndDate,
+      eligibleDays: totalEligibleDays,
+      plannedAmountTxn: roundTransferAmount(allocation.plannedAmountTxn || 0),
+      plannedAmountBase: roundTransferAmount(allocation.plannedAmountBase || 0),
+    }];
+  }
+
+  if (targetEligibleDays <= 0) {
+    return [{
+      allocationType: "OWNER_OU",
+      operatingUnitId: Number(sourceOwnerOperatingUnitId),
+      fromDate: segmentStartDate,
+      toDate: segmentEndDate,
+      eligibleDays: totalEligibleDays,
+      plannedAmountTxn: roundTransferAmount(allocation.plannedAmountTxn || 0),
+      plannedAmountBase: roundTransferAmount(allocation.plannedAmountBase || 0),
+    }];
+  }
+
+  const sourceAmountTxn = roundTransferAmount(
+    Number(allocation.plannedAmountTxn || 0) * (sourceEligibleDays / totalEligibleDays)
+  );
+  const sourceAmountBase = roundTransferAmount(
+    Number(allocation.plannedAmountBase || 0) * (sourceEligibleDays / totalEligibleDays)
+  );
+  const targetAmountTxn = roundTransferAmount(
+    Number(allocation.plannedAmountTxn || 0) - sourceAmountTxn
+  );
+  const targetAmountBase = roundTransferAmount(
+    Number(allocation.plannedAmountBase || 0) - sourceAmountBase
+  );
+
+  return [
+    {
+      allocationType: "OWNER_OU",
+      operatingUnitId: Number(sourceOwnerOperatingUnitId),
+      fromDate: segmentStartDate,
+      toDate: sourceRangeEndDate,
+      eligibleDays: sourceEligibleDays,
+      plannedAmountTxn: sourceAmountTxn,
+      plannedAmountBase: sourceAmountBase,
+    },
+    {
+      allocationType: "OWNER_OU",
+      operatingUnitId: Number(targetOwnerOperatingUnitId),
+      fromDate: actualEffectiveDate,
+      toDate: segmentEndDate,
+      eligibleDays: targetEligibleDays,
+      plannedAmountTxn: targetAmountTxn,
+      plannedAmountBase: targetAmountBase,
+    },
+  ];
+}
+
+function aggregateRetroOwnershipTransferCorrectionAmounts(allocations) {
+  let totalAmountTxn = 0;
+  let totalAmountBase = 0;
+  let totalEligibleDays = 0;
+
+  for (const allocation of allocations || []) {
+    totalAmountTxn = roundTransferAmount(
+      totalAmountTxn + Number(allocation?.plannedAmountTxn || 0)
+    );
+    totalAmountBase = roundTransferAmount(
+      totalAmountBase + Number(allocation?.plannedAmountBase || 0)
+    );
+    totalEligibleDays += Number(allocation?.eligibleDays || 0);
+  }
+
+  return {
+    totalAmountTxn,
+    totalAmountBase,
+    totalEligibleDays,
+  };
+}
+
+function buildRetroOwnershipTransferCorrectionImpactedPeriods({
+  postedDepreciationLines,
+  actualEffectiveDate,
+  fromOwnerOperatingUnitId,
+  targetOwnerOperatingUnitId,
+}) {
+  const periodsByKey = new Map();
+  let unsupportedOwnerAllocationBlocker = null;
+
+  for (const line of postedDepreciationLines || []) {
+    const ownerAllocations = (line.allocations || []).filter((allocation) => (
+      normalizeUpperText(allocation?.allocationType) === "OWNER_OU"
+        && Number(allocation?.eligibleDays || 0) > 0
+    ));
+    if (!ownerAllocations.length) {
+      continue;
+    }
+
+    const unexpectedOwnerAllocation = ownerAllocations.find((allocation) => (
+      allocation.operatingUnitId != null
+      && Number(allocation.operatingUnitId) !== Number(fromOwnerOperatingUnitId)
+      && Number(allocation.operatingUnitId) !== Number(targetOwnerOperatingUnitId)
+    ));
+    if (unexpectedOwnerAllocation) {
+      unsupportedOwnerAllocationBlocker = {
+        runId: Number(line.runId || 0) || null,
+        runLineId: Number(line.runLineId || 0) || null,
+        postedTransactionId: Number(line.postedTransactionId || 0) || null,
+        periodKey: line.periodKey || null,
+        operatingUnitId: Number(unexpectedOwnerAllocation.operatingUnitId || 0) || null,
+      };
+      break;
+    }
+
+    const correctedAllocations = ownerAllocations.flatMap((allocation) => (
+      splitRetroOwnershipTransferCorrectionAllocationSegment(
+        allocation,
+        actualEffectiveDate,
+        fromOwnerOperatingUnitId,
+        targetOwnerOperatingUnitId
+      )
+    ));
+
+    const bucket = periodsByKey.get(line.periodKey) || {
+      periodKey: line.periodKey,
+      sourceOwnerOperatingUnitId: Number(fromOwnerOperatingUnitId),
+      targetOwnerOperatingUnitId: Number(targetOwnerOperatingUnitId),
+      runIds: new Set(),
+      runLineIds: new Set(),
+      postedTransactionIds: new Set(),
+      depreciationKinds: new Set(),
+      actualSourceAmountTxn: 0,
+      actualSourceAmountBase: 0,
+      actualTargetAmountTxn: 0,
+      actualTargetAmountBase: 0,
+      correctedSourceAmountTxn: 0,
+      correctedSourceAmountBase: 0,
+      correctedTargetAmountTxn: 0,
+      correctedTargetAmountBase: 0,
+      actualSourceEligibleDays: 0,
+      actualTargetEligibleDays: 0,
+      correctedSourceEligibleDays: 0,
+      correctedTargetEligibleDays: 0,
+      totalPostedAmountTxn: 0,
+      totalPostedAmountBase: 0,
+    };
+    bucket.runIds.add(Number(line.runId));
+    bucket.runLineIds.add(Number(line.runLineId));
+    bucket.postedTransactionIds.add(Number(line.postedTransactionId));
+    if (line.depreciationKind) {
+      bucket.depreciationKinds.add(String(line.depreciationKind));
+    }
+
+    const actualSourceTotals = aggregateRetroOwnershipTransferCorrectionAmounts(
+      ownerAllocations.filter((allocation) => (
+        Number(allocation.operatingUnitId) === Number(fromOwnerOperatingUnitId)
+      ))
+    );
+    const actualTargetTotals = aggregateRetroOwnershipTransferCorrectionAmounts(
+      ownerAllocations.filter((allocation) => (
+        Number(allocation.operatingUnitId) === Number(targetOwnerOperatingUnitId)
+      ))
+    );
+    const correctedSourceTotals = aggregateRetroOwnershipTransferCorrectionAmounts(
+      correctedAllocations.filter((allocation) => (
+        Number(allocation.operatingUnitId) === Number(fromOwnerOperatingUnitId)
+      ))
+    );
+    const correctedTargetTotals = aggregateRetroOwnershipTransferCorrectionAmounts(
+      correctedAllocations.filter((allocation) => (
+        Number(allocation.operatingUnitId) === Number(targetOwnerOperatingUnitId)
+      ))
+    );
+
+    bucket.actualSourceAmountTxn = roundTransferAmount(
+      bucket.actualSourceAmountTxn + actualSourceTotals.totalAmountTxn
+    );
+    bucket.actualSourceAmountBase = roundTransferAmount(
+      bucket.actualSourceAmountBase + actualSourceTotals.totalAmountBase
+    );
+    bucket.actualTargetAmountTxn = roundTransferAmount(
+      bucket.actualTargetAmountTxn + actualTargetTotals.totalAmountTxn
+    );
+    bucket.actualTargetAmountBase = roundTransferAmount(
+      bucket.actualTargetAmountBase + actualTargetTotals.totalAmountBase
+    );
+    bucket.correctedSourceAmountTxn = roundTransferAmount(
+      bucket.correctedSourceAmountTxn + correctedSourceTotals.totalAmountTxn
+    );
+    bucket.correctedSourceAmountBase = roundTransferAmount(
+      bucket.correctedSourceAmountBase + correctedSourceTotals.totalAmountBase
+    );
+    bucket.correctedTargetAmountTxn = roundTransferAmount(
+      bucket.correctedTargetAmountTxn + correctedTargetTotals.totalAmountTxn
+    );
+    bucket.correctedTargetAmountBase = roundTransferAmount(
+      bucket.correctedTargetAmountBase + correctedTargetTotals.totalAmountBase
+    );
+    bucket.actualSourceEligibleDays += actualSourceTotals.totalEligibleDays;
+    bucket.actualTargetEligibleDays += actualTargetTotals.totalEligibleDays;
+    bucket.correctedSourceEligibleDays += correctedSourceTotals.totalEligibleDays;
+    bucket.correctedTargetEligibleDays += correctedTargetTotals.totalEligibleDays;
+    bucket.totalPostedAmountTxn = roundTransferAmount(
+      bucket.totalPostedAmountTxn + actualSourceTotals.totalAmountTxn + actualTargetTotals.totalAmountTxn
+    );
+    bucket.totalPostedAmountBase = roundTransferAmount(
+      bucket.totalPostedAmountBase + actualSourceTotals.totalAmountBase + actualTargetTotals.totalAmountBase
+    );
+
+    periodsByKey.set(line.periodKey, bucket);
+  }
+
+  if (unsupportedOwnerAllocationBlocker) {
+    return {
+      impactedPostedPeriods: [],
+      unsupportedOwnerAllocationBlocker,
+    };
+  }
+
+  return {
+    impactedPostedPeriods: [...periodsByKey.values()]
+      .sort((left, right) => comparePeriodKeys(left.periodKey, right.periodKey))
+      .map((bucket) => {
+      const sourceDeltaAmountTxn = roundTransferAmount(
+        bucket.correctedSourceAmountTxn - bucket.actualSourceAmountTxn
+      );
+      const sourceDeltaAmountBase = roundTransferAmount(
+        bucket.correctedSourceAmountBase - bucket.actualSourceAmountBase
+      );
+      const targetDeltaAmountTxn = roundTransferAmount(
+        bucket.correctedTargetAmountTxn - bucket.actualTargetAmountTxn
+      );
+      const targetDeltaAmountBase = roundTransferAmount(
+        bucket.correctedTargetAmountBase - bucket.actualTargetAmountBase
+      );
+
+      return {
+        periodKey: bucket.periodKey,
+        sourceOwnerOperatingUnitId: bucket.sourceOwnerOperatingUnitId,
+        targetOwnerOperatingUnitId: bucket.targetOwnerOperatingUnitId,
+        runIds: [...bucket.runIds.values()],
+        runLineIds: [...bucket.runLineIds.values()],
+        postedTransactionIds: [...bucket.postedTransactionIds.values()],
+        depreciationKinds: [...bucket.depreciationKinds.values()].sort(),
+        totalPostedAmountTxn: bucket.totalPostedAmountTxn,
+        totalPostedAmountBase: bucket.totalPostedAmountBase,
+        eligibleDaySplit: {
+          actualSourceEligibleDays: bucket.actualSourceEligibleDays,
+          actualTargetEligibleDays: bucket.actualTargetEligibleDays,
+          correctedSourceEligibleDays: bucket.correctedSourceEligibleDays,
+          correctedTargetEligibleDays: bucket.correctedTargetEligibleDays,
+        },
+        originallyPosted: {
+          sourceAmountTxn: bucket.actualSourceAmountTxn,
+          sourceAmountBase: bucket.actualSourceAmountBase,
+          targetAmountTxn: bucket.actualTargetAmountTxn,
+          targetAmountBase: bucket.actualTargetAmountBase,
+        },
+        corrected: {
+          sourceAmountTxn: bucket.correctedSourceAmountTxn,
+          sourceAmountBase: bucket.correctedSourceAmountBase,
+          targetAmountTxn: bucket.correctedTargetAmountTxn,
+          targetAmountBase: bucket.correctedTargetAmountBase,
+        },
+        delta: {
+          amountTxn: targetDeltaAmountTxn,
+          amountBase: targetDeltaAmountBase,
+          sourceAmountTxn: sourceDeltaAmountTxn,
+          sourceAmountBase: sourceDeltaAmountBase,
+          targetAmountTxn: targetDeltaAmountTxn,
+          targetAmountBase: targetDeltaAmountBase,
+        },
+      };
+      }),
+    unsupportedOwnerAllocationBlocker: null,
+  };
+}
+
+function buildRetroOwnershipTransferCorrectionCumulativeDelta(impactedPostedPeriods) {
+  return (impactedPostedPeriods || []).reduce((summary, period) => ({
+    amountTxn: roundTransferAmount(
+      Number(summary.amountTxn || 0) + Number(period?.delta?.amountTxn || 0)
+    ),
+    amountBase: roundTransferAmount(
+      Number(summary.amountBase || 0) + Number(period?.delta?.amountBase || 0)
+    ),
+    sourceAmountTxn: roundTransferAmount(
+      Number(summary.sourceAmountTxn || 0) + Number(period?.delta?.sourceAmountTxn || 0)
+    ),
+    sourceAmountBase: roundTransferAmount(
+      Number(summary.sourceAmountBase || 0) + Number(period?.delta?.sourceAmountBase || 0)
+    ),
+    targetAmountTxn: roundTransferAmount(
+      Number(summary.targetAmountTxn || 0) + Number(period?.delta?.targetAmountTxn || 0)
+    ),
+    targetAmountBase: roundTransferAmount(
+      Number(summary.targetAmountBase || 0) + Number(period?.delta?.targetAmountBase || 0)
+    ),
+  }), {
+    amountTxn: 0,
+    amountBase: 0,
+    sourceAmountTxn: 0,
+    sourceAmountBase: 0,
+    targetAmountTxn: 0,
+    targetAmountBase: 0,
+  });
+}
+
+function resolveRetroOwnershipTransferCorrectionOwnerMoveEconomics({
+  asset,
+  currentNbv,
+  cumulativeDelta,
+}) {
+  const grossCostTxn = roundTransferAmount(asset?.original_cost_txn || 0);
+  const grossCostBase = roundTransferAmount(asset?.original_cost_base || 0);
+  const currentEntityNbvTxn = roundTransferAmount(currentNbv?.nbvTxn || 0);
+  const currentEntityNbvBase = roundTransferAmount(currentNbv?.nbvBase || 0);
+  const currentEntityAccumDeprTxn = roundTransferAmount(grossCostTxn - currentEntityNbvTxn);
+  const currentEntityAccumDeprBase = roundTransferAmount(grossCostBase - currentEntityNbvBase);
+  const correctedSourceAccumDeprTxn = roundTransferAmount(
+    currentEntityAccumDeprTxn - Number(cumulativeDelta?.amountTxn || 0)
+  );
+  const correctedSourceAccumDeprBase = roundTransferAmount(
+    currentEntityAccumDeprBase - Number(cumulativeDelta?.amountBase || 0)
+  );
+  const correctedSourceCarryingValueTxn = roundTransferAmount(
+    grossCostTxn - correctedSourceAccumDeprTxn
+  );
+  const correctedSourceCarryingValueBase = roundTransferAmount(
+    grossCostBase - correctedSourceAccumDeprBase
+  );
+
+  return {
+    grossCostTxn,
+    grossCostBase,
+    currentEntityNbvTxn,
+    currentEntityNbvBase,
+    currentEntityAccumDeprTxn,
+    currentEntityAccumDeprBase,
+    correctedSourceAccumDeprTxn,
+    correctedSourceAccumDeprBase,
+    correctedSourceCarryingValueTxn,
+    correctedSourceCarryingValueBase,
+    hasNegativeCorrectedSourceCarryingValue:
+      correctedSourceCarryingValueTxn < 0
+      || correctedSourceCarryingValueBase < 0,
+    requiresOwnerMoveSelfBalancing:
+      correctedSourceCarryingValueTxn > 0
+      || correctedSourceCarryingValueBase > 0,
+  };
+}
+
+async function resolveRetroOwnershipTransferCorrectionOverlapPreview({
+  tenantId,
+  assetId,
+  actualEffectiveDate,
+  correctionPostingDate,
+  queryFn = query,
+  forUpdate = false,
+}) {
+  const result = await queryFn(
+    `SELECT id,
+            actual_effective_date,
+            correction_posting_date,
+            from_owner_operating_unit_id,
+            to_owner_operating_unit_id,
+            true_up_transaction_id,
+            true_up_journal_entry_id,
+            owner_move_transaction_id,
+            owner_move_journal_entry_id
+       FROM fixed_asset_retro_transfer_corrections
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND status = ?
+        AND actual_effective_date <= ?
+        AND correction_posting_date >= ?
+      ORDER BY actual_effective_date DESC, id DESC
+      LIMIT 2${forUpdate ? " FOR UPDATE" : ""}`,
+    [
+      tenantId,
+      assetId,
+      FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_POSTED,
+      correctionPostingDate,
+      actualEffectiveDate,
+    ]
+  );
+
+  const overlappingRows = result.rows || [];
+  const overlapRow = overlappingRows[0] || null;
+  const overlapCount = overlappingRows.length;
+  const replacesCorrectionId = overlapRow?.id != null ? Number(overlapRow.id) : null;
+
+  if (!overlapRow) {
+    return {
+      replacementRequired: false,
+      replacementSupported: false,
+      replacesCorrectionId: null,
+      overlapCount: 0,
+      excludedRetroCorrectionIds: [],
+      ownerTimelineCurrentOwnerFallbackId: null,
+      replacementBlocker: null,
+    };
+  }
+
+  if (overlapCount > 1) {
+    return {
+      replacementRequired: true,
+      replacementSupported: false,
+      replacesCorrectionId,
+      overlapCount,
+      excludedRetroCorrectionIds: [],
+      ownerTimelineCurrentOwnerFallbackId: null,
+      replacementBlocker: {
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+            .OVERLAPPING_CORRECTION_REQUIRES_REPLACEMENT,
+        message:
+          "Retro ownership transfer correction overlaps multiple active corrections and cannot be replaced deterministically in V1",
+        details: {
+          overlapCount,
+          replacesCorrectionId,
+        },
+      },
+    };
+  }
+
+  const missingLinkedPosting =
+    !parsePositiveInt(overlapRow.true_up_transaction_id)
+    || !parsePositiveInt(overlapRow.true_up_journal_entry_id)
+    || !parsePositiveInt(overlapRow.owner_move_transaction_id)
+    || !parsePositiveInt(overlapRow.owner_move_journal_entry_id);
+  if (missingLinkedPosting) {
+    return {
+      replacementRequired: true,
+      replacementSupported: false,
+      replacesCorrectionId,
+      overlapCount,
+      excludedRetroCorrectionIds: [],
+      ownerTimelineCurrentOwnerFallbackId: null,
+      replacementBlocker: {
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+            .OVERLAPPING_CORRECTION_REQUIRES_REPLACEMENT,
+        message:
+          "Retro ownership transfer correction overlaps an earlier correction whose linked transactions or journals are incomplete, so replacement cannot be derived deterministically in V1",
+        details: {
+          replacesCorrectionId,
+          trueUpTransactionId: parsePositiveInt(overlapRow.true_up_transaction_id),
+          trueUpJournalEntryId: parsePositiveInt(overlapRow.true_up_journal_entry_id),
+          ownerMoveTransactionId: parsePositiveInt(overlapRow.owner_move_transaction_id),
+          ownerMoveJournalEntryId: parsePositiveInt(overlapRow.owner_move_journal_entry_id),
+        },
+      },
+    };
+  }
+
+  const laterTransaction = await loadLaterActivePostedFixedAssetTransactionTx(
+    { query: queryFn },
+    {
+      tenantId,
+      assetId,
+      effectiveDate: String(overlapRow.correction_posting_date || "").slice(0, 10),
+      transactionId: parsePositiveInt(overlapRow.owner_move_transaction_id),
+    }
+  );
+  if (laterTransaction) {
+    return {
+      replacementRequired: true,
+      replacementSupported: false,
+      replacesCorrectionId,
+      overlapCount,
+      excludedRetroCorrectionIds: [],
+      ownerTimelineCurrentOwnerFallbackId: null,
+      replacementBlocker: {
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+            .OVERLAPPING_CORRECTION_REQUIRES_REPLACEMENT,
+        message:
+          "Retro ownership transfer correction overlaps an earlier correction that already has later posted fixed-asset activity, so replacement is blocked in V1",
+        details: {
+          replacesCorrectionId,
+          laterTransactionId: laterTransaction.id,
+          laterTransactionType: laterTransaction.transactionType,
+          laterTransactionEffectiveDate: laterTransaction.effectiveDate,
+        },
+      },
+    };
+  }
+
+  return {
+    replacementRequired: true,
+    replacementSupported: true,
+    replacesCorrectionId,
+    overlapCount,
+    excludedRetroCorrectionIds: [replacesCorrectionId],
+    ownerTimelineCurrentOwnerFallbackId:
+      parsePositiveInt(overlapRow.from_owner_operating_unit_id),
+    replacementBlocker: null,
+  };
+}
+
+async function computeRetroOwnershipTransferCorrectionPreviewFingerprint({
+  tenantId,
+  assetId,
+  actualEffectiveDate,
+  correctionPostingDate,
+  targetOwnerOperatingUnitId,
+  queryFn = query,
+}) {
+  const [latestPostedTransactionResult, latestPostedRunResult, latestRetroCorrectionResult] =
+    await Promise.all([
+      queryFn(
+        `SELECT id
+           FROM fixed_asset_transactions
+          WHERE tenant_id = ?
+            AND asset_id = ?
+            AND status = 'POSTED'
+          ORDER BY effective_date DESC, id DESC
+          LIMIT 1`,
+        [tenantId, assetId]
+      ),
+      queryFn(
+        `SELECT run.id
+           FROM fixed_asset_depreciation_runs run
+           JOIN fixed_asset_depreciation_run_lines line
+             ON line.tenant_id = run.tenant_id
+            AND line.run_id = run.id
+          WHERE run.tenant_id = ?
+            AND line.asset_id = ?
+            AND run.status = 'POSTED'
+          ORDER BY run.id DESC
+          LIMIT 1`,
+        [tenantId, assetId]
+      ),
+      queryFn(
+        `SELECT id
+           FROM fixed_asset_retro_transfer_corrections
+          WHERE tenant_id = ?
+            AND asset_id = ?
+          ORDER BY id DESC
+          LIMIT 1`,
+        [tenantId, assetId]
+      ),
+    ]);
+
+  const fingerprintPayload = {
+    assetId: Number(assetId),
+    latestPostedTransactionId: latestPostedTransactionResult.rows?.[0]?.id != null
+      ? Number(latestPostedTransactionResult.rows[0].id)
+      : null,
+    latestPostedDepreciationRunId: latestPostedRunResult.rows?.[0]?.id != null
+      ? Number(latestPostedRunResult.rows[0].id)
+      : null,
+    latestRetroCorrectionId: latestRetroCorrectionResult.rows?.[0]?.id != null
+      ? Number(latestRetroCorrectionResult.rows[0].id)
+      : null,
+    actualEffectiveDate,
+    correctionPostingDate,
+    targetOwnerOperatingUnitId: Number(targetOwnerOperatingUnitId),
+  };
+
+  return createHash("sha256")
+    .update(JSON.stringify(fingerprintPayload))
+    .digest("hex");
+}
+
+function resolveRetroOwnershipTransferCorrectionOwnerContext(
+  currentOwnerOperatingUnitId,
+  lifecycleHistory,
+  actualEffectiveDate
+) {
+  const ownershipEvents = (lifecycleHistory || []).filter((row) => (
+    normalizeUpperText(row?.transactionType) === "OWNERSHIP_TRANSFER"
+      && String(row?.effectiveDate || "").slice(0, 10)
+  )).sort((left, right) => {
+    const leftEffectiveDate = String(left?.effectiveDate || "").slice(0, 10);
+    const rightEffectiveDate = String(right?.effectiveDate || "").slice(0, 10);
+    if (leftEffectiveDate < rightEffectiveDate) return -1;
+    if (leftEffectiveDate > rightEffectiveDate) return 1;
+    return Number(left?.transactionId || 0) - Number(right?.transactionId || 0);
+  });
+
+  const laterOwnerChangingEvent = ownershipEvents.find((row) => (
+    String(row.effectiveDate || "").slice(0, 10) > actualEffectiveDate
+  )) || null;
+  let inferredInitialOwnerOperatingUnitId = currentOwnerOperatingUnitId != null
+    ? Number(currentOwnerOperatingUnitId)
+    : (
+      ownershipEvents.at(-1)?.toOwnerOperatingUnitId
+      ?? ownershipEvents.at(-1)?.fromOwnerOperatingUnitId
+      ?? null
+    );
+
+  for (const transferEvent of [...ownershipEvents].reverse()) {
+    if (transferEvent.fromOwnerOperatingUnitId == null || transferEvent.toOwnerOperatingUnitId == null) {
+      throw badRequest(
+        `Ownership transfer transaction ${transferEvent.transactionId} is missing persisted owner-OU detail`
+      );
+    }
+    inferredInitialOwnerOperatingUnitId = Number(transferEvent.fromOwnerOperatingUnitId);
+  }
+
+  // Track 43 source-OU derivation must resolve the owner at actualEffectiveDate
+  // from the persisted owner timeline, not from the asset master's current owner.
+  let fromOwnerOperatingUnitId = inferredInitialOwnerOperatingUnitId;
+  for (const transferEvent of ownershipEvents) {
+    if (String(transferEvent.effectiveDate || "").slice(0, 10) > actualEffectiveDate) {
+      break;
+    }
+    fromOwnerOperatingUnitId = transferEvent.toOwnerOperatingUnitId != null
+      ? Number(transferEvent.toOwnerOperatingUnitId)
+      : fromOwnerOperatingUnitId;
+  }
+
+  return {
+    fromOwnerOperatingUnitId,
+    laterOwnerChangingEvent,
+  };
+}
+
 async function hasPostedDepreciationTransactions(tenantId, assetId, queryFn) {
   const result = await queryFn(
     `SELECT 1
@@ -6336,6 +8090,1577 @@ async function hasPostedDepreciationTransactions(tenantId, assetId, queryFn) {
     [tenantId, assetId]
   );
   return Boolean(result.rows?.[0]);
+}
+
+async function loadOwnershipTransferDepreciationImpactSummary({
+  tenantId,
+  assetId,
+  effectiveDate,
+  queryFn = query,
+}) {
+  const result = await queryFn(
+    `SELECT DISTINCT rl.period_key,
+            fat.effective_date
+       FROM fixed_asset_transactions fat
+       LEFT JOIN fixed_asset_depreciation_run_lines rl
+         ON rl.posted_transaction_id = fat.id
+        AND rl.tenant_id = fat.tenant_id
+        AND rl.asset_id = fat.asset_id
+        AND rl.status = 'POSTED'
+      WHERE fat.tenant_id = ?
+        AND fat.asset_id = ?
+        AND fat.transaction_type = 'DEPRECIATION'
+        AND fat.status = 'POSTED'
+        AND fat.effective_date >= ?
+        AND fat.reversal_transaction_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM fixed_asset_transactions rev
+           WHERE rev.reversed_transaction_id = fat.id
+             AND rev.status = 'POSTED'
+        )
+      ORDER BY rl.period_key ASC, fat.effective_date ASC, fat.id ASC`,
+    [tenantId, assetId, effectiveDate]
+  );
+
+  const periodKeys = [];
+  const seen = new Set();
+  for (const row of result.rows || []) {
+    const periodKey = row.period_key
+      ? String(row.period_key)
+      : String(row.effective_date || "").slice(0, 7);
+    if (!periodKey || seen.has(periodKey)) {
+      continue;
+    }
+    seen.add(periodKey);
+    periodKeys.push(periodKey);
+  }
+
+  return {
+    firstImpactedPeriodKey: periodKeys[0] || null,
+    impactedPostedPeriodCount: periodKeys.length,
+  };
+}
+
+/**
+ * Preview the Track 43 retro ownership transfer correction decision and
+ * period-by-period owner-attribution delta.
+ *
+ * The preview stays correction-aware and deterministic by reusing the same
+ * owner timeline gates as future depreciation, while deriving the per-period
+ * correction math from the persisted posted OWNER_OU allocations themselves.
+ * That preserves the already-posted improvement/suspension basis and only
+ * reassigns ownership attribution for the late transfer date.
+ */
+export async function previewRetroOwnershipTransferCorrection(input) {
+  const {
+    tenantId,
+    assetId,
+    actualEffectiveDate,
+    correctionPostingDate,
+    targetOwnerOperatingUnitId,
+    queryFn = query,
+  } = input;
+
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+  if (!targetOwnerOperatingUnitId) {
+    throw badRequest("targetOwnerOperatingUnitId is required");
+  }
+
+  const normalizedActualEffectiveDate = formatDateOnly(
+    parseDateOnlyStrict(actualEffectiveDate, "actualEffectiveDate")
+  );
+  const normalizedCorrectionPostingDate = formatDateOnly(
+    parseDateOnlyStrict(correctionPostingDate, "correctionPostingDate")
+  );
+  if (normalizedActualEffectiveDate > normalizedCorrectionPostingDate) {
+    throw badRequest(
+      `actualEffectiveDate (${normalizedActualEffectiveDate}) cannot be after correctionPostingDate (${normalizedCorrectionPostingDate})`
+    );
+  }
+
+  const asset = await loadRetroOwnershipTransferCorrectionAssetSnapshot({
+    tenantId,
+    assetId,
+    queryFn,
+  });
+  if (!asset) {
+    throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+  }
+
+  const currentOwnerOperatingUnitId = asset.owner_operating_unit_id != null
+    ? Number(asset.owner_operating_unit_id)
+    : null;
+  if (!currentOwnerOperatingUnitId) {
+    throw badRequest(
+      "Asset is missing ownerOperatingUnitId; retro ownership transfer correction requires an existing owner"
+    );
+  }
+
+  const provisionalDecision = buildRetroOwnershipTransferCorrectionDecision({
+    assetId,
+    actualEffectiveDate: normalizedActualEffectiveDate,
+    correctionPostingDate: normalizedCorrectionPostingDate,
+    targetOwnerOperatingUnitId,
+    fromOwnerOperatingUnitId: null,
+    resolutionMode:
+      FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_NORMAL_TRANSFER_ALLOWED,
+    chronologyBlockers: [],
+    impactedPostedPeriods: [],
+  });
+  const overlapPreview = await resolveRetroOwnershipTransferCorrectionOverlapPreview({
+    tenantId,
+    assetId,
+    actualEffectiveDate: normalizedActualEffectiveDate,
+    correctionPostingDate: normalizedCorrectionPostingDate,
+    queryFn,
+  });
+  if (overlapPreview.replacementBlocker) {
+    return buildRetroOwnershipTransferCorrectionBlocker(provisionalDecision, {
+      reasonCode: overlapPreview.replacementBlocker.reasonCode,
+      message: overlapPreview.replacementBlocker.message,
+      blockerDetails: overlapPreview.replacementBlocker.details,
+    });
+  }
+
+  const lifecycleHistory = await loadCorrectionAwareOwnerTimeline({
+    tenantId,
+    assetId,
+    excludeRetroCorrectionIds: overlapPreview.excludedRetroCorrectionIds,
+    queryFn,
+  });
+  const ownerContext = resolveRetroOwnershipTransferCorrectionOwnerContext(
+    overlapPreview.ownerTimelineCurrentOwnerFallbackId || currentOwnerOperatingUnitId,
+    lifecycleHistory,
+    normalizedActualEffectiveDate
+  );
+  const baseDecision = buildRetroOwnershipTransferCorrectionDecision(
+    {
+      assetId,
+      actualEffectiveDate: normalizedActualEffectiveDate,
+      correctionPostingDate: normalizedCorrectionPostingDate,
+      targetOwnerOperatingUnitId,
+      fromOwnerOperatingUnitId: ownerContext.fromOwnerOperatingUnitId,
+      resolutionMode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_NORMAL_TRANSFER_ALLOWED,
+      chronologyBlockers: [],
+      impactedPostedPeriods: [],
+    }
+  );
+
+  if (!ownerContext.fromOwnerOperatingUnitId) {
+    throw badRequest(
+      "Failed to derive fromOwnerOperatingUnitId from the persisted owner timeline"
+    );
+  }
+
+  if (Number(targetOwnerOperatingUnitId) === Number(ownerContext.fromOwnerOperatingUnitId)) {
+    throw badRequest(
+      `targetOwnerOperatingUnitId (${targetOwnerOperatingUnitId}) must differ from ` +
+      `derived fromOwnerOperatingUnitId (${ownerContext.fromOwnerOperatingUnitId})`
+    );
+  }
+
+  const assetStatus = normalizeUpperText(asset.status);
+  if (assetStatus === "DISPOSED") {
+    return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+      reasonCode: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES.ASSET_DISPOSED,
+      message: `Retro ownership transfer correction is blocked because asset ${asset.asset_no || assetId} is DISPOSED`,
+      blockerDetails: {
+        assetStatus,
+      },
+    });
+  }
+  if (!OWNERSHIP_TRANSFER_ELIGIBLE_STATUSES.has(assetStatus)) {
+    throw badRequest(
+      `Retro ownership transfer correction is only allowed for ACTIVE, SUSPENDED, or FULLY_DEPRECIATED assets ` +
+      `(assetId=${assetId}, status=${assetStatus})`
+    );
+  }
+
+  if (ownerContext.laterOwnerChangingEvent) {
+    return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+      reasonCode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES.LATER_OWNER_CHANGING_EVENT_EXISTS,
+      message:
+        "Retro ownership transfer correction is blocked because a later owner-changing lifecycle event already exists after actualEffectiveDate",
+      blockerDetails: {
+        blockingTransactionId: Number(ownerContext.laterOwnerChangingEvent.transactionId || 0) || null,
+        blockingEffectiveDate: ownerContext.laterOwnerChangingEvent.effectiveDate || null,
+        blockingTransactionType:
+          normalizeUpperText(ownerContext.laterOwnerChangingEvent.transactionType)
+          || ownerContext.laterOwnerChangingEvent.kind
+          || null,
+      },
+    });
+  }
+
+  const legalEntityId = Number(asset.legal_entity_id);
+  const book = await resolveBookForLegalEntity(tenantId, legalEntityId, queryFn);
+  const actualEffectiveFiscalPeriod = await resolveFiscalPeriodForDate(
+    book.calendar_id,
+    normalizedActualEffectiveDate,
+    queryFn
+  );
+  const correctionPostingFiscalPeriod = await resolveFiscalPeriodForDate(
+    book.calendar_id,
+    normalizedCorrectionPostingDate,
+    queryFn
+  );
+
+  if (
+    Number(actualEffectiveFiscalPeriod.fiscal_year || 0)
+    < Number(correctionPostingFiscalPeriod.fiscal_year || 0)
+  ) {
+    return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+      reasonCode: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES.PRIOR_FISCAL_YEAR,
+      message:
+        "Retro ownership transfer correction is blocked because actualEffectiveDate falls in a prior fiscal year",
+      blockerDetails: {
+        actualEffectiveFiscalYear: Number(actualEffectiveFiscalPeriod.fiscal_year || 0) || null,
+        correctionPostingFiscalYear: Number(correctionPostingFiscalPeriod.fiscal_year || 0) || null,
+        actualEffectiveFiscalPeriodId: Number(actualEffectiveFiscalPeriod.id || 0) || null,
+        correctionPostingFiscalPeriodId: Number(correctionPostingFiscalPeriod.id || 0) || null,
+      },
+    });
+  }
+
+  const correctionPostingPeriodStatus = await loadPeriodPostingStatus(
+    book.id,
+    correctionPostingFiscalPeriod.id,
+    queryFn
+  );
+  if (correctionPostingPeriodStatus !== "OPEN") {
+    return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+      reasonCode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES.CORRECTION_POSTING_PERIOD_CLOSED,
+      message:
+        `Retro ownership transfer correction is blocked because fiscal period ${correctionPostingFiscalPeriod.id} is ${correctionPostingPeriodStatus}`,
+      blockerDetails: {
+        fiscalPeriodId: Number(correctionPostingFiscalPeriod.id || 0) || null,
+        fiscalPeriodStatus: correctionPostingPeriodStatus,
+      },
+    });
+  }
+
+  const draftRunBlocker = await loadDraftDepreciationRunBlockerForAsset({
+    tenantId,
+    assetId,
+    queryFn,
+  });
+  if (draftRunBlocker) {
+    return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+      reasonCode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES.DRAFT_DEPRECIATION_RUN_IN_PROGRESS,
+      message:
+        `Retro ownership transfer correction is blocked because the asset already appears in DRAFT depreciation run ${draftRunBlocker.runId}`,
+      blockerDetails: {
+        draftRunId: draftRunBlocker.runId,
+        draftRunLineId: draftRunBlocker.runLineId,
+        draftRunPeriodKey: draftRunBlocker.runPeriodKey,
+      },
+    });
+  }
+
+  const postedDepreciationShell = await loadRetroOwnershipTransferCorrectionPostedDepreciationShell({
+    tenantId,
+    assetId,
+    fromPeriodKey: normalizedActualEffectiveDate.slice(0, 7),
+    throughPeriodKey: normalizedCorrectionPostingDate.slice(0, 7),
+    queryFn,
+  });
+
+  if (postedDepreciationShell.missingOwnerAllocationBlocker) {
+    return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+      reasonCode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES.MISSING_OWNER_ALLOCATION_DETAIL,
+      message:
+        "Retro ownership transfer correction is blocked because at least one impacted posted depreciation period is missing persisted owner-allocation detail",
+      blockerDetails: {
+        runId: postedDepreciationShell.missingOwnerAllocationBlocker.runId,
+        runLineId: postedDepreciationShell.missingOwnerAllocationBlocker.runLineId,
+        postedTransactionId: postedDepreciationShell.missingOwnerAllocationBlocker.postedTransactionId,
+        impactedPeriodKey: postedDepreciationShell.missingOwnerAllocationBlocker.periodKey,
+        depreciationKind: postedDepreciationShell.missingOwnerAllocationBlocker.depreciationKind,
+      },
+    });
+  }
+
+  if (postedDepreciationShell.impactedPostedPeriods.length > 0) {
+    const postedDepreciationAllocations =
+      await loadRetroOwnershipTransferCorrectionPostedDepreciationAllocations({
+        tenantId,
+        runLineIds: postedDepreciationShell.lines.map((line) => line.runLineId),
+        queryFn,
+      });
+    const postedDepreciationLines = postedDepreciationShell.lines.map((line) => ({
+      ...line,
+      allocations: postedDepreciationAllocations.get(line.runLineId) || [],
+    }));
+
+    // The preview derives corrected owner attribution by splitting the posted
+    // allocation segments at actualEffectiveDate. This keeps Track 39/40
+    // improvement basis and suspension segmentation intact instead of trying to
+    // rebuild charge or depreciation math from scratch.
+    const impactedPeriodEvaluation = buildRetroOwnershipTransferCorrectionImpactedPeriods({
+      postedDepreciationLines,
+      actualEffectiveDate: normalizedActualEffectiveDate,
+      fromOwnerOperatingUnitId: ownerContext.fromOwnerOperatingUnitId,
+      targetOwnerOperatingUnitId,
+    });
+    if (impactedPeriodEvaluation.unsupportedOwnerAllocationBlocker) {
+      return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+            .UNSUPPORTED_OWNER_ALLOCATION_OPERATING_UNIT,
+        message:
+          "Retro ownership transfer correction is blocked because an impacted posted depreciation period includes owner-allocation detail outside the source/target OU pair",
+        blockerDetails: impactedPeriodEvaluation.unsupportedOwnerAllocationBlocker,
+      });
+    }
+    const impactedPostedPeriods = impactedPeriodEvaluation.impactedPostedPeriods;
+    const cumulativeDelta = buildRetroOwnershipTransferCorrectionCumulativeDelta(
+      impactedPostedPeriods
+    );
+    const currentNbv = await resolveCurrentAssetNbv(tenantId, assetId, queryFn);
+    const ownerMoveEconomics = resolveRetroOwnershipTransferCorrectionOwnerMoveEconomics({
+      asset,
+      currentNbv,
+      cumulativeDelta,
+    });
+    if (ownerMoveEconomics.hasNegativeCorrectedSourceCarryingValue) {
+      return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+            .NEGATIVE_CORRECTED_SOURCE_CARRYING_VALUE,
+        message:
+          "Retro ownership transfer correction is blocked because the corrected source-OU carrying value after the true-up would be negative, which is unsupported in V1",
+        blockerDetails: {
+          correctedSourceCarryingValueTxn:
+            ownerMoveEconomics.correctedSourceCarryingValueTxn,
+          correctedSourceCarryingValueBase:
+            ownerMoveEconomics.correctedSourceCarryingValueBase,
+        },
+      });
+    }
+    if (ownerMoveEconomics.requiresOwnerMoveSelfBalancing) {
+      try {
+        await resolveOuSelfBalancingAccountsTx(
+          { query: queryFn },
+          {
+            tenantId,
+            legalEntityId,
+            sourceOperatingUnitId: ownerContext.fromOwnerOperatingUnitId,
+            targetOperatingUnitId: targetOwnerOperatingUnitId,
+            cache: {
+              operatingUnitById: new Map(),
+              partnerPairById: new Map(),
+            },
+          }
+        );
+      } catch (err) {
+        return buildRetroOwnershipTransferCorrectionBlocker(baseDecision, {
+          reasonCode:
+            FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+              .SELF_BALANCING_ACCOUNTS_NOT_CONFIGURED,
+          message:
+            "Retro ownership transfer correction is blocked because OU self-balancing accounts are not configured for the corrected source carrying value being moved in A2",
+          blockerDetails: {
+            sourceOperatingUnitId: ownerContext.fromOwnerOperatingUnitId,
+            targetOperatingUnitId: targetOwnerOperatingUnitId,
+            correctedSourceCarryingValueTxn:
+              ownerMoveEconomics.correctedSourceCarryingValueTxn,
+            correctedSourceCarryingValueBase:
+              ownerMoveEconomics.correctedSourceCarryingValueBase,
+            underlyingMessage: String(err?.message || ""),
+          },
+        });
+      }
+    }
+    const previewFingerprint = await computeRetroOwnershipTransferCorrectionPreviewFingerprint({
+      tenantId,
+      assetId,
+      actualEffectiveDate: normalizedActualEffectiveDate,
+      correctionPostingDate: normalizedCorrectionPostingDate,
+      targetOwnerOperatingUnitId,
+      queryFn,
+    });
+
+    return buildRetroOwnershipTransferCorrectionDecision(baseDecision, {
+      resolutionMode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_CURRENT_PERIOD_TRUE_UP_REQUIRED,
+      impactedPostedPeriods,
+      cumulativeDelta,
+      previewFingerprint,
+      replacementRequired: overlapPreview.replacementRequired,
+      replacesCorrectionId: overlapPreview.replacesCorrectionId,
+      replacementSupported: overlapPreview.replacementSupported,
+    });
+  }
+
+  return baseDecision;
+}
+
+async function insertRetroOwnershipTransferCorrectionHeaderTx(tx, {
+  tenantId,
+  legalEntityId,
+  assetId,
+  fromOwnerOperatingUnitId,
+  toOwnerOperatingUnitId,
+  actualEffectiveDate,
+  correctionPostingDate,
+  note,
+  postedByUserId,
+  replacesCorrectionId = null,
+}) {
+  const insertResult = await tx.query(
+    `INSERT INTO fixed_asset_retro_transfer_corrections (
+       tenant_id,
+       legal_entity_id,
+       asset_id,
+       from_owner_operating_unit_id,
+       to_owner_operating_unit_id,
+       actual_effective_date,
+       correction_posting_date,
+       balance_sheet_transfer_posting_date,
+       resolution_mode,
+       status,
+       note,
+       posted_by_user_id,
+       replaces_correction_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      tenantId,
+      legalEntityId,
+      assetId,
+      fromOwnerOperatingUnitId,
+      toOwnerOperatingUnitId,
+      actualEffectiveDate,
+      correctionPostingDate,
+      correctionPostingDate,
+      FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_RESOLUTION_MODE_CURRENT_PERIOD_TRUE_UP,
+      FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_POSTED,
+      note || null,
+      postedByUserId || null,
+      parsePositiveInt(replacesCorrectionId),
+    ]
+  );
+
+  return parsePositiveInt(insertResult.rows?.insertId) || null;
+}
+
+async function updateRetroOwnershipTransferCorrectionPostingLinksTx(tx, {
+  correctionId,
+  trueUpTransactionId,
+  trueUpJournalEntryId,
+  ownerMoveTransactionId,
+  ownerMoveJournalEntryId,
+}) {
+  await tx.query(
+    `UPDATE fixed_asset_retro_transfer_corrections
+        SET true_up_transaction_id = ?,
+            true_up_journal_entry_id = ?,
+            owner_move_transaction_id = ?,
+            owner_move_journal_entry_id = ?
+      WHERE id = ?`,
+    [
+      trueUpTransactionId,
+      trueUpJournalEntryId,
+      ownerMoveTransactionId,
+      ownerMoveJournalEntryId,
+      correctionId,
+    ]
+  );
+}
+
+async function insertRetroOwnershipTransferCorrectionPeriodsTx(tx, {
+  tenantId,
+  legalEntityId,
+  correctionId,
+  impactedPostedPeriods,
+}) {
+  for (const period of impactedPostedPeriods || []) {
+    const postedDepreciationRunId = (period?.runIds || []).length === 1
+      ? Number(period.runIds[0])
+      : null;
+    await tx.query(
+      `INSERT INTO fixed_asset_retro_transfer_correction_periods (
+         tenant_id,
+         legal_entity_id,
+         correction_id,
+         period_key,
+         posted_depreciation_run_id,
+         from_owner_operating_unit_id,
+         to_owner_operating_unit_id,
+         source_eligible_days,
+         target_eligible_days,
+         originally_posted_source_amount_txn,
+         originally_posted_source_amount_base,
+         originally_posted_target_amount_txn,
+         originally_posted_target_amount_base,
+         corrected_source_amount_txn,
+         corrected_source_amount_base,
+         corrected_target_amount_txn,
+         corrected_target_amount_base,
+         delta_amount_txn,
+         delta_amount_base
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        correctionId,
+        period.periodKey,
+        postedDepreciationRunId,
+        Number(period.sourceOwnerOperatingUnitId),
+        Number(period.targetOwnerOperatingUnitId),
+        Number(period?.eligibleDaySplit?.correctedSourceEligibleDays || 0),
+        Number(period?.eligibleDaySplit?.correctedTargetEligibleDays || 0),
+        roundTransferAmount(period?.originallyPosted?.sourceAmountTxn || 0),
+        roundTransferAmount(period?.originallyPosted?.sourceAmountBase || 0),
+        roundTransferAmount(period?.originallyPosted?.targetAmountTxn || 0),
+        roundTransferAmount(period?.originallyPosted?.targetAmountBase || 0),
+        roundTransferAmount(period?.corrected?.sourceAmountTxn || 0),
+        roundTransferAmount(period?.corrected?.sourceAmountBase || 0),
+        roundTransferAmount(period?.corrected?.targetAmountTxn || 0),
+        roundTransferAmount(period?.corrected?.targetAmountBase || 0),
+        roundTransferAmount(period?.delta?.amountTxn || 0),
+        roundTransferAmount(period?.delta?.amountBase || 0),
+      ]
+    );
+  }
+}
+
+async function loadAndLockRetroOwnershipTransferCorrectionForReplacementTx(tx, {
+  tenantId,
+  assetId,
+  correctionId,
+}) {
+  const result = await tx.query(
+    `SELECT id,
+            tenant_id,
+            legal_entity_id,
+            asset_id,
+            status,
+            actual_effective_date,
+            correction_posting_date,
+            from_owner_operating_unit_id,
+            to_owner_operating_unit_id,
+            true_up_transaction_id,
+            true_up_journal_entry_id,
+            owner_move_transaction_id,
+            owner_move_journal_entry_id
+       FROM fixed_asset_retro_transfer_corrections
+      WHERE tenant_id = ?
+        AND asset_id = ?
+        AND id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [tenantId, assetId, correctionId]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    tenantId: Number(row.tenant_id),
+    legalEntityId: Number(row.legal_entity_id),
+    assetId: Number(row.asset_id),
+    status: normalizeUpperText(row.status),
+    actualEffectiveDate: row.actual_effective_date
+      ? String(row.actual_effective_date).slice(0, 10)
+      : null,
+    correctionPostingDate: row.correction_posting_date
+      ? String(row.correction_posting_date).slice(0, 10)
+      : null,
+    fromOwnerOperatingUnitId: parsePositiveInt(row.from_owner_operating_unit_id),
+    toOwnerOperatingUnitId: parsePositiveInt(row.to_owner_operating_unit_id),
+    trueUpTransactionId: parsePositiveInt(row.true_up_transaction_id),
+    trueUpJournalEntryId: parsePositiveInt(row.true_up_journal_entry_id),
+    ownerMoveTransactionId: parsePositiveInt(row.owner_move_transaction_id),
+    ownerMoveJournalEntryId: parsePositiveInt(row.owner_move_journal_entry_id),
+  };
+}
+
+async function markRetroOwnershipTransferCorrectionSupersededTx(tx, {
+  correctionId,
+  replacedByCorrectionId = null,
+}) {
+  await tx.query(
+    `UPDATE fixed_asset_retro_transfer_corrections
+        SET status = ?,
+            replaced_by_correction_id = ?
+      WHERE id = ?`,
+    [
+      FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_SUPERSEDED,
+      parsePositiveInt(replacedByCorrectionId),
+      correctionId,
+    ]
+  );
+}
+
+function buildRetroOwnershipTransferCorrectionReplacementReversalJournalNo(
+  correctionId,
+  sourceRefType
+) {
+  const componentCode =
+    sourceRefType === FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_OWNER_MOVE
+      ? "MOV"
+      : "TRU";
+  return `FA-TXN-ROT-REP-${componentCode}-${parsePositiveInt(correctionId)}-${Date.now().toString(36).toUpperCase()}`
+    .slice(0, 40);
+}
+
+async function reverseRetroOwnershipTransferCorrectionComponentTx(tx, {
+  tenantId,
+  correctionId,
+  transactionId,
+  expectedSourceRefType,
+  correctionPostingDate,
+  correctionPostingPeriodId,
+  userId,
+}) {
+  const target = await loadAndLockFixedAssetTransactionForReverseTx(
+    tx,
+    tenantId,
+    transactionId
+  );
+  if (target.transactionType !== FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_TRANSACTION_TYPE) {
+    throw badRequest(
+      `Replacement flow expected a RETRO_OWNERSHIP_CORRECTION transaction ` +
+      `(transactionId=${target.id}, transactionType=${target.transactionType || "UNKNOWN"})`
+    );
+  }
+  if (expectedSourceRefType && target.sourceRefType !== expectedSourceRefType) {
+    throw badRequest(
+      `Replacement flow expected sourceRefType ${expectedSourceRefType} for retro correction transaction ${target.id}, ` +
+      `got ${target.sourceRefType || "NULL"}`
+    );
+  }
+  if (!target.journalEntryId) {
+    throw badRequest(
+      `Retro correction transaction ${target.id} is missing posted journal lineage and cannot be replaced safely`
+    );
+  }
+  await assertFixedAssetTransactionNotAlreadyReversedTx(tx, target);
+
+  // Replacement is the only supported undo path for retro corrections in V1.
+  // It intentionally bypasses the generic later-event restore logic and instead
+  // reverses both correction journals as one atomic set before reposting.
+  const reversalNote =
+    `Replacement reversal of ${expectedSourceRefType || "RETRO_CORRECTION"} transaction ${target.id}`.slice(0, 255);
+  const reversalJournal = await reverseJournalEntryTx(tx, {
+    tenantId,
+    journalId: target.journalEntryId,
+    userId,
+    reason: reversalNote,
+    reversalPeriodId: correctionPostingPeriodId,
+    entryDate: correctionPostingDate,
+    documentDate: correctionPostingDate,
+    journalNo: buildRetroOwnershipTransferCorrectionReplacementReversalJournalNo(
+      correctionId,
+      expectedSourceRefType
+    ),
+    autoPost: true,
+  });
+
+  const reversalTransactionId = await insertFixedAssetTransaction(tx, {
+    tenantId,
+    legalEntityId: target.legalEntityId,
+    assetId: target.assetId,
+    transactionType: "REVERSAL",
+    effectiveDate: correctionPostingDate,
+    postingDate: correctionPostingDate,
+    bookId: target.bookId,
+    fiscalPeriodId: correctionPostingPeriodId,
+    currencyCode: target.currencyCode || "USD",
+    journalEntryId: reversalJournal.reversalJournalId,
+    grossAmountTxn: target.grossAmountTxn,
+    grossAmountBase: target.grossAmountBase,
+    accumDeprAmountTxn: target.accumDeprAmountTxn,
+    accumDeprAmountBase: target.accumDeprAmountBase,
+    nbvAmountTxn: target.nbvAmountTxn,
+    nbvAmountBase: target.nbvAmountBase,
+    reversedTransactionId: target.id,
+    note: reversalNote,
+    createdByUserId: userId,
+  });
+  if (!reversalTransactionId) {
+    throw badRequest(
+      `Failed to create REVERSAL transaction for retro correction transaction ${target.id}`
+    );
+  }
+
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId: target.legalEntityId,
+    journalEntryId: reversalJournal.reversalJournalId,
+    sourceRefType: FIXED_ASSET_TRANSACTION,
+    sourceRefId: reversalTransactionId,
+    linkRole: "PRIMARY",
+  });
+
+  const updateOriginalResult = await tx.query(
+    `UPDATE fixed_asset_transactions
+        SET status = 'REVERSED',
+            reversal_transaction_id = ?
+      WHERE tenant_id = ?
+        AND id = ?
+        AND status = 'POSTED'
+        AND reversal_transaction_id IS NULL`,
+    [reversalTransactionId, tenantId, target.id]
+  );
+  if (Number(updateOriginalResult.rows?.affectedRows || 0) === 0) {
+    throw badRequest(
+      `Retro correction transaction ${target.id} is already reversed`
+    );
+  }
+
+  return {
+    originalTransactionId: target.id,
+    reversalTransactionId,
+    reversalJournalEntryId: reversalJournal.reversalJournalId,
+  };
+}
+
+async function reverseRetroOwnershipTransferCorrectionForReplacementTx(tx, {
+  tenantId,
+  assetId,
+  correctionId,
+  correctionPostingDate,
+  correctionPostingPeriodId,
+  userId,
+}) {
+  const correction = await loadAndLockRetroOwnershipTransferCorrectionForReplacementTx(tx, {
+    tenantId,
+    assetId,
+    correctionId,
+  });
+  if (!correction) {
+    throw badRequest(
+      `Retro ownership transfer correction ${correctionId} not found for replacement`
+    );
+  }
+  if (correction.status !== FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_POSTED) {
+    throw badRequest(
+      `Retro ownership transfer correction ${correction.id} is not POSTED and cannot be replaced safely`
+    );
+  }
+  if (
+    !correction.trueUpTransactionId
+    || !correction.ownerMoveTransactionId
+    || !correction.trueUpJournalEntryId
+    || !correction.ownerMoveJournalEntryId
+  ) {
+    throw badRequest(
+      `Retro ownership transfer correction ${correction.id} is missing linked transactions or journals and cannot be replaced safely`
+    );
+  }
+
+  const ownerMoveReversal = await reverseRetroOwnershipTransferCorrectionComponentTx(tx, {
+    tenantId,
+    correctionId: correction.id,
+    transactionId: correction.ownerMoveTransactionId,
+    expectedSourceRefType: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_OWNER_MOVE,
+    correctionPostingDate,
+    correctionPostingPeriodId,
+    userId,
+  });
+  const trueUpReversal = await reverseRetroOwnershipTransferCorrectionComponentTx(tx, {
+    tenantId,
+    correctionId: correction.id,
+    transactionId: correction.trueUpTransactionId,
+    expectedSourceRefType: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_TRUE_UP,
+    correctionPostingDate,
+    correctionPostingPeriodId,
+    userId,
+  });
+
+  return {
+    correction,
+    trueUpReversal,
+    ownerMoveReversal,
+  };
+}
+
+async function postRetroOwnershipTransferCorrectionSetTx(tx, {
+  tenantId,
+  assetId,
+  lockedAsset,
+  preview,
+  note,
+  userId,
+  normalizedActualEffectiveDate,
+  normalizedCorrectionPostingDate,
+  replacementCorrectionId = null,
+}) {
+  const legalEntityId = Number(lockedAsset.legal_entity_id);
+  const assetNo = lockedAsset.asset_no || `ID-${assetId}`;
+  const currencyCode = lockedAsset.currency_code || "USD";
+  const sourceOwnerOperatingUnitId = Number(preview.fromOwnerOperatingUnitId || 0);
+  const destinationOwnerOperatingUnitId = Number(preview.targetOwnerOperatingUnitId || 0);
+  const assetAccountId = lockedAsset.asset_account_id != null
+    ? Number(lockedAsset.asset_account_id)
+    : null;
+  const accumDeprAccountId = lockedAsset.accum_depr_account_id != null
+    ? Number(lockedAsset.accum_depr_account_id)
+    : null;
+  const deprExpenseAccountId = lockedAsset.depr_expense_account_id != null
+    ? Number(lockedAsset.depr_expense_account_id)
+    : null;
+
+  if (!assetAccountId || !accumDeprAccountId || !deprExpenseAccountId) {
+    return {
+      posted: false,
+      reasonCode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+          .ASSET_ACCOUNTING_SETUP_INCOMPLETE,
+      message:
+        "Retro ownership transfer correction requires asset, accumulated depreciation, and depreciation expense accounts on the asset/category setup",
+      details: {
+        assetAccountId,
+        accumDeprAccountId,
+        deprExpenseAccountId,
+      },
+    };
+  }
+
+  const book = await resolveBookForLegalEntity(tenantId, legalEntityId, tx.query);
+  const correctionPostingPeriod = await resolveFiscalPeriodForDate(
+    book.calendar_id,
+    normalizedCorrectionPostingDate,
+    tx.query
+  );
+  const correctionPostingPeriodStatus = await loadPeriodPostingStatus(
+    book.id,
+    correctionPostingPeriod.id,
+    tx.query
+  );
+  if (correctionPostingPeriodStatus !== "OPEN") {
+    return {
+      posted: false,
+      reasonCode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+          .CORRECTION_POSTING_PERIOD_CLOSED,
+      message:
+        `Retro ownership transfer correction is blocked because fiscal period ${correctionPostingPeriod.id} is ${correctionPostingPeriodStatus}`,
+      details: {
+        fiscalPeriodId: Number(correctionPostingPeriod.id || 0) || null,
+        fiscalPeriodStatus: correctionPostingPeriodStatus,
+      },
+    };
+  }
+
+  const currentNbv = await resolveCurrentAssetNbv(tenantId, assetId, tx.query);
+  const ownerMoveEconomics = resolveRetroOwnershipTransferCorrectionOwnerMoveEconomics({
+    asset: lockedAsset,
+    currentNbv,
+    cumulativeDelta: preview.cumulativeDelta,
+  });
+
+  if (ownerMoveEconomics.hasNegativeCorrectedSourceCarryingValue) {
+    return {
+      posted: false,
+      reasonCode:
+        FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+          .NEGATIVE_CORRECTED_SOURCE_CARRYING_VALUE,
+      message:
+        "Retro ownership transfer correction is blocked because the corrected source-OU carrying value after the true-up would be negative, which is unsupported in V1",
+      details: {
+        correctedSourceCarryingValueTxn:
+          ownerMoveEconomics.correctedSourceCarryingValueTxn,
+        correctedSourceCarryingValueBase:
+          ownerMoveEconomics.correctedSourceCarryingValueBase,
+      },
+    };
+  }
+
+  let selfBalancingAccounts = null;
+  if (ownerMoveEconomics.requiresOwnerMoveSelfBalancing) {
+    try {
+      selfBalancingAccounts = await resolveOuSelfBalancingAccountsTx(tx, {
+        tenantId,
+        legalEntityId,
+        sourceOperatingUnitId: sourceOwnerOperatingUnitId,
+        targetOperatingUnitId: destinationOwnerOperatingUnitId,
+        cache: {
+          operatingUnitById: new Map(),
+          partnerPairById: new Map(),
+        },
+      });
+    } catch (err) {
+      return {
+        posted: false,
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+            .SELF_BALANCING_ACCOUNTS_NOT_CONFIGURED,
+        message:
+          "Retro ownership transfer correction is blocked because OU self-balancing accounts are not configured for the corrected source carrying value being moved in A2",
+        details: {
+          sourceOperatingUnitId: sourceOwnerOperatingUnitId,
+          targetOperatingUnitId: destinationOwnerOperatingUnitId,
+          correctedSourceCarryingValueTxn:
+            ownerMoveEconomics.correctedSourceCarryingValueTxn,
+          correctedSourceCarryingValueBase:
+            ownerMoveEconomics.correctedSourceCarryingValueBase,
+          underlyingMessage: String(err?.message || ""),
+        },
+      };
+    }
+  }
+
+  let replacementContext = null;
+  if (parsePositiveInt(replacementCorrectionId)) {
+    replacementContext = await reverseRetroOwnershipTransferCorrectionForReplacementTx(tx, {
+      tenantId,
+      assetId,
+      correctionId: replacementCorrectionId,
+      correctionPostingDate: normalizedCorrectionPostingDate,
+      correctionPostingPeriodId: correctionPostingPeriod.id,
+      userId,
+    });
+    await markRetroOwnershipTransferCorrectionSupersededTx(tx, {
+      correctionId: replacementCorrectionId,
+    });
+  }
+
+  const correctionId = await insertRetroOwnershipTransferCorrectionHeaderTx(tx, {
+    tenantId,
+    legalEntityId,
+    assetId,
+    fromOwnerOperatingUnitId: sourceOwnerOperatingUnitId,
+    toOwnerOperatingUnitId: destinationOwnerOperatingUnitId,
+    actualEffectiveDate: normalizedActualEffectiveDate,
+    correctionPostingDate: normalizedCorrectionPostingDate,
+    note,
+    postedByUserId: userId,
+    replacesCorrectionId: replacementCorrectionId,
+  });
+  if (!correctionId) {
+    throw badRequest("Failed to create retro ownership transfer correction header");
+  }
+
+  const trueUpLines = [];
+  if (
+    Number(preview.cumulativeDelta?.amountTxn || 0) > 0
+    || Number(preview.cumulativeDelta?.amountBase || 0) > 0
+  ) {
+    trueUpLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: accumDeprAccountId,
+        side: "DEBIT",
+        amountTxn: preview.cumulativeDelta.amountTxn,
+        amountBase: preview.cumulativeDelta.amountBase,
+        lineDescription: `FA retro ownership correction ${assetNo} true-up remove source attribution`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: sourceOwnerOperatingUnitId,
+      }),
+      buildCariDirectionalJournalLine({
+        accountId: deprExpenseAccountId,
+        side: "CREDIT",
+        amountTxn: preview.cumulativeDelta.amountTxn,
+        amountBase: preview.cumulativeDelta.amountBase,
+        lineDescription: `FA retro ownership correction ${assetNo} true-up reverse source expense`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: sourceOwnerOperatingUnitId,
+      }),
+      buildCariDirectionalJournalLine({
+        accountId: deprExpenseAccountId,
+        side: "DEBIT",
+        amountTxn: preview.cumulativeDelta.amountTxn,
+        amountBase: preview.cumulativeDelta.amountBase,
+        lineDescription: `FA retro ownership correction ${assetNo} true-up recognize target expense`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: destinationOwnerOperatingUnitId,
+      }),
+      buildCariDirectionalJournalLine({
+        accountId: accumDeprAccountId,
+        side: "CREDIT",
+        amountTxn: preview.cumulativeDelta.amountTxn,
+        amountBase: preview.cumulativeDelta.amountBase,
+        lineDescription: `FA retro ownership correction ${assetNo} true-up recognize target accum depr`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: destinationOwnerOperatingUnitId,
+      })
+    );
+  } else {
+    throw badRequest(
+      "Retro ownership transfer correction post requires a non-zero cumulative delta from preview"
+    );
+  }
+
+  const trueUpJournal = await insertPostedJournalWithLinesTx(tx, {
+    tenantId,
+    legalEntityId,
+    bookId: book.id,
+    fiscalPeriodId: correctionPostingPeriod.id,
+    journalNo: buildRetroOwnershipTransferCorrectionTrueUpJournalNo(assetId),
+    entryDate: normalizedCorrectionPostingDate,
+    documentDate: normalizedCorrectionPostingDate,
+    currencyCode,
+    description: `FA retro ownership correction true-up ${assetNo}`.slice(0, 255),
+    referenceNo: assetNo,
+    userId,
+    operatingUnitId: sourceOwnerOperatingUnitId,
+    lines: trueUpLines,
+  });
+
+  const trueUpTransactionId = await insertFixedAssetTransaction(tx, {
+    tenantId,
+    legalEntityId,
+    assetId,
+    transactionType: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_TRANSACTION_TYPE,
+    effectiveDate: normalizedCorrectionPostingDate,
+    postingDate: normalizedCorrectionPostingDate,
+    bookId: book.id,
+    fiscalPeriodId: correctionPostingPeriod.id,
+    currencyCode,
+    journalEntryId: trueUpJournal.journalEntryId,
+    sourceRefType: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_TRUE_UP,
+    sourceRefId: correctionId,
+    grossAmountTxn: ownerMoveEconomics.grossCostTxn,
+    grossAmountBase: ownerMoveEconomics.grossCostBase,
+    accumDeprAmountTxn: ownerMoveEconomics.currentEntityAccumDeprTxn,
+    accumDeprAmountBase: ownerMoveEconomics.currentEntityAccumDeprBase,
+    nbvAmountTxn: ownerMoveEconomics.currentEntityNbvTxn,
+    nbvAmountBase: ownerMoveEconomics.currentEntityNbvBase,
+    note:
+      note
+      || `Retro ownership correction true-up from OU ${sourceOwnerOperatingUnitId} to OU ${destinationOwnerOperatingUnitId}`,
+    createdByUserId: userId,
+  });
+  if (!trueUpTransactionId) {
+    throw badRequest(
+      "Failed to create RETRO_OWNERSHIP_CORRECTION true-up transaction"
+    );
+  }
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId,
+    journalEntryId: trueUpJournal.journalEntryId,
+    sourceRefType: FIXED_ASSET_TRANSACTION,
+    sourceRefId: trueUpTransactionId,
+  });
+
+  const ownerMoveLines = [
+    buildCariDirectionalJournalLine({
+      accountId: assetAccountId,
+      side: "DEBIT",
+      amountTxn: ownerMoveEconomics.grossCostTxn,
+      amountBase: ownerMoveEconomics.grossCostBase,
+      lineDescription: `FA retro ownership correction ${assetNo} owner move gross cost to target OU`.slice(0, 255),
+      subledgerReferenceNo: assetNo,
+      currencyCode,
+      operatingUnitId: destinationOwnerOperatingUnitId,
+    }),
+    buildCariDirectionalJournalLine({
+      accountId: assetAccountId,
+      side: "CREDIT",
+      amountTxn: ownerMoveEconomics.grossCostTxn,
+      amountBase: ownerMoveEconomics.grossCostBase,
+      lineDescription: `FA retro ownership correction ${assetNo} owner move gross cost from source OU`.slice(0, 255),
+      subledgerReferenceNo: assetNo,
+      currencyCode,
+      operatingUnitId: sourceOwnerOperatingUnitId,
+    }),
+  ];
+
+  if (
+    ownerMoveEconomics.correctedSourceAccumDeprTxn > 0
+    || ownerMoveEconomics.correctedSourceAccumDeprBase > 0
+  ) {
+    ownerMoveLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: accumDeprAccountId,
+        side: "DEBIT",
+        amountTxn: ownerMoveEconomics.correctedSourceAccumDeprTxn,
+        amountBase: ownerMoveEconomics.correctedSourceAccumDeprBase,
+        lineDescription: `FA retro ownership correction ${assetNo} owner move corrected accum depr from source OU`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: sourceOwnerOperatingUnitId,
+      }),
+      buildCariDirectionalJournalLine({
+        accountId: accumDeprAccountId,
+        side: "CREDIT",
+        amountTxn: ownerMoveEconomics.correctedSourceAccumDeprTxn,
+        amountBase: ownerMoveEconomics.correctedSourceAccumDeprBase,
+        lineDescription: `FA retro ownership correction ${assetNo} owner move corrected accum depr to target OU`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: destinationOwnerOperatingUnitId,
+      })
+    );
+  }
+
+  if (ownerMoveEconomics.requiresOwnerMoveSelfBalancing) {
+    ownerMoveLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: selfBalancingAccounts.sourceDueFromAccount.id,
+        side: "DEBIT",
+        amountTxn: ownerMoveEconomics.correctedSourceCarryingValueTxn,
+        amountBase: ownerMoveEconomics.correctedSourceCarryingValueBase,
+        lineDescription: `FA retro ownership correction ${assetNo} owner move due from target OU`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: sourceOwnerOperatingUnitId,
+      }),
+      buildCariDirectionalJournalLine({
+        accountId: selfBalancingAccounts.targetDueToAccount.id,
+        side: "CREDIT",
+        amountTxn: ownerMoveEconomics.correctedSourceCarryingValueTxn,
+        amountBase: ownerMoveEconomics.correctedSourceCarryingValueBase,
+        lineDescription: `FA retro ownership correction ${assetNo} owner move due to source OU`.slice(0, 255),
+        subledgerReferenceNo: assetNo,
+        currencyCode,
+        operatingUnitId: destinationOwnerOperatingUnitId,
+      })
+    );
+  }
+
+  const ownerMoveJournal = await insertPostedJournalWithLinesTx(tx, {
+    tenantId,
+    legalEntityId,
+    bookId: book.id,
+    fiscalPeriodId: correctionPostingPeriod.id,
+    journalNo: buildRetroOwnershipTransferCorrectionOwnerMoveJournalNo(assetId),
+    entryDate: normalizedCorrectionPostingDate,
+    documentDate: normalizedCorrectionPostingDate,
+    currencyCode,
+    description: `FA retro ownership correction owner move ${assetNo}`.slice(0, 255),
+    referenceNo: assetNo,
+    userId,
+    operatingUnitId: sourceOwnerOperatingUnitId,
+    lines: ownerMoveLines,
+  });
+
+  const ownerMoveTransactionId = await insertFixedAssetTransaction(tx, {
+    tenantId,
+    legalEntityId,
+    assetId,
+    transactionType: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_TRANSACTION_TYPE,
+    effectiveDate: normalizedCorrectionPostingDate,
+    postingDate: normalizedCorrectionPostingDate,
+    bookId: book.id,
+    fiscalPeriodId: correctionPostingPeriod.id,
+    currencyCode,
+    journalEntryId: ownerMoveJournal.journalEntryId,
+    sourceRefType: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_SOURCE_REF_OWNER_MOVE,
+    sourceRefId: correctionId,
+    grossAmountTxn: ownerMoveEconomics.grossCostTxn,
+    grossAmountBase: ownerMoveEconomics.grossCostBase,
+    accumDeprAmountTxn: ownerMoveEconomics.currentEntityAccumDeprTxn,
+    accumDeprAmountBase: ownerMoveEconomics.currentEntityAccumDeprBase,
+    nbvAmountTxn: ownerMoveEconomics.currentEntityNbvTxn,
+    nbvAmountBase: ownerMoveEconomics.currentEntityNbvBase,
+    note:
+      note
+      || `Retro ownership correction owner move from OU ${sourceOwnerOperatingUnitId} to OU ${destinationOwnerOperatingUnitId}`,
+    createdByUserId: userId,
+  });
+  if (!ownerMoveTransactionId) {
+    throw badRequest(
+      "Failed to create RETRO_OWNERSHIP_CORRECTION owner-move transaction"
+    );
+  }
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId,
+    journalEntryId: ownerMoveJournal.journalEntryId,
+    sourceRefType: FIXED_ASSET_TRANSACTION,
+    sourceRefId: ownerMoveTransactionId,
+  });
+
+  await updateRetroOwnershipTransferCorrectionPostingLinksTx(tx, {
+    correctionId,
+    trueUpTransactionId,
+    trueUpJournalEntryId: trueUpJournal.journalEntryId,
+    ownerMoveTransactionId,
+    ownerMoveJournalEntryId: ownerMoveJournal.journalEntryId,
+  });
+
+  await insertRetroOwnershipTransferCorrectionPeriodsTx(tx, {
+    tenantId,
+    legalEntityId,
+    correctionId,
+    impactedPostedPeriods: preview.impactedPostedPeriods,
+  });
+
+  await tx.query(
+    `UPDATE fixed_assets
+        SET owner_operating_unit_id = ?,
+            updated_by_user_id = ?
+      WHERE id = ? AND tenant_id = ?`,
+    [
+      destinationOwnerOperatingUnitId,
+      userId || null,
+      assetId,
+      tenantId,
+    ]
+  );
+
+  if (replacementContext?.correction?.id) {
+    await markRetroOwnershipTransferCorrectionSupersededTx(tx, {
+      correctionId: replacementContext.correction.id,
+      replacedByCorrectionId: correctionId,
+    });
+  }
+
+  return {
+    posted: true,
+    retroCorrectionId: correctionId,
+    assetId: Number(assetId),
+    resolutionMode:
+      FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_RESOLUTION_MODE_CURRENT_PERIOD_TRUE_UP,
+    status: FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_STATUS_POSTED,
+    actualEffectiveDate: normalizedActualEffectiveDate,
+    correctionPostingDate: normalizedCorrectionPostingDate,
+    balanceSheetTransferPostingDate: normalizedCorrectionPostingDate,
+    fromOwnerOperatingUnitId: sourceOwnerOperatingUnitId,
+    targetOwnerOperatingUnitId: destinationOwnerOperatingUnitId,
+    trueUpTransactionId,
+    trueUpJournalEntryId: trueUpJournal.journalEntryId,
+    ownerMoveTransactionId,
+    ownerMoveJournalEntryId: ownerMoveJournal.journalEntryId,
+    impactedPostedPeriods: preview.impactedPostedPeriods,
+    cumulativeDelta: preview.cumulativeDelta,
+    previewFingerprint: preview.previewFingerprint,
+    replacementRequired: Boolean(replacementContext?.correction?.id),
+    replacementApplied: Boolean(replacementContext?.correction?.id),
+    replacesCorrectionId: replacementContext?.correction?.id || null,
+    replacementReversal: replacementContext ? {
+      trueUpReversalTransactionId: replacementContext.trueUpReversal.reversalTransactionId,
+      trueUpReversalJournalEntryId: replacementContext.trueUpReversal.reversalJournalEntryId,
+      ownerMoveReversalTransactionId: replacementContext.ownerMoveReversal.reversalTransactionId,
+      ownerMoveReversalJournalEntryId: replacementContext.ownerMoveReversal.reversalJournalEntryId,
+    } : null,
+    currentOwnerChanged: true,
+    mandatoryCurrentPeriodOwnerMovePosted: true,
+  };
+}
+
+/**
+ * Post the Track 43 retro ownership transfer correction.
+ *
+ * The post step re-runs the preview-backed decision inside one transaction,
+ * rejects stale fingerprints, posts Journal A1 (true-up) and Journal A2
+ * (mandatory owner move), and when an overlap-safe replacement is previewed,
+ * reverses the superseded correction pair before re-posting the new set.
+ */
+export async function postRetroOwnershipTransferCorrection(input) {
+  const {
+    tenantId,
+    assetId,
+    actualEffectiveDate,
+    correctionPostingDate,
+    targetOwnerOperatingUnitId,
+    previewFingerprint,
+    resolutionMode,
+    note,
+    userId,
+  } = input;
+
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+  if (!previewFingerprint || !String(previewFingerprint).trim()) {
+    throw badRequest("previewFingerprint is required");
+  }
+  if (
+    resolutionMode
+    !== FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_CURRENT_PERIOD_TRUE_UP_REQUIRED
+  ) {
+    throw badRequest(
+      "resolutionMode must be CURRENT_PERIOD_TRUE_UP_REQUIRED for retro ownership transfer correction posting"
+    );
+  }
+
+  const normalizedActualEffectiveDate = formatDateOnly(
+    parseDateOnlyStrict(actualEffectiveDate, "actualEffectiveDate")
+  );
+  const normalizedCorrectionPostingDate = formatDateOnly(
+    parseDateOnlyStrict(correctionPostingDate, "correctionPostingDate")
+  );
+  if (normalizedActualEffectiveDate > normalizedCorrectionPostingDate) {
+    throw badRequest(
+      `actualEffectiveDate (${normalizedActualEffectiveDate}) cannot be after correctionPostingDate (${normalizedCorrectionPostingDate})`
+    );
+  }
+
+  return withTransaction(async (tx) => {
+    const lockedAsset = await loadRetroOwnershipTransferCorrectionAssetSnapshot({
+      tenantId,
+      assetId,
+      queryFn: tx.query,
+      forUpdate: true,
+    });
+    if (!lockedAsset) {
+      throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+    }
+
+    const preview = await previewRetroOwnershipTransferCorrection({
+      tenantId,
+      assetId,
+      actualEffectiveDate: normalizedActualEffectiveDate,
+      correctionPostingDate: normalizedCorrectionPostingDate,
+      targetOwnerOperatingUnitId,
+      note,
+      userId,
+      queryFn: tx.query,
+    });
+
+    if (
+      preview.resolutionMode
+      === FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_BLOCKED
+    ) {
+      return {
+        posted: false,
+        reasonCode: preview.reasonCode || null,
+        message: preview.message || "Retro ownership transfer correction is blocked",
+        details: {
+          chronologyBlockers: preview.chronologyBlockers || [],
+        },
+      };
+    }
+
+    if (
+      String(preview.previewFingerprint || "")
+      !== String(previewFingerprint || "").trim()
+    ) {
+      return {
+        posted: false,
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES.STALE_PREVIEW,
+        message:
+          "Retro ownership transfer correction preview is stale; refresh preview before posting",
+        details: {
+          suppliedPreviewFingerprint: String(previewFingerprint || "").trim(),
+          currentPreviewFingerprint: preview.previewFingerprint || null,
+        },
+      };
+    }
+
+    if (
+      preview.resolutionMode
+      !== FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_PREVIEW_RESOLUTION_MODE_CURRENT_PERIOD_TRUE_UP_REQUIRED
+    ) {
+      throw badRequest(
+        "Retro ownership transfer correction post requires a CURRENT_PERIOD_TRUE_UP_REQUIRED preview result"
+      );
+    }
+
+    if (preview.replacementRequired && preview.replacementSupported === false) {
+      return {
+        posted: false,
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES
+            .OVERLAPPING_CORRECTION_REQUIRES_REPLACEMENT,
+        message:
+          "Retro ownership transfer correction overlaps an earlier active correction but replacement cannot be derived safely in V1",
+        details: {
+          replacesCorrectionId: preview.replacesCorrectionId || null,
+        },
+      };
+    }
+
+    const assetStatus = normalizeUpperText(lockedAsset.status);
+    if (assetStatus === "DISPOSED") {
+      return {
+        posted: false,
+        reasonCode:
+          FIXED_ASSET_RETRO_OWNERSHIP_CORRECTION_REASON_CODES.ASSET_DISPOSED,
+        message:
+          `Retro ownership transfer correction is blocked because asset ${lockedAsset.asset_no || assetId} is DISPOSED`,
+        details: {
+          assetStatus,
+        },
+      };
+    }
+    if (!OWNERSHIP_TRANSFER_ELIGIBLE_STATUSES.has(assetStatus)) {
+      throw badRequest(
+        `Retro ownership transfer correction is only allowed for ACTIVE, SUSPENDED, or FULLY_DEPRECIATED assets ` +
+        `(assetId=${assetId}, status=${assetStatus})`
+      );
+    }
+    return postRetroOwnershipTransferCorrectionSetTx(tx, {
+      tenantId,
+      assetId,
+      lockedAsset,
+      preview,
+      note,
+      userId,
+      normalizedActualEffectiveDate,
+      normalizedCorrectionPostingDate,
+      replacementCorrectionId: preview.replacementRequired
+        ? parsePositiveInt(preview.replacesCorrectionId)
+        : null,
+    });
+  });
+}
+
+/**
+ * Evaluate whether the plain ownership-transfer endpoint can post safely or
+ * must return a structured Track 43 reroute/blocker response instead.
+ */
+export async function evaluateOwnershipTransferChronologySafety(input) {
+  const {
+    tenantId,
+    assetId,
+    effectiveDate,
+    postingDate,
+    targetLocationOperatingUnitId,
+  } = input;
+
+  if (!tenantId) throw badRequest("tenantId is required");
+  if (!assetId) throw badRequest("assetId is required");
+
+  const normalizedDates = assertEffectiveDateNotAfterPostingDate(
+    effectiveDate,
+    postingDate,
+    "Ownership transfer"
+  );
+
+  const asset = await loadRetroOwnershipTransferCorrectionAssetSnapshot({
+    tenantId,
+    assetId,
+  });
+  if (!asset) {
+    throw badRequest(`Asset (id=${assetId}) not found for tenant`);
+  }
+
+  const legalEntityId = Number(asset.legal_entity_id);
+  const book = await resolveBookForLegalEntity(tenantId, legalEntityId);
+  const postingFiscalPeriod = await resolveFiscalPeriodForDate(
+    book.calendar_id,
+    normalizedDates.postingDate
+  );
+  const postingPeriodStatus = await loadPeriodPostingStatus(
+    book.id,
+    postingFiscalPeriod.id
+  );
+
+  const depreciationImpact = await loadOwnershipTransferDepreciationImpactSummary({
+    tenantId,
+    assetId,
+    effectiveDate: normalizedDates.effectiveDate,
+  });
+
+  const lifecycleHistory = await loadCorrectionAwareOwnerTimeline({
+    tenantId,
+    assetId,
+  });
+  const laterOwnerChangingEvent = (lifecycleHistory || []).find((row) => (
+    normalizeUpperText(row?.transactionType) === "OWNERSHIP_TRANSFER"
+      && String(row?.effectiveDate || "").slice(0, 10) > normalizedDates.effectiveDate
+  )) || null;
+
+  const postedLifecycleTransactions = await loadPostedLifecycleTransactionsForAsset({
+    tenantId,
+    assetId,
+    queryFn: query,
+    forUpdate: false,
+  });
+  const laterLifecycleTransaction = (postedLifecycleTransactions || []).find((row) => (
+    String(row?.effectiveDate || "") > normalizedDates.effectiveDate
+      && (
+        row.transactionType === "IMPROVEMENT"
+        || row.transactionType === "WRITEOFF"
+        || row.transactionType === "SALE"
+      )
+  )) || null;
+
+  const unsafeReason = (() => {
+    if (laterOwnerChangingEvent || laterLifecycleTransaction) {
+      const blocker = laterOwnerChangingEvent || laterLifecycleTransaction;
+      return {
+        reasonCode: OWNERSHIP_TRANSFER_CHRONOLOGY_REASON_CODES.LATER_LIFECYCLE_CONFLICT,
+        message:
+          "Backdated ownership transfer is chronology-unsafe because later fixed-asset lifecycle activity already exists after effectiveDate",
+        details: {
+          blockingTransactionId: Number(blocker?.transactionId ?? blocker?.id ?? 0) || null,
+          blockingTransactionType:
+            normalizeUpperText(blocker?.transactionType) || blocker?.kind || null,
+          blockingEffectiveDate: String(blocker?.effectiveDate || "").slice(0, 10) || null,
+        },
+      };
+    }
+
+    if (depreciationImpact.impactedPostedPeriodCount > 0) {
+      return {
+        reasonCode: OWNERSHIP_TRANSFER_CHRONOLOGY_REASON_CODES.RETRO_CORRECTION_REQUIRED,
+        message:
+          "Backdated ownership transfer is chronology-unsafe because posted depreciation already exists at or after effectiveDate",
+        details: {
+          firstImpactedPeriodKey: depreciationImpact.firstImpactedPeriodKey,
+          impactedPostedPeriodCount: depreciationImpact.impactedPostedPeriodCount,
+        },
+      };
+    }
+
+    if (postingPeriodStatus !== "OPEN") {
+      return {
+        reasonCode: OWNERSHIP_TRANSFER_CHRONOLOGY_REASON_CODES.PERIOD_CLOSED,
+        message:
+          `Backdated ownership transfer is blocked because fiscal period ${postingFiscalPeriod.id} is ${postingPeriodStatus}`,
+        details: {
+          fiscalPeriodId: Number(postingFiscalPeriod.id || 0) || null,
+          fiscalPeriodStatus: postingPeriodStatus,
+        },
+      };
+    }
+
+    return null;
+  })();
+
+  if (!unsafeReason) {
+    return {
+      safe: true,
+      reasonCode: null,
+      message: null,
+      reroute: null,
+      details: null,
+    };
+  }
+
+  const reroute = {
+    retroCorrectionPreviewRequired: true,
+    firstImpactedPeriodKey: depreciationImpact.firstImpactedPeriodKey,
+    impactedPostedPeriodCount: depreciationImpact.impactedPostedPeriodCount,
+    locationChangeMustBeSeparate: targetLocationOperatingUnitId != null,
+    mixedRequestRejected: false,
+  };
+
+  let reasonCode = unsafeReason.reasonCode;
+  let message = unsafeReason.message;
+  const details = {
+    ...(unsafeReason.details || {}),
+  };
+
+  // Mixed owner+location submissions cannot be auto-split when chronology is
+  // unsafe; the UI must preserve the requested location for a separate move.
+  if (targetLocationOperatingUnitId != null) {
+    reasonCode =
+      OWNERSHIP_TRANSFER_CHRONOLOGY_REASON_CODES.MIXED_OWNER_LOCATION_REQUIRES_SEPARATE_SUBMISSION;
+    message =
+      "Unsafe backdated owner+location transfer cannot be submitted in one request; submit the owner change via retro correction and the location change separately via physical move";
+    reroute.mixedRequestRejected = true;
+    reroute.targetLocationOperatingUnitId = Number(targetLocationOperatingUnitId);
+    details.underlyingReasonCode = unsafeReason.reasonCode;
+  }
+
+  return {
+    safe: false,
+    reasonCode,
+    message,
+    reroute,
+    details,
+  };
 }
 
 export async function ownershipTransferAsset(input) {
@@ -7485,7 +10810,7 @@ export async function resolveDisposalCutoffEconomics({
     throw badRequest("inServiceDate is required to finalize sale for a depreciable asset");
   }
 
-  const lifecycleHistory = await loadAssetDepreciationLifecycleHistory({
+  const lifecycleHistory = await loadCorrectionAwareOwnerTimeline({
     tenantId,
     assetId: asset.id,
     queryFn,

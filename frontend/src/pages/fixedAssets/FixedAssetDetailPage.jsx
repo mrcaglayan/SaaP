@@ -22,7 +22,9 @@ import {
   listFixedAssetCustodians,
   listFixedAssetTransactions,
   ownershipTransferAsset,
+  postRetroOwnershipTransferCorrection,
   physicalMoveAsset,
+  previewRetroOwnershipTransferCorrection,
   reactivateFixedAsset,
   reverseFixedAssetTransaction,
   saleCreateDraftAr,
@@ -30,6 +32,10 @@ import {
   uploadFixedAssetEvidenceContent,
   writeoffAsset,
 } from "../../api/fixedAssets.js";
+import {
+  formatFixedAssetTransactionDisplayLabel,
+  isRetroOwnershipCorrectionTransaction,
+} from "./fixedAssetTransactionDisplay.js";
 
 function normalizeApiError(error, fallback) {
   const message = String(
@@ -37,6 +43,11 @@ function normalizeApiError(error, fallback) {
   ).trim();
   const requestId = String(error?.response?.data?.requestId || "").trim();
   return requestId ? `${message} (requestId: ${requestId})` : message || fallback;
+}
+
+function getApiErrorPayload(error) {
+  const payload = error?.response?.data;
+  return payload && typeof payload === "object" ? payload : null;
 }
 
 function formatDate(value) {
@@ -162,6 +173,18 @@ function parsePositiveInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function buildAssetDetailTransactionPath(assetId, transactionId) {
+  const normalizedAssetId = parsePositiveInt(assetId);
+  const normalizedTransactionId = parsePositiveInt(transactionId);
+  if (!normalizedAssetId) {
+    return "/app/demirbas-karti-listesi";
+  }
+  if (!normalizedTransactionId) {
+    return `/app/demirbas-karti-detayi/${normalizedAssetId}?tab=transactions`;
+  }
+  return `/app/demirbas-karti-detayi/${normalizedAssetId}?tab=transactions&transactionId=${normalizedTransactionId}`;
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -199,14 +222,52 @@ function buildPhysicalMoveForm(asset = null) {
   };
 }
 
-function buildOwnershipTransferForm(asset = null) {
+function buildOwnershipTransferForm(asset = null, overrides = {}) {
   return {
-    effectiveDate: todayIsoDate(),
-    postingDate: todayIsoDate(),
-    targetOwnerOperatingUnitId: "",
-    targetLocationOperatingUnitId: String(parsePositiveInt(asset?.locationOperatingUnitId) || ""),
-    note: "",
+    effectiveDate: normalizeText(overrides.effectiveDate) || todayIsoDate(),
+    postingDate: normalizeText(overrides.postingDate) || todayIsoDate(),
+    targetOwnerOperatingUnitId: String(
+      parsePositiveInt(overrides.targetOwnerOperatingUnitId) || ""
+    ),
+    targetLocationOperatingUnitId: String(
+      parsePositiveInt(
+        overrides.targetLocationOperatingUnitId ?? asset?.locationOperatingUnitId
+      ) || ""
+    ),
+    note: normalizeText(overrides.note),
   };
+}
+
+function buildRetroOwnershipCorrectionForm(overrides = {}) {
+  return {
+    actualEffectiveDate: normalizeText(overrides.actualEffectiveDate) || todayIsoDate(),
+    correctionPostingDate: normalizeText(overrides.correctionPostingDate) || todayIsoDate(),
+    targetOwnerOperatingUnitId: String(
+      parsePositiveInt(overrides.targetOwnerOperatingUnitId) || ""
+    ),
+    note: normalizeText(overrides.note),
+  };
+}
+
+function buildRetroOwnershipCorrectionRequest(form = {}) {
+  return {
+    actualEffectiveDate: normalizeText(form.actualEffectiveDate),
+    correctionPostingDate: normalizeText(form.correctionPostingDate),
+    targetOwnerOperatingUnitId: parsePositiveInt(form.targetOwnerOperatingUnitId),
+    note: normalizeText(form.note) || null,
+  };
+}
+
+function doesRetroOwnershipCorrectionPreviewMatchForm(preview, form = {}) {
+  if (!preview || typeof preview !== "object") {
+    return false;
+  }
+  const request = buildRetroOwnershipCorrectionRequest(form);
+  return (
+    String(preview.actualEffectiveDate || "") === request.actualEffectiveDate
+    && String(preview.correctionPostingDate || "") === request.correctionPostingDate
+    && Number(preview.targetOwnerOperatingUnitId || 0) === Number(request.targetOwnerOperatingUnitId || 0)
+  );
 }
 
 function buildWriteoffForm() {
@@ -416,6 +477,16 @@ function buildOperatingUnitLabel(rows, operatingUnitId) {
   return buildCodeNameLabel(match, normalizedOperatingUnitId);
 }
 
+function buildOperatingUnitIdentityLabel(code, name, id) {
+  return buildCodeNameLabel(
+    {
+      code,
+      name,
+    },
+    id
+  );
+}
+
 function buildCariDocumentLabel(document, idFallback) {
   if (!document) {
     const normalizedId = parsePositiveInt(idFallback);
@@ -448,6 +519,10 @@ function buildCariLineLabel(document, lineId) {
   return description || `#${normalizedLineId}`;
 }
 
+/**
+ * Render the fixed-asset detail workspace, including the Track 43 retro owner
+ * correction workflow, corrected owner timeline, and grouped correction audit.
+ */
 export default function FixedAssetDetailPage() {
   const { assetId } = useParams();
   const [searchParams] = useSearchParams();
@@ -512,6 +587,13 @@ export default function FixedAssetDetailPage() {
   const [ownershipTransferOpen, setOwnershipTransferOpen] = useState(false);
   const [ownershipTransferForm, setOwnershipTransferForm] = useState(() => buildOwnershipTransferForm());
   const [ownershipTransferSaving, setOwnershipTransferSaving] = useState(false);
+  const [retroCorrectionOpen, setRetroCorrectionOpen] = useState(false);
+  const [retroCorrectionForm, setRetroCorrectionForm] = useState(() => buildRetroOwnershipCorrectionForm());
+  const [retroCorrectionPreviewResult, setRetroCorrectionPreviewResult] = useState(null);
+  const [retroCorrectionPreviewLoading, setRetroCorrectionPreviewLoading] = useState(false);
+  const [retroCorrectionSaving, setRetroCorrectionSaving] = useState(false);
+  const [retroCorrectionError, setRetroCorrectionError] = useState("");
+  const [retroCorrectionReroute, setRetroCorrectionReroute] = useState(null);
   const [writeoffOpen, setWriteoffOpen] = useState(false);
   const [writeoffForm, setWriteoffForm] = useState(() => buildWriteoffForm());
   const [writeoffSaving, setWriteoffSaving] = useState(false);
@@ -629,6 +711,13 @@ export default function FixedAssetDetailPage() {
     setOwnershipTransferOpen(false);
     setOwnershipTransferForm(buildOwnershipTransferForm(asset));
     setOwnershipTransferSaving(false);
+    setRetroCorrectionOpen(false);
+    setRetroCorrectionForm(buildRetroOwnershipCorrectionForm());
+    setRetroCorrectionPreviewResult(null);
+    setRetroCorrectionPreviewLoading(false);
+    setRetroCorrectionSaving(false);
+    setRetroCorrectionError("");
+    setRetroCorrectionReroute(null);
     setWriteoffOpen(false);
     setWriteoffForm(buildWriteoffForm());
     setWriteoffSaving(false);
@@ -890,7 +979,50 @@ export default function FixedAssetDetailPage() {
   const ownershipTargetOwnerOptions = operatingUnitOptions.filter(
     (option) => parsePositiveInt(option.value) !== parsePositiveInt(asset.ownerOperatingUnitId)
   );
+  // Retro correction can replace an earlier correction while keeping the same
+  // current owner OU, so V1 must not exclude the asset master owner here.
+  const retroCorrectionTargetOwnerOptions = operatingUnitOptions;
   const custodianOptions = custodianRows.map(mapCustodianOption).filter(Boolean);
+  const retroCorrectionPreviewResolutionMode = normalizeUpperText(
+    retroCorrectionPreviewResult?.resolutionMode
+  );
+  const retroCorrectionPreviewMatchesForm = doesRetroOwnershipCorrectionPreviewMatchForm(
+    retroCorrectionPreviewResult,
+    retroCorrectionForm
+  );
+  const retroCorrectionImpactedPeriods = Array.isArray(
+    retroCorrectionPreviewResult?.impactedPostedPeriods
+  )
+    ? retroCorrectionPreviewResult.impactedPostedPeriods
+    : [];
+  const retroCorrectionChronologyBlockers = Array.isArray(
+    retroCorrectionPreviewResult?.chronologyBlockers
+  )
+    ? retroCorrectionPreviewResult.chronologyBlockers
+    : [];
+  const retroCorrectionCanPost =
+    retroCorrectionPreviewResolutionMode === "CURRENT_PERIOD_TRUE_UP_REQUIRED"
+    && retroCorrectionPreviewMatchesForm
+    && !retroCorrectionPreviewLoading
+    && !retroCorrectionSaving;
+  const retroCorrectionSourceOwnerLabel = buildOperatingUnitLabel(
+    operatingUnitRows,
+    retroCorrectionPreviewResult?.fromOwnerOperatingUnitId
+  );
+  const retroCorrectionTargetOwnerLabel = buildOperatingUnitLabel(
+    operatingUnitRows,
+    retroCorrectionPreviewResult?.targetOwnerOperatingUnitId
+      ?? retroCorrectionForm.targetOwnerOperatingUnitId
+  );
+  const retroCorrectionRerouteLocationOperatingUnitId = parsePositiveInt(
+    retroCorrectionReroute?.targetLocationOperatingUnitId
+  );
+  const retroCorrectionRerouteLocationLabel = retroCorrectionRerouteLocationOperatingUnitId
+    ? buildOperatingUnitLabel(
+        operatingUnitRows,
+        retroCorrectionRerouteLocationOperatingUnitId
+      )
+    : "-";
   const activationAssetTagMissing = !normalizeText(activationForm.assetTag);
   const activationSerialNoMissing = !normalizeText(activationForm.serialNo);
   const assetEvidenceCount = assetEvidenceLoading
@@ -919,6 +1051,26 @@ export default function FixedAssetDetailPage() {
   const pendingSkippedDepreciationReviewRecommended = Boolean(
     pendingSkippedDepreciation.reviewRecommended
   );
+  const retroOwnershipCorrectionHistory = Array.isArray(
+    asset.retroOwnershipCorrectionHistory
+  )
+    ? asset.retroOwnershipCorrectionHistory
+    : [];
+  const retroCorrectedOwnerTimeline = asset.retroCorrectedOwnerTimeline
+    && typeof asset.retroCorrectedOwnerTimeline === "object"
+    ? asset.retroCorrectedOwnerTimeline
+    : null;
+  const retroCorrectedOwnerRanges = Array.isArray(retroCorrectedOwnerTimeline?.ranges)
+    ? retroCorrectedOwnerTimeline.ranges
+    : [];
+  const retroCorrectedOwnerEvents = Array.isArray(retroCorrectedOwnerTimeline?.events)
+    ? retroCorrectedOwnerTimeline.events
+    : [];
+  const retroCorrectedOwnerCurrentLabel = buildOperatingUnitIdentityLabel(
+    retroCorrectedOwnerTimeline?.currentOwnerOuCode,
+    retroCorrectedOwnerTimeline?.currentOwnerOuName,
+    retroCorrectedOwnerTimeline?.currentOwnerOperatingUnitId
+  );
 
   function resetActionFeedback() {
     setActionError("");
@@ -926,11 +1078,30 @@ export default function FixedAssetDetailPage() {
     setActionWarning("");
   }
 
+  function resetRetroCorrectionWorkflow(nextForm = buildRetroOwnershipCorrectionForm(), nextReroute = null) {
+    setRetroCorrectionForm(nextForm);
+    setRetroCorrectionPreviewResult(null);
+    setRetroCorrectionError("");
+    setRetroCorrectionReroute(nextReroute);
+  }
+
+  function updateRetroCorrectionFormField(field, value) {
+    setRetroCorrectionForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+    if (field !== "note") {
+      setRetroCorrectionPreviewResult(null);
+      setRetroCorrectionError("");
+    }
+  }
+
   function closeLifecyclePanels() {
     setSuspendOpen(false);
     setReactivateOpen(false);
     setPhysicalMoveOpen(false);
     setOwnershipTransferOpen(false);
+    setRetroCorrectionOpen(false);
     setWriteoffOpen(false);
     setSaleFlowOpen(false);
     setLegacySaleFallbackOpen(false);
@@ -957,11 +1128,30 @@ export default function FixedAssetDetailPage() {
     setPhysicalMoveOpen(true);
   }
 
-  function openOwnershipTransferPanel() {
+  function openOwnershipTransferPanel(overrides = null) {
     closeLifecyclePanels();
-    setOwnershipTransferForm(buildOwnershipTransferForm(asset));
+    setOwnershipTransferForm(buildOwnershipTransferForm(asset, overrides || {}));
     resetActionFeedback();
     setOwnershipTransferOpen(true);
+  }
+
+  function openRetroCorrectionPanel({
+    formOverrides = null,
+    rerouteContext = null,
+  } = {}) {
+    closeLifecyclePanels();
+    resetActionFeedback();
+    resetRetroCorrectionWorkflow(
+      buildRetroOwnershipCorrectionForm(formOverrides || {}),
+      rerouteContext
+    );
+    setRetroCorrectionOpen(true);
+  }
+
+  function closeRetroCorrectionPanel() {
+    setRetroCorrectionOpen(false);
+    resetRetroCorrectionWorkflow(buildRetroOwnershipCorrectionForm(), null);
+    resetActionFeedback();
   }
 
   function openWriteoffPanel() {
@@ -1105,6 +1295,17 @@ export default function FixedAssetDetailPage() {
     const rows = Array.isArray(response?.rows) ? response.rows : [];
     setTransactions(rows);
     return rows;
+  }
+
+  async function refreshAssetDetail(targetAssetId = asset?.id) {
+    const normalizedTargetAssetId = parsePositiveInt(targetAssetId);
+    if (!normalizedTargetAssetId) {
+      setAsset(null);
+      return null;
+    }
+    const response = await getFixedAsset(normalizedTargetAssetId);
+    setAsset(response || null);
+    return response || null;
   }
 
   async function handleReverseTransaction(row) {
@@ -1582,6 +1783,41 @@ export default function FixedAssetDetailPage() {
       );
       setActiveTab("overview");
     } catch (err) {
+      const errorStatus = Number(err?.response?.status || 0);
+      const errorPayload = getApiErrorPayload(err);
+      const reroute = errorPayload?.reroute;
+
+      // Chronology-unsafe backdated transfers are not generic form failures in
+      // Track 43. The detail page must preserve the owner's requested dates and
+      // any location guidance, then pivot into the dedicated retro workflow.
+      if (errorStatus === 409 && reroute?.retroCorrectionPreviewRequired) {
+        const rerouteTargetLocationOperatingUnitId = parsePositiveInt(
+          reroute.targetLocationOperatingUnitId
+            ?? targetLocationOperatingUnitId
+        );
+        openRetroCorrectionPanel({
+          formOverrides: {
+            actualEffectiveDate: effectiveDate,
+            correctionPostingDate: postingDate,
+            targetOwnerOperatingUnitId,
+            note: normalizeText(ownershipTransferForm.note),
+          },
+          rerouteContext: {
+            ...reroute,
+            reasonCode: normalizeUpperText(errorPayload?.reasonCode),
+            message: normalizeText(errorPayload?.message),
+            targetLocationOperatingUnitId: rerouteTargetLocationOperatingUnitId || null,
+          },
+        });
+        setActionWarning(
+          normalizeText(errorPayload?.message)
+          || l(
+            "The backdated owner transfer needs retro correction preview before it can be posted.",
+            "Geri tarihli sahiplik degisikligi kaydedilmeden once retro duzeltme onizlemesine yonlendirilmelidir."
+          )
+        );
+        return;
+      }
       setActionError(
         normalizeApiError(
           err,
@@ -1590,6 +1826,145 @@ export default function FixedAssetDetailPage() {
       );
     } finally {
       setOwnershipTransferSaving(false);
+    }
+  }
+
+  async function handlePreviewRetroCorrection() {
+    if (!normalizedAssetId) {
+      setRetroCorrectionError(l("Asset record is missing.", "Demirbas kaydi eksik."));
+      return;
+    }
+
+    const request = buildRetroOwnershipCorrectionRequest(retroCorrectionForm);
+    if (!request.actualEffectiveDate || !request.correctionPostingDate) {
+      setRetroCorrectionError(
+        l(
+          "Actual effective date and correction posting date are required.",
+          "Gercek gecerlilik tarihi ve duzeltme kayit tarihi zorunludur."
+        )
+      );
+      return;
+    }
+    if (request.actualEffectiveDate > request.correctionPostingDate) {
+      setRetroCorrectionError(
+        l(
+          "Actual effective date cannot be after correction posting date.",
+          "Gercek gecerlilik tarihi duzeltme kayit tarihinden sonra olamaz."
+        )
+      );
+      return;
+    }
+    if (!request.targetOwnerOperatingUnitId) {
+      setRetroCorrectionError(
+        l(
+          "Target owner operating unit is required.",
+          "Hedef sahip isletme birimi zorunludur."
+        )
+      );
+      return;
+    }
+
+    setRetroCorrectionPreviewLoading(true);
+    setRetroCorrectionError("");
+    setRetroCorrectionPreviewResult(null);
+    try {
+      const response = await previewRetroOwnershipTransferCorrection(normalizedAssetId, request);
+      setRetroCorrectionPreviewResult(response || null);
+    } catch (err) {
+      const errorStatus = Number(err?.response?.status || 0);
+      const errorPayload = getApiErrorPayload(err);
+      if (errorStatus === 409 && errorPayload) {
+        setRetroCorrectionPreviewResult(errorPayload);
+        return;
+      }
+      setRetroCorrectionError(
+        normalizeApiError(
+          err,
+          l(
+            "Failed to preview retro ownership correction.",
+            "Retro sahiplik duzeltmesi onizlenemedi."
+          )
+        )
+      );
+    } finally {
+      setRetroCorrectionPreviewLoading(false);
+    }
+  }
+
+  async function handlePostRetroCorrection() {
+    if (!normalizedAssetId) {
+      setRetroCorrectionError(l("Asset record is missing.", "Demirbas kaydi eksik."));
+      return;
+    }
+
+    const request = buildRetroOwnershipCorrectionRequest(retroCorrectionForm);
+    if (!retroCorrectionCanPost) {
+      setRetroCorrectionError(
+        l(
+          "Run a fresh preview for the same dates and target owner before posting the correction.",
+          "Duzeltmeyi kaydetmeden once ayni tarihler ve hedef sahip icin guncel bir onizleme calistirin."
+        )
+      );
+      return;
+    }
+
+    setRetroCorrectionSaving(true);
+    setRetroCorrectionError("");
+    resetActionFeedback();
+    try {
+      const response = await postRetroOwnershipTransferCorrection(normalizedAssetId, {
+        ...request,
+        previewFingerprint: retroCorrectionPreviewResult.previewFingerprint,
+        resolutionMode: retroCorrectionPreviewResult.resolutionMode,
+      });
+      let refreshFailed = false;
+      await refreshAssetDetail(normalizedAssetId).catch(() => {
+        refreshFailed = true;
+        return null;
+      });
+      await refreshTransactions(normalizedAssetId).catch(() => {
+        refreshFailed = true;
+        return [];
+      });
+      setRetroCorrectionOpen(false);
+      resetRetroCorrectionWorkflow(buildRetroOwnershipCorrectionForm(), null);
+      setActionSuccess(
+        response?.replacementApplied
+          ? l(
+              "Retro ownership correction posted and the earlier overlapping correction was replaced.",
+              "Retro sahiplik duzeltmesi kaydedildi ve onceki cakisan duzeltme degistirildi."
+            )
+          : l(
+              "Retro ownership correction posted successfully. The current owner was updated and the current-period owner move was posted.",
+              "Retro sahiplik duzeltmesi basariyla kaydedildi. Guncel sahip guncellendi ve cari donem sahiplik tasima kaydi olusturuldu."
+            )
+      );
+      if (refreshFailed) {
+        setActionWarning(
+          l(
+            "The correction posted, but the page could not refresh every detail automatically. Reload the asset if something still looks stale.",
+            "Duzeltme kaydedildi ancak sayfadaki tum ayrintilar otomatik yenilenemedi. Bir sey eski gorunuyorsa demirbasi yeniden yukleyin."
+          )
+        );
+      }
+      setActiveTab("overview");
+    } catch (err) {
+      const errorStatus = Number(err?.response?.status || 0);
+      const errorPayload = getApiErrorPayload(err);
+      if (errorStatus === 409 && errorPayload) {
+        setRetroCorrectionPreviewResult(null);
+      }
+      setRetroCorrectionError(
+        normalizeApiError(
+          err,
+          l(
+            "Failed to post retro ownership correction.",
+            "Retro sahiplik duzeltmesi kaydedilemedi."
+          )
+        )
+      );
+    } finally {
+      setRetroCorrectionSaving(false);
     }
   }
 
@@ -1764,6 +2139,13 @@ export default function FixedAssetDetailPage() {
                   onClick={openOwnershipTransferPanel}
                 >
                   {l("Ownership Transfer", "Sahiplik Transferi")}
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100"
+                  onClick={() => openRetroCorrectionPanel()}
+                >
+                  {l("Retro Owner Correction", "Geriye Donuk Sahiplik Duzeltmesi")}
                 </button>
               </>
             ) : null}
@@ -2344,6 +2726,413 @@ export default function FixedAssetDetailPage() {
               </div>
             </div>
           ) : null}
+          {retroCorrectionOpen ? (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                {l(
+                  "Retro Ownership Transfer Correction",
+                  "Geriye Donuk Sahiplik Transferi Duzeltmesi"
+                )}
+              </p>
+              <p className="mt-2 text-sm text-amber-950">
+                {l(
+                  "Use this flow when the real owner changed earlier, but depreciation for one or more impacted periods has already been posted. V1 corrects owner attribution only and keeps any location move separate.",
+                  "Gercek sahip daha once degisti ancak etkilenen donemler icin amortisman zaten kaydedildiyse bu akisi kullanin. V1 sadece sahip atamasini duzeltir; lokasyon hareketi ayridir."
+                )}
+              </p>
+
+              {retroCorrectionReroute ? (
+                <div className="mt-3 rounded-lg border border-amber-300 bg-white/80 px-3 py-3 text-sm text-amber-950">
+                  <p className="font-semibold">
+                    {l(
+                      "Plain ownership transfer was rerouted into retro correction.",
+                      "Normal sahiplik transferi retro duzeltme akisina yonlendirildi."
+                    )}
+                  </p>
+                  {retroCorrectionReroute.message ? (
+                    <p className="mt-1">{retroCorrectionReroute.message}</p>
+                  ) : null}
+                  <p className="mt-1 text-xs">
+                    {l("Reason", "Neden")}: {retroCorrectionReroute.reasonCode || "-"} |{" "}
+                    {l("First impacted period", "Ilk etkilenen donem")}:{" "}
+                    {retroCorrectionReroute.firstImpactedPeriodKey || "-"} |{" "}
+                    {l("Impacted posted periods", "Etkilenen kayitli donem")}:{" "}
+                    {retroCorrectionReroute.impactedPostedPeriodCount ?? 0}
+                  </p>
+                  {retroCorrectionReroute.mixedRequestRejected ? (
+                    <p className="mt-2 rounded-md border border-amber-200 bg-amber-100 px-3 py-2 text-xs font-medium">
+                      {l(
+                        `Requested location change ${retroCorrectionRerouteLocationLabel} must be submitted separately via Physical Move after the retro correction is posted.`,
+                        `${retroCorrectionRerouteLocationLabel} lokasyon degisikligi retro duzeltme kaydedildikten sonra Fiziksel Hareket ile ayri gonderilmelidir.`
+                      )}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                  {l("Actual Effective Date", "Gercek Gecerlilik Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={retroCorrectionForm.actualEffectiveDate}
+                    onChange={(event) =>
+                      updateRetroCorrectionFormField("actualEffectiveDate", event.target.value)
+                    }
+                    disabled={retroCorrectionPreviewLoading || retroCorrectionSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                  {l("Correction Posting Date", "Duzeltme Kayit Tarihi")}
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={retroCorrectionForm.correctionPostingDate}
+                    onChange={(event) =>
+                      updateRetroCorrectionFormField("correctionPostingDate", event.target.value)
+                    }
+                    disabled={retroCorrectionPreviewLoading || retroCorrectionSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-amber-900 md:col-span-2">
+                  {l("Target Owner Operating Unit", "Hedef Sahip Isletme Birimi")}
+                  <div className="mt-1">
+                    <Combobox
+                      value={retroCorrectionForm.targetOwnerOperatingUnitId}
+                      options={retroCorrectionTargetOwnerOptions}
+                      placeholder={l("Select operating unit", "Isletme birimi secin")}
+                      noOptionsText={l("None", "Yok")}
+                      onChange={(value) =>
+                        updateRetroCorrectionFormField(
+                          "targetOwnerOperatingUnitId",
+                          value ? String(value) : ""
+                        )
+                      }
+                      disabled={retroCorrectionPreviewLoading || retroCorrectionSaving}
+                    />
+                  </div>
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-amber-900 md:col-span-2">
+                  {l("Note", "Not")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                    value={retroCorrectionForm.note}
+                    onChange={(event) =>
+                      updateRetroCorrectionFormField("note", event.target.value)
+                    }
+                    disabled={retroCorrectionPreviewLoading || retroCorrectionSaving}
+                    placeholder={l("Optional", "Opsiyonel")}
+                  />
+                </label>
+              </div>
+
+              {retroCorrectionError ? (
+                <p className="mt-3 text-sm text-rose-700">{retroCorrectionError}</p>
+              ) : null}
+              {retroCorrectionPreviewLoading ? (
+                <p className="mt-3 text-sm text-amber-900">
+                  {l("Loading preview...", "Onizleme yukleniyor...")}
+                </p>
+              ) : null}
+
+              {retroCorrectionPreviewResult ? (
+                <div className="mt-4 space-y-3">
+                  {retroCorrectionPreviewResolutionMode === "BLOCKED" ? (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+                      <p className="font-semibold">
+                        {l(
+                          "Retro correction is blocked for this input.",
+                          "Retro duzeltme bu giris icin engellendi."
+                        )}
+                      </p>
+                      <p className="mt-1">
+                        {retroCorrectionPreviewResult.message || "-"}
+                      </p>
+                      <p className="mt-2 text-xs">
+                        {l("Reason", "Neden")}: {retroCorrectionPreviewResult.reasonCode || "-"}
+                      </p>
+                      {retroCorrectionChronologyBlockers.length > 0 ? (
+                        <ul className="mt-2 space-y-1 text-xs">
+                          {retroCorrectionChronologyBlockers.map((blocker, index) => (
+                            <li key={`retro-blocker-${index}`}>
+                              {normalizeUpperText(blocker?.reasonCode) || "-"}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {retroCorrectionPreviewResolutionMode === "NORMAL_TRANSFER_ALLOWED" ? (
+                    <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+                      <p className="font-semibold">
+                        {l(
+                          "Retro correction is not required for these dates.",
+                          "Bu tarihler icin retro duzeltme gerekmiyor."
+                        )}
+                      </p>
+                      <p className="mt-1">
+                        {l(
+                          "Use the normal ownership transfer flow instead.",
+                          "Bunun yerine normal sahiplik transferi akisina donun."
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        className="mt-3 cursor-pointer rounded-md border border-sky-300 bg-white px-3 py-2 text-xs font-semibold text-sky-900 hover:bg-sky-100"
+                        onClick={() =>
+                          openOwnershipTransferPanel({
+                            effectiveDate: retroCorrectionForm.actualEffectiveDate,
+                            postingDate: retroCorrectionForm.correctionPostingDate,
+                            targetOwnerOperatingUnitId:
+                              retroCorrectionForm.targetOwnerOperatingUnitId,
+                            targetLocationOperatingUnitId:
+                              retroCorrectionRerouteLocationOperatingUnitId,
+                            note: retroCorrectionForm.note,
+                          })
+                        }
+                      >
+                        {l("Open Ownership Transfer", "Sahiplik Transferini Ac")}
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {retroCorrectionPreviewResolutionMode === "CURRENT_PERIOD_TRUE_UP_REQUIRED" ? (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-950">
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {l("Actual Effective Date", "Gercek Gecerlilik Tarihi")}
+                          </p>
+                          <p className="mt-1 font-medium">
+                            {formatDate(retroCorrectionPreviewResult.actualEffectiveDate)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {l("Correction Posting Date", "Duzeltme Kayit Tarihi")}
+                          </p>
+                          <p className="mt-1 font-medium">
+                            {formatDate(retroCorrectionPreviewResult.correctionPostingDate)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {l("Source Owner", "Kaynak Sahip")}
+                          </p>
+                          <p className="mt-1 font-medium">{retroCorrectionSourceOwnerLabel}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {l("Target Owner", "Hedef Sahip")}
+                          </p>
+                          <p className="mt-1 font-medium">{retroCorrectionTargetOwnerLabel}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-lg border border-emerald-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {l("Impacted Posted Periods", "Etkilenen Kayitli Donem")}
+                          </p>
+                          <p className="mt-1 text-lg font-semibold">
+                            {retroCorrectionPreviewResult.impactedPostedPeriodCount ?? 0}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-emerald-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {l("First Impacted Period", "Ilk Etkilenen Donem")}
+                          </p>
+                          <p className="mt-1 text-lg font-semibold">
+                            {retroCorrectionPreviewResult.firstImpactedPeriodKey || "-"}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-emerald-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {l("Cumulative Delta Base", "Kumulatif Fark Baz")}
+                          </p>
+                          <p className="mt-1 text-lg font-semibold font-mono">
+                            {formatNumber(retroCorrectionPreviewResult.cumulativeDelta?.amountBase)}
+                          </p>
+                          <p className="mt-1 text-xs text-emerald-900/80">
+                            txn={formatNumber(retroCorrectionPreviewResult.cumulativeDelta?.amountTxn)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-emerald-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {l("Replacement", "Degistirme")}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold">
+                            {retroCorrectionPreviewResult.replacementRequired
+                              ? l(
+                                  `Replaces #${retroCorrectionPreviewResult.replacesCorrectionId || "-"}`,
+                                  `#${retroCorrectionPreviewResult.replacesCorrectionId || "-"} kaydini degistirir`
+                                )
+                              : l("No earlier overlapping correction", "Onceki cakisan duzeltme yok")}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 rounded-lg border border-emerald-200 bg-white px-3 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                          {l("Posting Effect", "Kayit Etkisi")}
+                        </p>
+                        <ul className="mt-2 space-y-1 text-sm">
+                          <li>
+                            {retroCorrectionPreviewResult.mandatoryCurrentPeriodOwnerMoveWillPost
+                              ? l(
+                                  "A current-period true-up and a mandatory current-period owner move will post together.",
+                                  "Cari donem true-up kaydi ile zorunlu cari donem sahiplik tasima kaydi birlikte olusturulacak."
+                                )
+                              : l(
+                                  "No current-period owner move is planned.",
+                                  "Cari donem sahiplik tasima kaydi planlanmiyor."
+                                )}
+                          </li>
+                          <li>
+                            {retroCorrectionPreviewResult.currentOwnerChanged
+                              ? l(
+                                  "The asset master owner will be updated to the target owner in V1.",
+                                  "V1'de demirbas kartindaki mevcut sahip hedef sahip olarak guncellenecek."
+                                )
+                              : l(
+                                  "The asset master owner will not change.",
+                                  "Demirbas kartindaki mevcut sahip degismeyecek."
+                                )}
+                          </li>
+                        </ul>
+                      </div>
+
+                      {!retroCorrectionPreviewMatchesForm ? (
+                        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-100 px-3 py-2 text-sm text-amber-950">
+                          {l(
+                            "The preview is no longer aligned with the current dates or target owner. Run preview again before posting.",
+                            "Onizleme mevcut tarihler veya hedef sahip ile artik uyumlu degil. Kaydetmeden once onizlemeyi yeniden calistirin."
+                          )}
+                        </div>
+                      ) : null}
+
+                      <div className="mt-4 space-y-3">
+                        {retroCorrectionImpactedPeriods.map((period) => (
+                          <div
+                            key={`retro-period-${period.periodKey}-${Array.isArray(period.runLineIds) ? period.runLineIds.join("-") : ""}`}
+                            className="rounded-lg border border-emerald-200 bg-white px-3 py-3"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">
+                                  {period.periodKey || "-"}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-600">
+                                  {l("Kinds", "Turler")}:{" "}
+                                  {Array.isArray(period.depreciationKinds) && period.depreciationKinds.length > 0
+                                    ? period.depreciationKinds.join(", ")
+                                    : "-"}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                                  {l("Delta Base", "Fark Baz")}
+                                </p>
+                                <p className="mt-1 font-mono text-sm font-semibold">
+                                  {formatNumber(period.delta?.amountBase)}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-600">
+                                  txn={formatNumber(period.delta?.amountTxn)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 grid gap-3 md:grid-cols-3">
+                              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                  {l("Originally Posted", "Ilk Kaydedilen")}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-700">
+                                  {retroCorrectionSourceOwnerLabel}:{" "}
+                                  {formatNumber(period.originallyPosted?.sourceAmountBase)}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-700">
+                                  {retroCorrectionTargetOwnerLabel}:{" "}
+                                  {formatNumber(period.originallyPosted?.targetAmountBase)}
+                                </p>
+                              </div>
+                              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                  {l("Corrected Attribution", "Duzeltilmis Dagilim")}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-700">
+                                  {retroCorrectionSourceOwnerLabel}:{" "}
+                                  {formatNumber(period.corrected?.sourceAmountBase)}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-700">
+                                  {retroCorrectionTargetOwnerLabel}:{" "}
+                                  {formatNumber(period.corrected?.targetAmountBase)}
+                                </p>
+                              </div>
+                              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                  {l("Eligible Day Split", "Hak Edilen Gun Dagilimi")}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-700">
+                                  {retroCorrectionSourceOwnerLabel}:{" "}
+                                  {period.eligibleDaySplit?.correctedSourceEligibleDays ?? 0}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-700">
+                                  {retroCorrectionTargetOwnerLabel}:{" "}
+                                  {period.eligibleDaySplit?.correctedTargetEligibleDays ?? 0}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-amber-900">
+                  {l(
+                    "Preview the impacted periods and current-period correction before posting.",
+                    "Kaydetmeden once etkilenen donemleri ve cari donem duzeltmesini onizleyin."
+                  )}
+                </p>
+              )}
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handlePreviewRetroCorrection}
+                  disabled={retroCorrectionPreviewLoading || retroCorrectionSaving}
+                >
+                  {retroCorrectionPreviewLoading
+                    ? l("Previewing...", "Onizleniyor...")
+                    : l("Preview Correction", "Duzeltmeyi Onizle")}
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handlePostRetroCorrection}
+                  disabled={!retroCorrectionCanPost}
+                >
+                  {retroCorrectionSaving
+                    ? l("Posting...", "Kaydediliyor...")
+                    : l("Post Correction", "Duzeltmeyi Kaydet")}
+                </button>
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
+                  onClick={closeRetroCorrectionPanel}
+                  disabled={retroCorrectionPreviewLoading || retroCorrectionSaving}
+                >
+                  {l("Cancel", "Iptal")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           {writeoffOpen ? (
             <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-rose-900">
@@ -2670,6 +3459,124 @@ export default function FixedAssetDetailPage() {
             } />
           </SectionCard>
 
+          {retroCorrectedOwnerTimeline ? (
+            <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-5 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    {l("Retro-Corrected Owner Timeline", "Retro Duzeltilmis Sahip Zaman Cizelgesi")}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {l(
+                      "Track 43 keeps the asset master owner current while separately surfacing the corrected historical owner ranges used for future attribution.",
+                      "Track 43, demirbas kartindaki mevcut sahibi korurken gelecekteki dagilimda kullanilan duzeltilmis tarihsel sahip araliklarini ayrica gosterir."
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                    {l("Current Owner Snapshot", "Guncel Sahip Anlik Gorunumu")}
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {retroCorrectedOwnerCurrentLabel}
+                  </p>
+                </div>
+              </div>
+
+              {retroCorrectedOwnerRanges.length > 0 ? (
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {retroCorrectedOwnerRanges.map((range, index) => (
+                    <div
+                      key={`retro-owner-range-${range.fromDate || "start"}-${range.toDate || "open"}-${index}`}
+                      className="rounded-lg border border-emerald-200 bg-white px-4 py-3"
+                    >
+                      <p className="text-sm font-semibold text-slate-900">
+                        {buildOperatingUnitIdentityLabel(
+                          range.ownerOuCode,
+                          range.ownerOuName,
+                          range.ownerOperatingUnitId
+                        )}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        {formatDate(range.fromDate)}{" "}
+                        {"->"}{" "}
+                        {range.openEnded
+                          ? l("Open-ended", "Acik Uclu")
+                          : formatDate(range.toDate)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-slate-500">
+                  {l(
+                    "No corrected owner ranges are available for this asset.",
+                    "Bu demirbas icin duzeltilmis sahip araligi bulunmuyor."
+                  )}
+                </p>
+              )}
+
+              {retroCorrectedOwnerEvents.length > 0 ? (
+                <div className="mt-4 rounded-lg border border-emerald-200 bg-white px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                    {l("Owner-Change Events", "Sahip Degisim Olaylari")}
+                  </p>
+                  <div className="mt-3 space-y-3">
+                    {retroCorrectedOwnerEvents.map((event, index) => (
+                      <div
+                        key={`retro-owner-event-${event.transactionId || "tx"}-${event.effectiveDate || index}`}
+                        className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-900">
+                            {buildOperatingUnitIdentityLabel(
+                              event.fromOwnerOuCode,
+                              event.fromOwnerOuName,
+                              event.fromOwnerOperatingUnitId
+                            )}{" "}
+                            {"->"}{" "}
+                            {buildOperatingUnitIdentityLabel(
+                              event.toOwnerOuCode,
+                              event.toOwnerOuName,
+                              event.toOwnerOperatingUnitId
+                            )}
+                          </p>
+                          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                            {event.sourceType === "RETRO_OWNERSHIP_CORRECTION"
+                              ? l("Retro Correction", "Retro Duzeltme")
+                              : event.sourceType || "-"}
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-2 text-xs text-slate-600 md:grid-cols-3">
+                          <p>
+                            {l("Actual Effective", "Gercek Yurumelilik")}: {formatDate(
+                              event.actualEffectiveDate || event.effectiveDate
+                            )}
+                          </p>
+                          <p>
+                            {l("Correction Posting", "Duzeltme Kayit Tarihi")}: {formatDate(
+                              event.correctionPostingDate
+                            )}
+                          </p>
+                          <p>
+                            {l("Reference", "Referans")}: {event.retroCorrectionId
+                              ? l(
+                                  `Correction #${event.retroCorrectionId}`,
+                                  `Duzeltme #${event.retroCorrectionId}`
+                                )
+                              : event.transactionId
+                                ? `#${event.transactionId}`
+                                : "-"}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
           <SectionCard title={l("Key Dates", "Onemli Tarihler")}>
             <DetailField label={l("Acquisition Date", "Alim Tarihi")} value={formatDate(asset.acquisitionDate)} />
             <DetailField label={l("Capitalization Date", "Aktiflesme Tarihi")} value={formatDate(asset.capitalizationDate)} />
@@ -2862,6 +3769,17 @@ export default function FixedAssetDetailPage() {
                     {transactions.map((tx) => {
                       const txId = parsePositiveInt(tx.id);
                       const isFocused = focusedTransactionId && txId === focusedTransactionId;
+                      const transactionLabel = formatFixedAssetTransactionDisplayLabel(
+                        tx.transactionType || tx.transaction_type,
+                        tx.sourceRefType || tx.source_ref_type,
+                        tx.displayLabel || tx.display_label
+                      );
+                      const retroCorrectionId = parsePositiveInt(
+                        tx.retroCorrectionId || tx.retro_correction_id
+                      );
+                      const isRetroCorrection = isRetroOwnershipCorrectionTransaction(
+                        tx.transactionType || tx.transaction_type
+                      );
                       const canReverseRow = canReverseFixedAssetTransactionRow(tx, {
                         canPost,
                         canDispose,
@@ -2877,10 +3795,28 @@ export default function FixedAssetDetailPage() {
                       return (
                         <tr
                           key={tx.id}
-                          className={`border-b border-slate-100 ${isFocused ? "bg-cyan-50 ring-1 ring-cyan-300" : "hover:bg-slate-50"}`}
+                          className={`border-b border-slate-100 ${
+                            isFocused
+                              ? "bg-cyan-50 ring-1 ring-cyan-300"
+                              : isRetroCorrection
+                                ? "bg-emerald-50/40 hover:bg-emerald-50"
+                                : "hover:bg-slate-50"
+                          }`}
                         >
                           <td className="px-2 py-1.5 font-mono text-xs">{tx.id}</td>
-                          <td className="px-2 py-1.5">{tx.transactionType || tx.transaction_type || "-"}</td>
+                          <td className="px-2 py-1.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>{transactionLabel}</span>
+                              {retroCorrectionId ? (
+                                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                                  {l(
+                                    `Correction #${retroCorrectionId}`,
+                                    `Duzeltme #${retroCorrectionId}`
+                                  )}
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
                           <td className="px-2 py-1.5">{tx.status || "-"}</td>
                           <td className="px-2 py-1.5">{formatDate(tx.effectiveDate || tx.effective_date)}</td>
                           <td className="px-2 py-1.5">{formatDate(tx.postingDate || tx.posting_date)}</td>
@@ -3232,12 +4168,290 @@ export default function FixedAssetDetailPage() {
 
       {/* ── Audit Trail Tab ──────────────────────────────────────── */}
       {activeTab === "audit" ? (
-        <SectionCard title={l("Audit Trail", "Denetim Izi")}>
-          <DetailField label={l("Created By", "Olusturan")} value={createdByLabel} />
-          <DetailField label={l("Updated By", "Guncelleyen")} value={updatedByLabel} />
-          <DetailField label={l("Created At", "Olusturma Tarihi")} value={formatDate(asset.createdAt)} />
-          <DetailField label={l("Updated At", "Guncelleme Tarihi")} value={formatDate(asset.updatedAt)} />
-        </SectionCard>
+        <div className="space-y-4">
+          <SectionCard title={l("Audit Trail", "Denetim Izi")}>
+            <DetailField label={l("Created By", "Olusturan")} value={createdByLabel} />
+            <DetailField label={l("Updated By", "Guncelleyen")} value={updatedByLabel} />
+            <DetailField label={l("Created At", "Olusturma Tarihi")} value={formatDate(asset.createdAt)} />
+            <DetailField label={l("Updated At", "Guncelleme Tarihi")} value={formatDate(asset.updatedAt)} />
+          </SectionCard>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {l("Retro Ownership Correction History", "Retro Sahiplik Duzeltme Gecmisi")}
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {l(
+                    "Each posted retro correction stays grouped as one parent record with its true-up and owner-move child transactions.",
+                    "Her kaydedilmis retro duzeltme, true-up ve owner-move alt hareketleriyle tek ust kayit olarak gruplanir."
+                  )}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+                {l(
+                  `${retroOwnershipCorrectionHistory.length} correction(s)`,
+                  `${retroOwnershipCorrectionHistory.length} duzeltme`
+                )}
+              </div>
+            </div>
+
+            {retroOwnershipCorrectionHistory.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-500">
+                {l(
+                  "No retro ownership corrections have been posted for this asset.",
+                  "Bu demirbas icin kaydedilmis retro sahiplik duzeltmesi bulunmuyor."
+                )}
+              </p>
+            ) : (
+              <div className="mt-4 space-y-4">
+                {retroOwnershipCorrectionHistory.map((correction) => {
+                  const impactedPeriods = Array.isArray(correction.impactedPeriods)
+                    ? correction.impactedPeriods
+                    : [];
+                  const childTransactions = Array.isArray(correction.childTransactions)
+                    ? correction.childTransactions
+                    : [];
+                  const fromOwnerLabel = buildOperatingUnitIdentityLabel(
+                    correction.fromOwnerOuCode,
+                    correction.fromOwnerOuName,
+                    correction.fromOwnerOperatingUnitId
+                  );
+                  const toOwnerLabel = buildOperatingUnitIdentityLabel(
+                    correction.toOwnerOuCode,
+                    correction.toOwnerOuName,
+                    correction.toOwnerOperatingUnitId
+                  );
+                  return (
+                    <article
+                      key={`retro-correction-${correction.id}`}
+                      className="rounded-xl border border-slate-200 bg-slate-50/70 p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {l(
+                              `Correction #${correction.id}`,
+                              `Duzeltme #${correction.id}`
+                            )}
+                          </p>
+                          <p className="mt-1 text-sm text-slate-700">
+                            {fromOwnerLabel} {"->"} {toOwnerLabel}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                            {correction.status || "-"}
+                          </span>
+                          {correction.currentOwnerChanged ? (
+                            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-800">
+                              {l("Current owner updated", "Guncel sahip guncellendi")}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Actual Effective Date", "Gercek Yurumelilik Tarihi")}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {formatDate(correction.actualEffectiveDate)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Correction Posting Date", "Duzeltme Kayit Tarihi")}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {formatDate(correction.correctionPostingDate)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Resolution Mode", "Cozum Modu")}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {correction.resolutionMode || "-"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {correction.note ? (
+                        <div className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Note", "Not")}
+                          </p>
+                          <p className="mt-1 text-sm text-slate-700">{correction.note}</p>
+                        </div>
+                      ) : null}
+
+                      {correction.replacesCorrectionId || correction.replacedByCorrectionId ? (
+                        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+                          {correction.replacesCorrectionId ? (
+                            <p>
+                              {l(
+                                `Replaces correction #${correction.replacesCorrectionId}.`,
+                                `#${correction.replacesCorrectionId} duzeltmesinin yerine gecer.`
+                              )}
+                            </p>
+                          ) : null}
+                          {correction.replacedByCorrectionId ? (
+                            <p>
+                              {l(
+                                `Superseded by correction #${correction.replacedByCorrectionId}.`,
+                                `#${correction.replacedByCorrectionId} duzeltmesi tarafindan supersede edildi.`
+                              )}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {impactedPeriods.length > 0 ? (
+                        <div className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Impacted Periods", "Etkilenen Donemler")}
+                          </p>
+                          <div className="mt-3 overflow-auto">
+                            <table className="min-w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  <th className="px-2 py-2 text-left">{l("Period", "Donem")}</th>
+                                  <th className="px-2 py-2 text-right">{l("Delta (Base)", "Fark (Baz)")}</th>
+                                  <th className="px-2 py-2 text-right">{l("Source Days", "Kaynak Gun")}</th>
+                                  <th className="px-2 py-2 text-right">{l("Target Days", "Hedef Gun")}</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {impactedPeriods.map((period, index) => (
+                                  <tr
+                                    key={`retro-correction-period-${correction.id}-${period.periodKey || index}`}
+                                    className="border-b border-slate-100 last:border-b-0"
+                                  >
+                                    <td className="px-2 py-1.5">{period.periodKey || "-"}</td>
+                                    <td className="px-2 py-1.5 text-right font-mono">
+                                      {formatNumber(period.deltaAmountBase)}
+                                    </td>
+                                    <td className="px-2 py-1.5 text-right font-mono">
+                                      {period.sourceEligibleDays ?? 0}
+                                    </td>
+                                    <td className="px-2 py-1.5 text-right font-mono">
+                                      {period.targetEligibleDays ?? 0}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {childTransactions.length > 0 ? (
+                        <div className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Child Transactions", "Alt Hareketler")}
+                          </p>
+                          <div className="mt-3 space-y-3">
+                            {childTransactions.map((child) => {
+                              const childTransactionLabel = formatFixedAssetTransactionDisplayLabel(
+                                child.transactionType,
+                                child.sourceRefType,
+                                child.displayLabel
+                              );
+                              return (
+                                <div
+                                  key={`retro-correction-child-${correction.id}-${child.id}`}
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-3"
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-sm font-semibold text-slate-900">
+                                        {childTransactionLabel}
+                                      </p>
+                                      <p className="mt-1 text-xs text-slate-600">
+                                        {l("Transaction", "Hareket")}:{" "}
+                                        <Link
+                                          to={buildAssetDetailTransactionPath(asset.id, child.id)}
+                                          className="font-mono text-cyan-700 hover:underline"
+                                        >
+                                          #{child.id}
+                                        </Link>
+                                        {" · "}
+                                        {l("Journal", "Fis")}:{" "}
+                                        {child.journalEntryId ? (
+                                          <span className="font-mono">#{child.journalEntryId}</span>
+                                        ) : "-"}
+                                      </p>
+                                    </div>
+                                    <span className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                                      {child.sourceRefType || "-"}
+                                    </span>
+                                  </div>
+                                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                                    <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        {l("Effective Date", "Gecerlilik Tarihi")}
+                                      </p>
+                                      <p className="mt-1 text-sm text-slate-900">
+                                        {formatDate(child.effectiveDate)}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        {l("Posting Date", "Kayit Tarihi")}
+                                      </p>
+                                      <p className="mt-1 text-sm text-slate-900">
+                                        {formatDate(child.postingDate)}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        {l("Status", "Durum")}
+                                      </p>
+                                      <p className="mt-1 text-sm text-slate-900">
+                                        {child.status || "-"}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        {l("Gross (Base)", "Brut (Baz)")}
+                                      </p>
+                                      <p className="mt-1 font-mono text-sm text-slate-900">
+                                        {formatNumber(child.grossAmountBase)}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        {l("Accum Depr (Base)", "Birikm. Amort. (Baz)")}
+                                      </p>
+                                      <p className="mt-1 font-mono text-sm text-slate-900">
+                                        {formatNumber(child.accumDeprAmountBase)}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        {l("NBV (Base)", "NBV (Baz)")}
+                                      </p>
+                                      <p className="mt-1 font-mono text-sm text-slate-900">
+                                        {formatNumber(child.nbvAmountBase)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
       ) : null}
     </div>
   );

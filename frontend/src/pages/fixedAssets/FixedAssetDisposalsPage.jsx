@@ -4,6 +4,10 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { getFixedAsset, listFixedAssets, listFixedAssetTransactions } from "../../api/fixedAssets.js";
+import {
+  formatFixedAssetTransactionDisplayLabel,
+  isRetroOwnershipCorrectionTransaction,
+} from "./fixedAssetTransactionDisplay.js";
 
 function parsePositiveInt(value) {
   const parsed = Number(value);
@@ -31,6 +35,11 @@ function formatNumber(value) {
   });
 }
 
+/**
+ * Render the fixed-asset disposal list plus transaction deep links, including
+ * Track 43 retro-correction transaction labels where disposal context shows
+ * the shared fixed-asset transaction feed.
+ */
 export default function FixedAssetDisposalsPage() {
   const { l } = useI18n();
   const { hasPermission } = useAuth();
@@ -222,6 +231,11 @@ export default function FixedAssetDisposalsPage() {
   const focusedTx = transactions.find(
     (tx) => parsePositiveInt(tx.id) === queryTransactionId
   );
+  const focusedTxDisplayLabel = formatFixedAssetTransactionDisplayLabel(
+    focusedTx?.transactionType || focusedTx?.transaction_type,
+    focusedTx?.sourceRefType || focusedTx?.source_ref_type,
+    focusedTx?.displayLabel || focusedTx?.display_label
+  );
 
   return (
     <div className="space-y-4">
@@ -266,7 +280,23 @@ export default function FixedAssetDisposalsPage() {
             </div>
             <div>
               <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{l("Type", "Tip")}</dt>
-              <dd className="mt-0.5 text-sm text-slate-900">{focusedTx.transactionType || focusedTx.transaction_type || "-"}</dd>
+              <dd className="mt-0.5 text-sm text-slate-900">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>{focusedTxDisplayLabel}</span>
+                  {isRetroOwnershipCorrectionTransaction(
+                    focusedTx.transactionType || focusedTx.transaction_type
+                  ) && parsePositiveInt(
+                    focusedTx.retroCorrectionId || focusedTx.retro_correction_id
+                  ) ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                      {l(
+                        `Correction #${focusedTx.retroCorrectionId || focusedTx.retro_correction_id}`,
+                        `Duzeltme #${focusedTx.retroCorrectionId || focusedTx.retro_correction_id}`
+                      )}
+                    </span>
+                  ) : null}
+                </div>
+              </dd>
             </div>
             <div>
               <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{l("Status", "Durum")}</dt>
@@ -325,13 +355,42 @@ export default function FixedAssetDisposalsPage() {
               <tbody>
                 {transactions.map((tx) => {
                   const isFocused = parsePositiveInt(tx.id) === queryTransactionId;
+                  const transactionLabel = formatFixedAssetTransactionDisplayLabel(
+                    tx.transactionType || tx.transaction_type,
+                    tx.sourceRefType || tx.source_ref_type,
+                    tx.displayLabel || tx.display_label
+                  );
+                  const retroCorrectionId = parsePositiveInt(
+                    tx.retroCorrectionId || tx.retro_correction_id
+                  );
+                  const isRetroCorrection = isRetroOwnershipCorrectionTransaction(
+                    tx.transactionType || tx.transaction_type
+                  );
                   return (
                     <tr
                       key={tx.id}
-                      className={`border-b border-slate-100 ${isFocused ? "bg-cyan-50 ring-1 ring-cyan-300" : "hover:bg-slate-50"}`}
+                      className={`border-b border-slate-100 ${
+                        isFocused
+                          ? "bg-cyan-50 ring-1 ring-cyan-300"
+                          : isRetroCorrection
+                            ? "bg-emerald-50/40 hover:bg-emerald-50"
+                            : "hover:bg-slate-50"
+                      }`}
                     >
                       <td className="px-2 py-1.5 font-mono text-xs">{tx.id}</td>
-                      <td className="px-2 py-1.5">{tx.transactionType || tx.transaction_type || "-"}</td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{transactionLabel}</span>
+                          {retroCorrectionId ? (
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                              {l(
+                                `Correction #${retroCorrectionId}`,
+                                `Duzeltme #${retroCorrectionId}`
+                              )}
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="px-2 py-1.5">{tx.status || "-"}</td>
                       <td className="px-2 py-1.5">{formatDate(tx.effectiveDate || tx.effective_date)}</td>
                       <td className="px-2 py-1.5 text-right font-mono">{formatNumber(tx.nbvAmountBase || tx.nbv_amount_base)}</td>

@@ -141,6 +141,7 @@ import migration151FixedAssetImprovementTransactionType from "./m151_fixed_asset
 import migration152CariDocumentLinesImprovementEffectiveDate from "./m152_cari_document_lines_improvement_effective_date.js";
 import migration153CariDocumentLineChargeAllocations from "./m153_cari_document_line_charge_allocations.js";
 import migration154StockLandedCostVouchers from "./m154_stock_landed_cost_vouchers.js";
+import migration155FixedAssetRetroTransferCorrections from "./m155_fixed_asset_retro_transfer_corrections.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -286,6 +287,7 @@ const migrations = [
   migration152CariDocumentLinesImprovementEffectiveDate,
   migration153CariDocumentLineChargeAllocations,
   migration154StockLandedCostVouchers,
+  migration155FixedAssetRetroTransferCorrections,
 ];
 
 export default migrations;

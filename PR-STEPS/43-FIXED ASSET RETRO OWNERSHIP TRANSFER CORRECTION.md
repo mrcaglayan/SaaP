@@ -553,17 +553,17 @@ The original 7-step tracker is too dense in three places for a single focused im
 | Step | Scope | Status |
 |---|---|---|
 | **Phase 1 - Foundation and decision gates** | | |
-| ROT01 | Migration, correction taxonomy, and persisted audit model | Not started |
-| ROT02A | Preview contract, eligibility checks, and decision response shell | Not started |
-| ROT04 | Plain ownership-transfer endpoint blockers and reroute contract | Not started |
-| ROT02B | Preview calculation engine and full preview response assembly | Not started |
+| ROT01 | Migration, correction taxonomy, and persisted audit model | Completed |
+| ROT02A | Preview contract, eligibility checks, and decision response shell | Completed |
+| ROT04 | Plain ownership-transfer endpoint blockers and reroute contract | Completed |
+| ROT02B | Preview calculation engine and full preview response assembly | Completed |
 | **Phase 2 - Posting and replacement control** | | |
-| ROT03A | Happy-path posting engine: true-up journal and mandatory current-period owner move | Not started |
-| ROT03B | Overlap replacement engine and explicit retro-correction reversal rejection path | Not started |
+| ROT03A | Happy-path posting engine: true-up journal and mandatory current-period owner move | Completed |
+| ROT03B | Overlap replacement engine and explicit retro-correction reversal rejection path | Completed |
 | **Phase 3 - Read surfaces and frontend** | | |
-| ROT05A | Backend asset-detail history payload and owner-report treatment | Not started |
-| ROT06 | Frontend retro correction wizard and preview UX | Not started |
-| ROT05B | Frontend asset-detail correction history and owner-report UI | Not started |
+| ROT05A | Backend asset-detail history payload and owner-report treatment | Completed |
+| ROT06 | Frontend retro correction wizard and preview UX | Completed |
+| ROT05B | Frontend asset-detail correction history and owner-report UI | Completed |
 | **Phase 4 - Test and release control** | | |
 | ROT07 | Smoke coverage, readiness gates, and rollback verification | Not started |
 
@@ -577,6 +577,22 @@ The original 7-step tracker is too dense in three places for a single focused im
 6. `ROT05A` and `ROT06` can proceed in parallel after posting and preview surfaces stabilize: `ROT05A` is backend read/report plumbing, while `ROT06` is the retro-correction wizard on the detail page.
 7. `ROT05B` depends on both `ROT05A` and `ROT06` because the frontend history/report surfaces need the backend payload shape and should align with the wizard/display-label behavior already introduced in `ROT06`.
 8. `ROT07` closes the track only after all prior steps are stable and the plain transfer, catch-up, and correction paths are re-verified together.
+
+### Focused Verification Note
+
+- `backend/scripts/test-fa48-retro-correction-focused-smoke.js` is the reusable focused verification script for the highest-risk Track 43 preview/posting seams discovered before `ROT03B`
+- `backend/scripts/test-fa49-retro-correction-replacement-smoke.js` is the reusable focused verification script for the `ROT03B` replacement/supersession branch and explicit retro-correction reversal rejection path
+- it is not a separate tracker step, but it is expected to be rerun before overlap-replacement work and again as part of `ROT07` readiness
+- the current focused script covers:
+  - one-month preview success
+  - multi-month preview success
+  - third-OU posted-allocation blocker
+  - later owner-changing event blocker
+  - happy-path post with correction header/detail persistence plus OU-balanced A1/A2 journals
+  - overlap replacement success with supersession lineage and paired reversal/re-post behavior
+  - explicit generic reversal rejection for `RETRO_CORRECTION_NOT_INDIVIDUALLY_REVERSIBLE`
+  - stale-preview `409`
+  - negative corrected source carrying value blocker
 
 ---
 
@@ -684,8 +700,9 @@ For actual step sizing, stop `ROT02A` at the blocker/eligibility decision shell.
    - reads posted depreciation runs and run allocations, treating both `depreciation_kind = 'RUN'` and `depreciation_kind = 'CATCH_UP'` equally (see locked decision #15)
    - reads improvement/lifecycle history using the same correction-aware fixed-asset timeline the depreciation engine consumes, so any charge-augmented `IMPROVEMENT` basis coming from Track 40 is already reflected without separate charge-table joins
    - requires persisted owner-allocation detail for each impacted posted period and returns `BLOCKED` if that detail is missing
+   - blocks preview with `reasonCode = UNSUPPORTED_OWNER_ALLOCATION_OPERATING_UNIT` if an impacted posted owner-allocation row contains an OU outside the derived source/target pair; V1 must block instead of guessing more complex owner attribution
    - checks for in-flight draft depreciation runs covering the asset and returns `BLOCKED` with reason `DRAFT_DEPRECIATION_RUN_IN_PROGRESS` if found (see locked decision #28)
-   - validates self-balancing account configuration between source and target OUs and returns `BLOCKED` with reason `SELF_BALANCING_ACCOUNTS_NOT_CONFIGURED` if not configured (skipped when NBV is zero, see locked decision #33)
+   - validates self-balancing account configuration between source and target OUs and returns `BLOCKED` with reason `SELF_BALANCING_ACCOUNTS_NOT_CONFIGURED` if not configured (skipped only when the corrected source-OU carrying value after A1 is exactly zero, see locked decisions #26 and #33)
    - checks that the asset's current status is in `OWNERSHIP_TRANSFER_ELIGIBLE_STATUSES` (`ACTIVE`, `SUSPENDED`, `FULLY_DEPRECIATED`) and returns `BLOCKED` with reason `ASSET_DISPOSED` if the asset is disposed (see locked decision #29)
    - checks for any later posted owner-changing lifecycle event after `actualEffectiveDate` and returns `BLOCKED` with reason `LATER_OWNER_CHANGING_EVENT_EXISTS` if found (see locked decision #30)
    - identifies the first impacted posted month from `actualEffectiveDate`
@@ -798,7 +815,7 @@ For actual step sizing, keep `ROT03A` to the no-overlap happy path. Replacement/
    - both transaction rows must populate all six amount fields: `grossAmountTxn`/`Base`, `accumDeprAmountTxn`/`Base`, `nbvAmountTxn`/`Base` in both `_txn` and `_base` currencies (see locked decision #23)
    - post the retro owner-attribution correction journal (Journal A1 per locked template) with dual-currency amounts on every journal line
    - post a separate current-period carrying-value owner move journal (Journal A2 per locked template) on `correctionPostingDate` as a mandatory part of the correction set
-   - if asset NBV is zero at `correctionPostingDate`, omit due-from/due-to self-balancing lines from Journal A2 (see locked decision #26)
+   - compute the corrected source-OU carrying value after A1 for Journal A2; if that amount is positive include due-from/due-to, if it is exactly zero omit them, and if it would be negative block the correction in V1 with a stable reason code (see locked decision #26)
    - call `upsertJournalSourceLinkTx` after each journal post to link journal entries back to their respective `fixed_asset_transactions` rows (see locked decision #27)
    - do NOT create a `fixed_asset_ownership_transfer_details` row for the owner move (see locked decision #12)
    - link posted transaction ids back to the correction header row
@@ -1086,13 +1103,14 @@ For actual step sizing, keep `ROT05A` backend-only. The asset-detail JSX section
 ## `STEP-ROT07` - Smoke coverage, readiness gates, and rollback verification
 
 ### Patch target
-- `backend/scripts/` - add new FA smoke scripts following existing `test-fa##-*` naming convention; existing scripts go up to `test-fa47-*`, so next available slots are `test-fa48-*` onward (see locked decision #22)
+- `backend/scripts/` - keep and rerun `test-fa48-retro-correction-focused-smoke.js` as the focused Track 43 preview/posting baseline, keep and rerun `test-fa49-retro-correction-replacement-smoke.js` as the focused `ROT03B` replacement/reversal baseline, and add any broader FA smoke scripts using the next available `test-fa##-*` slots after `FA49` (see locked decision #22)
 - existing fixed-assets smoke/readiness scripts as needed
 - `backend/openapi.yaml`
 - `backend/scripts/generate-openapi.js`
 
 ### In scope
 1. Add smoke coverage for at least these cases:
+   - rerun `test-fa48-retro-correction-focused-smoke.js` as a focused baseline before broader Track 43 readiness checks
    - scenario 1: one posted month impacted, preview result correct, chosen resolution path behaves as designed
    - scenario 2: multiple posted months impacted, current-period true-up posted correctly
    - owner correction after a posted `IMPROVEMENT` that already includes Track 40 allocated charges still computes the correct owner-attribution delta from the effective depreciation basis
@@ -1101,10 +1119,11 @@ For actual step sizing, keep `ROT05A` backend-only. The asset-detail JSX section
    - stale preview is rejected and requires a fresh preview before post
    - overlapping correction requests do not create two active overlapping corrections and instead follow the replacement path or block deterministically
    - missing owner-allocation detail blocks the workflow in V1
+   - impacted posted owner allocations containing a third OU outside the derived source/target pair block preview with `UNSUPPORTED_OWNER_ALLOCATION_OPERATING_UNIT`
    - owner-based reporting includes persisted correction rows in the chosen corrected mode
    - later owner-changing event scenario: retro correction is blocked when a later posted ownership transfer exists after `actualEffectiveDate` (see locked decision #30)
    - disposed asset blocked from correction (see locked decision #29)
-   - zero-NBV asset correction omits self-balancing lines (see locked decision #26)
+   - corrected-source-carrying-value-zero case omits A2 self-balancing lines; negative corrected source carrying value is blocked (see locked decision #26)
    - dual-currency amounts (`_txn`/`_base`) computed independently and stored correctly (see locked decision #23)
    - draft depreciation run in progress blocks correction (see locked decision #28)
    - journal source links exist for both correction journals (see locked decision #27)
@@ -1166,7 +1185,7 @@ Locked decisions from planning:
 23. All correction amounts tracked in dual-currency (`_txn`/`_base`) independently.
 24. NBV values and insertion order: true-up transaction first (lower id), owner-move second (higher id).
 25. `effective_date` on both correction transaction rows is `correctionPostingDate`, not `actualEffectiveDate`.
-26. Zero-NBV journal shape: skip due-from/due-to self-balancing lines in Journal A2.
+26. Journal A2 self-balancing is keyed off corrected source-OU carrying value after A1.
 27. Journal source links (`upsertJournalSourceLinkTx`) required for both journals.
 28. Draft depreciation run conflict check before posting.
 29. Disposed assets blocked from retro ownership transfer correction in V1.
@@ -1192,6 +1211,7 @@ Locked decisions from planning:
 49. `reportDepreciationByOwnerOu` supports only `AS_POSTED` and `INCLUDE_RETRO_CORRECTIONS` in V1; `OPERATIONALLY_CORRECTED` remains reserved and requesting it must return `400` with stable `reasonCode = UNSUPPORTED_REPORT_BASIS`.
 50. In corrected `reportDepreciationByOwnerOu`, unresolved attribution must surface as an explicit `UNRESOLVED` row/bucket in API rows and export output; report metadata should also expose unresolved totals/flags.
 51. `reportBasis` is the only backend/API/query-param name for report basis selection in Track 43; unsupported basis combinations must be rejected with `400` and stable reason codes, and must not be silently ignored.
+52. If impacted posted owner-allocation detail contains an OU outside the derived source/target pair, preview/post must block with stable `reasonCode = UNSUPPORTED_OWNER_ALLOCATION_OPERATING_UNIT`; V1 does not guess or collapse more complex owner-attribution histories.
 
 ### Ordering guidance for combined catch-up + transfer scenarios
 
@@ -1278,7 +1298,7 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
     - All reversal and re-posting happens within a single database transaction.
 
 22. **Smoke test naming follows existing `test-fa##-*` convention.**
-    - Existing FA smoke scripts go up to `test-fa47-*`. Track 43 smoke scripts should use the next available FA numbers (e.g., `test-fa48-retro-correction-single-period-smoke.js`, `test-fa49-retro-correction-multi-period-smoke.js`, etc.).
+    - Existing FA smoke scripts go up to `test-fa47-*`. `test-fa48-retro-correction-focused-smoke.js` is the reusable focused Track 43 verification script. Any broader Track 43 smoke coverage added afterward should continue from the next available FA numbers (for example `test-fa49-*`, `test-fa50-*`, etc.).
     - Do not use the `ROT##` step codes as smoke script file names.
 
 23. **All correction amounts must be tracked in both transaction currency (`_txn`) and base currency (`_base`).**
@@ -1302,10 +1322,12 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
       - `resolveCurrentAssetNbv` sorts by `effective_date DESC`, so using a historical date would cause NBV resolution to skip over later transactions
       - the depreciation engine's `buildLifecycleTimeline` uses `effective_date` to order events chronologically
 
-26. **Zero-NBV journal shape: skip due-from/due-to self-balancing lines in Journal A2.**
-    - The existing `ownershipTransferAsset` already skips self-balancing lines when NBV is zero (line 6514 in `fixed-assets.service.js`).
-    - The correction's owner-move journal (A2) must follow the same rule: if the asset's current NBV is zero at `correctionPostingDate`, omit the due-from/due-to lines and only post the gross cost and accumulated depreciation moves.
-    - This can happen for fully depreciated assets that still need owner-attribution correction on historical depreciation.
+26. **Journal A2 self-balancing is keyed off corrected source-OU carrying value after A1.**
+    - Do **not** decide due-from/due-to from entity-level current NBV alone.
+    - Compute the corrected source-OU carrying value after A1 as the gross cost moved in Journal A2 minus the corrected source-OU accumulated depreciation moved in Journal A2.
+    - If the corrected source-OU carrying value is positive, include the due-from / due-to self-balancing lines for that amount.
+    - If the corrected source-OU carrying value is exactly zero, omit the due-from / due-to lines.
+    - If the corrected source-OU carrying value would be negative, block the correction in V1 with a stable reason code because the owner-move template is not defined for negative source carrying value.
 
 27. **Journal source links (`upsertJournalSourceLinkTx`) are required for both journals.**
     - The repo requires `upsertJournalSourceLinkTx` after every journal post to link the journal entry back to its source transaction for drillback and reconciliation.
@@ -1423,7 +1445,7 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
 33. **Preview must validate self-balancing account configuration before returning `CURRENT_PERIOD_TRUE_UP_REQUIRED`.**
     - `resolveOuSelfBalancingAccountsTx` throws if due-from/due-to accounts are not configured between the source and target OUs.
     - The preview endpoint must call this resolution (or a read-only equivalent) during preview so the user sees a `BLOCKED` result with reason `SELF_BALANCING_ACCOUNTS_NOT_CONFIGURED` before attempting to post, rather than encountering a runtime error at posting time.
-    - Exception: if the asset has zero NBV, self-balancing accounts are not needed (decision #26), so the check can be skipped.
+    - Exception: if the corrected source-OU carrying value after A1 is exactly zero, self-balancing accounts are not needed (decision #26), so the check can be skipped.
 
 34. **Period breakdown table stores aggregated run-level amounts per period, not raw day-level allocation segments.**
     - The depreciation engine stores per-allocation segments in `fixed_asset_depreciation_run_allocations` with day-level granularity (`from_date`, `to_date`, `eligible_days`, `operating_unit_id`). A single period can have multiple allocation rows (e.g., split by ownership transfer date or suspension).
@@ -1515,3 +1537,8 @@ The frontend (ROT06) does not need a special "combined catch-up + transfer" wiza
       - unsupported `reportBasis` combinations return `400` with stable reason codes; `UNSUPPORTED_REPORT_BASIS` is used when the requested basis exists conceptually but is not implemented for V1
       - `reportByOwnerOu` rejects corrected-history basis values and remains current-owner snapshot only
       - unaffected reports such as transfers and rollforward do not silently accept correction-aware basis values
+
+52. **Impacted posted owner allocations must stay within the derived source/target OU pair in V1.**
+    - If an impacted posted owner-allocation row contains an operating unit outside the derived `from_owner_operating_unit_id` and requested `targetOwnerOperatingUnitId`, the retro correction workflow must block with `reasonCode = UNSUPPORTED_OWNER_ALLOCATION_OPERATING_UNIT`.
+    - V1 does not attempt to collapse, net, or guess more complex posted owner-attribution histories involving a third OU.
+    - This is an explicit safety rule, not an incidental implementation detail: Track 43 must block instead of inventing owner attribution when persisted posted allocation history is more complex than the V1 correction model.

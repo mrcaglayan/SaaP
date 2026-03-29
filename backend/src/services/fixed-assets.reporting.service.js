@@ -110,6 +110,84 @@ function num(val) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function normalizeUpperText(value) {
+  if (value === undefined || value === null) return null;
+  return String(value).trim().toUpperCase();
+}
+
+const FIXED_ASSET_REPORT_BASIS = Object.freeze({
+  AS_POSTED: "AS_POSTED",
+  INCLUDE_RETRO_CORRECTIONS: "INCLUDE_RETRO_CORRECTIONS",
+  OPERATIONALLY_CORRECTED: "OPERATIONALLY_CORRECTED",
+});
+
+const FIXED_ASSET_REPORT_REASON_CODES = Object.freeze({
+  UNSUPPORTED_REPORT_BASIS: "UNSUPPORTED_REPORT_BASIS",
+});
+
+function badRequestWithCode(message, code) {
+  const err = badRequest(message);
+  err.code = code;
+  return err;
+}
+
+function buildUnsupportedReportBasisError(reportName, reportBasis, supportedValues) {
+  return badRequestWithCode(
+    `reportBasis ${reportBasis} is not supported for ${reportName}. Supported values: ${supportedValues.join(", ")}`,
+    FIXED_ASSET_REPORT_REASON_CODES.UNSUPPORTED_REPORT_BASIS
+  );
+}
+
+function assertNoReportBasisRequested(reportName, reportBasis) {
+  const normalizedReportBasis = normalizeUpperText(reportBasis);
+  if (!normalizedReportBasis) {
+    return null;
+  }
+
+  if (!Object.values(FIXED_ASSET_REPORT_BASIS).includes(normalizedReportBasis)) {
+    throw badRequest(
+      `reportBasis must be one of: ${Object.values(FIXED_ASSET_REPORT_BASIS).join(", ")}`
+    );
+  }
+
+  throw badRequestWithCode(
+    `reportBasis ${normalizedReportBasis} is not supported for ${reportName} in V1`,
+    FIXED_ASSET_REPORT_REASON_CODES.UNSUPPORTED_REPORT_BASIS
+  );
+}
+
+function resolveDepreciationByOwnerOuReportBasis(reportBasis) {
+  const normalizedReportBasis = normalizeUpperText(reportBasis);
+  if (!normalizedReportBasis) {
+    return FIXED_ASSET_REPORT_BASIS.AS_POSTED;
+  }
+
+  if (
+    normalizedReportBasis === FIXED_ASSET_REPORT_BASIS.AS_POSTED
+    || normalizedReportBasis === FIXED_ASSET_REPORT_BASIS.INCLUDE_RETRO_CORRECTIONS
+  ) {
+    return normalizedReportBasis;
+  }
+
+  if (
+    normalizedReportBasis
+    === FIXED_ASSET_REPORT_BASIS.OPERATIONALLY_CORRECTED
+  ) {
+    throw buildUnsupportedReportBasisError(
+      "depreciation-by-owner-ou",
+      normalizedReportBasis,
+      [
+        FIXED_ASSET_REPORT_BASIS.AS_POSTED,
+        FIXED_ASSET_REPORT_BASIS.INCLUDE_RETRO_CORRECTIONS,
+      ]
+    );
+  }
+
+  throw badRequest(
+    `reportBasis must be one of: ${Object.values(FIXED_ASSET_REPORT_BASIS).join(", ")}`
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // 1. Register report
 // ═══════════════════════════════════════════════════════════════════
@@ -448,8 +526,13 @@ export async function exportDisposals(filters) {
 //    DAILY_PRORATA effective-date splits and cutoffs.
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Report plain chronology ownership transfers only. Track 43 retro
+ * corrections stay out of this surface by design in V1.
+ */
 export async function reportTransfers(filters) {
   if (!filters.tenantId) throw badRequest("tenantId is required");
+  assertNoReportBasisRequested("transfers", filters.reportBasis);
 
   const { conditions, params } = buildTransactionConditions(filters);
   conditions.push("txn.transaction_type = 'OWNERSHIP_TRANSFER'");
@@ -501,7 +584,11 @@ export async function reportTransfers(filters) {
     totalNbvBase: rows.reduce((s, r) => s + r.nbvAmountBase, 0),
   };
 
-  return { rows, totals };
+  return {
+    rows,
+    totals,
+    reportView: "PLAIN_TRANSFERS_ONLY",
+  };
 }
 
 const TRANSFERS_HEADERS = [
@@ -525,8 +612,13 @@ export async function exportTransfers(filters) {
 //    NOT period depreciation — that is depreciation-by-owner-ou.
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Report the current-owner snapshot grouping. This remains a non-historical
+ * asset-master view in V1 and therefore rejects corrected-history bases.
+ */
 export async function reportByOwnerOu(filters) {
   if (!filters.tenantId) throw badRequest("tenantId is required");
+  assertNoReportBasisRequested("by-owner-ou", filters.reportBasis);
 
   const { conditions, params } = buildRegisterConditions(filters);
   // Exclude DRAFT for meaningful register grouping
@@ -564,7 +656,11 @@ export async function reportByOwnerOu(filters) {
     totalOriginalCostBase: rows.reduce((s, r) => s + r.totalOriginalCostBase, 0),
   };
 
-  return { rows, totals };
+  return {
+    rows,
+    totals,
+    reportBasis: "CURRENT_OWNER_SNAPSHOT",
+  };
 }
 
 const BY_OWNER_OU_HEADERS = [
@@ -700,15 +796,75 @@ export async function exportByCustodian(filters) {
 // 9. Depreciation-by-owner-OU report
 //    Period depreciation expense/allocation grouped by owner OU.
 //    Uses persisted fixed_asset_depreciation_run_line_allocations
-//    where available (OWNER_OU allocation_type), falling back to
-//    the run line asset's current owner OU for non-allocated lines.
-//    This is a DIFFERENT report from by-owner-ou (which is register-style).
+//    where available (OWNER_OU allocation_type). Track 43 corrected mode
+//    adds current-period retro true-up rows and blocks current-owner fallback.
 // ═══════════════════════════════════════════════════════════════════
 
+function mergeDepreciationByOwnerBucket(bucketMap, {
+  assetId,
+  operatingUnitId = null,
+  ownerOuCode = null,
+  ownerOuName = null,
+  totalDeprTxn = 0,
+  totalDeprBase = 0,
+  totalEligibleDays = 0,
+  isUnresolved = false,
+}) {
+  const key = isUnresolved
+    ? "UNRESOLVED"
+    : `OU:${operatingUnitId != null ? Number(operatingUnitId) : "NULL"}`;
+  const existing = bucketMap.get(key) || {
+    operatingUnitId: operatingUnitId != null ? Number(operatingUnitId) : null,
+    ownerOuCode: isUnresolved ? "UNRESOLVED" : (ownerOuCode || null),
+    ownerOuName: isUnresolved ? "Unresolved Attribution" : (ownerOuName || null),
+    isUnresolved,
+    totalDeprTxn: 0,
+    totalDeprBase: 0,
+    totalEligibleDays: 0,
+    _assetIds: new Set(),
+  };
+
+  existing.totalDeprTxn += num(totalDeprTxn);
+  existing.totalDeprBase += num(totalDeprBase);
+  existing.totalEligibleDays += Number(totalEligibleDays || 0);
+  if (assetId) {
+    existing._assetIds.add(Number(assetId));
+  }
+  bucketMap.set(key, existing);
+}
+
+function finalizeDepreciationByOwnerBuckets(bucketMap) {
+  return [...bucketMap.values()]
+    .map((bucket) => ({
+      operatingUnitId: bucket.operatingUnitId,
+      ownerOuCode: bucket.ownerOuCode,
+      ownerOuName: bucket.ownerOuName,
+      isUnresolved: Boolean(bucket.isUnresolved),
+      assetCount: bucket._assetIds.size,
+      totalDeprTxn: bucket.totalDeprTxn,
+      totalDeprBase: bucket.totalDeprBase,
+      totalEligibleDays: bucket.totalEligibleDays,
+    }))
+    .sort((left, right) => {
+      if (left.isUnresolved && !right.isUnresolved) return 1;
+      if (!left.isUnresolved && right.isUnresolved) return -1;
+      return (left.ownerOuCode || "").localeCompare(right.ownerOuCode || "");
+    });
+}
+
+/**
+ * Report depreciation grouped by owner OU. V1 supports `AS_POSTED` and
+ * `INCLUDE_RETRO_CORRECTIONS`; corrected mode adds current-period retro
+ * true-up rows and surfaces missing historical attribution as UNRESOLVED.
+ */
 export async function reportDepreciationByOwnerOu(filters) {
   if (!filters.tenantId) throw badRequest("tenantId is required");
 
-  const conditions = ["run.tenant_id = ?", "run.status = 'POSTED'"];
+  const reportBasis = resolveDepreciationByOwnerOuReportBasis(filters.reportBasis);
+  const correctedMode =
+    reportBasis === FIXED_ASSET_REPORT_BASIS.INCLUDE_RETRO_CORRECTIONS;
+
+  const conditions = ["run.tenant_id = ?", "run.status = 'POSTED'", "rl.status = 'POSTED'"];
   const params = [filters.tenantId];
 
   if (filters.legalEntityId) {
@@ -724,83 +880,227 @@ export async function reportDepreciationByOwnerOu(filters) {
     params.push(filters.periodKey);
   }
 
-  // First: get allocated lines (DAILY_PRORATA OU splits from persisted allocations)
-  const allocResult = await query(
-    `SELECT alloc.operating_unit_id,
-            ouTbl.code AS owner_ou_code, ouTbl.name AS owner_ou_name,
+  const allocatedResult = await query(
+    `SELECT alloc.asset_id,
+            alloc.operating_unit_id,
+            ouTbl.code AS owner_ou_code,
+            ouTbl.name AS owner_ou_name,
+            SUM(alloc.planned_amount_txn) AS total_depr_txn,
             SUM(alloc.planned_amount_base) AS total_depr_base,
-            SUM(alloc.eligible_days) AS total_eligible_days,
-            COUNT(DISTINCT alloc.asset_id) AS asset_count
+            SUM(alloc.eligible_days) AS total_eligible_days
        FROM fixed_asset_depreciation_run_line_allocations alloc
-       JOIN fixed_asset_depreciation_run_lines rl ON rl.id = alloc.run_line_id
-       JOIN fixed_asset_depreciation_runs run ON run.id = rl.run_id
-       LEFT JOIN operating_units ouTbl ON ouTbl.id = alloc.operating_unit_id
+       JOIN fixed_asset_depreciation_run_lines rl
+         ON rl.id = alloc.run_line_id
+       JOIN fixed_asset_depreciation_runs run
+         ON run.id = rl.run_id
+       LEFT JOIN operating_units ouTbl
+         ON ouTbl.id = alloc.operating_unit_id
       WHERE ${conditions.join(" AND ")}
         AND alloc.allocation_type = 'OWNER_OU'
-      GROUP BY alloc.operating_unit_id, ouTbl.code, ouTbl.name
-      ORDER BY ouTbl.code ASC`,
+      GROUP BY alloc.asset_id, alloc.operating_unit_id, ouTbl.code, ouTbl.name
+      ORDER BY ouTbl.code ASC, alloc.asset_id ASC`,
     params
   );
 
-  // Second: get non-allocated run lines (fallback to asset's current owner OU)
-  const nonAllocConditions = [...conditions];
-  const nonAllocParams = [...params];
+  const unallocatedQuery = correctedMode
+    ? query(
+      `SELECT rl.asset_id,
+              SUM(rl.planned_amount_txn) AS total_depr_txn,
+              SUM(rl.planned_amount_base) AS total_depr_base,
+              SUM(rl.eligible_days) AS total_eligible_days
+         FROM fixed_asset_depreciation_run_lines rl
+         JOIN fixed_asset_depreciation_runs run
+           ON run.id = rl.run_id
+        WHERE ${conditions.join(" AND ")}
+          AND NOT EXISTS (
+            SELECT 1
+              FROM fixed_asset_depreciation_run_line_allocations sub
+             WHERE sub.run_line_id = rl.id
+               AND sub.allocation_type = 'OWNER_OU'
+          )
+        GROUP BY rl.asset_id
+        ORDER BY rl.asset_id ASC`,
+      params
+    )
+    : query(
+      `SELECT rl.asset_id,
+              fa.owner_operating_unit_id AS operating_unit_id,
+              ouTbl.code AS owner_ou_code,
+              ouTbl.name AS owner_ou_name,
+              SUM(rl.planned_amount_txn) AS total_depr_txn,
+              SUM(rl.planned_amount_base) AS total_depr_base,
+              SUM(rl.eligible_days) AS total_eligible_days
+         FROM fixed_asset_depreciation_run_lines rl
+         JOIN fixed_asset_depreciation_runs run
+           ON run.id = rl.run_id
+         JOIN fixed_assets fa
+           ON fa.id = rl.asset_id
+          AND fa.tenant_id = rl.tenant_id
+         LEFT JOIN operating_units ouTbl
+           ON ouTbl.id = fa.owner_operating_unit_id
+        WHERE ${conditions.join(" AND ")}
+          AND NOT EXISTS (
+            SELECT 1
+              FROM fixed_asset_depreciation_run_line_allocations sub
+             WHERE sub.run_line_id = rl.id
+               AND sub.allocation_type = 'OWNER_OU'
+          )
+        GROUP BY rl.asset_id, fa.owner_operating_unit_id, ouTbl.code, ouTbl.name
+        ORDER BY ouTbl.code ASC, rl.asset_id ASC`,
+      params
+    );
 
-  const fallbackResult = await query(
-    `SELECT fa.owner_operating_unit_id AS operating_unit_id,
-            ouTbl.code AS owner_ou_code, ouTbl.name AS owner_ou_name,
-            SUM(rl.planned_amount_base) AS total_depr_base,
-            SUM(rl.eligible_days) AS total_eligible_days,
-            COUNT(DISTINCT rl.asset_id) AS asset_count
-       FROM fixed_asset_depreciation_run_lines rl
-       JOIN fixed_asset_depreciation_runs run ON run.id = rl.run_id
-       JOIN fixed_assets fa ON fa.id = rl.asset_id AND fa.tenant_id = rl.tenant_id
-       LEFT JOIN operating_units ouTbl ON ouTbl.id = fa.owner_operating_unit_id
-      WHERE ${nonAllocConditions.join(" AND ")}
-        AND rl.status = 'POSTED'
-        AND NOT EXISTS (
-          SELECT 1 FROM fixed_asset_depreciation_run_line_allocations sub
-           WHERE sub.run_line_id = rl.id
-        )
-      GROUP BY fa.owner_operating_unit_id, ouTbl.code, ouTbl.name
-      ORDER BY ouTbl.code ASC`,
-    nonAllocParams
-  );
+  const retroCorrectionResult = correctedMode
+    ? query(
+      `SELECT correction.asset_id,
+              correction.from_owner_operating_unit_id,
+              correction.to_owner_operating_unit_id,
+              fromOu.code AS from_owner_ou_code,
+              fromOu.name AS from_owner_ou_name,
+              toOu.code AS to_owner_ou_code,
+              toOu.name AS to_owner_ou_name,
+              SUM(periods.delta_amount_txn) AS total_delta_txn,
+              SUM(periods.delta_amount_base) AS total_delta_base
+         FROM fixed_asset_retro_transfer_corrections correction
+         JOIN fixed_asset_transactions trueUpTx
+           ON trueUpTx.id = correction.true_up_transaction_id
+          AND trueUpTx.tenant_id = correction.tenant_id
+         LEFT JOIN fiscal_periods postingPeriod
+           ON postingPeriod.id = trueUpTx.fiscal_period_id
+         JOIN fixed_asset_retro_transfer_correction_periods periods
+           ON periods.correction_id = correction.id
+          AND periods.tenant_id = correction.tenant_id
+         LEFT JOIN operating_units fromOu
+           ON fromOu.id = correction.from_owner_operating_unit_id
+         LEFT JOIN operating_units toOu
+           ON toOu.id = correction.to_owner_operating_unit_id
+        WHERE correction.tenant_id = ?
+          AND correction.status = 'POSTED'
+          AND trueUpTx.status = 'POSTED'
+          AND trueUpTx.transaction_type = 'RETRO_OWNERSHIP_CORRECTION'
+          AND trueUpTx.source_ref_type = 'RETRO_CORRECTION_TRUE_UP'
+          AND trueUpTx.reversal_transaction_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+              FROM fixed_asset_transactions reversalTx
+             WHERE reversalTx.reversed_transaction_id = trueUpTx.id
+               AND reversalTx.status = 'POSTED'
+          )
+          AND (? IS NULL OR trueUpTx.legal_entity_id = ?)
+          AND (? IS NULL OR trueUpTx.fiscal_period_id = ?)
+          AND (
+            ? IS NULL
+            OR CONCAT(postingPeriod.fiscal_year, '-', LPAD(postingPeriod.period_no, 2, '0')) = ?
+          )
+        GROUP BY correction.asset_id,
+                 correction.from_owner_operating_unit_id,
+                 correction.to_owner_operating_unit_id,
+                 fromOu.code,
+                 fromOu.name,
+                 toOu.code,
+                 toOu.name`,
+      [
+        filters.tenantId,
+        filters.legalEntityId || null,
+        filters.legalEntityId || null,
+        filters.fiscalPeriodId || null,
+        filters.fiscalPeriodId || null,
+        filters.periodKey || null,
+        filters.periodKey || null,
+      ]
+    )
+    : Promise.resolve({ rows: [] });
 
-  // Merge allocated and non-allocated results by OU
-  const ouMap = new Map();
-  for (const r of [...(allocResult.rows || []), ...(fallbackResult.rows || [])]) {
-    const key = r.operating_unit_id != null ? Number(r.operating_unit_id) : "NULL";
-    const existing = ouMap.get(key) || {
-      operatingUnitId: r.operating_unit_id != null ? Number(r.operating_unit_id) : null,
-      ownerOuCode: r.owner_ou_code || null,
-      ownerOuName: r.owner_ou_name || null,
-      totalDeprBase: 0,
-      totalEligibleDays: 0,
-      assetCount: 0,
-    };
-    existing.totalDeprBase += num(r.total_depr_base);
-    existing.totalEligibleDays += Number(r.total_eligible_days || 0);
-    existing.assetCount += Number(r.asset_count || 0);
-    ouMap.set(key, existing);
+  const [fallbackOrUnresolvedResult, correctionAdjustments] = await Promise.all([
+    unallocatedQuery,
+    retroCorrectionResult,
+  ]);
+
+  const bucketMap = new Map();
+
+  for (const row of allocatedResult.rows || []) {
+    mergeDepreciationByOwnerBucket(bucketMap, {
+      assetId: row.asset_id,
+      operatingUnitId: row.operating_unit_id,
+      ownerOuCode: row.owner_ou_code,
+      ownerOuName: row.owner_ou_name,
+      totalDeprTxn: row.total_depr_txn,
+      totalDeprBase: row.total_depr_base,
+      totalEligibleDays: row.total_eligible_days,
+    });
   }
 
-  const rows = [...ouMap.values()].sort((a, b) =>
-    (a.ownerOuCode || "").localeCompare(b.ownerOuCode || "")
-  );
+  for (const row of fallbackOrUnresolvedResult.rows || []) {
+    if (correctedMode) {
+      mergeDepreciationByOwnerBucket(bucketMap, {
+        assetId: row.asset_id,
+        totalDeprTxn: row.total_depr_txn,
+        totalDeprBase: row.total_depr_base,
+        totalEligibleDays: row.total_eligible_days,
+        isUnresolved: true,
+      });
+      continue;
+    }
 
+    mergeDepreciationByOwnerBucket(bucketMap, {
+      assetId: row.asset_id,
+      operatingUnitId: row.operating_unit_id,
+      ownerOuCode: row.owner_ou_code,
+      ownerOuName: row.owner_ou_name,
+      totalDeprTxn: row.total_depr_txn,
+      totalDeprBase: row.total_depr_base,
+      totalEligibleDays: row.total_eligible_days,
+    });
+  }
+
+  for (const row of correctionAdjustments.rows || []) {
+    if (num(row.total_delta_txn) !== 0 || num(row.total_delta_base) !== 0) {
+      mergeDepreciationByOwnerBucket(bucketMap, {
+        assetId: row.asset_id,
+        operatingUnitId: row.from_owner_operating_unit_id,
+        ownerOuCode: row.from_owner_ou_code,
+        ownerOuName: row.from_owner_ou_name,
+        totalDeprTxn: -num(row.total_delta_txn),
+        totalDeprBase: -num(row.total_delta_base),
+      });
+      mergeDepreciationByOwnerBucket(bucketMap, {
+        assetId: row.asset_id,
+        operatingUnitId: row.to_owner_operating_unit_id,
+        ownerOuCode: row.to_owner_ou_code,
+        ownerOuName: row.to_owner_ou_name,
+        totalDeprTxn: row.total_delta_txn,
+        totalDeprBase: row.total_delta_base,
+      });
+    }
+  }
+
+  const rows = finalizeDepreciationByOwnerBuckets(bucketMap);
+  const unresolvedRow = rows.find((row) => row.isUnresolved) || null;
   const totals = {
     groupCount: rows.length,
-    totalAssets: rows.reduce((s, r) => s + r.assetCount, 0),
-    totalDeprBase: rows.reduce((s, r) => s + r.totalDeprBase, 0),
+    totalAssets: rows.reduce((sum, row) => sum + row.assetCount, 0),
+    totalDeprTxn: rows.reduce((sum, row) => sum + row.totalDeprTxn, 0),
+    totalDeprBase: rows.reduce((sum, row) => sum + row.totalDeprBase, 0),
   };
 
-  return { rows, totals };
+  return {
+    rows,
+    totals,
+    reportBasis,
+    hasUnresolvedRows: Boolean(unresolvedRow),
+    unresolvedAmountTxn: unresolvedRow ? unresolvedRow.totalDeprTxn : 0,
+    unresolvedAmountBase: unresolvedRow ? unresolvedRow.totalDeprBase : 0,
+  };
 }
 
 const DEPR_BY_OWNER_OU_HEADERS = [
-  "ownerOuCode", "ownerOuName", "assetCount",
-  "totalDeprBase", "totalEligibleDays",
+  "ownerOuCode",
+  "ownerOuName",
+  "isUnresolved",
+  "assetCount",
+  "totalDeprTxn",
+  "totalDeprBase",
+  "totalEligibleDays",
 ];
 
 export async function exportDepreciationByOwnerOu(filters) {
@@ -820,8 +1120,13 @@ export async function exportDepreciationByOwnerOu(filters) {
 //     transaction effective_date filtering.
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Report entity-level economic movements. Track 43 retro corrections are
+ * excluded so rollforward closing NBV is not distorted by reclassification.
+ */
 export async function reportRollforward(filters) {
   if (!filters.tenantId) throw badRequest("tenantId is required");
+  assertNoReportBasisRequested("rollforward", filters.reportBasis);
 
   const tenantId = filters.tenantId;
   const legalEntityId = filters.legalEntityId || null;
@@ -870,7 +1175,11 @@ export async function reportRollforward(filters) {
   }
 
   // ── Period movements: transactions within [dateFrom, dateTo]
-  const movConds = ["txn.tenant_id = ?", "txn.status = 'POSTED'"];
+  const movConds = [
+    "txn.tenant_id = ?",
+    "txn.status = 'POSTED'",
+    "txn.transaction_type <> 'RETRO_OWNERSHIP_CORRECTION'",
+  ];
   const movParams = [tenantId];
   if (legalEntityId) {
     movConds.push("txn.legal_entity_id = ?");
