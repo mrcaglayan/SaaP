@@ -23,6 +23,7 @@ const ENV_LEGAL_ENTITY_ID = parseOptionalPositiveInt(
 );
 let TENANT_ID = ENV_TENANT_ID || 0;
 let LEGAL_ENTITY_ID = ENV_LEGAL_ENTITY_ID || 0;
+let SMOKE_CURRENCY_CODE = "USD";
 const KEEP_ARTIFACTS = parseBooleanEnv(process.env.FA39_SMOKE_KEEP_ARTIFACTS, true);
 
 function parseOptionalPositiveInt(v) {
@@ -272,10 +273,11 @@ async function createAndActivateAsset({
     cookie, method: "POST", pathName: "/api/v1/fixed-assets", expectedStatus: 201,
     body: {
       legalEntityId, name: `FA39 Smoke ${nameSuffix} ${uniqueSuffix}`, categoryId,
-      acquisitionDate: postingWindow.acquisitionDate, currencyCode: "AFN",
+      acquisitionDate: postingWindow.acquisitionDate, currencyCode: SMOKE_CURRENCY_CODE,
       ownerOperatingUnitId: ownerOuId, locationOperatingUnitId: ownerOuId,
       originalCostTxn: originalCost, originalCostBase: originalCost,
       description: `STEP-FA39 smoke ${nameSuffix}`,
+      assetTag: `FA39-${nameSuffix}-${uniqueSuffix}`.slice(0, 40),
     },
   });
   const assetId = Number(draft?.id || 0);
@@ -349,6 +351,7 @@ async function main() {
   const ctx = await resolveSmokeContext();
   TENANT_ID = ctx.tenantId;
   LEGAL_ENTITY_ID = ctx.legalEntityId;
+  SMOKE_CURRENCY_CODE = String(ctx.currencyCode || "USD").trim().toUpperCase() || "USD";
   const uniqueSuffix = `${Date.now()}`;
   let runPassed = false;
   const artifactState = {
@@ -501,7 +504,7 @@ async function main() {
         counterpartyId: customer.counterpartyId,
         direction: "AR",
         documentType: "INVOICE",
-        currencyCode: "AFN",
+        currencyCode: SMOKE_CURRENCY_CODE,
         documentDate: postingWindow.saleDate,
         dueDate: postingWindow.saleDate,
         amountTxn: 9000,
@@ -654,7 +657,7 @@ async function main() {
         name: `FA39 Smoke DRAFT ${uniqueSuffix}`,
         categoryId: category.categoryId,
         acquisitionDate: postingWindow.acquisitionDate,
-        currencyCode: "AFN",
+        currencyCode: SMOKE_CURRENCY_CODE,
         ownerOperatingUnitId: ownerOuId,
         locationOperatingUnitId: ownerOuId,
         originalCostTxn: 5000, originalCostBase: 5000,

@@ -350,32 +350,87 @@ async function createAndActivateAsset({
   return activated;
 }
 
+async function insertPostedLifecycleBlockerTransaction({
+  tenantId,
+  legalEntityId,
+  assetId,
+  effectiveDate,
+  postingDate,
+  bookId,
+  fiscalPeriodId,
+  currencyCode,
+  userId,
+}) {
+  const insertResult = await query(
+    `INSERT INTO fixed_asset_transactions (
+        tenant_id, legal_entity_id, asset_id,
+        transaction_type, status, effective_date, posting_date,
+        book_id, fiscal_period_id, currency_code,
+        note, created_by_user_id
+     ) VALUES (
+        ?, ?, ?,
+        'PHYSICAL_MOVE', 'POSTED', ?, ?,
+        ?, ?, ?,
+        ?, ?
+     )`,
+    [
+      tenantId,
+      legalEntityId,
+      assetId,
+      effectiveDate,
+      postingDate,
+      bookId,
+      fiscalPeriodId,
+      currencyCode,
+      "FA38 smoke chronology blocker",
+      userId,
+    ]
+  );
+  const transactionId = Number(insertResult.rows?.insertId || 0);
+  assert(transactionId > 0, "Failed to create chronology blocker transaction");
+  return transactionId;
+}
+
 async function cleanupArtifacts(state) {
   const assetIds = Array.from(new Set(state.assetIds)).filter((id) => Number(id) > 0);
 
   if (assetIds.length > 0) {
     const placeholders = assetIds.map(() => "?").join(", ");
 
-    // Clean up journal artifacts
     const txnResult = await query(
       `SELECT id, journal_entry_id FROM fixed_asset_transactions
         WHERE tenant_id = ? AND asset_id IN (${placeholders})`,
       [TENANT_ID, ...assetIds]
     );
-    for (const txn of (txnResult.rows || [])) {
-      if (txn.journal_entry_id) {
-        await query(`DELETE FROM journal_source_links WHERE tenant_id = ? AND journal_entry_id = ?`,
-          [TENANT_ID, txn.journal_entry_id]);
-        await query(`DELETE FROM journal_lines WHERE journal_entry_id = ?`, [txn.journal_entry_id]);
-        await query(`DELETE FROM journal_entries WHERE id = ? AND tenant_id = ?`,
-          [txn.journal_entry_id, TENANT_ID]);
-      }
-    }
+    const journalEntryIds = Array.from(new Set(
+      (txnResult.rows || [])
+        .map((txn) => Number(txn.journal_entry_id || 0))
+        .filter((id) => id > 0)
+    ));
+
+    await query(
+      `DELETE FROM fixed_asset_depreciation_schedule_lines
+        WHERE tenant_id = ? AND asset_id IN (${placeholders})`,
+      [TENANT_ID, ...assetIds]
+    );
 
     await query(
       `DELETE FROM fixed_asset_transactions WHERE tenant_id = ? AND asset_id IN (${placeholders})`,
       [TENANT_ID, ...assetIds]
     );
+
+    for (const journalEntryId of journalEntryIds) {
+      await query(
+        `DELETE FROM journal_source_links WHERE tenant_id = ? AND journal_entry_id = ?`,
+        [TENANT_ID, journalEntryId]
+      );
+      await query(`DELETE FROM journal_lines WHERE journal_entry_id = ?`, [journalEntryId]);
+      await query(
+        `DELETE FROM journal_entries WHERE id = ? AND tenant_id = ?`,
+        [journalEntryId, TENANT_ID]
+      );
+    }
+
     await query(
       `DELETE FROM fixed_assets WHERE tenant_id = ? AND id IN (${placeholders})`,
       [TENANT_ID, ...assetIds]
@@ -418,8 +473,10 @@ async function main() {
     fixtureIds: {},
     smoke1_partiallyDepreciatedWriteoff: null,
     smoke2_fullyDepreciatedWriteoff: null,
-    smoke3_alreadyDisposedRejection: null,
-    smoke4_draftAssetRejection: null,
+    smoke3_chronologyBlockedWriteoff: null,
+    smoke4_writeoffReversal: null,
+    smoke5_alreadyDisposedRejection: null,
+    smoke6_draftAssetRejection: null,
     cleanup: KEEP_ARTIFACTS ? "skipped" : "pending",
   };
 
@@ -473,14 +530,15 @@ async function main() {
     const assetId1 = Number(asset1.id);
     artifactState.assetIds.push(assetId1);
 
-    // Verify asset is ACTIVE with non-zero NBV before write-off
     assert(
       asset1.status === "ACTIVE" || asset1.status === "FULLY_DEPRECIATED",
       `SMOKE1: Asset should be ACTIVE or FULLY_DEPRECIATED, got ${asset1.status}`
     );
 
+    const cutoffDate1 = addDays(postingWindow.writeoffDate, -1);
     const { payload: woResult1 } = await apiRequest({
-      cookie, method: "POST",
+      cookie,
+      method: "POST",
       pathName: `/api/v1/fixed-assets/${assetId1}/writeoff`,
       expectedStatus: 200,
       body: {
@@ -490,13 +548,10 @@ async function main() {
       },
     });
 
-    // Verify asset is now DISPOSED
     assert(
       woResult1?.status === "DISPOSED",
       `SMOKE1: Expected status=DISPOSED, got ${woResult1?.status}`
     );
-
-    // Verify disposal date is set
     const disposalDateStr1 = woResult1?.disposalDate
       ? String(woResult1.disposalDate).slice(0, 10)
       : null;
@@ -505,12 +560,9 @@ async function main() {
       `SMOKE1: Expected disposalDate=${postingWindow.writeoffDate}, got ${disposalDateStr1}`
     );
 
-    // Verify WRITEOFF transaction exists
     const txn1Result = await query(
-      `SELECT id, transaction_type, status, journal_entry_id,
-              gross_amount_txn, gross_amount_base,
-              accum_depr_amount_txn, accum_depr_amount_base,
-              nbv_amount_txn, nbv_amount_base
+      `SELECT id, status, journal_entry_id,
+              gross_amount_txn, accum_depr_amount_txn, nbv_amount_txn
          FROM fixed_asset_transactions
         WHERE tenant_id = ? AND asset_id = ?
           AND transaction_type = 'WRITEOFF' AND status = 'POSTED'
@@ -524,36 +576,56 @@ async function main() {
       `SMOKE1: gross_amount_txn expected 10000, got ${txn1.gross_amount_txn}`
     );
 
+    const cutoffTxn1Result = await query(
+      `SELECT id, journal_entry_id, effective_date, depreciation_kind
+         FROM fixed_asset_transactions
+        WHERE tenant_id = ? AND asset_id = ?
+          AND transaction_type = 'DEPRECIATION' AND status = 'POSTED'
+        ORDER BY id ASC`,
+      [TENANT_ID, assetId1]
+    );
+    const cutoffTxn1 = (cutoffTxn1Result.rows || []).find(
+      (row) => String(row.depreciation_kind || "").toUpperCase() === "RUN"
+    );
+    assert(cutoffTxn1, "SMOKE1: cutoff DEPRECIATION transaction not found");
+    assert(
+      String(cutoffTxn1.effective_date || "").slice(0, 10) === cutoffDate1,
+      `SMOKE1: cutoff depreciation effective_date expected ${cutoffDate1}, got ${cutoffTxn1.effective_date}`
+    );
+    assert(
+      toNumber(woResult1?.writeoff?.cutoffDepreciationTransactionId) === toNumber(cutoffTxn1.id),
+      "SMOKE1: response cutoffDepreciationTransactionId mismatch"
+    );
+    assert(
+      toNumber(woResult1?.writeoff?.cutoffDepreciationJournalEntryId) === toNumber(cutoffTxn1.journal_entry_id),
+      "SMOKE1: response cutoffDepreciationJournalEntryId mismatch"
+    );
+
     const txn1JournalId = Number(txn1.journal_entry_id);
     assert(txn1JournalId > 0, "SMOKE1: journal_entry_id missing on WRITEOFF transaction");
 
-    // Verify journal lines
     const lines1Result = await query(
-      `SELECT line_no, account_id, debit_base, credit_base, operating_unit_id
+      `SELECT debit_base, credit_base
          FROM journal_lines WHERE journal_entry_id = ? ORDER BY line_no ASC`,
       [txn1JournalId]
     );
     const lines1 = lines1Result.rows || [];
-
     const nbv1 = toAmount(txn1.nbv_amount_txn);
     const accumDepr1 = toAmount(txn1.accum_depr_amount_txn);
 
     if (nbv1 > 0 && accumDepr1 > 0) {
-      // 3 lines: debit accum-depr + credit asset + debit loss
       assert(lines1.length === 3,
         `SMOKE1: Expected 3 journal lines (accum>0, nbv>0), got ${lines1.length}`);
     } else if (nbv1 > 0 && accumDepr1 === 0) {
-      // 2 lines: credit asset + debit loss (no accum line since accum=0)
       assert(lines1.length === 2,
         `SMOKE1: Expected 2 journal lines (accum=0, nbv>0), got ${lines1.length}`);
     } else if (nbv1 === 0 && accumDepr1 > 0) {
-      // 2 lines: debit accum-depr + credit asset (no loss since nbv=0)
       assert(lines1.length === 2,
         `SMOKE1: Expected 2 journal lines (accum>0, nbv=0), got ${lines1.length}`);
     }
 
-    // Verify journal line amounts balance
-    let totalDebit1 = 0, totalCredit1 = 0;
+    let totalDebit1 = 0;
+    let totalCredit1 = 0;
     for (const line of lines1) {
       totalDebit1 += toAmount(line.debit_base);
       totalCredit1 += toAmount(line.credit_base);
@@ -562,14 +634,11 @@ async function main() {
       Math.abs(totalDebit1 - totalCredit1) < 0.01,
       `SMOKE1: Journal lines not balanced: debit=${totalDebit1}, credit=${totalCredit1}`
     );
-
-    // Verify total credit = gross cost (asset removal)
     assert(
       toAmount(totalCredit1) === 10000,
       `SMOKE1: Total credit expected 10000 (gross cost), got ${totalCredit1}`
     );
 
-    // Verify PRIMARY source link
     const link1Result = await query(
       `SELECT source_ref_type, source_ref_id FROM journal_source_links
         WHERE tenant_id = ? AND journal_entry_id = ? LIMIT 1`,
@@ -580,25 +649,14 @@ async function main() {
     assert(link1.source_ref_type === "FIXED_ASSET_TRANSACTION",
       `SMOKE1: source_ref_type expected FIXED_ASSET_TRANSACTION, got ${link1.source_ref_type}`);
     assert(toNumber(link1.source_ref_id) === toNumber(txn1.id),
-      `SMOKE1: source_ref_id mismatch`);
-
-    // Verify exactly one WRITEOFF transaction (not zero-amount depreciation)
-    const allWoTxns1 = await query(
-      `SELECT transaction_type, status FROM fixed_asset_transactions
-        WHERE tenant_id = ? AND asset_id = ?
-          AND transaction_type = 'WRITEOFF' AND status = 'POSTED'`,
-      [TENANT_ID, assetId1]
-    );
-    assert(
-      (allWoTxns1.rows || []).length === 1,
-      `SMOKE1: Expected exactly 1 WRITEOFF transaction, got ${(allWoTxns1.rows || []).length}`
-    );
+      "SMOKE1: source_ref_id mismatch");
 
     summary.smoke1_partiallyDepreciatedWriteoff = {
       assetId: assetId1,
-      transactionId: toNumber(txn1.id),
-      journalEntryId: txn1JournalId,
-      journalLineCount: lines1.length,
+      writeoffTransactionId: toNumber(txn1.id),
+      writeoffJournalEntryId: txn1JournalId,
+      cutoffDepreciationTransactionId: toNumber(cutoffTxn1.id),
+      cutoffDepreciationJournalEntryId: toNumber(cutoffTxn1.journal_entry_id),
       grossCost: 10000,
       accumDepr: accumDepr1,
       nbv: nbv1,
@@ -616,13 +674,12 @@ async function main() {
     const asset2 = await createAndActivateAsset({
       cookie, categoryId: category.categoryId,
       legalEntityId: LEGAL_ENTITY_ID, ownerOperatingUnitId: ownerOuId,
-      postingWindow, uniqueSuffix: uniqueSuffix + "fd",
+      postingWindow, uniqueSuffix: `${uniqueSuffix}fd`,
       nameSuffix: "WO-FULL-DEPR", originalCost: 5000,
     });
     const assetId2 = Number(asset2.id);
     artifactState.assetIds.push(assetId2);
 
-    // Force NBV to zero to simulate fully depreciated
     await query(
       `UPDATE fixed_asset_transactions
           SET nbv_amount_txn = 0.0000, nbv_amount_base = 0.0000
@@ -630,7 +687,10 @@ async function main() {
       [TENANT_ID, assetId2]
     );
     await query(
-      `UPDATE fixed_assets SET status = 'FULLY_DEPRECIATED' WHERE tenant_id = ? AND id = ?`,
+      `UPDATE fixed_assets
+          SET status = 'FULLY_DEPRECIATED',
+              remaining_useful_life_months = 0
+        WHERE tenant_id = ? AND id = ?`,
       [TENANT_ID, assetId2]
     );
 
@@ -662,24 +722,27 @@ async function main() {
     assert(toAmount(txn2.nbv_amount_txn) === 0,
       `SMOKE2: nbv_amount_txn expected 0, got ${txn2.nbv_amount_txn}`);
 
-    // Verify no zero-amount depreciation transaction was created
-    const zeroDeprTxns = await query(
-      `SELECT id, transaction_type FROM fixed_asset_transactions
+    assert(
+      woResult2?.writeoff?.cutoffDepreciationTransactionId == null,
+      `SMOKE2: cutoffDepreciationTransactionId expected null, got ${woResult2?.writeoff?.cutoffDepreciationTransactionId}`
+    );
+
+    const postedDeprTxns2 = await query(
+      `SELECT id FROM fixed_asset_transactions
         WHERE tenant_id = ? AND asset_id = ?
           AND transaction_type = 'DEPRECIATION'
-          AND (gross_amount_txn = 0 OR gross_amount_txn IS NULL)
           AND status = 'POSTED'`,
       [TENANT_ID, assetId2]
     );
     assert(
-      (zeroDeprTxns.rows || []).length === 0,
-      `SMOKE2: Expected no zero-amount DEPRECIATION transactions, found ${(zeroDeprTxns.rows || []).length}`
+      (postedDeprTxns2.rows || []).length === 0,
+      `SMOKE2: Expected no posted DEPRECIATION transactions, found ${(postedDeprTxns2.rows || []).length}`
     );
 
     // Verify journal lines for zero-NBV write-off
     const txn2JournalId = Number(txn2.journal_entry_id);
     const lines2Result = await query(
-      `SELECT line_no, account_id, debit_base, credit_base
+      `SELECT debit_base, credit_base
          FROM journal_lines WHERE journal_entry_id = ? ORDER BY line_no ASC`,
       [txn2JournalId]
     );
@@ -690,7 +753,8 @@ async function main() {
       `SMOKE2: Expected 2 journal lines for zero-NBV write-off, got ${lines2.length}`);
 
     // Verify balance
-    let totalDebit2 = 0, totalCredit2 = 0;
+    let totalDebit2 = 0;
+    let totalCredit2 = 0;
     for (const line of lines2) {
       totalDebit2 += toAmount(line.debit_base);
       totalCredit2 += toAmount(line.credit_base);
@@ -706,40 +770,160 @@ async function main() {
       grossCost: toAmount(txn2.gross_amount_txn),
       accumDepr: toAmount(txn2.accum_depr_amount_txn),
       nbv: 0,
-      noZeroAmountDeprTxn: true,
+      noCutoffDepreciationTxn: true,
       journalBalanced: true,
       PASS: true,
     };
     console.log("[fa38-smoke] SMOKE 2 PASSED ✓");
 
     // ══════════════════════════════════════════════════════════════
-    // SMOKE 3: Already disposed asset rejection
-    // ══════════════════════════════════════════════════════════════
-    console.log("[fa38-smoke] SMOKE 3: Already DISPOSED asset rejection...");
+    // SMOKE 3: Backdated write-off is blocked by later posted activity
+    console.log("[fa38-smoke] SMOKE 3: Chronology blocker rejection...");
 
-    // asset1 is already DISPOSED from SMOKE 1
+    const asset3 = await createAndActivateAsset({
+      cookie, categoryId: category.categoryId,
+      legalEntityId: LEGAL_ENTITY_ID, ownerOperatingUnitId: ownerOuId,
+      postingWindow, uniqueSuffix: `${uniqueSuffix}blk`,
+      nameSuffix: "WO-BLOCKED", originalCost: 7000,
+    });
+    const assetId3 = Number(asset3.id);
+    artifactState.assetIds.push(assetId3);
+
+    const blockedWriteoffDate = minDate(addDays(postingWindow.acquisitionDate, 4), postingWindow.endDate);
+    const blockerEffectiveDate = minDate(addDays(postingWindow.acquisitionDate, 5), postingWindow.endDate);
+    assert(
+      blockerEffectiveDate > blockedWriteoffDate,
+      `SMOKE3: Need blockerEffectiveDate > blockedWriteoffDate, got ${blockerEffectiveDate} and ${blockedWriteoffDate}`
+    );
+
+    const blockerTransactionId = await insertPostedLifecycleBlockerTransaction({
+      tenantId: TENANT_ID,
+      legalEntityId: LEGAL_ENTITY_ID,
+      assetId: assetId3,
+      effectiveDate: blockerEffectiveDate,
+      postingDate: blockerEffectiveDate,
+      bookId: postingWindow.bookId,
+      fiscalPeriodId: postingWindow.fiscalPeriodId,
+      currencyCode: "AFN",
+      userId: smokeUser.userId,
+    });
+
+    const { payload: blockedPayload } = await apiRequest({
+      cookie, method: "POST",
+      pathName: `/api/v1/fixed-assets/${assetId3}/writeoff`,
+      expectedStatus: 409,
+      body: {
+        effectiveDate: blockedWriteoffDate,
+        postingDate: blockedWriteoffDate,
+        note: "SMOKE3 chronology blocker",
+      },
+    });
+    assert(
+      blockedPayload?.code === "FA_DISPOSAL_LATER_POSTED_ACTIVITY",
+      `SMOKE3: code expected FA_DISPOSAL_LATER_POSTED_ACTIVITY, got ${blockedPayload?.code}`
+    );
+    assert(
+      toNumber(blockedPayload?.details?.blockingTransactionId) === blockerTransactionId,
+      `SMOKE3: blockingTransactionId expected ${blockerTransactionId}, got ${blockedPayload?.details?.blockingTransactionId}`
+    );
+
+    summary.smoke3_chronologyBlockedWriteoff = {
+      assetId: assetId3,
+      blockingTransactionId: blockerTransactionId,
+      blockedEffectiveDate: blockedWriteoffDate,
+      blockerEffectiveDate,
+      reasonCode: blockedPayload?.code || null,
+      PASS: true,
+    };
+    console.log("[fa38-smoke] SMOKE 3 PASSED");
+
+    // SMOKE 4: Mistaken write-off is corrected via reversal
+    console.log("[fa38-smoke] SMOKE 4: Write-off reversal...");
+
+    const { payload: reversalResult } = await apiRequest({
+      cookie, method: "POST",
+      pathName: `/api/v1/fixed-assets/transactions/${toNumber(txn1.id)}/reverse`,
+      expectedStatus: 200,
+      body: {
+        note: "SMOKE4 reverse mistaken write-off",
+      },
+    });
+    assert(
+      reversalResult?.status !== "DISPOSED",
+      `SMOKE4: Expected asset to leave DISPOSED after reversal, got ${reversalResult?.status}`
+    );
+    assert(
+      reversalResult?.disposalDate == null,
+      `SMOKE4: Expected disposalDate to clear after reversal, got ${reversalResult?.disposalDate}`
+    );
+    assert(
+      toNumber(reversalResult?.reversal?.originalTransactionId) === toNumber(txn1.id),
+      "SMOKE4: originalTransactionId mismatch"
+    );
+    assert(
+      toNumber(reversalResult?.reversal?.reversalTransactionId) > 0,
+      "SMOKE4: reversalTransactionId missing"
+    );
+
+    const reversedTxn1Result = await query(
+      `SELECT status, reversal_transaction_id
+         FROM fixed_asset_transactions
+        WHERE tenant_id = ? AND id = ? LIMIT 1`,
+      [TENANT_ID, toNumber(txn1.id)]
+    );
+    const reversedTxn1 = reversedTxn1Result.rows?.[0];
+    assert(reversedTxn1?.status === "REVERSED",
+      `SMOKE4: WRITEOFF transaction status expected REVERSED, got ${reversedTxn1?.status}`);
+
+    const reversalTxnId = toNumber(reversedTxn1?.reversal_transaction_id);
+    const reversalTxnRowResult = await query(
+      `SELECT transaction_type, reversed_transaction_id
+         FROM fixed_asset_transactions
+        WHERE tenant_id = ? AND id = ? LIMIT 1`,
+      [TENANT_ID, reversalTxnId]
+    );
+    const reversalTxnRow = reversalTxnRowResult.rows?.[0];
+    assert(reversalTxnRow?.transaction_type === "REVERSAL",
+      `SMOKE4: reversal transaction_type expected REVERSAL, got ${reversalTxnRow?.transaction_type}`);
+    assert(toNumber(reversalTxnRow?.reversed_transaction_id) === toNumber(txn1.id),
+      "SMOKE4: reversal transaction linkage mismatch");
+
+    summary.smoke4_writeoffReversal = {
+      assetId: assetId1,
+      originalTransactionId: toNumber(txn1.id),
+      reversalTransactionId: reversalTxnId,
+      restoredStatus: reversalResult?.status || null,
+      PASS: true,
+    };
+    console.log("[fa38-smoke] SMOKE 4 PASSED");
+
+    // SMOKE 5: Already disposed asset rejection
+    // ══════════════════════════════════════════════════════════════
+    console.log("[fa38-smoke] SMOKE 5: Already DISPOSED asset rejection...");
+
+    // asset2 remains DISPOSED because only asset1 was reversed in SMOKE 4
     const { status: disposedStatus } = await apiRequest({
       cookie, method: "POST",
-      pathName: `/api/v1/fixed-assets/${assetId1}/writeoff`,
+      pathName: `/api/v1/fixed-assets/${assetId2}/writeoff`,
       body: {
         effectiveDate: postingWindow.writeoffDate,
         postingDate: postingWindow.writeoffDate,
       },
     });
     assert(disposedStatus === 400,
-      `SMOKE3: Expected 400 for already-DISPOSED write-off, got ${disposedStatus}`);
+      `SMOKE5: Expected 400 for already-DISPOSED write-off, got ${disposedStatus}`);
 
-    summary.smoke3_alreadyDisposedRejection = {
-      assetId: assetId1,
+    summary.smoke5_alreadyDisposedRejection = {
+      assetId: assetId2,
       httpStatus: disposedStatus,
       PASS: true,
     };
-    console.log("[fa38-smoke] SMOKE 3 PASSED ✓");
+    console.log("[fa38-smoke] SMOKE 5 PASSED");
 
     // ══════════════════════════════════════════════════════════════
-    // SMOKE 4: DRAFT asset rejection
+    // SMOKE 6: DRAFT asset rejection
     // ══════════════════════════════════════════════════════════════
-    console.log("[fa38-smoke] SMOKE 4: DRAFT asset write-off rejection...");
+    console.log("[fa38-smoke] SMOKE 6: DRAFT asset write-off rejection...");
 
     const { payload: draftAsset } = await apiRequest({
       cookie, method: "POST", pathName: "/api/v1/fixed-assets", expectedStatus: 201,
@@ -756,7 +940,7 @@ async function main() {
       },
     });
     const draftAssetId = Number(draftAsset?.id || 0);
-    assert(draftAssetId > 0, "SMOKE4: Failed to create draft asset");
+    assert(draftAssetId > 0, "SMOKE6: Failed to create draft asset");
     artifactState.assetIds.push(draftAssetId);
 
     const { status: draftWoStatus } = await apiRequest({
@@ -768,14 +952,14 @@ async function main() {
       },
     });
     assert(draftWoStatus === 400,
-      `SMOKE4: Expected 400 for DRAFT asset write-off, got ${draftWoStatus}`);
+      `SMOKE6: Expected 400 for DRAFT asset write-off, got ${draftWoStatus}`);
 
-    summary.smoke4_draftAssetRejection = {
+    summary.smoke6_draftAssetRejection = {
       assetId: draftAssetId,
       httpStatus: draftWoStatus,
       PASS: true,
     };
-    console.log("[fa38-smoke] SMOKE 4 PASSED ✓");
+    console.log("[fa38-smoke] SMOKE 6 PASSED");
 
     // ── All passed ───────────────────────────────────────────────
     runPassed = true;

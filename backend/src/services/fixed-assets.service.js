@@ -9979,8 +9979,19 @@ const WRITEOFF_ELIGIBLE_STATUSES = new Set([
   "FULLY_DEPRECIATED",
 ]);
 
+const FIXED_ASSET_DISPOSAL_REASON_CODES = Object.freeze({
+  LATER_POSTED_ACTIVITY: "FA_DISPOSAL_LATER_POSTED_ACTIVITY",
+  CUTOFF_ALREADY_PASSED: "FA_DISPOSAL_CUTOFF_ALREADY_PASSED",
+  PRIOR_DEPRECIATION_NOT_CURRENT: "FA_DISPOSAL_PRIOR_DEPRECIATION_NOT_CURRENT",
+  CUTOFF_STATE_UNSAFE: "FA_DISPOSAL_CUTOFF_STATE_UNSAFE",
+});
+
 function buildWriteoffJournalNo(assetId) {
   return `FA-TXN-WO-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
+}
+
+function buildWriteoffCutoffDepreciationJournalNo(assetId) {
+  return `FA-TXN-WOD-${parsePositiveInt(assetId)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 40);
 }
 
 function roundDisposalAmount(value) {
@@ -9988,6 +9999,15 @@ function roundDisposalAmount(value) {
 }
 
 const DISPOSAL_CUTOFF_EPSILON = 0.0001;
+
+function buildFixedAssetDisposalError(message, details = null, status = 400) {
+  const error = badRequest(message, details);
+  error.status = status;
+  if (details?.reasonCode) {
+    error.code = details.reasonCode;
+  }
+  return error;
+}
 
 function addDaysToDateText(dateText, days) {
   const date = parseDateOnlyStrict(dateText, "date");
@@ -10809,7 +10829,7 @@ export async function resolveDisposalCutoffEconomics({
   }
 
   if (!asset.in_service_date) {
-    throw badRequest("inServiceDate is required to finalize sale for a depreciable asset");
+    throw badRequest("inServiceDate is required to post a cutoff disposal for a depreciable asset");
   }
 
   const lifecycleHistory = await loadCorrectionAwareOwnerTimeline({
@@ -10889,8 +10909,13 @@ export async function resolveDisposalCutoffEconomics({
     Number(currentNbv.nbvTxn) < Number(theoreticalCutoffNbvTxn) - DISPOSAL_CUTOFF_EPSILON
     || Number(currentNbv.nbvBase) < Number(theoreticalCutoffNbvBase) - DISPOSAL_CUTOFF_EPSILON
   ) {
-    throw badRequest(
-      "Asset carrying value is already below the locked disposal cutoff; finalize would recognize depreciation on or after the effective disposal date"
+    throw buildFixedAssetDisposalError(
+      "Asset carrying value is already below the locked disposal cutoff; disposal would recognize depreciation on or after the effective disposal date",
+      {
+        reasonCode: FIXED_ASSET_DISPOSAL_REASON_CODES.CUTOFF_ALREADY_PASSED,
+        effectiveDate,
+      },
+      409
     );
   }
 
@@ -10898,14 +10923,24 @@ export async function resolveDisposalCutoffEconomics({
     Number(currentNbv.nbvTxn) > Number(openingNbvTxn) + DISPOSAL_CUTOFF_EPSILON
     || Number(currentNbv.nbvBase) > Number(openingNbvBase) + DISPOSAL_CUTOFF_EPSILON
   ) {
-    throw badRequest(
-      "Asset depreciation is not current through the start of the disposal month; finalize requires prior-period depreciation to be posted before sale cutoff is recognized"
+    throw buildFixedAssetDisposalError(
+      "Asset depreciation is not current through the start of the disposal month; disposal requires prior-period depreciation to be posted before the cutoff is recognized",
+      {
+        reasonCode: FIXED_ASSET_DISPOSAL_REASON_CODES.PRIOR_DEPRECIATION_NOT_CURRENT,
+        effectiveDate,
+      },
+      409
     );
   }
 
   if (!currentMatchesOpening && !currentMatchesCutoff) {
-    throw badRequest(
-      "Asset carrying value does not align to the disposal-period opening NBV or the day-before-disposal cutoff NBV; finalize cannot infer a partial-month depreciation state safely"
+    throw buildFixedAssetDisposalError(
+      "Asset carrying value does not align to the disposal-period opening NBV or the day-before-disposal cutoff NBV; disposal cannot infer a partial-month depreciation state safely",
+      {
+        reasonCode: FIXED_ASSET_DISPOSAL_REASON_CODES.CUTOFF_STATE_UNSAFE,
+        effectiveDate,
+      },
+      409
     );
   }
 
@@ -10941,6 +10976,12 @@ export async function resolveDisposalCutoffEconomics({
   };
 }
 
+/**
+ * Post a terminal no-proceeds disposal for a fixed asset using chronology-safe
+ * cutoff economics. If the disposal month has unposted day-before-disposal
+ * depreciation, the workflow posts that cutoff depreciation first and relies on
+ * generic reversal plus later catch-up for mistaken write-offs.
+ */
 export async function writeoffAsset(input) {
   const {
     tenantId,
@@ -10961,12 +11002,28 @@ export async function writeoffAsset(input) {
     // ── Load and lock asset ──────────────────────────────────────
     const existingResult = await tx.query(
       `SELECT id, tenant_id, legal_entity_id, status, asset_no,
+              acquisition_date,
+              capitalization_date,
+              in_service_date,
               owner_operating_unit_id,
               currency_code,
               original_cost_txn,
               original_cost_base,
+              salvage_value_txn,
+              salvage_value_base,
+              depreciation_method,
+              declining_balance_rate_percent,
+              switch_to_straight_line,
+              useful_life_months,
+              remaining_useful_life_months,
+              legacy_accum_depr_txn,
+              legacy_accum_depr_base,
+              legacy_nbv_txn,
+              legacy_nbv_base,
+              last_depreciation_period,
               asset_account_id,
               accum_depr_account_id,
+              depr_expense_account_id,
               disposal_gain_account_id,
               disposal_loss_account_id
          FROM fixed_assets
@@ -10993,7 +11050,19 @@ export async function writeoffAsset(input) {
       ? Number(asset.owner_operating_unit_id) : null;
     const assetAccountId = asset.asset_account_id != null ? Number(asset.asset_account_id) : null;
     const accumDeprAccountId = asset.accum_depr_account_id != null ? Number(asset.accum_depr_account_id) : null;
+    const deprExpenseAccountId = asset.depr_expense_account_id != null
+      ? Number(asset.depr_expense_account_id)
+      : null;
     const disposalLossAccountId = asset.disposal_loss_account_id != null ? Number(asset.disposal_loss_account_id) : null;
+
+    if (
+      asset.acquisition_date
+      && normalizedDates.effectiveDate < String(asset.acquisition_date).slice(0, 10)
+    ) {
+      throw badRequest(
+        `effectiveDate (${normalizedDates.effectiveDate}) cannot be before acquisitionDate (${asset.acquisition_date})`
+      );
+    }
 
     if (!assetAccountId) {
       throw badRequest("Asset is missing assetAccountId; write-off requires an asset GL account");
@@ -11006,14 +11075,29 @@ export async function writeoffAsset(input) {
     const grossCostTxn = roundDisposalAmount(asset.original_cost_txn);
     const grossCostBase = roundDisposalAmount(asset.original_cost_base);
 
-    const currentNbv = await resolveCurrentAssetNbv(tenantId, assetId, tx.query);
-    const accumDeprTxn = roundDisposalAmount(grossCostTxn - currentNbv.nbvTxn);
-    const accumDeprBase = roundDisposalAmount(grossCostBase - currentNbv.nbvBase);
-    const writeoffNbvTxn = currentNbv.nbvTxn;
-    const writeoffNbvBase = currentNbv.nbvBase;
-    const writeoffGainLossBase = writeoffNbvBase > DISPOSAL_CUTOFF_EPSILON
-      ? roundDisposalAmount(-writeoffNbvBase)
-      : 0;
+    const postedTransactions = await loadPostedLifecycleTransactionsForAsset({
+      tenantId,
+      assetId,
+      queryFn: tx.query,
+      forUpdate: true,
+    });
+    const laterPostedTransaction = (postedTransactions || []).find((row) => (
+      String(row?.effectiveDate || "") > normalizedDates.effectiveDate
+    )) || null;
+    if (laterPostedTransaction) {
+      throw buildFixedAssetDisposalError(
+        "Backdated write-off is chronology-unsafe because later posted fixed-asset activity already exists after effectiveDate",
+        {
+          reasonCode: FIXED_ASSET_DISPOSAL_REASON_CODES.LATER_POSTED_ACTIVITY,
+          assetId: Number(assetId),
+          effectiveDate: normalizedDates.effectiveDate,
+          blockingTransactionId: Number(laterPostedTransaction.id || 0) || null,
+          blockingTransactionType: laterPostedTransaction.transactionType || null,
+          blockingEffectiveDate: laterPostedTransaction.effectiveDate || null,
+        },
+        409
+      );
+    }
 
     // ── Resolve book & fiscal period ─────────────────────────────
     const book = await resolveBookForLegalEntity(tenantId, legalEntityId, tx.query);
@@ -11030,6 +11114,168 @@ export async function writeoffAsset(input) {
     //   Credit fixed asset account (remove gross cost)
     //   Debit  disposal loss account (remaining NBV = write-off loss)
     // If NBV is zero, no loss line needed (gross = accum, they balance).
+    const cutoffEconomics = await resolveDisposalCutoffEconomics({
+      tenantId,
+      asset,
+      calendarId: Number(book.calendar_id),
+      effectiveDate: normalizedDates.effectiveDate,
+      queryFn: tx.query,
+    });
+
+    let cutoffDepreciationTransactionId = null;
+    let cutoffDepreciationJournalEntryId = null;
+    if (
+      cutoffEconomics.cutoffDepreciationTxn > DISPOSAL_CUTOFF_EPSILON
+      || cutoffEconomics.cutoffDepreciationBase > DISPOSAL_CUTOFF_EPSILON
+    ) {
+      if (!deprExpenseAccountId || !accumDeprAccountId) {
+        throw badRequest(
+          "Asset is missing depreciation posting accounts; write-off cannot recognize cutoff depreciation"
+        );
+      }
+      if (!cutoffEconomics.allocationSegments.length) {
+        throw badRequest(
+          "Write-off requires allocation segments for cutoff depreciation through the day before disposal"
+        );
+      }
+
+      const totalEligibleDays = cutoffEconomics.allocationSegments.reduce(
+        (sum, segment) => sum + Number(segment.eligibleDays || 0),
+        0
+      );
+      const depreciationJournalLines = [];
+      let allocatedTxn = 0;
+      let allocatedBase = 0;
+
+      for (let index = 0; index < cutoffEconomics.allocationSegments.length; index += 1) {
+        const segment = cutoffEconomics.allocationSegments[index];
+        const isLastSegment = index === cutoffEconomics.allocationSegments.length - 1;
+        const segmentEligibleDays = Number(segment.eligibleDays || 0);
+        if (segmentEligibleDays <= 0 || totalEligibleDays <= 0) {
+          continue;
+        }
+
+        const amountTxn = isLastSegment
+          ? roundDisposalAmount(cutoffEconomics.cutoffDepreciationTxn - allocatedTxn)
+          : roundDisposalAmount(
+            cutoffEconomics.cutoffDepreciationTxn * (segmentEligibleDays / totalEligibleDays)
+          );
+        const amountBase = isLastSegment
+          ? roundDisposalAmount(cutoffEconomics.cutoffDepreciationBase - allocatedBase)
+          : roundDisposalAmount(
+            cutoffEconomics.cutoffDepreciationBase * (segmentEligibleDays / totalEligibleDays)
+          );
+        allocatedTxn = roundDisposalAmount(allocatedTxn + amountTxn);
+        allocatedBase = roundDisposalAmount(allocatedBase + amountBase);
+
+        if (amountTxn <= 0 && amountBase <= 0) {
+          continue;
+        }
+
+        const operatingUnitId = segment.operatingUnitId ?? ownerOperatingUnitId ?? null;
+        depreciationJournalLines.push(
+          buildCariDirectionalJournalLine({
+            accountId: deprExpenseAccountId,
+            side: "DEBIT",
+            amountTxn,
+            amountBase,
+            lineDescription: `FA write-off cutoff depreciation ${assetNo} through ${cutoffEconomics.cutoffDate}`.slice(0, 255),
+            subledgerReferenceNo: assetNo,
+            currencyCode,
+            operatingUnitId,
+          })
+        );
+        depreciationJournalLines.push(
+          buildCariDirectionalJournalLine({
+            accountId: accumDeprAccountId,
+            side: "CREDIT",
+            amountTxn,
+            amountBase,
+            lineDescription: `FA accumulated depreciation ${assetNo} through ${cutoffEconomics.cutoffDate}`.slice(0, 255),
+            subledgerReferenceNo: assetNo,
+            currencyCode,
+            operatingUnitId,
+          })
+        );
+      }
+
+      if (!depreciationJournalLines.length) {
+        throw badRequest(
+          "Write-off cutoff depreciation resolved a positive amount but produced no journal lines"
+        );
+      }
+
+      const depreciationJournal = await insertPostedJournalWithLinesTx(tx, {
+        tenantId,
+        legalEntityId,
+        bookId: book.id,
+        fiscalPeriodId: period.id,
+        journalNo: buildWriteoffCutoffDepreciationJournalNo(assetId),
+        entryDate: normalizedDates.postingDate,
+        documentDate: cutoffEconomics.cutoffDate,
+        currencyCode,
+        description: `FA write-off cutoff depreciation ${assetNo}`.slice(0, 255),
+        referenceNo: assetNo,
+        userId,
+        operatingUnitId: ownerOperatingUnitId,
+        lines: depreciationJournalLines,
+      });
+
+      cutoffDepreciationTransactionId = await insertFixedAssetTransaction(tx, {
+        tenantId,
+        legalEntityId,
+        assetId,
+        transactionType: "DEPRECIATION",
+        effectiveDate: cutoffEconomics.cutoffDate,
+        postingDate: normalizedDates.postingDate,
+        bookId: book.id,
+        fiscalPeriodId: period.id,
+        currencyCode,
+        depreciationKind: "RUN",
+        journalEntryId: depreciationJournal.journalEntryId,
+        grossAmountTxn: grossCostTxn,
+        grossAmountBase: grossCostBase,
+        accumDeprAmountTxn: cutoffEconomics.accumDeprTxn,
+        accumDeprAmountBase: cutoffEconomics.accumDeprBase,
+        nbvAmountTxn: cutoffEconomics.cutoffNbvTxn,
+        nbvAmountBase: cutoffEconomics.cutoffNbvBase,
+        note: `Write-off cutoff depreciation through ${cutoffEconomics.cutoffDate}`,
+        createdByUserId: userId,
+      });
+
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId,
+        journalEntryId: depreciationJournal.journalEntryId,
+        sourceRefType: FIXED_ASSET_TRANSACTION,
+        sourceRefId: cutoffDepreciationTransactionId,
+      });
+
+      await upsertDisposalCutoffPostedScheduleLineTx(tx, {
+        tenantId,
+        legalEntityId,
+        assetId,
+        periodKey: cutoffEconomics.cutoffPeriodKey,
+        plannedAmountTxn: cutoffEconomics.cutoffDepreciationTxn,
+        plannedAmountBase: cutoffEconomics.cutoffDepreciationBase,
+        openingNbvTxn: cutoffEconomics.openingNbvTxn,
+        openingNbvBase: cutoffEconomics.openingNbvBase,
+        closingNbvTxn: cutoffEconomics.cutoffNbvTxn,
+        closingNbvBase: cutoffEconomics.cutoffNbvBase,
+        postedTransactionId: cutoffDepreciationTransactionId,
+      });
+
+      cutoffDepreciationJournalEntryId = depreciationJournal.journalEntryId;
+    }
+
+    const accumDeprTxn = roundDisposalAmount(cutoffEconomics.accumDeprTxn);
+    const accumDeprBase = roundDisposalAmount(cutoffEconomics.accumDeprBase);
+    const writeoffNbvTxn = roundDisposalAmount(cutoffEconomics.cutoffNbvTxn);
+    const writeoffNbvBase = roundDisposalAmount(cutoffEconomics.cutoffNbvBase);
+    const writeoffGainLossBase = writeoffNbvBase > DISPOSAL_CUTOFF_EPSILON
+      ? roundDisposalAmount(-writeoffNbvBase)
+      : 0;
+
     const journalLines = [];
 
     // 1. Debit accumulated depreciation account (clear accumulated depreciation)
@@ -11138,29 +11384,52 @@ export async function writeoffAsset(input) {
 
     // ── Transition asset to DISPOSED ─────────────────────────────
     // Owner OU changes only after posting succeeds
+    const assetUpdateClauses = [
+      "status = 'DISPOSED'",
+      "disposal_date = ?",
+      "disposal_type = 'WRITEOFF'",
+      "disposed_at = CURRENT_TIMESTAMP",
+      "disposal_proceeds_base = NULL",
+      "disposal_gain_loss_base = ?",
+      "remaining_useful_life_months = 0",
+      "updated_by_user_id = ?",
+    ];
+    const assetUpdateParams = [
+      normalizedDates.effectiveDate,
+      writeoffGainLossBase,
+      userId,
+    ];
+    if (cutoffEconomics.cutoffPeriodKey) {
+      assetUpdateClauses.push("last_depreciation_period = ?");
+      assetUpdateParams.push(cutoffEconomics.cutoffPeriodKey);
+    }
+    assetUpdateParams.push(assetId, tenantId);
+
     await tx.query(
       `UPDATE fixed_assets
-          SET status = 'DISPOSED',
-              disposal_date = ?,
-              disposal_type = 'WRITEOFF',
-              disposed_at = CURRENT_TIMESTAMP,
-              disposal_proceeds_base = NULL,
-              disposal_gain_loss_base = ?,
-              remaining_useful_life_months = 0,
-              updated_by_user_id = ?
+          SET ${assetUpdateClauses.join(", ")}
         WHERE id = ? AND tenant_id = ?`,
-      [
-        normalizedDates.effectiveDate,
-        writeoffGainLossBase,
-        userId,
-        assetId,
-        tenantId,
-      ]
+      assetUpdateParams
     );
 
-    return assetId;
-  }).then(async (disposedAssetId) => {
-    return getAssetDetail({ tenantId, assetId: disposedAssetId });
+    return {
+      assetId,
+      writeoffTransactionId: transactionId,
+      writeoffJournalEntryId: journalResult.journalEntryId,
+      cutoffDepreciationTransactionId,
+      cutoffDepreciationJournalEntryId,
+    };
+  }).then(async (result) => {
+    const assetDetail = await getAssetDetail({ tenantId, assetId: result.assetId });
+    return {
+      ...assetDetail,
+      writeoff: {
+        writeoffTransactionId: result.writeoffTransactionId,
+        writeoffJournalEntryId: result.writeoffJournalEntryId,
+        cutoffDepreciationTransactionId: result.cutoffDepreciationTransactionId,
+        cutoffDepreciationJournalEntryId: result.cutoffDepreciationJournalEntryId,
+      },
+    };
   });
 }
 
