@@ -686,6 +686,79 @@ These remain in the main Track 51 roadmap beyond the live repo progress document
 - `RP12` higher-order blockers and publish gates
 - `RP13` export/fingerprint/performance hardening
 
+## `RP10` - Discovery notes before implementation
+
+- The live repo already has one realistic first-pass RP10 slice for control-account reconciliation without inventing a second accounting engine:
+  - `backend/src/services/gl.purpose-mappings.service.js` can resolve the configured `CARI_*_CONTROL*` account mappings per legal entity
+  - `backend/src/services/cari.report.service.js` already exposes as-of open-item rows with counterparty and document operating-unit context
+  - `backend/src/services/journal.source-link.service.js` and the existing ledger-report shape already preserve journal-to-source lineage for drillthrough
+- The most realistic first pass is therefore:
+  - GL control-account balances vs CARI open-item residuals
+  - grouped by direction plus OU/counterparty where the source lineage allows it
+  - with explicit exception surfacing for control-account lines missing expected CARI linkage or subledger reference
+- Reusable frontend seams already exist for RP10:
+  - `frontend/src/hooks/usePersistedFilters.js` for saved/reusable filter state
+  - `frontend/src/utils/journalSourceLinkDestinations.js` for source drillback routing
+  - `frontend/src/pages/GeneralLedgerPage.jsx` for report-family filter/query and journal/source drill patterns
+
+## `RP10` - Current implementation notes
+
+- `RP10` now implements one first-pass reconciliation slice inside the Track 51 report family:
+  - `/app/cari-kontrol-mutabakati`
+  - backend route family:
+    - `GET /api/v1/gl/cari-control-reconciliation`
+    - `GET /api/v1/gl/cari-control-reconciliation/detail`
+- The implemented slice is deliberately narrow and accounting-first:
+  - configured CARI control-account balances vs CARI open-item residuals
+  - grouped by:
+    - direction
+    - OU / `CENTRAL`
+    - counterparty where source lineage exists
+  - explicit exception surfacing for:
+    - control-account lines missing expected CARI linkage
+    - control-account lines missing subledger reference
+    - balance differences between GL and open-item residuals
+- `RP10` keeps OU as a reconciliation axis, not a separate accounting engine:
+  - the live repo still reads one local legal-entity/book truth
+  - OU only filters and groups the same accounting truth
+- The backend RP10 read/drillthrough surface is implemented in:
+  - `backend/src/services/gl.cari-control-reconciliation.service.js`
+  - `backend/src/routes/gl.reconciliation.routes.js`
+  - `backend/src/routes/gl.reconciliation.validators.js`
+  - `backend/src/routes/gl.js`
+- The frontend RP10 route/report-family surfacing is implemented in:
+  - `frontend/src/pages/CariControlReconciliationPage.jsx`
+  - `frontend/src/App.jsx`
+  - `frontend/src/api/glReports.js`
+  - `frontend/src/reporting/localReportConfig.js`
+  - `frontend/src/layouts/sidebarConfig.js`
+  - `frontend/src/i18n/messages.js`
+- Drillthrough now follows:
+  - reconciliation row
+  - GL journal lines
+  - source open-item rows
+  - source/journal destinations where the repo already has destination routing
+- Reusable filter behavior landed as URL-backed deep-link filters inside the current report-family seam:
+  - legal entity
+  - book
+  - fiscal period
+  - OU scope / OU
+  - direction
+  - counterparty
+  - row mode
+  - the shared local-report query helper now preserves the RP10 filter subset for deep links
+- The first RP10 characterization/smoke contract now exists in:
+  - `backend/scripts/test-ux-rsrecon01-cari-control-reconciliation-contract.js`
+  - `backend/package.json`
+  - `backend/scripts/fixtures/rswire03-release-gate-manifest.json`
+  - `backend/openapi.yaml`
+- `Deferred item already covered`
+  - additional reconciliation families and broader exception work remain later roadmap work under `RP11` / `RP12`
+- `Optional hardening`
+  - move from URL-backed reusable filters to stronger saved-view/persisted-filter UX only if this report family grows materially
+  - broaden beyond `RS-RECON-01` if more reconciliation slices are added later
+
+
 ## `RP04` - Current implementation notes
 
 - `RP04` did not create a second ledger engine.

@@ -23,8 +23,11 @@ const LOCAL_REPORT_QUERY_KEYS = Object.freeze([
   "accountId",
   "accountCodeFrom",
   "accountCodeTo",
+  "counterpartyId",
   "operatingUnitScope",
   "operatingUnitId",
+  "direction",
+  "rowStatus",
   "subledgerReferenceNo",
   "sourceModule",
   "sourceType",
@@ -177,6 +180,37 @@ export async function getLocalStatementAccountSummary(params = {}) {
       statementRowKey: params.statementRowKey,
     })}`
   );
+  return response.data;
+}
+
+/**
+ * Read the first-pass RP10 GL-vs-CARI control reconciliation summary.
+ */
+export async function getCariControlReconciliationReport(params = {}) {
+  const normalized = normalizeLocalReportParams(params);
+  const response = await api.get("/api/v1/gl/cari-control-reconciliation", {
+    params: {
+      ...normalized,
+      direction: params.direction,
+      rowStatus: params.rowStatus,
+    },
+  });
+  return response.data;
+}
+
+/**
+ * Read journal/source drillthrough detail for one RP10 reconciliation row.
+ */
+export async function getCariControlReconciliationDetail(params = {}) {
+  const normalized = normalizeLocalReportParams(params);
+  const response = await api.get("/api/v1/gl/cari-control-reconciliation/detail", {
+    params: {
+      ...normalized,
+      direction: params.direction,
+      rowStatus: params.rowStatus,
+      rowKey: params.rowKey,
+    },
+  });
   return response.data;
 }
 

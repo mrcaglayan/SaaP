@@ -71,6 +71,11 @@
       "packageScriptName": "test:ux:rsrep01"
     },
     {
+      "routePath": "/app/cari-kontrol-mutabakati",
+      "smokeScriptPath": "backend/scripts/test-ux-rsrecon01-cari-control-reconciliation-contract.js",
+      "packageScriptName": "test:ux:rsrecon01"
+    },
+    {
       "routePath": "/app/payroll-ownership",
       "smokeScriptPath": "backend/scripts/test-payroll-pou08-release-gate.js",
       "packageScriptName": "test:payroll:pou08-release-gate"

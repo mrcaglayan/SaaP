@@ -3120,6 +3120,276 @@
         }
       }
     },
+    "/api/v1/gl/cari-control-reconciliation": {
+      "get": {
+        "tags": [
+          "GL",
+          "Cari"
+        ],
+        "operationId": "getCariControlReconciliationReport",
+        "summary": "Get first-pass GL-vs-CARI control-account reconciliation",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bookId",
+            "required": true,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": true,
+            "description": "Selected fiscal period identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Optional legal entity identifier that must match the selected book",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Optional exact counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitScope",
+            "required": false,
+            "description": "Operating-unit scope selector",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ALL",
+                "OPERATING_UNIT",
+                "CENTRAL"
+              ],
+              "default": "ALL"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Operating unit identifier. Required when operatingUnitScope=OPERATING_UNIT.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "description": "Optional AR/AP direction filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ALL",
+                "AR",
+                "AP"
+              ],
+              "default": "ALL"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rowStatus",
+            "required": false,
+            "description": "Whether to return all grouped rows or only exception rows",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ALL",
+                "EXCEPTIONS_ONLY"
+              ],
+              "default": "ALL"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "RP10 first-pass control-account reconciliation report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/cari-control-reconciliation/detail": {
+      "get": {
+        "tags": [
+          "GL",
+          "Cari"
+        ],
+        "operationId": "getCariControlReconciliationDetail",
+        "summary": "Get journal and source drillthrough for one RP10 reconciliation row",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bookId",
+            "required": true,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": true,
+            "description": "Selected fiscal period identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Optional legal entity identifier that must match the selected book",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Optional exact counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitScope",
+            "required": false,
+            "description": "Operating-unit scope selector",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ALL",
+                "OPERATING_UNIT",
+                "CENTRAL"
+              ],
+              "default": "ALL"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Operating unit identifier. Required when operatingUnitScope=OPERATING_UNIT.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "description": "Optional AR/AP direction filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ALL",
+                "AR",
+                "AP"
+              ],
+              "default": "ALL"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rowKey",
+            "required": true,
+            "description": "Reconciliation row key returned from the summary endpoint",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Journal and source drillthrough for one reconciliation row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/gl/local-close-packs": {
       "get": {
         "tags": [

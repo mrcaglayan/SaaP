@@ -27,6 +27,7 @@ import {
   registerGlReadTrialBalanceRoute,
 } from "./gl.read.journal.routes.js";
 import { registerGlLedgerReportRoutes } from "./gl.ledger.routes.js";
+import { registerGlReconciliationRoutes } from "./gl.reconciliation.routes.js";
 import { registerGlStatementReportRoutes } from "./gl.statement.routes.js";
 import { registerGlReadCoreRoutes } from "./gl.read.routes.js";
 import { registerGlWriteCoreRoutes } from "./gl.write.routes.js";
@@ -2205,6 +2206,9 @@ registerGlReadTrialBalanceRoute(router, {
   isNearlyZero,
 });
 registerGlLedgerReportRoutes(router, {
+  resolveScopeFromBookId,
+});
+registerGlReconciliationRoutes(router, {
   resolveScopeFromBookId,
 });
 registerGlStatementReportRoutes(router, {

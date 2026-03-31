@@ -578,6 +578,10 @@ export const sidebarItems = [
         to: "/app/muavin",
       },
       {
+        ...LOCAL_REPORT_SIDEBAR_ITEMS.cariControlReconciliation,
+        to: "/app/cari-kontrol-mutabakati",
+      },
+      {
         ...LOCAL_REPORT_SIDEBAR_ITEMS.balanceSheet,
         to: "/app/bilanco",
       },

@@ -764,6 +764,38 @@ async function loadOpenItemAsOfRows({
   return (rowsResult.rows || []).map((row) => mapOpenItemAsOfRow(row, filters.asOfDate));
 }
 
+/**
+ * Reuse the existing CARI open-item as-of engine without pagination when
+ * another finance control surface needs row-level residuals.
+ */
+export async function listCariOpenItemAsOfRows({
+  tenantId,
+  legalEntityId,
+  asOfDate,
+  counterpartyId = null,
+  role = null,
+  direction = null,
+  status = "OPEN",
+  runQuery = query,
+}) {
+  const rows = await loadOpenItemAsOfRows({
+    req: null,
+    filters: {
+      tenantId,
+      legalEntityId,
+      counterpartyId,
+      asOfDate,
+      role,
+      direction,
+    },
+    buildScopeFilter: null,
+    assertScopeAccess: null,
+    runQuery,
+  });
+
+  return rows.filter((row) => matchesOpenStatusFilter(row.asOfStatus, status));
+}
+
 async function loadSettlementReferenceMapForOpenItems({
   tenantId,
   asOfDate,

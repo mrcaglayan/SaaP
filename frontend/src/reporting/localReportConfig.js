@@ -50,6 +50,18 @@ const LOCAL_REPORT_ROUTES = Object.freeze({
     implemented: true,
     showInSidebar: true,
   }),
+  cariControlReconciliation: Object.freeze({
+    key: "cariControlReconciliation",
+    appPath: "/app/cari-kontrol-mutabakati",
+    childPath: "cari-kontrol-mutabakati",
+    label: "Cari Kontrol Mutabakati",
+    requiredPermissions: [
+      LOCAL_REPORT_PERMISSION_CODES.ledger,
+      "cari.report.read",
+    ],
+    implemented: true,
+    showInSidebar: true,
+  }),
 });
 
 export const LOCAL_REPORT_ROUTE_PATHS = Object.freeze(
@@ -101,6 +113,14 @@ export const LOCAL_REPORT_SIDEBAR_ITEMS = Object.freeze({
       ...LOCAL_REPORT_ROUTES.subsidiaryLedger.requiredPermissions,
     ],
     implemented: LOCAL_REPORT_ROUTES.subsidiaryLedger.implemented,
+  }),
+  cariControlReconciliation: Object.freeze({
+    label: LOCAL_REPORT_ROUTES.cariControlReconciliation.label,
+    to: LOCAL_REPORT_ROUTES.cariControlReconciliation.appPath,
+    requiredPermissions: [
+      ...LOCAL_REPORT_ROUTES.cariControlReconciliation.requiredPermissions,
+    ],
+    implemented: LOCAL_REPORT_ROUTES.cariControlReconciliation.implemented,
   }),
 });
 
