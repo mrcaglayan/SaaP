@@ -83,6 +83,9 @@ import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
 import YearEndRevrecChecklistPage from "./pages/YearEndRevrecChecklistPage.jsx";
 import TrialBalancePage from "./pages/TrialBalancePage.jsx";
 import GeneralLedgerPage from "./pages/GeneralLedgerPage.jsx";
+import LocalStatementPage from "./pages/LocalStatementPage.jsx";
+import LocalCloseWorkspacePage from "./pages/LocalCloseWorkspacePage.jsx";
+import LocalClosePackDetailPage from "./pages/LocalClosePackDetailPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
@@ -164,6 +167,16 @@ const implementedRoutes = [
     appPath: "/app/muavin",
     childPath: "muavin",
     element: <GeneralLedgerPage reportMode="MUAVIN" />,
+  },
+  {
+    appPath: "/app/bilanco",
+    childPath: "bilanco",
+    element: <LocalStatementPage statementType="BALANCE_SHEET" />,
+  },
+  {
+    appPath: "/app/gelir-tablosu",
+    childPath: "gelir-tablosu",
+    element: <LocalStatementPage statementType="INCOME_STATEMENT" />,
   },
   {
     appPath: "/app/kasa-tanimlari",
@@ -650,6 +663,17 @@ const implementedRoutes = [
     appPath: "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",
     childPath: "donem-sonu-islemler/aylik/intercompany-mutabakat",
     element: <IntercompanyReconciliationPage />,
+  },
+  {
+    appPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+    childPath: "donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+    element: <LocalCloseWorkspacePage />,
+  },
+  {
+    appPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri/:packId",
+    childPath: "donem-sonu-islemler/yillik/yerel-kapanis-paketleri/:packId",
+    permissionPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+    element: <LocalClosePackDetailPage />,
   },
   {
     appPath: "/app/donem-sonu-islemler/yillik/kapanis-islemleri",

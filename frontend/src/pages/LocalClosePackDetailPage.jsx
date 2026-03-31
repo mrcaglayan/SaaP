@@ -261,8 +261,8 @@ function TabButton({ active, onClick, children }) {
       type="button"
       onClick={onClick}
       className={`rounded-xl px-4 py-2 text-sm font-medium transition ${active
-          ? "bg-slate-900 text-white shadow-sm"
-          : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900"
+        ? "bg-slate-900 text-white shadow-sm"
+        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900"
         }`}
     >
       {children}
@@ -716,10 +716,10 @@ export default function LocalClosePackDetailPage() {
                 </div>
                 <span
                   className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${item.done
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                      : item.optional
-                        ? "border-amber-200 bg-amber-50 text-amber-700"
-                        : "border-slate-200 bg-slate-100 text-slate-700"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : item.optional
+                      ? "border-amber-200 bg-amber-50 text-amber-700"
+                      : "border-slate-200 bg-slate-100 text-slate-700"
                     }`}
                 >
                   {item.done

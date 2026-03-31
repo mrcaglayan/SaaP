@@ -8,12 +8,14 @@ import {
   listPeriodCloseRuns,
 } from "../api/glAdmin.js";
 import {
+  appendLocalReportContextParams,
   buildLocalReportLocation,
   LOCAL_REPORT_ROUTE_PATHS,
   normalizeLocalReportParams,
 } from "../api/glReports.js";
 import { listFiscalPeriods, listLegalEntities } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
+import LocalCloseReportBanner from "../components/LocalCloseReportBanner.jsx";
 import { useI18n } from "../i18n/useI18n.js";
 import { getLocalReportRouteConfig } from "../reporting/localReportConfig.js";
 
@@ -81,6 +83,17 @@ function areFiltersEqual(left, right) {
   );
 }
 
+function buildTrialBalanceResponseSnapshot(reportResponse) {
+  return {
+    filters: reportResponse?.filters || {},
+    summary: reportResponse?.summary || {},
+    rowCount: Array.isArray(reportResponse?.rows) ? reportResponse.rows.length : 0,
+    legalEntity: reportResponse?.legalEntity || null,
+    book: reportResponse?.book || null,
+    fiscalPeriod: reportResponse?.fiscalPeriod || null,
+  };
+}
+
 /**
  * Render the first real local Mizan page on top of the shared trial-balance contract.
  */
@@ -96,6 +109,7 @@ export default function TrialBalancePage() {
   const canReadPeriods = hasPermission("org.fiscal_period.read");
   const canReadTrialBalance = hasPermission("gl.trial_balance.read");
   const canReadPeriodClose = hasPermission("gl.period.close");
+  const canReviewLocalClose = hasPermission("ouclose.prepare");
   const missingLegacyPermissions = REQUIRED_LEGACY_PERMISSIONS.filter(
     (permissionCode) => !hasPermission(permissionCode),
   );
@@ -172,7 +186,10 @@ export default function TrialBalancePage() {
     if (!hasRequiredLegacyReads) {
       return undefined;
     }
-    const nextParams = new URLSearchParams();
+    const nextParams = appendLocalReportContextParams(
+      searchParams,
+      new URLSearchParams(),
+    );
     const normalized = normalizeLocalReportParams({
       legalEntityId: selectedLegalEntityId || undefined,
       bookId: selectedBookId || undefined,
@@ -464,6 +481,8 @@ export default function TrialBalancePage() {
       bookId: selectedBookId || undefined,
       fiscalPeriodId: selectedPeriodId || undefined,
       accountId: toPositiveInt(row?.account_id) || undefined,
+      closePackId: searchParams.get("closePackId") || undefined,
+      closeLaunchMode: searchParams.get("closeLaunchMode") || undefined,
     });
     // Keep the row payload stable so Mizan drillthrough and direct menu entry
     // continue to share the same ledger contract as RP03 evolves into RP04.
@@ -630,6 +649,15 @@ export default function TrialBalancePage() {
             </span>
           </div>
         </div>
+        <LocalCloseReportBanner
+          searchParams={searchParams}
+          reportKey="trialBalance"
+          routePath={LOCAL_REPORT_ROUTE_PATHS.trialBalance}
+          reportResponse={reportResponse}
+          buildResponseSnapshot={buildTrialBalanceResponseSnapshot}
+          canReview={canReviewLocalClose}
+          l={l}
+        />
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">

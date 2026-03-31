@@ -144,6 +144,7 @@ import migration154StockLandedCostVouchers from "./m154_stock_landed_cost_vouche
 import migration155FixedAssetRetroTransferCorrections from "./m155_fixed_asset_retro_transfer_corrections.js";
 import migration156LocalClosePacks from "./m156_local_close_packs.js";
 import migration157LocalClosePackReopenRequests from "./m157_local_close_pack_reopen_requests.js";
+import migration158LocalClosePackReportReviews from "./m158_local_close_pack_report_reviews.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -292,6 +293,7 @@ const migrations = [
   migration155FixedAssetRetroTransferCorrections,
   migration156LocalClosePacks,
   migration157LocalClosePackReopenRequests,
+  migration158LocalClosePackReportReviews,
 ];
 
 export default migrations;

@@ -192,6 +192,7 @@
     "test:ux:rswire01": "node scripts/test-ux-rswire01-cross-file-wiring.js",
     "test:ux:rswire02": "node scripts/test-ux-rswire02-implemented-routes-ci-guard.js",
     "test:ux:rswire03": "node scripts/test-ux-rswire03-release-gate-smoke-coverage.js",
+    "test:ux:rsstat01": "node scripts/test-ux-rsstat01-local-statements-contract.js",
     "test:ux:raw-audit-logs-smoke": "node scripts/test-rbac-raw-audit-logs-smoke.js",
     "test:ux:consolidation-prcm01": "node scripts/test-consolidation-prcm01-execute-preflight-gate.js",
     "test:ux:consolidation-prcm02": "node scripts/test-consolidation-prcm02-canonical-workbench.js",
@@ -308,7 +309,7 @@
     "test:tenant-safety": "node scripts/test-tenant-safety-and-transactions.js",
     "test:period-close": "node scripts/test-period-close-process.js",
     "test:intercompany-consolidation": "node scripts/test-intercompany-and-consolidation-reports.js",
-    "test:release-gate:core": "npm run test:permission-matrix && npm run test:ux:rswire02 && npm run test:ux:rswire03 && npm run test:ux:consolidation-prcm && npm run test:ux:consolidation-cbr06 && npm run test:ux:consolidation-fup-cm02 && npm run test:ux:consolidation-fup-cm03 && npm run test:ux:consolidation-fup-cm04 && npm run test:ux:consolidation-fup-cm05 && npm run test:ux:consolidation-fup-cm06 && npm run test:ux:consolidation-fup-cm07 && npm run test:cash-fx-full-release-gate && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:cash-register-ownership && npm run test:shareholder-capital && npm run test:ou:self-balancing:release-gate && npm run test:ou:current-account-automation:release-gate && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-quality-gate && npm run test:inventory:release-gate && npm run test:inventory:lcv07-release-gate",
+    "test:release-gate:core": "npm run test:permission-matrix && npm run test:ux:rswire02 && npm run test:ux:rswire03 && npm run test:ux:rsstat01 && npm run test:ux:consolidation-prcm && npm run test:ux:consolidation-cbr06 && npm run test:ux:consolidation-fup-cm02 && npm run test:ux:consolidation-fup-cm03 && npm run test:ux:consolidation-fup-cm04 && npm run test:ux:consolidation-fup-cm05 && npm run test:ux:consolidation-fup-cm06 && npm run test:ux:consolidation-fup-cm07 && npm run test:cash-fx-full-release-gate && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:cash-register-ownership && npm run test:shareholder-capital && npm run test:ou:self-balancing:release-gate && npm run test:ou:current-account-automation:release-gate && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-quality-gate && npm run test:inventory:release-gate && npm run test:inventory:lcv07-release-gate",
     "test:release-gate": "node scripts/test-release-gate.js"
   },
   "keywords": [],

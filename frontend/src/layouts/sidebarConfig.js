@@ -544,6 +544,12 @@ export const sidebarItems = [
             to: "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
           },
           {
+            label: "Yerel Kapanis Paketleri",
+            to: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+            requiredPermissions: ["ouclose.read"],
+            implemented: true,
+          },
+          {
             label: "Yansitma Islemleri",
             to: "/app/donem-sonu-islemler/yillik/yansitma-islemleri",
           },
@@ -563,15 +569,30 @@ export const sidebarItems = [
     icon: "report",
     matchPrefix: "/app/raporlar",
     items: [
-      LOCAL_REPORT_SIDEBAR_ITEMS.generalLedger,
-      LOCAL_REPORT_SIDEBAR_ITEMS.subsidiaryLedger,
-      LOCAL_REPORT_SIDEBAR_ITEMS.balanceSheet,
-      LOCAL_REPORT_SIDEBAR_ITEMS.incomeStatement,
+      {
+        ...LOCAL_REPORT_SIDEBAR_ITEMS.generalLedger,
+        to: "/app/defter-i-kebir",
+      },
+      {
+        ...LOCAL_REPORT_SIDEBAR_ITEMS.subsidiaryLedger,
+        to: "/app/muavin",
+      },
+      {
+        ...LOCAL_REPORT_SIDEBAR_ITEMS.balanceSheet,
+        to: "/app/bilanco",
+      },
+      {
+        ...LOCAL_REPORT_SIDEBAR_ITEMS.incomeStatement,
+        to: "/app/gelir-tablosu",
+      },
       {
         label: "Stok Raporu",
         to: "/app/stok-raporu",
       },
-      LOCAL_REPORT_SIDEBAR_ITEMS.trialBalance,
+      {
+        ...LOCAL_REPORT_SIDEBAR_ITEMS.trialBalance,
+        to: "/app/mizan-raporu",
+      },
     ],
   },
   {

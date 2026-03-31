@@ -8,9 +8,11 @@ import {
 } from "../tenantGuards.js";
 import {
   buildLocalClosePackScopeKey,
+  LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS,
   LOCAL_CLOSE_PACK_STATUS_VALUES,
   resolveLocalClosePackRowScope,
 } from "./local.close-packs.shared.js";
+import { LOCAL_CLOSE_PACK } from "../utils/source-ref-types.js";
 
 function toUpperText(value) {
   return String(value || "")
@@ -20,6 +22,29 @@ function toUpperText(value) {
 
 function toDateTime(value) {
   return value || null;
+}
+
+function pickLatestDateTime(...values) {
+  let latest = null;
+  let latestTs = 0;
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    const parsed = new Date(value);
+    const ts = Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+    if (!ts) {
+      if (!latest) {
+        latest = value;
+      }
+      continue;
+    }
+    if (ts >= latestTs) {
+      latestTs = ts;
+      latest = value;
+    }
+  }
+  return latest;
 }
 
 function notFound(message) {
@@ -42,6 +67,26 @@ function mapLocalClosePackRow(row) {
   if (!row) {
     return null;
   }
+
+  const pendingReopenRequestCount =
+    Number(row.pending_reopen_request_count || 0) || 0;
+  const evidenceCount = Number(row.evidence_count || 0) || 0;
+  const commentCount = Number(row.comment_count || 0) || 0;
+  const reportReviewCount = Number(row.report_review_count || 0) || 0;
+  const requiredReportCount = LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS.length;
+  const completionPercentage = requiredReportCount
+    ? Math.max(
+        0,
+        Math.min(100, Math.round((reportReviewCount / requiredReportCount) * 100))
+      )
+    : 0;
+  const blockerCount = Math.max(requiredReportCount - reportReviewCount, 0);
+  const warningCount = pendingReopenRequestCount + (evidenceCount === 0 ? 1 : 0);
+  const updatedAt = toDateTime(row.updated_at);
+  const lastReportReviewedAt = toDateTime(row.last_report_reviewed_at);
+  const lastEvidenceAt = toDateTime(row.last_evidence_at);
+  const lastCommentAt = toDateTime(row.last_comment_at);
+  const lastAuditAt = toDateTime(row.last_audit_at);
 
   return {
     id: parsePositiveInt(row.id),
@@ -72,7 +117,25 @@ function mapLocalClosePackRow(row) {
       ? toUpperText(row.workflow_instance_status)
       : null,
     workflowCurrentStepNo: Number(row.workflow_current_step_no || 0) || null,
-    pendingReopenRequestCount: Number(row.pending_reopen_request_count || 0) || 0,
+    pendingReopenRequestCount,
+    evidenceCount,
+    commentCount,
+    reportReviewCount,
+    requiredReportCount,
+    completionPercentage,
+    blockerCount,
+    warningCount,
+    lastReportReviewedAt,
+    lastEvidenceAt,
+    lastCommentAt,
+    lastAuditAt,
+    lastActivityAt: pickLatestDateTime(
+      updatedAt,
+      lastReportReviewedAt,
+      lastEvidenceAt,
+      lastCommentAt,
+      lastAuditAt
+    ),
     submittedAt: toDateTime(row.submitted_at),
     approvedAt: toDateTime(row.approved_at),
     lockedAt: toDateTime(row.locked_at),
@@ -82,7 +145,7 @@ function mapLocalClosePackRow(row) {
     updatedByUserId: parsePositiveInt(row.updated_by_user_id),
     updatedByUserName: row.updated_by_user_name || null,
     createdAt: toDateTime(row.created_at),
-    updatedAt: toDateTime(row.updated_at),
+    updatedAt,
   };
 }
 
@@ -130,7 +193,65 @@ function buildLocalClosePackBaseSelect(whereSql) {
         WHERE lcrr.tenant_id = lcp.tenant_id
           AND lcrr.local_close_pack_id = lcp.id
           AND lcrr.request_status = 'REQUESTED'
-      ) AS pending_reopen_request_count
+      ) AS pending_reopen_request_count,
+      (
+        SELECT COUNT(*)
+        FROM evidence_objects eo
+        WHERE eo.tenant_id = lcp.tenant_id
+          AND eo.legal_entity_id = lcp.legal_entity_id
+          AND eo.source_ref_type = '${LOCAL_CLOSE_PACK}'
+          AND eo.source_ref_id = lcp.id
+          AND eo.status <> 'DELETED'
+      ) AS evidence_count,
+      (
+        SELECT MAX(eo.updated_at)
+        FROM evidence_objects eo
+        WHERE eo.tenant_id = lcp.tenant_id
+          AND eo.legal_entity_id = lcp.legal_entity_id
+          AND eo.source_ref_type = '${LOCAL_CLOSE_PACK}'
+          AND eo.source_ref_id = lcp.id
+          AND eo.status <> 'DELETED'
+      ) AS last_evidence_at,
+      (
+        SELECT COUNT(*)
+        FROM internal_comments ic
+        WHERE ic.tenant_id = lcp.tenant_id
+          AND ic.legal_entity_id = lcp.legal_entity_id
+          AND ic.source_ref_type = '${LOCAL_CLOSE_PACK}'
+          AND ic.source_ref_id = lcp.id
+          AND ic.status <> 'DELETED'
+      ) AS comment_count,
+      (
+        SELECT MAX(ic.updated_at)
+        FROM internal_comments ic
+        WHERE ic.tenant_id = lcp.tenant_id
+          AND ic.legal_entity_id = lcp.legal_entity_id
+          AND ic.source_ref_type = '${LOCAL_CLOSE_PACK}'
+          AND ic.source_ref_id = lcp.id
+          AND ic.status <> 'DELETED'
+      ) AS last_comment_at,
+      (
+        SELECT COUNT(*)
+        FROM local_close_pack_report_reviews lcprr
+        WHERE lcprr.tenant_id = lcp.tenant_id
+          AND lcprr.local_close_pack_id = lcp.id
+      ) AS report_review_count,
+      (
+        SELECT MAX(lcprr.reviewed_at)
+        FROM local_close_pack_report_reviews lcprr
+        WHERE lcprr.tenant_id = lcp.tenant_id
+          AND lcprr.local_close_pack_id = lcp.id
+      ) AS last_report_reviewed_at,
+      (
+        SELECT MAX(al.created_at)
+        FROM audit_logs al
+        WHERE al.tenant_id = lcp.tenant_id
+          AND al.resource_type = 'local_close_pack'
+          AND (
+            CAST(al.resource_id AS UNSIGNED) = lcp.id
+            OR CAST(JSON_UNQUOTE(JSON_EXTRACT(al.payload_json, '$.localClosePackId')) AS UNSIGNED) = lcp.id
+          )
+      ) AS last_audit_at
     FROM local_close_packs lcp
     JOIN legal_entities le ON le.id = lcp.legal_entity_id
     JOIN books b ON b.id = lcp.book_id

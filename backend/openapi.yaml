@@ -2619,6 +2619,507 @@
         }
       }
     },
+    "/api/v1/gl/ledger-report": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getGeneralLedgerReport",
+        "summary": "Get shared local ledger detail report",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bookId",
+            "required": true,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Optional legal entity identifier that must match the selected book",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountId",
+            "required": false,
+            "description": "Exact account identifier. Use either accountId or accountCodeFrom/accountCodeTo.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountCodeFrom",
+            "required": false,
+            "description": "Start of account code range. Use together with accountCodeTo, or alone for an exact code-range anchor.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountCodeTo",
+            "required": false,
+            "description": "End of account code range. Use together with accountCodeFrom, or alone for an exact code-range anchor.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": false,
+            "description": "Single fiscal period identifier. Use either fiscalPeriodId/fiscalPeriodIdFrom/fiscalPeriodIdTo or dateFrom/dateTo.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodIdFrom",
+            "required": false,
+            "description": "Start fiscal period identifier for a fiscal-period range.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodIdTo",
+            "required": false,
+            "description": "End fiscal period identifier for a fiscal-period range.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "dateFrom",
+            "required": false,
+            "description": "Start date for date-range ledger reads in YYYY-MM-DD format. Use together with dateTo.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dateTo",
+            "required": false,
+            "description": "End date for date-range ledger reads in YYYY-MM-DD format. Use together with dateFrom.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitScope",
+            "required": false,
+            "description": "Operating-unit scope selector",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ALL",
+                "OPERATING_UNIT",
+                "CENTRAL"
+              ],
+              "default": "ALL"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Operating unit identifier. Required when operatingUnitScope=OPERATING_UNIT.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "subledgerReferenceNo",
+            "required": false,
+            "description": "Subledger reference filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceType",
+            "required": false,
+            "description": "Journal source category filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceModule",
+            "required": false,
+            "description": "Compatibility alias over the same journal source category used by sourceType",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Journal status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRAFT",
+                "POSTED",
+                "REVERSED",
+                "CANCELLED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeReversed",
+            "required": false,
+            "description": "Whether to include reversed journals",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "in": "query",
+            "name": "groupBy",
+            "required": false,
+            "description": "Optional grouped totals over the canonical row-level ledger detail payload",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NONE",
+                "MONTH",
+                "SOURCE_TYPE",
+                "OPERATING_UNIT",
+                "SUBLEDGER_REF"
+              ],
+              "default": "NONE"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortBy",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ENTRY_DATE",
+                "JOURNAL_NO",
+                "REFERENCE_NO",
+                "DOCUMENT_DATE"
+              ],
+              "default": "ENTRY_DATE"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortDirection",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ASC",
+                "DESC"
+              ],
+              "default": "ASC"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shared local ledger detail report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/balance-sheet-report": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getLocalBalanceSheetReport",
+        "summary": "Get local legal-entity balance sheet",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bookId",
+            "required": true,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": true,
+            "description": "Selected fiscal period identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Optional legal entity identifier that must match the selected book",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeZero",
+            "required": false,
+            "description": "Whether to include zero-value rows in the statement output",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Local balance sheet report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/income-statement-report": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getLocalIncomeStatementReport",
+        "summary": "Get local legal-entity income statement",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bookId",
+            "required": true,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": true,
+            "description": "Selected fiscal period identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Optional legal entity identifier that must match the selected book",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeZero",
+            "required": false,
+            "description": "Whether to include zero-value rows in the statement output",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Local income statement report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/statement-account-summary": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getLocalStatementAccountSummary",
+        "summary": "Get statement-row account summary drillthrough",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bookId",
+            "required": true,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": true,
+            "description": "Selected fiscal period identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Optional legal entity identifier that must match the selected book",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "statementType",
+            "required": true,
+            "description": "Statement family to resolve the row from",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "BALANCE_SHEET",
+                "INCOME_STATEMENT"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "statementRowKey",
+            "required": true,
+            "description": "Statement row key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statement-row account summary drillthrough",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/gl/period-closing/runs": {
       "get": {
         "tags": [

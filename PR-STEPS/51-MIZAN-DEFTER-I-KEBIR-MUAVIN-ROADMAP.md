@@ -13,50 +13,56 @@ For the high-risk foundational implementation slices, use:
 
 - `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md`
 
+Use this roadmap for target architecture, step order, and locked report semantics. Use `51A` as the live-repo progress tracker when implementation moves ahead of the original planning baseline.
+
 ## Current Repo Fit
 
-The repo already has the core accounting surfaces needed to start this track:
+The repo now has the core accounting and first-pass local reporting surfaces needed to advance this track:
 
 - posted journal list/detail read APIs already exist
 - trial balance by `book + fiscal period` already exists
+- shared local ledger detail read now exists for `Defter-i Kebir` / `Muavin`
+- local statement reads now exist for `Bilanco`, `Gelir Tablosu`, and statement-row account summary drillthrough
 - source-link drillback and reverse-block destination enrichment already exist
 - period-close run and workflow-gate foundations already exist
 - consolidation trial-balance / summary / balance-sheet / income-statement read surfaces already exist
 - the app router already implements the consolidated reports page
-- the sidebar config already contains local-report menu targets such as `Mizan Raporu`, `Defter-i Kebir`, and `Bilanco`, but the local reporting experience is not yet shaped into one coherent reporting workflow
-- unimplemented local report routes currently mount preview-only placeholder pages for module-preview admins rather than a normal end-user reporting flow
-
-This means Track 51 should not wait for every future business module. It should productize the reporting layer on top of posted accounting truth that already exists.
-
-## Current Delivery Gap
-
-The biggest gap is not posted accounting truth. It is productized local reporting and close-pack workflow on top of that truth.
-
-### Frontend gap
-
-- dedicated pages are still missing for:
+- foundational local report pages now exist for:
   - `Mizan`
   - `Defter-i Kebir`
   - `Muavin`
   - local `Bilanco`
   - local `Gelir Tablosu`
+- the local close-pack domain foundation now exists, but the full close workspace/report-launch/evidence experience is still incomplete
+
+This means Track 51 should not wait for every future business module. It should productize the reporting layer on top of posted accounting truth that already exists.
+
+## Current Delivery Gap
+
+The biggest remaining gap is not posted accounting truth or the first-pass report pages. It is turning those foundations into a coherent close-pack and report-family workflow with stronger hardening around evidence, reconciliation, export, and later consolidated drill-across.
+
+### Frontend gap
+
 - local close-pack UI is still missing for:
   - workspace shell
   - pack detail tabs
   - evidence/comments/audit views
   - approval / reopen actions
+- report-family UX is still incomplete around:
+  - close-context report launch and prefilled scope handoff
+  - deeper reconciliation / exception views
+  - export / fingerprint / performance hardening
 
 ### Backend / domain gap
 
-- dedicated local-report read APIs still need to be shaped for:
-  - richer ledger detail
-  - local statement outputs
-  - close-pack launches and evidence fingerprints
-- local close-pack domain and workflow APIs are still missing for:
-  - OU packs
-  - central / no-OU pack
-  - checklist / evidence / comments / audit trail
-  - submit / return / approve / lock / reopen
+- local report reads now exist, but the report family still needs:
+  - closer integration with close-pack launch/evidence flow
+  - broader reconciliation / exception slices
+  - later export / fingerprint / scale hardening
+- local close-pack domain and workflow foundations now exist, but later slices still need:
+  - workspace/evidence/comment/audit surfaces
+  - richer checklist / evidence / comment child domains
+  - fuller report-driven operator flow across submit / return / approve / lock / reopen
 - enforcement hooks are still missing across:
   - journal post
   - repost
@@ -68,9 +74,8 @@ This means the roadmap is not speculative. It is describing a real missing produ
 
 ## Existing API Surfaces Not Yet In Product UI
 
-Several backend/reporting surfaces already exist but are still not productized into the main UI flow:
+Several backend/reporting surfaces already exist but are still not fully productized into the main Track 51 reporting and close workflow:
 
-- local posted trial-balance read already exists, but there is still no dedicated `Mizan` page
 - consolidated trial-balance and consolidated summary report endpoints already exist, but the current consolidated reports page does not surface them
 - consolidated elimination and adjustment draft-create endpoints already exist, but the current consolidated reports page mainly lists and posts existing drafts
 - workflow instance detail / approve / reject endpoints already exist, but the current UI mostly uses workflow list/read surfaces and setup screens instead of a report-driven approval flow
@@ -873,7 +878,8 @@ Add proper local legal-entity statement surfaces after summary and detail layers
 - reporting basis:
   - legal entity
   - book
-  - period or approved date-range rules as applicable
+  - the first shipped RP05 stays `fiscalPeriodId`-based / period-first
+  - broader approved date-range behavior is only a later extension if explicitly added
   - posted local truth
 - keep the first version accounting-first:
   - no BI layer
@@ -883,6 +889,14 @@ Add proper local legal-entity statement surfaces after summary and detail layers
   - sign conventions
   - retained earnings / current-year result presentation
   - header/non-posting presentation behavior
+- first-pass statutory/local statement semantics are locked as:
+  - `Bilanco` is point-in-time at the selected period end
+  - `Gelir Tablosu` is fiscal-year-to-date through the selected period end by default
+  - retained earnings stay on posted equity balances
+  - current-year result is shown as a separate computed row before posted year-end close and is then absorbed by posted close behavior later
+  - local statement truth stays anchored to legal entity + book + period + local currency
+  - statement mappings must be explicit and local to the statutory statement layer rather than borrowed blindly from consolidated reporting
+  - the first pass may use one explicit local mapping source such as code-band/account-type rules, with later evolution to a versioned statement-definition layer if multiple statutory layouts or effective-dated mapping changes become necessary
 - statement rows should drill toward:
   - account summary
   - then ledger detail

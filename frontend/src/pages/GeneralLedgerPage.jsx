@@ -4,6 +4,8 @@ import Combobox from "../components/Combobox.jsx";
 import MoneyText from "../components/MoneyText.jsx";
 import { listAccounts, listBooks } from "../api/glAdmin.js";
 import {
+  appendLocalReportContextParams,
+  LOCAL_REPORT_ROUTE_PATHS,
   getGeneralLedgerReport,
   normalizeLocalReportParams,
 } from "../api/glReports.js";
@@ -13,6 +15,7 @@ import {
   listOperatingUnits,
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
+import LocalCloseReportBanner from "../components/LocalCloseReportBanner.jsx";
 import { useI18n } from "../i18n/useI18n.js";
 import { resolveSourceLinkDestination } from "../utils/journalSourceLinkDestinations.js";
 
@@ -321,6 +324,25 @@ function buildSourceActions(sourceLinks, l) {
     .filter(Boolean);
 }
 
+function buildLedgerResponseSnapshot(reportResponse) {
+  return {
+    filters: reportResponse?.filters || {},
+    summary: reportResponse?.summary || {},
+    range: reportResponse?.range || null,
+    grouping: {
+      groupBy: reportResponse?.grouping?.groupBy || "NONE",
+      rowCount: Array.isArray(reportResponse?.grouping?.rows)
+        ? reportResponse.grouping.rows.length
+        : 0,
+    },
+    rowCount: Array.isArray(reportResponse?.rows) ? reportResponse.rows.length : 0,
+    total: reportResponse?.total || 0,
+    book: reportResponse?.book || null,
+    account: reportResponse?.account || null,
+    accountRange: reportResponse?.accountRange || null,
+  };
+}
+
 /**
  * Render the shared report-grade ledger page used by both Defter-i Kebir and
  * Muavin, keeping one query contract and one drillthrough surface.
@@ -354,6 +376,7 @@ export default function GeneralLedgerPage({ reportMode = "GENERAL_LEDGER" }) {
   const canReadBooks = hasPermission("gl.book.read");
   const canReadAccounts = hasPermission("gl.account.read");
   const canReadPeriods = hasPermission("org.fiscal_period.read");
+  const canReviewLocalClose = hasPermission("ouclose.prepare");
 
   const missingReferencePermissions = REFERENCE_PERMISSION_CODES.filter(
     (permissionCode) => !hasPermission(permissionCode),
@@ -454,17 +477,27 @@ export default function GeneralLedgerPage({ reportMode = "GENERAL_LEDGER" }) {
   }, [normalizedReportMode, searchParams]);
 
   useEffect(() => {
-    const nextSearchParams = buildSearchParams(
-      filters,
-      normalizedReportMode,
+    const nextSearchParams = appendLocalReportContextParams(
+      searchParams,
+      buildSearchParams(filters, normalizedReportMode),
     ).toString();
     const currentSearchParams = searchParams.toString();
     if (nextSearchParams !== currentSearchParams) {
-      setSearchParams(buildSearchParams(filters, normalizedReportMode), {
-        replace: true,
-      });
+      setSearchParams(
+        appendLocalReportContextParams(
+          searchParams,
+          buildSearchParams(filters, normalizedReportMode),
+        ),
+        {
+          replace: true,
+        },
+      );
     }
   }, [filters, normalizedReportMode, searchParams, setSearchParams]);
+
+  const localReportRoutePath = isMuavinMode
+    ? LOCAL_REPORT_ROUTE_PATHS.subsidiaryLedger
+    : LOCAL_REPORT_ROUTE_PATHS.generalLedger;
 
   useEffect(() => {
     let cancelled = false;
@@ -1521,6 +1554,16 @@ export default function GeneralLedgerPage({ reportMode = "GENERAL_LEDGER" }) {
           </div>
         ) : null}
       </section>
+
+      <LocalCloseReportBanner
+        searchParams={searchParams}
+        reportKey={isMuavinMode ? "subsidiaryLedger" : "generalLedger"}
+        routePath={localReportRoutePath}
+        reportResponse={reportResponse}
+        buildResponseSnapshot={buildLedgerResponseSnapshot}
+        canReview={canReviewLocalClose}
+        l={l}
+      />
 
       {Array.isArray(reportGrouping.rows) && reportGrouping.rows.length > 0 ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

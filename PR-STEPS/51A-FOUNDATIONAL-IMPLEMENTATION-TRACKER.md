@@ -7,12 +7,12 @@
 ## Purpose
 Turn the Track 51 roadmap locks into a concrete implementation tracker for the slices where route drift, permission drift, workflow drift, or enforcement drift would be expensive later.
 
-## Existing API Surfaces Not Yet In Product UI
+## Existing API Surfaces And UI Productization Status
 
-This section is an inventory in the plain-English sense: a list/catalog of backend surfaces that already exist but are not yet productized in the reporting UI. It does not mean stock or warehouse inventory.
+This section is an inventory in the plain-English sense: a list/catalog of backend surfaces that already exist and their current productization status in the reporting UI. It does not mean stock or warehouse inventory.
 
 - `GET /api/v1/gl/trial-balance`
-  - already used in setup/workbench flows, but not yet surfaced as a dedicated `Mizan` page
+  - now surfaced through the dedicated local `Mizan` page; later work is about close-pack launch integration and broader report-family hardening rather than initial page activation
 - `GET /api/v1/consolidation/runs/:runId/reports/trial-balance`
   - backend and permissions already exist, but no current frontend page/API wrapper surfaces it
 - `GET /api/v1/consolidation/runs/:runId/reports/summary`
@@ -59,7 +59,7 @@ Keep the later slices at module/service/page level in Track 51 until the foundat
 5. `RP08`
 6. `RP09`
 
-That order matches the current repo: the accounting truth already exists, but the local reporting product layer, local close-pack domain, and cross-entry-point enforcement do not.
+That order matched the repo when this tracker was created. The live repo now has the foundational local reporting, local close-pack domain, and first-pass enforcement/reopen seams in place; the remaining Track 51 gaps have shifted to `RP07` workspace/evidence/report-launch flow and later hardening slices.
 
 ---
 
@@ -193,6 +193,10 @@ Optional only if needed during implementation:
   - `org.fiscal_period.read`
   - `gl.trial_balance.read`
 - Row drillthrough now prepares the future `Defter-i Kebir` path/query payload using the shared local-report contract, but live navigation remains deferred until `RP03` activates the ledger page.
+- Later live-repo seams now supersede the original RP02 route-deferral wording:
+  - `frontend/src/pages/GeneralLedgerPage.jsx` is live for `/app/defter-i-kebir`
+  - `/app/muavin` is also live via the same shared ledger page in `MUAVIN` mode
+  - the original RP02 bullets above remain historical notes about that step's implementation moment, not the final current repo state
 
 ---
 
@@ -603,13 +607,76 @@ Frontend files become relevant once `RP07` UI lands:
 
 ---
 
+## `RP07` - Discovery notes before implementation
+
+- The current year-end route `/app/donem-sonu-islemler/yillik/kapanis-islemleri` is already occupied by `frontend/src/pages/YearEndRevrecChecklistPage.jsx`.
+  - `RP07` should therefore add a dedicated local-close workspace/detail route family instead of overwriting that existing page.
+- Reusable evidence/comment/audit storage seams already exist, but not yet as local-close-pack surfaces:
+  - evidence storage lives in `evidence_objects`
+  - internal commentary lives in `internal_comments`
+  - audit history lives in `audit_logs`
+  - `RP07` should add thin local-close wrappers over those shared stores instead of inventing a second attachment/comment/audit subsystem
+- The current RP05 statement contract stays legal-entity/book/period anchored in the live repo.
+  - `RP07` report launch from OU or `CENTRAL` packs should therefore treat `Bilanco` / `Gelir Tablosu` as statutory close-context views with preserved pack context, not as proof that the repo already has exact-scope OU or central statement semantics.
+
+---
+
+## `RP07` - Current implementation notes
+
+- `RP07` now exposes a dedicated local close workspace and pack-detail shell instead of reusing the already-occupied year-end checklist route:
+  - `/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri`
+  - `/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri/:packId`
+  - implementation lives in:
+    - `frontend/src/pages/LocalCloseWorkspacePage.jsx`
+    - `frontend/src/pages/LocalClosePackDetailPage.jsx`
+    - `frontend/src/App.jsx`
+    - `frontend/src/layouts/sidebarConfig.js`
+    - `frontend/src/i18n/messages.js`
+- The local close backend now has first-pass RP07 wrappers over the shared evidence, comment, audit, and reviewed-report stores:
+  - `backend/src/services/local.close-pack.workspace.service.js`
+  - `backend/src/services/local.close-pack.evidence.service.js`
+  - `backend/src/services/local.close-pack.comments.service.js`
+  - `backend/src/routes/local.close-packs.routes.js`
+  - `backend/src/routes/local.close-packs.validators.js`
+  - `backend/src/migrations/m158_local_close_pack_report_reviews.js`
+- Workspace list/detail rows now surface first-pass derived progress metrics instead of a second state engine:
+  - reviewed report count
+  - completion percentage
+  - blocker count
+  - warning count
+  - evidence/comment counts
+  - last activity timestamps
+- Pack detail currently ships these tabs:
+  - overview
+  - checklist
+  - reports
+  - exceptions
+  - evidence
+  - comments
+  - audit
+- Report-launch integration is now live:
+  - `Mizan`, `Defter-i Kebir`, and `Muavin` launch with exact pack scope where the repo supports it
+  - `Bilanco` and `Gelir Tablosu` launch as statutory entity-level fallback while preserving close-pack context explicitly
+  - report pages now preserve `closePackId` and `closeLaunchMode` while rewriting their filter query strings
+  - launched report headers now show close context and let `ouclose.prepare` users persist reviewed-report fingerprints
+- Duplicate pack creation is still blocked by the unique scope constraint, but the workspace now treats that as recoverable UX:
+  - when the same entity/book/period/scope pack already exists, the create flow redirects to the existing pack instead of leaving the user on a raw conflict
+- The live repo needed one compatibility correction during RP07:
+  - audit-log pack-id matching now uses numeric comparison instead of string collation-sensitive comparison, so mixed `utf8mb4_unicode_ci` / `utf8mb4_0900_ai_ci` databases do not break pack list or audit reads
+- `Deferred item already covered`:
+  - deeper reopen policy, post-lock enforcement, and broader blocker/publish governance still belong to `RP08`, `RP09`, `RP12`
+  - broader reconciliation views and drill-across remain `RP10` and `RP11`
+- `Optional hardening`:
+  - OpenAPI export for the new RP07 local-close routes is still behind the live repo
+  - RP07 still lacks a dedicated characterization test that seeds packs, reviewed reports, evidence, comments, and audit rows together
+  - frontend chunk splitting remains a build warning, not a functional blocker
+
+---
+
 ## Out Of Scope For This Tracker
 
-These remain in the main Track 51 roadmap until the foundational slices above land:
+These remain in the main Track 51 roadmap beyond the live repo progress documented below:
 
-- `RP04` `Muavin`
-- `RP05` local statements
-- `RP07` workspace UI buildout beyond the contract implications already listed above
 - `RP10` reconciliation/exception views
 - `RP11` consolidated drill-across
 - `RP12` higher-order blockers and publish gates
@@ -661,6 +728,51 @@ These remain in the main Track 51 roadmap until the foundational slices above la
   - export / print
   - a true GL-specific source-module taxonomy beyond the current alias
   - local statements / close workspace layers handled by later roadmap steps
+
+## `RP05` - Current implementation notes
+
+- `RP05` now exposes real local statement pages for:
+  - `/app/bilanco`
+  - `/app/gelir-tablosu`
+- The frontend RP05 statement surface is implemented in:
+  - `frontend/src/pages/LocalStatementPage.jsx`
+  - `frontend/src/App.jsx`
+  - `frontend/src/api/glReports.js`
+  - `frontend/src/reporting/localReportConfig.js`
+- The backend RP05 statement read/drillthrough surface is implemented in:
+  - `backend/src/services/gl.statement-report.service.js`
+  - `backend/src/routes/gl.statement.routes.js`
+  - `backend/src/routes/gl.statement.validators.js`
+  - `backend/src/routes/gl.js`
+- The first RP05 characterization contract check now exists in:
+  - `backend/scripts/test-ux-rsstat01-local-statements-contract.js`
+  - it locks the point-in-time `Bilanco`, fiscal-year-to-date `Gelir Tablosu`, synthetic current-year-result handling, auto-close exclusion, and statement-row-to-account-summary reconciliation expectations
+  - `backend/package.json` now also wires `test:ux:rsstat01` into `test:release-gate:core`
+- The live API contract now surfaces the current report-family read endpoints in:
+  - `backend/openapi.yaml`
+  - exported paths now include:
+    - `/api/v1/gl/ledger-report`
+    - `/api/v1/gl/balance-sheet-report`
+    - `/api/v1/gl/income-statement-report`
+    - `/api/v1/gl/statement-account-summary`
+- The RP05 statutory statement contract is now explicitly locked as:
+  - `Bilanco` is point-in-time at the selected fiscal-period end
+  - `Gelir Tablosu` is fiscal-year-to-date through the selected fiscal period
+  - retained earnings stay on posted equity balances
+  - current-year result is shown as a separate synthetic/computed balance-sheet row until posted year-end close absorbs it
+  - statement signs are presentation-normalized instead of exposing raw debit/credit polarity
+  - statement drillthrough follows:
+    - statement row
+    - account summary
+    - ledger detail
+- `RP05` does not reuse consolidated statement semantics blindly:
+  - the live repo uses one explicit local mapping source for statement rows
+  - the first pass stays accounting-first and statutory/local-book anchored
+- `Deferred item already covered`
+  - OU / `CENTRAL` / no-OU expansion and broader date-range/report-family behavior remain intentionally deferred to later Track 51 steps; `RP05` stays period-first and legal-entity/book anchored
+- `Optional hardening`
+  - evolve the explicit local mapping source into a versioned statement-definition layer if multiple statutory layouts or effective-dated mapping changes later become mandatory
+  - expand beyond `RS-STAT-01` into broader RP05 characterization coverage only if the statement surface grows materially beyond the current first-pass statutory contract
 
 ## Working Rule
 

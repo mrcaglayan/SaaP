@@ -20,7 +20,7 @@ const LOCAL_REPORT_ROUTES = Object.freeze({
     childPath: "bilanco",
     label: "Bilanco",
     requiredPermissions: [LOCAL_REPORT_PERMISSION_CODES.statement],
-    implemented: false,
+    implemented: true,
     showInSidebar: true,
   }),
   incomeStatement: Object.freeze({
@@ -29,7 +29,7 @@ const LOCAL_REPORT_ROUTES = Object.freeze({
     childPath: "gelir-tablosu",
     label: "Gelir Tablosu",
     requiredPermissions: [LOCAL_REPORT_PERMISSION_CODES.statement],
-    implemented: false,
+    implemented: true,
     showInSidebar: true,
   }),
   trialBalance: Object.freeze({

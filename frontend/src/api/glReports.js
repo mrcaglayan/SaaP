@@ -7,6 +7,11 @@ export const LOCAL_REPORT_SCOPE_MODES = Object.freeze({
   central: "CENTRAL",
 });
 
+export const LOCAL_REPORT_CONTEXT_QUERY_KEYS = Object.freeze([
+  "closePackId",
+  "closeLaunchMode",
+]);
+
 const LOCAL_REPORT_QUERY_KEYS = Object.freeze([
   "legalEntityId",
   "bookId",
@@ -33,6 +38,7 @@ const LOCAL_REPORT_QUERY_KEYS = Object.freeze([
   "offset",
   "sortBy",
   "sortDirection",
+  ...LOCAL_REPORT_CONTEXT_QUERY_KEYS,
 ]);
 
 function hasValue(value) {
@@ -85,6 +91,29 @@ export function normalizeLocalReportParams(params = {}) {
 }
 
 /**
+ * Preserve local-close context params while report pages rewrite their own
+ * filter query string from controlled form state.
+ */
+export function appendLocalReportContextParams(sourceParams, targetSearchParams) {
+  const target = targetSearchParams || new URLSearchParams();
+  const readValue = (key) => {
+    if (sourceParams instanceof URLSearchParams) {
+      return sourceParams.get(key);
+    }
+    return sourceParams?.[key];
+  };
+
+  for (const key of LOCAL_REPORT_CONTEXT_QUERY_KEYS) {
+    const value = readValue(key);
+    if (hasValue(value)) {
+      target.set(key, String(value));
+    }
+  }
+
+  return target;
+}
+
+/**
  * Build a report URL using the shared local-report query contract.
  */
 export function buildLocalReportLocation(reportKeyOrPath, params = {}) {
@@ -112,6 +141,41 @@ export async function getTrialBalanceReport(params = {}) {
 export async function getGeneralLedgerReport(params = {}) {
   const response = await api.get(
     `/api/v1/gl/ledger-report${toQueryString(normalizeLocalReportParams(params))}`
+  );
+  return response.data;
+}
+
+/**
+ * Read the first-pass local balance sheet report.
+ */
+export async function getLocalBalanceSheetReport(params = {}) {
+  const response = await api.get(
+    `/api/v1/gl/balance-sheet-report${toQueryString(normalizeLocalReportParams(params))}`
+  );
+  return response.data;
+}
+
+/**
+ * Read the first-pass local income statement report.
+ */
+export async function getLocalIncomeStatementReport(params = {}) {
+  const response = await api.get(
+    `/api/v1/gl/income-statement-report${toQueryString(normalizeLocalReportParams(params))}`
+  );
+  return response.data;
+}
+
+/**
+ * Read account-summary drillthrough for one local statement row.
+ */
+export async function getLocalStatementAccountSummary(params = {}) {
+  const normalized = normalizeLocalReportParams(params);
+  const response = await api.get(
+    `/api/v1/gl/statement-account-summary${toQueryString({
+      ...normalized,
+      statementType: params.statementType,
+      statementRowKey: params.statementRowKey,
+    })}`
   );
   return response.data;
 }

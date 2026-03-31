@@ -274,3 +274,10 @@ For this repo:
 - if a warehouse must own stock independently, model it as an `OPERATING_UNIT`
 - separate warehouse worker operations UI from inventory admin/audit UI
 - schedule this design after Track 41, then build a dedicated warehouse-operations track from it
+
+
+
+
+Add an Inventory Valuation report that calculates total stock value using moving-average or FIFO logic, and add a dashboard view showing high-value inventory items at risk of stockout based on reorder points.
+
+also we might need categories for inventories, like food , supplier , cleaning stuff, equipments etc. right ? stockout risk. 
