@@ -125,8 +125,36 @@ export function parseLocalClosePackCreateInput(req) {
   };
 }
 
+/**
+ * Parse one local close-pack workflow action payload.
+ */
+export function parseLocalClosePackActionInput(
+  req,
+  { requireDecisionNote = false } = {}
+) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const packId = parseLocalClosePackIdParam(req);
+  const body = req.body || {};
+
+  const decisionNote = normalizeText(
+    body.decisionNote ?? body.decision_note ?? body.note ?? body.reason,
+    "decisionNote",
+    500,
+    { required: requireDecisionNote }
+  );
+
+  return {
+    tenantId,
+    userId,
+    packId,
+    decisionNote,
+  };
+}
+
 export default {
   parseLocalClosePackIdParam,
   parseLocalClosePackListInput,
   parseLocalClosePackCreateInput,
+  parseLocalClosePackActionInput,
 };

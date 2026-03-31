@@ -47,8 +47,8 @@ const LOCAL_REPORT_ROUTES = Object.freeze({
     childPath: "muavin",
     label: "Muavin",
     requiredPermissions: [LOCAL_REPORT_PERMISSION_CODES.ledger],
-    implemented: false,
-    showInSidebar: false,
+    implemented: true,
+    showInSidebar: true,
   }),
 });
 
@@ -93,6 +93,14 @@ export const LOCAL_REPORT_SIDEBAR_ITEMS = Object.freeze({
       ...LOCAL_REPORT_ROUTES.trialBalance.requiredPermissions,
     ],
     implemented: LOCAL_REPORT_ROUTES.trialBalance.implemented,
+  }),
+  subsidiaryLedger: Object.freeze({
+    label: LOCAL_REPORT_ROUTES.subsidiaryLedger.label,
+    to: LOCAL_REPORT_ROUTES.subsidiaryLedger.appPath,
+    requiredPermissions: [
+      ...LOCAL_REPORT_ROUTES.subsidiaryLedger.requiredPermissions,
+    ],
+    implemented: LOCAL_REPORT_ROUTES.subsidiaryLedger.implemented,
   }),
 });
 

@@ -7,6 +7,7 @@ import {
   toIsoDate,
   validateJournalLineScope,
 } from "../routes/gl.js";
+import { assertLocalClosePackPostingAllowedForLines } from "./local.close-enforcement.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const BALANCE_EPSILON = 0.0001;
@@ -1765,6 +1766,16 @@ export async function createAndPostCashJournalTx(tx, payload) {
   if (!journalLinesOverride && !(txnAmountMagnitude > 0)) {
     throw badRequest("Cash transaction amount must be > 0 for journal_lines.amount_txn");
   }
+
+  await assertLocalClosePackPostingAllowedForLines({
+    tenantId,
+    legalEntityId,
+    bookId: journalContext.bookId,
+    fiscalPeriodId: journalContext.fiscalPeriodId,
+    lines,
+    actionType: "POST_CASH_TRANSACTION_JOURNAL",
+    runQuery: tx.query.bind(tx),
+  });
 
   const journalResult = await tx.query(
     `INSERT INTO journal_entries (

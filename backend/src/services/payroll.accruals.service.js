@@ -5,6 +5,7 @@ import {
   EXPECTED_SIDE_BY_COMPONENT,
   findApplicablePayrollComponentMapping,
 } from "./payroll.mappings.service.js";
+import { assertLocalClosePackPostingAllowedForLines } from "./local.close-enforcement.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import {
   getPayrollRunOwnershipValidationDetails,
@@ -649,6 +650,18 @@ async function createPayrollAccrualJournalTx(tx, {
       .filter((line) => normalizeUpperText(line.entry_side) === "CREDIT")
       .reduce((sum, line) => sum + toAmount(line.amount), 0)
   );
+  await assertLocalClosePackPostingAllowedForLines({
+    tenantId,
+    legalEntityId,
+    bookId: journalContext.bookId,
+    fiscalPeriodId: journalContext.fiscalPeriodId,
+    lines: (preview.posting_lines || []).map((line) => ({
+      operatingUnitId: parsePositiveInt(line.operating_unit_id),
+      operating_unit_id: parsePositiveInt(line.operating_unit_id),
+    })),
+    actionType: "POST_PAYROLL_ACCRUAL_JOURNAL",
+    runQuery: tx.query.bind(tx),
+  });
 
   const headerInsert = await tx.query(
     `INSERT INTO journal_entries (

@@ -27,6 +27,47 @@ function buildSortOrderSql(sortBy, sortDirection) {
   return `${sortColumn} ${safeDirection}, ledger_rows.natural_row_no ${safeDirection}`;
 }
 
+function buildStatusFilter(reportQuery) {
+  if (reportQuery.status) {
+    return {
+      sql: "je.status = ?",
+      params: [reportQuery.status],
+      reportBasis: reportQuery.status === "POSTED" ? "POSTED" : "STATUS_FILTERED",
+    };
+  }
+
+  if (reportQuery.includeReversed) {
+    return {
+      sql: "je.status IN (?, ?)",
+      params: ["POSTED", "REVERSED"],
+      reportBasis: "STATUS_FILTERED",
+    };
+  }
+
+  return {
+    sql: "je.status = ?",
+    params: ["POSTED"],
+    reportBasis: "POSTED",
+  };
+}
+
+function buildInSql(columnSql, values) {
+  const normalizedValues = Array.isArray(values) ? values.filter(Boolean) : [];
+  if (normalizedValues.length === 0) {
+    throw badRequest("a non-empty filter list is required");
+  }
+  if (normalizedValues.length === 1) {
+    return {
+      sql: `${columnSql} = ?`,
+      params: [normalizedValues[0]],
+    };
+  }
+  return {
+    sql: `${columnSql} IN (${normalizedValues.map(() => "?").join(", ")})`,
+    params: normalizedValues,
+  };
+}
+
 async function loadAccountDisplayRow(tenantId, accountId, runQuery = query) {
   const result = await runQuery(
     `SELECT
@@ -110,11 +151,108 @@ async function resolveLedgerAccountIds(account, runQuery = query) {
   };
 }
 
+async function resolveAccountRangeIds({
+  tenantId,
+  legalEntityId,
+  accountCodeFrom,
+  accountCodeTo,
+  runQuery = query,
+}) {
+  const params = [tenantId];
+  const conditions = ["c.tenant_id = ?"];
+  if (legalEntityId) {
+    conditions.push("(c.legal_entity_id IS NULL OR c.legal_entity_id = ?)");
+    params.push(legalEntityId);
+  }
+  conditions.push("a.code >= ?");
+  params.push(accountCodeFrom);
+  conditions.push("a.code <= ?");
+  params.push(accountCodeTo);
+
+  const result = await runQuery(
+    `SELECT
+       a.id,
+       a.code,
+       a.name
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE ${conditions.join(" AND ")}
+     ORDER BY a.code ASC, a.id ASC`,
+    params
+  );
+
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  const accountIds = rows.map((row) => parsePositiveInt(row.id)).filter(Boolean);
+  if (accountIds.length === 0) {
+    throw badRequest("accountCodeFrom/accountCodeTo matched no accounts for this ledger scope");
+  }
+
+  return {
+    accountIds,
+    rows,
+  };
+}
+
+async function resolveLedgerAccountScope({
+  tenantId,
+  legalEntityId,
+  accountId,
+  accountCodeFrom,
+  accountCodeTo,
+  runQuery = query,
+}) {
+  const parsedAccountId = parsePositiveInt(accountId);
+  if (parsedAccountId) {
+    const account = await loadAccountDisplayRow(tenantId, parsedAccountId, runQuery);
+    if (!account) {
+      throw badRequest("accountId not found for tenant");
+    }
+
+    const ledgerAccountScope = await resolveLedgerAccountIds(account, runQuery);
+    return {
+      accountFilter: buildInSql("jl.account_id", ledgerAccountScope.accountIds),
+      account: {
+        id: parsedAccountId,
+        code: String(account.code || ""),
+        name: String(account.name || ""),
+        allowPosting: Boolean(account.allow_posting),
+        includesDescendants: ledgerAccountScope.includesDescendants,
+      },
+      accountRange: null,
+    };
+  }
+
+  const rangeIds = await resolveAccountRangeIds({
+    tenantId,
+    legalEntityId,
+    accountCodeFrom,
+    accountCodeTo,
+    runQuery,
+  });
+  const firstAccount = rangeIds.rows[0] || null;
+  const lastAccount = rangeIds.rows[rangeIds.rows.length - 1] || null;
+
+  return {
+    accountFilter: buildInSql("jl.account_id", rangeIds.accountIds),
+    account: null,
+    accountRange: {
+      codeFrom: String(accountCodeFrom || ""),
+      codeTo: String(accountCodeTo || ""),
+      matchedAccountCount: rangeIds.accountIds.length,
+      firstAccountCode: String(firstAccount?.code || ""),
+      firstAccountName: String(firstAccount?.name || ""),
+      lastAccountCode: String(lastAccount?.code || ""),
+      lastAccountName: String(lastAccount?.name || ""),
+    },
+  };
+}
+
 async function loadBookDisplayRow(tenantId, bookId, runQuery = query) {
   const result = await runQuery(
     `SELECT
        id,
        legal_entity_id,
+       calendar_id,
        code,
        name,
        base_currency_code
@@ -233,6 +371,60 @@ function buildOpeningSql(rangeContext, prefix = "je") {
   };
 }
 
+function buildDimensionFilters(reportQuery, accountFilter) {
+  const conditions = [accountFilter.sql];
+  const params = [...accountFilter.params];
+
+  if (reportQuery.operatingUnitScope === "OPERATING_UNIT") {
+    conditions.push("jl.operating_unit_id = ?");
+    params.push(reportQuery.operatingUnitId);
+  } else if (reportQuery.operatingUnitScope === "CENTRAL") {
+    conditions.push("jl.operating_unit_id IS NULL");
+  }
+
+  if (reportQuery.subledgerReferenceNo) {
+    conditions.push("jl.subledger_reference_no LIKE ?");
+    params.push(`%${reportQuery.subledgerReferenceNo}%`);
+  }
+
+  if (reportQuery.sourceType) {
+    conditions.push("je.source_type = ?");
+    params.push(reportQuery.sourceType);
+  }
+
+  return { conditions, params };
+}
+
+function buildGroupingSql(groupBy) {
+  switch (String(groupBy || "NONE").toUpperCase()) {
+    case "MONTH":
+      return {
+        keySql: "DATE_FORMAT(je.entry_date, '%Y-%m')",
+        labelSql: "DATE_FORMAT(je.entry_date, '%Y-%m')",
+      };
+    case "SOURCE_TYPE":
+      return {
+        keySql: "COALESCE(NULLIF(TRIM(je.source_type), ''), 'UNSPECIFIED')",
+        labelSql: "COALESCE(NULLIF(TRIM(je.source_type), ''), 'UNSPECIFIED')",
+      };
+    case "OPERATING_UNIT":
+      return {
+        keySql: "COALESCE(CAST(jl.operating_unit_id AS CHAR), 'CENTRAL')",
+        labelSql:
+          "CASE WHEN jl.operating_unit_id IS NULL THEN 'CENTRAL' ELSE COALESCE(NULLIF(TRIM(CONCAT(ou.code, ' - ', ou.name)), ' - '), NULLIF(TRIM(ou.code), ''), CONCAT('OU#', jl.operating_unit_id)) END",
+      };
+    case "SUBLEDGER_REF":
+      return {
+        keySql:
+          "COALESCE(NULLIF(TRIM(jl.subledger_reference_no), ''), 'NO_SUBLEDGER_REF')",
+        labelSql:
+          "COALESCE(NULLIF(TRIM(jl.subledger_reference_no), ''), 'No subledger ref')",
+      };
+    default:
+      return null;
+  }
+}
+
 async function attachLedgerSourceLinks(tenantId, rows, runQuery = query) {
   const journalIds = Array.from(
     new Set(rows.map((row) => parsePositiveInt(row.journal_id)).filter(Boolean))
@@ -274,48 +466,52 @@ async function attachLedgerSourceLinks(tenantId, rows, runQuery = query) {
 }
 
 /**
- * Build the report-grade local ledger payload used by Defter-i Kebir and later Muavin modes.
+ * Build the report-grade local ledger payload used by Defter-i Kebir and Muavin modes.
  */
 export async function getGeneralLedgerReport({
   tenantId,
   book,
-  accountId,
   reportQuery,
   runQuery = query,
 }) {
   const parsedTenantId = parsePositiveInt(tenantId);
   const parsedBookId = parsePositiveInt(book?.id);
-  const parsedAccountId = parsePositiveInt(accountId);
-  if (!parsedTenantId || !parsedBookId || !parsedAccountId) {
-    throw badRequest("tenantId, bookId, and accountId are required");
+  if (!parsedTenantId || !parsedBookId) {
+    throw badRequest("tenantId and bookId are required");
   }
 
-  const account = await loadAccountDisplayRow(parsedTenantId, parsedAccountId, runQuery);
-  if (!account) {
-    throw badRequest("accountId not found for tenant");
-  }
   const bookDisplay = await loadBookDisplayRow(parsedTenantId, parsedBookId, runQuery);
   if (!bookDisplay) {
     throw badRequest("bookId not found for tenant");
   }
-  const ledgerAccountScope = await resolveLedgerAccountIds(account, runQuery);
-  const accountFilterSql =
-    ledgerAccountScope.accountIds.length === 1
-      ? "jl.account_id = ?"
-      : `jl.account_id IN (${ledgerAccountScope.accountIds.map(() => "?").join(", ")})`;
-  const accountFilterParams = ledgerAccountScope.accountIds;
 
-  const rangeContext = await resolveLedgerRange(book, reportQuery, runQuery);
+  const accountScope = await resolveLedgerAccountScope({
+    tenantId: parsedTenantId,
+    legalEntityId: parsePositiveInt(book?.legal_entity_id) || null,
+    accountId: reportQuery.accountId,
+    accountCodeFrom: reportQuery.accountCodeFrom,
+    accountCodeTo: reportQuery.accountCodeTo,
+    runQuery,
+  });
+  const rangeContext = await resolveLedgerRange(bookDisplay, reportQuery, runQuery);
   const rangeSql = buildRangeSql(rangeContext);
   const openingSql = buildOpeningSql(rangeContext);
+  const statusFilter = buildStatusFilter(reportQuery);
+  const dimensionFilters = buildDimensionFilters(reportQuery, accountScope.accountFilter);
   const baseConditions = [
     "je.tenant_id = ?",
     "je.book_id = ?",
-    "je.status = 'POSTED'",
-    accountFilterSql,
+    statusFilter.sql,
+    ...dimensionFilters.conditions,
     rangeSql.sql,
   ];
-  const baseParams = [parsedTenantId, parsedBookId, ...accountFilterParams, ...rangeSql.params];
+  const baseParams = [
+    parsedTenantId,
+    parsedBookId,
+    ...statusFilter.params,
+    ...dimensionFilters.params,
+    ...rangeSql.params,
+  ];
 
   let openingBalance = 0;
   if (openingSql.sql) {
@@ -325,10 +521,16 @@ export async function getGeneralLedgerReport({
        JOIN journal_lines jl ON jl.journal_entry_id = je.id
        WHERE je.tenant_id = ?
          AND je.book_id = ?
-         AND je.status = 'POSTED'
-         AND ${accountFilterSql}
+         AND ${statusFilter.sql}
+         AND ${dimensionFilters.conditions.join(" AND ")}
          AND ${openingSql.sql}`,
-      [parsedTenantId, parsedBookId, ...accountFilterParams, ...openingSql.params]
+      [
+        parsedTenantId,
+        parsedBookId,
+        ...statusFilter.params,
+        ...dimensionFilters.params,
+        ...openingSql.params,
+      ]
     );
     openingBalance = toAmount(openingResult.rows[0]?.opening_balance);
   }
@@ -355,6 +557,28 @@ export async function getGeneralLedgerReport({
   const creditTotal = toAmount(summaryResult.rows[0]?.credit_total);
   const closingBalance = openingBalance + debitTotal - creditTotal;
 
+  const groupingSql = buildGroupingSql(reportQuery.groupBy);
+  const groupSummaryRows = groupingSql
+    ? (
+        await runQuery(
+          `SELECT
+             ${groupingSql.keySql} AS group_key,
+             ${groupingSql.labelSql} AS group_label,
+             COUNT(*) AS line_count,
+             COALESCE(SUM(jl.debit_base), 0) AS debit_total,
+             COALESCE(SUM(jl.credit_base), 0) AS credit_total,
+             COALESCE(SUM(jl.debit_base - jl.credit_base), 0) AS balance_total
+           FROM journal_entries je
+           JOIN journal_lines jl ON jl.journal_entry_id = je.id
+           LEFT JOIN operating_units ou ON ou.id = jl.operating_unit_id
+           WHERE ${baseConditions.join(" AND ")}
+           GROUP BY group_key, group_label
+           ORDER BY group_label ASC`,
+          baseParams
+        )
+      ).rows || []
+    : [];
+
   const sortOrderSql = buildSortOrderSql(reportQuery.sortBy, reportQuery.sortDirection);
   const rowsResult = await runQuery(
     `SELECT *
@@ -365,6 +589,12 @@ export async function getGeneralLedgerReport({
          ) AS natural_row_no,
          je.id AS journal_id,
          jl.id AS journal_line_id,
+         jl.account_id,
+         a.code AS account_code,
+         a.name AS account_name,
+         jl.operating_unit_id,
+         ou.code AS operating_unit_code,
+         ou.name AS operating_unit_name,
          je.entry_date,
          je.document_date,
          je.journal_no,
@@ -373,6 +603,7 @@ export async function getGeneralLedgerReport({
          jl.description AS line_description,
          COALESCE(NULLIF(TRIM(jl.description), ''), NULLIF(TRIM(je.description), ''), CONCAT('Line ', jl.line_no)) AS description,
          je.source_type,
+         je.source_type AS source_module,
          je.status,
          jl.line_no,
          jl.subledger_reference_no,
@@ -384,6 +615,8 @@ export async function getGeneralLedgerReport({
          ) + ? AS running_balance
        FROM journal_entries je
        JOIN journal_lines jl ON jl.journal_entry_id = je.id
+       JOIN accounts a ON a.id = jl.account_id
+       LEFT JOIN operating_units ou ON ou.id = jl.operating_unit_id
        WHERE ${baseConditions.join(" AND ")}
      ) ledger_rows
      ORDER BY ${sortOrderSql}
@@ -402,17 +635,27 @@ export async function getGeneralLedgerReport({
     filters: {
       scope: "LOCAL",
       reportType: "GENERAL_LEDGER",
-      reportBasis: "POSTED",
+      reportBasis: statusFilter.reportBasis,
       periodBasis: rangeContext.periodBasis,
       legalEntityId:
         reportQuery.legalEntityId || parsePositiveInt(book?.legal_entity_id) || null,
       bookId: parsedBookId,
-      accountId: parsedAccountId,
+      accountId: parsePositiveInt(reportQuery.accountId) || null,
+      accountCodeFrom: reportQuery.accountCodeFrom,
+      accountCodeTo: reportQuery.accountCodeTo,
       fiscalPeriodId: reportQuery.fiscalPeriodId || null,
       fiscalPeriodIdFrom: rangeContext.fiscalPeriodIdFrom,
       fiscalPeriodIdTo: rangeContext.fiscalPeriodIdTo,
       dateFrom: rangeContext.periodBasis === "DATE_RANGE" ? rangeContext.startDate : "",
       dateTo: rangeContext.periodBasis === "DATE_RANGE" ? rangeContext.endDate : "",
+      operatingUnitScope: reportQuery.operatingUnitScope,
+      operatingUnitId: reportQuery.operatingUnitId || null,
+      subledgerReferenceNo: reportQuery.subledgerReferenceNo || "",
+      sourceType: reportQuery.sourceType || "",
+      sourceModule: reportQuery.sourceModule || reportQuery.sourceType || "",
+      status: reportQuery.status || "",
+      includeReversed: Boolean(reportQuery.includeReversed),
+      groupBy: reportQuery.groupBy || "NONE",
       sortBy: reportQuery.sortBy,
       sortDirection: reportQuery.sortDirection,
     },
@@ -423,13 +666,8 @@ export async function getGeneralLedgerReport({
       legalEntityId: parsePositiveInt(bookDisplay.legal_entity_id) || null,
       baseCurrencyCode: String(bookDisplay.base_currency_code || "").toUpperCase(),
     },
-    account: {
-      id: parsedAccountId,
-      code: account.code,
-      name: account.name,
-      allowPosting: Boolean(account.allow_posting),
-      includesDescendants: ledgerAccountScope.includesDescendants,
-    },
+    account: accountScope.account,
+    accountRange: accountScope.accountRange,
     range: {
       periodBasis: rangeContext.periodBasis,
       startDate: rangeContext.startDate,
@@ -445,6 +683,17 @@ export async function getGeneralLedgerReport({
       creditTotal,
       closingBalance,
       totalRows: total,
+    },
+    grouping: {
+      groupBy: reportQuery.groupBy || "NONE",
+      rows: groupSummaryRows.map((row) => ({
+        groupKey: String(row.group_key || ""),
+        groupLabel: String(row.group_label || ""),
+        lineCount: Number(row.line_count || 0),
+        debitTotal: toAmount(row.debit_total),
+        creditTotal: toAmount(row.credit_total),
+        balanceTotal: toAmount(row.balance_total),
+      })),
     },
     rows,
     total,

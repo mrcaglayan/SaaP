@@ -27,6 +27,8 @@ const LOCAL_REPORT_QUERY_KEYS = Object.freeze([
   "includeReversed",
   "includeZero",
   "includeRollup",
+  "groupBy",
+  "reportPreset",
   "limit",
   "offset",
   "sortBy",

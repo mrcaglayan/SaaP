@@ -455,6 +455,60 @@ First-pass posting hotspot review list:
 - first-pass indirect posting hotspots are reviewed and either guarded or explicitly deferred with a named follow-up
 - tracker hotspot coverage has been compared against a repo-wide search before claiming enforcement completeness
 
+### Current implementation notes
+
+- `RP08` implemented the explicit pack actions in:
+  - `backend/src/services/local.close-pack.workflow.service.js`
+  - `backend/src/routes/local.close-packs.routes.js`
+  - `backend/src/routes/local.close-packs.validators.js`
+- `RP08` implemented the reusable post-lock enforcement seam in:
+  - `backend/src/services/local.close-enforcement.service.js`
+- The local close-pack action contract is now:
+  - `POST /api/v1/gl/local-close-packs/:packId/submit`
+  - `POST /api/v1/gl/local-close-packs/:packId/return`
+  - `POST /api/v1/gl/local-close-packs/:packId/approve`
+  - `POST /api/v1/gl/local-close-packs/:packId/lock`
+- The first-pass action gates are intentionally limited to repo-truth that exists now:
+  - exact-scope `DRAFT` journals block `submit` and `approve`
+  - workflow approval blocks `approve` when the workflow feature is enabled and a local-close-pack assignment exists but is not yet approved
+  - pending reopen requests block `lock`
+  - checklist / evidence / exception gates remain deferred until `RP07` and later slices create those domains
+- Because the shared workflow runtime is target-unique, `RP08` uses an in-place workflow-instance rearm wrapper for repeated `submit -> return -> submit` cycles:
+  - the same `workflow_instances` target row is reset to `PENDING`
+  - prior instance decisions are cleared on resubmit
+  - this avoids dead-ending the pack on the unique `(tenant_id, process_type, target_type, target_id)` constraint
+- Implementing `RP09` before `RP08` did not require a roadmap reorder:
+  - `RP09` had already added partial blocked-path routing and readiness invalidation
+  - `RP08` absorbed that into the shared enforcement/action layer instead of leaving block logic embedded inside reopen-only code
+  - no `51` roadmap lock change was required for the order shift
+- First-pass enforcement coverage is now implemented at these seams:
+  - `backend/src/routes/gl.write.journal.routes.js`
+  - `backend/src/services/gl.journal-reversal.service.js`
+  - `backend/src/services/cari.document.service.js`
+  - `backend/src/services/cash.service.js`
+  - `backend/src/services/inventory.service.js`
+  - `backend/src/services/payroll.accruals.service.js`
+  - `backend/src/services/revenue-recognition.service.js`
+- This coverage also reaches some higher-level posting flows indirectly because they already route through guarded helpers:
+  - `backend/src/services/cash.transaction.service.js`
+  - `backend/src/services/cash.exchange.service.js`
+  - `backend/src/services/cash.session.service.js`
+  - `backend/src/services/payments.service.js`
+- The following posting hotspots remain explicitly deferred after the fresh repo-wide search and should not be claimed as covered yet:
+  - `backend/src/services/cari.settlement.service.js`
+  - `backend/src/services/cash.fx.revaluation.service.js`
+  - `backend/src/services/inventory.landed-cost.service.js`
+  - `backend/src/services/inventory.transfer.service.js`
+  - `backend/src/services/payroll.corrections.service.js`
+  - `backend/src/services/bank.reconciliationAutoPosting.service.js`
+  - `backend/src/services/bank.reconciliationDifferences.service.js`
+  - `backend/src/services/fixed-assets.service.js`
+  - `backend/src/services/fixed-assets.depreciation.service.js`
+  - `backend/src/services/org.write.service.js`
+  - `backend/src/services/org.shareholder.helpers.js`
+  - `backend/src/services/org.capital-fulfillment.service.js`
+  - `backend/src/routes/gl.reclass.routes.js`
+
 ---
 
 ## `RP09` - Local close-pack reopen workflow, late-change governance, and entity-readiness invalidation
@@ -560,6 +614,53 @@ These remain in the main Track 51 roadmap until the foundational slices above la
 - `RP11` consolidated drill-across
 - `RP12` higher-order blockers and publish gates
 - `RP13` export/fingerprint/performance hardening
+
+## `RP04` - Current implementation notes
+
+- `RP04` did not create a second ledger engine.
+  - `frontend/src/pages/GeneralLedgerPage.jsx` now serves both:
+    - `Defter-i Kebir`
+    - `Muavin`
+  - route mode is selected from:
+    - `/app/defter-i-kebir`
+    - `/app/muavin`
+- `/app/muavin` is now fully surfaced in the current repo:
+  - `frontend/src/App.jsx`
+  - `frontend/src/reporting/localReportConfig.js`
+  - `frontend/src/layouts/sidebarConfig.js`
+- The backend shared ledger contract stayed on the dedicated RP03 seam:
+  - `backend/src/routes/gl.ledger.routes.js`
+  - `backend/src/routes/gl.ledger.validators.js`
+  - `backend/src/services/gl.ledger-report.service.js`
+- `RP04` widened the shared ledger filter contract for the same route/service family instead of adding a separate Muavin route family:
+  - `accountCodeFrom`
+  - `accountCodeTo`
+  - `operatingUnitScope`
+  - `operatingUnitId`
+  - `subledgerReferenceNo`
+  - `sourceType`
+  - `status`
+  - `includeReversed`
+  - `groupBy`
+- `sourceModule` is currently a compatibility alias, not a distinct GL storage field:
+  - the live repo still does not have a dedicated GL journal `source_module` column on `journal_entries`
+  - `RP04` therefore maps `sourceModule` and `sourceType` to the same current journal source category for ledger-report reads
+  - later steps can harden this only if a true GL source-module seam is introduced
+- Account scope now supports both:
+  - one exact `accountId`
+  - one account-code range via `accountCodeFrom/accountCodeTo`
+- First-pass grouping landed as additive grouped totals, not as a second result shape:
+  - `grouping.rows` now returns filtered grouped totals for:
+    - month
+    - source type
+    - operating unit
+    - subledger ref
+  - row-level ledger detail remains the canonical drillthrough payload
+- `RP04` still intentionally leaves these items deferred:
+  - reconciliation views
+  - export / print
+  - a true GL-specific source-module taxonomy beyond the current alias
+  - local statements / close workspace layers handled by later roadmap steps
 
 ## Working Rule
 

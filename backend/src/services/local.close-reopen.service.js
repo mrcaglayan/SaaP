@@ -3,9 +3,12 @@ import { assertSecondaryPermission } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { getEntityCloseReadiness } from "./entity.close-readiness.service.js";
 import {
+  assertLocalClosePackJournalActionAllowed,
+  findBlockingLocalClosePackForJournalAction,
+} from "./local.close-enforcement.service.js";
+import {
   isEvidenceOnlyLocalClosePackReopenAction,
   isFinancialLocalClosePackReopenAction,
-  resolveJournalLocalClosePackScope,
   resolveLocalClosePackRowScope,
 } from "./local.close-packs.shared.js";
 
@@ -168,36 +171,6 @@ function assertLocalClosePackScopeAccess(req, packRow, assertScopeAccess) {
     return;
   }
   assertScopeAccess(req, scope.scopeKind, scope.scopeId, "localClosePack");
-}
-
-function buildReopenRequestScope(packRow) {
-  return {
-    closeScopeType: toUpperText(packRow?.close_scope_type),
-    operatingUnitId: parsePositiveInt(packRow?.operating_unit_id),
-    legalEntityId: parsePositiveInt(packRow?.legal_entity_id),
-    bookId: parsePositiveInt(packRow?.book_id),
-    fiscalPeriodId: parsePositiveInt(packRow?.fiscal_period_id),
-    scopeKey: String(packRow?.scope_key || ""),
-  };
-}
-
-function buildLocalClosePackReopenHint({ packRow, actionType, pendingRequestRow = null }) {
-  const packId = parsePositiveInt(packRow?.id);
-  const requestedActionType =
-    actionType === "REVERSE_POSTED_JOURNAL" ? "REVERSAL_REQUIRED" : "LATE_POSTING_REQUIRED";
-  return {
-    localClosePackId: packId,
-    localClosePackStatus: toUpperText(packRow?.status),
-    reopenRequestEndpoint: packId
-      ? `/api/v1/gl/local-close-packs/${packId}/reopen-requests`
-      : null,
-    suggestedActionType: requestedActionType,
-    requestedScope: buildReopenRequestScope(packRow),
-    pendingRequestId: parsePositiveInt(pendingRequestRow?.id),
-    pendingRequestStatus: pendingRequestRow
-      ? toUpperText(pendingRequestRow.request_status)
-      : null,
-  };
 }
 
 async function writeLocalClosePackAuditLog({
@@ -688,146 +661,6 @@ export async function getLocalClosePackEntityReadinessByPackId({
     fiscalPeriodId: parsePositiveInt(packRow.fiscal_period_id),
     runQuery,
   });
-}
-
-async function loadJournalLineScopeRows({
-  journalId,
-  runQuery = query,
-}) {
-  const result = await runQuery(
-    `SELECT operating_unit_id
-     FROM journal_lines
-     WHERE journal_entry_id = ?`,
-    [journalId]
-  );
-  return Array.isArray(result.rows) ? result.rows : [];
-}
-
-/**
- * Resolve the blocking pack, if any, for one journal posting or reversal action.
- */
-export async function findBlockingLocalClosePackForJournalAction({
-  tenantId,
-  journalId,
-  legalEntityId,
-  bookId,
-  fiscalPeriodId,
-  actionType,
-  runQuery = query,
-}) {
-  const normalizedTenantId = parsePositiveInt(tenantId);
-  const normalizedJournalId = parsePositiveInt(journalId);
-  const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
-  const normalizedBookId = parsePositiveInt(bookId);
-  const normalizedFiscalPeriodId = parsePositiveInt(fiscalPeriodId);
-  if (
-    !normalizedTenantId ||
-    !normalizedJournalId ||
-    !normalizedLegalEntityId ||
-    !normalizedBookId ||
-    !normalizedFiscalPeriodId
-  ) {
-    return null;
-  }
-
-  const lineRows = await loadJournalLineScopeRows({
-    journalId: normalizedJournalId,
-    runQuery,
-  });
-  const resolvedJournalScope = resolveJournalLocalClosePackScope(lineRows);
-  if (!resolvedJournalScope) {
-    return null;
-  }
-
-  let packResult;
-  try {
-    packResult = await runQuery(
-      `SELECT *
-       FROM local_close_packs
-       WHERE tenant_id = ?
-         AND legal_entity_id = ?
-         AND book_id = ?
-         AND fiscal_period_id = ?
-         AND scope_key = ?
-         AND status IN ('APPROVED', 'LOCKED')
-       LIMIT 1`,
-      [
-        normalizedTenantId,
-        normalizedLegalEntityId,
-        normalizedBookId,
-        normalizedFiscalPeriodId,
-        resolvedJournalScope.scopeKey,
-      ]
-    );
-  } catch (err) {
-    if (isMissingTableError(err)) {
-      return null;
-    }
-    throw err;
-  }
-  const packRow = packResult.rows?.[0] || null;
-  if (!packRow) {
-    return null;
-  }
-
-  const pendingRequestRow = await loadPendingReopenRequestRow({
-    tenantId: normalizedTenantId,
-    packId: parsePositiveInt(packRow.id),
-    runQuery,
-  });
-
-  return {
-    packRow,
-    actionType: toUpperText(actionType),
-    reopenHint: buildLocalClosePackReopenHint({
-      packRow,
-      actionType,
-      pendingRequestRow,
-    }),
-  };
-}
-
-/**
- * Block governed financial changes when an approved or locked local close pack
- * already controls the journal scope.
- */
-export async function assertLocalClosePackJournalActionAllowed({
-  tenantId,
-  journalId,
-  legalEntityId,
-  bookId,
-  fiscalPeriodId,
-  actionType,
-  runQuery = query,
-}) {
-  const block = await findBlockingLocalClosePackForJournalAction({
-    tenantId,
-    journalId,
-    legalEntityId,
-    bookId,
-    fiscalPeriodId,
-    actionType,
-    runQuery,
-  });
-  if (!block?.packRow) {
-    return { allowed: true, blockedByPack: null };
-  }
-
-  throw conflict(
-    `Local close pack is ${toUpperText(block.packRow.status)} for this journal scope; request governed reopen before ${String(
-      actionType || ""
-    )
-      .trim()
-      .toLowerCase()
-      .replaceAll("_", " ")}`,
-    {
-      code: "LOCAL_CLOSE_PACK_REOPEN_REQUIRED",
-      journalId: parsePositiveInt(journalId),
-      blockedActionType: toUpperText(actionType),
-      ...block.reopenHint,
-    },
-    "LOCAL_CLOSE_PACK_REOPEN_REQUIRED"
-  );
 }
 
 export default {

@@ -158,7 +158,12 @@ const implementedRoutes = [
   {
     appPath: "/app/defter-i-kebir",
     childPath: "defter-i-kebir",
-    element: <GeneralLedgerPage />,
+    element: <GeneralLedgerPage reportMode="GENERAL_LEDGER" />,
+  },
+  {
+    appPath: "/app/muavin",
+    childPath: "muavin",
+    element: <GeneralLedgerPage reportMode="MUAVIN" />,
   },
   {
     appPath: "/app/kasa-tanimlari",

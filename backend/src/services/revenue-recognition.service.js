@@ -1,5 +1,6 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { assertLocalClosePackPostingAllowedForLines } from "./local.close-enforcement.service.js";
 
 const RUN_STATUS = Object.freeze({
   DRAFT: "DRAFT",
@@ -1698,6 +1699,16 @@ function buildPostingEntriesForRunLine({
 
 async function insertPostedJournalWithLinesTx(tx, payload) {
   const totals = ensureBalancedJournalLines(payload.lines, "Revenue-recognition posting journal");
+  await assertLocalClosePackPostingAllowedForLines({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    bookId: payload.bookId,
+    fiscalPeriodId: payload.fiscalPeriodId,
+    lines: payload.lines,
+    actionType: "POST_REVENUE_RECOGNITION_JOURNAL",
+    runQuery: tx.query.bind(tx),
+  });
+
   const insertResult = await tx.query(
     `INSERT INTO journal_entries (
         tenant_id,

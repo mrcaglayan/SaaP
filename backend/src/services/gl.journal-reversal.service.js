@@ -1,5 +1,5 @@
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
-import { assertLocalClosePackJournalActionAllowed } from "./local.close-reopen.service.js";
+import { assertLocalClosePackJournalActionAllowed } from "./local.close-enforcement.service.js";
 
 function normalizeUpperText(value) {
   return String(value || "").trim().toUpperCase();

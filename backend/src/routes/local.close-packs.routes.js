@@ -7,6 +7,12 @@ import {
   resolveLocalClosePackScope,
 } from "../services/local.close-packs.service.js";
 import {
+  approveLocalClosePack,
+  lockLocalClosePack,
+  returnLocalClosePack,
+  submitLocalClosePack,
+} from "../services/local.close-pack.workflow.service.js";
+import {
   approveLocalClosePackReopenRequest,
   createLocalClosePackReopenRequest,
   getLocalClosePackEntityReadinessByPackId,
@@ -14,6 +20,7 @@ import {
   rejectLocalClosePackReopenRequest,
 } from "../services/local.close-reopen.service.js";
 import {
+  parseLocalClosePackActionInput,
   parseLocalClosePackCreateInput,
   parseLocalClosePackIdParam,
   parseLocalClosePackListInput,
@@ -133,6 +140,92 @@ export function registerLocalClosePackRoutes(router) {
         assertScopeAccess,
       });
       return res.json({
+        tenantId: input.tenantId,
+        ...result,
+      });
+    })
+  );
+
+  router.post(
+    "/local-close-packs/:packId/submit",
+    requirePermission("ouclose.submit", {
+      resolveScope: (req, tenantId) =>
+        resolveLocalClosePackScope(req.params?.packId, tenantId),
+    }),
+    asyncHandler(async (req, res) => {
+      const input = parseLocalClosePackActionInput(req);
+      const result = await submitLocalClosePack({
+        req,
+        input,
+        assertScopeAccess,
+      });
+      return res.json({
+        ok: true,
+        tenantId: input.tenantId,
+        ...result,
+      });
+    })
+  );
+
+  router.post(
+    "/local-close-packs/:packId/return",
+    requirePermission("ouclose.review", {
+      resolveScope: (req, tenantId) =>
+        resolveLocalClosePackScope(req.params?.packId, tenantId),
+    }),
+    asyncHandler(async (req, res) => {
+      const input = parseLocalClosePackActionInput(req, {
+        requireDecisionNote: true,
+      });
+      const result = await returnLocalClosePack({
+        req,
+        input,
+        assertScopeAccess,
+      });
+      return res.json({
+        ok: true,
+        tenantId: input.tenantId,
+        ...result,
+      });
+    })
+  );
+
+  router.post(
+    "/local-close-packs/:packId/approve",
+    requirePermission("ouclose.approve", {
+      resolveScope: (req, tenantId) =>
+        resolveLocalClosePackScope(req.params?.packId, tenantId),
+    }),
+    asyncHandler(async (req, res) => {
+      const input = parseLocalClosePackActionInput(req);
+      const result = await approveLocalClosePack({
+        req,
+        input,
+        assertScopeAccess,
+      });
+      return res.json({
+        ok: true,
+        tenantId: input.tenantId,
+        ...result,
+      });
+    })
+  );
+
+  router.post(
+    "/local-close-packs/:packId/lock",
+    requirePermission("ouclose.lock", {
+      resolveScope: (req, tenantId) =>
+        resolveLocalClosePackScope(req.params?.packId, tenantId),
+    }),
+    asyncHandler(async (req, res) => {
+      const input = parseLocalClosePackActionInput(req);
+      const result = await lockLocalClosePack({
+        req,
+        input,
+        assertScopeAccess,
+      });
+      return res.json({
+        ok: true,
         tenantId: input.tenantId,
         ...result,
       });

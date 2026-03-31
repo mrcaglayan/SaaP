@@ -13,7 +13,7 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 import { reverseJournalEntryTx } from "../services/gl.journal-reversal.service.js";
-import { assertLocalClosePackJournalActionAllowed } from "../services/local.close-reopen.service.js";
+import { assertLocalClosePackJournalActionAllowed } from "../services/local.close-enforcement.service.js";
 import {
   resolveReverseBlock,
   buildReverseBlockMessage,

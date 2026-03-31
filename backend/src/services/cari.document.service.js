@@ -10,6 +10,7 @@ import {
   resolveOffsetPagination,
 } from "../utils/pagination.js";
 import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
+import { assertLocalClosePackPostingAllowedForLines } from "./local.close-enforcement.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import {
   buildCariTaxAugmentation,
@@ -3210,6 +3211,16 @@ function summarizePostingLineDescription({
 
 export async function insertPostedJournalWithLinesTx(tx, payload) {
   const totals = ensureBalancedJournalLines(payload.lines);
+  await assertLocalClosePackPostingAllowedForLines({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    bookId: payload.bookId,
+    fiscalPeriodId: payload.fiscalPeriodId,
+    lines: payload.lines,
+    actionType: "POST_CARI_DOCUMENT_JOURNAL",
+    runQuery: tx.query.bind(tx),
+  });
+
   const insertResult = await tx.query(
     `INSERT INTO journal_entries (
         tenant_id,

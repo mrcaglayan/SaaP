@@ -564,6 +564,7 @@ export const sidebarItems = [
     matchPrefix: "/app/raporlar",
     items: [
       LOCAL_REPORT_SIDEBAR_ITEMS.generalLedger,
+      LOCAL_REPORT_SIDEBAR_ITEMS.subsidiaryLedger,
       LOCAL_REPORT_SIDEBAR_ITEMS.balanceSheet,
       LOCAL_REPORT_SIDEBAR_ITEMS.incomeStatement,
       {

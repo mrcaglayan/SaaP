@@ -24,6 +24,7 @@ import {
   STOCK_LINK_REPAIR_REASON_SUCCESSOR_WAREHOUSE_INHERITANCE_INVALID,
   deriveStockLinkReadState,
 } from "./stock.link.read-state.service.js";
+import { assertLocalClosePackPostingAllowedForLines } from "./local.close-enforcement.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import {
   applyLandedCostIssueOverlayPlanTx,
@@ -2310,6 +2311,16 @@ function ensureBalancedJournalLines(lines) {
 
 export async function insertPostedJournalWithLinesTx(tx, payload) {
   const totals = ensureBalancedJournalLines(payload.lines);
+  await assertLocalClosePackPostingAllowedForLines({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    bookId: payload.bookId,
+    fiscalPeriodId: payload.fiscalPeriodId,
+    lines: payload.lines,
+    actionType: "POST_INVENTORY_JOURNAL",
+    runQuery: tx.query.bind(tx),
+  });
+
   const insertResult = await tx.query(
     `INSERT INTO journal_entries (
         tenant_id,
