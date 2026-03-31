@@ -542,6 +542,7 @@ export const sidebarItems = [
           {
             label: "Kapanis Islemleri",
             to: "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
+            implemented: true,
           },
           {
             label: "Yerel Kapanis Paketleri",

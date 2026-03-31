@@ -1295,6 +1295,12 @@ Extend the reporting model from entity-submitted/locked local books into group-l
   - source transaction lineage where meaningful and permitted
 - keep canonical-mapping awareness explicit in consolidated drill-across
 - do not pretend consolidated rows can always drill to one simple local account without mapping context
+- keep richer consolidated support detail inside this same track rather than breaking it into a separate product plan:
+  - add per-row source/functional-currency context where local-base support values are shown
+  - keep local-base support values visually distinct from translated/reporting-currency balances
+  - harden member-book resolution/defaulting and explicit ambiguous/no-book states
+  - add mapping explanation and safer drill-eligibility rules before allowing deeper account-level drill paths
+  - add richer member-breakdown filters only if they preserve canonical-mapping awareness instead of hiding it
 
 ### Why after local close maturity
 
@@ -1313,6 +1319,9 @@ Extend the reporting model from entity-submitted/locked local books into group-l
 - navigation follows a clear ladder instead of hidden many-to-many jumps
 - local and consolidated report semantics remain aligned
 - consolidated review assumes member entities have reached a submitted/locked review state for the target period
+- richer consolidated support detail remains part of Track 51:
+  - currency context on local-base support rows is explainable
+  - drill eligibility is explicit where mapping lineage stops at member support instead of direct local ledger lineage
 
 ---
 
@@ -1325,6 +1334,7 @@ Only after reports and workflow states are operationally trusted, use them in hi
 ### Scope
 
 - period-close warnings / blockers based on report-backed conditions where appropriate
+- closing-period vs next-period opening continuity checks where applicable, including deferred/accrual carry-forward and residual long/short reclass closure
 - define explicit higher-level approval/status progression:
   - `Entity Close Approval`
   - `Entity Submitted / Locked`
@@ -1384,6 +1394,10 @@ Make the reporting layer durable for larger volumes and close/audit evidence.
   - report parameter fingerprint
   - source lineage chain
   - evidence bundle support for close / review packs
+- harden consolidated drill-across support where the first RP11 slice needs better durability:
+  - export/fingerprint support for consolidated -> member -> local drill chains
+  - clearer local-base vs translated/reporting-currency presentation in support layers
+  - performance-friendly support/detail filtering where richer member breakdown grows materially
 - harden performance for large history:
   - opening-balance snapshots when needed
   - incremental balance tables when justified

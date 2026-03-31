@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Combobox from "../components/Combobox.jsx";
 import MoneyText from "../components/MoneyText.jsx";
+import ReportAuditPanel from "../components/ReportAuditPanel.jsx";
 import {
   getTrialBalance,
   listBooks,
@@ -25,6 +26,17 @@ const REQUIRED_LEGACY_PERMISSIONS = Object.freeze([
   "org.fiscal_period.read",
   "gl.trial_balance.read",
 ]);
+const EMPTY_TRIAL_BALANCE_ROWS = Object.freeze([]);
+const EMPTY_TRIAL_BALANCE_SUMMARY = Object.freeze({
+  debitTotal: 0,
+  creditTotal: 0,
+  balanceTotal: 0,
+});
+const EMPTY_TRIAL_BALANCE_FILTERS = Object.freeze({
+  scope: "LOCAL",
+  reportBasis: "POSTED",
+  periodBasis: "FISCAL_PERIOD",
+});
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -94,6 +106,10 @@ function buildTrialBalanceResponseSnapshot(reportResponse) {
   };
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /**
  * Render the first real local Mizan page on top of the shared trial-balance contract.
  */
@@ -156,17 +172,91 @@ export default function TrialBalancePage() {
   ).toUpperCase();
   const trialBalanceRows = Array.isArray(reportResponse?.rows)
     ? reportResponse.rows
-    : [];
-  const trialBalanceSummary = reportResponse?.summary || {
-    debitTotal: 0,
-    creditTotal: 0,
-    balanceTotal: 0,
-  };
-  const reportFilters = reportResponse?.filters || {
-    scope: "LOCAL",
-    reportBasis: "POSTED",
-    periodBasis: "FISCAL_PERIOD",
-  };
+    : EMPTY_TRIAL_BALANCE_ROWS;
+  const trialBalanceSummary =
+    reportResponse?.summary || EMPTY_TRIAL_BALANCE_SUMMARY;
+  const reportFilters = reportResponse?.filters || EMPTY_TRIAL_BALANCE_FILTERS;
+  const auditSpecs = useMemo(() => {
+    if (!reportResponse || trialBalanceRows.length === 0) {
+      return [];
+    }
+
+    const exportRows = trialBalanceRows.map((row) => ({
+      legalEntityCode: selectedEntity?.code || "",
+      legalEntityName: selectedEntity?.name || "",
+      bookCode: selectedBook?.code || "",
+      bookName: selectedBook?.name || "",
+      fiscalPeriodLabel: formatPeriodLabel(selectedPeriod),
+      includeRollup: filters.includeRollup ? "YES" : "NO",
+      currencyCode: bookBaseCurrencyCode,
+      accountCode: row.account_code || "",
+      accountName: row.account_name || "",
+      isRollup: row.is_rollup ? "YES" : "NO",
+      debitTotal: Number(row.debit_total || 0),
+      creditTotal: Number(row.credit_total || 0),
+      balance: Number(row.balance || 0),
+    }));
+
+    return [
+      {
+        key: "trialBalanceSummary",
+        label: l("Trial balance rows", "Mizan satirlari"),
+        rowCount: exportRows.length,
+        routePath: LOCAL_REPORT_ROUTE_PATHS.trialBalance,
+        fileName: `track51-trial-balance-${selectedBook?.code || selectedBookId || "book"}-${selectedPeriodId || "period"}-${todayIsoDate()}.csv`,
+        exportColumns: [
+          { key: "legalEntityCode", header: "Legal Entity Code" },
+          { key: "legalEntityName", header: "Legal Entity Name" },
+          { key: "bookCode", header: "Book Code" },
+          { key: "bookName", header: "Book Name" },
+          { key: "fiscalPeriodLabel", header: "Fiscal Period" },
+          { key: "includeRollup", header: "Include Rollup" },
+          { key: "currencyCode", header: "Currency" },
+          { key: "accountCode", header: "Account Code" },
+          { key: "accountName", header: "Account Name" },
+          { key: "isRollup", header: "Is Rollup" },
+          { key: "debitTotal", header: "Debit Total" },
+          { key: "creditTotal", header: "Credit Total" },
+          { key: "balance", header: "Balance" },
+        ],
+        exportRows,
+        fingerprintParameters: {
+          legalEntityId: selectedLegalEntityId,
+          bookId: selectedBookId,
+          fiscalPeriodId: selectedPeriodId,
+          includeRollup: filters.includeRollup,
+        },
+        fingerprintContext: {
+          route: LOCAL_REPORT_ROUTE_PATHS.trialBalance,
+          scope: reportFilters.scope || "LOCAL",
+          reportBasis: reportFilters.reportBasis || "POSTED",
+          periodBasis: reportFilters.periodBasis || "FISCAL_PERIOD",
+          currencyCode: bookBaseCurrencyCode || null,
+        },
+        fingerprintSnapshot: {
+          report: buildTrialBalanceResponseSnapshot(reportResponse),
+          rows: exportRows,
+          summary: trialBalanceSummary,
+        },
+      },
+    ];
+  }, [
+    bookBaseCurrencyCode,
+    filters.includeRollup,
+    l,
+    reportFilters.periodBasis,
+    reportFilters.reportBasis,
+    reportFilters.scope,
+    reportResponse,
+    selectedBook,
+    selectedBookId,
+    selectedEntity,
+    selectedLegalEntityId,
+    selectedPeriod,
+    selectedPeriodId,
+    trialBalanceRows,
+    trialBalanceSummary,
+  ]);
   const ledgerRouteImplemented = Boolean(
     getLocalReportRouteConfig(LOCAL_REPORT_ROUTE_PATHS.generalLedger)
       ?.implemented,
@@ -658,6 +748,20 @@ export default function TrialBalancePage() {
           canReview={canReviewLocalClose}
           l={l}
         />
+        <div className="mt-4">
+          <ReportAuditPanel
+            specs={auditSpecs}
+            title={l(
+              "Audit export and fingerprint",
+              "Audit disa aktarim ve fingerprint",
+            )}
+            subtitle={l(
+              "RP13 now gives Mizan one stable frontend fingerprint plus CSV export for the currently loaded posted-trial-balance surface.",
+              "RP13 artik Mizan icin mevcut yuklu post edilmis mizan yuzeyinde bir kararlı frontend fingerprint'i ve CSV disa aktarimi sunar.",
+            )}
+            l={l}
+          />
+        </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">

@@ -14,6 +14,7 @@ import {
 } from "../services/local.close-packs.service.js";
 import {
   approveLocalClosePack,
+  getLocalClosePackReviewGate,
   lockLocalClosePack,
   returnLocalClosePack,
   submitLocalClosePack,
@@ -152,10 +153,17 @@ export function registerLocalClosePackRoutes(router) {
         packId,
         assertScopeAccess,
       });
+      const reviewGate = await getLocalClosePackReviewGate({
+        req,
+        tenantId,
+        packId,
+        assertScopeAccess,
+      });
       return res.json({
         tenantId,
         row,
         entityReadiness,
+        reviewGate,
       });
     })
   );

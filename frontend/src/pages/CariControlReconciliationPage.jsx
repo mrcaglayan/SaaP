@@ -10,10 +10,12 @@ import { listCariCounterparties } from "../api/cariCounterparty.js";
 import { useAuth } from "../auth/useAuth.js";
 import LocalCloseReportBanner from "../components/LocalCloseReportBanner.jsx";
 import MoneyText from "../components/MoneyText.jsx";
+import ReportAuditPanel from "../components/ReportAuditPanel.jsx";
 import { useI18n } from "../i18n/useI18n.js";
 import { listFiscalPeriods, listLegalEntities, listOperatingUnits } from "../api/orgAdmin.js";
 import { resolveSourceLinkDestination } from "../utils/journalSourceLinkDestinations.js";
 
+const CARI_CONTROL_RECONCILIATION_ROUTE_PATH = "/app/cari-kontrol-mutabakati";
 const DEFAULT_FILTERS = Object.freeze({
   legalEntityId: "",
   bookId: "",
@@ -149,6 +151,29 @@ function formatIssueLabel(issueCode, l) {
   }
 }
 
+function buildReconciliationResponseSnapshot(payload) {
+  return {
+    rowCount: Number(payload?.total || 0),
+    summary: payload?.summary || null,
+    period: payload?.period || null,
+    book: payload?.book || null,
+  };
+}
+
+function buildReconciliationDetailSnapshot(payload) {
+  return {
+    row: payload?.row || null,
+    glRowCount: Array.isArray(payload?.glRows) ? payload.glRows.length : 0,
+    sourceRowCount: Array.isArray(payload?.sourceRows)
+      ? payload.sourceRows.length
+      : 0,
+  };
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /**
  * First-pass RP10 page for GL-vs-CARI control-account reconciliation with OU
  * as a grouping/filter axis and direct journal/source drillthrough.
@@ -184,6 +209,124 @@ export default function CariControlReconciliationPage() {
     [books, filters.bookId]
   );
   const baseCurrencyCode = report?.book?.baseCurrencyCode || selectedBook?.base_currency_code || "";
+  const auditSpecs = useMemo(() => {
+    if (!report) {
+      return [];
+    }
+
+    const specs = [];
+    const rowExports = (report.rows || []).map((row) => ({
+      rowKey: row.rowKey || "",
+      direction: row.direction || "",
+      operatingUnitLabel: row.operatingUnitLabel || "",
+      counterpartyLabel: row.counterpartyLabel || "",
+      issueCodes: Array.isArray(row.issueCodes) ? row.issueCodes.join(", ") : "",
+      missingSourceLinkCount: Number(row.missingSourceLinkCount || 0),
+      missingSubledgerRefCount: Number(row.missingSubledgerRefCount || 0),
+      glAmountBase: Number(row.glAmountBase || 0),
+      sourceAmountBase: Number(row.sourceAmountBase || 0),
+      differenceBase: Number(row.differenceBase || 0),
+    }));
+
+    if (rowExports.length > 0) {
+      specs.push({
+        key: "cariControlReconciliationRows",
+        label: l("Reconciliation rows", "Mutabakat satirlari"),
+        rowCount: rowExports.length,
+        routePath: CARI_CONTROL_RECONCILIATION_ROUTE_PATH,
+        fileName: `track51-cari-control-reconciliation-${selectedBook?.code || filters.bookId || "book"}-${todayIsoDate()}.csv`,
+        exportColumns: [
+          { key: "rowKey", header: "Row Key" },
+          { key: "direction", header: "Direction" },
+          { key: "operatingUnitLabel", header: "Operating Unit" },
+          { key: "counterpartyLabel", header: "Counterparty" },
+          { key: "issueCodes", header: "Issue Codes" },
+          { key: "missingSourceLinkCount", header: "Missing Source Links" },
+          { key: "missingSubledgerRefCount", header: "Missing Subledger Refs" },
+          { key: "glAmountBase", header: "GL Amount Base" },
+          { key: "sourceAmountBase", header: "Source Amount Base" },
+          { key: "differenceBase", header: "Difference Base" },
+        ],
+        exportRows: rowExports,
+        fingerprintParameters: {
+          legalEntityId: toPositiveInt(filters.legalEntityId) || null,
+          bookId: toPositiveInt(filters.bookId) || null,
+          fiscalPeriodId: toPositiveInt(filters.fiscalPeriodId) || null,
+          operatingUnitScope: filters.operatingUnitScope,
+          operatingUnitId: toPositiveInt(filters.operatingUnitId) || null,
+          direction: filters.direction,
+          rowStatus: filters.rowStatus,
+          counterpartyId: toPositiveInt(filters.counterpartyId) || null,
+        },
+        fingerprintContext: {
+          routePath: CARI_CONTROL_RECONCILIATION_ROUTE_PATH,
+          baseCurrencyCode,
+        },
+        fingerprintSnapshot: {
+          report: buildReconciliationResponseSnapshot(report),
+          rows: rowExports,
+        },
+      });
+    }
+
+    if (activeDetail?.row) {
+      const detailRows = [
+        ...(activeDetail.glRows || []).map((row) => ({
+          detailType: "GL_LINE",
+          referenceNo: row.journalNo || "",
+          counterpartyOrAccount:
+            `${row.accountCode || ""} ${row.accountName || ""}`.trim(),
+          date: row.entryDate || "",
+          context: row.operatingUnitLabel || "",
+          amountBase: Number(row.normalizedAmountBase || 0),
+        })),
+        ...(activeDetail.sourceRows || []).map((row) => ({
+          detailType: "SOURCE_OPEN_ITEM",
+          referenceNo: row.documentNo || "",
+          counterpartyOrAccount:
+            `${row.counterpartyCode || ""} ${row.counterpartyName || ""}`.trim(),
+          date: row.documentDate || "",
+          context: row.operatingUnitLabel || "",
+          amountBase: Number(row.residualAmountBaseAsOf || 0),
+        })),
+      ];
+
+      specs.push({
+        key: "cariControlReconciliationDetail",
+        label: l("Expanded drill detail", "Acilmis drill detayi"),
+        rowCount: detailRows.length,
+        routePath: CARI_CONTROL_RECONCILIATION_ROUTE_PATH,
+        fileName: `track51-cari-control-reconciliation-detail-${expandedRowKey || "row"}-${todayIsoDate()}.csv`,
+        exportColumns: [
+          { key: "detailType", header: "Detail Type" },
+          { key: "referenceNo", header: "Reference No" },
+          { key: "counterpartyOrAccount", header: "Counterparty / Account" },
+          { key: "date", header: "Date" },
+          { key: "context", header: "Context" },
+          { key: "amountBase", header: "Amount Base" },
+        ],
+        exportRows: detailRows,
+        fingerprintParameters: {
+          ...DEFAULT_FILTERS,
+          legalEntityId: toPositiveInt(filters.legalEntityId) || null,
+          bookId: toPositiveInt(filters.bookId) || null,
+          fiscalPeriodId: toPositiveInt(filters.fiscalPeriodId) || null,
+          rowKey: expandedRowKey || null,
+        },
+        fingerprintContext: {
+          routePath: CARI_CONTROL_RECONCILIATION_ROUTE_PATH,
+          baseCurrencyCode,
+          expandedRowKey: expandedRowKey || null,
+        },
+        fingerprintSnapshot: {
+          detail: buildReconciliationDetailSnapshot(activeDetail),
+          rows: detailRows,
+        },
+      });
+    }
+
+    return specs;
+  }, [activeDetail, baseCurrencyCode, expandedRowKey, filters, l, report, selectedBook]);
 
   const loadReport = useCallback(
     async (nextFilters) => {
@@ -394,16 +537,25 @@ export default function CariControlReconciliationPage() {
         <LocalCloseReportBanner
           searchParams={searchParams}
           reportKey="cariControlReconciliation"
-          routePath="/app/cari-kontrol-mutabakati"
+          routePath={CARI_CONTROL_RECONCILIATION_ROUTE_PATH}
           reportResponse={report}
-          buildResponseSnapshot={(payload) => ({
-            rowCount: Number(payload?.total || 0),
-            summary: payload?.summary || null,
-          })}
+          buildResponseSnapshot={buildReconciliationResponseSnapshot}
           canReview={false}
           l={l}
         />
       </section>
+      <ReportAuditPanel
+        specs={auditSpecs}
+        title={l(
+          "Audit export and fingerprint",
+          "Audit disa aktarim ve fingerprint",
+        )}
+        subtitle={l(
+          "RP13 now gives the RP10 reconciliation surface one stable frontend fingerprint plus CSV export for both the loaded exception rows and the expanded drill detail when opened.",
+          "RP13 artik RP10 mutabakat yuzeyine yuklu istisna satirlari ve acildiysa genisletilmis drill detayi icin bir kararlı frontend fingerprint'i ve CSV disa aktarimi verir.",
+        )}
+        l={l}
+      />
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="text-sm text-slate-700">

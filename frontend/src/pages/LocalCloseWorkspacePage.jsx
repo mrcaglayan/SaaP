@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import Combobox from "../components/Combobox.jsx";
 import { listBooks } from "../api/glAdmin.js";
 import { createLocalClosePack, listLocalClosePacks } from "../api/localClosePacks.js";
@@ -50,6 +50,59 @@ function formatPeriodLabel(row) {
 
 function hasRowId(rows, id) {
   return rows.some((row) => Number(row?.id) === Number(id));
+}
+
+function normalizeScopeType(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  return SCOPE_OPTIONS.some(([optionValue]) => optionValue === normalized)
+    ? normalized
+    : "";
+}
+
+function normalizeStatus(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  return STATUS_OPTIONS.some(([optionValue]) => optionValue === normalized)
+    ? normalized
+    : "";
+}
+
+function createInitialFilters(searchParams) {
+  const params = searchParams || new URLSearchParams();
+  return {
+    legalEntityId: String(toPositiveInt(params.get("legalEntityId")) || ""),
+    bookId: String(toPositiveInt(params.get("bookId")) || ""),
+    fiscalPeriodId: String(toPositiveInt(params.get("fiscalPeriodId")) || ""),
+    closeScopeType: normalizeScopeType(params.get("closeScopeType")),
+    status: normalizeStatus(params.get("status")),
+    q: String(params.get("q") || "").trim(),
+  };
+}
+
+function buildWorkspaceSearchParams(filters) {
+  const nextParams = new URLSearchParams();
+  if (toPositiveInt(filters?.legalEntityId)) {
+    nextParams.set("legalEntityId", String(toPositiveInt(filters.legalEntityId)));
+  }
+  if (toPositiveInt(filters?.bookId)) {
+    nextParams.set("bookId", String(toPositiveInt(filters.bookId)));
+  }
+  if (toPositiveInt(filters?.fiscalPeriodId)) {
+    nextParams.set("fiscalPeriodId", String(toPositiveInt(filters.fiscalPeriodId)));
+  }
+  if (normalizeScopeType(filters?.closeScopeType)) {
+    nextParams.set("closeScopeType", normalizeScopeType(filters.closeScopeType));
+  }
+  if (normalizeStatus(filters?.status)) {
+    nextParams.set("status", normalizeStatus(filters.status));
+  }
+  if (String(filters?.q || "").trim()) {
+    nextParams.set("q", String(filters.q).trim());
+  }
+  return nextParams;
 }
 
 function buildPackDetailPath(packId) {
@@ -108,6 +161,7 @@ function formatScopeLabel(row, l) {
  * First-pass RP07 local close workspace shell.
  */
 export default function LocalCloseWorkspacePage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const isTr = language === "tr";
@@ -120,14 +174,7 @@ export default function LocalCloseWorkspacePage() {
   const canReadPeriods = hasPermission("org.fiscal_period.read");
   const hasLookupReads = canReadEntities && canReadBooks && canReadPeriods;
 
-  const [filters, setFilters] = useState({
-    legalEntityId: "",
-    bookId: "",
-    fiscalPeriodId: "",
-    closeScopeType: "",
-    status: "",
-    q: "",
-  });
+  const [filters, setFilters] = useState(() => createInitialFilters(searchParams));
   const [createForm, setCreateForm] = useState({
     closeScopeType: "CENTRAL",
     operatingUnitId: "",
@@ -152,6 +199,20 @@ export default function LocalCloseWorkspacePage() {
     () => books.find((row) => Number(row?.id) === Number(selectedBookId)) || null,
     [books, selectedBookId]
   );
+
+  useEffect(() => {
+    const nextFilters = createInitialFilters(searchParams);
+    setFilters((prev) =>
+      JSON.stringify(prev) === JSON.stringify(nextFilters) ? prev : nextFilters
+    );
+  }, [searchParams]);
+
+  useEffect(() => {
+    const nextParams = buildWorkspaceSearchParams(filters);
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [filters, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!canRead || !hasLookupReads) {

@@ -145,6 +145,7 @@ import migration155FixedAssetRetroTransferCorrections from "./m155_fixed_asset_r
 import migration156LocalClosePacks from "./m156_local_close_packs.js";
 import migration157LocalClosePackReopenRequests from "./m157_local_close_pack_reopen_requests.js";
 import migration158LocalClosePackReportReviews from "./m158_local_close_pack_report_reviews.js";
+import migration159Track51ExportSnapshots from "./m159_track51_export_snapshots.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -294,6 +295,7 @@ const migrations = [
   migration156LocalClosePacks,
   migration157LocalClosePackReopenRequests,
   migration158LocalClosePackReportReviews,
+  migration159Track51ExportSnapshots,
 ];
 
 export default migrations;

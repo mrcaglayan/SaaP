@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   getOpsFixedAssetActivationAttention,
@@ -194,6 +194,10 @@ function SummaryCard({ label, value, hint }) {
   );
 }
 
+/**
+ * Render the fixed-asset operations warning surface scoped by the current
+ * working-context legal entity and date range.
+ */
 export default function FixedAssetOpsDashboardPage() {
   const { l } = useI18n();
   const { hasPermission } = useAuth();
@@ -210,7 +214,22 @@ export default function FixedAssetOpsDashboardPage() {
   const [lateCatchUpAttention, setLateCatchUpAttention] = useState(EMPTY_LATE_CATCH_UP_ATTENTION);
   const [attention, setAttention] = useState(EMPTY_ATTENTION);
 
-  const scopeParams = buildScopeParams(workingContext);
+  const workingContextLegalEntityId = workingContext?.legalEntityId;
+  const workingContextDateFrom = workingContext?.dateFrom;
+  const workingContextDateTo = workingContext?.dateTo;
+  const scopeParams = useMemo(
+    () =>
+      buildScopeParams({
+        legalEntityId: workingContextLegalEntityId,
+        dateFrom: workingContextDateFrom,
+        dateTo: workingContextDateTo,
+      }),
+    [
+      workingContextDateFrom,
+      workingContextDateTo,
+      workingContextLegalEntityId,
+    ]
+  );
   const pendingActivationAssetCount = toInt(
     activationAttention?.affected_assets?.pending_activation_assets,
     0
@@ -349,10 +368,7 @@ export default function FixedAssetOpsDashboardPage() {
     canReadFixedAssets,
     canReadOps,
     l,
-    scopeParams.dateFrom,
-    scopeParams.dateTo,
-    scopeParams.days,
-    scopeParams.legalEntityId,
+    scopeParams,
   ]);
 
   if (!canReadFixedAssets) {

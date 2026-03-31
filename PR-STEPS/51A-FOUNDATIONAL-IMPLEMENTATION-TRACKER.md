@@ -1,10 +1,12 @@
 # 51A - FOUNDATIONAL IMPLEMENTATION TRACKER
 
 ## Status
+
 - Companion tracker for Track 51
 - Scope-limited to high-risk foundational slices
 
 ## Purpose
+
 Turn the Track 51 roadmap locks into a concrete implementation tracker for the slices where route drift, permission drift, workflow drift, or enforcement drift would be expensive later.
 
 ## Existing API Surfaces And UI Productization Status
@@ -686,6 +688,78 @@ These remain in the main Track 51 roadmap beyond the live repo progress document
 - `RP12` higher-order blockers and publish gates
 - `RP13` export/fingerprint/performance hardening
 
+## `RP12` - Discovery notes before implementation
+
+- The live repo already has one realistic first-pass `RP12` seam for report-backed close controls:
+  - `frontend/src/pages/YearEndRevrecChecklistPage.jsx` now provides selected-period REVREC setup and balance checks
+  - the page reuses posted trial balance plus existing REVREC split/rollforward reports instead of introducing a second hidden accounting engine
+- `Deferred item already covered`
+  - full close-block wiring and publish-state gating still belong to `RP12`
+  - closing-period vs next-period opening continuity checks, including REVREC deferred/accrual carry-forward, should extend this existing year-end REVREC seam rather than create a parallel control page
+- `Optional hardening`
+  - if the first `RP12` implementation pass stays narrow, start continuity mismatches as warning-mode controls before promoting them to hard close blockers
+
+### Current implementation notes
+
+- `RP12` now surfaces first-pass local close-pack review gates on the existing pack detail seam instead of creating a second close-control page:
+  - backend:
+    - `backend/src/services/local.close-pack.workflow.service.js`
+    - `backend/src/routes/local.close-packs.routes.js`
+  - frontend:
+    - `frontend/src/api/localClosePacks.js`
+    - `frontend/src/pages/LocalClosePackDetailPage.jsx`
+- The local close-pack detail response now returns additive `reviewGate` data beside the existing pack row and `entityReadiness`.
+- The first-pass local close-pack review gate is intentionally limited to repo-truth that already exists:
+  - missing required report reviews block `approve`
+  - exact-scope `DRAFT` journals block `submit` and `approve`
+  - workflow approval still blocks `approve` when required and not yet approved
+  - pending reopen requests block `lock`
+  - missing evidence and readiness invalidation are surfaced as warnings, not hard blockers
+- Local close-pack approval is now actually enforced against missing report reviews with machine-readable code:
+  - `LOCAL_REPORT_REVIEW_MISSING`
+- `RP12` now adds a first-pass consolidation publish gate on the existing run/report flow instead of adding a separate publish workspace:
+  - backend:
+    - `backend/src/services/consolidation.review-gate.service.js`
+    - `backend/src/routes/consolidation.js`
+  - frontend:
+    - `frontend/src/api/consolidationAdmin.js`
+    - `frontend/src/pages/ConsolidationReportsPage.jsx`
+- The live consolidation review gate route is:
+  - `GET /api/v1/consolidation/runs/:runId/review-gate`
+- The consolidation finalize gate now extends beyond execution/worklist/workflow-only truth and still stays explainable from the live report engine:
+  - no posted consolidation entries yet
+  - draft adjustments remain
+  - draft eliminations remain
+  - workflow approval gate not yet approved
+  - consolidated trial-balance delta must stay within the shared report epsilon
+  - consolidated balance-sheet equation delta must stay within the shared report epsilon
+- The consolidation balance-sheet / income-statement routes and the RP12 review gate now reuse the same shared report-math service:
+  - `backend/src/services/consolidation.report-math.service.js`
+  - this avoids a second hidden publish-math formula path
+- Finalize now uses that review gate server-side and returns the first blocker code plus full gate details instead of relying only on the earlier workflow-only check.
+- `RP12` now extends the existing year-end REVREC seam rather than creating a parallel continuity surface:
+  - `frontend/src/pages/YearEndRevrecChecklistPage.jsx`
+- The year-end REVREC page now covers:
+  - selected-period posted GL vs REVREC split validation
+  - closing-period vs next-period opening carry-forward continuity per REVREC family using the existing rollforward report
+- The continuity slice is still intentionally first-pass:
+  - it validates current closing vs next opening totals per family
+  - residual long/short reclass closure still relies on the existing selected-period split-vs-GL controls on the same page
+  - full close-block wiring into the broader pack/entity/consolidation publish chain remains later hardening
+- The deeper `RP12` follow-up is now live on the existing seams:
+  - `backend/src/services/revrec.year-end-review.service.js` reuses the live REVREC rollforward report to evaluate strict carry-forward continuity without inventing a second close-control formula path
+  - `backend/src/services/local.close-pack.workflow.service.js` now surfaces central-pack `REVREC_CONTINUITY_*` blockers in the review gate and enforces them on `approve` / `lock`
+  - `backend/src/services/consolidation.review-gate.service.js` now hard-blocks finalize when mandatory member local close scopes are not fully `LOCKED`
+  - operator drill paths now route into the existing year-end REVREC page, local close workspace, or exact local close-pack page instead of adding parallel blocker UIs
+- The binding `RP12` policy decisions are now implemented:
+  - REVREC continuity mismatches are blocker-grade, not warning-only
+  - consolidation finalize requires mandatory member scopes to be fully `LOCKED`; `APPROVED` is not sufficient
+  - publish-math tolerances stay on strict epsilon
+  - drill depth uses the deepest existing route chain the repo already exposes cleanly, with graceful fallback where lower-level lineage routes still do not exist
+- The still-deferred items that remain owned by `RP12`, not `RP13`, are:
+  - broader end-to-end close/publish blocking across the current pack/entity/consolidation chain
+  - broader operator drill-through from consolidation math blockers into lower-level journal/source evidence where the repo still lacks a tighter published-support chain
+
 ## `RP10` - Discovery notes before implementation
 
 - The live repo already has one realistic first-pass RP10 slice for control-account reconciliation without inventing a second accounting engine:
@@ -758,6 +832,156 @@ These remain in the main Track 51 roadmap beyond the live repo progress document
   - move from URL-backed reusable filters to stronger saved-view/persisted-filter UX only if this report family grows materially
   - broaden beyond `RS-RECON-01` if more reconciliation slices are added later
 
+## `RP11` - Current implementation notes
+
+- `RP11` now surfaces the previously unsurfaced consolidated report reads inside the existing consolidated reporting page instead of creating a parallel drill-across surface:
+  - `GET /api/v1/consolidation/runs/:runId/reports/trial-balance`
+  - `GET /api/v1/consolidation/runs/:runId/reports/summary`
+  - implementation currently lives in:
+    - `frontend/src/pages/ConsolidationReportsPage.jsx`
+    - `frontend/src/api/glAdmin.js`
+- The first shipped drill-across chain is explicitly mapping-aware:
+  - consolidated trial balance or consolidated summary row
+  - mapped member-entity breakdown from the consolidated summary endpoint
+  - member-local report entry points
+  - not one-step direct local ledger lineage
+- `RP11` reuses the current repo seams for member support detail instead of inventing a second reporting family:
+  - `frontend/src/pages/ConsolidationReportsPage.jsx`
+  - `frontend/src/pages/TrialBalancePage.jsx`
+  - `frontend/src/pages/LocalStatementPage.jsx`
+  - `frontend/src/api/consolidationAdmin.js`
+  - `frontend/src/api/glReports.js`
+- Member breakdown now enriches consolidated rows with existing group-member metadata where permissions allow:
+  - consolidation method
+  - ownership percentage
+  - legal-entity member context
+- Local drill entry now resolves one actual member book via the existing `listBooks({ legalEntityId })` seam instead of assuming that one legal entity always has exactly one local book.
+- The live repo still keeps local and consolidated naming compatibility explicit:
+  - current repo run fields remain:
+    - `consolidationGroupId`
+    - `fiscalPeriodId`
+    - `presentationCurrencyCode`
+  - Track 51 canonical naming still maps them conceptually to:
+    - `groupId`
+    - `consolidationPeriodId`
+    - `reportingCurrencyId`
+- The richer consolidated support slice now keeps local-base support values explicit without changing consolidation math:
+  - the consolidated summary endpoint now returns source-currency metadata on summary rows and totals
+  - the consolidated drill-across UI now distinguishes:
+    - one functional/source currency
+    - mixed local-currency support
+    - unavailable currency context
+  - mixed-currency support rows stay plain local-base sums instead of being labeled as if they were one reporting-currency amount
+- Member-book drill resolution is now stricter and safer:
+  - if exactly one local book exists for the selected member entity, it is auto-selected
+  - if multiple books exist, the UI now requires an explicit book choice
+  - if no books exist, the blocked local-drill state is shown explicitly
+- `Conflict / plan gap`
+  - none discovered during this RP11 pass; the existing consolidated trial-balance/summary endpoints were sufficient for the first shipped drill-across slice.
+- `Deferred item already covered`
+  - direct consolidated-row -> local ledger deep links remain intentionally deferred because consolidated group accounts can map to multiple local accounts.
+  - broader consolidated drill-across hardening, publication blockers, and export/fingerprint layers remain `RP12` / `RP13`.
+- `Optional hardening`
+  - keep richer consolidated support detail inside Track 51 as additive post-`RP11` hardening, not a separate follow-on plan.
+  - richer member-breakdown filters and mapping explanation can be added later only if they preserve canonical-mapping awareness instead of implying one-to-one lineage.
+  - safer account-level drill-eligibility rules should be made explicit before any deeper consolidated-row -> local ledger navigation is attempted.
+  - deeper backend filters for account-specific summary slices could reduce frontend row filtering later, but were not required for the first RP11 flow.
+
+## `RP13` - Current implementation notes
+
+- `RP13` chose one additive audit-durability slice on the existing consolidated drill-across surface instead of broad generic performance work:
+  - `frontend/src/pages/ConsolidationReportsPage.jsx`
+  - `frontend/src/utils/reportFingerprint.js`
+- The consolidated reporting page now preserves first-pass audit evidence for the currently loaded surfaces without changing report math or drill semantics:
+  - stable frontend report fingerprints derived from:
+    - selected run context
+    - current report parameters
+    - loaded response snapshot
+  - CSV export for the currently loaded:
+    - consolidated `Bilanco`
+    - consolidated `Gelir Tablosu`
+    - consolidated trial balance
+    - consolidated summary
+    - member breakdown
+    - selected member local-drill context
+- The RP13 hardening pass also now clears loaded consolidated report state when the selected run changes, so export/fingerprint evidence cannot silently mix one run's snapshot with another run id.
+- Consolidated support exports keep local-base vs translated/reporting-currency context explicit instead of flattening them into one misleading amount:
+  - local-base support rows export source-currency mode/code/count fields
+  - translated balances remain the canonical reporting-currency amounts
+  - selected member local-drill exports also preserve the current local report route chain where available
+- `RP13` `Prompt 7B` now reuses the shared immutable export-snapshot retention seam for one narrow persisted evidence slice instead of inventing a second retention subsystem:
+  - `backend/src/migrations/m159_track51_export_snapshots.js`
+  - `backend/src/services/consolidation.report-snapshots.service.js`
+  - `backend/src/routes/consolidation.js`
+  - `frontend/src/api/consolidationAdmin.js`
+  - `frontend/src/pages/ConsolidationReportsPage.jsx`
+- The first persisted-snapshot pass is intentionally narrow and explainable:
+  - snapshot type: `TRACK51_CONSOLIDATED_MEMBER_SUPPORT`
+  - scope anchor: the selected member legal entity from the consolidated drill chain
+  - stored item coverage:
+    - member breakdown
+    - selected member local-drill context
+  - the shared `period_export_snapshots` and `period_export_snapshot_items` tables remain the only storage seam
+- The server-side immutable evidence layer is now additive to the existing frontend fingerprints rather than replacing them:
+  - backend-created `snapshot_hash`
+  - backend-created per-item `item_hash`
+  - stored export columns and exported row payloads
+  - stored client fingerprint basis for the loaded report instance
+  - run/group/member/support-account/book metadata needed to reproduce the reviewed/exported drill state
+- `RP13` `Prompt 7C` chose the wider report-family rollout slice instead of a first measured performance pass:
+  - shared rollout component:
+    - `frontend/src/components/ReportAuditPanel.jsx`
+  - widened current frontend-only audit/export/fingerprint coverage to:
+    - `frontend/src/pages/TrialBalancePage.jsx`
+    - `frontend/src/pages/GeneralLedgerPage.jsx`
+    - `frontend/src/pages/LocalStatementPage.jsx`
+    - `frontend/src/pages/CariControlReconciliationPage.jsx`
+- The widened frontend rollout preserves each page's existing evidence semantics instead of flattening them into one generic export:
+  - `Mizan`
+    - posted trial-balance rows
+  - `Defter-i Kebir` / `Muavin`
+    - ledger detail rows
+    - grouping summary rows
+  - local statements
+    - statement rows
+    - the explicit account-summary middle drill step when loaded
+  - `RP10` reconciliation
+    - reconciliation rows
+    - expanded drill detail when opened
+- `Deferred item already covered`
+  - broader close/publish governance still remains owned by `RP12`, not this `RP13` slice
+- `Optional hardening`
+  - deeper performance work remains the higher-value remaining `RP13` residue after `7C`
+  - persisted server-side snapshots still do not cover every widened non-consolidation report surface; those pages now have consistent frontend audit/export behavior first
+  - frontend chunk splitting remains a build warning, not a Track 51 semantic blocker
+- `RP13` `Prompt 7D` chose the first measured performance slice instead of redoing rollout:
+  - `frontend/src/App.jsx` now lazy-loads the heaviest Track 51 route surfaces behind the existing permission guard seam:
+    - `frontend/src/pages/TrialBalancePage.jsx`
+    - `frontend/src/pages/GeneralLedgerPage.jsx`
+    - `frontend/src/pages/LocalStatementPage.jsx`
+    - `frontend/src/pages/CariControlReconciliationPage.jsx`
+    - `frontend/src/pages/LocalCloseWorkspacePage.jsx`
+    - `frontend/src/pages/LocalClosePackDetailPage.jsx`
+    - `frontend/src/pages/YearEndRevrecChecklistPage.jsx`
+    - `frontend/src/pages/ConsolidationReportsPage.jsx`
+  - the performance change is additive only:
+    - route-level code splitting
+    - unchanged report semantics, export meaning, and audit evidence context
+  - the main bundle no longer eagerly includes those heavy Track 51 pages for every authenticated session
+  - measured build outcome on the current repo:
+    - the main frontend chunk dropped from about `3.76 MB` to about `3.49 MB` minified after route-level splitting
+    - the Vite chunk-size warning still remains, so deeper tuning stays optional hardening rather than claimed closure
+- `Optional hardening`
+  - manual chunk tuning or deeper per-page render/query optimization may still be useful if the frontend build warning persists after route-level splitting
+  - persisted server-side snapshots are still narrow compared with the widened frontend audit/export rollout
+- `RP13` now has both follow-up dimensions materially covered on the current repo:
+  - wider frontend audit/export/fingerprint rollout from `Prompt 7C`
+  - one measured performance slice from `Prompt 7D`
+- `Optional hardening`
+  - any remaining residue is now optional follow-on hardening inside the same roadmap step rather than a missing Track 51 deliverable:
+    - deeper per-page render/query optimization
+    - broader persisted snapshot coverage for non-consolidation pages
+    - manual chunk tuning if build warnings still remain
 
 ## `RP04` - Current implementation notes
 

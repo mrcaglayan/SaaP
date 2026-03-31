@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
 import AcceptInvitePage from "./pages/AcceptInvitePage.jsx";
@@ -30,7 +31,6 @@ import OpsDashboardPage from "./pages/OpsDashboardPage.jsx";
 import ExceptionsWorkbenchPage from "./pages/ExceptionsWorkbenchPage.jsx";
 import RetentionAdminPage from "./pages/settings/RetentionAdminPage.jsx";
 import IntercompanyReconciliationPage from "./pages/IntercompanyReconciliationPage";
-import ConsolidationReportsPage from "./pages/ConsolidationReportsPage";
 import ProviderBootstrapPage from "./pages/ProviderBootstrapPage";
 import ProviderLoginPage from "./pages/provider/ProviderLoginPage.jsx";
 import ModulePlaceholderPage from "./pages/ModulePlaceholderPage";
@@ -80,18 +80,30 @@ import FixedAssetReportsPage from "./pages/fixedAssets/FixedAssetReportsPage.jsx
 import FixedAssetSettingsPage from "./pages/fixedAssets/FixedAssetSettingsPage.jsx";
 import FixedAssetCustodiansPage from "./pages/fixedAssets/FixedAssetCustodiansPage.jsx";
 import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
-import YearEndRevrecChecklistPage from "./pages/YearEndRevrecChecklistPage.jsx";
-import TrialBalancePage from "./pages/TrialBalancePage.jsx";
-import GeneralLedgerPage from "./pages/GeneralLedgerPage.jsx";
-import CariControlReconciliationPage from "./pages/CariControlReconciliationPage.jsx";
-import LocalStatementPage from "./pages/LocalStatementPage.jsx";
-import LocalCloseWorkspacePage from "./pages/LocalCloseWorkspacePage.jsx";
-import LocalClosePackDetailPage from "./pages/LocalClosePackDetailPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
 import ModuleReadinessProvider from "./readiness/ModuleReadinessProvider.jsx";
 import RequireProviderAuth from "./provider/RequireProviderAuth.jsx";
+
+const ConsolidationReportsPage = lazy(
+  () => import("./pages/ConsolidationReportsPage.jsx"),
+);
+const YearEndRevrecChecklistPage = lazy(
+  () => import("./pages/YearEndRevrecChecklistPage.jsx"),
+);
+const TrialBalancePage = lazy(() => import("./pages/TrialBalancePage.jsx"));
+const GeneralLedgerPage = lazy(() => import("./pages/GeneralLedgerPage.jsx"));
+const CariControlReconciliationPage = lazy(
+  () => import("./pages/CariControlReconciliationPage.jsx"),
+);
+const LocalStatementPage = lazy(() => import("./pages/LocalStatementPage.jsx"));
+const LocalCloseWorkspacePage = lazy(
+  () => import("./pages/LocalCloseWorkspacePage.jsx"),
+);
+const LocalClosePackDetailPage = lazy(
+  () => import("./pages/LocalClosePackDetailPage.jsx"),
+);
 
 function toRoutePath(value) {
   return String(value || "").replace(/[?#].*$/, "");
@@ -142,6 +154,21 @@ const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role_permissions.assign",
 ];
 const PERIODIZATION_REVENUE_CANONICAL_PATH = "/app/gelecek-yillar-gelirleri";
+const routeLoadingFallback = (
+  <div className="grid min-h-[32vh] place-items-center">
+    <div className="text-sm text-slate-600">Loading module...</div>
+  </div>
+);
+
+// Keep heavy route bundles behind RequirePermission so unauthorized users do not
+// fetch report chunks they cannot open.
+function withLazyRoute(Component, props = {}) {
+  return (
+    <Suspense fallback={routeLoadingFallback}>
+      <Component {...props} />
+    </Suspense>
+  );
+}
 
 const implementedRoutes = [
   {
@@ -157,32 +184,38 @@ const implementedRoutes = [
   {
     appPath: "/app/mizan-raporu",
     childPath: "mizan-raporu",
-    element: <TrialBalancePage />,
+    element: withLazyRoute(TrialBalancePage),
   },
   {
     appPath: "/app/defter-i-kebir",
     childPath: "defter-i-kebir",
-    element: <GeneralLedgerPage reportMode="GENERAL_LEDGER" />,
+    element: withLazyRoute(GeneralLedgerPage, {
+      reportMode: "GENERAL_LEDGER",
+    }),
   },
   {
     appPath: "/app/muavin",
     childPath: "muavin",
-    element: <GeneralLedgerPage reportMode="MUAVIN" />,
+    element: withLazyRoute(GeneralLedgerPage, { reportMode: "MUAVIN" }),
   },
   {
     appPath: "/app/cari-kontrol-mutabakati",
     childPath: "cari-kontrol-mutabakati",
-    element: <CariControlReconciliationPage />,
+    element: withLazyRoute(CariControlReconciliationPage),
   },
   {
     appPath: "/app/bilanco",
     childPath: "bilanco",
-    element: <LocalStatementPage statementType="BALANCE_SHEET" />,
+    element: withLazyRoute(LocalStatementPage, {
+      statementType: "BALANCE_SHEET",
+    }),
   },
   {
     appPath: "/app/gelir-tablosu",
     childPath: "gelir-tablosu",
-    element: <LocalStatementPage statementType="INCOME_STATEMENT" />,
+    element: withLazyRoute(LocalStatementPage, {
+      statementType: "INCOME_STATEMENT",
+    }),
   },
   {
     appPath: "/app/kasa-tanimlari",
@@ -673,23 +706,23 @@ const implementedRoutes = [
   {
     appPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
     childPath: "donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
-    element: <LocalCloseWorkspacePage />,
+    element: withLazyRoute(LocalCloseWorkspacePage),
   },
   {
     appPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri/:packId",
     childPath: "donem-sonu-islemler/yillik/yerel-kapanis-paketleri/:packId",
     permissionPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
-    element: <LocalClosePackDetailPage />,
+    element: withLazyRoute(LocalClosePackDetailPage),
   },
   {
     appPath: "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
     childPath: "donem-sonu-islemler/yillik/kapanis-islemleri",
-    element: <YearEndRevrecChecklistPage />,
+    element: withLazyRoute(YearEndRevrecChecklistPage),
   },
   {
     appPath: "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",
     childPath: "donem-sonu-islemler/yillik/konsolidasyon-raporlari",
-    element: <ConsolidationReportsPage />,
+    element: withLazyRoute(ConsolidationReportsPage),
   },
 ];
 
@@ -774,6 +807,10 @@ function LegacyRouteRedirect({ to }) {
   return <Navigate to={`${to}${search}${hash}`} replace />;
 }
 
+/**
+ * Renders the authenticated application route tree and keeps the heaviest
+ * Track 51 report surfaces on lazy-loaded route chunks.
+ */
 export default function App() {
   const { hasAllPermissions, hasAnyFeature } = useAuth();
   const canViewUnimplementedModules = hasAllPermissions(

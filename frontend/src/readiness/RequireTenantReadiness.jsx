@@ -8,7 +8,21 @@ const SETUP_ALLOWLIST = new Set([
   "/app/ayarlar/hesap-plani-olustur",
   "/app/ayarlar/hesap-plani-ayarlari",
   "/app/ayarlar/workflow-kurulumu",
+  "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
+  "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",
+  "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
 ]);
+
+function isTenantSetupAllowedPath(pathname) {
+  const normalizedPath = String(pathname || "").trim();
+  if (SETUP_ALLOWLIST.has(normalizedPath)) {
+    return true;
+  }
+
+  return normalizedPath.startsWith(
+    "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri/"
+  );
+}
 
 export default function RequireTenantReadiness({ children }) {
   const location = useLocation();
@@ -45,7 +59,10 @@ export default function RequireTenantReadiness({ children }) {
     return children;
   }
 
-  const isSetupPage = SETUP_ALLOWLIST.has(location.pathname);
+  // Keep the close-control surfaces reachable even when tenant readiness is
+  // incomplete so operators can inspect what is blocking close instead of
+  // getting bounced to company settings first.
+  const isSetupPage = isTenantSetupAllowedPath(location.pathname);
   if (!isSetupPage) {
     return <Navigate to="/app/ayarlar/sirket-ayarlari" replace />;
   }

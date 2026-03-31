@@ -5,8 +5,10 @@ import { getLocalClosePackById } from "./local.close-packs.service.js";
 import {
   LOCAL_CLOSE_PACK_WORKFLOW_PROCESS_TYPE,
   LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
+  LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS,
   resolveLocalClosePackRowScope,
 } from "./local.close-packs.shared.js";
+import { getRevrecYearEndContinuityReview } from "./revrec.year-end-review.service.js";
 
 const SUBMITTABLE_LOCAL_CLOSE_PACK_STATUSES = new Set([
   "NOT_OPENED",
@@ -174,12 +176,20 @@ async function countScopedDraftJournalsForPack({
   packRow,
   runQuery = query,
 }) {
-  const tenantId = parsePositiveInt(packRow?.tenant_id);
-  const legalEntityId = parsePositiveInt(packRow?.legal_entity_id);
-  const bookId = parsePositiveInt(packRow?.book_id);
-  const fiscalPeriodId = parsePositiveInt(packRow?.fiscal_period_id);
-  const closeScopeType = toUpperText(packRow?.close_scope_type);
-  const operatingUnitId = parsePositiveInt(packRow?.operating_unit_id);
+  const tenantId = parsePositiveInt(packRow?.tenant_id ?? packRow?.tenantId);
+  const legalEntityId = parsePositiveInt(
+    packRow?.legal_entity_id ?? packRow?.legalEntityId
+  );
+  const bookId = parsePositiveInt(packRow?.book_id ?? packRow?.bookId);
+  const fiscalPeriodId = parsePositiveInt(
+    packRow?.fiscal_period_id ?? packRow?.fiscalPeriodId
+  );
+  const closeScopeType = toUpperText(
+    packRow?.close_scope_type ?? packRow?.closeScopeType
+  );
+  const operatingUnitId = parsePositiveInt(
+    packRow?.operating_unit_id ?? packRow?.operatingUnitId
+  );
   if (!tenantId || !legalEntityId || !bookId || !fiscalPeriodId || !closeScopeType) {
     return 0;
   }
@@ -239,6 +249,367 @@ async function countScopedDraftJournalsForPack({
   }
 
   return 0;
+}
+
+async function listReviewedReportKeysForPack({
+  tenantId,
+  packId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT report_key
+     FROM local_close_pack_report_reviews
+     WHERE tenant_id = ?
+       AND local_close_pack_id = ?`,
+    [tenantId, packId]
+  );
+  return [...new Set((result.rows || [])
+    .map((row) => String(row?.report_key || "").trim())
+    .filter(Boolean))];
+}
+
+function buildActionAvailability({
+  currentStatus,
+  blockerCodesByAction,
+}) {
+  return {
+    currentStatus,
+    submit: {
+      allowed:
+        SUBMITTABLE_LOCAL_CLOSE_PACK_STATUSES.has(currentStatus) &&
+        blockerCodesByAction.submit.length === 0,
+      blockedByCodes: blockerCodesByAction.submit,
+    },
+    return: {
+      allowed: RETURNABLE_LOCAL_CLOSE_PACK_STATUSES.has(currentStatus),
+      blockedByCodes: [],
+    },
+    approve: {
+      allowed:
+        APPROVABLE_LOCAL_CLOSE_PACK_STATUSES.has(currentStatus) &&
+        blockerCodesByAction.approve.length === 0,
+      blockedByCodes: blockerCodesByAction.approve,
+    },
+    lock: {
+      allowed:
+        LOCKABLE_LOCAL_CLOSE_PACK_STATUSES.has(currentStatus) &&
+        blockerCodesByAction.lock.length === 0,
+      blockedByCodes: blockerCodesByAction.lock,
+    },
+  };
+}
+
+function buildRecommendedAction(currentStatus, actionAvailability) {
+  if (actionAvailability.lock.allowed) {
+    return "LOCK";
+  }
+  if (actionAvailability.approve.allowed) {
+    return "APPROVE";
+  }
+  if (actionAvailability.return.allowed) {
+    return "RETURN";
+  }
+  if (actionAvailability.submit.allowed) {
+    return "SUBMIT";
+  }
+  if (currentStatus === "LOCKED") {
+    return "NONE";
+  }
+  return "RESOLVE_BLOCKERS";
+}
+
+async function loadRevrecYearEndContinuityReviewForPack({
+  packRow,
+  runQuery = query,
+}) {
+  if (toUpperText(packRow?.close_scope_type) !== "CENTRAL") {
+    return null;
+  }
+  const tenantId = parsePositiveInt(packRow?.tenant_id);
+  const legalEntityId = parsePositiveInt(packRow?.legal_entity_id);
+  const bookId = parsePositiveInt(packRow?.book_id);
+  const fiscalPeriodId = parsePositiveInt(packRow?.fiscal_period_id);
+  if (!tenantId || !legalEntityId || !bookId || !fiscalPeriodId) {
+    return null;
+  }
+
+  // RP12 reuses the existing year-end REVREC report seam only for CENTRAL
+  // packs because the live continuity checks are entity/book/period controls,
+  // not OU-scoped accounting rules.
+  return getRevrecYearEndContinuityReview({
+    tenantId,
+    legalEntityId,
+    bookId,
+    fiscalPeriodId,
+    runQuery,
+  });
+}
+
+function buildRevrecContinuityBlockers(review = null) {
+  if (!review?.applicable) {
+    return [];
+  }
+  return (Array.isArray(review?.blockingRows) ? review.blockingRows : []).map((row) => {
+    const primaryReasonCode =
+      String(Array.isArray(row?.reasonCodes) ? row.reasonCodes[0] || "" : "")
+        .trim()
+        .toUpperCase() || "CONTINUITY_BLOCK";
+    return {
+      level: "BLOCKER",
+      code: `REVREC_CONTINUITY_${primaryReasonCode}`,
+      message: `${row?.title || row?.familyCode || "REVREC"}: ${row?.detail || "Continuity issue must be resolved before close"}`,
+      appliesToActions: ["approve", "lock"],
+      count: 1,
+      drill: {
+        tab: "reports",
+        surface: "yearEndRevrec",
+        path: String(row?.drill?.path || review?.drillPath || "").trim() || null,
+        label: String(row?.drill?.label || "Open year-end REVREC"),
+        familyCode: row?.familyCode || null,
+        reasonCodes: Array.isArray(row?.reasonCodes) ? row.reasonCodes : [],
+      },
+    };
+  });
+}
+
+async function evaluateLocalClosePackReviewGate({
+  req,
+  tenantId,
+  packId,
+  assertScopeAccess,
+  row = null,
+  entityReadiness = null,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedPackId = parsePositiveInt(packId);
+  if (!normalizedTenantId) {
+    throw notFound("tenantId is required");
+  }
+  if (!normalizedPackId) {
+    throw notFound("packId is required");
+  }
+
+  const packRow =
+    row ||
+    (await getLocalClosePackById({
+      req,
+      tenantId: normalizedTenantId,
+      packId: normalizedPackId,
+      assertScopeAccess,
+      runQuery,
+    }));
+  const headerRow = await loadLocalClosePackHeader({
+    tenantId: normalizedTenantId,
+    packId: normalizedPackId,
+    runQuery,
+  });
+  if (!headerRow) {
+    throw notFound("Local close pack not found");
+  }
+
+  const reviewedReportKeys = await listReviewedReportKeysForPack({
+    tenantId: normalizedTenantId,
+    packId: normalizedPackId,
+    runQuery,
+  });
+  const reviewedReportKeySet = new Set(reviewedReportKeys);
+  const missingReportKeys = LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS.filter(
+    (key) => !reviewedReportKeySet.has(key)
+  );
+  const draftJournalCount = await countScopedDraftJournalsForPack({
+    packRow: headerRow,
+    runQuery,
+  });
+  const pendingReopenRequestCount = await countPendingReopenRequests({
+    tenantId: normalizedTenantId,
+    packId: normalizedPackId,
+    runQuery,
+  });
+  const workflowGate = await evaluateWorkflowGateForApproval({
+    tenantId: normalizedTenantId,
+    packRow: headerRow,
+    runQuery,
+  });
+  const revrecContinuity = await loadRevrecYearEndContinuityReviewForPack({
+    packRow: headerRow,
+    runQuery,
+  });
+  const readiness =
+    entityReadiness ||
+    (await getEntityCloseReadiness({
+      tenantId: normalizedTenantId,
+      legalEntityId: parsePositiveInt(packRow?.legalEntityId),
+      bookId: parsePositiveInt(packRow?.bookId),
+      fiscalPeriodId: parsePositiveInt(packRow?.fiscalPeriodId),
+      runQuery,
+    }));
+  const invalidatingScopeCount = Array.isArray(readiness?.invalidatingScopes)
+    ? readiness.invalidatingScopes.length
+    : 0;
+  const blockers = [];
+  const warnings = [];
+
+  if (missingReportKeys.length > 0) {
+    blockers.push({
+      level: "BLOCKER",
+      code: "LOCAL_REPORT_REVIEW_MISSING",
+      message: `Missing ${missingReportKeys.length} required report review(s) before approval`,
+      appliesToActions: ["approve"],
+      count: missingReportKeys.length,
+      drill: {
+        tab: "reports",
+        reportKeys: missingReportKeys,
+      },
+    });
+  }
+
+  if (draftJournalCount > 0) {
+    // Exact-scope draft journals are already real repo truth, so RP12 reuses
+    // the same guard as a surfaced blocker instead of inventing a new rule.
+    blockers.push({
+      level: "BLOCKER",
+      code: "LOCAL_CLOSE_PACK_DRAFT_JOURNALS_BLOCK",
+      message: `Exact-scope draft journals still exist for this pack (${draftJournalCount})`,
+      appliesToActions: ["submit", "approve"],
+      count: draftJournalCount,
+      drill: {
+        tab: "reports",
+        reportKey: "generalLedger",
+        suggestedParams: {
+          status: "DRAFT",
+        },
+      },
+    });
+  }
+
+  if (workflowGate.required && !workflowGate.approved) {
+    blockers.push({
+      level: "BLOCKER",
+      code: String(workflowGate.errorCode || "APPROVAL_REQUIRED"),
+      message:
+        String(workflowGate.message || "").trim() ||
+        "Workflow approval is still pending for this local close pack",
+      appliesToActions: ["approve"],
+      drill: {
+        tab: "overview",
+        surface: "workflow",
+        workflowInstanceId: workflowGate.workflowInstanceId || null,
+      },
+    });
+  }
+
+  if (pendingReopenRequestCount > 0) {
+    blockers.push({
+      level: "BLOCKER",
+      code: "LOCAL_CLOSE_PACK_PENDING_REOPEN_BLOCK",
+      message: `Pending reopen requests must be resolved before lock (${pendingReopenRequestCount})`,
+      appliesToActions: ["lock"],
+      count: pendingReopenRequestCount,
+      drill: {
+        tab: "exceptions",
+      },
+    });
+  }
+
+  blockers.push(...buildRevrecContinuityBlockers(revrecContinuity));
+
+  if (!(Number(packRow?.evidenceCount || 0) > 0)) {
+    warnings.push({
+      level: "WARNING",
+      code: "LOCAL_CLOSE_PACK_EVIDENCE_MISSING",
+      message: "No evidence is attached for this pack yet",
+      drill: {
+        tab: "evidence",
+      },
+    });
+  }
+
+  if (invalidatingScopeCount > 0) {
+    warnings.push({
+      level: "WARNING",
+      code: "ENTITY_CLOSE_READINESS_INVALIDATED",
+      message: `Entity readiness is currently invalidated by ${invalidatingScopeCount} scope(s)`,
+      count: invalidatingScopeCount,
+      drill: {
+        tab: "exceptions",
+      },
+    });
+  }
+
+  const currentStatus = toUpperText(packRow?.status);
+  const blockerCodesByAction = {
+    submit: blockers
+      .filter((row) => row.appliesToActions?.includes("submit"))
+      .map((row) => row.code),
+    approve: blockers
+      .filter((row) => row.appliesToActions?.includes("approve"))
+      .map((row) => row.code),
+    lock: blockers
+      .filter((row) => row.appliesToActions?.includes("lock"))
+      .map((row) => row.code),
+  };
+  const actionAvailability = buildActionAvailability({
+    currentStatus,
+    blockerCodesByAction,
+  });
+
+  return {
+    currentStatus,
+    reviewedReportKeys,
+    missingReportKeys,
+    blockerCount: blockers.length,
+    warningCount: warnings.length,
+    counts: {
+      reviewedReportCount: reviewedReportKeys.length,
+      requiredReportCount: LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS.length,
+      draftJournalCount,
+      pendingReopenRequestCount,
+      revrecContinuityIssueCount: Array.isArray(revrecContinuity?.blockingRows)
+        ? revrecContinuity.blockingRows.length
+        : 0,
+      evidenceCount: Number(packRow?.evidenceCount || 0),
+      invalidatingScopeCount,
+    },
+    workflowGate,
+    revrecContinuity: revrecContinuity
+      ? {
+          applicable: Boolean(revrecContinuity.applicable),
+          nextFiscalPeriodId: parsePositiveInt(revrecContinuity.nextFiscalPeriodId),
+          blockingRowCount: Array.isArray(revrecContinuity.blockingRows)
+            ? revrecContinuity.blockingRows.length
+            : 0,
+        }
+      : null,
+    blockers,
+    warnings,
+    actionAvailability,
+    nextRecommendedAction: buildRecommendedAction(
+      currentStatus,
+      actionAvailability
+    ),
+  };
+}
+
+/**
+ * Read the surfaced RP12 review gate for one local close pack without mutating
+ * the workflow state. This keeps pack blockers explainable from existing
+ * report reviews, draft journals, workflow state, and reopen truth.
+ */
+export async function getLocalClosePackReviewGate({
+  req,
+  tenantId,
+  packId,
+  assertScopeAccess,
+  runQuery = query,
+}) {
+  return evaluateLocalClosePackReviewGate({
+    req,
+    tenantId,
+    packId,
+    assertScopeAccess,
+    runQuery,
+  });
 }
 
 async function isWorkflowGateFeatureEnabled({
@@ -720,17 +1091,27 @@ async function buildActionResult({
     assertScopeAccess,
     runQuery,
   });
+  const entityReadiness = await getEntityCloseReadiness({
+    tenantId,
+    legalEntityId: parsePositiveInt(row.legalEntityId),
+    bookId: parsePositiveInt(row.bookId),
+    fiscalPeriodId: parsePositiveInt(row.fiscalPeriodId),
+    runQuery,
+  });
   return {
     row,
-    entityReadiness: await getEntityCloseReadiness({
-      tenantId,
-      legalEntityId: parsePositiveInt(row.legalEntityId),
-      bookId: parsePositiveInt(row.bookId),
-      fiscalPeriodId: parsePositiveInt(row.fiscalPeriodId),
-      runQuery,
-    }),
+    entityReadiness,
     workflowGate: workflowGate ? mapWorkflowGateSummary(workflowGate) : null,
     gateSummary: gateSummary || null,
+    reviewGate: await evaluateLocalClosePackReviewGate({
+      req,
+      tenantId,
+      packId,
+      assertScopeAccess,
+      row,
+      entityReadiness,
+      runQuery,
+    }),
   };
 }
 
@@ -962,6 +1343,26 @@ export async function approveLocalClosePack({
       );
     }
 
+    const reviewedReportKeys = await listReviewedReportKeysForPack({
+      tenantId: input.tenantId,
+      packId: input.packId,
+      runQuery: tx.query,
+    });
+    const missingReportKeys = LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS.filter(
+      (key) => !reviewedReportKeys.includes(key)
+    );
+    if (missingReportKeys.length > 0) {
+      throw conflict(
+        `Local close pack cannot be approved until all required report reviews are captured (${missingReportKeys.join(", ")})`,
+        {
+          reviewedReportCount: reviewedReportKeys.length,
+          requiredReportCount: LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS.length,
+          missingReportKeys,
+        },
+        "LOCAL_REPORT_REVIEW_MISSING"
+      );
+    }
+
     const workflowGate = await evaluateWorkflowGateForApproval({
       tenantId: input.tenantId,
       packRow,
@@ -974,6 +1375,21 @@ export async function approveLocalClosePack({
           workflowGate,
         },
         workflowGate.errorCode || "APPROVAL_REQUIRED"
+      );
+    }
+
+    const revrecContinuity = await loadRevrecYearEndContinuityReviewForPack({
+      packRow,
+      runQuery: tx.query,
+    });
+    if (Array.isArray(revrecContinuity?.blockingRows) && revrecContinuity.blockingRows.length > 0) {
+      const firstBlockingRow = revrecContinuity.blockingRows[0];
+      throw conflict(
+        `${firstBlockingRow?.title || "REVREC"}: ${firstBlockingRow?.detail || "Continuity issue must be resolved before approval"}`,
+        {
+          revrecContinuity,
+        },
+        `REVREC_CONTINUITY_${toUpperText(firstBlockingRow?.reasonCodes?.[0] || "CONTINUITY_BLOCK")}`
       );
     }
 
@@ -1059,6 +1475,21 @@ export async function lockLocalClosePack({
       );
     }
 
+    const revrecContinuity = await loadRevrecYearEndContinuityReviewForPack({
+      packRow,
+      runQuery: tx.query,
+    });
+    if (Array.isArray(revrecContinuity?.blockingRows) && revrecContinuity.blockingRows.length > 0) {
+      const firstBlockingRow = revrecContinuity.blockingRows[0];
+      throw conflict(
+        `${firstBlockingRow?.title || "REVREC"}: ${firstBlockingRow?.detail || "Continuity issue must be resolved before lock"}`,
+        {
+          revrecContinuity,
+        },
+        `REVREC_CONTINUITY_${toUpperText(firstBlockingRow?.reasonCodes?.[0] || "CONTINUITY_BLOCK")}`
+      );
+    }
+
     await tx.query(
       `UPDATE local_close_packs
        SET status = 'LOCKED',
@@ -1103,6 +1534,7 @@ export async function lockLocalClosePack({
 }
 
 export default {
+  getLocalClosePackReviewGate,
   submitLocalClosePack,
   returnLocalClosePack,
   approveLocalClosePack,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Combobox from "../components/Combobox.jsx";
 import MoneyText from "../components/MoneyText.jsx";
+import ReportAuditPanel from "../components/ReportAuditPanel.jsx";
 import { listBooks } from "../api/glAdmin.js";
 import {
   appendLocalReportContextParams,
@@ -23,6 +24,11 @@ const REQUIRED_PAGE_PERMISSIONS = Object.freeze([
   "org.fiscal_period.read",
   "gl.report.statement.read",
 ]);
+const EMPTY_REPORT_ROWS = Object.freeze([]);
+const EMPTY_REPORT_WARNINGS = Object.freeze([]);
+const EMPTY_REPORT_TOTALS = Object.freeze({});
+const EMPTY_REPORT_CONTRACT = Object.freeze({});
+const EMPTY_REPORT_RANGE = Object.freeze({});
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -128,6 +134,22 @@ function buildStatementResponseSnapshot(reportResponse) {
   };
 }
 
+function buildStatementAccountSummarySnapshot(accountSummaryResponse) {
+  return {
+    statementRow: accountSummaryResponse?.statementRow || null,
+    summary: accountSummaryResponse?.summary || null,
+    range: accountSummaryResponse?.range || null,
+    drillthrough: accountSummaryResponse?.drillthrough || null,
+    rowCount: Array.isArray(accountSummaryResponse?.rows)
+      ? accountSummaryResponse.rows.length
+      : 0,
+  };
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /**
  * Render the RP05 local Bilanco and Gelir Tablosu pages with explicit
  * statement-row -> account-summary -> ledger drillthrough.
@@ -189,14 +211,157 @@ export default function LocalStatementPage({ statementType = "BALANCE_SHEET" }) 
     [periods, selectedPeriodId],
   );
 
-  const reportRows = Array.isArray(reportResponse?.rows) ? reportResponse.rows : [];
-  const reportWarnings = Array.isArray(reportResponse?.warnings) ? reportResponse.warnings : [];
-  const reportTotals = reportResponse?.totals || {};
-  const reportContract = reportResponse?.contract || {};
-  const reportRange = reportResponse?.range || {};
+  const reportRows = Array.isArray(reportResponse?.rows)
+    ? reportResponse.rows
+    : EMPTY_REPORT_ROWS;
+  const reportWarnings = Array.isArray(reportResponse?.warnings)
+    ? reportResponse.warnings
+    : EMPTY_REPORT_WARNINGS;
+  const reportTotals = reportResponse?.totals || EMPTY_REPORT_TOTALS;
+  const reportContract = reportResponse?.contract || EMPTY_REPORT_CONTRACT;
+  const reportRange = reportResponse?.range || EMPTY_REPORT_RANGE;
   const currencyCode = String(
     reportResponse?.book?.baseCurrencyCode || selectedBook?.base_currency_code || "",
   ).toUpperCase();
+  const auditSpecs = useMemo(() => {
+    if (!reportResponse) {
+      return [];
+    }
+
+    const specs = [];
+    const statementRows = reportRows.map((row) => ({
+      statementType: normalizedStatementType,
+      rowKey: row.key || "",
+      label: row.label || "",
+      section: row.section || "",
+      rowKind: row.rowKind || "",
+      accountCount: Number(row.accountCount || 0),
+      amount: Number(row.amount || 0),
+      drillthroughEnabled: row.drillthroughEnabled ? "YES" : "NO",
+    }));
+
+    if (statementRows.length > 0) {
+      specs.push({
+        key: `${reportKey}Rows`,
+        label:
+          normalizedStatementType === "INCOME_STATEMENT"
+            ? l("Income statement rows", "Gelir tablosu satirlari")
+            : l("Balance sheet rows", "Bilanco satirlari"),
+        rowCount: statementRows.length,
+        routePath,
+        fileName: `track51-${reportKey}-rows-${selectedBook?.code || selectedBookId || "book"}-${todayIsoDate()}.csv`,
+        exportColumns: [
+          { key: "statementType", header: "Statement Type" },
+          { key: "rowKey", header: "Row Key" },
+          { key: "label", header: "Label" },
+          { key: "section", header: "Section" },
+          { key: "rowKind", header: "Row Kind" },
+          { key: "accountCount", header: "Account Count" },
+          { key: "amount", header: "Amount" },
+          { key: "drillthroughEnabled", header: "Drillthrough Enabled" },
+        ],
+        exportRows: statementRows,
+        fingerprintParameters: {
+          statementType: normalizedStatementType,
+          legalEntityId: selectedLegalEntityId,
+          bookId: selectedBookId,
+          fiscalPeriodId: selectedPeriodId,
+          includeZero: filters.includeZero,
+        },
+        fingerprintContext: {
+          routePath,
+          currencyCode,
+          mappingSource: reportContract.mappingSource || null,
+          statementBasis: reportContract.statementBasis || null,
+        },
+        fingerprintSnapshot: {
+          report: buildStatementResponseSnapshot(reportResponse),
+          rows: statementRows,
+          totals: reportTotals,
+        },
+      });
+    }
+
+    if (accountSummaryResponse?.statementRow) {
+      const accountSummaryRows = (accountSummaryResponse.rows || []).map((row) => ({
+        statementRowKey: accountSummaryResponse.statementRow?.key || "",
+        statementRowLabel: accountSummaryResponse.statementRow?.label || "",
+        accountCode: row.accountCode || "",
+        accountName: row.accountName || "",
+        accountType: row.accountType || "",
+        normalSide: row.normalSide || "",
+        debitTotal: Number(row.debitTotal || 0),
+        creditTotal: Number(row.creditTotal || 0),
+        contributionAmount: Number(row.contributionAmount || 0),
+        ledgerPath: buildLocalReportLocation("generalLedger", {
+          legalEntityId: selectedLegalEntityId || undefined,
+          bookId: selectedBookId || undefined,
+          fiscalPeriodIdFrom: accountSummaryResponse.drillthrough?.fiscalPeriodIdFrom || undefined,
+          fiscalPeriodIdTo: accountSummaryResponse.drillthrough?.fiscalPeriodIdTo || undefined,
+          accountId: row.accountId || undefined,
+          closePackId: searchParams.get("closePackId") || undefined,
+          closeLaunchMode: searchParams.get("closeLaunchMode") || undefined,
+        }),
+      }));
+
+      specs.push({
+        key: `${reportKey}AccountSummary`,
+        label: l("Statement account summary", "Finansal tablo hesap ozeti"),
+        rowCount: accountSummaryRows.length,
+        routePath,
+        fileName: `track51-${reportKey}-account-summary-${accountSummaryResponse.statementRow?.key || "row"}-${todayIsoDate()}.csv`,
+        exportColumns: [
+          { key: "statementRowKey", header: "Statement Row Key" },
+          { key: "statementRowLabel", header: "Statement Row Label" },
+          { key: "accountCode", header: "Account Code" },
+          { key: "accountName", header: "Account Name" },
+          { key: "accountType", header: "Account Type" },
+          { key: "normalSide", header: "Normal Side" },
+          { key: "debitTotal", header: "Debit Total" },
+          { key: "creditTotal", header: "Credit Total" },
+          { key: "contributionAmount", header: "Contribution Amount" },
+          { key: "ledgerPath", header: "Ledger Path" },
+        ],
+        exportRows: accountSummaryRows,
+        fingerprintParameters: {
+          statementType: normalizedStatementType,
+          legalEntityId: selectedLegalEntityId,
+          bookId: selectedBookId,
+          fiscalPeriodId: selectedPeriodId,
+          statementRowKey: accountSummaryResponse.statementRow?.key || null,
+        },
+        fingerprintContext: {
+          routePath,
+          currencyCode,
+          statementRowLabel: accountSummaryResponse.statementRow?.label || null,
+        },
+        fingerprintSnapshot: {
+          summary: buildStatementAccountSummarySnapshot(accountSummaryResponse),
+          rows: accountSummaryRows,
+        },
+      });
+    }
+
+    return specs;
+  }, [
+    accountSummaryResponse,
+    currencyCode,
+    filters.includeZero,
+    l,
+    normalizedStatementType,
+    reportContract.mappingSource,
+    reportContract.statementBasis,
+    reportKey,
+    reportResponse,
+    reportRows,
+    reportTotals,
+    routePath,
+    searchParams,
+    selectedBook,
+    selectedBookId,
+    selectedLegalEntityId,
+    selectedPeriodId,
+  ]);
 
   useEffect(() => {
     if (!hasRequiredReads) return undefined;
@@ -453,6 +618,20 @@ export default function LocalStatementPage({ statementType = "BALANCE_SHEET" }) 
           canReview={canReviewLocalClose}
           l={l}
         />
+        <div className="mt-4">
+          <ReportAuditPanel
+            specs={auditSpecs}
+            title={l(
+              "Audit export and fingerprint",
+              "Audit disa aktarim ve fingerprint",
+            )}
+            subtitle={l(
+              "RP13 now gives the local statement family one stable frontend fingerprint plus CSV export for the loaded statement rows and, when opened, the intermediate account-summary drill surface.",
+              "RP13 artik yerel finansal tablo ailesine yuklu tablo satirlari ve acildiysa ara hesap-ozeti drill yuzeyi icin bir kararlı frontend fingerprint'i ve CSV disa aktarimi verir.",
+            )}
+            l={l}
+          />
+        </div>
       </section>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}

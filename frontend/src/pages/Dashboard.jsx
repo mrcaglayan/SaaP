@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  getConsolidationRunReviewGate,
+  listConsolidationGroupMembers,
+  listConsolidationRuns,
+} from "../api/consolidationAdmin.js";
+import {
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
   getOpsFixedAssetActivationAttention,
@@ -12,6 +17,7 @@ import {
 } from "../api/opsDashboard.js";
 import { getInventoryWorkQueueSummary } from "../api/inventory.js";
 import { listExceptionWorkbench } from "../api/exceptionsWorkbench.js";
+import { getLocalClosePack, listLocalClosePacks } from "../api/localClosePacks.js";
 import {
   listMeNotifications,
   markAllMeNotificationsRead,
@@ -23,6 +29,13 @@ import { useI18n } from "../i18n/useI18n.js";
 import { useModuleReadiness } from "../readiness/useModuleReadiness.js";
 import { useTenantReadiness } from "../readiness/useTenantReadiness.js";
 import { resolveSourceLinkDestination } from "../utils/journalSourceLinkDestinations.js";
+
+const CONSOLIDATION_REPORTS_PATH =
+  "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari";
+const LOCAL_CLOSE_WORKSPACE_PATH =
+  "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri";
+const YEAR_END_REVREC_PATH =
+  "/app/donem-sonu-islemler/yillik/kapanis-islemleri";
 
 function toInt(value, fallback = 0) {
   const parsed = Number(value);
@@ -153,6 +166,82 @@ function buildAppPath(basePath, params = {}) {
   return query ? `${basePath}?${query}` : basePath;
 }
 
+function formatPeriodLabel(periodYear, periodNo, periodName = "") {
+  const normalizedYear = toInt(periodYear, 0);
+  const normalizedPeriodNo = toInt(periodNo, 0);
+  const normalizedPeriodName = String(periodName || "").trim();
+  if (normalizedYear > 0 && normalizedPeriodNo > 0) {
+    return `FY${normalizedYear} P${String(normalizedPeriodNo).padStart(2, "0")}${
+      normalizedPeriodName ? ` - ${normalizedPeriodName}` : ""
+    }`;
+  }
+  return normalizedPeriodName || "-";
+}
+
+function formatEnumLabel(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "-";
+  }
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function formatConsolidationRunScope(run) {
+  if (!run) {
+    return "-";
+  }
+  const groupCode = String(run?.consolidation_group_code || run?.consolidationGroupCode || "").trim();
+  const groupName = String(run?.consolidation_group_name || run?.consolidationGroupName || "").trim();
+  const groupLabel = groupCode && groupName ? `${groupCode} - ${groupName}` : groupCode || groupName;
+  const periodLabel = formatPeriodLabel(run?.fiscal_year, run?.period_no, run?.period_name);
+  const currencyCode = String(
+    run?.presentation_currency_code || run?.presentationCurrencyCode || ""
+  )
+    .trim()
+    .toUpperCase();
+  return [groupLabel, periodLabel, currencyCode].filter(Boolean).join(" | ") || `#${run?.id || "-"}`;
+}
+
+function getConsolidationPublishTone(publishState) {
+  switch (String(publishState || "").trim().toUpperCase()) {
+    case "READY_TO_PUBLISH":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "LOCKED":
+      return "border-cyan-200 bg-cyan-50 text-cyan-700";
+    case "BLOCKED":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    default:
+      return "border-slate-200 bg-slate-100 text-slate-700";
+  }
+}
+
+function dedupeConsolidationMemberRows(rows) {
+  const deduped = [];
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const legalEntityId = toInt(row?.legal_entity_id ?? row?.legalEntityId, 0);
+    if (!legalEntityId || seen.has(legalEntityId)) {
+      continue;
+    }
+    seen.add(legalEntityId);
+    deduped.push(row);
+  }
+  return deduped;
+}
+
+function buildYearEndRevrecPath(params = {}) {
+  return buildAppPath(YEAR_END_REVREC_PATH, {
+    legalEntityId: params.legalEntityId,
+    bookId: params.bookId,
+    fiscalPeriodId: params.fiscalPeriodId,
+    tab: "balances",
+  });
+}
+
 function MetricCard({ title, value, subtitle, to, ctaLabel, locked }) {
   const baseClassName =
     "rounded-xl border p-4 transition-colors bg-white border-slate-200 shadow-sm";
@@ -194,6 +283,34 @@ function MetricCard({ title, value, subtitle, to, ctaLabel, locked }) {
   );
 }
 
+function ReadinessSummaryCard({ title, value, subtitle, tone = "slate", locked = false }) {
+  const toneClassName =
+    tone === "rose"
+      ? "border-rose-200 bg-rose-50"
+      : tone === "emerald"
+        ? "border-emerald-200 bg-emerald-50"
+        : tone === "cyan"
+          ? "border-cyan-200 bg-cyan-50"
+          : "border-slate-200 bg-slate-50";
+  return (
+    <article className={`rounded-lg border px-3 py-3 ${toneClassName}`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+        {title}
+      </p>
+      <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
+      <p className="mt-2 text-sm text-slate-600">{subtitle}</p>
+      {locked ? (
+        <p className="mt-2 text-xs font-medium text-amber-900">Permission required</p>
+      ) : null}
+    </article>
+  );
+}
+
+/**
+ * Render the finance console dashboard, including one lightweight Track 51
+ * consolidation-readiness summary that reuses the live run, local-close, and
+ * year-end review seams instead of introducing another dashboard endpoint.
+ */
 export default function Dashboard() {
   const { t } = useI18n();
   const { hasPermission } = useAuth();
@@ -215,6 +332,9 @@ export default function Dashboard() {
   const canReadInventory = hasPermission("inventory.read");
   const canReadFixedAssetRuns =
     hasPermission("fixed_assets.depreciation.run") || hasPermission("fixed_assets.read");
+  const canReadConsolidationRuns = hasPermission("consolidation.run.read");
+  const canReadConsolidationGroups = hasPermission("consolidation.group.read");
+  const canReadLocalClose = hasPermission("ouclose.read");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -237,11 +357,17 @@ export default function Dashboard() {
   const [notificationsTotal, setNotificationsTotal] = useState(0);
   const [markingNotificationId, setMarkingNotificationId] = useState(null);
   const [markAllNotificationsSaving, setMarkAllNotificationsSaving] = useState(false);
+  const [consolidationReadiness, setConsolidationReadiness] = useState({
+    loading: false,
+    error: "",
+    data: null,
+  });
 
   const scopeParams = useMemo(
     () => resolveScopeParams(workingContext),
     [workingContext]
   );
+  const workingFiscalPeriodId = toInt(workingContext?.fiscalPeriodId, 0);
   const inventoryScopeParams = useMemo(() => {
     const params = {};
     if (scopeParams.legalEntityId) {
@@ -249,6 +375,185 @@ export default function Dashboard() {
     }
     return params;
   }, [scopeParams.legalEntityId]);
+
+  const loadConsolidationReadiness = useCallback(async () => {
+    if (!canReadConsolidationRuns) {
+      setConsolidationReadiness({
+        loading: false,
+        error: "",
+        data: null,
+      });
+      return;
+    }
+
+    setConsolidationReadiness((prev) => ({
+      ...prev,
+      loading: true,
+      error: "",
+    }));
+
+    try {
+      let runRows = [];
+      let selectionMode = "LATEST";
+
+      // Prefer the current working period when one is selected so the dashboard
+      // follows the same accounting window the operator is already using.
+      if (workingFiscalPeriodId > 0) {
+        const scopedResponse = await listConsolidationRuns({
+          fiscalPeriodId: workingFiscalPeriodId,
+        });
+        runRows = Array.isArray(scopedResponse?.rows) ? scopedResponse.rows : [];
+        if (runRows.length > 0) {
+          selectionMode = "CURRENT_PERIOD";
+        }
+      }
+
+      if (runRows.length === 0) {
+        const fallbackResponse = await listConsolidationRuns();
+        runRows = Array.isArray(fallbackResponse?.rows) ? fallbackResponse.rows : [];
+        selectionMode = "LATEST";
+      }
+
+      const selectedRun = runRows[0] || null;
+      if (!selectedRun) {
+        setConsolidationReadiness({
+          loading: false,
+          error: "",
+          data: {
+            selectionMode,
+            run: null,
+            reviewGate: null,
+            localClose: null,
+          },
+        });
+        return;
+      }
+
+      const reviewGate = await getConsolidationRunReviewGate(selectedRun.id);
+      const selectedRunGroupId = toInt(
+        selectedRun?.consolidation_group_id ?? selectedRun?.consolidationGroupId,
+        0
+      );
+      const selectedRunPeriodId = toInt(
+        selectedRun?.fiscal_period_id ?? selectedRun?.fiscalPeriodId,
+        0
+      );
+
+      let localClose = {
+        available: false,
+        memberCount: 0,
+        packCount: 0,
+        lockedPackCount: 0,
+        pendingPackCount: Number(reviewGate?.counts?.memberReadinessBlockCount || 0),
+        revrecFailureCount: 0,
+        centralPackCount: 0,
+        revrecPath: "",
+        partialRevrecCoverage: false,
+        firstCentralPack: null,
+      };
+
+      if (
+        canReadConsolidationGroups &&
+        canReadLocalClose &&
+        selectedRunGroupId > 0 &&
+        selectedRunPeriodId > 0
+      ) {
+        const groupMemberResponse = await listConsolidationGroupMembers(selectedRunGroupId);
+        const memberRows = dedupeConsolidationMemberRows(groupMemberResponse?.rows);
+        const memberEntityIds = new Set(
+          memberRows
+            .map((row) => toInt(row?.legal_entity_id ?? row?.legalEntityId, 0))
+            .filter((value) => value > 0)
+        );
+        const localCloseResponse = await listLocalClosePacks({
+          fiscalPeriodId: selectedRunPeriodId,
+          limit: 500,
+        });
+        const memberPackRows = (Array.isArray(localCloseResponse?.rows)
+          ? localCloseResponse.rows
+          : []
+        ).filter((row) => memberEntityIds.has(toInt(row?.legalEntityId, 0)));
+        const centralPackRows = memberPackRows.filter(
+          (row) => String(row?.closeScopeType || "").trim().toUpperCase() === "CENTRAL"
+        );
+        const detailResults = await Promise.allSettled(
+          centralPackRows.map((row) => getLocalClosePack(row.id))
+        );
+
+        let revrecFailureCount = 0;
+        let revrecPath = "";
+        let partialRevrecCoverage = false;
+        for (const result of detailResults) {
+          if (result.status !== "fulfilled") {
+            partialRevrecCoverage = true;
+            continue;
+          }
+          const blockers = Array.isArray(result.value?.reviewGate?.blockers)
+            ? result.value.reviewGate.blockers
+            : [];
+          const revrecBlockers = blockers.filter((row) =>
+            String(row?.code || "").trim().toUpperCase().startsWith("REVREC_CONTINUITY_")
+          );
+          revrecFailureCount += revrecBlockers.length;
+          if (!revrecPath) {
+            const firstPath = String(revrecBlockers[0]?.drill?.path || "").trim();
+            if (firstPath) {
+              revrecPath = firstPath;
+            }
+          }
+        }
+
+        localClose = {
+          available: true,
+          memberCount: memberRows.length,
+          packCount: memberPackRows.length,
+          lockedPackCount: memberPackRows.filter(
+            (row) => String(row?.status || "").trim().toUpperCase() === "LOCKED"
+          ).length,
+          pendingPackCount: Math.max(
+            memberPackRows.filter(
+              (row) => String(row?.status || "").trim().toUpperCase() !== "LOCKED"
+            ).length,
+            Number(reviewGate?.counts?.memberReadinessBlockCount || 0)
+          ),
+          revrecFailureCount,
+          centralPackCount: centralPackRows.length,
+          revrecPath,
+          partialRevrecCoverage,
+          firstCentralPack: centralPackRows[0] || null,
+        };
+      }
+
+      setConsolidationReadiness({
+        loading: false,
+        error: "",
+        data: {
+          selectionMode,
+          run: selectedRun,
+          reviewGate: reviewGate || null,
+          localClose,
+        },
+      });
+    } catch (err) {
+      setConsolidationReadiness({
+        loading: false,
+        error:
+          err?.response?.data?.message ||
+          err?.message ||
+          t(
+            "dashboard.consolidationReadiness.loadFailed",
+            "Consolidation readiness summary could not be loaded."
+          ),
+        data: null,
+      });
+    }
+  }, [
+    canReadConsolidationGroups,
+    canReadConsolidationRuns,
+    canReadLocalClose,
+    t,
+    workingFiscalPeriodId,
+  ]);
 
   const load = useCallback(async () => {
     const requestEntries = [];
@@ -384,9 +689,13 @@ export default function Dashboard() {
     }
   }, [canReadExceptions, canReadFixedAssetRuns, canReadInventory, canReadOps, inventoryScopeParams, scopeParams, t]);
 
+  const refreshDashboard = useCallback(async () => {
+    await Promise.all([load(), loadConsolidationReadiness()]);
+  }, [load, loadConsolidationReadiness]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    void refreshDashboard();
+  }, [refreshDashboard]);
 
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true);
@@ -708,6 +1017,36 @@ export default function Dashboard() {
   );
 
   const readinessInlineError = moduleReadinessError || tenantReadinessError || "";
+  const consolidationRun = consolidationReadiness.data?.run || null;
+  const consolidationReviewGate = consolidationReadiness.data?.reviewGate || null;
+  const consolidationLocalClose = consolidationReadiness.data?.localClose || null;
+  const consolidationBlockerCount = Array.isArray(consolidationReviewGate?.blockers)
+    ? consolidationReviewGate.blockers.length
+    : 0;
+  const consolidationSelectionLabel =
+    consolidationReadiness.data?.selectionMode === "CURRENT_PERIOD"
+      ? t("dashboard.consolidationReadiness.currentPeriod", "Current working period")
+      : t("dashboard.consolidationReadiness.latestRun", "Latest available run");
+  const consolidationPublishStateLabel = formatEnumLabel(
+    consolidationReviewGate?.publishState || consolidationRun?.status || ""
+  );
+  const consolidationReportsLink = buildAppPath(CONSOLIDATION_REPORTS_PATH, {
+    runId: consolidationRun?.id,
+  });
+  const localCloseWorkspaceLink = buildAppPath(LOCAL_CLOSE_WORKSPACE_PATH, {
+    fiscalPeriodId:
+      consolidationRun?.fiscal_period_id ?? consolidationRun?.fiscalPeriodId ?? undefined,
+  });
+  const yearEndRevrecLink =
+    String(consolidationLocalClose?.revrecPath || "").trim() ||
+    (consolidationLocalClose?.firstCentralPack
+      ? buildYearEndRevrecPath({
+          legalEntityId: consolidationLocalClose.firstCentralPack.legalEntityId,
+          bookId: consolidationLocalClose.firstCentralPack.bookId,
+          fiscalPeriodId: consolidationLocalClose.firstCentralPack.fiscalPeriodId,
+        })
+      : YEAR_END_REVREC_PATH);
+  const refreshingDashboard = loading || consolidationReadiness.loading;
 
   return (
     <section className="space-y-5">
@@ -738,11 +1077,13 @@ export default function Dashboard() {
             ) : null}
             <button
               type="button"
-              onClick={load}
-              disabled={loading}
+              onClick={() => {
+                void refreshDashboard();
+              }}
+              disabled={refreshingDashboard}
               className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              {loading
+              {refreshingDashboard
                 ? t("dashboard.refreshing", "Refreshing...")
                 : t("dashboard.refresh", "Refresh")}
             </button>
@@ -868,6 +1209,201 @@ export default function Dashboard() {
           locked={!canReadOps || !canReadFixedAssetRuns}
         />
       </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">
+              {t("dashboard.consolidationReadiness", "Consolidation Readiness")}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {t(
+                "dashboard.consolidationReadinessHint",
+                "Latest run publish state, surfaced blockers, member close-chain lock progress, and REVREC continuity follow-up in one summary."
+              )}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to={consolidationReportsLink}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {t("dashboard.consolidationReadiness.openRun", "Open consolidation")}
+            </Link>
+            <Link
+              to={localCloseWorkspaceLink}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {t("dashboard.consolidationReadiness.openLocalClose", "Open local close")}
+            </Link>
+            <Link
+              to={yearEndRevrecLink}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {t("dashboard.consolidationReadiness.openYearEnd", "Open year-end REVREC")}
+            </Link>
+          </div>
+        </div>
+        {!canReadConsolidationRuns ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {t("dashboard.permissionRequired", "Permission required")}
+          </div>
+        ) : null}
+        {consolidationReadiness.error ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {consolidationReadiness.error}
+          </div>
+        ) : null}
+        {canReadConsolidationRuns && consolidationReadiness.loading ? (
+          <p className="mt-3 text-sm text-slate-600">
+            {t(
+              "dashboard.consolidationReadiness.loading",
+              "Refreshing consolidation readiness summary..."
+            )}
+          </p>
+        ) : null}
+        {canReadConsolidationRuns && !consolidationRun && !consolidationReadiness.loading ? (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            {t(
+              "dashboard.consolidationReadiness.noRun",
+              "No consolidation runs are available yet for this tenant."
+            )}
+          </div>
+        ) : null}
+        {consolidationRun ? (
+          <>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span
+                className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getConsolidationPublishTone(
+                  consolidationReviewGate?.publishState || consolidationRun?.status
+                )}`}
+              >
+                {consolidationPublishStateLabel}
+              </span>
+              <span className="text-sm text-slate-600">
+                {consolidationRun.run_name
+                  ? `${consolidationRun.run_name} | `
+                  : ""}
+                {formatConsolidationRunScope(consolidationRun)}
+              </span>
+              <span className="text-xs text-slate-500">
+                {consolidationSelectionLabel}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <ReadinessSummaryCard
+                title={t("dashboard.consolidationReadiness.runStatus", "Run Status")}
+                value={consolidationPublishStateLabel}
+                subtitle={t(
+                  "dashboard.consolidationReadiness.runStatusHint",
+                  "Surfaced publish state from the live consolidation review gate."
+                )}
+                tone={
+                  String(consolidationReviewGate?.publishState || consolidationRun?.status)
+                    .trim()
+                    .toUpperCase() === "READY_TO_PUBLISH"
+                    ? "emerald"
+                    : String(consolidationReviewGate?.publishState || consolidationRun?.status)
+                          .trim()
+                          .toUpperCase() === "LOCKED"
+                      ? "cyan"
+                      : "rose"
+                }
+              />
+              <ReadinessSummaryCard
+                title={t("dashboard.consolidationReadiness.blockers", "Blockers")}
+                value={formatCount(consolidationBlockerCount)}
+                subtitle={t(
+                  "dashboard.consolidationReadiness.blockersHint",
+                  "Open review-gate blockers before the run can finalize or publish."
+                )}
+                tone={consolidationBlockerCount > 0 ? "rose" : "emerald"}
+              />
+              <ReadinessSummaryCard
+                title={t("dashboard.consolidationReadiness.localClose", "Local Close Locked / Pending")}
+                value={
+                  consolidationLocalClose?.available
+                    ? `${formatCount(consolidationLocalClose.lockedPackCount)} / ${formatCount(
+                        consolidationLocalClose.pendingPackCount
+                      )}`
+                    : "-"
+                }
+                subtitle={
+                  consolidationLocalClose?.available
+                    ? t(
+                        "dashboard.consolidationReadiness.localCloseHint",
+                        "{{locked}} locked scopes across {{packs}} member packs. Pending includes missing or non-locked mandatory scopes.",
+                        {
+                          locked: formatCount(consolidationLocalClose.lockedPackCount),
+                          packs: formatCount(consolidationLocalClose.packCount),
+                        }
+                      )
+                    : t(
+                        "dashboard.consolidationReadiness.localCloseMissing",
+                        "Requires consolidation.group.read and ouclose.read to summarize member close-chain progress."
+                      )
+                }
+                tone={
+                  consolidationLocalClose?.available &&
+                  Number(consolidationLocalClose.pendingPackCount || 0) === 0
+                    ? "emerald"
+                    : "rose"
+                }
+                locked={!consolidationLocalClose?.available}
+              />
+              <ReadinessSummaryCard
+                title={t(
+                  "dashboard.consolidationReadiness.revrecFailures",
+                  "REVREC Continuity Failures"
+                )}
+                value={
+                  consolidationLocalClose?.available
+                    ? formatCount(consolidationLocalClose.revrecFailureCount)
+                    : "-"
+                }
+                subtitle={
+                  consolidationLocalClose?.available
+                    ? t(
+                        "dashboard.consolidationReadiness.revrecFailuresHint",
+                        "Central pack review-gate blockers from closing-to-next-opening REVREC continuity."
+                      )
+                    : t(
+                        "dashboard.consolidationReadiness.revrecMissing",
+                        "Uses the existing local-close review seam; unavailable without member pack visibility."
+                      )
+                }
+                tone={
+                  consolidationLocalClose?.available &&
+                  Number(consolidationLocalClose.revrecFailureCount || 0) === 0
+                    ? "emerald"
+                    : "rose"
+                }
+                locked={!consolidationLocalClose?.available}
+              />
+            </div>
+            {consolidationLocalClose?.available ? (
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                <span>
+                  {t("dashboard.consolidationReadiness.memberCount", "Members")}:{" "}
+                  {formatCount(consolidationLocalClose.memberCount)}
+                </span>
+                <span>
+                  {t("dashboard.consolidationReadiness.centralPacks", "Central packs")}:{" "}
+                  {formatCount(consolidationLocalClose.centralPackCount)}
+                </span>
+                {consolidationLocalClose.partialRevrecCoverage ? (
+                  <span className="text-amber-700">
+                    {t(
+                      "dashboard.consolidationReadiness.partialCoverage",
+                      "Some central pack review details could not be read, so REVREC counts may be partial."
+                    )}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-2">

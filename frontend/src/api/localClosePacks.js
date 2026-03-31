@@ -44,6 +44,50 @@ export async function createLocalClosePack(payload = {}) {
   return response.data;
 }
 
+/**
+ * Submit one local close pack into review.
+ */
+export async function submitLocalClosePack(packId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/gl/local-close-packs/${packId}/submit`,
+    payload
+  );
+  return response.data;
+}
+
+/**
+ * Return one local close pack for correction.
+ */
+export async function returnLocalClosePack(packId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/gl/local-close-packs/${packId}/return`,
+    payload
+  );
+  return response.data;
+}
+
+/**
+ * Approve one local close pack after report and workflow gates pass.
+ */
+export async function approveLocalClosePack(packId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/gl/local-close-packs/${packId}/approve`,
+    payload
+  );
+  return response.data;
+}
+
+/**
+ * Lock one approved local close pack.
+ */
+export async function lockLocalClosePack(packId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/gl/local-close-packs/${packId}/lock`,
+    payload
+  );
+  return response.data;
+}
+
 export async function listLocalClosePackReopenRequests(packId, params = {}) {
   const response = await api.get(
     `/api/v1/gl/local-close-packs/${packId}/reopen-requests${toQueryString(params)}`

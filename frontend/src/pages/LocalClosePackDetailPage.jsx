@@ -2,16 +2,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
+  approveLocalClosePack,
   createLocalClosePackComment,
   createLocalClosePackEvidence,
   deleteLocalClosePackEvidence,
   downloadLocalClosePackEvidence,
   getLocalClosePack,
+  lockLocalClosePack,
   listLocalClosePackAudit,
   listLocalClosePackComments,
   listLocalClosePackEvidence,
   listLocalClosePackReopenRequests,
   listLocalClosePackReportReviews,
+  returnLocalClosePack,
+  submitLocalClosePack,
   uploadLocalClosePackEvidenceContent,
 } from "../api/localClosePacks.js";
 import { buildLocalReportLocation } from "../api/glReports.js";
@@ -123,6 +127,34 @@ function getReadinessLabel(state, l) {
       return state || "-";
   }
 }
+function getRecommendedActionLabel(action, l) {
+  switch (String(action || "").trim().toUpperCase()) {
+    case "SUBMIT":
+      return l("Submit", "Gonder");
+    case "RETURN":
+      return l("Return", "Iade et");
+    case "APPROVE":
+      return l("Approve", "Onayla");
+    case "LOCK":
+      return l("Lock", "Kilitle");
+    case "RESOLVE_BLOCKERS":
+      return l("Resolve blockers", "Blokajlari cozumleyin");
+    default:
+      return l("No action", "Aksiyon yok");
+  }
+}
+function getGateTone(level) {
+  if (String(level || "").toUpperCase() === "BLOCKER") {
+    return "border-rose-200 bg-rose-50 text-rose-800";
+  }
+  return "border-amber-200 bg-amber-50 text-amber-900";
+}
+function getGatePillTone(level) {
+  if (String(level || "").toUpperCase() === "BLOCKER") {
+    return "border-rose-200 bg-rose-100 text-rose-700";
+  }
+  return "border-amber-200 bg-amber-100 text-amber-700";
+}
 function buildPackReportLaunches(pack, l) {
   if (!pack) {
     return [];
@@ -204,6 +236,28 @@ function buildPackReportLaunches(pack, l) {
     },
   ];
 }
+function resolveGateDrillLabel(gateRow, l) {
+  const tab = String(gateRow?.drill?.tab || "").trim().toLowerCase();
+  if (String(gateRow?.drill?.surface || "").trim().toLowerCase() === "yearendrevrec") {
+    return l("Open year-end REVREC", "Yil sonu REVREC'i ac");
+  }
+  if (String(gateRow?.drill?.path || "").trim()) {
+    return l("Open related detail", "Ilgili detayi ac");
+  }
+  if (tab === "reports") {
+    return l("Open reports tab", "Raporlar sekmesini ac");
+  }
+  if (tab === "exceptions") {
+    return l("Open exceptions tab", "Istisnalar sekmesini ac");
+  }
+  if (tab === "evidence") {
+    return l("Open evidence tab", "Kanit sekmesini ac");
+  }
+  if (tab === "overview") {
+    return l("Open overview tab", "Genel bakis sekmesini ac");
+  }
+  return l("Open related detail", "Ilgili detayi ac");
+}
 function deriveChecklist(pack, reportReviews, evidenceRows, commentRows, reopenRows, entityReadiness, l) {
   const requiredReportCount = Number(pack?.requiredReportCount || 0) || 5;
   const reviewedReportCount = Array.isArray(reportReviews) ? reportReviews.length : 0;
@@ -270,9 +324,9 @@ function TabButton({ active, onClick, children }) {
   );
 }
 /**
-+ * First-pass RP07 local close-pack detail shell with reports, evidence,
-+ * comments, reopen context, and audit in one page.
-+ */
+ * First-pass RP07 local close-pack detail shell with reports, evidence,
+ * comments, reopen context, and audit in one page.
+ */
 export default function LocalClosePackDetailPage() {
   const { packId } = useParams();
   const { hasPermission } = useAuth();
@@ -282,6 +336,10 @@ export default function LocalClosePackDetailPage() {
   const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
   const canRead = hasPermission("ouclose.read");
   const canPrepare = hasPermission("ouclose.prepare");
+  const canSubmit = hasPermission("ouclose.submit");
+  const canReview = hasPermission("ouclose.review");
+  const canApprove = hasPermission("ouclose.approve");
+  const canLock = hasPermission("ouclose.lock");
   const normalizedPackId = toPositiveInt(packId);
   const requestedTab = String(searchParams.get("tab") || "overview").trim().toLowerCase();
   const [activeTab, setActiveTab] = useState(
@@ -292,6 +350,7 @@ export default function LocalClosePackDetailPage() {
   const [message, setMessage] = useState("");
   const [pack, setPack] = useState(null);
   const [entityReadiness, setEntityReadiness] = useState(null);
+  const [reviewGate, setReviewGate] = useState(null);
   const [reportReviews, setReportReviews] = useState([]);
   const [evidenceRows, setEvidenceRows] = useState([]);
   const [commentRows, setCommentRows] = useState([]);
@@ -303,6 +362,8 @@ export default function LocalClosePackDetailPage() {
   const [deleteId, setDeleteId] = useState(null);
   const [commentBody, setCommentBody] = useState("");
   const [commentSaving, setCommentSaving] = useState(false);
+  const [decisionNote, setDecisionNote] = useState("");
+  const [actionSaving, setActionSaving] = useState("");
   useEffect(() => {
     const normalizedTab = TAB_KEYS.includes(requestedTab) ? requestedTab : "overview";
     setActiveTab((prev) => (prev === normalizedTab ? prev : normalizedTab));
@@ -332,6 +393,7 @@ export default function LocalClosePackDetailPage() {
         ]);
       setPack(packResponse?.row || null);
       setEntityReadiness(packResponse?.entityReadiness || null);
+      setReviewGate(packResponse?.reviewGate || null);
       setReportReviews(Array.isArray(reviewResponse?.rows) ? reviewResponse.rows : []);
       setEvidenceRows(Array.isArray(evidenceResponse?.rows) ? evidenceResponse.rows : []);
       setCommentRows(Array.isArray(commentResponse?.rows) ? commentResponse.rows : []);
@@ -350,6 +412,10 @@ export default function LocalClosePackDetailPage() {
     void loadWorkspaceData();
   }, [loadWorkspaceData]);
   const reportLaunches = useMemo(() => buildPackReportLaunches(pack, l), [l, pack]);
+  const reportLaunchByKey = useMemo(
+    () => new Map(reportLaunches.map((row) => [row.key, row])),
+    [reportLaunches]
+  );
   const reviewByKey = useMemo(
     () =>
       new Map(
@@ -460,6 +526,58 @@ export default function LocalClosePackDetailPage() {
       setCommentSaving(false);
     }
   }
+  async function handlePackAction(actionKey) {
+    if (!normalizedPackId) {
+      return;
+    }
+    const normalizedAction = String(actionKey || "").trim().toLowerCase();
+    const payload =
+      normalizedAction === "return" && String(decisionNote || "").trim()
+        ? { decisionNote: String(decisionNote || "").trim() }
+        : normalizedAction === "return"
+          ? { decisionNote: "" }
+          : String(decisionNote || "").trim()
+            ? { decisionNote: String(decisionNote || "").trim() }
+            : {};
+    const actionMap = {
+      submit: submitLocalClosePack,
+      return: returnLocalClosePack,
+      approve: approveLocalClosePack,
+      lock: lockLocalClosePack,
+    };
+    const actionFn = actionMap[normalizedAction];
+    if (!actionFn) {
+      return;
+    }
+    setActionSaving(normalizedAction);
+    setError("");
+    setMessage("");
+    try {
+      const response = await actionFn(normalizedPackId, payload);
+      setPack(response?.row || null);
+      setEntityReadiness(response?.entityReadiness || null);
+      setReviewGate(response?.reviewGate || null);
+      setDecisionNote("");
+      setMessage(
+        normalizedAction === "submit"
+          ? l("Pack submitted for review.", "Paket incelemeye gonderildi.")
+          : normalizedAction === "return"
+            ? l("Pack returned for correction.", "Paket duzeltme icin iade edildi.")
+            : normalizedAction === "approve"
+              ? l("Pack approved.", "Paket onaylandi.")
+              : l("Pack locked.", "Paket kilitlendi.")
+      );
+      await loadWorkspaceData();
+    } catch (err) {
+      const errorCode = String(err?.response?.data?.code || "").trim();
+      const errorMessage =
+        err?.response?.data?.message ||
+        l("Pack action failed.", "Paket aksiyonu basarisiz oldu.");
+      setError(errorCode ? `${errorMessage} [${errorCode}]` : errorMessage);
+    } finally {
+      setActionSaving("");
+    }
+  }
   if (!canRead) {
     return (
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
@@ -561,6 +679,207 @@ export default function LocalClosePackDetailPage() {
           </div>
         ) : null}
       </section>
+      {pack && reviewGate ? (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                {l("Review gate and status progression", "Inceleme kapisi ve durum ilerlemesi")}
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {l(
+                  "RP12 surfaces the existing pack blockers from report reviews, draft journals, workflow status, and reopen truth before the close actions mutate status.",
+                  "RP12, kapanis aksiyonlari durumu degistirmeden once rapor incelemeleri, taslak fisler, workflow durumu ve yeniden acma gerceginden gelen mevcut paket blokajlarini gorunur kilar."
+                )}
+              </p>
+            </div>
+            <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+              <div className="text-xs font-semibold uppercase tracking-wide">
+                {l("Next recommended action", "Onerilen sonraki aksiyon")}
+              </div>
+              <div className="mt-1 font-semibold">
+                {getRecommendedActionLabel(reviewGate.nextRecommendedAction, l)}
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {l("Current status", "Mevcut durum")}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">
+                {getStatusLabel(reviewGate.currentStatus, l)}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {l("Report reviews", "Rapor incelemeleri")}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">
+                {reviewGate.counts?.reviewedReportCount || 0}/{reviewGate.counts?.requiredReportCount || 0}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {l("Blockers / Warnings", "Blokaj / Uyari")}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">
+                {reviewGate.blockerCount || 0} / {reviewGate.warningCount || 0}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {l("Workflow gate", "Workflow kapisi")}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">
+                {reviewGate.workflowGate?.approved
+                  ? l("Approved", "Onayli")
+                  : reviewGate.workflowGate?.required
+                    ? reviewGate.workflowGate?.workflowInstanceStatus || l("Pending", "Beklemede")
+                    : l("Not required", "Gerekli degil")}
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {l("Decision note", "Karar notu")}
+            </label>
+            <textarea
+              value={decisionNote}
+              onChange={(event) => setDecisionNote(event.target.value)}
+              rows={3}
+              className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder={l(
+                "Required for return; optional for approve/lock audit context.",
+                "Iade icin zorunlu; onay/kilit denetim baglami icin opsiyonel."
+              )}
+              disabled={Boolean(actionSaving)}
+            />
+            <div className="mt-3 flex flex-wrap gap-2">
+              {canSubmit ? (
+                <button
+                  type="button"
+                  onClick={() => void handlePackAction("submit")}
+                  disabled={!reviewGate.actionAvailability?.submit?.allowed || Boolean(actionSaving)}
+                  className="rounded-lg border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {actionSaving === "submit" ? l("Submitting...", "Gonderiliyor...") : l("Submit", "Gonder")}
+                </button>
+              ) : null}
+              {canReview ? (
+                <button
+                  type="button"
+                  onClick={() => void handlePackAction("return")}
+                  disabled={!reviewGate.actionAvailability?.return?.allowed || Boolean(actionSaving)}
+                  className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 disabled:opacity-60"
+                >
+                  {actionSaving === "return" ? l("Returning...", "Iade ediliyor...") : l("Return", "Iade et")}
+                </button>
+              ) : null}
+              {canApprove ? (
+                <button
+                  type="button"
+                  onClick={() => void handlePackAction("approve")}
+                  disabled={!reviewGate.actionAvailability?.approve?.allowed || Boolean(actionSaving)}
+                  className="rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {actionSaving === "approve" ? l("Approving...", "Onaylaniyor...") : l("Approve", "Onayla")}
+                </button>
+              ) : null}
+              {canLock ? (
+                <button
+                  type="button"
+                  onClick={() => void handlePackAction("lock")}
+                  disabled={!reviewGate.actionAvailability?.lock?.allowed || Boolean(actionSaving)}
+                  className="rounded-lg border border-cyan-600 bg-cyan-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {actionSaving === "lock" ? l("Locking...", "Kilitleniyor...") : l("Lock", "Kilitle")}
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {[...(reviewGate.blockers || []), ...(reviewGate.warnings || [])].map((gateRow) => {
+              const reportLaunch = gateRow?.drill?.reportKey
+                ? reportLaunchByKey.get(gateRow.drill.reportKey)
+                : null;
+              const drillSurface = String(gateRow?.drill?.surface || "").trim().toLowerCase();
+              const hasDirectDrillPath = Boolean(String(gateRow?.drill?.path || "").trim());
+              const showTabDrillButton = Boolean(gateRow?.drill?.tab) && !(
+                drillSurface === "yearendrevrec" && hasDirectDrillPath
+              );
+              return (
+                <div
+                  key={`${gateRow.level}-${gateRow.code}`}
+                  className={`rounded-xl border px-4 py-3 ${getGateTone(gateRow.level)}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${getGatePillTone(gateRow.level)}`}>
+                          {gateRow.level === "BLOCKER" ? l("Blocker", "Blokaj") : l("Warning", "Uyari")}
+                        </span>
+                        <span className="font-mono text-[11px]">{gateRow.code}</span>
+                      </div>
+                      <div className="mt-2 text-sm font-semibold">{gateRow.message}</div>
+                      {gateRow.count ? (
+                        <div className="mt-1 text-xs opacity-80">
+                          {l("Count", "Sayi")}: {gateRow.count}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {showTabDrillButton ? (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab(String(gateRow.drill.tab || "overview"))}
+                          className="rounded-lg border border-current bg-white/70 px-3 py-2 text-xs font-semibold"
+                        >
+                          {resolveGateDrillLabel(gateRow, l)}
+                        </button>
+                      ) : null}
+                      {reportLaunch ? (
+                        <Link
+                          to={reportLaunch.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-lg border border-current bg-white/70 px-3 py-2 text-xs font-semibold"
+                        >
+                          {l("Open related report", "Ilgili raporu ac")}
+                        </Link>
+                      ) : null}
+                      {gateRow?.drill?.path ? (
+                        <Link
+                          to={gateRow.drill.path}
+                          className="rounded-lg border border-current bg-white/70 px-3 py-2 text-xs font-semibold"
+                        >
+                          {resolveGateDrillLabel(gateRow, l)}
+                        </Link>
+                      ) : null}
+                      {gateRow?.drill?.surface === "workflow" ? (
+                        <Link
+                          to="/app/ayarlar/workflow-kurulumu"
+                          className="rounded-lg border border-current bg-white/70 px-3 py-2 text-xs font-semibold"
+                        >
+                          {l("Open workflow setup", "Workflow kurulumunu ac")}
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {(reviewGate.blockers || []).length === 0 && (reviewGate.warnings || []).length === 0 ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                {l(
+                  "No surfaced blockers or warnings are currently open for this pack.",
+                  "Bu paket icin su anda gorunur blokaj veya uyari acik degil."
+                )}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
       {error ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}

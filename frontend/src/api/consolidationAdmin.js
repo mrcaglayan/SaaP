@@ -237,6 +237,26 @@ export async function executeConsolidationRun(runId, payload = {}) {
   return response.data;
 }
 
+/**
+ * Read the first-pass RP12 consolidation finalize review gate.
+ */
+export async function getConsolidationRunReviewGate(runId) {
+  const response = await api.get(`/api/v1/consolidation/runs/${runId}/review-gate`);
+  return response.data;
+}
+
+/**
+ * Persist one immutable RP13 member-support snapshot for the currently loaded
+ * consolidation drill chain.
+ */
+export async function createConsolidationRunMemberSupportSnapshot(runId, payload) {
+  const response = await api.post(
+    `/api/v1/consolidation/runs/${runId}/report-snapshots/member-support`,
+    payload,
+  );
+  return response.data;
+}
+
 export async function finalizeConsolidationRun(runId) {
   const response = await api.post(`/api/v1/consolidation/runs/${runId}/finalize`);
   return response.data;

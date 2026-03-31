@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Combobox from "../components/Combobox.jsx";
 import MoneyText from "../components/MoneyText.jsx";
+import ReportAuditPanel from "../components/ReportAuditPanel.jsx";
 import { listAccounts, listBooks } from "../api/glAdmin.js";
 import {
   appendLocalReportContextParams,
@@ -84,6 +85,18 @@ const REFERENCE_PERMISSION_CODES = Object.freeze([
   "gl.account.read",
   "org.fiscal_period.read",
 ]);
+const EMPTY_LEDGER_ROWS = Object.freeze([]);
+const EMPTY_LEDGER_SUMMARY = Object.freeze({
+  openingBalance: 0,
+  debitTotal: 0,
+  creditTotal: 0,
+  closingBalance: 0,
+  totalRows: 0,
+});
+const EMPTY_LEDGER_GROUPING = Object.freeze({
+  groupBy: "NONE",
+  rows: EMPTY_LEDGER_ROWS,
+});
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -343,6 +356,10 @@ function buildLedgerResponseSnapshot(reportResponse) {
   };
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /**
  * Render the shared report-grade ledger page used by both Defter-i Kebir and
  * Muavin, keeping one query contract and one drillthrough surface.
@@ -418,18 +435,9 @@ export default function GeneralLedgerPage({ reportMode = "GENERAL_LEDGER" }) {
 
   const reportRows = Array.isArray(reportResponse?.rows)
     ? reportResponse.rows
-    : [];
-  const reportSummary = reportResponse?.summary || {
-    openingBalance: 0,
-    debitTotal: 0,
-    creditTotal: 0,
-    closingBalance: 0,
-    totalRows: 0,
-  };
-  const reportGrouping = reportResponse?.grouping || {
-    groupBy: "NONE",
-    rows: [],
-  };
+    : EMPTY_LEDGER_ROWS;
+  const reportSummary = reportResponse?.summary || EMPTY_LEDGER_SUMMARY;
+  const reportGrouping = reportResponse?.grouping || EMPTY_LEDGER_GROUPING;
   const reportBook = reportResponse?.book || null;
   const reportAccount = reportResponse?.account || null;
   const reportAccountRange = reportResponse?.accountRange || null;
@@ -976,6 +984,187 @@ export default function GeneralLedgerPage({ reportMode = "GENERAL_LEDGER" }) {
     : isMuavinMode || reportAccountRange
       ? 9
       : 8;
+  const auditSpecs = useMemo(() => {
+    if (!reportResponse) {
+      return [];
+    }
+
+    const specs = [];
+    const modeLabel = isMuavinMode ? "muavin" : "ledger";
+    const rangeLabel = formatRangeLabel(reportRange);
+    const baseSnapshot = {
+      report: buildLedgerResponseSnapshot(reportResponse),
+      summary: reportSummary,
+      rangeLabel,
+      accountScopeLabel,
+      mode: normalizedReportMode,
+    };
+
+    if (reportRows.length > 0) {
+      const detailRows = reportRows.map((row) => ({
+        postingDate: String(row.entry_date || "").slice(0, 10) || "",
+        journalNo: row.journal_no || "",
+        referenceNo: row.reference_no || "",
+        accountCode: row.account_code || "",
+        accountName: row.account_name || "",
+        description: row.description || "",
+        lineNo: row.line_no || "",
+        documentDate: String(row.document_date || "").slice(0, 10) || "",
+        operatingUnitCode: row.operating_unit_code || "",
+        operatingUnitName: row.operating_unit_name || "",
+        subledgerReferenceNo: row.subledger_reference_no || "",
+        sourceType: row.source_type || "",
+        status: row.status || "",
+        debitBase: Number(row.debit_base || 0),
+        creditBase: Number(row.credit_base || 0),
+        runningBalance: Number(row.running_balance || 0),
+      }));
+
+      specs.push({
+        key: isMuavinMode ? "subsidiaryLedgerDetail" : "generalLedgerDetail",
+        label: isMuavinMode
+          ? l("Muavin detail", "Muavin detayi")
+          : l("Ledger detail", "Defter detayi"),
+        rowCount: detailRows.length,
+        routePath: localReportRoutePath,
+        fileName: `track51-${modeLabel}-detail-${selectedBook?.code || selectedBookId || "book"}-${todayIsoDate()}.csv`,
+        exportColumns: [
+          { key: "postingDate", header: "Posting Date" },
+          { key: "journalNo", header: "Journal No" },
+          { key: "referenceNo", header: "Reference No" },
+          { key: "accountCode", header: "Account Code" },
+          { key: "accountName", header: "Account Name" },
+          { key: "description", header: "Description" },
+          { key: "lineNo", header: "Line No" },
+          { key: "documentDate", header: "Document Date" },
+          { key: "operatingUnitCode", header: "Operating Unit Code" },
+          { key: "operatingUnitName", header: "Operating Unit Name" },
+          { key: "subledgerReferenceNo", header: "Subledger Ref" },
+          { key: "sourceType", header: "Source Type" },
+          { key: "status", header: "Status" },
+          { key: "debitBase", header: "Debit Base" },
+          { key: "creditBase", header: "Credit Base" },
+          { key: "runningBalance", header: "Running Balance" },
+        ],
+        exportRows: detailRows,
+        fingerprintParameters: {
+          legalEntityId: selectedLegalEntityId,
+          bookId: selectedBookId,
+          accountId: selectedAccountId,
+          fiscalPeriodIdFrom: filters.fiscalPeriodIdFrom,
+          fiscalPeriodIdTo: filters.fiscalPeriodIdTo,
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          operatingUnitScope: filters.operatingUnitScope,
+          operatingUnitId: selectedOperatingUnitId,
+          subledgerReferenceNo: filters.subledgerReferenceNo || null,
+          sourceType: filters.sourceType || null,
+          status: filters.status || null,
+          includeReversed: filters.includeReversed,
+          groupBy: effectiveGroupBy,
+          limit: filters.limit,
+          offset: filters.offset,
+          sortBy: filters.sortBy,
+          sortDirection: filters.sortDirection,
+          reportPreset: filters.reportPreset,
+        },
+        fingerprintContext: {
+          mode: normalizedReportMode,
+          entityLabel: selectedEntityLabel,
+          bookLabel: selectedBookLabel,
+          accountScopeLabel,
+          rangeLabel,
+          currencyCode,
+        },
+        fingerprintSnapshot: {
+          ...baseSnapshot,
+          rows: detailRows,
+        },
+      });
+    }
+
+    if (Array.isArray(reportGrouping.rows) && reportGrouping.rows.length > 0) {
+      const groupingRows = reportGrouping.rows.map((row) => ({
+        groupKey: row.groupKey || "",
+        groupLabel: row.groupLabel || "",
+        lineCount: Number(row.lineCount || 0),
+        debitTotal: Number(row.debitTotal || 0),
+        creditTotal: Number(row.creditTotal || 0),
+        balanceTotal: Number(row.balanceTotal || 0),
+      }));
+
+      specs.push({
+        key: isMuavinMode ? "subsidiaryLedgerGrouping" : "generalLedgerGrouping",
+        label: l("Grouping summary", "Gruplama ozeti"),
+        rowCount: groupingRows.length,
+        routePath: localReportRoutePath,
+        fileName: `track51-${modeLabel}-grouping-${effectiveGroupBy.toLowerCase()}-${todayIsoDate()}.csv`,
+        exportColumns: [
+          { key: "groupKey", header: "Group Key" },
+          { key: "groupLabel", header: "Group Label" },
+          { key: "lineCount", header: "Line Count" },
+          { key: "debitTotal", header: "Debit Total" },
+          { key: "creditTotal", header: "Credit Total" },
+          { key: "balanceTotal", header: "Balance Total" },
+        ],
+        exportRows: groupingRows,
+        fingerprintParameters: {
+          legalEntityId: selectedLegalEntityId,
+          bookId: selectedBookId,
+          groupBy: effectiveGroupBy,
+          reportPreset: filters.reportPreset,
+        },
+        fingerprintContext: {
+          mode: normalizedReportMode,
+          entityLabel: selectedEntityLabel,
+          bookLabel: selectedBookLabel,
+          accountScopeLabel,
+          currencyCode,
+          groupBy: effectiveGroupBy,
+        },
+        fingerprintSnapshot: {
+          ...baseSnapshot,
+          groupingRows,
+        },
+      });
+    }
+
+    return specs;
+  }, [
+    accountScopeLabel,
+    currencyCode,
+    effectiveGroupBy,
+    filters.dateFrom,
+    filters.dateTo,
+    filters.fiscalPeriodIdFrom,
+    filters.fiscalPeriodIdTo,
+    filters.includeReversed,
+    filters.limit,
+    filters.offset,
+    filters.operatingUnitScope,
+    filters.reportPreset,
+    filters.sortBy,
+    filters.sortDirection,
+    filters.sourceType,
+    filters.status,
+    filters.subledgerReferenceNo,
+    isMuavinMode,
+    l,
+    localReportRoutePath,
+    normalizedReportMode,
+    reportGrouping.rows,
+    reportRange,
+    reportResponse,
+    reportRows,
+    reportSummary,
+    selectedAccountId,
+    selectedBook,
+    selectedBookId,
+    selectedEntityLabel,
+    selectedLegalEntityId,
+    selectedOperatingUnitId,
+    selectedBookLabel,
+  ]);
 
   return (
     <div className="space-y-4">
@@ -1562,6 +1751,18 @@ export default function GeneralLedgerPage({ reportMode = "GENERAL_LEDGER" }) {
         reportResponse={reportResponse}
         buildResponseSnapshot={buildLedgerResponseSnapshot}
         canReview={canReviewLocalClose}
+        l={l}
+      />
+      <ReportAuditPanel
+        specs={auditSpecs}
+        title={l(
+          "Audit export and fingerprint",
+          "Audit disa aktarim ve fingerprint",
+        )}
+        subtitle={l(
+          "RP13 now gives the shared ledger engine one stable frontend fingerprint plus CSV export for the currently loaded detail and grouping surfaces.",
+          "RP13 artik paylasilan defter motoruna mevcut yuklu detay ve gruplama yuzeyleri icin bir kararlı frontend fingerprint'i ve CSV disa aktarimi verir.",
+        )}
         l={l}
       />
 

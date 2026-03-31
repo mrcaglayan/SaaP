@@ -1,6 +1,10 @@
 import express from "express";
 import { query, withTransaction } from "../db.js";
-import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middleware/rbac.js";
+import {
+  assertScopeAccess,
+  buildScopeFilter,
+  requirePermission,
+} from "../middleware/rbac.js";
 import {
   assertAccountBelongsToTenant,
   assertCoaBelongsToTenant,
@@ -19,7 +23,13 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 import { logWarn } from "../observability/logger.js";
-import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
+import {
+  loadConsolidationRunReportAccountBalances,
+  normalizeConsolidationBalanceByAccountType,
+  summarizeConsolidationRunReportMath,
+} from "../services/consolidation.report-math.service.js";
+import { createConsolidatedMemberSupportSnapshot } from "../services/consolidation.report-snapshots.service.js";
+import { getConsolidationRunReviewGate } from "../services/consolidation.review-gate.service.js";
 import {
   applyCanonicalMappingRuleById,
   applyCanonicalMappingRule,
@@ -51,10 +61,13 @@ const FEATURE_TAX_ENGINE_V1 = "FEATURE_TAX_ENGINE_V1";
 const CONSOLIDATION_CANONICAL_FAILURE_AUDIT_ACTION =
   "consolidation.execute.failure.canonical_mapping";
 const CONSOLIDATION_CANONICAL_FAILURE_ALERT_WINDOW_MINUTES =
-  parsePositiveInt(process.env.CONSOLIDATION_CANONICAL_FAILURE_ALERT_WINDOW_MINUTES) ||
-  60;
+  parsePositiveInt(
+    process.env.CONSOLIDATION_CANONICAL_FAILURE_ALERT_WINDOW_MINUTES,
+  ) || 60;
 const CONSOLIDATION_CANONICAL_FAILURE_ALERT_THRESHOLD =
-  parsePositiveInt(process.env.CONSOLIDATION_CANONICAL_FAILURE_ALERT_THRESHOLD) || 3;
+  parsePositiveInt(
+    process.env.CONSOLIDATION_CANONICAL_FAILURE_ALERT_THRESHOLD,
+  ) || 3;
 
 function normalizeRateType(value) {
   const rateType = String(value || "CLOSING").toUpperCase();
@@ -84,10 +97,40 @@ function parseBooleanLike(value, fallback = false, fieldLabel = "flag") {
   throw badRequest(`${fieldLabel} must be true or false`);
 }
 
+/**
+ * Normalize local-base support currency metadata for consolidated summary rows.
+ * These support amounts can aggregate multiple member functional currencies, so
+ * the UI needs an explicit signal before showing any one currency label.
+ */
+function buildConsolidatedSupportCurrencyContext(row) {
+  const distinctCodes = String(row?.source_currency_codes_csv || "")
+    .split(",")
+    .map((value) =>
+      String(value || "")
+        .trim()
+        .toUpperCase(),
+    )
+    .filter(Boolean);
+  const uniqueCodes = [...new Set(distinctCodes)];
+  const parsedCount = Number(row?.source_currency_count);
+  const sourceCurrencyCount = Number.isFinite(parsedCount)
+    ? Math.max(0, Math.trunc(parsedCount))
+    : uniqueCodes.length;
+  const hasMixedSourceCurrencies =
+    sourceCurrencyCount > 1 || uniqueCodes.length > 1;
+
+  return {
+    source_currency_count: sourceCurrencyCount,
+    source_currency_codes: uniqueCodes,
+    source_currency_code: uniqueCodes.length === 1 ? uniqueCodes[0] : null,
+    has_mixed_source_currencies: hasMixedSourceCurrencies,
+  };
+}
+
 function toIsoDate(value, fieldLabel = "date") {
   const toLocalYyyyMmDd = (date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-      date.getDate()
+      date.getDate(),
     ).padStart(2, "0")}`;
 
   if (value === undefined || value === null || value === "") {
@@ -132,19 +175,11 @@ function resolveClientIpAddress(req) {
 function buildAuditRequestMeta(req) {
   return {
     requestId:
-      String(req?.requestId || req?.headers?.["x-request-id"] || "").trim() || null,
+      String(req?.requestId || req?.headers?.["x-request-id"] || "").trim() ||
+      null,
     ipAddress: resolveClientIpAddress(req),
     userAgent: String(req?.headers?.["user-agent"] || "").trim() || null,
   };
-}
-
-function normalizeBalanceByAccountType(accountType, balance) {
-  const type = String(accountType || "").toUpperCase();
-  const amount = Number(balance || 0);
-  if (["LIABILITY", "EQUITY", "REVENUE"].includes(type)) {
-    return amount * -1;
-  }
-  return amount;
 }
 
 function normalizeDraftPostingStatus(value) {
@@ -155,27 +190,12 @@ function normalizeDraftPostingStatus(value) {
   return status;
 }
 
-function toApprovalGateResponse(req, gate, details = {}) {
-  const errorCode = String(gate?.errorCode || "APPROVAL_REQUIRED").trim().toUpperCase();
-  const defaultMessage =
-    errorCode === "WORKFLOW_NOT_ASSIGNED"
-      ? "Workflow gate is enabled but no assignment was found"
-      : errorCode === "APPROVAL_INSTANCE_REJECTED"
-        ? "Workflow instance is rejected; consolidation finalize is blocked"
-        : "Workflow approval is required before consolidation finalize";
-
-  return {
-    message: String(gate?.message || defaultMessage),
-    code: errorCode,
-    details,
-    requestId: req.requestId || null,
-  };
-}
-
 function assertRunNotLocked(run) {
   const status = String(run?.status || "").toUpperCase();
   if (status === "LOCKED") {
-    throw badRequest("Consolidation run is LOCKED; no further posting is allowed");
+    throw badRequest(
+      "Consolidation run is LOCKED; no further posting is allowed",
+    );
   }
 }
 
@@ -212,7 +232,9 @@ function normalizeCanonicalFailureReasonCounts(value) {
   }
   const normalized = {};
   for (const [key, rawCount] of Object.entries(value)) {
-    const normalizedKey = String(key || "").trim().toUpperCase();
+    const normalizedKey = String(key || "")
+      .trim()
+      .toUpperCase();
     if (!normalizedKey) {
       continue;
     }
@@ -222,8 +244,12 @@ function normalizeCanonicalFailureReasonCounts(value) {
 }
 
 function resolveCanonicalFailureSubtype(reasonCounts = {}) {
-  const localDateMismatch = Number(reasonCounts.LOCAL_MAPPING_DATE_MISMATCH || 0);
-  const groupDateMismatch = Number(reasonCounts.GROUP_MAPPING_DATE_MISMATCH || 0);
+  const localDateMismatch = Number(
+    reasonCounts.LOCAL_MAPPING_DATE_MISMATCH || 0,
+  );
+  const groupDateMismatch = Number(
+    reasonCounts.GROUP_MAPPING_DATE_MISMATCH || 0,
+  );
   if (localDateMismatch + groupDateMismatch > 0) {
     return "EFFECTIVE_DATE_MISMATCH";
   }
@@ -253,13 +279,18 @@ async function recordCanonicalExecuteFailureEvent({
   }
 
   const details =
-    err?.details && typeof err.details === "object" && !Array.isArray(err.details)
+    err?.details &&
+    typeof err.details === "object" &&
+    !Array.isArray(err.details)
       ? err.details
       : {};
-  const reasonCounts = normalizeCanonicalFailureReasonCounts(details.reasonCounts);
+  const reasonCounts = normalizeCanonicalFailureReasonCounts(
+    details.reasonCounts,
+  );
   const subtype = resolveCanonicalFailureSubtype(reasonCounts);
   const legalEntityId = parsePositiveInt(details.legalEntityId) || null;
-  const consolidationGroupId = parsePositiveInt(details.consolidationGroupId) || null;
+  const consolidationGroupId =
+    parsePositiveInt(details.consolidationGroupId) || null;
   const auditScopeType = consolidationGroupId
     ? "GROUP"
     : legalEntityId
@@ -278,8 +309,13 @@ async function recordCanonicalExecuteFailureEvent({
     sampledCount: Number(details.sampledCount || 0),
     sampleTruncated: details.sampleTruncated === true,
     reasonCounts,
-    sampleRows: Array.isArray(details.sampleRows) ? details.sampleRows.slice(0, 10) : [],
-    errorMessage: String(err?.message || "Consolidation execute failed").slice(0, 500),
+    sampleRows: Array.isArray(details.sampleRows)
+      ? details.sampleRows.slice(0, 10)
+      : [],
+    errorMessage: String(err?.message || "Consolidation execute failed").slice(
+      0,
+      500,
+    ),
   };
 
   await query(
@@ -305,11 +341,12 @@ async function recordCanonicalExecuteFailureEvent({
       String(parsedRunId),
       auditScopeType,
       auditScopeId,
-      String(req?.requestId || req?.headers?.["x-request-id"] || "").trim() || null,
+      String(req?.requestId || req?.headers?.["x-request-id"] || "").trim() ||
+        null,
       resolveClientIpAddress(req),
       String(req?.headers?.["user-agent"] || "").trim() || null,
       safeJsonStringify(payload),
-    ]
+    ],
   );
 
   logWarn("Consolidation canonical execute failure observed", {
@@ -323,7 +360,8 @@ async function recordCanonicalExecuteFailureEvent({
     requestId: req?.requestId || null,
   });
 
-  const alertWindowMinutes = CONSOLIDATION_CANONICAL_FAILURE_ALERT_WINDOW_MINUTES;
+  const alertWindowMinutes =
+    CONSOLIDATION_CANONICAL_FAILURE_ALERT_WINDOW_MINUTES;
   const alertThreshold = CONSOLIDATION_CANONICAL_FAILURE_ALERT_THRESHOLD;
   if (alertWindowMinutes <= 0 || alertThreshold <= 0) {
     return;
@@ -337,7 +375,7 @@ async function recordCanonicalExecuteFailureEvent({
      WHERE tenant_id = ?
        AND action = ?
        AND created_at >= ?`,
-    [parsedTenantId, CONSOLIDATION_CANONICAL_FAILURE_AUDIT_ACTION, sinceUtc]
+    [parsedTenantId, CONSOLIDATION_CANONICAL_FAILURE_AUDIT_ACTION, sinceUtc],
   );
   const failureCount = Number(alertResult.rows?.[0]?.failure_count || 0);
   if (failureCount >= alertThreshold) {
@@ -357,23 +395,27 @@ async function recordCanonicalExecuteFailureEvent({
 }
 
 function normalizeConsolidationStatus(value) {
-  return String(value || "").trim().toUpperCase();
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
 function assertLegalEntityMatchesGroupCompany(
   legalEntityRow,
   groupCompanyId,
-  label = "legalEntityId"
+  label = "legalEntityId",
 ) {
   const expectedGroupCompanyId = parsePositiveInt(groupCompanyId);
   if (!expectedGroupCompanyId) {
     return;
   }
 
-  const legalEntityGroupCompanyId = parsePositiveInt(legalEntityRow?.group_company_id);
+  const legalEntityGroupCompanyId = parsePositiveInt(
+    legalEntityRow?.group_company_id,
+  );
   if (legalEntityGroupCompanyId !== expectedGroupCompanyId) {
     throw badRequest(
-      `${label} must belong to selected consolidation group's group company`
+      `${label} must belong to selected consolidation group's group company`,
     );
   }
 }
@@ -390,7 +432,12 @@ async function isTenantFeatureEnabled({
        WHERE tenant_id = ?
          AND feature_code = ?
        LIMIT 1`,
-      [parsePositiveInt(tenantId), String(featureCode || "").trim().toUpperCase()]
+      [
+        parsePositiveInt(tenantId),
+        String(featureCode || "")
+          .trim()
+          .toUpperCase(),
+      ],
     );
     return toDbBoolean(result.rows?.[0]?.is_enabled);
   } catch (err) {
@@ -429,7 +476,7 @@ async function evaluateSubaccountsCompatibility({
        WHERE cgm.consolidation_group_id = ?
          AND cgm.effective_from <= ?
          AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)`,
-      [tenantId, consolidationGroupId, periodEndDate, periodStartDate]
+      [tenantId, consolidationGroupId, periodEndDate, periodStartDate],
     );
 
     const missingCanonicalResult = await runQuery(
@@ -472,7 +519,7 @@ async function evaluateSubaccountsCompatibility({
         consolidationGroupId,
         periodEndDate,
         periodStartDate,
-      ]
+      ],
     );
 
     const missingCanonicalSampleResult = await runQuery(
@@ -527,7 +574,7 @@ async function evaluateSubaccountsCompatibility({
         consolidationGroupId,
         periodEndDate,
         periodStartDate,
-      ]
+      ],
     );
 
     let missingRunEntryPairCount = null;
@@ -583,9 +630,11 @@ async function evaluateSubaccountsCompatibility({
           periodEndDate,
           periodStartDate,
           runId,
-        ]
+        ],
       );
-      missingRunEntryPairCount = Number(missingPairsResult.rows?.[0]?.missing_count || 0);
+      missingRunEntryPairCount = Number(
+        missingPairsResult.rows?.[0]?.missing_count || 0,
+      );
 
       if (missingRunEntryPairCount > 0) {
         const missingPairsSampleResult = await runQuery(
@@ -646,24 +695,30 @@ async function evaluateSubaccountsCompatibility({
             periodEndDate,
             periodStartDate,
             runId,
-          ]
+          ],
         );
-        missingRunEntryPairSamples = (missingPairsSampleResult.rows || []).map((row) => ({
-          legalEntityId: parsePositiveInt(row.legal_entity_id),
-          legalEntityCode: row.legal_entity_code || null,
-          groupAccountId: parsePositiveInt(row.group_account_id),
-          groupAccountCode: row.group_account_code || null,
-        }));
+        missingRunEntryPairSamples = (missingPairsSampleResult.rows || []).map(
+          (row) => ({
+            legalEntityId: parsePositiveInt(row.legal_entity_id),
+            legalEntityCode: row.legal_entity_code || null,
+            groupAccountId: parsePositiveInt(row.group_account_id),
+            groupAccountCode: row.group_account_code || null,
+          }),
+        );
       }
     }
 
-    const totalBankAccounts = Number(totalsResult.rows?.[0]?.total_bank_account_count || 0);
+    const totalBankAccounts = Number(
+      totalsResult.rows?.[0]?.total_bank_account_count || 0,
+    );
     const missingCanonicalMappingCount = Number(
-      missingCanonicalResult.rows?.[0]?.missing_count || 0
+      missingCanonicalResult.rows?.[0]?.missing_count || 0,
     );
     const mappingOk = missingCanonicalMappingCount === 0;
     const runOutputOk =
-      missingRunEntryPairCount === null ? true : Number(missingRunEntryPairCount) === 0;
+      missingRunEntryPairCount === null
+        ? true
+        : Number(missingRunEntryPairCount) === 0;
     const ok = mappingOk && runOutputOk;
 
     return {
@@ -677,16 +732,18 @@ async function evaluateSubaccountsCompatibility({
         runOutputCoverage: runOutputOk,
       },
       samples: {
-        missingCanonicalMappings: (missingCanonicalSampleResult.rows || []).map((row) => ({
-          bankAccountId: parsePositiveInt(row.bank_account_id),
-          bankAccountCode: row.bank_account_code || null,
-          bankAccountName: row.bank_account_name || null,
-          legalEntityId: parsePositiveInt(row.legal_entity_id),
-          legalEntityCode: row.legal_entity_code || null,
-          localAccountId: parsePositiveInt(row.local_account_id),
-          localAccountCode: row.local_account_code || null,
-          localAccountName: row.local_account_name || null,
-        })),
+        missingCanonicalMappings: (missingCanonicalSampleResult.rows || []).map(
+          (row) => ({
+            bankAccountId: parsePositiveInt(row.bank_account_id),
+            bankAccountCode: row.bank_account_code || null,
+            bankAccountName: row.bank_account_name || null,
+            legalEntityId: parsePositiveInt(row.legal_entity_id),
+            legalEntityCode: row.legal_entity_code || null,
+            localAccountId: parsePositiveInt(row.local_account_id),
+            localAccountCode: row.local_account_code || null,
+            localAccountName: row.local_account_name || null,
+          }),
+        ),
         missingRunEntryPairs: missingRunEntryPairSamples,
       },
       message: ok
@@ -760,7 +817,7 @@ async function evaluateApprovalGateCompatibility({
          CASE WHEN wa.group_company_id IS NOT NULL THEN 0 ELSE 1 END,
          wa.id DESC
        LIMIT 1`,
-      [tenantId, periodEndDate, periodEndDate, groupCompanyId]
+      [tenantId, periodEndDate, periodEndDate, groupCompanyId],
     );
 
     const assignment = assignmentResult.rows?.[0] || null;
@@ -794,7 +851,7 @@ async function evaluateApprovalGateCompatibility({
          AND target_id = ?
        ORDER BY id DESC
        LIMIT 1`,
-      [tenantId, runId]
+      [tenantId, runId],
     );
 
     const instance = instanceResult.rows?.[0] || null;
@@ -807,7 +864,9 @@ async function evaluateApprovalGateCompatibility({
         status: "INSTANCE_MISSING",
         code: "APPROVAL_REQUIRED",
         assignmentId: parsePositiveInt(assignment.id),
-        workflowDefinitionId: parsePositiveInt(assignment.workflow_definition_id),
+        workflowDefinitionId: parsePositiveInt(
+          assignment.workflow_definition_id,
+        ),
         instanceId: null,
         currentStepNo: null,
         message:
@@ -899,7 +958,13 @@ async function evaluateTaxPostedLinesCompatibility({
        WHERE cgm.consolidation_group_id = ?
          AND cgm.effective_from <= ?
          AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)`,
-      [tenantId, fiscalPeriodId, consolidationGroupId, periodEndDate, periodStartDate]
+      [
+        tenantId,
+        fiscalPeriodId,
+        consolidationGroupId,
+        periodEndDate,
+        periodStartDate,
+      ],
     );
 
     const unmappedResult = await runQuery(
@@ -951,7 +1016,7 @@ async function evaluateTaxPostedLinesCompatibility({
         periodStartDate,
         periodEndDate,
         periodStartDate,
-      ]
+      ],
     );
 
     const unmappedSampleResult = await runQuery(
@@ -1017,7 +1082,7 @@ async function evaluateTaxPostedLinesCompatibility({
         periodStartDate,
         periodEndDate,
         periodStartDate,
-      ]
+      ],
     );
 
     let missingRunEntryPairCount = null;
@@ -1079,9 +1144,11 @@ async function evaluateTaxPostedLinesCompatibility({
           periodEndDate,
           periodStartDate,
           runId,
-        ]
+        ],
       );
-      missingRunEntryPairCount = Number(missingPairsResult.rows?.[0]?.missing_count || 0);
+      missingRunEntryPairCount = Number(
+        missingPairsResult.rows?.[0]?.missing_count || 0,
+      );
 
       if (missingRunEntryPairCount > 0) {
         const missingPairsSampleResult = await runQuery(
@@ -1148,25 +1215,31 @@ async function evaluateTaxPostedLinesCompatibility({
             periodEndDate,
             periodStartDate,
             runId,
-          ]
+          ],
         );
-        missingRunEntryPairSamples = (missingPairsSampleResult.rows || []).map((row) => ({
-          legalEntityId: parsePositiveInt(row.legal_entity_id),
-          legalEntityCode: row.legal_entity_code || null,
-          groupAccountId: parsePositiveInt(row.group_account_id),
-          groupAccountCode: row.group_account_code || null,
-        }));
+        missingRunEntryPairSamples = (missingPairsSampleResult.rows || []).map(
+          (row) => ({
+            legalEntityId: parsePositiveInt(row.legal_entity_id),
+            legalEntityCode: row.legal_entity_code || null,
+            groupAccountId: parsePositiveInt(row.group_account_id),
+            groupAccountCode: row.group_account_code || null,
+          }),
+        );
       }
     }
 
     const taxLineCount = Number(totalsResult.rows?.[0]?.tax_line_count || 0);
-    const taxAccountCount = Number(totalsResult.rows?.[0]?.tax_account_count || 0);
+    const taxAccountCount = Number(
+      totalsResult.rows?.[0]?.tax_account_count || 0,
+    );
     const unmappedTaxAccountCount = Number(
-      unmappedResult.rows?.[0]?.unmapped_tax_account_count || 0
+      unmappedResult.rows?.[0]?.unmapped_tax_account_count || 0,
     );
     const mappingOk = unmappedTaxAccountCount === 0;
     const runOutputOk =
-      missingRunEntryPairCount === null ? true : Number(missingRunEntryPairCount) === 0;
+      missingRunEntryPairCount === null
+        ? true
+        : Number(missingRunEntryPairCount) === 0;
     const ok = mappingOk && runOutputOk;
 
     return {
@@ -1177,9 +1250,15 @@ async function evaluateTaxPostedLinesCompatibility({
       unmappedTaxAccountCount,
       missingRunEntryPairCount,
       totals: {
-        localDebitBaseTotal: Number(totalsResult.rows?.[0]?.tax_debit_base_total || 0),
-        localCreditBaseTotal: Number(totalsResult.rows?.[0]?.tax_credit_base_total || 0),
-        localBalanceBaseTotal: Number(totalsResult.rows?.[0]?.tax_balance_base_total || 0),
+        localDebitBaseTotal: Number(
+          totalsResult.rows?.[0]?.tax_debit_base_total || 0,
+        ),
+        localCreditBaseTotal: Number(
+          totalsResult.rows?.[0]?.tax_credit_base_total || 0,
+        ),
+        localBalanceBaseTotal: Number(
+          totalsResult.rows?.[0]?.tax_balance_base_total || 0,
+        ),
       },
       checks: {
         canonicalMappingCoverage: mappingOk,
@@ -1256,7 +1335,10 @@ async function buildCrossTrackCompatibilitySnapshot({
   });
 
   return {
-    ok: Boolean(subaccounts?.ok) && Boolean(approvalGate?.ok) && Boolean(taxPostedLines?.ok),
+    ok:
+      Boolean(subaccounts?.ok) &&
+      Boolean(approvalGate?.ok) &&
+      Boolean(taxPostedLines?.ok),
     generatedAt: new Date().toISOString(),
     subaccounts,
     approvalGate,
@@ -1289,7 +1371,7 @@ async function getRunWithContext(tenantId, runId) {
      WHERE cr.id = ?
        AND cg.tenant_id = ?
      LIMIT 1`,
-    [runId, tenantId]
+    [runId, tenantId],
   );
 
   return result.rows[0] || null;
@@ -1341,8 +1423,14 @@ async function resolveFxRate({
     };
   }
 
-  const fallbackOrder = [preferredRateType, "CLOSING", "SPOT", "AVERAGE"].filter(
-    (value, index, arr) => VALID_FX_RATE_TYPES.has(value) && arr.indexOf(value) === index
+  const fallbackOrder = [
+    preferredRateType,
+    "CLOSING",
+    "SPOT",
+    "AVERAGE",
+  ].filter(
+    (value, index, arr) =>
+      VALID_FX_RATE_TYPES.has(value) && arr.indexOf(value) === index,
   );
   if (fallbackOrder.length === 0) {
     fallbackOrder.push("CLOSING", "SPOT", "AVERAGE");
@@ -1359,20 +1447,13 @@ async function resolveFxRate({
      ORDER BY rate_date DESC,
               FIELD(rate_type, ${fallbackOrder.map(() => "?").join(", ")})
      LIMIT 1`,
-    [
-      tenantId,
-      fromCode,
-      toCode,
-      ...fallbackOrder,
-      rateDate,
-      ...fallbackOrder,
-    ]
+    [tenantId, fromCode, toCode, ...fallbackOrder, rateDate, ...fallbackOrder],
   );
 
   const row = result.rows[0];
   if (!row) {
     throw badRequest(
-      `FX rate not found for ${fromCode}->${toCode} on or before ${rateDate}`
+      `FX rate not found for ${fromCode}->${toCode} on or before ${rateDate}`,
     );
   }
 
@@ -1413,18 +1494,22 @@ async function assertCanonicalMappingCoverage({
     const localCoveredByDate = isDateCovered(
       row?.local_effective_from,
       row?.local_effective_to,
-      asOfDate
+      asOfDate,
     );
 
     const canonicalKeyId = parsePositiveInt(row?.canonical_key_id);
-    const canonicalKeyStatus = String(row?.canonical_key_status || "").toUpperCase();
+    const canonicalKeyStatus = String(
+      row?.canonical_key_status || "",
+    ).toUpperCase();
 
     const groupMappingId = parsePositiveInt(row?.group_mapping_id);
-    const groupMappingStatus = String(row?.group_mapping_status || "").toUpperCase();
+    const groupMappingStatus = String(
+      row?.group_mapping_status || "",
+    ).toUpperCase();
     const groupCoveredByDate = isDateCovered(
       row?.group_effective_from,
       row?.group_effective_to,
-      asOfDate
+      asOfDate,
     );
 
     if (!localMappingId) {
@@ -1495,9 +1580,11 @@ async function assertCanonicalMappingCoverage({
       consolidationGroupId,
       effectiveOn,
       effectiveOn,
-    ]
+    ],
   );
-  const uncoveredCount = Number(uncoveredResult.rows?.[0]?.uncovered_count || 0);
+  const uncoveredCount = Number(
+    uncoveredResult.rows?.[0]?.uncovered_count || 0,
+  );
   if (uncoveredCount <= 0) {
     return;
   }
@@ -1590,7 +1677,7 @@ async function assertCanonicalMappingCoverage({
       consolidationGroupId,
       effectiveOn,
       effectiveOn,
-    ]
+    ],
   );
 
   const sampleRows = (sampleResult.rows || []).map((row) => {
@@ -1631,7 +1718,7 @@ async function assertCanonicalMappingCoverage({
     .join(", ");
 
   const err = badRequest(
-    `Canonical consolidation mapping is missing for ${uncoveredCount} posted local account(s) in legalEntityId=${legalEntityId}. Sample codes: ${sampleCodes || "n/a"}`
+    `Canonical consolidation mapping is missing for ${uncoveredCount} posted local account(s) in legalEntityId=${legalEntityId}. Sample codes: ${sampleCodes || "n/a"}`,
   );
   err.details = {
     legalEntityId,
@@ -1710,7 +1797,7 @@ async function loadMemberMappedBalances({
       tenantId,
       fiscalPeriodId,
       legalEntityId,
-    ]
+    ],
   );
 
   return result.rows || [];
@@ -1730,7 +1817,7 @@ async function executeConsolidationRun({
   const consolidationGroupId = parsePositiveInt(run.consolidation_group_id);
   const fiscalPeriodId = parsePositiveInt(run.fiscal_period_id);
   const presentationCurrencyCode = String(
-    run.presentation_currency_code || ""
+    run.presentation_currency_code || "",
   ).toUpperCase();
   const periodStartDate = toIsoDate(run.period_start_date, "periodStartDate");
   const periodEndDate = toIsoDate(run.period_end_date, "periodEndDate");
@@ -1744,7 +1831,7 @@ async function executeConsolidationRun({
       [
         `Execution started by user ${executedByUserId}; mapping_mode=CANONICAL`,
         runId,
-      ]
+      ],
     );
 
     const memberResult = await tx.query(
@@ -1758,13 +1845,13 @@ async function executeConsolidationRun({
        WHERE cgm.consolidation_group_id = ?
          AND cgm.effective_from <= ?
          AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)`,
-      [consolidationGroupId, periodEndDate, periodStartDate]
+      [consolidationGroupId, periodEndDate, periodStartDate],
     );
 
     await tx.query(
       `DELETE FROM consolidation_run_entries
        WHERE consolidation_run_id = ?`,
-      [runId]
+      [runId],
     );
 
     let inserted = 0;
@@ -1775,11 +1862,13 @@ async function executeConsolidationRun({
         continue;
       }
 
-      const method = String(member.consolidation_method || "FULL").toUpperCase();
+      const method = String(
+        member.consolidation_method || "FULL",
+      ).toUpperCase();
       const ownershipPct = Number(member.ownership_pct || 1);
       const factor = ownershipFactor(method, ownershipPct);
       const sourceCurrencyCode = String(
-        member.functional_currency_code || ""
+        member.functional_currency_code || "",
       ).toUpperCase();
 
       // eslint-disable-next-line no-await-in-loop
@@ -1864,7 +1953,7 @@ async function executeConsolidationRun({
             translatedDebit,
             translatedCredit,
             translatedBalance,
-          ]
+          ],
         );
         inserted += 1;
       }
@@ -1877,7 +1966,7 @@ async function executeConsolidationRun({
          SUM(translated_balance) AS translated_balance_total
        FROM consolidation_run_entries
        WHERE consolidation_run_id = ?`,
-      [runId]
+      [runId],
     );
     const calculatedTotals = totalResult.rows[0] || {
       translated_debit_total: 0,
@@ -1894,7 +1983,7 @@ async function executeConsolidationRun({
       [
         `Execution completed by user ${executedByUserId}; inserted_rows=${inserted}; rate_type=${preferredRateType}; mapping_mode=CANONICAL`,
         runId,
-      ]
+      ],
     );
 
     return {
@@ -1914,208 +2003,6 @@ async function executeConsolidationRun({
   };
 }
 
-async function loadRunReportAccountBalances({
-  tenantId,
-  run,
-  includeDraft = false,
-  preferredRateType = "CLOSING",
-  runQuery = query,
-}) {
-  const runId = parsePositiveInt(run?.id);
-  if (!runId) {
-    throw badRequest("Consolidation run not found");
-  }
-
-  const presentationCurrencyCode = String(
-    run.presentation_currency_code || ""
-  ).toUpperCase();
-  const rateDate = toIsoDate(run.period_end_date, "periodEndDate");
-  const statusFilter = includeDraft ? ["DRAFT", "POSTED"] : ["POSTED"];
-  const statusPlaceholders = statusFilter.map(() => "?").join(", ");
-
-  const accountMap = new Map();
-  const fxRateCache = new Map();
-
-  function ensureAccount(accountId, accountCode, accountName, accountType) {
-    if (!accountMap.has(accountId)) {
-      accountMap.set(accountId, {
-        accountId,
-        accountCode: String(accountCode || `ACC-${accountId}`),
-        accountName: accountName ? String(accountName) : null,
-        accountType: String(accountType || "").toUpperCase(),
-        baseDebit: 0,
-        baseCredit: 0,
-        baseBalance: 0,
-        adjustmentDebit: 0,
-        adjustmentCredit: 0,
-        adjustmentBalance: 0,
-        eliminationDebit: 0,
-        eliminationCredit: 0,
-        eliminationBalance: 0,
-        finalDebit: 0,
-        finalCredit: 0,
-        finalBalance: 0,
-      });
-    }
-    return accountMap.get(accountId);
-  }
-
-  function addAmounts(row, component, debit, credit, balance) {
-    row[`${component}Debit`] += debit;
-    row[`${component}Credit`] += credit;
-    row[`${component}Balance`] += balance;
-    row.finalDebit += debit;
-    row.finalCredit += credit;
-    row.finalBalance += balance;
-  }
-
-  async function resolveCachedRate(fromCurrencyCode) {
-    const source = String(fromCurrencyCode || "").toUpperCase();
-    const key = `${source}->${presentationCurrencyCode}:${preferredRateType}:${rateDate}`;
-    if (fxRateCache.has(key)) {
-      return fxRateCache.get(key);
-    }
-
-    const fx = await resolveFxRate({
-      tenantId,
-      rateDate,
-      fromCurrencyCode: source,
-      toCurrencyCode: presentationCurrencyCode,
-      preferredRateType,
-      runQuery,
-    });
-    const numericRate = Number(fx.rate || 0);
-    fxRateCache.set(key, numericRate);
-    return numericRate;
-  }
-
-  const baseResult = await runQuery(
-    `SELECT
-       cre.group_account_id AS account_id,
-       a.code AS account_code,
-       a.name AS account_name,
-       a.account_type,
-       SUM(cre.translated_debit) AS debit_total,
-       SUM(cre.translated_credit) AS credit_total,
-       SUM(cre.translated_balance) AS balance_total
-     FROM consolidation_run_entries cre
-     JOIN accounts a ON a.id = cre.group_account_id
-     WHERE cre.consolidation_run_id = ?
-     GROUP BY cre.group_account_id, a.code, a.name, a.account_type`,
-    [runId]
-  );
-
-  for (const row of baseResult.rows || []) {
-    const accountId = parsePositiveInt(row.account_id);
-    if (!accountId) {
-      continue;
-    }
-    const target = ensureAccount(
-      accountId,
-      row.account_code,
-      row.account_name,
-      row.account_type
-    );
-    addAmounts(
-      target,
-      "base",
-      Number(row.debit_total || 0),
-      Number(row.credit_total || 0),
-      Number(row.balance_total || 0)
-    );
-  }
-
-  const adjustmentResult = await runQuery(
-    `SELECT
-       ca.account_id,
-       a.code AS account_code,
-       a.name AS account_name,
-       a.account_type,
-       ca.currency_code,
-       SUM(ca.debit_amount) AS debit_total,
-       SUM(ca.credit_amount) AS credit_total
-     FROM consolidation_adjustments ca
-     JOIN accounts a ON a.id = ca.account_id
-     WHERE ca.consolidation_run_id = ?
-       AND ca.status IN (${statusPlaceholders})
-     GROUP BY
-       ca.account_id,
-       a.code,
-       a.name,
-       a.account_type,
-       ca.currency_code`,
-    [runId, ...statusFilter]
-  );
-
-  for (const row of adjustmentResult.rows || []) {
-    const accountId = parsePositiveInt(row.account_id);
-    if (!accountId) {
-      continue;
-    }
-
-    const rate = await resolveCachedRate(row.currency_code);
-    const debit = Number(row.debit_total || 0) * rate;
-    const credit = Number(row.credit_total || 0) * rate;
-    const balance = (Number(row.debit_total || 0) - Number(row.credit_total || 0)) * rate;
-
-    const target = ensureAccount(
-      accountId,
-      row.account_code,
-      row.account_name,
-      row.account_type
-    );
-    addAmounts(target, "adjustment", debit, credit, balance);
-  }
-
-  const eliminationResult = await runQuery(
-    `SELECT
-       el.account_id,
-       a.code AS account_code,
-       a.name AS account_name,
-       a.account_type,
-       el.currency_code,
-       SUM(el.debit_amount) AS debit_total,
-       SUM(el.credit_amount) AS credit_total
-     FROM elimination_entries ee
-     JOIN elimination_lines el ON el.elimination_entry_id = ee.id
-     JOIN accounts a ON a.id = el.account_id
-     WHERE ee.consolidation_run_id = ?
-       AND ee.status IN (${statusPlaceholders})
-     GROUP BY
-       el.account_id,
-       a.code,
-       a.name,
-       a.account_type,
-       el.currency_code`,
-    [runId, ...statusFilter]
-  );
-
-  for (const row of eliminationResult.rows || []) {
-    const accountId = parsePositiveInt(row.account_id);
-    if (!accountId) {
-      continue;
-    }
-
-    const rate = await resolveCachedRate(row.currency_code);
-    const debit = Number(row.debit_total || 0) * rate;
-    const credit = Number(row.credit_total || 0) * rate;
-    const balance = (Number(row.debit_total || 0) - Number(row.credit_total || 0)) * rate;
-
-    const target = ensureAccount(
-      accountId,
-      row.account_code,
-      row.account_name,
-      row.account_type
-    );
-    addAmounts(target, "elimination", debit, credit, balance);
-  }
-
-  return {
-    statusFilter,
-    rows: Array.from(accountMap.values()),
-  };
-}
-
 router.get(
   "/groups",
   requirePermission("consolidation.group.read"),
@@ -2126,7 +2013,12 @@ router.get(
     }
 
     const params = [tenantId];
-    const groupFilter = buildScopeFilter(req, "group", "group_company_id", params);
+    const groupFilter = buildScopeFilter(
+      req,
+      "group",
+      "group_company_id",
+      params,
+    );
 
     const result = await query(
       `SELECT
@@ -2143,14 +2035,14 @@ router.get(
        WHERE tenant_id = ?
          AND ${groupFilter}
        ORDER BY id`,
-      params
+      params,
     );
 
     return res.json({
       tenantId,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2181,11 +2073,21 @@ router.post(
     const groupCompanyId = parsePositiveInt(req.body.groupCompanyId);
     const calendarId = parsePositiveInt(req.body.calendarId);
     if (!groupCompanyId || !calendarId) {
-      throw badRequest("groupCompanyId and calendarId must be positive integers");
+      throw badRequest(
+        "groupCompanyId and calendarId must be positive integers",
+      );
     }
 
-    await assertGroupCompanyBelongsToTenant(tenantId, groupCompanyId, "groupCompanyId");
-    await assertFiscalCalendarBelongsToTenant(tenantId, calendarId, "calendarId");
+    await assertGroupCompanyBelongsToTenant(
+      tenantId,
+      groupCompanyId,
+      "groupCompanyId",
+    );
+    await assertFiscalCalendarBelongsToTenant(
+      tenantId,
+      calendarId,
+      "calendarId",
+    );
     assertScopeAccess(req, "group", groupCompanyId, "groupCompanyId");
 
     const result = await query(
@@ -2205,11 +2107,11 @@ router.post(
         String(req.body.code).trim(),
         String(req.body.name).trim(),
         String(req.body.presentationCurrencyCode).toUpperCase(),
-      ]
+      ],
     );
 
     return res.status(201).json({ ok: true, id: result.rows.insertId || null });
-  })
+  }),
 );
 
 router.post(
@@ -2225,7 +2127,11 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     assertRequiredFields(req.body, ["legalEntityId", "effectiveFrom"]);
@@ -2236,17 +2142,17 @@ router.post(
     const legalEntity = await assertLegalEntityBelongsToTenant(
       tenantId,
       legalEntityId,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertLegalEntityMatchesGroupCompany(
       legalEntity,
       group.group_company_id,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
     const consolidationMethod = String(
-      req.body.consolidationMethod || "FULL"
+      req.body.consolidationMethod || "FULL",
     ).toUpperCase();
     const ownershipPct =
       req.body.ownershipPct === undefined ? 1 : Number(req.body.ownershipPct);
@@ -2267,11 +2173,11 @@ router.post(
         ownershipPct,
         String(req.body.effectiveFrom),
         req.body.effectiveTo ? String(req.body.effectiveTo) : null,
-      ]
+      ],
     );
 
     return res.status(201).json({ ok: true, id: result.rows.insertId || null });
-  })
+  }),
 );
 
 router.get(
@@ -2291,7 +2197,7 @@ router.get(
     const group = await assertConsolidationGroupBelongsToTenant(
       tenantId,
       groupId,
-      "groupId"
+      "groupId",
     );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
@@ -2300,12 +2206,12 @@ router.get(
       const legalEntity = await assertLegalEntityBelongsToTenant(
         tenantId,
         legalEntityId,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertLegalEntityMatchesGroupCompany(
         legalEntity,
         group.group_company_id,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
@@ -2332,7 +2238,7 @@ router.get(
        JOIN legal_entities le ON le.id = cgm.legal_entity_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY cgm.effective_from DESC, cgm.id DESC`,
-      params
+      params,
     );
 
     return res.json({
@@ -2340,7 +2246,7 @@ router.get(
       groupId,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.get(
@@ -2356,7 +2262,11 @@ router.get(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     const legalEntityId = parsePositiveInt(req.query.legalEntityId);
@@ -2364,12 +2274,12 @@ router.get(
       const legalEntity = await assertLegalEntityBelongsToTenant(
         tenantId,
         legalEntityId,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertLegalEntityMatchesGroupCompany(
         legalEntity,
         group.group_company_id,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
@@ -2396,7 +2306,7 @@ router.get(
        FROM group_coa_mappings
        WHERE ${conditions.join(" AND ")}
        ORDER BY id`,
-      params
+      params,
     );
 
     return res.json({
@@ -2404,7 +2314,7 @@ router.get(
       groupId,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2420,33 +2330,53 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
-    assertRequiredFields(req.body, ["legalEntityId", "groupCoaId", "localCoaId"]);
+    assertRequiredFields(req.body, [
+      "legalEntityId",
+      "groupCoaId",
+      "localCoaId",
+    ]);
     const legalEntityId = parsePositiveInt(req.body.legalEntityId);
     const groupCoaId = parsePositiveInt(req.body.groupCoaId);
     const localCoaId = parsePositiveInt(req.body.localCoaId);
     if (!legalEntityId || !groupCoaId || !localCoaId) {
-      throw badRequest("legalEntityId, groupCoaId and localCoaId must be positive integers");
+      throw badRequest(
+        "legalEntityId, groupCoaId and localCoaId must be positive integers",
+      );
     }
 
     const legalEntity = await assertLegalEntityBelongsToTenant(
       tenantId,
       legalEntityId,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertLegalEntityMatchesGroupCompany(
       legalEntity,
       group.group_company_id,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
-    const groupCoa = await assertCoaBelongsToTenant(tenantId, groupCoaId, "groupCoaId");
-    const localCoa = await assertCoaBelongsToTenant(tenantId, localCoaId, "localCoaId");
+    const groupCoa = await assertCoaBelongsToTenant(
+      tenantId,
+      groupCoaId,
+      "groupCoaId",
+    );
+    const localCoa = await assertCoaBelongsToTenant(
+      tenantId,
+      localCoaId,
+      "localCoaId",
+    );
     if (String(groupCoa.scope || "").toUpperCase() !== "GROUP") {
-      throw badRequest("groupCoaId must reference a GROUP scoped chart of accounts");
+      throw badRequest(
+        "groupCoaId must reference a GROUP scoped chart of accounts",
+      );
     }
     if (parsePositiveInt(localCoa.legal_entity_id) !== legalEntityId) {
       throw badRequest("localCoaId must belong to legalEntityId");
@@ -2462,14 +2392,14 @@ router.post(
        ON DUPLICATE KEY UPDATE
          status = VALUES(status),
          updated_at = CURRENT_TIMESTAMP`,
-      [tenantId, groupId, legalEntityId, groupCoaId, localCoaId, status]
+      [tenantId, groupId, legalEntityId, groupCoaId, localCoaId, status],
     );
 
     return res.status(201).json({
       ok: true,
       id: result.rows.insertId || null,
     });
-  })
+  }),
 );
 
 router.get(
@@ -2485,7 +2415,11 @@ router.get(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     const rows = await listCanonicalKeys({
@@ -2499,7 +2433,7 @@ router.get(
       groupId,
       rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2515,7 +2449,11 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     assertRequiredFields(req.body, ["canonicalKey"]);
@@ -2533,7 +2471,7 @@ router.post(
       ok: true,
       row,
     });
-  })
+  }),
 );
 
 router.get(
@@ -2549,7 +2487,11 @@ router.get(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     const legalEntityId = parsePositiveInt(req.query.legalEntityId);
@@ -2557,12 +2499,12 @@ router.get(
       const legalEntity = await assertLegalEntityBelongsToTenant(
         tenantId,
         legalEntityId,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertLegalEntityMatchesGroupCompany(
         legalEntity,
         group.group_company_id,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
@@ -2580,7 +2522,7 @@ router.get(
       legalEntityId: legalEntityId || null,
       rows,
     });
-  })
+  }),
 );
 
 router.get(
@@ -2596,7 +2538,11 @@ router.get(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     let limit = undefined;
@@ -2618,7 +2564,7 @@ router.get(
       groupId,
       ...snapshot,
     });
-  })
+  }),
 );
 
 router.get(
@@ -2634,7 +2580,11 @@ router.get(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     let limit = undefined;
@@ -2658,7 +2608,7 @@ router.get(
       groupId,
       ...snapshot,
     });
-  })
+  }),
 );
 
 router.get(
@@ -2674,11 +2624,18 @@ router.get(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     let legalEntityId = null;
-    if (req.query.legalEntityId !== undefined && req.query.legalEntityId !== "") {
+    if (
+      req.query.legalEntityId !== undefined &&
+      req.query.legalEntityId !== ""
+    ) {
       legalEntityId = parsePositiveInt(req.query.legalEntityId);
       if (!legalEntityId) {
         throw badRequest("legalEntityId must be a positive integer");
@@ -2686,12 +2643,12 @@ router.get(
       const legalEntity = await assertLegalEntityBelongsToTenant(
         tenantId,
         legalEntityId,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertLegalEntityMatchesGroupCompany(
         legalEntity,
         group.group_company_id,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
@@ -2719,7 +2676,7 @@ router.get(
       summary: result.summary,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.get(
@@ -2735,11 +2692,18 @@ router.get(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     let legalEntityId = null;
-    if (req.query.legalEntityId !== undefined && req.query.legalEntityId !== "") {
+    if (
+      req.query.legalEntityId !== undefined &&
+      req.query.legalEntityId !== ""
+    ) {
       legalEntityId = parsePositiveInt(req.query.legalEntityId);
       if (!legalEntityId) {
         throw badRequest("legalEntityId must be a positive integer");
@@ -2747,12 +2711,12 @@ router.get(
       const legalEntity = await assertLegalEntityBelongsToTenant(
         tenantId,
         legalEntityId,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertLegalEntityMatchesGroupCompany(
         legalEntity,
         group.group_company_id,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
@@ -2771,7 +2735,7 @@ router.get(
       summary: result.summary,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2787,10 +2751,18 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
-    assertRequiredFields(req.body, ["legalEntityId", "ruleType", "canonicalKey"]);
+    assertRequiredFields(req.body, [
+      "legalEntityId",
+      "ruleType",
+      "canonicalKey",
+    ]);
     const legalEntityId = parsePositiveInt(req.body.legalEntityId);
     if (!legalEntityId) {
       throw badRequest("legalEntityId must be a positive integer");
@@ -2798,12 +2770,12 @@ router.post(
     const legalEntity = await assertLegalEntityBelongsToTenant(
       tenantId,
       legalEntityId,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertLegalEntityMatchesGroupCompany(
       legalEntity,
       group.group_company_id,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
@@ -2832,7 +2804,7 @@ router.post(
       ok: true,
       row,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2848,10 +2820,18 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
-    assertRequiredFields(req.body, ["legalEntityId", "ruleType", "canonicalKey"]);
+    assertRequiredFields(req.body, [
+      "legalEntityId",
+      "ruleType",
+      "canonicalKey",
+    ]);
     const legalEntityId = parsePositiveInt(req.body.legalEntityId);
     if (!legalEntityId) {
       throw badRequest("legalEntityId must be a positive integer");
@@ -2859,12 +2839,12 @@ router.post(
     const legalEntity = await assertLegalEntityBelongsToTenant(
       tenantId,
       legalEntityId,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertLegalEntityMatchesGroupCompany(
       legalEntity,
       group.group_company_id,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
@@ -2888,7 +2868,7 @@ router.post(
       legalEntityId,
       ...preview,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2904,10 +2884,18 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
-    assertRequiredFields(req.body, ["legalEntityId", "ruleType", "canonicalKey"]);
+    assertRequiredFields(req.body, [
+      "legalEntityId",
+      "ruleType",
+      "canonicalKey",
+    ]);
     const legalEntityId = parsePositiveInt(req.body.legalEntityId);
     if (!legalEntityId) {
       throw badRequest("legalEntityId must be a positive integer");
@@ -2915,12 +2903,12 @@ router.post(
     const legalEntity = await assertLegalEntityBelongsToTenant(
       tenantId,
       legalEntityId,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertLegalEntityMatchesGroupCompany(
       legalEntity,
       group.group_company_id,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
@@ -2951,7 +2939,7 @@ router.post(
       legalEntityId,
       ...result,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2967,11 +2955,18 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     let legalEntityId = null;
-    if (req.body?.legalEntityId !== undefined && req.body?.legalEntityId !== "") {
+    if (
+      req.body?.legalEntityId !== undefined &&
+      req.body?.legalEntityId !== ""
+    ) {
       legalEntityId = parsePositiveInt(req.body.legalEntityId);
       if (!legalEntityId) {
         throw badRequest("legalEntityId must be a positive integer");
@@ -2979,12 +2974,12 @@ router.post(
       const legalEntity = await assertLegalEntityBelongsToTenant(
         tenantId,
         legalEntityId,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertLegalEntityMatchesGroupCompany(
         legalEntity,
         group.group_company_id,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
@@ -3017,7 +3012,7 @@ router.post(
       legalEntityId: legalEntityId || null,
       ...result,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3034,7 +3029,11 @@ router.post(
     if (!groupId || !ruleId) {
       throw badRequest("groupId and ruleId must be positive integers");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     const savedRule = await getCanonicalMappingRuleById({
@@ -3045,7 +3044,12 @@ router.post(
     if (!savedRule) {
       throw badRequest("ruleId not found in consolidation group");
     }
-    assertScopeAccess(req, "legal_entity", savedRule.legalEntityId, "legalEntityId");
+    assertScopeAccess(
+      req,
+      "legal_entity",
+      savedRule.legalEntityId,
+      "legalEntityId",
+    );
 
     const result = await previewCanonicalMappingRuleById({
       tenantId,
@@ -3059,7 +3063,7 @@ router.post(
       ruleId,
       ...result,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3076,7 +3080,11 @@ router.post(
     if (!groupId || !ruleId) {
       throw badRequest("groupId and ruleId must be positive integers");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     const savedRule = await getCanonicalMappingRuleById({
@@ -3087,7 +3095,12 @@ router.post(
     if (!savedRule) {
       throw badRequest("ruleId not found in consolidation group");
     }
-    assertScopeAccess(req, "legal_entity", savedRule.legalEntityId, "legalEntityId");
+    assertScopeAccess(
+      req,
+      "legal_entity",
+      savedRule.legalEntityId,
+      "legalEntityId",
+    );
 
     const actedByUserId = parsePositiveInt(req.user?.userId) || null;
     const auditRequestMeta = buildAuditRequestMeta(req);
@@ -3108,7 +3121,7 @@ router.post(
       ruleId,
       ...result,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3125,7 +3138,11 @@ router.post(
     if (!groupId || !ruleId) {
       throw badRequest("groupId and ruleId must be positive integers");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     const savedRule = await getCanonicalMappingRuleById({
@@ -3136,7 +3153,12 @@ router.post(
     if (!savedRule) {
       throw badRequest("ruleId not found in consolidation group");
     }
-    assertScopeAccess(req, "legal_entity", savedRule.legalEntityId, "legalEntityId");
+    assertScopeAccess(
+      req,
+      "legal_entity",
+      savedRule.legalEntityId,
+      "legalEntityId",
+    );
 
     const actedByUserId = parsePositiveInt(req.user?.userId) || null;
     const auditRequestMeta = buildAuditRequestMeta(req);
@@ -3153,7 +3175,7 @@ router.post(
       ok: true,
       row,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3169,27 +3191,37 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     assertRequiredFields(req.body, ["legalEntityId", "localAccountId"]);
     const legalEntityId = parsePositiveInt(req.body.legalEntityId);
     const localAccountId = parsePositiveInt(req.body.localAccountId);
     if (!legalEntityId || !localAccountId) {
-      throw badRequest("legalEntityId and localAccountId must be positive integers");
+      throw badRequest(
+        "legalEntityId and localAccountId must be positive integers",
+      );
     }
     const legalEntity = await assertLegalEntityBelongsToTenant(
       tenantId,
       legalEntityId,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertLegalEntityMatchesGroupCompany(
       legalEntity,
       group.group_company_id,
-      "legalEntityId"
+      "legalEntityId",
     );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
-    await assertAccountBelongsToTenant(tenantId, localAccountId, "localAccountId");
+    await assertAccountBelongsToTenant(
+      tenantId,
+      localAccountId,
+      "localAccountId",
+    );
     const actedByUserId = parsePositiveInt(req.user?.userId) || null;
     const auditRequestMeta = buildAuditRequestMeta(req);
 
@@ -3216,7 +3248,7 @@ router.post(
       ok: true,
       row,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3232,7 +3264,11 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     assertRequiredFields(req.body, ["groupAccountId"]);
@@ -3240,7 +3276,11 @@ router.post(
     if (!groupAccountId) {
       throw badRequest("groupAccountId must be a positive integer");
     }
-    await assertAccountBelongsToTenant(tenantId, groupAccountId, "groupAccountId");
+    await assertAccountBelongsToTenant(
+      tenantId,
+      groupAccountId,
+      "groupAccountId",
+    );
     const actedByUserId = parsePositiveInt(req.user?.userId) || null;
     const auditRequestMeta = buildAuditRequestMeta(req);
 
@@ -3266,7 +3306,7 @@ router.post(
       ok: true,
       row,
     });
-  })
+  }),
 );
 
 router.get(
@@ -3282,7 +3322,11 @@ router.get(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     const result = await query(
@@ -3302,7 +3346,7 @@ router.get(
        WHERE tenant_id = ?
          AND consolidation_group_id = ?
        ORDER BY placeholder_code`,
-      [tenantId, groupId]
+      [tenantId, groupId],
     );
 
     return res.json({
@@ -3310,7 +3354,7 @@ router.get(
       groupId,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3326,21 +3370,33 @@ router.post(
     if (!groupId) {
       throw badRequest("groupId must be a positive integer");
     }
-    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId",
+    );
     assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
 
     assertRequiredFields(req.body, ["placeholderCode", "name"]);
-    const accountId = req.body.accountId ? parsePositiveInt(req.body.accountId) : null;
+    const accountId = req.body.accountId
+      ? parsePositiveInt(req.body.accountId)
+      : null;
     if (req.body.accountId && !accountId) {
       throw badRequest("accountId must be a positive integer");
     }
     if (accountId) {
       await assertAccountBelongsToTenant(tenantId, accountId, "accountId");
     }
-    const placeholderCode = String(req.body.placeholderCode).trim().toUpperCase();
+    const placeholderCode = String(req.body.placeholderCode)
+      .trim()
+      .toUpperCase();
     const name = String(req.body.name).trim();
-    const defaultDirection = String(req.body.defaultDirection || "AUTO").toUpperCase();
-    const description = req.body.description ? String(req.body.description) : null;
+    const defaultDirection = String(
+      req.body.defaultDirection || "AUTO",
+    ).toUpperCase();
+    const description = req.body.description
+      ? String(req.body.description)
+      : null;
     const isActive =
       req.body.isActive === undefined ? true : Boolean(req.body.isActive);
 
@@ -3372,14 +3428,14 @@ router.post(
         defaultDirection,
         description,
         isActive,
-      ]
+      ],
     );
 
     return res.status(201).json({
       ok: true,
       id: result.rows.insertId || null,
     });
-  })
+  }),
 );
 
 router.get(
@@ -3391,13 +3447,19 @@ router.get(
       throw badRequest("tenantId is required");
     }
 
-    const consolidationGroupId = parsePositiveInt(req.query.consolidationGroupId);
+    const consolidationGroupId = parsePositiveInt(
+      req.query.consolidationGroupId,
+    );
     const fiscalPeriodId = parsePositiveInt(req.query.fiscalPeriodId);
-    const status = req.query.status ? String(req.query.status).toUpperCase() : null;
+    const status = req.query.status
+      ? String(req.query.status).toUpperCase()
+      : null;
 
     const params = [tenantId];
     const conditions = ["cg.tenant_id = ?"];
-    conditions.push(buildScopeFilter(req, "group", "cg.group_company_id", params));
+    conditions.push(
+      buildScopeFilter(req, "group", "cg.group_company_id", params),
+    );
 
     if (consolidationGroupId) {
       conditions.push("cr.consolidation_group_id = ?");
@@ -3435,14 +3497,14 @@ router.get(
        JOIN fiscal_periods fp ON fp.id = cr.fiscal_period_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY cr.started_at DESC, cr.id DESC`,
-      params
+      params,
     );
 
     return res.json({
       tenantId,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3461,24 +3523,30 @@ router.post(
       "presentationCurrencyCode",
     ]);
 
-    const consolidationGroupId = parsePositiveInt(req.body.consolidationGroupId);
+    const consolidationGroupId = parsePositiveInt(
+      req.body.consolidationGroupId,
+    );
     const fiscalPeriodId = parsePositiveInt(req.body.fiscalPeriodId);
     const startedByUserId = parsePositiveInt(req.user?.userId);
     const presentationCurrencyCode = String(
-      req.body.presentationCurrencyCode || ""
+      req.body.presentationCurrencyCode || "",
     ).toUpperCase();
 
     if (!consolidationGroupId || !fiscalPeriodId || !startedByUserId) {
       throw badRequest(
-        "consolidationGroupId, fiscalPeriodId and authenticated user are required"
+        "consolidationGroupId, fiscalPeriodId and authenticated user are required",
       );
     }
 
-    await assertUserBelongsToTenant(tenantId, startedByUserId, "startedByUserId");
+    await assertUserBelongsToTenant(
+      tenantId,
+      startedByUserId,
+      "startedByUserId",
+    );
     const group = await assertConsolidationGroupBelongsToTenant(
       tenantId,
       consolidationGroupId,
-      "consolidationGroupId"
+      "consolidationGroupId",
     );
 
     const groupCompanyId = parsePositiveInt(group.group_company_id);
@@ -3489,7 +3557,7 @@ router.post(
     await assertFiscalPeriodBelongsToCalendar(
       parsePositiveInt(group.calendar_id),
       fiscalPeriodId,
-      "fiscalPeriodId"
+      "fiscalPeriodId",
     );
 
     const result = await query(
@@ -3503,7 +3571,7 @@ router.post(
         String(req.body.runName),
         presentationCurrencyCode,
         startedByUserId,
-      ]
+      ],
     );
 
     return res.status(201).json({
@@ -3511,7 +3579,7 @@ router.post(
       tenantId,
       runId: result.rows.insertId || null,
     });
-  })
+  }),
 );
 
 router.get(
@@ -3541,7 +3609,7 @@ router.get(
       `SELECT COUNT(*) AS entry_count
        FROM consolidation_run_entries
        WHERE consolidation_run_id = ?`,
-      [runId]
+      [runId],
     );
     const totalsResult = await query(
       `SELECT
@@ -3550,7 +3618,7 @@ router.get(
          SUM(translated_balance) AS translated_balance_total
        FROM consolidation_run_entries
        WHERE consolidation_run_id = ?`,
-      [runId]
+      [runId],
     );
     const compatibility = await buildCrossTrackCompatibilitySnapshot({
       tenantId,
@@ -3565,19 +3633,19 @@ router.get(
         entryCount: Number(entryCountResult.rows[0]?.entry_count || 0),
         totals: {
           translatedDebitTotal: Number(
-            totalsResult.rows[0]?.translated_debit_total || 0
+            totalsResult.rows[0]?.translated_debit_total || 0,
           ),
           translatedCreditTotal: Number(
-            totalsResult.rows[0]?.translated_credit_total || 0
+            totalsResult.rows[0]?.translated_credit_total || 0,
           ),
           translatedBalanceTotal: Number(
-            totalsResult.rows[0]?.translated_balance_total || 0
+            totalsResult.rows[0]?.translated_balance_total || 0,
           ),
         },
       },
       compatibility,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3628,7 +3696,7 @@ router.post(
              finished_at = CURRENT_TIMESTAMP,
              notes = ?
          WHERE id = ?`,
-        [String(err.message || "Execution failed").slice(0, 500), runId]
+        [String(err.message || "Execution failed").slice(0, 500), runId],
       );
       if (isCanonicalCoverageFailure(err)) {
         try {
@@ -3643,18 +3711,19 @@ router.post(
           logWarn(
             "Failed to record consolidation canonical execute failure event",
             {
-              eventCode: "CONSOLIDATION_CANONICAL_EXECUTE_FAILURE_MONITORING_ERROR",
+              eventCode:
+                "CONSOLIDATION_CANONICAL_EXECUTE_FAILURE_MONITORING_ERROR",
               tenantId,
               runId,
               requestId: req.requestId || null,
             },
-            monitorErr
+            monitorErr,
           );
         }
       }
       throw err;
     }
-  })
+  }),
 );
 
 router.get(
@@ -3677,7 +3746,11 @@ router.get(
     await requireRun(tenantId, runId);
 
     const status = normalizeDraftPostingStatus(req.query.status);
-    const includeLines = parseBooleanLike(req.query.includeLines, false, "includeLines");
+    const includeLines = parseBooleanLike(
+      req.query.includeLines,
+      false,
+      "includeLines",
+    );
 
     const params = [runId];
     const conditions = ["ee.consolidation_run_id = ?"];
@@ -3718,7 +3791,7 @@ router.get(
          ee.created_at,
          ee.posted_at
        ORDER BY ee.id DESC`,
-      params
+      params,
     );
 
     const rows = (result.rows || []).map((row) => ({
@@ -3764,7 +3837,7 @@ router.get(
            LEFT JOIN legal_entities cle ON cle.id = el.counterparty_legal_entity_id
            WHERE el.elimination_entry_id IN (${placeholders})
            ORDER BY el.elimination_entry_id, el.line_no`,
-          entryIds
+          entryIds,
         );
 
         const linesByEntryId = new Map();
@@ -3784,9 +3857,13 @@ router.get(
             legalEntityId: parsePositiveInt(line.legal_entity_id),
             legalEntityCode: line.legal_entity_code || null,
             legalEntityName: line.legal_entity_name || null,
-            counterpartyLegalEntityId: parsePositiveInt(line.counterparty_legal_entity_id),
-            counterpartyLegalEntityCode: line.counterparty_legal_entity_code || null,
-            counterpartyLegalEntityName: line.counterparty_legal_entity_name || null,
+            counterpartyLegalEntityId: parsePositiveInt(
+              line.counterparty_legal_entity_id,
+            ),
+            counterpartyLegalEntityCode:
+              line.counterparty_legal_entity_code || null,
+            counterpartyLegalEntityName:
+              line.counterparty_legal_entity_name || null,
             debitAmount: Number(line.debit_amount || 0),
             creditAmount: Number(line.credit_amount || 0),
             currencyCode: String(line.currency_code || "").toUpperCase(),
@@ -3805,7 +3882,7 @@ router.get(
       status,
       rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3842,22 +3919,26 @@ router.post(
       if (!accountId) {
         throw badRequest(`Invalid accountId on elimination line ${i + 1}`);
       }
-      await assertAccountBelongsToTenant(tenantId, accountId, `lines[${i}].accountId`);
+      await assertAccountBelongsToTenant(
+        tenantId,
+        accountId,
+        `lines[${i}].accountId`,
+      );
 
       const legalEntityId = parsePositiveInt(line.legalEntityId);
       const counterpartyLegalEntityId = parsePositiveInt(
-        line.counterpartyLegalEntityId
+        line.counterpartyLegalEntityId,
       );
       if (legalEntityId) {
         const legalEntity = await assertLegalEntityBelongsToTenant(
           tenantId,
           legalEntityId,
-          `lines[${i}].legalEntityId`
+          `lines[${i}].legalEntityId`,
         );
         assertLegalEntityMatchesGroupCompany(
           legalEntity,
           run.group_company_id,
-          `lines[${i}].legalEntityId`
+          `lines[${i}].legalEntityId`,
         );
         assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
       }
@@ -3865,18 +3946,18 @@ router.post(
         const counterpartyLegalEntity = await assertLegalEntityBelongsToTenant(
           tenantId,
           counterpartyLegalEntityId,
-          `lines[${i}].counterpartyLegalEntityId`
+          `lines[${i}].counterpartyLegalEntityId`,
         );
         assertLegalEntityMatchesGroupCompany(
           counterpartyLegalEntity,
           run.group_company_id,
-          `lines[${i}].counterpartyLegalEntityId`
+          `lines[${i}].counterpartyLegalEntityId`,
         );
         assertScopeAccess(
           req,
           "legal_entity",
           counterpartyLegalEntityId,
-          "counterpartyLegalEntityId"
+          "counterpartyLegalEntityId",
         );
       }
 
@@ -3897,7 +3978,12 @@ router.post(
             consolidation_run_id, status, description, reference_no, created_by_user_id
          )
          VALUES (?, 'DRAFT', ?, ?, ?)`,
-        [runId, String(req.body.description), req.body.referenceNo || null, userId]
+        [
+          runId,
+          String(req.body.description),
+          req.body.referenceNo || null,
+          userId,
+        ],
       );
       const createdEntryId = parsePositiveInt(entryResult.rows.insertId);
       if (!createdEntryId) {
@@ -3923,7 +4009,7 @@ router.post(
             line.creditAmount,
             line.currencyCode,
             line.description,
-          ]
+          ],
         );
       }
 
@@ -3935,7 +4021,7 @@ router.post(
       eliminationEntryId,
       lineCount: lines.length,
     });
-  })
+  }),
 );
 
 router.post(
@@ -3955,7 +4041,9 @@ router.post(
     const eliminationEntryId = parsePositiveInt(req.params.eliminationEntryId);
     const userId = parsePositiveInt(req.user?.userId);
     if (!runId || !eliminationEntryId || !userId) {
-      throw badRequest("runId, eliminationEntryId and authenticated user are required");
+      throw badRequest(
+        "runId, eliminationEntryId and authenticated user are required",
+      );
     }
     await assertUserBelongsToTenant(tenantId, userId, "userId");
     await requireRun(tenantId, runId);
@@ -3977,7 +4065,7 @@ router.post(
            AND cg.tenant_id = ?
          LIMIT 1
          FOR UPDATE`,
-        [eliminationEntryId, runId, tenantId]
+        [eliminationEntryId, runId, tenantId],
       );
       const entry = entryResult.rows[0];
       if (!entry) {
@@ -4001,7 +4089,7 @@ router.post(
          FROM elimination_lines
          WHERE elimination_entry_id = ?
          FOR UPDATE`,
-        [eliminationEntryId]
+        [eliminationEntryId],
       );
       const lines = lineResult.rows || [];
       if (lines.length === 0) {
@@ -4015,7 +4103,9 @@ router.post(
         creditTotal += Number(line.credit_amount || 0);
       }
       if (Math.abs(debitTotal - creditTotal) > BALANCE_EPSILON) {
-        throw badRequest("Elimination entry is not balanced and cannot be posted");
+        throw badRequest(
+          "Elimination entry is not balanced and cannot be posted",
+        );
       }
 
       await tx.query(
@@ -4024,7 +4114,7 @@ router.post(
              posted_by_user_id = ?,
              posted_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [userId, eliminationEntryId]
+        [userId, eliminationEntryId],
       );
 
       const postedResult = await tx.query(
@@ -4032,7 +4122,7 @@ router.post(
          FROM elimination_entries
          WHERE id = ?
          LIMIT 1`,
-        [eliminationEntryId]
+        [eliminationEntryId],
       );
       const postedRow = postedResult.rows[0] || {};
 
@@ -4049,7 +4139,7 @@ router.post(
       ok: true,
       ...postResult,
     });
-  })
+  }),
 );
 
 router.get(
@@ -4108,7 +4198,7 @@ router.get(
        LEFT JOIN users poster ON poster.id = ca.posted_by_user_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY ca.id DESC`,
-      params
+      params,
     );
 
     return res.json({
@@ -4137,7 +4227,7 @@ router.get(
         postedAt: row.posted_at || null,
       })),
     });
-  })
+  }),
 );
 
 router.post(
@@ -4179,12 +4269,12 @@ router.post(
       const legalEntity = await assertLegalEntityBelongsToTenant(
         tenantId,
         legalEntityId,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertLegalEntityMatchesGroupCompany(
         legalEntity,
         run.group_company_id,
-        "legalEntityId"
+        "legalEntityId",
       );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
@@ -4205,14 +4295,14 @@ router.post(
         String(req.body.currencyCode).toUpperCase(),
         String(req.body.description),
         userId,
-      ]
+      ],
     );
 
     return res.status(201).json({
       ok: true,
       adjustmentId: result.rows.insertId || null,
     });
-  })
+  }),
 );
 
 router.post(
@@ -4232,7 +4322,9 @@ router.post(
     const adjustmentId = parsePositiveInt(req.params.adjustmentId);
     const userId = parsePositiveInt(req.user?.userId);
     if (!runId || !adjustmentId || !userId) {
-      throw badRequest("runId, adjustmentId and authenticated user are required");
+      throw badRequest(
+        "runId, adjustmentId and authenticated user are required",
+      );
     }
     await assertUserBelongsToTenant(tenantId, userId, "userId");
     await requireRun(tenantId, runId);
@@ -4255,7 +4347,7 @@ router.post(
            AND cg.tenant_id = ?
          LIMIT 1
          FOR UPDATE`,
-        [adjustmentId, runId, tenantId]
+        [adjustmentId, runId, tenantId],
       );
       const adjustment = adjustmentResult.rows[0];
       if (!adjustment) {
@@ -4289,7 +4381,7 @@ router.post(
              posted_by_user_id = ?,
              posted_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [userId, adjustmentId]
+        [userId, adjustmentId],
       );
 
       const postedResult = await tx.query(
@@ -4297,7 +4389,7 @@ router.post(
          FROM consolidation_adjustments
          WHERE id = ?
          LIMIT 1`,
-        [adjustmentId]
+        [adjustmentId],
       );
       const postedRow = postedResult.rows[0] || {};
 
@@ -4314,7 +4406,7 @@ router.post(
       ok: true,
       ...postResult,
     });
-  })
+  }),
 );
 
 router.post(
@@ -4336,27 +4428,28 @@ router.post(
       throw badRequest("runId and authenticated user are required");
     }
     const run = await requireRun(tenantId, runId);
-    const gate = await evaluateWorkflowApprovalGate({
+    if (String(run?.status || "").toUpperCase() === "LOCKED") {
+      return res.json({ ok: true, runId, status: "LOCKED", idempotent: true });
+    }
+
+    const reviewGate = await getConsolidationRunReviewGate({
       tenantId,
-      processType: "CONSOLIDATION_RUN",
-      targetType: "CONSOLIDATION_RUN",
-      targetId: runId,
+      runId,
       requestedByUserId: userId,
-      scope: {
-        groupCompanyId: parsePositiveInt(run?.group_company_id),
-      },
-      effectiveOn: run?.period_end_date || null,
     });
-    if (gate.required && !gate.approved) {
+    if (!reviewGate.canFinalize) {
+      const firstBlocker = reviewGate.blockers?.[0] || null;
       return res.status(409).json(
-        toApprovalGateResponse(req, gate, {
-          processType: "CONSOLIDATION_RUN",
-          targetType: "CONSOLIDATION_RUN",
-          targetId: runId,
-          consolidationGroupId: parsePositiveInt(run?.consolidation_group_id),
-          assignment: gate.assignment || null,
-          instance: gate.instance || null,
-        })
+        {
+          message:
+            firstBlocker?.message ||
+            "Consolidation finalize is blocked by review gate checks",
+          code: firstBlocker?.code || "CONSOLIDATION_REVIEW_BLOCKED",
+          details: {
+            reviewGate,
+          },
+          requestId: req.requestId || null,
+        }
       );
     }
 
@@ -4364,11 +4457,79 @@ router.post(
       `UPDATE consolidation_runs
        SET status = 'LOCKED', finished_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [runId]
+      [runId],
     );
 
     return res.json({ ok: true, runId, status: "LOCKED" });
-  })
+  }),
+);
+
+router.get(
+  "/runs/:runId/review-gate",
+  requirePermission("consolidation.run.read", {
+    resolveScope: async (req, tenantId) => {
+      return resolveRunScope(req.params?.runId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    const userId = parsePositiveInt(req.user?.userId);
+    if (!runId || !userId) {
+      throw badRequest("runId and authenticated user are required");
+    }
+
+    const reviewGate = await getConsolidationRunReviewGate({
+      tenantId,
+      runId,
+      requestedByUserId: userId,
+    });
+    return res.json({
+      ok: true,
+      runId,
+      ...reviewGate,
+    });
+  }),
+);
+
+router.post(
+  "/runs/:runId/report-snapshots/member-support",
+  requirePermission("ops.export_snapshot.create", {
+    resolveScope: async (req, tenantId) => {
+      return resolveRunScope(req.params?.runId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    const runId = parsePositiveInt(req.params.runId);
+    const userId = parsePositiveInt(req.user?.userId);
+
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+    if (!runId || !userId) {
+      throw badRequest("runId and authenticated user are required");
+    }
+
+    const run = await requireRun(tenantId, runId);
+    const result = await createConsolidatedMemberSupportSnapshot({
+      tenantId,
+      userId,
+      run,
+      input: req.body || {},
+      requestMeta: buildAuditRequestMeta(req),
+    });
+
+    return res.status(201).json({
+      ok: true,
+      runId,
+      ...result,
+    });
+  }),
 );
 
 router.get(
@@ -4403,7 +4564,7 @@ router.get(
        WHERE cre.consolidation_run_id = ?
        GROUP BY cre.group_account_id, a.code, a.name
        ORDER BY a.code`,
-      [runId]
+      [runId],
     );
     const compatibility = await buildCrossTrackCompatibilitySnapshot({
       tenantId,
@@ -4416,7 +4577,7 @@ router.get(
       compatibility,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.get(
@@ -4444,7 +4605,9 @@ router.get(
 
     const groupBy = String(req.query.groupBy || "account_entity").toLowerCase();
     if (!["account", "entity", "account_entity"].includes(groupBy)) {
-      throw badRequest("groupBy must be one of account, entity, account_entity");
+      throw badRequest(
+        "groupBy must be one of account, entity, account_entity",
+      );
     }
 
     let selectClause = "";
@@ -4490,6 +4653,12 @@ router.get(
     const rowsResult = await query(
       `SELECT
          ${selectClause},
+         COUNT(DISTINCT cre.source_currency_code) AS source_currency_count,
+         GROUP_CONCAT(
+           DISTINCT cre.source_currency_code
+           ORDER BY cre.source_currency_code
+           SEPARATOR ','
+         ) AS source_currency_codes_csv,
          SUM(cre.local_debit_base) AS local_debit_total,
          SUM(cre.local_credit_base) AS local_credit_total,
          SUM(cre.local_balance_base) AS local_balance_total,
@@ -4502,11 +4671,17 @@ router.get(
        WHERE cre.consolidation_run_id = ?
        GROUP BY ${groupClause}
        ORDER BY ${orderClause}`,
-      [runId]
+      [runId],
     );
 
     const totalsResult = await query(
       `SELECT
+         COUNT(DISTINCT source_currency_code) AS source_currency_count,
+         GROUP_CONCAT(
+           DISTINCT source_currency_code
+           ORDER BY source_currency_code
+           SEPARATOR ','
+         ) AS source_currency_codes_csv,
          SUM(local_debit_base) AS local_debit_total,
          SUM(local_credit_base) AS local_credit_total,
          SUM(local_balance_base) AS local_balance_total,
@@ -4515,13 +4690,18 @@ router.get(
          SUM(translated_balance) AS translated_balance_total
        FROM consolidation_run_entries
        WHERE consolidation_run_id = ?`,
-      [runId]
+      [runId],
     );
     const compatibility = await buildCrossTrackCompatibilitySnapshot({
       tenantId,
       runId,
       run,
     });
+    const totalsRow = totalsResult.rows[0] || {};
+    const rows = (rowsResult.rows || []).map((row) => ({
+      ...row,
+      ...buildConsolidatedSupportCurrencyContext(row),
+    }));
 
     return res.json({
       runId,
@@ -4538,23 +4718,18 @@ router.get(
         status: run.status,
       },
       totals: {
-        localDebitTotal: Number(totalsResult.rows[0]?.local_debit_total || 0),
-        localCreditTotal: Number(totalsResult.rows[0]?.local_credit_total || 0),
-        localBalanceTotal: Number(totalsResult.rows[0]?.local_balance_total || 0),
-        translatedDebitTotal: Number(
-          totalsResult.rows[0]?.translated_debit_total || 0
-        ),
-        translatedCreditTotal: Number(
-          totalsResult.rows[0]?.translated_credit_total || 0
-        ),
-        translatedBalanceTotal: Number(
-          totalsResult.rows[0]?.translated_balance_total || 0
-        ),
+        localDebitTotal: Number(totalsRow.local_debit_total || 0),
+        localCreditTotal: Number(totalsRow.local_credit_total || 0),
+        localBalanceTotal: Number(totalsRow.local_balance_total || 0),
+        translatedDebitTotal: Number(totalsRow.translated_debit_total || 0),
+        translatedCreditTotal: Number(totalsRow.translated_credit_total || 0),
+        translatedBalanceTotal: Number(totalsRow.translated_balance_total || 0),
+        ...buildConsolidatedSupportCurrencyContext(totalsRow),
       },
       compatibility,
-      rows: rowsResult.rows,
+      rows,
     });
-  })
+  }),
 );
 
 router.get(
@@ -4579,36 +4754,50 @@ router.get(
     const includeDraft = parseBooleanLike(
       req.query.includeDraft,
       false,
-      "includeDraft"
+      "includeDraft",
     );
-    const includeZero = parseBooleanLike(req.query.includeZero, false, "includeZero");
+    const includeZero = parseBooleanLike(
+      req.query.includeZero,
+      false,
+      "includeZero",
+    );
     const preferredRateType = normalizeRateType(req.query.rateType);
 
-    const reportData = await loadRunReportAccountBalances({
+    const reportData = await loadConsolidationRunReportAccountBalances({
       tenantId,
       run,
       includeDraft,
       preferredRateType,
     });
+    const reportMath = summarizeConsolidationRunReportMath({
+      rows: reportData.rows,
+      balanceEpsilon: BALANCE_EPSILON,
+    });
 
     const mappedRows = reportData.rows
-      .filter((row) => ["ASSET", "LIABILITY", "EQUITY"].includes(row.accountType))
+      .filter((row) =>
+        ["ASSET", "LIABILITY", "EQUITY"].includes(row.accountType),
+      )
       .map((row) => {
-        const normalizedBaseBalance = normalizeBalanceByAccountType(
+        const normalizedBaseBalance =
+          normalizeConsolidationBalanceByAccountType(
           row.accountType,
-          row.baseBalance
+          row.baseBalance,
         );
-        const normalizedAdjustmentBalance = normalizeBalanceByAccountType(
+        const normalizedAdjustmentBalance =
+          normalizeConsolidationBalanceByAccountType(
           row.accountType,
-          row.adjustmentBalance
+          row.adjustmentBalance,
         );
-        const normalizedEliminationBalance = normalizeBalanceByAccountType(
+        const normalizedEliminationBalance =
+          normalizeConsolidationBalanceByAccountType(
           row.accountType,
-          row.eliminationBalance
+          row.eliminationBalance,
         );
-        const normalizedFinalBalance = normalizeBalanceByAccountType(
+        const normalizedFinalBalance =
+          normalizeConsolidationBalanceByAccountType(
           row.accountType,
-          row.finalBalance
+          row.finalBalance,
         );
 
         return {
@@ -4627,40 +4816,14 @@ router.get(
         };
       })
       .filter(
-        (row) => includeZero || Math.abs(Number(row.normalizedFinalBalance || 0)) >= BALANCE_EPSILON
+        (row) =>
+          includeZero ||
+          Math.abs(Number(row.normalizedFinalBalance || 0)) >= BALANCE_EPSILON,
       )
-      .sort((a, b) => String(a.accountCode).localeCompare(String(b.accountCode)));
-
-    const assetsTotal = mappedRows
-      .filter((row) => row.accountType === "ASSET")
-      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
-    const liabilitiesTotal = mappedRows
-      .filter((row) => row.accountType === "LIABILITY")
-      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
-    const equityTotal = mappedRows
-      .filter((row) => row.accountType === "EQUITY")
-      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
-
-    const incomeStatementRows = reportData.rows.filter((row) =>
-      ["REVENUE", "EXPENSE"].includes(row.accountType)
-    );
-    const revenueTotal = incomeStatementRows
-      .filter((row) => row.accountType === "REVENUE")
-      .reduce(
-        (sum, row) =>
-          sum + normalizeBalanceByAccountType(row.accountType, row.finalBalance),
-        0
+      .sort((a, b) =>
+        String(a.accountCode).localeCompare(String(b.accountCode)),
       );
-    const expenseTotal = incomeStatementRows
-      .filter((row) => row.accountType === "EXPENSE")
-      .reduce(
-        (sum, row) =>
-          sum + normalizeBalanceByAccountType(row.accountType, row.finalBalance),
-        0
-      );
-    const currentPeriodEarnings = revenueTotal - expenseTotal;
-    const equationDelta =
-      assetsTotal - (liabilitiesTotal + equityTotal + currentPeriodEarnings);
+
     const compatibility = await buildCrossTrackCompatibilitySnapshot({
       tenantId,
       runId,
@@ -4678,7 +4841,9 @@ router.get(
         periodStartDate: run.period_start_date || null,
         periodEndDate: run.period_end_date || null,
         status: String(run.status || "").toUpperCase(),
-        presentationCurrencyCode: String(run.presentation_currency_code || "").toUpperCase(),
+        presentationCurrencyCode: String(
+          run.presentation_currency_code || "",
+        ).toUpperCase(),
       },
       options: {
         includeDraft,
@@ -4687,16 +4852,16 @@ router.get(
         includedStatuses: reportData.statusFilter,
       },
       totals: {
-        assetsTotal,
-        liabilitiesTotal,
-        equityTotal,
-        currentPeriodEarnings,
-        equationDelta,
+        assetsTotal: reportMath.assetsTotal,
+        liabilitiesTotal: reportMath.liabilitiesTotal,
+        equityTotal: reportMath.equityTotal,
+        currentPeriodEarnings: reportMath.currentPeriodEarnings,
+        equationDelta: reportMath.equationDelta,
       },
       compatibility,
       rows: mappedRows,
     });
-  })
+  }),
 );
 
 router.get(
@@ -4721,36 +4886,48 @@ router.get(
     const includeDraft = parseBooleanLike(
       req.query.includeDraft,
       false,
-      "includeDraft"
+      "includeDraft",
     );
-    const includeZero = parseBooleanLike(req.query.includeZero, false, "includeZero");
+    const includeZero = parseBooleanLike(
+      req.query.includeZero,
+      false,
+      "includeZero",
+    );
     const preferredRateType = normalizeRateType(req.query.rateType);
 
-    const reportData = await loadRunReportAccountBalances({
+    const reportData = await loadConsolidationRunReportAccountBalances({
       tenantId,
       run,
       includeDraft,
       preferredRateType,
     });
+    const reportMath = summarizeConsolidationRunReportMath({
+      rows: reportData.rows,
+      balanceEpsilon: BALANCE_EPSILON,
+    });
 
     const mappedRows = reportData.rows
       .filter((row) => ["REVENUE", "EXPENSE"].includes(row.accountType))
       .map((row) => {
-        const normalizedBaseBalance = normalizeBalanceByAccountType(
+        const normalizedBaseBalance =
+          normalizeConsolidationBalanceByAccountType(
           row.accountType,
-          row.baseBalance
+          row.baseBalance,
         );
-        const normalizedAdjustmentBalance = normalizeBalanceByAccountType(
+        const normalizedAdjustmentBalance =
+          normalizeConsolidationBalanceByAccountType(
           row.accountType,
-          row.adjustmentBalance
+          row.adjustmentBalance,
         );
-        const normalizedEliminationBalance = normalizeBalanceByAccountType(
+        const normalizedEliminationBalance =
+          normalizeConsolidationBalanceByAccountType(
           row.accountType,
-          row.eliminationBalance
+          row.eliminationBalance,
         );
-        const normalizedFinalBalance = normalizeBalanceByAccountType(
+        const normalizedFinalBalance =
+          normalizeConsolidationBalanceByAccountType(
           row.accountType,
-          row.finalBalance
+          row.finalBalance,
         );
 
         return {
@@ -4769,17 +4946,14 @@ router.get(
         };
       })
       .filter(
-        (row) => includeZero || Math.abs(Number(row.normalizedFinalBalance || 0)) >= BALANCE_EPSILON
+        (row) =>
+          includeZero ||
+          Math.abs(Number(row.normalizedFinalBalance || 0)) >= BALANCE_EPSILON,
       )
-      .sort((a, b) => String(a.accountCode).localeCompare(String(b.accountCode)));
+      .sort((a, b) =>
+        String(a.accountCode).localeCompare(String(b.accountCode)),
+      );
 
-    const revenueTotal = mappedRows
-      .filter((row) => row.accountType === "REVENUE")
-      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
-    const expenseTotal = mappedRows
-      .filter((row) => row.accountType === "EXPENSE")
-      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
-    const netIncome = revenueTotal - expenseTotal;
     const compatibility = await buildCrossTrackCompatibilitySnapshot({
       tenantId,
       runId,
@@ -4797,7 +4971,9 @@ router.get(
         periodStartDate: run.period_start_date || null,
         periodEndDate: run.period_end_date || null,
         status: String(run.status || "").toUpperCase(),
-        presentationCurrencyCode: String(run.presentation_currency_code || "").toUpperCase(),
+        presentationCurrencyCode: String(
+          run.presentation_currency_code || "",
+        ).toUpperCase(),
       },
       options: {
         includeDraft,
@@ -4806,14 +4982,14 @@ router.get(
         includedStatuses: reportData.statusFilter,
       },
       totals: {
-        revenueTotal,
-        expenseTotal,
-        netIncome,
+        revenueTotal: reportMath.revenueTotal,
+        expenseTotal: reportMath.expenseTotal,
+        netIncome: reportMath.currentPeriodEarnings,
       },
       compatibility,
       rows: mappedRows,
     });
-  })
+  }),
 );
 
 export default router;
