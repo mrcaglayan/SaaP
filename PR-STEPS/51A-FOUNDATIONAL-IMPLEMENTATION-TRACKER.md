@@ -659,6 +659,11 @@ Frontend files become relevant once `RP07` UI lands:
   - `Bilanco` and `Gelir Tablosu` launch as statutory entity-level fallback while preserving close-pack context explicitly
   - report pages now preserve `closePackId` and `closeLaunchMode` while rewriting their filter query strings
   - launched report headers now show close context and let `ouclose.prepare` users persist reviewed-report fingerprints
+- Release-clean hardening now also covers the current live RP05/RP07 route family:
+  - `backend/openapi.yaml` now exports the RP07 workspace/detail read-write surfaces used by the local close shell
+  - `backend/scripts/test-ux-rsrep01-local-report-family-smoke.js` now covers the local report family route/OpenAPI/close-context seam
+  - `backend/scripts/test-ux-rsclose01-local-close-workspace-contract.js` now covers first-pass pack metrics, report-review reads, audit reads, and RP07 route/OpenAPI wiring
+  - `backend/scripts/fixtures/rswire03-release-gate-manifest.json` now includes the current local report pages and local close workspace route so `RS-WIRE-03` no longer lags the live repo
 - Duplicate pack creation is still blocked by the unique scope constraint, but the workspace now treats that as recoverable UX:
   - when the same entity/book/period/scope pack already exists, the create flow redirects to the existing pack instead of leaving the user on a raw conflict
 - The live repo needed one compatibility correction during RP07:
@@ -667,9 +672,8 @@ Frontend files become relevant once `RP07` UI lands:
   - deeper reopen policy, post-lock enforcement, and broader blocker/publish governance still belong to `RP08`, `RP09`, `RP12`
   - broader reconciliation views and drill-across remain `RP10` and `RP11`
 - `Optional hardening`:
-  - OpenAPI export for the new RP07 local-close routes is still behind the live repo
-  - RP07 still lacks a dedicated characterization test that seeds packs, reviewed reports, evidence, comments, and audit rows together
   - frontend chunk splitting remains a build warning, not a functional blocker
+  - deeper end-to-end browser automation still does not exist for the RP07 workspace/report-launch journey
 
 ---
 

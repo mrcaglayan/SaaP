@@ -16,6 +16,11 @@
       "packageScriptName": "test:period-close"
     },
     {
+      "routePath": "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+      "smokeScriptPath": "backend/scripts/test-ux-rsclose01-local-close-workspace-contract.js",
+      "packageScriptName": "test:ux:rsclose01"
+    },
+    {
       "routePath": "/app/kasa-kur-degisimleri",
       "smokeScriptPath": "backend/scripts/test-cash-exf03-exchange-fee-and-spread.js",
       "packageScriptName": "test:cash:exf03"
@@ -39,6 +44,31 @@
       "routePath": "/app/ayarlar/rbac/raw-audit-logs",
       "smokeScriptPath": "backend/scripts/test-rbac-raw-audit-logs-smoke.js",
       "packageScriptName": "test:ux:raw-audit-logs-smoke"
+    },
+    {
+      "routePath": "/app/bilanco",
+      "smokeScriptPath": "backend/scripts/test-ux-rsstat01-local-statements-contract.js",
+      "packageScriptName": "test:ux:rsstat01"
+    },
+    {
+      "routePath": "/app/defter-i-kebir",
+      "smokeScriptPath": "backend/scripts/test-ux-rsrep01-local-report-family-smoke.js",
+      "packageScriptName": "test:ux:rsrep01"
+    },
+    {
+      "routePath": "/app/gelir-tablosu",
+      "smokeScriptPath": "backend/scripts/test-ux-rsstat01-local-statements-contract.js",
+      "packageScriptName": "test:ux:rsstat01"
+    },
+    {
+      "routePath": "/app/mizan-raporu",
+      "smokeScriptPath": "backend/scripts/test-ux-rsrep01-local-report-family-smoke.js",
+      "packageScriptName": "test:ux:rsrep01"
+    },
+    {
+      "routePath": "/app/muavin",
+      "smokeScriptPath": "backend/scripts/test-ux-rsrep01-local-report-family-smoke.js",
+      "packageScriptName": "test:ux:rsrep01"
     },
     {
       "routePath": "/app/payroll-ownership",
