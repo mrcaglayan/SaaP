@@ -81,6 +81,8 @@ import FixedAssetSettingsPage from "./pages/fixedAssets/FixedAssetSettingsPage.j
 import FixedAssetCustodiansPage from "./pages/fixedAssets/FixedAssetCustodiansPage.jsx";
 import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
 import YearEndRevrecChecklistPage from "./pages/YearEndRevrecChecklistPage.jsx";
+import TrialBalancePage from "./pages/TrialBalancePage.jsx";
+import GeneralLedgerPage from "./pages/GeneralLedgerPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
@@ -122,12 +124,12 @@ for (const link of rawSidebarLinks) {
     : [];
   if (nextPermissions.length > 0) {
     existing.requiredPermissions = Array.from(
-      new Set([...existingPermissions, ...nextPermissions])
+      new Set([...existingPermissions, ...nextPermissions]),
     );
   }
   if (nextFeatureCodes.length > 0) {
     existing.requiredFeatureCodes = Array.from(
-      new Set([...existingFeatureCodes, ...nextFeatureCodes])
+      new Set([...existingFeatureCodes, ...nextFeatureCodes]),
     );
   }
 }
@@ -147,6 +149,16 @@ const implementedRoutes = [
     appPath: "/app/mahsup-islemleri",
     childPath: "mahsup-islemleri",
     element: <JournalWorkbenchPage />,
+  },
+  {
+    appPath: "/app/mizan-raporu",
+    childPath: "mizan-raporu",
+    element: <TrialBalancePage />,
+  },
+  {
+    appPath: "/app/defter-i-kebir",
+    childPath: "defter-i-kebir",
+    element: <GeneralLedgerPage />,
   },
   {
     appPath: "/app/kasa-tanimlari",
@@ -671,10 +683,10 @@ for (const route of implementedRoutes) {
     ? aliasLink.requiredFeatureCodes
     : [];
   const mergedPermissions = Array.from(
-    new Set([...aliasPermissions, ...basePermissions])
+    new Set([...aliasPermissions, ...basePermissions]),
   );
   const mergedFeatureCodes = Array.from(
-    new Set([...aliasFeatureCodes, ...baseFeatureCodes])
+    new Set([...aliasFeatureCodes, ...baseFeatureCodes]),
   );
 
   sidebarLinkByPath.set(route.appPath, {
@@ -693,7 +705,7 @@ const implementedPaths = new Set([
 
 const allPlaceholderRoutes = sidebarRouteLinks.filter(
   (link) =>
-    link.routePath.startsWith("/app/") && !implementedPaths.has(link.routePath)
+    link.routePath.startsWith("/app/") && !implementedPaths.has(link.routePath),
 );
 
 function withPermissionGuard(pathForPermissions, element, hasAnyFeature) {
@@ -730,7 +742,7 @@ function LegacyRouteRedirect({ to }) {
 export default function App() {
   const { hasAllPermissions, hasAnyFeature } = useAuth();
   const canViewUnimplementedModules = hasAllPermissions(
-    MODULE_PREVIEW_ADMIN_PERMISSIONS
+    MODULE_PREVIEW_ADMIN_PERMISSIONS,
   );
   const providerPanelEnabled =
     import.meta.env.DEV ||
@@ -753,7 +765,10 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       {providerPanelEnabled ? (
         <>
-          <Route path="/provider" element={<Navigate to="/provider/login" replace />} />
+          <Route
+            path="/provider"
+            element={<Navigate to="/provider/login" replace />}
+          />
           <Route path="/provider/login" element={<ProviderLoginPage />} />
           <Route
             path="/provider/bootstrap"
@@ -790,7 +805,11 @@ export default function App() {
           <Route
             key={route.appPath}
             path={route.childPath}
-            element={withPermissionGuard(route.appPath, route.element, hasAnyFeature)}
+            element={withPermissionGuard(
+              route.appPath,
+              route.element,
+              hasAnyFeature,
+            )}
           />
         ))}
 
@@ -800,8 +819,11 @@ export default function App() {
             path={toChildPath(link.routePath)}
             element={withPermissionGuard(
               link.routePath,
-              <ModulePlaceholderPage title={link.label || "Module"} path={link.routePath} />,
-              hasAnyFeature
+              <ModulePlaceholderPage
+                title={link.label || "Module"}
+                path={link.routePath}
+              />,
+              hasAnyFeature,
             )}
           />
         ))}

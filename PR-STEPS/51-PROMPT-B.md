@@ -1,11 +1,11 @@
-# 1002 - CODEX PROMPTS LATER STEPS
+# 51 - PROMPT B
 
 ## Status
 - Ready-to-paste prompt file
-- Intended for later Track 51 steps after the foundational `1001` sequence is substantially complete
+- Intended for later Track 51 steps after the foundational `51 Prompt A` sequence is substantially complete
 
 ## Purpose
-Provide Codex prompts for the later Track 51 implementation slices that depend on the reporting and close-pack foundations stabilized by `1001`.
+Provide Codex prompts for the later Track 51 implementation slices that depend on the reporting and close-pack foundations stabilized by `51 Prompt A`.
 
 ## Source Of Truth
 
@@ -15,12 +15,12 @@ Use these prompts with:
   - roadmap lock
 - `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md`
   - implementation tracker
-- `PR-STEPS/1001-CODEX-PROMPTS.md`
+- `PR-STEPS/51-PROMPT-A.md`
   - foundational prompt sequence that should be substantially complete first
 
 ## Use This File After
 
-Use `1002` once the repo has a stable enough foundation from `1001`, especially:
+Use `51 Prompt B` once the repo has a stable enough foundation from `51 Prompt A`, especially:
 
 - shared reporting contract and route/permission scaffolding
 - real `Mizan`
@@ -47,6 +47,7 @@ This file is intentionally later because these prompts assume the earlier seams 
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP04` `Muavin` mode with dimensional and subledger filters.
 
@@ -55,6 +56,7 @@ Before changing code:
 - verify whether the cleanest implementation is:
   - a separate `/app/muavin` page
   - or a preset/mode over the same ledger page
+- verify whether `/app/muavin` already has router, sidebar, and i18n seams in the repo; if not, treat that surfacing as part of the work rather than assuming it exists
 - update `51A` if the real seams differ materially
 
 Implement:
@@ -80,6 +82,7 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP05` local legal-entity `Bilanco` and `Gelir Tablosu`.
 
@@ -113,6 +116,7 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP07` local close pack workspace, evidence pack, and report-launch integration.
 
@@ -132,6 +136,7 @@ Constraints:
 - do not change the underlying close-pack status model in this step unless required
 - do not broaden into full post-lock enforcement or reopen policy
 - reuse existing evidence patterns where they fit
+- keep business/UI labels such as `CENTRAL/HQ` separate from implementation enums if the repo still uses `CENTRAL`
 - update `51` only if a roadmap-level lock is wrong
 
 At the end:
@@ -146,6 +151,7 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP10` OU / subledger reconciliation and exception reporting.
 
@@ -176,12 +182,14 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP11` entity submitted/locked to consolidated drill-across reporting.
 
 Before changing code:
 - verify the current consolidation report seams and local report pages now available in the repo
 - verify canonical mapping and member-breakdown seams
+- verify whether existing consolidated trial-balance/summary endpoints should be surfaced in the same reporting flow instead of adding parallel seams
 - update `51A` if the actual seams differ materially
 
 Implement:
@@ -192,7 +200,7 @@ Implement:
 Constraints:
 - do not bypass the mapping layer
 - do not pretend every consolidated row can drill directly to one local account
-- keep local and consolidated filter semantics aligned
+- keep local and consolidated filter semantics aligned, including any compatibility mapping between current repo field names and Track 51 canonical names
 - update `51` only if a roadmap-level lock is wrong
 
 At the end:
@@ -207,12 +215,14 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP12` close / consolidation checks, approvals, publish states, and report-based blockers.
 
 Before changing code:
 - verify the current close-pack, entity-close, and consolidation seams in the repo
 - identify which blocker/warning chain is realistic for the first implementation pass
+- verify whether existing consolidated summary/trial-balance and workflow-instance surfaces can be reused for operator drill paths before adding new parallel endpoints
 - update `51A` if the real seams differ materially
 
 Implement:
@@ -239,6 +249,7 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP13` export, report fingerprinting, and performance hardening.
 
@@ -270,7 +281,7 @@ At the end:
 
 ## Usage Note
 
-Use `1002` after the foundational `1001` sequence is stable enough that the later prompts can target real implemented seams rather than roadmap-only assumptions.
+Use `51 Prompt B` after the foundational `51 Prompt A` sequence is stable enough that the later prompts can target real implemented seams rather than roadmap-only assumptions.
 
 If implementation reveals a better seam:
 

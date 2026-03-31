@@ -5,9 +5,43 @@ import {
   assertLegalEntityBelongsToTenant,
   assertOperatingUnitBelongsToTenant,
 } from "../tenantGuards.js";
+import {
+  LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
+} from "./local.close-packs.shared.js";
 
 const FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1 =
   "FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1";
+
+const WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL = `COALESCE(
+      period_close_book.legal_entity_id,
+      local_close_pack.legal_entity_id
+    ) AS target_legal_entity_id,
+      COALESCE(
+        period_close_entity.group_company_id,
+        local_close_entity.group_company_id,
+        consolidation_group.group_company_id
+      ) AS target_group_company_id,
+      local_close_pack.operating_unit_id AS target_operating_unit_id`;
+
+const WORKFLOW_INSTANCE_TARGET_SCOPE_JOIN_SQL = `LEFT JOIN period_close_runs pcr
+      ON pcr.id = wi.target_id
+     AND wi.target_type = 'PERIOD_CLOSE_RUN'
+     AND pcr.tenant_id = wi.tenant_id
+    LEFT JOIN books period_close_book ON period_close_book.id = pcr.book_id
+    LEFT JOIN legal_entities period_close_entity
+      ON period_close_entity.id = period_close_book.legal_entity_id
+    LEFT JOIN consolidation_runs cr
+      ON cr.id = wi.target_id
+     AND wi.target_type = 'CONSOLIDATION_RUN'
+    LEFT JOIN consolidation_groups consolidation_group
+      ON consolidation_group.id = cr.consolidation_group_id
+     AND consolidation_group.tenant_id = wi.tenant_id
+    LEFT JOIN local_close_packs local_close_pack
+      ON local_close_pack.id = wi.target_id
+     AND wi.target_type = '${LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE}'
+     AND local_close_pack.tenant_id = wi.tenant_id
+    LEFT JOIN legal_entities local_close_entity
+      ON local_close_entity.id = local_close_pack.legal_entity_id`;
 
 function toUpper(value) {
   return String(value || "")
@@ -595,24 +629,11 @@ function buildWorkflowInstanceBaseSelect({ forUpdate = false } = {}) {
       wd.code AS workflow_definition_code,
       wd.name AS workflow_definition_name,
       requester.name AS requested_by_user_name,
-      b.legal_entity_id AS target_legal_entity_id,
-      COALESCE(le_target.group_company_id, cg_target.group_company_id) AS target_group_company_id,
-      NULL AS target_operating_unit_id
+      ${WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL}
     FROM workflow_instances wi
     JOIN workflow_definitions wd ON wd.id = wi.workflow_definition_id
     LEFT JOIN users requester ON requester.id = wi.requested_by_user_id
-    LEFT JOIN period_close_runs pcr
-      ON pcr.id = wi.target_id
-     AND wi.target_type = 'PERIOD_CLOSE_RUN'
-     AND pcr.tenant_id = wi.tenant_id
-    LEFT JOIN books b ON b.id = pcr.book_id
-    LEFT JOIN legal_entities le_target ON le_target.id = b.legal_entity_id
-    LEFT JOIN consolidation_runs cr
-      ON cr.id = wi.target_id
-     AND wi.target_type = 'CONSOLIDATION_RUN'
-    LEFT JOIN consolidation_groups cg_target
-      ON cg_target.id = cr.consolidation_group_id
-     AND cg_target.tenant_id = wi.tenant_id
+    ${WORKFLOW_INSTANCE_TARGET_SCOPE_JOIN_SQL}
     WHERE wi.tenant_id = ?
       AND wi.id = ?
     LIMIT 1
@@ -1042,24 +1063,11 @@ export async function listWorkflowInstances({
        wd.code AS workflow_definition_code,
        wd.name AS workflow_definition_name,
        requester.name AS requested_by_user_name,
-       b.legal_entity_id AS target_legal_entity_id,
-       COALESCE(le_target.group_company_id, cg_target.group_company_id) AS target_group_company_id,
-       NULL AS target_operating_unit_id
+       ${WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL}
      FROM workflow_instances wi
      JOIN workflow_definitions wd ON wd.id = wi.workflow_definition_id
      LEFT JOIN users requester ON requester.id = wi.requested_by_user_id
-     LEFT JOIN period_close_runs pcr
-       ON pcr.id = wi.target_id
-      AND wi.target_type = 'PERIOD_CLOSE_RUN'
-      AND pcr.tenant_id = wi.tenant_id
-     LEFT JOIN books b ON b.id = pcr.book_id
-     LEFT JOIN legal_entities le_target ON le_target.id = b.legal_entity_id
-     LEFT JOIN consolidation_runs cr
-       ON cr.id = wi.target_id
-      AND wi.target_type = 'CONSOLIDATION_RUN'
-     LEFT JOIN consolidation_groups cg_target
-       ON cg_target.id = cr.consolidation_group_id
-      AND cg_target.tenant_id = wi.tenant_id
+     ${WORKFLOW_INSTANCE_TARGET_SCOPE_JOIN_SQL}
      WHERE ${where.join(" AND ")}
      ORDER BY wi.requested_at DESC, wi.id DESC`,
     params

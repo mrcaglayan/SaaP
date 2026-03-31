@@ -1,4 +1,5 @@
 import { api } from "./client.js";
+import { getTrialBalanceReport } from "./glReports.js";
 
 function toQueryString(params = {}) {
   const searchParams = new URLSearchParams();
@@ -86,10 +87,7 @@ export async function reverseJournal(journalId, payload) {
 }
 
 export async function getTrialBalance(params = {}) {
-  const response = await api.get(
-    `/api/v1/gl/trial-balance${toQueryString(params)}`
-  );
-  return response.data;
+  return getTrialBalanceReport(params);
 }
 
 export async function createBalanceSplitReclassification(payload) {

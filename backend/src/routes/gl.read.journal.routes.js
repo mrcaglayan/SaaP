@@ -14,6 +14,7 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+import { parseTrialBalanceReportQuery } from "./gl.report.validators.js";
 import { listJournalSourceLinksByJournalIds } from "../services/journal.source-link.service.js";
 import { listCariSettlementDrilldownsByBatchIds } from "../services/cari.settlement.drilldown.service.js";
 import {
@@ -328,6 +329,9 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
   );
 }
 
+/**
+ * Register posted trial-balance reads with the shared local-report contract parser.
+ */
 export function registerGlReadTrialBalanceRoute(router, deps = {}) {
   const { resolveScopeFromBookId, isNearlyZero } = deps;
 
@@ -349,23 +353,35 @@ export function registerGlReadTrialBalanceRoute(router, deps = {}) {
       const tenantId = resolveTenantId(req);
       if (!tenantId) throw badRequest("tenantId is required");
 
-      const bookId = parsePositiveInt(req.query.bookId);
-      const fiscalPeriodId = parsePositiveInt(req.query.fiscalPeriodId);
-      const includeRollupRaw = req.query.includeRollup;
-      const includeRollup =
-        includeRollupRaw === undefined || includeRollupRaw === null || includeRollupRaw === ""
-          ? true
-          : String(includeRollupRaw).toLowerCase() === "true";
+      const reportQuery = parseTrialBalanceReportQuery(req.query);
+      const { legalEntityId, bookId, fiscalPeriodId, includeRollup } = reportQuery;
       if (!bookId || !fiscalPeriodId) {
         throw badRequest("bookId and fiscalPeriodId query params are required");
       }
 
       const book = await assertBookBelongsToTenant(tenantId, bookId, "bookId");
+      const bookLegalEntityId = parsePositiveInt(book.legal_entity_id);
+      if (legalEntityId && bookLegalEntityId && legalEntityId !== bookLegalEntityId) {
+        throw badRequest("legalEntityId does not match the selected book");
+      }
       await assertFiscalPeriodBelongsToCalendar(
         parsePositiveInt(book.calendar_id),
         fiscalPeriodId,
         "fiscalPeriodId"
       );
+
+      const filters = {
+        scope: "LOCAL",
+        reportType: "TRIAL_BALANCE",
+        reportBasis: "POSTED",
+        periodBasis: "FISCAL_PERIOD",
+        legalEntityId: legalEntityId || bookLegalEntityId || null,
+        bookId,
+        fiscalPeriodId,
+        operatingUnitScope: reportQuery.operatingUnitScope,
+        operatingUnitId: reportQuery.operatingUnitId,
+        includeRollup,
+      };
 
       const result = await query(
         `SELECT
@@ -412,6 +428,7 @@ export function registerGlReadTrialBalanceRoute(router, deps = {}) {
 
       if (!includeRollup) {
         return res.json({
+          filters,
           bookId,
           fiscalPeriodId,
           includeRollup,
@@ -420,7 +437,6 @@ export function registerGlReadTrialBalanceRoute(router, deps = {}) {
         });
       }
 
-      const bookLegalEntityId = parsePositiveInt(book.legal_entity_id);
       const hierarchyParams = [tenantId];
       const hierarchyConditions = ["c.tenant_id = ?"];
       if (bookLegalEntityId) {
@@ -548,6 +564,7 @@ export function registerGlReadTrialBalanceRoute(router, deps = {}) {
       });
 
       return res.json({
+        filters,
         bookId,
         fiscalPeriodId,
         includeRollup,

@@ -10,12 +10,24 @@ import {
   requireTenantId,
   requireUserId,
 } from "./cash.validators.common.js";
+import {
+  LOCAL_CLOSE_PACK_WORKFLOW_PROCESS_TYPE,
+  LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
+} from "../services/local.close-packs.shared.js";
 
-const PROCESS_TYPES = ["PERIOD_CLOSE", "CONSOLIDATION_RUN"];
+const PROCESS_TYPES = [
+  "PERIOD_CLOSE",
+  "CONSOLIDATION_RUN",
+  LOCAL_CLOSE_PACK_WORKFLOW_PROCESS_TYPE,
+];
 const STAGE_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "GROUP"];
 const ASSIGNMENT_STATUS = ["ACTIVE", "INACTIVE"];
 const INSTANCE_STATUS = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"];
-const TARGET_TYPES = ["PERIOD_CLOSE_RUN", "CONSOLIDATION_RUN"];
+const TARGET_TYPES = [
+  "PERIOD_CLOSE_RUN",
+  "CONSOLIDATION_RUN",
+  LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
+];
 
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj || {}, key);

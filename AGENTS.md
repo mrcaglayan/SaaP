@@ -14,3 +14,10 @@
 - Add JSDoc to exported non-trivial functions, hooks, route handlers, validators, and service methods you create or materially modify.
 - Add inline comments for non-obvious business rules, accounting logic, readiness gates, reversal paths, rollout guards, and compatibility branches.
 - Do not add comments for obvious code.
+
+## Analysis classification policy
+- When reviewing plans, prompts, trackers, or roadmap docs, classify findings explicitly.
+- Use `Conflict / plan gap` only when the roadmap, prompt set, or tracker likely needs a change now.
+- Use `Deferred item already covered` for work that is unfinished in the current step but is already expected in later planned steps.
+- Use `Optional hardening` for useful improvements that are not blockers and do not mean the plan is wrong.
+- Do not describe intentionally deferred roadmap items as generic "gaps" without clarifying whether they already belong to a later step.

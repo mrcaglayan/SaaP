@@ -1,0 +1,260 @@
+# 52 - CROSS-CURRENCY INTERCOMPANY REVALUATION, RECONCILIATION, AND ELIMINATION FOR CONSOLIDATION
+
+## Status
+- Planned follow-up track
+- Follows Track 51 local reporting / close-pack foundations
+- Intentionally high-level at this stage
+
+## Purpose
+Define how the system should handle intercompany balances between entities with different functional currencies, including local foreign-currency remeasurement, common-currency reconciliation, reciprocal elimination, FX-rate policy, mismatch handling, and consolidated review drillthrough.
+
+This track exists for cases such as:
+- one entity books in `AFN`
+- another entity books in `TL`
+- the underlying intercompany exposure is economically denominated in `USD`
+- each entity remeasures the monetary balance locally at period end
+- consolidation must translate, compare, and eliminate the reciprocal balances correctly
+
+This should be treated as a consolidation-accounting follow-up track, not as part of Track 51's local reporting scope.
+
+## Why This Track Is Needed
+
+The current roadmap already establishes the local side of the process:
+- posted local books as source of truth
+- local review/reporting surfaces
+- close-pack workflow
+- later consolidated drill-across
+
+But cross-currency intercompany balances add a different accounting problem:
+- local entities may hold the same economic balance in different functional currencies
+- local month-end remeasurement may create different local carrying amounts
+- reconciliation cannot rely only on local-base amounts
+- elimination cannot assume one simple local-to-local equality check
+- group review needs visibility into source currency, local carrying value, translated value, and elimination result
+
+## Current Repo Fit
+
+The repo already appears to have important foundations for this track:
+- consolidation run/report surfaces
+- FX-rate lookup foundations
+- intercompany reconciliation foundations
+- journal/source drillback foundations
+
+But it does not yet appear to lock a full cross-currency intercompany policy for:
+- common-currency reconciliation
+- reciprocal elimination across different functional currencies
+- rate-pair / triangulation policy
+- mismatch treatment and late-change governance for this specific case
+
+So this track should build on the current consolidation foundations rather than replacing them.
+
+## Product Direction
+
+- Keep local books authoritative for local foreign-currency remeasurement.
+- Compare reciprocal intercompany balances on a defined common comparison basis, not only in each entity's local base currency.
+- Eliminate reciprocal intercompany balances only after translation and mapping context are explicit.
+- Treat FX differences, timing differences, and missing-rate issues as explainable exceptions, not hidden noise.
+- Make review drillthrough show the full chain:
+  - source transaction
+  - local booked amount
+  - local remeasurement
+  - translated consolidation amount
+  - reciprocal match status
+  - elimination result or unresolved difference
+
+## Core Policy Direction
+
+### 1. Local remeasurement happens before consolidation
+- A foreign-currency intercompany monetary balance should be remeasured in the local entity's functional currency at period end according to the chosen accounting policy.
+- Consolidation should consume the local carrying amount and its supporting remeasurement logic, not silently replace it.
+
+### 2. Reconciliation needs a common comparison basis
+- Cross-currency reciprocal balances should not be compared only as raw local-base amounts.
+- The system should define one comparison basis for reconciliation, such as:
+  - group presentation currency, or
+  - source transaction currency where policy allows.
+
+### 3. Elimination must be currency-aware
+- Reciprocal intercompany elimination should respect:
+  - source entity functional currency
+  - counterparty entity functional currency
+  - consolidation presentation currency
+  - canonical account mapping
+- The system must not assume all reciprocal balances can be eliminated by a naive local-base equality check.
+
+### 4. FX-rate policy must be explicit
+- The system should define:
+  - direct pair requirement vs triangulation
+  - period-end date policy
+  - rate-type usage
+  - missing-rate behavior
+- These rules should be explicit before automation expands.
+
+### 5. Exceptions must be explainable
+- Differences should be classified into explicit reason types such as:
+  - missing reciprocal entry
+  - timing difference
+  - local remeasurement missing
+  - rate mismatch
+  - account mapping mismatch
+  - elimination rule mismatch
+
+## High-Level Chronological Delivery Model
+
+The recommended order for this track is:
+
+1. local foreign-currency intercompany accounting policy
+2. common-currency reconciliation basis
+3. consolidation FX translation policy for cross-currency balances
+4. reciprocal elimination model
+5. mismatch handling and late-change governance
+6. review reporting and drillthrough support
+
+That order keeps the track accounting-first:
+- local carrying amount truth
+- comparison basis
+- translation basis
+- elimination logic
+- exception handling
+- review UX
+
+## Execution Tracker
+
+- [ ] `ICFX01` - Cross-currency intercompany accounting policy
+- [ ] `ICFX02` - Common-currency reconciliation model
+- [ ] `ICFX03` - Consolidation FX translation rules
+- [ ] `ICFX04` - Reciprocal elimination model
+- [ ] `ICFX05` - Exception reason codes and late-change policy
+- [ ] `ICFX06` - Review reporting and drillthrough support
+
+---
+
+## `ICFX01` - Cross-currency intercompany accounting policy
+
+### Goal
+Lock how foreign-currency intercompany balances should be recognized and remeasured in local books before consolidation consumes them.
+
+### Scope
+- define transaction-date initial recognition direction
+- define period-end remeasurement expectation for monetary intercompany balances
+- define local FX gain/loss treatment boundary
+- define which balances are in scope first:
+  - due from / due to
+  - intercompany cash settlement balances
+  - related monetary balances with reciprocal expectation
+
+### Why first
+- reconciliation and elimination cannot be trusted unless the local carrying-amount policy is clear first
+
+---
+
+## `ICFX02` - Common-currency reconciliation model
+
+### Goal
+Define how reciprocal balances across different functional currencies should be compared.
+
+### Scope
+- define one common comparison basis
+- define tolerance handling
+- define reciprocal matching keys
+- define what counts as matched vs mismatched
+- define first-pass mismatch categories
+
+### Why second
+- the system must know how to compare the two sides before it can decide whether elimination is safe
+
+---
+
+## `ICFX03` - Consolidation FX translation rules
+
+### Goal
+Lock how the system translates cross-currency intercompany balances for consolidation.
+
+### Scope
+- define direct FX pair requirement vs triangulation policy
+- define rate date policy
+- define rate type policy for first-pass cross-currency intercompany balances
+- define missing-rate behavior and exception output
+- define whether translation uses local carrying amount or any alternative basis
+
+### Why third
+- elimination depends on translated comparison and reporting amounts being deterministic
+
+---
+
+## `ICFX04` - Reciprocal elimination model
+
+### Goal
+Define how translated reciprocal intercompany balances should be eliminated.
+
+### Scope
+- define elimination eligibility conditions
+- define elimination basis and posting logic
+- define how mapped reciprocal accounts are paired
+- define what happens when sides are close but not equal
+- define what remains as exception instead of auto-eliminated
+
+### Why after translation policy
+- elimination without a locked translation basis would be unstable and hard to explain
+
+---
+
+## `ICFX05` - Exception reason codes and late-change policy
+
+### Goal
+Define how unresolved cross-currency intercompany differences are classified and governed.
+
+### Scope
+- define exception reason codes
+- define tolerance breach handling
+- define local reopen vs top-side adjustment vs next-period correction policy
+- define downstream governance once group review has already started
+- define when an issue blocks elimination vs only warns
+
+### Why here
+- once auto-compare and elimination logic exist, the remaining unresolved population must be governed consistently
+
+---
+
+## `ICFX06` - Review reporting and drillthrough support
+
+### Goal
+Make cross-currency intercompany review explainable for finance users.
+
+### Scope
+- show source transaction lineage
+- show local booked amount and local remeasurement result
+- show translated consolidation amount
+- show reciprocal match status
+- show elimination result or unresolved difference
+- provide drillthrough from consolidation review into local evidence where meaningful
+
+### Why last
+- review UX should explain a trusted accounting model, not hide an unfinished one
+
+## Recommended Delivery Order
+
+Use this order:
+
+1. `ICFX01` local accounting policy
+2. `ICFX02` reconciliation basis
+3. `ICFX03` translation rules
+4. `ICFX04` elimination model
+5. `ICFX05` exception / governance policy
+6. `ICFX06` review and drillthrough
+
+## Non-Goals For The First Pass
+
+- no full disclosure/reporting redesign for all IAS/IFRS presentation cases
+- no broad treasury netting workflow redesign
+- no attempt to solve every consolidation edge case in the same track
+- no dependency on Track 51 UI polish before the accounting model is locked
+- no assumption that current local-base intercompany reconciliation is already sufficient for cross-currency use cases
+
+## Open Questions For Later Refinement
+
+- Should common-currency reconciliation use group presentation currency, source transaction currency, or a configurable policy?
+- Will the first implementation require direct FX pairs only, or should it support triangulation immediately?
+- Which account classes should enter the first-pass automation scope?
+- When local packs are already approved, when should a cross-currency mismatch trigger local reopen versus group top-side handling?
+- Which differences should block elimination versus stay as reviewed exceptions?

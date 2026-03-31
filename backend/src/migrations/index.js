@@ -142,6 +142,8 @@ import migration152CariDocumentLinesImprovementEffectiveDate from "./m152_cari_d
 import migration153CariDocumentLineChargeAllocations from "./m153_cari_document_line_charge_allocations.js";
 import migration154StockLandedCostVouchers from "./m154_stock_landed_cost_vouchers.js";
 import migration155FixedAssetRetroTransferCorrections from "./m155_fixed_asset_retro_transfer_corrections.js";
+import migration156LocalClosePacks from "./m156_local_close_packs.js";
+import migration157LocalClosePackReopenRequests from "./m157_local_close_pack_reopen_requests.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -288,6 +290,8 @@ const migrations = [
   migration153CariDocumentLineChargeAllocations,
   migration154StockLandedCostVouchers,
   migration155FixedAssetRetroTransferCorrections,
+  migration156LocalClosePacks,
+  migration157LocalClosePackReopenRequests,
 ];
 
 export default migrations;

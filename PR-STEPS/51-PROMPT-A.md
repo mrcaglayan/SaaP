@@ -1,4 +1,4 @@
-# 1001 - CODEX PROMPTS
+# 51 - PROMPT A
 
 ## Status
 - Ready-to-paste prompt file
@@ -32,11 +32,13 @@ Use these prompts with:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP01` shared reporting contract / permissions / navigation foundation.
 
 Before changing code:
-- verify current repo seams in `frontend/src/App.jsx`, `frontend/src/layouts/sidebarConfig.js`, `frontend/src/api/glAdmin.js`, `backend/src/seedCore.js`, and the GL read routes
+- verify current repo seams in `frontend/src/App.jsx`, `frontend/src/layouts/AppLayout.jsx`, `frontend/src/layouts/sidebarConfig.js`, `frontend/src/api/glAdmin.js`, `backend/src/seedCore.js`, and the GL read routes
+- verify the current seeded permission footprint in `backend/src/seedCore.js` and make the RP01 local-report permission plan explicit before adding new permission codes
 - compare actual repo behavior against `51` and `51A`
 - update `51A` first if the real seams differ materially
 
@@ -48,6 +50,7 @@ Implement:
 
 Constraints:
 - do not build full report pages yet
+- for `/app/muavin`, reserve contract/path/query semantics only if helpful; do not add a normal-user sidebar entry or visible placeholder page before `RP04`
 - do not introduce naming that conflicts with Track 51
 - update `51` only if a roadmap-level lock or repo-fit statement is wrong
 
@@ -63,6 +66,7 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP02` real `Mizan Raporu` local summary page.
 
@@ -79,7 +83,7 @@ Implement:
 
 Constraints:
 - keep V1 period-first
-- do not fake OU / `CENTRAL/HQ` filtering if backend support is not actually implemented
+- do not fake OU / central / no-OU filtering if backend support is not actually implemented
 - keep the page aligned with Track 51 contract naming
 - update `51` only if a roadmap-level assumption is wrong
 
@@ -95,12 +99,17 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP03` shared `Defter-i Kebir` ledger engine.
 
 Before changing code:
 - verify the current journal list/detail seams and source-link drillback seams
 - compare them against the `RP03` tracker notes
+- carry forward the `RP02` implementation notes explicitly:
+  - convert the existing prepared `Mizan` -> `Defter-i Kebir` payload into live `RP03` navigation
+  - do not assume `RP03` automatically resolves the current legacy `Mizan` read-permission dependency unless you actually refactor the shared report-read ownership
+  - keep OU / `CENTRAL` / no-OU, date-range basis for `Mizan`, and include-zero behavior deferred unless backend support is actually implemented
 - update `51A` if the real route/service/page seams differ materially
 
 Implement:
@@ -108,17 +117,18 @@ Implement:
 - a real `/app/defter-i-kebir` page
 - opening balance + in-range movement rows + running balance
 - pagination / sorting / filtering needed for V1
-- clean drillthrough target behavior for future `Mizan` row navigation
+- live drillthrough target behavior for the existing `Mizan` row payload contract
 
 Constraints:
 - prefer a dedicated ledger-report service/route seam over bloating generic journal routes
 - keep contract naming aligned with Track 51
+- if you also clean up the current `Mizan` permission dependency as part of a shared reporting-route refactor, update `TrialBalancePage.jsx` and record the change in `51A`; otherwise leave that gap explicitly open
 - do not broaden into `Muavin` yet unless required for a clean shared seam
 - update `51` only if a roadmap-level lock or repo-fit statement is wrong
 
 At the end:
 - run relevant checks
-- summarize files changed, route/API added, opening/running balance behavior, and remaining gaps
+- summarize files changed, route/API added, opening/running balance behavior, whether `Mizan` drillthrough is now live, and which RP02 gaps remain deferred
 ```
 
 ---
@@ -128,17 +138,20 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP06` local close pack domain model, statuses, role model, and permission contract.
 
 Before changing code:
 - verify the current workflow engine model, validators, process types, and seeded permissions
+- verify the current migration head and use the next real migration number instead of a placeholder filename
 - verify reusable close/reopen patterns from period close and payroll close
+- verify whether `frontend/src/pages/settings/WorkflowSetupPage.jsx` also needs extension for any new workflow process type/admin surface
 - update `51A` first if the real domain seams differ materially
 
 Implement:
 - the minimal backend domain for local close packs
-- explicit scope model for `OPERATING_UNIT` and `CENTRAL_HQ`
+- explicit scope model for `OPERATING_UNIT` and `CENTRAL`
 - explicit status model and role/permission model
 - workflow reuse path as a clean extension or clean wrapper
 - baseline route/service/migration scaffolding for local close packs
@@ -146,7 +159,7 @@ Implement:
 Constraints:
 - do not treat current workflow engine support as drop-in for local close packs
 - do not build the full workspace UI yet
-- keep implementation naming aligned with `local close packs`
+- keep implementation naming aligned with `local close packs` and the repo's current `CENTRAL` / `OPERATING_UNIT` conventions even if business/UI copy later says `CENTRAL/HQ`
 - update `51` only if a roadmap-level lock is wrong
 
 At the end:
@@ -161,12 +174,14 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP08` local close pack submit / return / approve / lock workflow and post-lock controls.
 
 Before changing code:
 - verify current posting and reversal entry points across the repo
 - verify current close/reopen gating seams in GL and related posting services
+- compare actual posting/reversal hotspots against the tracker list and a fresh repo-wide search before claiming coverage
 - update `51A` with actual enforcement coverage seams before implementation if needed
 
 Implement:
@@ -193,6 +208,7 @@ At the end:
 ```text
 Use `PR-STEPS/51-MIZAN-DEFTER-I-KEBIR-MUAVIN-ROADMAP.md` as the roadmap lock
 and `PR-STEPS/51A-FOUNDATIONAL-IMPLEMENTATION-TRACKER.md` as the implementation tracker.
+Treat any `Current implementation notes` already recorded in `51A` for earlier steps as binding unless the live repo now differs materially.
 
 Work only on `RP09` local close pack reopen workflow, late-change governance, and entity-readiness invalidation.
 

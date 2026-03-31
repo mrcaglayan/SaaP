@@ -1,3 +1,5 @@
+import { LOCAL_REPORT_SIDEBAR_ITEMS } from "../reporting/localReportConfig.js";
+
 const ROLE_PERMISSIONS_PAGE_PERMISSIONS = [
   "security.role.read",
   "security.permission.read",
@@ -561,26 +563,14 @@ export const sidebarItems = [
     icon: "report",
     matchPrefix: "/app/raporlar",
     items: [
-      {
-        label: "Defter-i Kebir",
-        to: "/app/defter-i-kebir",
-      },
-      {
-        label: "Bilanco",
-        to: "/app/bilanco",
-      },
-      {
-        label: "Gelir Tablosu",
-        to: "/app/gelir-tablosu",
-      },
+      LOCAL_REPORT_SIDEBAR_ITEMS.generalLedger,
+      LOCAL_REPORT_SIDEBAR_ITEMS.balanceSheet,
+      LOCAL_REPORT_SIDEBAR_ITEMS.incomeStatement,
       {
         label: "Stok Raporu",
         to: "/app/stok-raporu",
       },
-      {
-        label: "Mizan Raporu",
-        to: "/app/mizan-raporu",
-      },
+      LOCAL_REPORT_SIDEBAR_ITEMS.trialBalance,
     ],
   },
   {

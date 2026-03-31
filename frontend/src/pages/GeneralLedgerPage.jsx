@@ -191,7 +191,7 @@ function buildSourceActions(sourceLinks = [], l) {
       return { route, label: l("Open Source", "Kaynagi Ac") };
     })
     .filter(Boolean);}
-function formatRangeLabel(reportRange, l) {
+function formatRangeLabel(reportRange) {
   if (!reportRange) {
     return "-";
   }
@@ -626,7 +626,6 @@ export default function GeneralLedgerPage() {
             {loadingReport ? l("Refreshing...", "Yenileniyor...") : l("Refresh", "Yenile")}
           </button>
         </div>
-+
         <div className="mt-4 grid gap-3 xl:grid-cols-4">
           <Combobox
             value={filters.legalEntityId || null}
@@ -680,7 +679,6 @@ export default function GeneralLedgerPage() {
             clearable={false}
           />
         </div>
-+
         {String(filters.periodBasis || "FISCAL_PERIOD").toUpperCase() === "DATE_RANGE" ? (
           <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -784,7 +782,6 @@ export default function GeneralLedgerPage() {
             "RP03 Defter-i Kebir'i post edilmis yerel hakikat uzerinde tutar. OU, CENTRAL, alt defter ve Muavin'e ozgu boyutsal genislemeler sonraki adimlara kalir."
           )}
         </div>
-+
         {referenceWarning ? (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             {referenceWarning}
@@ -804,7 +801,6 @@ export default function GeneralLedgerPage() {
           </div>
         ) : null}
       </section>
-+
       {error ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
@@ -832,7 +828,6 @@ export default function GeneralLedgerPage() {
             </span>
           </div>
         </div>
-+
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -860,7 +855,7 @@ export default function GeneralLedgerPage() {
               {l("Range Basis", "Aralik Bazi")}
             </div>
             <div className="mt-1 text-sm font-semibold text-slate-900">
-              {formatRangeLabel(reportRange, l)}
+              {formatRangeLabel(reportRange)}
             </div>
             <div className="mt-1 text-xs text-slate-600">
               {(reportFilters.periodBasis || filters.periodBasis || "-")} |{" "}
@@ -880,7 +875,6 @@ export default function GeneralLedgerPage() {
             </div>
           </div>
         </div>
-+
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-xl border border-slate-200 px-4 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -921,7 +915,6 @@ export default function GeneralLedgerPage() {
             </div>
           </div>
         </div>
-+
         {filters.sortBy !== DEFAULT_SORT_BY || filters.sortDirection !== DEFAULT_SORT_DIRECTION ? (
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
             {l(
@@ -931,7 +924,6 @@ export default function GeneralLedgerPage() {
           </div>
         ) : null}
       </section>
-+
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -976,7 +968,6 @@ export default function GeneralLedgerPage() {
             </button>
           </div>
         </div>
-+
         <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-600">

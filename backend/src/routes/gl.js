@@ -26,12 +26,14 @@ import {
   registerGlReadJournalRoutes,
   registerGlReadTrialBalanceRoute,
 } from "./gl.read.journal.routes.js";
+import { registerGlLedgerReportRoutes } from "./gl.ledger.routes.js";
 import { registerGlReadCoreRoutes } from "./gl.read.routes.js";
 import { registerGlWriteCoreRoutes } from "./gl.write.routes.js";
 import { registerGlWriteJournalRoutes } from "./gl.write.journal.routes.js";
 import { registerGlReclassificationRoutes } from "./gl.reclass.routes.js";
 import { registerGlPeriodClosingRoutes } from "./gl.period-closing.routes.js";
 import { registerGlPurposeMappingsRoutes } from "./gl.purpose-mappings.routes.js";
+import { registerLocalClosePackRoutes } from "./local.close-packs.routes.js";
 import {
   isDescendantOfParentAccount,
   loadLegalEntityAccountHierarchy,
@@ -2201,6 +2203,10 @@ registerGlReadTrialBalanceRoute(router, {
   resolveScopeFromBookId,
   isNearlyZero,
 });
+registerGlLedgerReportRoutes(router, {
+  resolveScopeFromBookId,
+});
+registerLocalClosePackRoutes(router);
 
 registerGlWriteJournalRoutes(router, {
   applyShareholderCommitmentSyncForPostedJournalTx,

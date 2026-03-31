@@ -13,6 +13,7 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 import { reverseJournalEntryTx } from "../services/gl.journal-reversal.service.js";
+import { assertLocalClosePackJournalActionAllowed } from "../services/local.close-reopen.service.js";
 import {
   resolveReverseBlock,
   buildReverseBlockMessage,
@@ -961,6 +962,15 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
       let shareholderCommitmentSync = [];
 
       if (!postLinkedMirrors) {
+        await assertLocalClosePackJournalActionAllowed({
+          tenantId,
+          journalId,
+          legalEntityId: parsePositiveInt(journal.legal_entity_id),
+          bookId: parsePositiveInt(journal.book_id),
+          fiscalPeriodId: parsePositiveInt(journal.fiscal_period_id),
+          actionType: "POST_DRAFT_JOURNAL",
+        });
+
         const singleJournalAccountIds = await loadJournalLineAccountIds({ journalId });
         const singleJournalControlledAccounts = await loadCashControlledAccounts({
           tenantId,
@@ -1078,6 +1088,15 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
           if (!draftJournal) {
             throw badRequest(`Linked journal not found: ${draftJournalId}`);
           }
+          // eslint-disable-next-line no-await-in-loop
+          await assertLocalClosePackJournalActionAllowed({
+            tenantId,
+            journalId: draftJournalId,
+            legalEntityId: parsePositiveInt(draftJournal.legal_entity_id),
+            bookId: parsePositiveInt(draftJournal.book_id),
+            fiscalPeriodId: parsePositiveInt(draftJournal.fiscal_period_id),
+            actionType: "POST_DRAFT_JOURNAL",
+          });
           // eslint-disable-next-line no-await-in-loop
           const accountIds = await loadJournalLineAccountIds({ journalId: draftJournalId });
           // eslint-disable-next-line no-await-in-loop

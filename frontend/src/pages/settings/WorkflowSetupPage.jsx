@@ -18,7 +18,7 @@ import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 
-const PROCESS_TYPES = ["PERIOD_CLOSE", "CONSOLIDATION_RUN"];
+const PROCESS_TYPES = ["PERIOD_CLOSE", "CONSOLIDATION_RUN", "LOCAL_CLOSE_PACK"];
 const ASSIGNMENT_SCOPE_TYPES = ["TENANT", "GROUP", "LEGAL_ENTITY", "OPERATING_UNIT"];
 
 function toPositiveInt(value) {
@@ -32,6 +32,20 @@ function todayIsoDate() {
 
 function buildDefaultSteps(processType) {
   const normalized = String(processType || "").toUpperCase();
+  if (normalized === "LOCAL_CLOSE_PACK") {
+    // CENTRAL packs do not have an operating-unit target id, so the default
+    // local-close definition must resolve at entity scope. OU-specific flows
+    // can still be customized later via the JSON step editor.
+    return [
+      {
+        stepNo: 1,
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPermissionCode: "ouclose.approve",
+        minApproverCount: 1,
+        allowSelfApprove: false,
+      },
+    ];
+  }
   const permissionCode =
     normalized === "CONSOLIDATION_RUN"
       ? "consolidation.run.finalize"
@@ -378,8 +392,8 @@ export default function WorkflowSetupPage() {
         </h1>
         <p className="mt-1 text-sm text-slate-600">
           {l(
-            "Configure close/consolidation workflow definitions, steps, and assignments.",
-            "Kapanis/konsolidasyon workflow tanimlari, adimlari ve atamalarini yonetin."
+            "Configure period-close, local-close-pack, and consolidation workflow definitions, steps, and assignments.",
+            "Donem kapanisi, yerel kapanis paketi ve konsolidasyon workflow tanimlari, adimlari ve atamalarini yonetin."
           )}
         </p>
       </div>

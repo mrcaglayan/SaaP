@@ -21,10 +21,10 @@ The repo already has the core accounting surfaces needed to start this track:
 - trial balance by `book + fiscal period` already exists
 - source-link drillback and reverse-block destination enrichment already exist
 - period-close run and workflow-gate foundations already exist
-- consolidation balance sheet / income statement read surfaces already exist
+- consolidation trial-balance / summary / balance-sheet / income-statement read surfaces already exist
 - the app router already implements the consolidated reports page
-- the sidebar already exposes `Mizan Raporu`, `Defter-i Kebir`, and `Bilanco`, but the local reporting experience is not yet shaped into one coherent reporting workflow
-- the local report routes still fall through to placeholder routing until dedicated pages are built
+- the sidebar config already contains local-report menu targets such as `Mizan Raporu`, `Defter-i Kebir`, and `Bilanco`, but the local reporting experience is not yet shaped into one coherent reporting workflow
+- unimplemented local report routes currently mount preview-only placeholder pages for module-preview admins rather than a normal end-user reporting flow
 
 This means Track 51 should not wait for every future business module. It should productize the reporting layer on top of posted accounting truth that already exists.
 
@@ -54,7 +54,7 @@ The biggest gap is not posted accounting truth. It is productized local reportin
   - close-pack launches and evidence fingerprints
 - local close-pack domain and workflow APIs are still missing for:
   - OU packs
-  - `CENTRAL/HQ` pack
+  - central / no-OU pack
   - checklist / evidence / comments / audit trail
   - submit / return / approve / lock / reopen
 - enforcement hooks are still missing across:
@@ -66,6 +66,18 @@ The biggest gap is not posted accounting truth. It is productized local reportin
 
 This means the roadmap is not speculative. It is describing a real missing product layer in the current repo.
 
+## Existing API Surfaces Not Yet In Product UI
+
+Several backend/reporting surfaces already exist but are still not productized into the main UI flow:
+
+- local posted trial-balance read already exists, but there is still no dedicated `Mizan` page
+- consolidated trial-balance and consolidated summary report endpoints already exist, but the current consolidated reports page does not surface them
+- consolidated elimination and adjustment draft-create endpoints already exist, but the current consolidated reports page mainly lists and posts existing drafts
+- workflow instance detail / approve / reject endpoints already exist, but the current UI mostly uses workflow list/read surfaces and setup screens instead of a report-driven approval flow
+- journal list read already supports optional source-link enrichment, but the current journal workbench mainly uses source links from journal detail
+
+This matters for Track 51 because some gaps are genuinely missing backend/domain work, while other gaps are mainly missing UI-UX productization on top of APIs that already exist.
+
 ## Reusable Repo Seams
 
 The repo already has reusable implementation seams that Track 51 should build on rather than bypass:
@@ -75,10 +87,15 @@ The repo already has reusable implementation seams that Track 51 should build on
 - `frontend/src/App.jsx`
   - implemented-route activation
   - placeholder-route fallback
+- `frontend/src/layouts/AppLayout.jsx`
+  - ordinary-user menu surfacing
+  - preview-admin gating for unimplemented routes
 - `frontend/src/layouts/sidebarConfig.js`
   - existing menu paths and permission wiring
 - `frontend/src/api/glAdmin.js`
   - existing GL read helpers
+- `frontend/src/pages/settings/WorkflowSetupPage.jsx`
+  - current workflow setup UI limited to `PERIOD_CLOSE` and `CONSOLIDATION_RUN`
 - `frontend/src/pages/JournalWorkbenchPage.jsx`
   - journal browse/detail and journal-oriented workflow patterns
 - `frontend/src/pages/ConsolidationReportsPage.jsx`
@@ -187,23 +204,24 @@ These locks should be treated as part of the roadmap, not deferred implementatio
   - `fiscalPeriodId` and/or approved date-range fields
   - `accountId` / account code range
   - `operatingUnitId`
-  - explicit `CENTRAL/HQ` or `no OU` filter semantics
+  - explicit central / no-OU filter semantics
   - `subledgerReferenceNo`
   - source type / source module
   - status / include reversed behavior
 - consolidated reporting contract must standardize:
-  - `groupId`
+  - either reuse current repo names or define one explicit compatibility mapping for:
+    - `consolidationGroupId` vs `groupId`
+    - `fiscalPeriodId` vs `consolidationPeriodId`
+    - `presentationCurrencyCode` vs `reportingCurrencyId`
   - `subgroupId` where applicable
-  - `consolidationPeriodId`
   - `consolidationRunId` or version/scenario identifier
-  - `reportingCurrencyId`
   - member `legalEntityId` where drill-across narrows into one entity
 - local and consolidated routes must not drift into different naming conventions.
-- omitted `operatingUnitId` must not silently mean `CENTRAL/HQ` when report semantics intend "all scopes".
+- omitted `operatingUnitId` must not silently mean central/no-OU when report semantics intend "all scopes".
 - local reporting must distinguish clearly between:
   - all scopes
   - one explicit OU
-  - `CENTRAL/HQ` / `operating_unit_id IS NULL`
+  - explicit central/no-OU scope where `operating_unit_id IS NULL`
 
 ### 2. Period/date behavior must be locked early
 
@@ -352,7 +370,7 @@ This is intentionally aligned with how Oracle / SAP / Dynamics-style finance wor
 - entity close should not be a black box between OU close and consolidation
 - entity-close workflow should explicitly consume:
   - required OU packs
-  - one required `CENTRAL/HQ` pack for no-OU entity scope
+  - one required central / no-OU pack for entity scope where `operating_unit_id IS NULL`
   - entity-level top-side adjustments
   - tax / statutory adjustments
   - entity-level evidence and signoff
@@ -361,16 +379,18 @@ This is intentionally aligned with how Oracle / SAP / Dynamics-style finance wor
 
 ### 14. OU, CENTRAL/HQ, and entity-only attribution boundaries must be explicit
 
-- the repo already treats missing `operating_unit_id` as `CENTRAL/HQ`, not as unknown scope
+- the repo already treats missing `operating_unit_id` as central/no-OU scope, not as unknown scope
+- existing ownership and close-control seams use implementation values such as `CENTRAL` and `OPERATING_UNIT`
+- the close-pack model may still display the business label `CENTRAL/HQ` in UI copy, but implementation enums and validators should align with the repo's existing `CENTRAL` convention unless there is an intentional migration
 - close-pack attribution should therefore follow these rules:
   - journals attributable to exactly one OU participate in that OU pack
-  - journals whose relevant lines are all `operating_unit_id = null` participate in the `CENTRAL/HQ` pack
-  - journals spanning multiple OUs, or mixing `CENTRAL/HQ` and OU lines, belong to entity close only
+  - journals whose relevant lines are all `operating_unit_id = null` participate in the central/no-OU pack
+  - journals spanning multiple OUs, or mixing central/no-OU and OU lines, belong to entity close only
 - mixed-scope journals must not be blocked, certified, or reopened by one OU pack alone
 
 ### 15. Entity reopen transitions must be explicit
 
-- if a mandatory OU pack or the mandatory `CENTRAL/HQ` pack reopens after entity approval or entity lock:
+- if a mandatory OU pack or the mandatory central / no-OU pack reopens after entity approval or entity lock:
   - entity state should transition to `ENTITY_REOPENED`
   - re-review and re-approval should be required before entity lock can be restored
 - if entity review has started but entity is not yet approved/locked:
@@ -397,9 +417,9 @@ This is intentionally aligned with how Oracle / SAP / Dynamics-style finance wor
 
 - for implementation planning, use `local close packs` as the family term covering:
   - OU packs
-  - the `CENTRAL/HQ` pack
+  - the central/no-OU pack
 - keep `OU Close` in the higher-level close ladder as business shorthand for the local review stage
-- this avoids implying that the workflow family contains only OU-scoped packs when the final model includes `CENTRAL/HQ` as a first-class pack
+- this avoids implying that the workflow family contains only OU-scoped packs when the final model includes a central/no-OU pack as a first-class pack
 
 ### 19. Workflow-engine reuse must be treated as extension, not drop-in reuse
 
@@ -407,7 +427,7 @@ This is intentionally aligned with how Oracle / SAP / Dynamics-style finance wor
   - `PERIOD_CLOSE`
   - `CONSOLIDATION_RUN`
 - local close packs should reuse the approval / assignment / decision / audit mechanics where practical
-- but the current workflow schema and validators do not yet model an OU / `CENTRAL/HQ` local close-pack process type
+- but the current workflow schema and validators do not yet model an OU / central local close-pack process type
 - implementation should therefore extend the workflow engine cleanly, or wrap it cleanly, instead of assuming that local close packs already fit the current process-type model unchanged
 
 ## Ledger Engine Maturity Model
@@ -565,7 +585,7 @@ Create one consistent reporting contract before building pages so summary, detai
 
 ### Current repo baseline
 
-- sidebar labels and route targets already exist for:
+- sidebar config already contains labels and route targets for:
   - `/app/mizan-raporu`
   - `/app/defter-i-kebir`
   - `/app/bilanco`
@@ -575,15 +595,17 @@ Create one consistent reporting contract before building pages so summary, detai
   - `gl.journal.read`
   - `gl.period.close`
 - consolidation report permissions are already seeded
-- `App.jsx` already has a placeholder-route mechanism for routes that are visible in the sidebar but not yet implemented
+- `App.jsx` already has a placeholder-route mechanism for routes that are visible in the sidebar but not yet implemented, but that placeholder surfacing is effectively limited to preview-admin flows today
 
 ### Current repo gap
 
-- local report routes exist in menu/navigation, but not yet as real implemented local-report pages
+- local report route targets exist in sidebar config, but ordinary users do not yet get a real local-report page flow for them
+- the current placeholder route experience is not a normal-user reporting surface; it is primarily a preview-admin seam
+- `/app/muavin` does not yet exist as a real route, sidebar item, or i18n label in the repo
 - no shared local-report contract yet exists for:
   - all scopes
   - one OU
-  - `CENTRAL/HQ`
+  - central / no-OU scope
 - no dedicated local statement permission family exists yet
 - no dedicated local ledger-detail permission family exists yet
 
@@ -596,16 +618,16 @@ Create one consistent reporting contract before building pages so summary, detai
   - approved date-range fields where needed
   - `accountId` / account code range
   - `operatingUnitId`
-  - explicit `CENTRAL/HQ` / `no OU` scope selector or equivalent null-scope contract
+  - explicit central / no-OU scope selector or equivalent null-scope contract
   - `subledgerReferenceNo`
   - source type / source module
   - status / include reversed behavior
-- define one shared report filter vocabulary for consolidated reporting:
-  - `groupId`
+- define one shared report filter vocabulary for consolidated reporting, either by reusing the current repo names or by defining one explicit compatibility mapping layer:
+  - `consolidationGroupId` and/or canonical `groupId`
   - `subgroupId`
-  - `consolidationPeriodId`
+  - `fiscalPeriodId` and/or canonical `consolidationPeriodId`
   - `consolidationRunId` or scenario/version key
-  - `reportingCurrencyId`
+  - `presentationCurrencyCode` and/or canonical `reportingCurrencyId`
   - member `legalEntityId` for drill-across narrowing
 - define drillthrough contract:
   - summary row -> ledger detail
@@ -618,13 +640,17 @@ Create one consistent reporting contract before building pages so summary, detai
   - `/app/muavin`
   - `/app/bilanco`
   - `/app/gelir-tablosu`
+- lock route-ownership timing explicitly:
+  - `RP01` may reserve the `/app/muavin` path and parameter contract at the naming/deep-link level
+  - `RP01` should not surface `/app/muavin` as a normal-user sidebar item or ordinary-user placeholder page before `RP04`
+  - `RP04` owns the actual `Muavin` page behavior and, if it remains a separate route, the visible sidebar/i18n/router surfacing
 - decide one report-basis contract for V1:
   - local posted basis only
   - no mixed "draft + posted unless maybe-preview" ambiguity on default local reports
 - lock local scope-filter behavior:
   - no OU filter = all local scopes
   - one OU filter = that OU only
-  - `CENTRAL/HQ` filter = only lines with `operating_unit_id IS NULL`
+  - central / no-OU filter = only lines with `operating_unit_id IS NULL`
 - lock V1 basis rules:
   - period-first local reporting
   - canonical running-balance currency basis
@@ -653,6 +679,7 @@ Create one consistent reporting contract before building pages so summary, detai
 - placeholder routes can be replaced incrementally without route churn
 - report pages and close pages can deep-link each other using the same parameter names
 - report drillthrough and export visibility rules are explicit before page build starts
+- `RP01` does not require a visible `/app/muavin` menu item before `RP04` exists
 
 ---
 
@@ -671,10 +698,10 @@ Build the first real local report page from posted book/period balances.
 ### Current repo gap
 
 - no actual `Mizan` page component exists yet
-- the local `Mizan` route still falls through to placeholder routing
+- the local `Mizan` route does not yet provide a normal-user page; current placeholder routing is only a preview-admin seam
 - the current trial balance endpoint is still book + period oriented and does not yet express:
   - explicit OU filtering
-  - explicit `CENTRAL/HQ` / no-OU filtering
+  - explicit central / no-OU filtering
   - close-pack launch context
 - no report header close-context integration exists yet
 - no direct summary-row -> ledger-detail drillthrough UI exists yet
@@ -792,6 +819,8 @@ Extend the same ledger engine into a more detailed accountant / audit workspace.
 - add `/app/muavin` as:
   - a separate route using the same engine, or
   - a preset mode over the same page
+- if `RP01` previously reserved `/app/muavin` at the contract/path level, `RP04` is still the step that makes it a real user-facing report surface
+- if `/app/muavin` remains a separate route, add its router, sidebar, and i18n surfacing explicitly because the repo does not already have that seam
 - add stronger filters:
   - operating unit
   - subledger reference
@@ -884,11 +913,12 @@ Define the local close-pack workflow contract before building the close workspac
   - `legalEntityId`
   - `bookId`
   - `fiscalPeriodId`
-  - `closeScopeType = OPERATING_UNIT | CENTRAL_HQ`
+  - `closeScopeType = OPERATING_UNIT | CENTRAL`
   - `operatingUnitId` when `closeScopeType = OPERATING_UNIT`
 - define the pack family:
   - one pack per operating unit
-  - one `CENTRAL/HQ` pack for no-OU entity scope
+  - one central / no-OU pack for entity scope where `operating_unit_id IS NULL`
+  - the UI/business label may still be `CENTRAL/HQ`, but implementation enums should align with the repo's current `CENTRAL` convention unless there is an intentional migration
 - define explicit close-pack statuses:
   - `NOT_OPENED`
   - `OPEN`
@@ -924,8 +954,8 @@ Define the local close-pack workflow contract before building the close workspac
   - it does not create a separate statutory ledger close engine
 - define attribution policy for journal participation:
   - exactly one OU-owned journal scope -> that OU pack
-  - all-`CENTRAL/HQ` / no-OU journal scope -> `CENTRAL/HQ` pack
-  - multi-OU or mixed `CENTRAL/HQ` + OU journal scope -> entity close only
+  - all-central / no-OU journal scope -> the central pack
+  - multi-OU or mixed central + OU journal scope -> entity close only
 - define entity-readiness rollup target states for later integration:
   - `NOT_READY`
   - `PARTIALLY_READY`
@@ -945,7 +975,7 @@ Define the local close-pack workflow contract before building the close workspac
 
 - one explicit OU-close state model exists for the roadmap
 - one explicit local close-pack state model exists for the roadmap
-- the roadmap names both OU packs and the `CENTRAL/HQ` pack explicitly
+- the roadmap names both OU packs and the central / no-OU pack explicitly
 - mixed-scope journals are routed to entity close instead of being forced into one OU pack
 - authority boundaries between OU, entity, and group roles are named up front
 - permission families and downstream readiness states are defined before UI/action work begins
@@ -957,7 +987,7 @@ Define the local close-pack workflow contract before building the close workspac
 
 ### Goal
 
-Turn the local reporting layer into a usable local close pack so finance teams can review, evidence, and submit one OU or `CENTRAL/HQ` scope without reconstructing filters manually.
+Turn the local reporting layer into a usable local close pack so finance teams can review, evidence, and submit one OU or central / no-OU scope without reconstructing filters manually.
 
 ### Scope
 
@@ -993,7 +1023,7 @@ Turn the local reporting layer into a usable local close pack so finance teams c
   - `bookId`
   - `fiscalPeriodId`
   - `operatingUnitId` for OU packs
-  - explicit `CENTRAL/HQ` / `no OU` scope for the `CENTRAL/HQ` pack
+  - explicit central / no-OU scope for the central pack, with `CENTRAL/HQ` only as UI/business copy if desired
 - define evidence-pack behavior:
   - report review support
   - evidence / commentary attachment support
@@ -1139,7 +1169,7 @@ Govern late changes after local close-pack approval or lock so corrections, reve
   - downstream entity/group dashboards are flagged immediately
   - re-review and re-approval are required after financially relevant change
 - define entity state transition explicitly:
-  - if entity is `ENTITY_APPROVED` or `ENTITY_LOCKED` and a mandatory OU pack or the mandatory `CENTRAL/HQ` pack reopens, entity becomes `ENTITY_REOPENED`
+  - if entity is `ENTITY_APPROVED` or `ENTITY_LOCKED` and a mandatory OU pack or the mandatory central / no-OU pack reopens, entity becomes `ENTITY_REOPENED`
   - if entity is earlier in the workflow, it falls back to the applicable review/readiness state instead of remaining silently locked
 - define late-change policy:
   - prefer next-period correction for immaterial issues
@@ -1157,8 +1187,8 @@ Govern late changes after local close-pack approval or lock so corrections, reve
   - `EVIDENCE_CORRECTION_ONLY` cannot change balances, postings, mappings, or report basis
   - otherwise the issue must route to financial reopen / adjustment logic
 - define entity-readiness rollup rule:
-  - entity cannot move to `READY_FOR_ENTITY_REVIEW` unless required OU packs and the required `CENTRAL/HQ` pack are `APPROVED` or `LOCKED`
-  - mandatory OU packs or the mandatory `CENTRAL/HQ` pack in `REOPENED` or `RETURNED` invalidate readiness
+  - entity cannot move to `READY_FOR_ENTITY_REVIEW` unless required OU packs and the required central / no-OU pack are `APPROVED` or `LOCKED`
+  - mandatory OU packs or the mandatory central / no-OU pack in `REOPENED` or `RETURNED` invalidate readiness
 - define already-published policy explicitly:
   - once a period is already group-published, reopening should be exceptional
   - highest-governance approval is required
@@ -1233,11 +1263,11 @@ Extend the reporting model from entity-submitted/locked local books into group-l
 
 - keep existing consolidated balance sheet / income statement surfaces as the group summary layer
 - use explicit consolidated filter semantics:
-  - `groupId`
+  - `consolidationGroupId` and/or canonical `groupId`
   - `subgroupId` where relevant
-  - `consolidationPeriodId`
+  - `fiscalPeriodId` and/or canonical `consolidationPeriodId`
   - `consolidationRunId` or scenario/version key
-  - `reportingCurrencyId`
+  - `presentationCurrencyCode` and/or canonical `reportingCurrencyId`
 - define the state handoff into group review explicitly:
   - OU review complete
   - entity close approved
@@ -1288,7 +1318,7 @@ Only after reports and workflow states are operationally trusted, use them in hi
   - `Group Approved / Published`
 - define entity-close package content explicitly:
   - required OU packs
-  - required `CENTRAL/HQ` pack
+  - required central / no-OU pack
   - entity-level top-side adjustments
   - tax / statutory adjustments
   - entity-level evidence and signoff

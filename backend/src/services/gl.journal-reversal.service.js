@@ -1,4 +1,5 @@
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { assertLocalClosePackJournalActionAllowed } from "./local.close-reopen.service.js";
 
 function normalizeUpperText(value) {
   return String(value || "").trim().toUpperCase();
@@ -102,6 +103,16 @@ export async function reverseJournalEntryTx(tx, {
   if (normalizeUpperText(original.status) !== "POSTED") {
     throw badRequest("Only POSTED journals can be reversed");
   }
+
+  await assertLocalClosePackJournalActionAllowed({
+    tenantId: parsePositiveInt(tenantId),
+    journalId: parsePositiveInt(journalId),
+    legalEntityId: parsePositiveInt(original.legal_entity_id),
+    bookId: parsePositiveInt(original.book_id),
+    fiscalPeriodId: parsePositiveInt(original.fiscal_period_id),
+    actionType: "REVERSE_POSTED_JOURNAL",
+    runQuery: tx.query.bind(tx),
+  });
 
   const lines = await loadOriginalJournalLinesTx(tx, journalId);
   if (lines.length === 0) {
