@@ -70,6 +70,10 @@ export function parseGroupCompanyUpsertInput(req) {
   };
 }
 
+/**
+ * Parse and validate legal-entity upsert input, including optional default
+ * provisioning controls used by Organization Management.
+ */
 export function parseLegalEntityUpsertInput(req) {
   const tenantId = resolveTenantId(req);
   if (!tenantId) {
@@ -101,6 +105,8 @@ export function parseLegalEntityUpsertInput(req) {
     isIntercompanyEnabled: req.body.isIntercompanyEnabled,
     intercompanyPartnerRequired: req.body.intercompanyPartnerRequired,
     autoProvisionDefaults: req.body.autoProvisionDefaults,
+    policyPackId: req.body.policyPackId,
+    overwriteExistingCoaAccounts: req.body.overwriteExistingCoaAccounts,
     fiscalYear: req.body.fiscalYear,
     paymentTerms: req.body.paymentTerms,
   };

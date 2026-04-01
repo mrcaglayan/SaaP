@@ -265,13 +265,19 @@ async function main() {
       legalEntityId: orgA.legalEntityId,
       dueFromParentAccountId: postingLeafDueFrom,
       dueToParentAccountId: dueToParentA2,
-      expectedStatus: 400,
+      expectedStatus: 201,
     });
     assert(
-      toErrorText(postingLeafResponse.json).includes(
-        "dueFromParentAccountId must reference a child-capable non-postable control/header account"
-      ),
-      "Config save should reject posting leaf accounts as saved control parents"
+      toNumber(postingLeafResponse.json?.row?.due_from_parent_account_id) === postingLeafDueFrom,
+      "Config save should allow posting Due From parent candidates before provisioning"
+    );
+    const configRowsAfterPostingLeaf = await listCurrentAccountConfigs({
+      token: adminToken,
+      legalEntityId: orgA.legalEntityId,
+    });
+    assert(
+      toNumber(configRowsAfterPostingLeaf[0]?.due_from_parent_account_id) === postingLeafDueFrom,
+      "Config list should reflect the saved posting Due From parent candidate"
     );
 
     const entityMismatchResponse = await saveCurrentAccountConfig({
@@ -298,7 +304,7 @@ async function main() {
           tenantId: identity.tenantId,
           legalEntityId: orgA.legalEntityId,
           configRow: {
-            dueFromParentAccountId: dueFromParentA1,
+            dueFromParentAccountId: postingLeafDueFrom,
             dueToParentAccountId: dueToParentA2,
             autoProvisionOnOperatingUnitCreate: false,
           },

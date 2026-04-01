@@ -217,6 +217,22 @@ async function fetchPartnerMappings(tenantId, legalEntityId) {
   return result.rows || [];
 }
 
+async function fetchAccountsByIds(accountIds) {
+  const ids = Array.from(new Set((accountIds || []).map((id) => toNumber(id)).filter(Boolean)));
+  if (ids.length === 0) {
+    return [];
+  }
+  const placeholders = ids.map(() => "?").join(",");
+  const result = await query(
+    `SELECT id, allow_posting
+     FROM accounts
+     WHERE id IN (${placeholders})
+     ORDER BY id`,
+    ids
+  );
+  return result.rows || [];
+}
+
 function assertAllFourCentralFields(row, label) {
   assert(toNumber(row?.central_due_from_account_id) > 0, `${label} missing central_due_from_account_id`);
   assert(toNumber(row?.central_due_to_account_id) > 0, `${label} missing central_due_to_account_id`);
@@ -300,7 +316,7 @@ async function main() {
       name: `Due From Parent ${suffix}`,
       accountType: "ASSET",
       normalSide: "DEBIT",
-      allowPosting: false,
+      allowPosting: true,
     });
     const oldDueToParentAccountId = await createGlAccount({
       token: adminToken,
@@ -309,7 +325,7 @@ async function main() {
       name: `Due To Parent ${suffix}`,
       accountType: "LIABILITY",
       normalSide: "CREDIT",
-      allowPosting: false,
+      allowPosting: true,
     });
     const newDueFromParentAccountId = await createGlAccount({
       token: adminToken,
@@ -318,7 +334,7 @@ async function main() {
       name: `Due From Parent New ${suffix}`,
       accountType: "ASSET",
       normalSide: "DEBIT",
-      allowPosting: false,
+      allowPosting: true,
     });
     const newDueToParentAccountId = await createGlAccount({
       token: adminToken,
@@ -327,7 +343,7 @@ async function main() {
       name: `Due To Parent New ${suffix}`,
       accountType: "LIABILITY",
       normalSide: "CREDIT",
-      allowPosting: false,
+      allowPosting: true,
     });
 
     await saveCurrentAccountConfig({
@@ -376,6 +392,14 @@ async function main() {
     const branchBAfterFirstApply = firstApplyRows.find((row) => toNumber(row.id) === branchBId);
     assertAllFourCentralFields(branchAAfterFirstApply, "Branch A after first apply");
     assertAllFourCentralFields(branchBAfterFirstApply, "Branch B after first apply");
+    const selectedParentRows = await fetchAccountsByIds([
+      oldDueFromParentAccountId,
+      oldDueToParentAccountId,
+    ]);
+    assert(
+      selectedParentRows.every((row) => row?.allow_posting === false || row?.allow_posting === 0),
+      "Provisioning should flip selected posting current-account parents to non-postable"
+    );
 
     const firstMappings = await fetchPartnerMappings(identity.tenantId, orgA.legalEntityId);
     assert(firstMappings.length === 2, "First full apply should create two directional partner mappings");

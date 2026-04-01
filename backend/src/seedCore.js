@@ -616,6 +616,7 @@ const ROLE_DEFINITIONS = [
       "ouclose.request_reopen",
       "cash.fx.revaluation.override",
       "cash.register.read",
+      "cash.register.upsert",
       "bank.accounts.read",
       "bank.accounts.write",
       "bank.connectors.read",

@@ -537,7 +537,7 @@ export async function countChildAccounts({ accountId, runQuery = query }) {
 
 export async function findCashRegisterScopeById({ tenantId, registerId, runQuery = query }) {
   const result = await runQuery(
-    `SELECT id, legal_entity_id
+    `SELECT id, legal_entity_id, operating_unit_id
      FROM cash_registers
      WHERE tenant_id = ?
        AND id = ?
@@ -618,7 +618,7 @@ export async function findCashSessionById({
 
 export async function findCashSessionScopeById({ tenantId, sessionId, runQuery = query }) {
   const result = await runQuery(
-    `SELECT cs.id, cr.legal_entity_id
+    `SELECT cs.id, cr.legal_entity_id, cr.operating_unit_id
      FROM cash_sessions cs
      JOIN cash_registers cr ON cr.id = cs.cash_register_id
      WHERE cs.tenant_id = ?

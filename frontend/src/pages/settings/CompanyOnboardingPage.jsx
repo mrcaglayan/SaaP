@@ -385,7 +385,13 @@ return sanitizeDefaultAccounts(defaultAccounts)
   .sort(compareAccountsForTree);
 }
 function buildCurrentAccountParentOptions(defaultAccounts, accountType, normalSide) {
-return buildHeaderParentAccountOptions(defaultAccounts, accountType, normalSide);
+return sanitizeDefaultAccounts(defaultAccounts)
+  .filter(
+    (account) =>
+      toUpper(account.accountType) === toUpper(accountType) &&
+      toUpper(account.normalSide) === toUpper(normalSide)
+  )
+  .sort(compareAccountsForTree);
 }
 function buildShareholderParentOptions(defaultAccounts, normalSide) {
 return buildHeaderParentAccountOptions(defaultAccounts, "EQUITY", normalSide);
@@ -625,14 +631,14 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
 
   if (hasDueFrom && !dueFromCodes.has(currentAccountConfig.dueFromParentAccountCode)) {
     return l(
-      `${prefix}: due-from parent must stay selected from a non-postable ASSET/DEBIT account in the account tree.`,
-      `${prefix}: alacak/due-from ust hesap secimi hesap agacindaki post edilemeyen ASSET/DEBIT hesaptan kalmalidir.`
+      `${prefix}: due-from parent must stay selected from an ASSET/DEBIT account in the account tree.`,
+      `${prefix}: alacak/due-from ust hesap secimi hesap agacindaki bir ASSET/DEBIT hesaptan kalmalidir.`
     );
   }
   if (hasDueTo && !dueToCodes.has(currentAccountConfig.dueToParentAccountCode)) {
     return l(
-      `${prefix}: due-to parent must stay selected from a non-postable LIABILITY/CREDIT account in the account tree.`,
-      `${prefix}: borc/due-to ust hesap secimi hesap agacindaki post edilemeyen LIABILITY/CREDIT hesaptan kalmalidir.`
+      `${prefix}: due-to parent must stay selected from a LIABILITY/CREDIT account in the account tree.`,
+      `${prefix}: borc/due-to ust hesap secimi hesap agacindaki bir LIABILITY/CREDIT hesaptan kalmalidir.`
     );
   }
   if ((hasDueFrom && !hasDueTo) || (!hasDueFrom && hasDueTo)) {
@@ -2833,8 +2839,8 @@ return (
             </p>
             <p className="mt-2 text-xs text-cyan-900/80">
               {l(
-                "Pick non-postable control/header parents from the account tree. If you skip now, multi-branch cross-context readiness stays pending until you save and apply the config later.",
-                "Hesap agacindan post edilemeyen kontrol/ust hesaplari secin. Simdilik atlarsaniz, cok subeli capraz baglam hazirlik durumu daha sonra kaydedip uygulayana kadar beklemede kalir."
+                "Pick matching ASSET/DEBIT and LIABILITY/CREDIT parent candidates from the account tree. If SaaP provisions child current accounts under a selected account, it will flip that parent to non-postable automatically.",
+                "Hesap agacindan uygun ASSET/DEBIT ve LIABILITY/CREDIT parent adaylarini secin. SaaP secilen hesabin altina cari alt hesaplar acarsa bu parent hesabi otomatik olarak post edilemeyen duruma cevirir."
               )}
             </p>
           </div>
@@ -2926,7 +2932,10 @@ return (
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
                       >
                         <option value="">
-                          {l("Select ASSET / DEBIT header parent", "ASSET / DEBIT ust hesabi secin")}
+                          {l(
+                            "Select ASSET / DEBIT parent candidate",
+                            "ASSET / DEBIT parent adayi secin"
+                          )}
                         </option>
                         {dueFromOptions.map((account) => (
                           <option key={`${entity.id}-dfa-${account.code}`} value={account.code}>
@@ -2936,8 +2945,8 @@ return (
                       </select>
                       <p className="text-xs text-slate-500">
                         {l(
-                          "Use a non-postable ASSET / DEBIT control account under the legal entity CoA.",
-                          "Tuzel kisilik hesap planinda post edilemeyen bir ASSET / DEBIT kontrol hesabi kullanin."
+                          "Use an ASSET / DEBIT account under the legal-entity CoA. If SaaP provisions child current accounts under it, the selected account will be converted to non-postable automatically.",
+                          "Tuzel kisilik hesap planinda bir ASSET / DEBIT hesap kullanin. SaaP bunun altina cari alt hesaplar acarsa secilen hesap otomatik olarak post edilemeyen duruma cevrilir."
                         )}
                       </p>
                     </div>
@@ -2959,8 +2968,8 @@ return (
                       >
                         <option value="">
                           {l(
-                            "Select LIABILITY / CREDIT header parent",
-                            "LIABILITY / CREDIT ust hesabi secin"
+                            "Select LIABILITY / CREDIT parent candidate",
+                            "LIABILITY / CREDIT parent adayi secin"
                           )}
                         </option>
                         {dueToOptions.map((account) => (
@@ -2971,8 +2980,8 @@ return (
                       </select>
                       <p className="text-xs text-slate-500">
                         {l(
-                          "Use a non-postable LIABILITY / CREDIT control account under the legal entity CoA.",
-                          "Tuzel kisilik hesap planinda post edilemeyen bir LIABILITY / CREDIT kontrol hesabi kullanin."
+                          "Use a LIABILITY / CREDIT account under the legal-entity CoA. If SaaP provisions child current accounts under it, the selected account will be converted to non-postable automatically.",
+                          "Tuzel kisilik hesap planinda bir LIABILITY / CREDIT hesap kullanin. SaaP bunun altina cari alt hesaplar acarsa secilen hesap otomatik olarak post edilemeyen duruma cevrilir."
                         )}
                       </p>
                     </div>
@@ -3005,8 +3014,8 @@ return (
                   {dueFromOptions.length === 0 || dueToOptions.length === 0 ? (
                     <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                       {l(
-                        "This entity does not yet have both required non-postable parent candidates in the account tree. Go back to Account Tree and add child-capable header accounts first.",
-                        "Bu birimde hesap agacinda gerekli iki post edilemeyen ust hesap adayi henuz yok. Once Hesap Agaci adimina donup alt hesap kabul eden ust hesaplari ekleyin."
+                        "This entity does not yet have both required ASSET/DEBIT and LIABILITY/CREDIT parent candidates in the account tree. Go back to Account Tree and add matching accounts first.",
+                        "Bu birimde hesap agacinda gerekli ASSET/DEBIT ve LIABILITY/CREDIT parent adaylari henuz yok. Once Hesap Agaci adimina donup uygun hesaplari ekleyin."
                       )}
                     </div>
                   ) : null}

@@ -23,15 +23,23 @@ function findByPurposeCode(rows, purposeCode) {
 }
 
 const TR_UNIFORM_EXPECTED_POSTABLE_CODES = Object.freeze([
-  "153",
-  "157",
-  "191",
-  "255",
-  "257",
-  "391",
+  "100",
+  "127",
+  "195",
+  "335",
+  "336",
+  "340",
+  "570",
+  "580",
+  "600",
   "621",
   "679",
-  "689",
+]);
+
+const TR_UNIFORM_REQUIRED_NON_POSTABLE_CODES = Object.freeze([
+  "102",
+  "500",
+  "501",
 ]);
 
 function assertPackExpansion(pack) {
@@ -143,6 +151,14 @@ async function main() {
     assert(
       row.allowPosting === true,
       `TR_UNIFORM_V1 code ${code} must stay postable by default`
+    );
+  }
+  for (const code of TR_UNIFORM_REQUIRED_NON_POSTABLE_CODES) {
+    const row = findByCode(trPack?.starterAccountTree, code);
+    assert(Boolean(row), `TR_UNIFORM_V1 starter tree missing code ${code}`);
+    assert(
+      row.allowPosting === false,
+      `TR_UNIFORM_V1 code ${code} must stay non-postable by default`
     );
   }
 

@@ -37,6 +37,7 @@ import {
 } from "../../api/bankAccounts.js";
 import { listCashRegisters, listCashSessions } from "../../api/cashAdmin.js";
 import { listAccounts } from "../../api/glAdmin.js";
+import { listPolicyPacks } from "../../api/policyPacks.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useI18n } from "../../i18n/useI18n.js";
@@ -65,6 +66,7 @@ const DEFAULT_ENTITY_FORM = {
   isIntercompanyEnabled: true,
   intercompanyPartnerRequired: false,
   autoProvisionDefaults: true,
+  policyPackId: "",
   useCustomPaymentTerms: false,
   paymentTermsJson: "",
 };
@@ -122,6 +124,10 @@ const DEFAULT_CAPITAL_FULFILLMENT_BANK_FORM = {
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeUpperText(value) {
+  return String(value || "").trim().toUpperCase();
 }
 
 function normalizeAmount(value) {
@@ -607,8 +613,10 @@ export default function OrganizationManagementPage() {
   const [shareholderJournalConfigs, setShareholderJournalConfigs] = useState(
     []
   );
+  const [policyPacks, setPolicyPacks] = useState([]);
   const [calendars, setCalendars] = useState([]);
   const [periods, setPeriods] = useState([]);
+  const [showAllPolicyPackOptions, setShowAllPolicyPackOptions] = useState(false);
 
   const [groupForm, setGroupForm] = useState({ code: "", name: "" });
   const [groupEditingCode, setGroupEditingCode] = useState("");
@@ -667,6 +675,7 @@ export default function OrganizationManagementPage() {
           countriesRes,
           currenciesRes,
           accountsRes,
+          policyPacksRes,
           entitiesRes,
           unitsRes,
           operatingUnitCurrentAccountConfigsRes,
@@ -681,6 +690,7 @@ export default function OrganizationManagementPage() {
             canReadAccounts
               ? listAccounts({ includeInactive: true })
               : Promise.resolve({ rows: [] }),
+            listPolicyPacks(),
             listLegalEntities(),
             listOperatingUnits(),
             listOperatingUnitCurrentAccountConfigs(),
@@ -697,6 +707,7 @@ export default function OrganizationManagementPage() {
         const countryRows = countriesRes?.rows || [];
         const currencyRows = currenciesRes?.rows || [];
         const accountRows = accountsRes?.rows || [];
+        const policyPackRows = policyPacksRes?.rows || [];
         const entityRows = entitiesRes?.rows || [];
         const unitRows = unitsRes?.rows || [];
         const operatingUnitCurrentAccountConfigRows =
@@ -709,6 +720,7 @@ export default function OrganizationManagementPage() {
         setCountries(countryRows);
         setCurrencies(currencyRows);
         setAccounts(accountRows);
+        setPolicyPacks(policyPackRows);
         setLegalEntities(entityRows);
         setOperatingUnits(unitRows);
         setOperatingUnitCurrentAccountConfigs(operatingUnitCurrentAccountConfigRows);
@@ -725,6 +737,22 @@ export default function OrganizationManagementPage() {
           const countryDefaultCurrency = String(
             selectedCountry?.default_currency_code || ""
           ).toUpperCase();
+          const policyPacksByCountry = new Map();
+          for (const row of policyPackRows) {
+            const countryIso2 = normalizeUpperText(row?.countryIso2);
+            if (!countryIso2) {
+              continue;
+            }
+            if (!policyPacksByCountry.has(countryIso2)) {
+              policyPacksByCountry.set(countryIso2, []);
+            }
+            policyPacksByCountry.get(countryIso2).push(row);
+          }
+          const recommendedPolicyPackId = String(
+            (
+              policyPacksByCountry.get(normalizeUpperText(selectedCountry?.iso2)) || []
+            )[0]?.packId || ""
+          ).trim();
 
           return {
             ...prev,
@@ -733,6 +761,7 @@ export default function OrganizationManagementPage() {
             countryId: nextCountryId,
             functionalCurrencyCode:
               prev.functionalCurrencyCode || countryDefaultCurrency || "USD",
+            policyPackId: prev.policyPackId || recommendedPolicyPackId,
           };
         });
         setUnitForm((prev) => ({
@@ -872,6 +901,32 @@ export default function OrganizationManagementPage() {
     }
     return next;
   }, [countries]);
+  const policyPacksByCountry = useMemo(() => {
+    const next = new Map();
+    for (const row of policyPacks || []) {
+      const countryIso2 = normalizeUpperText(row?.countryIso2);
+      if (!countryIso2) {
+        continue;
+      }
+      if (!next.has(countryIso2)) {
+        next.set(countryIso2, []);
+      }
+      next.get(countryIso2).push(row);
+    }
+    return next;
+  }, [policyPacks]);
+  const policyPackOptions = useMemo(
+    () =>
+      [...(policyPacks || [])].sort((left, right) => {
+        const leftCountry = normalizeUpperText(left?.countryIso2);
+        const rightCountry = normalizeUpperText(right?.countryIso2);
+        if (leftCountry !== rightCountry) {
+          return leftCountry.localeCompare(rightCountry);
+        }
+        return String(left?.packId || "").localeCompare(String(right?.packId || ""));
+      }),
+    [policyPacks]
+  );
   const legalEntityById = useMemo(() => {
     const next = new Map();
     for (const row of legalEntities) {
@@ -913,6 +968,74 @@ export default function OrganizationManagementPage() {
       })),
     [currencies]
   );
+  const selectedEntityCountryIso2 = useMemo(
+    () =>
+      normalizeUpperText(
+        countryById.get(toNumber(entityForm.countryId))?.iso2
+      ),
+    [countryById, entityForm.countryId]
+  );
+  const selectedEntityRecommendedPolicyPack = useMemo(
+    () => (policyPacksByCountry.get(selectedEntityCountryIso2) || [])[0] || null,
+    [policyPacksByCountry, selectedEntityCountryIso2]
+  );
+  const selectedEntityPolicyPack = useMemo(
+    () =>
+      policyPackOptions.find(
+        (row) => normalizeUpperText(row?.packId) === normalizeUpperText(entityForm.policyPackId)
+      ) || null,
+    [entityForm.policyPackId, policyPackOptions]
+  );
+  const entitySelectablePolicyPackOptions = useMemo(() => {
+    const countryPackRows = policyPacksByCountry.get(selectedEntityCountryIso2) || [];
+    const baseRows = showAllPolicyPackOptions ? [...policyPackOptions] : [...countryPackRows];
+    if (
+      !showAllPolicyPackOptions &&
+      selectedEntityPolicyPack &&
+      !baseRows.some(
+        (row) =>
+          normalizeUpperText(row?.packId) ===
+          normalizeUpperText(selectedEntityPolicyPack?.packId)
+      )
+    ) {
+      baseRows.push(selectedEntityPolicyPack);
+    }
+
+    return baseRows.sort((left, right) => {
+      if (showAllPolicyPackOptions) {
+        const leftPriority =
+          normalizeUpperText(left?.packId) ===
+          normalizeUpperText(selectedEntityRecommendedPolicyPack?.packId)
+            ? 0
+            : normalizeUpperText(left?.countryIso2) === selectedEntityCountryIso2
+              ? 1
+              : 2;
+        const rightPriority =
+          normalizeUpperText(right?.packId) ===
+          normalizeUpperText(selectedEntityRecommendedPolicyPack?.packId)
+            ? 0
+            : normalizeUpperText(right?.countryIso2) === selectedEntityCountryIso2
+              ? 1
+              : 2;
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority;
+        }
+      }
+      const leftCountry = normalizeUpperText(left?.countryIso2);
+      const rightCountry = normalizeUpperText(right?.countryIso2);
+      if (leftCountry !== rightCountry) {
+        return leftCountry.localeCompare(rightCountry);
+      }
+      return String(left?.packId || "").localeCompare(String(right?.packId || ""));
+    });
+  }, [
+    policyPacksByCountry,
+    selectedEntityCountryIso2,
+    showAllPolicyPackOptions,
+    policyPackOptions,
+    selectedEntityPolicyPack,
+    selectedEntityRecommendedPolicyPack,
+  ]);
   const selectedOperatingUnitCurrentAccountConfigLegalEntityId = toNumber(
     operatingUnitCurrentAccountConfigForm.legalEntityId
   );
@@ -926,30 +1049,30 @@ export default function OrganizationManagementPage() {
       ),
     [accounts, selectedOperatingUnitCurrentAccountConfigLegalEntityId]
   );
-  const operatingUnitCurrentAccountConfigParentAccounts = useMemo(
+  const operatingUnitCurrentAccountConfigSelectableAccounts = useMemo(
     () =>
-      selectedOperatingUnitCurrentAccountConfigEntityAccounts.filter(
-        (account) => Boolean(account.is_active) && !isPostingEnabled(account)
+      selectedOperatingUnitCurrentAccountConfigEntityAccounts.filter((account) =>
+        Boolean(account.is_active)
       ),
     [selectedOperatingUnitCurrentAccountConfigEntityAccounts]
   );
   const operatingUnitCurrentDueFromParentOptions = useMemo(
     () =>
-      operatingUnitCurrentAccountConfigParentAccounts.filter(
+      operatingUnitCurrentAccountConfigSelectableAccounts.filter(
         (account) =>
           String(account.account_type || "").toUpperCase() === "ASSET" &&
           getAccountNormalSide(account) === "DEBIT"
       ),
-    [operatingUnitCurrentAccountConfigParentAccounts]
+    [operatingUnitCurrentAccountConfigSelectableAccounts]
   );
   const operatingUnitCurrentDueToParentOptions = useMemo(
     () =>
-      operatingUnitCurrentAccountConfigParentAccounts.filter(
+      operatingUnitCurrentAccountConfigSelectableAccounts.filter(
         (account) =>
           String(account.account_type || "").toUpperCase() === "LIABILITY" &&
           getAccountNormalSide(account) === "CREDIT"
       ),
-    [operatingUnitCurrentAccountConfigParentAccounts]
+    [operatingUnitCurrentAccountConfigSelectableAccounts]
   );
   const selectedUnitLegalEntityId = toNumber(unitForm.legalEntityId);
   const selectedUnitEntityAccounts = useMemo(
@@ -2403,6 +2526,11 @@ export default function OrganizationManagementPage() {
     setMessage("");
   }
 
+  function getRecommendedPolicyPackIdForCountryId(countryId) {
+    const countryIso2 = normalizeUpperText(countryById.get(toNumber(countryId))?.iso2);
+    return String((policyPacksByCountry.get(countryIso2) || [])[0]?.packId || "").trim();
+  }
+
   function resetLegalEntityForm() {
     setEntityForm((prev) => ({
       ...prev,
@@ -2410,6 +2538,7 @@ export default function OrganizationManagementPage() {
       groupCompanyId: prev.groupCompanyId,
       countryId: prev.countryId,
       functionalCurrencyCode: prev.functionalCurrencyCode || "USD",
+      policyPackId: getRecommendedPolicyPackIdForCountryId(prev.countryId),
     }));
     setLegalEntityEditingCode("");
     setError("");
@@ -2481,6 +2610,7 @@ export default function OrganizationManagementPage() {
           ? true
           : Boolean(row?.is_intercompany_enabled),
       intercompanyPartnerRequired: Boolean(row?.intercompany_partner_required),
+      policyPackId: getRecommendedPolicyPackIdForCountryId(row?.country_id),
       useCustomPaymentTerms: false,
       paymentTermsJson: "",
     }));
@@ -2636,6 +2766,7 @@ export default function OrganizationManagementPage() {
         isIntercompanyEnabled: Boolean(entityForm.isIntercompanyEnabled),
         intercompanyPartnerRequired: Boolean(entityForm.intercompanyPartnerRequired),
         autoProvisionDefaults: Boolean(entityForm.autoProvisionDefaults),
+        policyPackId: entityForm.policyPackId.trim().toUpperCase() || undefined,
         ...(paymentTermsPayload ? { paymentTerms: paymentTermsPayload } : {}),
       });
 
@@ -2647,8 +2778,36 @@ export default function OrganizationManagementPage() {
       const hasPaymentTermProvisioning = Boolean(response?.paymentTermsProvisioning);
       if (hasGlProvisioning || hasPaymentTermProvisioning) {
         const created = response?.provisioning?.created || null;
+        const accountTemplate = response?.provisioning?.accountTemplate || null;
         const paymentTermsProvisioning = response?.paymentTermsProvisioning || null;
-        const glSummary = created
+        const hasCreatedCounts = Boolean(
+          created &&
+            [
+              created.fiscalCalendars,
+              created.fiscalPeriods,
+              created.chartsOfAccounts,
+              created.accounts,
+              created.books,
+            ].some((value) => Number(value || 0) > 0)
+        );
+        const templateSummary = accountTemplate
+          ? l(
+              `Account template: ${accountTemplate.packId || "BASELINE_DEFAULTS"}.`,
+              `Hesap sablonu: ${accountTemplate.packId || "BASELINE_DEFAULTS"}.`
+            )
+          : "";
+        const overwriteSummary = accountTemplate?.overwriteApplied
+          ? l(
+              `Existing CoA accounts cleared ${accountTemplate.clearedAccountCount} and replaced from the selected template.`,
+              `Mevcut hesap plani hesaplari temizlendi ${accountTemplate.clearedAccountCount} ve secilen sablondan yeniden yuklendi.`
+            )
+          : accountTemplate?.skippedBecauseExistingAccounts
+            ? l(
+                `Existing CoA already has ${accountTemplate.existingAccountCount} accounts, so account seeding was skipped. Use Hesap Plani Olustur to merge or replace that CoA if needed.`,
+                `Mevcut hesap planinda zaten ${accountTemplate.existingAccountCount} hesap var; bu nedenle hesap yukleme atlandi. Gerekirse bu hesap planini merge etmek veya degistirmek icin Hesap Plani Olustur sayfasini kullanin.`
+              )
+            : "";
+        const glSummary = hasCreatedCounts
           ? l(
             `Defaults created: calendar ${created.fiscalCalendars}, periods ${created.fiscalPeriods}, CoA ${created.chartsOfAccounts}, accounts ${created.accounts}, books ${created.books}.`,
             `Varsayilanlar olusturuldu: takvim ${created.fiscalCalendars}, donem ${created.fiscalPeriods}, hesap plani ${created.chartsOfAccounts}, hesap ${created.accounts}, defter ${created.books}.`
@@ -2660,7 +2819,14 @@ export default function OrganizationManagementPage() {
             `Odeme kosullari: olusturulan ${paymentTermsProvisioning.createdCount}, atlanan ${paymentTermsProvisioning.skippedCount}.`
           )
           : "";
-        const detailMessage = [glSummary, paymentTermsSummary].filter(Boolean).join(" ");
+        const detailMessage = [
+          templateSummary,
+          overwriteSummary,
+          glSummary,
+          paymentTermsSummary,
+        ]
+          .filter(Boolean)
+          .join(" ");
         setMessage(`${baseSuccessMessage} ${detailMessage}`.trim());
       } else {
         setMessage(baseSuccessMessage);
@@ -4624,12 +4790,27 @@ export default function OrganizationManagementPage() {
                 const selectedCountry = countrySelectOptions.find(
                   (option) => String(option.id) === String(nextCountryId)
                 );
-                setEntityForm((prev) => ({
-                  ...prev,
-                  countryId: nextCountryId,
-                  functionalCurrencyCode:
-                    selectedCountry?.defaultCurrencyCode || prev.functionalCurrencyCode,
-                }));
+                setEntityForm((prev) => {
+                  const previousRecommendedPolicyPackId =
+                    getRecommendedPolicyPackIdForCountryId(prev.countryId);
+                  const nextRecommendedPolicyPackId =
+                    getRecommendedPolicyPackIdForCountryId(nextCountryId);
+                  const shouldAutoSwitchPolicyPack =
+                    !normalizeUpperText(prev.policyPackId) ||
+                    normalizeUpperText(prev.policyPackId) ===
+                      normalizeUpperText(previousRecommendedPolicyPackId);
+
+                  return {
+                    ...prev,
+                    countryId: nextCountryId,
+                    functionalCurrencyCode:
+                      selectedCountry?.defaultCurrencyCode ||
+                      prev.functionalCurrencyCode,
+                    policyPackId: shouldAutoSwitchPolicyPack
+                      ? nextRecommendedPolicyPackId
+                      : prev.policyPackId,
+                  };
+                });
               }}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
@@ -4659,6 +4840,83 @@ export default function OrganizationManagementPage() {
                 </option>
               ))}
             </select>
+            <div className="rounded-lg border border-cyan-200 bg-cyan-50/60 px-3 py-3 text-sm md:col-span-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="font-semibold text-cyan-950">
+                    {l("Starter account template", "Baslangic hesap sablonu")}
+                  </div>
+                  <p className="mt-1 text-xs text-cyan-900">
+                    {l(
+                      "This template is used only when auto-create defaults is enabled below.",
+                      "Bu sablon sadece asagidaki otomatik varsayilan olusturma secenegi aciksa kullanilir."
+                    )}
+                  </p>
+                </div>
+                {selectedEntityRecommendedPolicyPack ? (
+                  <span className="rounded-full border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-900">
+                    {l("Recommended", "Onerilen")}:{" "}
+                    {selectedEntityRecommendedPolicyPack.packId}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="mt-3 grid gap-2 md:grid-cols-3">
+                <select
+                  value={entityForm.policyPackId}
+                  onChange={(event) =>
+                    setEntityForm((prev) => ({
+                      ...prev,
+                      policyPackId: event.target.value,
+                    }))
+                  }
+                  className="rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm md:col-span-2"
+                >
+                  <option value="">{l("Select policy pack", "Politika paketi secin")}</option>
+                  {entitySelectablePolicyPackOptions.map((pack) => (
+                    <option key={pack.packId} value={pack.packId}>
+                      {pack.packId} - {pack.label} ({pack.countryIso2})
+                    </option>
+                  ))}
+                </select>
+                <label className="inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm text-cyan-950">
+                  <input
+                    type="checkbox"
+                    checked={showAllPolicyPackOptions}
+                    onChange={(event) =>
+                      setShowAllPolicyPackOptions(event.target.checked)
+                    }
+                  />
+                  {l("Show all packs", "Tum paketleri goster")}
+                </label>
+              </div>
+
+              <div className="mt-2 text-xs text-cyan-950">
+                {selectedEntityPolicyPack
+                  ? l(
+                      `Selected pack: ${selectedEntityPolicyPack.packId}.`,
+                      `Secili paket: ${selectedEntityPolicyPack.packId}.`
+                    )
+                  : l("No pack selected.", "Paket secilmedi.")}
+                {selectedEntityRecommendedPolicyPack
+                  ? ` ${l(
+                      `Country recommendation: ${selectedEntityRecommendedPolicyPack.packId}.`,
+                      `Ulke onerisi: ${selectedEntityRecommendedPolicyPack.packId}.`
+                    )}`
+                  : ""}
+              </div>
+
+              {selectedEntityPolicyPack &&
+              normalizeUpperText(selectedEntityPolicyPack.countryIso2) !==
+                selectedEntityCountryIso2 ? (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  {l(
+                    "You selected a cross-country template. This is allowed, but account defaults will come from that pack instead of the entity country recommendation.",
+                    "Farkli ulkeye ait bir sablon sectiniz. Buna izin verilir, ancak hesap varsayilanlari birimin ulke onerisi yerine bu paketten gelir."
+                  )}
+                </div>
+              ) : null}
+            </div>
 
             <input
               value={entityForm.taxId}
@@ -5205,8 +5463,8 @@ export default function OrganizationManagementPage() {
           </h2>
           <p className="mb-3 text-xs text-slate-600">
             {l(
-              "Choose one Due From parent and one Due To parent per legal entity. Saved config becomes the setup-time and branch-add auto-provision source; use non-postable control/header accounts, not posting leafs. After that, Repair missing only is the default review-and-fix action; the manual leaf-account forms below stay available only for exceptions.",
-              "Her legal entity icin bir Alacak parent ve bir Borc parent secin. Kaydedilen konfigurasyon kurulum ve sonradan sube ekleme otomasyonunun kaynagi olur; posting leaf yerine post edilemeyen kontrol/header hesaplari kullanin. Bundan sonra varsayilan inceleme ve duzeltme aksiyonu Sadece eksikleri onar olur; asagidaki manuel leaf-hesap formlari sadece istisnalar icin acik kalir."
+              "Choose one Due From parent and one Due To parent per legal entity. Saved config becomes the setup-time and branch-add auto-provision source; use active LEGAL_ENTITY accounts with matching ASSET/DEBIT and LIABILITY/CREDIT sides. If SaaP provisions child current accounts under a selected posting account, it will convert that account to non-postable automatically. After that, Repair missing only is the default review-and-fix action; the manual leaf-account forms below stay available only for exceptions.",
+              "Her legal entity icin bir Alacak parent ve bir Borc parent secin. Kaydedilen konfigurasyon kurulum ve sonradan sube ekleme otomasyonunun kaynagi olur; ayni legal entity icindeki aktif ve uygun ASSET/DEBIT ile LIABILITY/CREDIT tarafa sahip hesaplari kullanin. SaaP secilen posting hesabin altina cari alt hesaplar acarsa o hesabi otomatik olarak post edilemeyen duruma cevirir. Bundan sonra varsayilan inceleme ve duzeltme aksiyonu Sadece eksikleri onar olur; asagidaki manuel leaf-hesap formlari sadece istisnalar icin acik kalir."
             )}
           </p>
           <form
@@ -5243,8 +5501,8 @@ export default function OrganizationManagementPage() {
               <option value="">
                 {canReadAccounts
                   ? l(
-                      "Due From parent (ASSET/DEBIT, header)",
-                      "Alacak parent (ASSET/DEBIT, header)"
+                      "Due From parent (ASSET/DEBIT candidate)",
+                      "Alacak parent (ASSET/DEBIT adayi)"
                     )
                   : l("Need gl.account.read", "gl.account.read yetkisi gerekli")}
               </option>
@@ -5269,8 +5527,8 @@ export default function OrganizationManagementPage() {
               <option value="">
                 {canReadAccounts
                   ? l(
-                      "Due To parent (LIABILITY/CREDIT, header)",
-                      "Borc parent (LIABILITY/CREDIT, header)"
+                      "Due To parent (LIABILITY/CREDIT candidate)",
+                      "Borc parent (LIABILITY/CREDIT adayi)"
                     )
                   : l("Need gl.account.read", "gl.account.read yetkisi gerekli")}
               </option>

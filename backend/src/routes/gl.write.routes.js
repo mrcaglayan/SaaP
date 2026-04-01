@@ -1,6 +1,7 @@
-import { query } from "../db.js";
+import { query, withTransaction } from "../db.js";
 import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
 import { autoRemapCariPurposeMappingsForLegalEntity } from "../services/cari.purpose-mapping-autofix.service.js";
+import { applyStarterAccountTemplateToCoaTx } from "../services/gl.coa-starter-template.service.js";
 import {
   assertAccountBelongsToTenant,
   assertCoaBelongsToTenant,
@@ -121,6 +122,79 @@ export function registerGlWriteCoreRoutes(router) {
       );
 
       return res.status(201).json({ ok: true, id: result.rows.insertId || null });
+    })
+  );
+
+  router.post(
+    "/coas/:coaId/starter-template/apply",
+    requirePermission("gl.account.upsert", {
+      resolveScope: async (req, tenantId) => {
+        const coaId = parsePositiveInt(req.params?.coaId);
+        if (!coaId) {
+          return { scopeType: "TENANT", scopeId: tenantId };
+        }
+
+        const coaResult = await query(
+          `SELECT legal_entity_id
+           FROM charts_of_accounts
+           WHERE id = ?
+             AND tenant_id = ?
+           LIMIT 1`,
+          [coaId, tenantId]
+        );
+        const legalEntityId = parsePositiveInt(coaResult.rows[0]?.legal_entity_id);
+        if (legalEntityId) {
+          return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+        }
+        return { scopeType: "TENANT", scopeId: tenantId };
+      },
+    }),
+    asyncHandler(async (req, res) => {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) throw badRequest("tenantId is required");
+
+      const coaId = parsePositiveInt(req.params?.coaId);
+      if (!coaId) {
+        throw badRequest("coaId must be a positive integer");
+      }
+
+      const coa = await assertCoaBelongsToTenant(tenantId, coaId, "coaId");
+      const coaLegalEntityId = parsePositiveInt(coa.legal_entity_id);
+      const coaScope = String(coa.scope || "").trim().toUpperCase();
+      if (coaLegalEntityId) {
+        assertScopeAccess(req, "legal_entity", coaLegalEntityId, "coaId");
+      }
+      if (coaScope !== "LEGAL_ENTITY" || !coaLegalEntityId) {
+        throw badRequest(
+          "Starter-account template apply is supported only for LEGAL_ENTITY CoAs"
+        );
+      }
+
+      const rawMode = String(req.body?.mode || "MERGE").trim().toUpperCase();
+      if (!["MERGE", "OVERWRITE"].includes(rawMode)) {
+        throw badRequest("mode must be MERGE or OVERWRITE");
+      }
+
+      const result = await withTransaction(async (tx) =>
+        applyStarterAccountTemplateToCoaTx(tx, {
+          coaId,
+          policyPackId: req.body?.packId,
+          mode: rawMode,
+        })
+      );
+
+      return res.status(201).json({
+        ok: true,
+        coaId,
+        packId: result.template.packId,
+        source: result.template.source,
+        mode: result.mode,
+        appliedCount: result.appliedCount,
+        existingCount: result.existingCount,
+        clearedCount: result.clearedCount,
+        overwriteApplied: result.overwriteApplied,
+        skippedBecauseExistingAccounts: result.skippedBecauseExistingAccounts,
+      });
     })
   );
 

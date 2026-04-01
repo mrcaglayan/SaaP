@@ -123,6 +123,89 @@ function isDuplicateConstraintError(err) {
   return Number(err?.errno) === 1062;
 }
 
+/**
+ * Resolves the effective RBAC scope for a cash resource row. Branch-owned
+ * resources follow operating-unit scope; central resources remain legal-entity
+ * scoped.
+ */
+export function resolveCashOwnershipScope(row) {
+  const operatingUnitId = parsePositiveInt(row?.operating_unit_id);
+  if (operatingUnitId) {
+    return {
+      scopeType: "OPERATING_UNIT",
+      scopeId: operatingUnitId,
+    };
+  }
+
+  const legalEntityId = parsePositiveInt(row?.legal_entity_id);
+  if (!legalEntityId) {
+    return null;
+  }
+
+  return {
+    scopeType: "LEGAL_ENTITY",
+    scopeId: legalEntityId,
+  };
+}
+
+/**
+ * Enforces RBAC using the effective ownership scope of a cash resource row.
+ */
+export function assertCashOwnershipScopeAccess(
+  req,
+  row,
+  assertScopeAccess,
+  fieldLabel = "cashResource"
+) {
+  const scope = resolveCashOwnershipScope(row);
+  if (!scope) {
+    throw badRequest("Cash resource scope configuration is invalid");
+  }
+
+  if (scope.scopeType === "OPERATING_UNIT") {
+    assertScopeAccess(req, "operating_unit", scope.scopeId, fieldLabel);
+    return;
+  }
+
+  assertScopeAccess(req, "legal_entity", scope.scopeId, fieldLabel);
+}
+
+/**
+ * Builds an ownership-aware SQL filter so central rows follow legal-entity
+ * scope while branch-owned rows follow operating-unit scope.
+ */
+export function buildCashOwnershipScopeFilter(
+  req,
+  {
+    buildScopeFilter,
+    legalEntityColumn,
+    operatingUnitColumn,
+    params,
+  }
+) {
+  const legalEntityParams = [];
+  const operatingUnitParams = [];
+  const legalEntityFilter = buildScopeFilter(
+    req,
+    "legal_entity",
+    legalEntityColumn,
+    legalEntityParams
+  );
+  const operatingUnitFilter = buildScopeFilter(
+    req,
+    "operating_unit",
+    operatingUnitColumn,
+    operatingUnitParams
+  );
+
+  params.push(...legalEntityParams, ...operatingUnitParams);
+  return `(
+    (${operatingUnitColumn} IS NULL AND ${legalEntityFilter})
+    OR
+    (${operatingUnitColumn} IS NOT NULL AND ${operatingUnitFilter})
+  )`;
+}
+
 export async function resolveCashRegisterScope(registerId, tenantId) {
   const parsedRegisterId = parsePositiveInt(registerId);
   const parsedTenantId = parsePositiveInt(tenantId);
@@ -138,10 +221,7 @@ export async function resolveCashRegisterScope(registerId, tenantId) {
     return null;
   }
 
-  return {
-    scopeType: "LEGAL_ENTITY",
-    scopeId: Number(row.legal_entity_id),
-  };
+  return resolveCashOwnershipScope(row);
 }
 
 export async function listCashRegisterRows({
@@ -153,7 +233,14 @@ export async function listCashRegisterRows({
 }) {
   const params = [tenantId];
   const conditions = ["cr.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "cr.legal_entity_id", params));
+  conditions.push(
+    buildCashOwnershipScopeFilter(req, {
+      buildScopeFilter,
+      legalEntityColumn: "cr.legal_entity_id",
+      operatingUnitColumn: "cr.operating_unit_id",
+      params,
+    })
+  );
 
   if (filters.legalEntityId) {
     assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
@@ -210,10 +297,7 @@ export async function getCashRegisterByIdForTenant({
     throw badRequest("Cash register not found");
   }
 
-  assertScopeAccess(req, "legal_entity", row.legal_entity_id, "registerId");
-  if (row.operating_unit_id) {
-    assertScopeAccess(req, "operating_unit", row.operating_unit_id, "registerId");
-  }
+  assertCashOwnershipScopeAccess(req, row, assertScopeAccess, "registerId");
 
   return row;
 }

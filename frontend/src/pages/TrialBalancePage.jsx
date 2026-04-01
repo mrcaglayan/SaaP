@@ -90,7 +90,7 @@ function areFiltersEqual(left, right) {
     String(left?.legalEntityId || "") === String(right?.legalEntityId || "") &&
     String(left?.bookId || "") === String(right?.bookId || "") &&
     String(left?.fiscalPeriodId || "") ===
-      String(right?.fiscalPeriodId || "") &&
+    String(right?.fiscalPeriodId || "") &&
     Boolean(left?.includeRollup) === Boolean(right?.includeRollup)
   );
 }
@@ -326,10 +326,10 @@ export default function TrialBalancePage() {
             : Promise.resolve({ rows: [] }),
           canReadBooks
             ? listBooks(
-                selectedLegalEntityId
-                  ? { legalEntityId: selectedLegalEntityId }
-                  : {},
-              )
+              selectedLegalEntityId
+                ? { legalEntityId: selectedLegalEntityId }
+                : {},
+            )
             : Promise.resolve({ rows: [] }),
         ]);
         if (cancelled) {
@@ -357,10 +357,10 @@ export default function TrialBalancePage() {
         if (!cancelled) {
           setError(
             err?.response?.data?.message ||
-              l(
-                "Failed to load report references.",
-                "Rapor referanslari yuklenemedi.",
-              ),
+            l(
+              "Failed to load report references.",
+              "Rapor referanslari yuklenemedi.",
+            ),
           );
         }
       } finally {
@@ -417,7 +417,7 @@ export default function TrialBalancePage() {
         if (!cancelled) {
           setError(
             err?.response?.data?.message ||
-              l("Failed to load fiscal periods.", "Mali donemler yuklenemedi."),
+            l("Failed to load fiscal periods.", "Mali donemler yuklenemedi."),
           );
         }
       } finally {
@@ -450,7 +450,7 @@ export default function TrialBalancePage() {
       setReportResponse(null);
       setError(
         err?.response?.data?.message ||
-          l("Failed to load trial balance.", "Mizan yuklenemedi."),
+        l("Failed to load trial balance.", "Mizan yuklenemedi."),
       );
     } finally {
       setLoadingReport(false);
@@ -482,7 +482,7 @@ export default function TrialBalancePage() {
       setLatestCloseRun(null);
       setCloseContextError(
         err?.response?.data?.message ||
-          l("Failed to load close context.", "Kapanis baglami yuklenemedi."),
+        l("Failed to load close context.", "Kapanis baglami yuklenemedi."),
       );
     } finally {
       setLoadingCloseContext(false);
@@ -689,7 +689,7 @@ export default function TrialBalancePage() {
             loading={loadingPeriods}
             clearable={false}
           />
-          <label className="flex min-h-[42px] items-center gap-3 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          <label className="flex min-h-10.5 items-center gap-3 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
             <input
               type="checkbox"
               checked={filters.includeRollup}
@@ -819,9 +819,9 @@ export default function TrialBalancePage() {
                 ? `#${latestCloseRun.id} | ${latestCloseRun.status || "-"}`
                 : canReadPeriodClose
                   ? l(
-                      "Latest period-close run not found for this scope.",
-                      "Bu kapsam icin son donem kapanisi bulunamadi.",
-                    )
+                    "Latest period-close run not found for this scope.",
+                    "Bu kapsam icin son donem kapanisi bulunamadi.",
+                  )
                   : "gl.period.close"}
             </div>
           </div>
@@ -876,13 +876,13 @@ export default function TrialBalancePage() {
             <p className="mt-1 text-sm text-slate-600">
               {ledgerRouteImplemented
                 ? l(
-                    "Account rows now open the live Defter-i Kebir page on the shared RP03 path and query contract.",
-                    "Hesap satirlari artik ortak RP03 path ve query sozlesmesi uzerinden canli Defter-i Kebir sayfasini acar.",
-                  )
+                  "Account rows now open the live Defter-i Kebir page on the shared RP03 path and query contract.",
+                  "Hesap satirlari artik ortak RP03 path ve query sozlesmesi uzerinden canli Defter-i Kebir sayfasini acar.",
+                )
                 : l(
-                    "Account rows already prepare the future Defter-i Kebir drillthrough contract even though RP03 has not activated the ledger page yet.",
-                    "Hesap satirlari, RP03 henuz ledger sayfasini acmamis olsa da gelecekteki Defter-i Kebir drillthrough sozlesmesini simdiden hazirlar.",
-                  )}
+                  "Account rows already prepare the future Defter-i Kebir drillthrough contract even though RP03 has not activated the ledger page yet.",
+                  "Hesap satirlari, RP03 henuz ledger sayfasini acmamis olsa da gelecekteki Defter-i Kebir drillthrough sozlesmesini simdiden hazirlar.",
+                )}
             </p>
           </div>
         </div>
@@ -909,9 +909,8 @@ export default function TrialBalancePage() {
                 return (
                   <tr
                     key={row.account_id}
-                    className={`border-t border-slate-100 ${
-                      row.is_rollup ? "bg-slate-50/70" : "bg-white"
-                    }`}
+                    className={`border-t border-slate-100 ${row.is_rollup ? "bg-slate-50/70" : "bg-white"
+                      }`}
                   >
                     <td className="px-3 py-3">
                       <button
@@ -969,13 +968,13 @@ export default function TrialBalancePage() {
                   >
                     {loadingReport
                       ? l(
-                          "Loading posted trial balance rows...",
-                          "Post edilmis mizan satirlari yukleniyor...",
-                        )
+                        "Loading posted trial balance rows...",
+                        "Post edilmis mizan satirlari yukleniyor...",
+                      )
                       : l(
-                          "No trial balance rows found for the selected scope.",
-                          "Secilen kapsam icin mizan satiri bulunamadi.",
-                        )}
+                        "No trial balance rows found for the selected scope.",
+                        "Secilen kapsam icin mizan satiri bulunamadi.",
+                      )}
                   </td>
                 </tr>
               ) : null}
@@ -987,13 +986,13 @@ export default function TrialBalancePage() {
             <div className="font-semibold">
               {ledgerRouteImplemented
                 ? l(
-                    "Defter-i Kebir drillthrough payload",
-                    "Defter-i Kebir drillthrough payload'i",
-                  )
+                  "Defter-i Kebir drillthrough payload",
+                  "Defter-i Kebir drillthrough payload'i",
+                )
                 : l(
-                    "Defter-i Kebir drillthrough payload prepared",
-                    "Defter-i Kebir drillthrough payload hazirlandi",
-                  )}
+                  "Defter-i Kebir drillthrough payload prepared",
+                  "Defter-i Kebir drillthrough payload hazirlandi",
+                )}
             </div>
             <div className="mt-1 text-xs text-cyan-800">
               {pendingLedgerDrillthrough.accountLabel}

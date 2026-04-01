@@ -199,6 +199,13 @@ export default function WorkflowSetupPage() {
   }, [canRead]);
 
   useEffect(() => {
+    if (!canRead) {
+      return;
+    }
+    refreshModuleReadiness({ global: true });
+  }, [canRead, refreshModuleReadiness]);
+
+  useEffect(() => {
     const definitionId = toPositiveInt(selectedDefinitionId);
     if (!definitionId || !canRead) {
       setStepsJson(JSON.stringify(buildDefaultSteps(selectedDefinition?.processType), null, 2));
@@ -302,7 +309,7 @@ export default function WorkflowSetupPage() {
     setMessage("");
     try {
       await replaceWorkflowDefinitionSteps(definitionId, { steps: parsedSteps });
-      await refreshModuleReadiness();
+      await refreshModuleReadiness({ global: true });
       setMessage(l("Workflow steps saved.", "Workflow adimlari kaydedildi."));
     } catch (err) {
       setError(
@@ -349,7 +356,7 @@ export default function WorkflowSetupPage() {
     try {
       await createWorkflowAssignment(payload);
       await loadData();
-      await refreshModuleReadiness();
+      await refreshModuleReadiness({ global: true });
       setMessage(l("Workflow assignment saved.", "Workflow atamasi kaydedildi."));
     } catch (err) {
       setError(
@@ -373,7 +380,7 @@ export default function WorkflowSetupPage() {
     try {
       await updateWorkflowAssignment(assignmentId, { status: nextStatus });
       await loadData();
-      await refreshModuleReadiness();
+      await refreshModuleReadiness({ global: true });
     } catch (err) {
       setError(
         err?.response?.data?.message ||
@@ -407,7 +414,7 @@ export default function WorkflowSetupPage() {
           </div>
           <button
             type="button"
-            onClick={() => refreshModuleReadiness()}
+            onClick={() => refreshModuleReadiness({ global: true })}
             className="rounded border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold"
           >
             {l("Refresh readiness", "Hazirligi yenile")}

@@ -104,51 +104,13 @@ import {
   parseShareholderJournalConfigUpsertInput,
   parseShareholderUpsertInput,
 } from "./org.write.validators.js";
+import { applyStarterAccountTemplateToCoaTx } from "../services/gl.coa-starter-template.service.js";
 
 const router = express.Router();
 const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
   "SHAREHOLDER_CAPITAL_CREDIT_PARENT";
 const SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE =
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT";
-const DEFAULT_GL_ACCOUNTS = [
-  {
-    code: "1000",
-    name: "Cash and Cash Equivalents",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "1100",
-    name: "Accounts Receivable",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "2000",
-    name: "Accounts Payable",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "3000",
-    name: "Retained Earnings",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "4000",
-    name: "Revenue",
-    accountType: "REVENUE",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "5000",
-    name: "Operating Expense",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-];
-
 function toLocalYyyyMmDd(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
     date.getDate()
@@ -199,28 +161,6 @@ function normalizeCode(rawValue, fallback = "DEFAULT", maxLength = 50) {
 function normalizeName(rawValue, fallback = "Default Name", maxLength = 255) {
   const normalized = String(rawValue || "").trim();
   return (normalized || fallback).slice(0, maxLength);
-}
-
-function parseBooleanValue(rawValue, defaultValue = false) {
-  if (rawValue === undefined || rawValue === null) {
-    return defaultValue;
-  }
-  if (typeof rawValue === "boolean") {
-    return rawValue;
-  }
-  if (typeof rawValue === "number") {
-    return rawValue !== 0;
-  }
-  if (typeof rawValue === "string") {
-    const normalized = rawValue.trim().toLowerCase();
-    if (["true", "1", "yes", "on"].includes(normalized)) {
-      return true;
-    }
-    if (["false", "0", "no", "off", ""].includes(normalized)) {
-      return false;
-    }
-  }
-  return Boolean(rawValue);
 }
 
 function parseOptionalNonNegativeNumber(rawValue, label, defaultValue = null) {
@@ -414,44 +354,6 @@ async function resolveOrCreateDefaultCoa(tx, tenantId, legalEntity) {
   };
 }
 
-async function ensureDefaultAccountsForCoa(tx, coaId) {
-  const existing = await tx.query(
-    `SELECT COUNT(*) AS count
-     FROM accounts
-     WHERE coa_id = ?`,
-    [coaId]
-  );
-  const existingCount = Number(existing.rows[0]?.count || 0);
-  if (existingCount > 0) {
-    return 0;
-  }
-
-  let created = 0;
-  for (const account of DEFAULT_GL_ACCOUNTS) {
-    // eslint-disable-next-line no-await-in-loop
-    await tx.query(
-      `INSERT INTO accounts (
-          coa_id, code, name, account_type, normal_side, allow_posting, parent_account_id
-       )
-       VALUES (?, ?, ?, ?, ?, TRUE, NULL)
-       ON DUPLICATE KEY UPDATE
-         name = VALUES(name),
-         account_type = VALUES(account_type),
-         normal_side = VALUES(normal_side),
-         allow_posting = VALUES(allow_posting)`,
-      [
-        coaId,
-        String(account.code).trim(),
-        String(account.name).trim(),
-        String(account.accountType).toUpperCase(),
-        String(account.normalSide).toUpperCase(),
-      ]
-    );
-    created += 1;
-  }
-  return created;
-}
-
 async function resolveOrCreateDefaultBook(tx, tenantId, legalEntity, calendarId) {
   const existing = await tx.query(
     `SELECT id, code
@@ -510,11 +412,24 @@ async function resolveOrCreateDefaultBook(tx, tenantId, legalEntity, calendarId)
   };
 }
 
-async function autoProvisionLegalEntityGl(tx, tenantId, legalEntity, fiscalYear) {
+async function autoProvisionLegalEntityGl(
+  tx,
+  {
+    tenantId,
+    legalEntity,
+    fiscalYear,
+    policyPackId = null,
+    overwriteExistingCoaAccounts = false,
+  }
+) {
   const calendar = await resolveOrCreateDefaultFiscalCalendar(tx, tenantId);
   const fiscalPeriodsCreated = await ensureFiscalPeriodsForYear(tx, calendar, fiscalYear);
   const coa = await resolveOrCreateDefaultCoa(tx, tenantId, legalEntity);
-  const accountsCreated = await ensureDefaultAccountsForCoa(tx, coa.id);
+  const accountProvisioning = await applyStarterAccountTemplateToCoaTx(tx, {
+    coaId: coa.id,
+    policyPackId,
+    mode: overwriteExistingCoaAccounts ? "OVERWRITE" : "SKIP_IF_EXISTS",
+  });
   const book = await resolveOrCreateDefaultBook(tx, tenantId, legalEntity, calendar.id);
 
   return {
@@ -524,11 +439,21 @@ async function autoProvisionLegalEntityGl(tx, tenantId, legalEntity, fiscalYear)
     coaCode: coa.code,
     bookId: book.id,
     bookCode: book.code,
+    accountTemplate: {
+      source: accountProvisioning.template.source,
+      packId: accountProvisioning.template.packId,
+      overwriteRequested: Boolean(overwriteExistingCoaAccounts),
+      overwriteApplied: accountProvisioning.overwriteApplied,
+      skippedBecauseExistingAccounts:
+        accountProvisioning.skippedBecauseExistingAccounts,
+      existingAccountCount: accountProvisioning.existingCount,
+      clearedAccountCount: accountProvisioning.clearedCount,
+    },
     created: {
       fiscalCalendars: calendar.created ? 1 : 0,
       fiscalPeriods: fiscalPeriodsCreated,
       chartsOfAccounts: coa.created ? 1 : 0,
-      accounts: accountsCreated,
+      accounts: accountProvisioning.appliedCount,
       books: book.created ? 1 : 0,
     },
   };

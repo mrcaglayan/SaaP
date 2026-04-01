@@ -23,14 +23,14 @@ function buildDefaultAccounts() {
       name: "Due From Branches",
       accountType: "ASSET",
       normalSide: "DEBIT",
-      allowPosting: false,
+      allowPosting: true,
     },
     {
       code: "339",
       name: "Due To Branches",
       accountType: "LIABILITY",
       normalSide: "CREDIT",
-      allowPosting: false,
+      allowPosting: true,
     },
   ];
 }
@@ -134,6 +134,24 @@ async function countProvisionedChildrenUnderCodes(tenantId, legalEntityId, paren
     [tenantId, legalEntityId, ...parentCodes]
   );
   return toNumber(result.rows?.[0]?.row_count);
+}
+
+async function fetchParentPostingStateByCodes(tenantId, legalEntityId, codes) {
+  const placeholders = codes.map(() => "?").join(", ");
+  const result = await query(
+    `SELECT code, allow_posting
+     FROM accounts
+     WHERE coa_id IN (
+       SELECT id
+       FROM charts_of_accounts
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+     )
+       AND code IN (${placeholders})
+     ORDER BY code`,
+    [tenantId, legalEntityId, ...codes]
+  );
+  return result.rows || [];
 }
 
 async function countLegalEntitiesByCode(tenantId, code) {
@@ -335,6 +353,18 @@ async function main() {
         ["132", "339"]
       ) === 12,
       "Configured bootstrap should persist all expected provisioned child accounts under the selected parent codes"
+    );
+    const configuredParentRows = await fetchParentPostingStateByCodes(
+      configuredSession.tenantId,
+      configuredLegalEntityId,
+      ["132", "339"]
+    );
+    assert(
+      configuredParentRows.length === 2 &&
+        configuredParentRows.every(
+          (row) => row?.allow_posting === false || row?.allow_posting === 0
+        ),
+      "Configured bootstrap should flip selected posting parent codes to non-postable after provisioning"
     );
 
     const configuredReplay = await apiRequest({

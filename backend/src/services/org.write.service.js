@@ -503,6 +503,11 @@ export async function upsertGroupCompany({
   };
 }
 
+/**
+ * Create or update a legal entity and optionally provision its default
+ * fiscal/GL scaffolding using either the baseline seed or a selected
+ * policy-pack starter tree.
+ */
 export async function upsertLegalEntity({
   req,
   tenantId,
@@ -515,6 +520,8 @@ export async function upsertLegalEntity({
   isIntercompanyEnabled,
   intercompanyPartnerRequired,
   autoProvisionDefaults,
+  policyPackId,
+  overwriteExistingCoaAccounts,
   fiscalYear,
   paymentTerms,
   parseBooleanValue,
@@ -546,6 +553,11 @@ export async function upsertLegalEntity({
     isIntercompanyEnabled === undefined ? true : Boolean(isIntercompanyEnabled);
   const finalPartnerRequired = Boolean(intercompanyPartnerRequired);
   const finalAutoProvisionDefaults = parseBooleanValue(autoProvisionDefaults, false);
+  const finalPolicyPackId = normalizeUpperText(policyPackId);
+  const finalOverwriteExistingCoaAccounts = parseBooleanValue(
+    overwriteExistingCoaAccounts,
+    false
+  );
   const finalFiscalYear = parsePositiveInt(fiscalYear) || new Date().getUTCFullYear();
   const shouldProvisionPaymentTerms =
     finalAutoProvisionDefaults || paymentTerms !== undefined;
@@ -566,12 +578,13 @@ export async function upsertLegalEntity({
     const legalEntity = await resolveLegalEntityByCode(tx, tenantId, normalizedCode);
     let provisioning = null;
     if (finalAutoProvisionDefaults) {
-      provisioning = await autoProvisionLegalEntityGl(
-        tx,
+      provisioning = await autoProvisionLegalEntityGl(tx, {
         tenantId,
         legalEntity,
-        finalFiscalYear
-      );
+        fiscalYear: finalFiscalYear,
+        policyPackId: finalPolicyPackId || null,
+        overwriteExistingCoaAccounts: finalOverwriteExistingCoaAccounts,
+      });
     }
     let paymentTermsProvisioning = null;
     if (shouldProvisionPaymentTerms) {
@@ -600,6 +613,8 @@ export async function upsertLegalEntity({
     id: operationResult.insertId || operationResult.legalEntity.id,
     legalEntityId: operationResult.legalEntity.id,
     autoProvisionDefaults: finalAutoProvisionDefaults,
+    policyPackId: finalPolicyPackId || null,
+    overwriteExistingCoaAccounts: finalOverwriteExistingCoaAccounts,
     fiscalYear: finalFiscalYear,
     provisioning: operationResult.provisioning,
     paymentTermsProvisioning: operationResult.paymentTermsProvisioning,
@@ -1152,25 +1167,6 @@ async function assertOperatingUnitCurrentAccountConfigParentAccountTx(
     expectedAccountType,
     expectedNormalSide,
   });
-
-  const result = await tx.query(
-    `SELECT allow_posting
-     FROM accounts
-     WHERE id = ?
-     LIMIT 1
-     FOR UPDATE`,
-    [account.id]
-  );
-  const row = result.rows?.[0] || null;
-  if (!row) {
-    throw badRequest(`${fieldLabel} not found for tenant`);
-  }
-  if (parseDbBoolean(row.allow_posting)) {
-    throw badRequest(
-      `${fieldLabel} must reference a child-capable non-postable control/header account`
-    );
-  }
-
   return account;
 }
 
@@ -1488,6 +1484,9 @@ async function insertOperatingUnitCurrentChildAccountTx(
     throw badRequest(`Failed to create child account ${code}`);
   }
 
+  // Current-account setup can start from a postable leaf/control account.
+  // Once SaaP provisions child accounts under it, that selected account
+  // becomes a real parent and must stop accepting direct posting.
   await tx.query(
     `UPDATE accounts
      SET allow_posting = FALSE

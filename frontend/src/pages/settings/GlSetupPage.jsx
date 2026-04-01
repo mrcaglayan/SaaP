@@ -1,5 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  applyStarterTemplateToCoa,
   createBalanceSplitReclassification,
   getTrialBalance,
   listAccounts,
@@ -47,8 +48,6 @@ const COA_SCOPES = ["LEGAL_ENTITY", "GROUP"];
 const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
 const UNSPECIFIED_ACCOUNT_TYPE = "UNSPECIFIED";
 const NORMAL_SIDES = ["DEBIT", "CREDIT"];
-const TURKISH_DEFAULT_COA_ACCOUNTS = getPolicyPackStarterAccounts("TR_UNIFORM_V1");
-const USA_DEFAULT_COA_ACCOUNTS = getPolicyPackStarterAccounts("US_GAAP_STARTER_V1");
 const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL",
   "CARI_AR_OFFSET",
@@ -865,9 +864,18 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     packId: "",
     mode: "MERGE",
   });
+  const [coaStarterTemplateForm, setCoaStarterTemplateForm] = useState({
+    packId: "",
+    mode: "MERGE",
+  });
+  const [showAllCoaStarterTemplatePacks, setShowAllCoaStarterTemplatePacks] =
+    useState(false);
   const [templatePreviewRows, setTemplatePreviewRows] = useState([]);
   const [templateOverridesByPurpose, setTemplateOverridesByPurpose] = useState({});
   const [templateApplyResult, setTemplateApplyResult] = useState(null);
+  const [coaStarterTemplateApplyResult, setCoaStarterTemplateApplyResult] = useState(
+    null
+  );
   const [manualMappingsForm, setManualMappingsForm] = useState({
     legalEntityId: "",
     capitalCreditParentAccountId: "",
@@ -1115,6 +1123,106 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     () => new Set(availableTemplatePacks.map((pack) => String(pack?.packId || "").trim())),
     [availableTemplatePacks]
   );
+  const selectedCoaRow = useMemo(
+    () => coas.find((coa) => toPositiveInt(coa?.id) === selectedCoaId) || null,
+    [coas, selectedCoaId]
+  );
+  const selectedCoaLegalEntity = useMemo(
+    () => legalEntityById.get(toPositiveInt(selectedCoaRow?.legal_entity_id)) || null,
+    [legalEntityById, selectedCoaRow]
+  );
+  const selectedCoaCountryIso2 = toUpper(
+    countryIso2ById.get(toPositiveInt(selectedCoaLegalEntity?.country_id))
+  );
+  const selectedCoaRecommendedStarterPack = useMemo(() => {
+    const sameCountryRows = policyPacks.filter(
+      (pack) => toUpper(pack?.countryIso2) === selectedCoaCountryIso2
+    );
+    return sameCountryRows[0] || policyPacks[0] || null;
+  }, [policyPacks, selectedCoaCountryIso2]);
+  const selectedCoaStarterPack = useMemo(
+    () =>
+      policyPacks.find(
+        (pack) =>
+          String(pack?.packId || "").trim() ===
+          String(coaStarterTemplateForm.packId || "").trim()
+      ) || null,
+    [policyPacks, coaStarterTemplateForm.packId]
+  );
+  const selectedCoaStarterPackOptions = useMemo(() => {
+    const sameCountryRows = policyPacks.filter(
+      (pack) => toUpper(pack?.countryIso2) === selectedCoaCountryIso2
+    );
+    const baseRows =
+      showAllCoaStarterTemplatePacks || sameCountryRows.length === 0
+        ? [...policyPacks]
+        : [...sameCountryRows];
+    if (
+      selectedCoaStarterPack &&
+      !baseRows.some(
+        (pack) =>
+          String(pack?.packId || "").trim() ===
+          String(selectedCoaStarterPack?.packId || "").trim()
+      )
+    ) {
+      baseRows.push(selectedCoaStarterPack);
+    }
+
+    return baseRows.sort((left, right) => {
+      const leftPackId = String(left?.packId || "").trim();
+      const rightPackId = String(right?.packId || "").trim();
+      const leftPriority =
+        leftPackId === String(selectedCoaRecommendedStarterPack?.packId || "").trim()
+          ? 0
+          : toUpper(left?.countryIso2) === selectedCoaCountryIso2
+            ? 1
+            : 2;
+      const rightPriority =
+        rightPackId === String(selectedCoaRecommendedStarterPack?.packId || "").trim()
+          ? 0
+          : toUpper(right?.countryIso2) === selectedCoaCountryIso2
+            ? 1
+            : 2;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      const leftCountry = toUpper(left?.countryIso2);
+      const rightCountry = toUpper(right?.countryIso2);
+      if (leftCountry !== rightCountry) {
+        return leftCountry.localeCompare(rightCountry);
+      }
+      return leftPackId.localeCompare(rightPackId);
+    });
+  }, [
+    policyPacks,
+    selectedCoaCountryIso2,
+    showAllCoaStarterTemplatePacks,
+    selectedCoaStarterPack,
+    selectedCoaRecommendedStarterPack,
+  ]);
+  const selectedCoaStarterPackRows = useMemo(
+    () => getPolicyPackStarterAccounts(coaStarterTemplateForm.packId),
+    [coaStarterTemplateForm.packId]
+  );
+  const coaStarterTemplatePreviewRows = useMemo(
+    () =>
+      selectedCoaStarterPackRows.map((row) => ({
+        ...row,
+        existingAccountId: toPositiveInt(selectedCoaAccountByCode.get(toUpper(row?.code))?.id),
+      })),
+    [selectedCoaStarterPackRows, selectedCoaAccountByCode]
+  );
+  const coaStarterTemplatePreviewSummary = useMemo(() => {
+    const existingMatches = coaStarterTemplatePreviewRows.filter((row) =>
+      toPositiveInt(row?.existingAccountId)
+    ).length;
+    return {
+      templateRows: coaStarterTemplatePreviewRows.length,
+      existingMatches,
+      newCodes: coaStarterTemplatePreviewRows.length - existingMatches,
+      currentAccountCount: selectedCoaAccounts.length,
+    };
+  }, [coaStarterTemplatePreviewRows, selectedCoaAccounts.length]);
   const templateEntityAccounts =
     accountsByLegalEntityId.get(selectedTemplateLegalEntityId) || [];
   const templateOverrideAccountOptions = templateEntityAccounts.filter((account) =>
@@ -1477,6 +1585,36 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     setTemplateOverridesByPurpose({});
     setTemplateApplyResult(null);
   }, [templateWizardForm.legalEntityId, templateWizardForm.packId]);
+
+  useEffect(() => {
+    const currentPackId = String(coaStarterTemplateForm.packId || "").trim();
+    const currentPackStillVisible = selectedCoaStarterPackOptions.some(
+      (pack) => String(pack?.packId || "").trim() === currentPackId
+    );
+    if (currentPackStillVisible) {
+      return;
+    }
+    const fallbackPackId = String(
+      selectedCoaRecommendedStarterPack?.packId ||
+        selectedCoaStarterPackOptions[0]?.packId ||
+        ""
+    ).trim();
+    if (!fallbackPackId || fallbackPackId === currentPackId) {
+      return;
+    }
+    setCoaStarterTemplateForm((prev) => ({
+      ...prev,
+      packId: fallbackPackId,
+    }));
+  }, [
+    coaStarterTemplateForm.packId,
+    selectedCoaRecommendedStarterPack,
+    selectedCoaStarterPackOptions,
+  ]);
+
+  useEffect(() => {
+    setCoaStarterTemplateApplyResult(null);
+  }, [selectedCoaId, coaStarterTemplateForm.packId, coaStarterTemplateForm.mode]);
 
   useEffect(() => {
     if (!selectedCoaId) {
@@ -2817,13 +2955,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     }
   }
 
-  async function loadDefaultCoaAccounts({
-    accountsToLoad,
-    savingKey,
-    confirmMessage,
-    successMessage,
-    failureMessage,
-  }) {
+  async function handleApplyCoaStarterTemplate() {
     if (!canUpsertAccounts) {
       setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
       return;
@@ -2833,126 +2965,102 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     if (!coaId) {
       setError(
         l(
-          "Select a CoA first, then run default account loader.",
-          "Once bir hesap plani secin, sonra varsayilan hesap yukleyiciyi calistirin."
+          "Select a CoA first, then apply the starter template.",
+          "Once bir hesap plani secin, sonra baslangic sablonunu uygulayin."
         )
       );
       return;
     }
 
+    if (String(selectedCoaRow?.scope || "").toUpperCase() !== "LEGAL_ENTITY") {
+      setError(
+        l(
+          "Starter-account templates can only be applied to LEGAL_ENTITY CoAs.",
+          "Baslangic hesap sablonlari yalnizca LEGAL_ENTITY hesap planlarina uygulanabilir."
+        )
+      );
+      return;
+    }
+
+    const packId = String(coaStarterTemplateForm.packId || "").trim();
+    if (!packId) {
+      setError(l("Select a policy pack first.", "Once bir politika paketi secin."));
+      return;
+    }
+
+    const previewRows = getPolicyPackStarterAccounts(packId);
+    if (previewRows.length === 0) {
+      setError(
+        l(
+          "Selected policy pack does not provide starter accounts.",
+          "Secili politika paketi baslangic hesaplari sunmuyor."
+        )
+      );
+      return;
+    }
+
+    const mode = toUpper(coaStarterTemplateForm.mode || "MERGE");
+    const confirmMessage =
+      mode === "OVERWRITE"
+        ? l(
+            `Overwrite the selected CoA with ${previewRows.length} starter rows? Existing accounts will be deleted in one transaction and the operation will stop if journals or setup rows still reference them.`,
+            `Secili hesap planini ${previewRows.length} baslangic satiriyla overwrite etmek istiyor musunuz? Mevcut hesaplar tek transaction icinde silinir ve fisler veya kurulum satirlari hala bu hesaplara bagliysa islem durur.`
+          )
+        : l(
+            `Merge ${previewRows.length} starter rows into the selected CoA? Matching codes will be updated, missing codes will be inserted, and unrelated existing codes will stay as-is.`,
+            `Secili hesap planina ${previewRows.length} baslangic satiri merge edilsin mi? Eslesen kodlar guncellenir, eksik kodlar eklenir ve ilgisiz mevcut kodlar oldugu gibi kalir.`
+          );
     if (!window.confirm(confirmMessage)) {
       return;
     }
 
-    setSaving(savingKey);
+    setSaving("coa-starter-template-apply");
     setError("");
     setMessage("");
-
     try {
-      const accountIdByCode = new Map(
-        selectedCoaAccounts
-          .map((account) => [toUpper(account?.code), toPositiveInt(account?.id)])
-          .filter(([code, id]) => code && id)
-      );
-      let pendingAccounts = (Array.isArray(accountsToLoad) ? accountsToLoad : []).map((account) => ({
-        ...account,
-        code: toUpper(account?.code),
-        parentCode: toUpper(account?.parentCode ?? account?.parent_code),
-      }));
-      let processed = 0;
-      while (pendingAccounts.length > 0) {
-        let progressed = 0;
-        const deferredAccounts = [];
-        for (const account of pendingAccounts) {
-          const parentAccountId = account.parentCode
-            ? accountIdByCode.get(account.parentCode) || null
-            : null;
-          if (account.parentCode && !parentAccountId) {
-            deferredAccounts.push(account);
-            continue;
-          }
-
-          // Preserve explicit starter-account posting defaults and tree parents.
-          const response = await upsertAccount({
-            coaId,
-            code: account.code,
-            name: account.name,
-            accountType: account.accountType,
-            normalSide: account.normalSide,
-            allowPosting: account.allowPosting ?? true,
-            ...(parentAccountId ? { parentAccountId } : {}),
-          });
-          const savedAccountId = toPositiveInt(response?.id);
-          if (savedAccountId) {
-            accountIdByCode.set(account.code, savedAccountId);
-          }
-          processed += 1;
-          progressed += 1;
-        }
-        if (deferredAccounts.length === 0) {
-          break;
-        }
-        if (progressed === 0) {
-          const unresolvedSummary = deferredAccounts
-            .slice(0, 5)
-            .map((account) => `${account.code} -> ${account.parentCode}`)
-            .join(", ");
-          throw new Error(
-            l(
-              `Failed to resolve starter-account parents: ${unresolvedSummary}`,
-              `Baslangic hesaplari icin ust hesap baglari cozulmedi: ${unresolvedSummary}`
+      const response = await applyStarterTemplateToCoa(coaId, {
+        packId,
+        mode,
+      });
+      setCoaStarterTemplateApplyResult({
+        packId: String(response?.packId || packId),
+        mode: String(response?.mode || mode),
+        appliedCount: Number(response?.appliedCount || 0),
+        clearedCount: Number(response?.clearedCount || 0),
+      });
+      setMessage(
+        mode === "OVERWRITE"
+          ? l(
+              `Starter template applied with overwrite. Cleared ${Number(
+                response?.clearedCount || 0
+              )} existing accounts and wrote ${Number(response?.appliedCount || 0)} template rows.`,
+              `Baslangic sablonu overwrite ile uygulandi. ${Number(
+                response?.clearedCount || 0
+              )} mevcut hesap temizlendi ve ${Number(
+                response?.appliedCount || 0
+              )} sablon satiri yazildi.`
             )
-          );
-        }
-        pendingAccounts = deferredAccounts;
-      }
-      setMessage(successMessage(processed));
+          : l(
+              `Starter template merged successfully. Processed ${Number(
+                response?.appliedCount || 0
+              )} template rows.`,
+              `Baslangic sablonu basariyla merge edildi. ${Number(
+                response?.appliedCount || 0
+              )} sablon satiri islendi.`
+            )
+      );
       await loadData();
     } catch (err) {
-      setError(err?.response?.data?.message || failureMessage);
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to apply starter-account template.",
+            "Baslangic hesap sablonu uygulanamadi."
+          )
+      );
     } finally {
       setSaving("");
     }
-  }
-
-  async function handleLoadTurkishDefaultAccounts() {
-    await loadDefaultCoaAccounts({
-      accountsToLoad: TURKISH_DEFAULT_COA_ACCOUNTS,
-      savingKey: "turkish-default-accounts",
-      confirmMessage: l(
-        `Load ${TURKISH_DEFAULT_COA_ACCOUNTS.length} Turkish default accounts into selected CoA?`,
-        `Secili hesap planina ${TURKISH_DEFAULT_COA_ACCOUNTS.length} adet varsayilan Turk hesap plani hesabi yuklensin mi?`
-      ),
-      successMessage: (processed) =>
-        l(
-          `Turkish default CoA loaded. Processed ${processed} accounts.`,
-          `Varsayilan Turk hesap plani yuklendi. ${processed} hesap isleme alindi.`
-        ),
-      failureMessage: l(
-        "Failed to load Turkish default CoA accounts.",
-        "Varsayilan Turk hesap plani hesaplari yuklenemedi."
-      ),
-    });
-  }
-
-  async function handleLoadUsaDefaultAccounts() {
-    await loadDefaultCoaAccounts({
-      accountsToLoad: USA_DEFAULT_COA_ACCOUNTS,
-      savingKey: "usa-default-accounts",
-      confirmMessage: l(
-        `Load ${USA_DEFAULT_COA_ACCOUNTS.length} USA default accounts into selected CoA?`,
-        `Secili hesap planina ${USA_DEFAULT_COA_ACCOUNTS.length} adet varsayilan ABD hesap plani hesabi yuklensin mi?`
-      ),
-      successMessage: (processed) =>
-        l(
-          `USA default CoA loaded. Processed ${processed} accounts.`,
-          `Varsayilan ABD hesap plani yuklendi. ${processed} hesap isleme alindi.`
-        ),
-      failureMessage: l(
-        "Failed to load USA default CoA accounts.",
-        "Varsayilan ABD hesap plani hesaplari yuklenemedi."
-      ),
-    });
   }
 
   async function handleMappingSubmit(event) {
@@ -3943,28 +4051,6 @@ export default function GlSetupPage({ mode = "full" } = {}) {
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-700">{l("Accounts", "Hesaplar")}</h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleLoadTurkishDefaultAccounts}
-                disabled={saving === "turkish-default-accounts" || !canUpsertAccounts}
-                className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 disabled:opacity-60"
-              >
-                {saving === "turkish-default-accounts"
-                  ? l("Loading Turkish CoA...", "Turk hesap plani yukleniyor...")
-                  : l("Load Turkish Default CoA", "Varsayilan Turk Hesap Planini Yukle")}
-              </button>
-              <button
-                type="button"
-                onClick={handleLoadUsaDefaultAccounts}
-                disabled={saving === "usa-default-accounts" || !canUpsertAccounts}
-                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 disabled:opacity-60"
-              >
-                {saving === "usa-default-accounts"
-                  ? l("Loading USA CoA...", "ABD hesap plani yukleniyor...")
-                  : l("Load USA defaults", "Varsayilan ABD Hesap Planini Yukle")}
-              </button>
-            </div>
           </div>
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             {l(
@@ -4023,6 +4109,229 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                 {l("Add Root Account", "Kok Hesap Ekle")}
               </button>
             </div>
+          </div>
+
+          <div className="mb-3 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-cyan-950">
+                  {l("Starter Account Template", "Baslangic Hesap Sablonu")}
+                </h3>
+                <p className="mt-1 text-xs text-cyan-900">
+                  {l(
+                    "Choose the target template for the selected legal-entity CoA. Preview is local; overwrite safety is enforced on apply inside one transaction.",
+                    "Secili legal-entity hesap plani icin hedef sablonu secin. Onizleme lokaldir; overwrite guvenligi uygulama aninda tek transaction icinde zorlanir."
+                  )}
+                </p>
+              </div>
+              <span className="rounded-full border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-900">
+                {l("No silent deletes", "Sessiz silme yok")}
+              </span>
+            </div>
+
+            <div className="grid gap-2 lg:grid-cols-12">
+              <select
+                value={coaStarterTemplateForm.packId}
+                onChange={(event) =>
+                  setCoaStarterTemplateForm((prev) => ({
+                    ...prev,
+                    packId: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm lg:col-span-4"
+              >
+                <option value="">{l("Select policy pack", "Politika paketi secin")}</option>
+                {selectedCoaStarterPackOptions.map((pack) => (
+                  <option key={pack.packId} value={pack.packId}>
+                    {pack.packId} - {pack.label} ({pack.countryIso2})
+                  </option>
+                ))}
+              </select>
+              <select
+                value={coaStarterTemplateForm.mode}
+                onChange={(event) =>
+                  setCoaStarterTemplateForm((prev) => ({
+                    ...prev,
+                    mode: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm lg:col-span-2"
+              >
+                <option value="MERGE">MERGE</option>
+                <option value="OVERWRITE">OVERWRITE</option>
+              </select>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm text-cyan-950 lg:col-span-3">
+                <input
+                  type="checkbox"
+                  checked={showAllCoaStarterTemplatePacks}
+                  onChange={(event) =>
+                    setShowAllCoaStarterTemplatePacks(event.target.checked)
+                  }
+                />
+                {l("Show all country packs", "Tum ulke paketlerini goster")}
+              </label>
+              <button
+                type="button"
+                onClick={handleApplyCoaStarterTemplate}
+                disabled={
+                  saving === "coa-starter-template-apply" ||
+                  !canUpsertAccounts ||
+                  !selectedCoaId ||
+                  String(selectedCoaRow?.scope || "").toUpperCase() !== "LEGAL_ENTITY" ||
+                  !coaStarterTemplateForm.packId ||
+                  selectedCoaStarterPackRows.length === 0
+                }
+                className="rounded-lg bg-cyan-800 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 lg:col-span-3"
+              >
+                {saving === "coa-starter-template-apply"
+                  ? l("Applying...", "Uygulaniyor...")
+                  : l("Apply To Selected CoA", "Secili Hesap Planina Uygula")}
+              </button>
+            </div>
+
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <div className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-xs text-slate-700">
+                <div className="font-semibold text-cyan-950">
+                  {l("Target CoA", "Hedef hesap plani")}
+                </div>
+                <div className="mt-1">
+                  {selectedCoaRow
+                    ? `${selectedCoaRow.code} - ${selectedCoaRow.name}`
+                    : l("Select a CoA first.", "Once bir hesap plani secin.")}
+                </div>
+                <div className="mt-1 text-slate-500">
+                  {selectedCoaLegalEntity
+                    ? `${selectedCoaLegalEntity.code} - ${selectedCoaLegalEntity.name}`
+                    : l("No legal entity scope yet.", "Henuz legal entity kapsami yok.")}
+                </div>
+              </div>
+              <div className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-xs text-slate-700">
+                <div className="font-semibold text-cyan-950">
+                  {l("Recommended pack", "Onerilen paket")}
+                </div>
+                <div className="mt-1">
+                  {selectedCoaRecommendedStarterPack
+                    ? `${selectedCoaRecommendedStarterPack.packId} (${selectedCoaRecommendedStarterPack.countryIso2})`
+                    : l("No pack suggestion", "Paket onerisi yok")}
+                </div>
+                <div className="mt-1 text-slate-500">
+                  {selectedCoaCountryIso2
+                    ? l(
+                        `Entity country: ${selectedCoaCountryIso2}`,
+                        `Birim ulkesi: ${selectedCoaCountryIso2}`
+                      )
+                    : l("Entity country not resolved.", "Birim ulkesi cozulmedi.")}
+                </div>
+              </div>
+            </div>
+
+            {selectedCoaRow &&
+            String(selectedCoaRow.scope || "").toUpperCase() !== "LEGAL_ENTITY" ? (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {l(
+                  "Starter-account template apply is limited to LEGAL_ENTITY CoAs. Select a local legal-entity CoA to continue.",
+                  "Baslangic hesap sablonu uygulamasi LEGAL_ENTITY hesap planlari ile sinirlidir. Devam etmek icin local bir legal-entity hesap plani secin."
+                )}
+              </div>
+            ) : null}
+
+            {coaStarterTemplateForm.mode === "OVERWRITE" ? (
+              <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                {l(
+                  "Overwrite deletes the current account tree before writing the selected template. The backend will block the transaction if journal lines or setup tables still reference those accounts.",
+                  "Overwrite, secili sablonu yazmadan once mevcut hesap agacini siler. Fis satirlari veya kurulum tablolari hala bu hesaplara bagliysa backend transaction'i bloklar."
+                )}
+              </div>
+            ) : null}
+
+            {coaStarterTemplateApplyResult ? (
+              <div className="mt-3 rounded-lg border border-cyan-300 bg-white px-3 py-2 text-xs text-cyan-950">
+                {l("Applied pack", "Uygulanan paket")}: {coaStarterTemplateApplyResult.packId}
+                {" | "}
+                {l("Mode", "Mod")}: {coaStarterTemplateApplyResult.mode}
+                {" | "}
+                {l("Rows", "Satir")}: {coaStarterTemplateApplyResult.appliedCount}
+                {coaStarterTemplateApplyResult.mode === "OVERWRITE"
+                  ? ` | ${l("Cleared", "Temizlenen")}: ${coaStarterTemplateApplyResult.clearedCount}`
+                  : ""}
+              </div>
+            ) : null}
+
+            {selectedCoaStarterPackRows.length > 0 ? (
+              <>
+                <div className="mt-3 rounded-lg border border-cyan-200 bg-white px-3 py-2 text-xs text-slate-700">
+                  {l("Template rows", "Sablon satirlari")}:{" "}
+                  <span className="font-semibold text-slate-900">
+                    {coaStarterTemplatePreviewSummary.templateRows}
+                  </span>
+                  {" | "}
+                  {l("Current CoA accounts", "Mevcut hesap plani hesaplari")}:{" "}
+                  <span className="font-semibold text-slate-900">
+                    {coaStarterTemplatePreviewSummary.currentAccountCount}
+                  </span>
+                  {" | "}
+                  {l("Matching codes", "Eslesen kodlar")}:{" "}
+                  <span className="font-semibold text-slate-900">
+                    {coaStarterTemplatePreviewSummary.existingMatches}
+                  </span>
+                  {" | "}
+                  {l("New codes", "Yeni kodlar")}:{" "}
+                  <span className="font-semibold text-slate-900">
+                    {coaStarterTemplatePreviewSummary.newCodes}
+                  </span>
+                </div>
+                <div className="mt-3 max-h-72 overflow-auto rounded-lg border border-cyan-200 bg-white">
+                  <table className="min-w-full text-xs">
+                    <thead className="sticky top-0 bg-cyan-100 text-left text-cyan-950">
+                      <tr>
+                        <th className="px-3 py-2">{l("Code", "Kod")}</th>
+                        <th className="px-3 py-2">{l("Parent", "Ust")}</th>
+                        <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                        <th className="px-3 py-2">{l("Type", "Tur")}</th>
+                        <th className="px-3 py-2">{l("Side", "Taraf")}</th>
+                        <th className="px-3 py-2">{l("Post", "Post")}</th>
+                        <th className="px-3 py-2">{l("Effect", "Etki")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coaStarterTemplatePreviewRows.map((row) => {
+                        const hasExistingMatch = Boolean(toPositiveInt(row?.existingAccountId));
+                        const effectLabel =
+                          coaStarterTemplateForm.mode === "OVERWRITE"
+                            ? l("WRITE", "YAZ")
+                            : hasExistingMatch
+                              ? l("UPDATE", "GUNCELLE")
+                              : l("INSERT", "EKLE");
+                        return (
+                          <tr key={row.code} className="border-t border-slate-100">
+                            <td className="px-3 py-2 font-medium text-slate-900">{row.code}</td>
+                            <td className="px-3 py-2 text-slate-500">{row.parentCode || "-"}</td>
+                            <td className="px-3 py-2 text-slate-700">{row.name}</td>
+                            <td className="px-3 py-2 text-slate-600">{row.accountType}</td>
+                            <td className="px-3 py-2 text-slate-600">{row.normalSide}</td>
+                            <td className="px-3 py-2 text-slate-600">
+                              {row.allowPosting ? l("Yes", "Evet") : l("No", "Hayir")}
+                            </td>
+                            <td className="px-3 py-2 text-slate-700">
+                              <span className="rounded-full bg-cyan-100 px-2 py-0.5 font-semibold text-cyan-900">
+                                {effectLabel}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p className="mt-3 text-xs text-cyan-900">
+                {l(
+                  "Select a policy pack to preview starter rows.",
+                  "Baslangic satirlarini onizlemek icin bir politika paketi secin."
+                )}
+              </p>
+            )}
           </div>
 
           <div className="grid gap-3 lg:grid-cols-12">

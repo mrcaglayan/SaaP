@@ -134,8 +134,13 @@ function parseErrorMessage(err, fallback) {
 
 const WORKING_CONTEXT_SYNC_DEBOUNCE_MS = 600;
 
+/**
+ * Maintains the shared legal-entity / operating-unit / fiscal-period working
+ * context and its supporting lookup data for the signed-in user.
+ */
 export default function WorkingContextProvider({ children }) {
-  const { isAuthed } = useAuth();
+  const { hasPermission, isAuthed } = useAuth();
+  const canReadFiscalCalendars = hasPermission("org.fiscal_calendar.read");
 
   const [workingContext, setWorkingContextState] = useState(
     DEFAULT_WORKING_CONTEXT
@@ -307,10 +312,12 @@ export default function WorkingContextProvider({ children }) {
       setLoadingBase(true);
       setError("");
 
-      const [legalEntityResult, calendarResult] = await Promise.allSettled([
-        listLegalEntities({ limit: 500, includeInactive: true }),
-        listFiscalCalendars({ limit: 500 }),
-      ]);
+      const lookups = [listLegalEntities({ limit: 500, includeInactive: true })];
+      if (canReadFiscalCalendars) {
+        lookups.push(listFiscalCalendars({ limit: 500 }));
+      }
+
+      const [legalEntityResult, calendarResult] = await Promise.allSettled(lookups);
 
       if (!active) return;
 
@@ -325,14 +332,20 @@ export default function WorkingContextProvider({ children }) {
         );
       }
 
-      if (calendarResult.status === "fulfilled") {
-        setFiscalCalendars(toRows(calendarResult.value));
-      } else if (!nextError) {
+      if (canReadFiscalCalendars) {
+        if (calendarResult?.status === "fulfilled") {
+          setFiscalCalendars(toRows(calendarResult.value));
+        } else if (!nextError) {
+          setFiscalCalendars([]);
+          nextError = parseErrorMessage(
+            calendarResult?.reason,
+            "Failed to load fiscal calendars."
+          );
+        }
+      } else {
+        // Branch-scoped users can work with a previously selected calendar
+        // without browsing the calendar master list.
         setFiscalCalendars([]);
-        nextError = parseErrorMessage(
-          calendarResult.reason,
-          "Failed to load fiscal calendars."
-        );
       }
 
       setError(nextError);
@@ -343,7 +356,7 @@ export default function WorkingContextProvider({ children }) {
     return () => {
       active = false;
     };
-  }, [isAuthed, refreshToken]);
+  }, [canReadFiscalCalendars, isAuthed, refreshToken]);
 
   useEffect(() => {
     if (!isAuthed) return;
@@ -355,7 +368,7 @@ export default function WorkingContextProvider({ children }) {
         next.operatingUnitId = "";
       }
 
-      if (!hasId(fiscalCalendars, next.fiscalCalendarId)) {
+      if (canReadFiscalCalendars && !hasId(fiscalCalendars, next.fiscalCalendarId)) {
         next.fiscalCalendarId = getFirstId(fiscalCalendars);
         next.fiscalPeriodId = "";
         next.dateFrom = "";
@@ -365,7 +378,7 @@ export default function WorkingContextProvider({ children }) {
       const normalizedNext = normalizeWorkingContext(next);
       return contextEqual(previous, normalizedNext) ? previous : normalizedNext;
     });
-  }, [isAuthed, legalEntities, fiscalCalendars]);
+  }, [canReadFiscalCalendars, isAuthed, legalEntities, fiscalCalendars]);
 
   useEffect(() => {
     if (!isAuthed) return undefined;

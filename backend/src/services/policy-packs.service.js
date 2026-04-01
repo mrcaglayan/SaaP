@@ -876,7 +876,6 @@ const STARTER_ACCOUNT_TREES_BY_PACK_ID = Object.freeze({
       name: "DIGER CESITLI BORCLAR",
       accountType: "LIABILITY",
       normalSide: "CREDIT",
-      allowPosting: false,
     }),
     Object.freeze({
       code: "337",
@@ -1983,82 +1982,11 @@ function toUpper(value) {
     .toUpperCase();
 }
 
-const TR_UNIFORM_DEFAULT_NON_POSTING_CODES = Object.freeze(
+const TR_UNIFORM_REQUIRED_NON_POSTING_CODES = Object.freeze(
   new Set([
-    "100",
     "102",
-    "195",
-    "335",
-    "127",
-    "128",
-    "129",
-    "131",
-    "136",
-    "153",
-    "157",
-    "159",
-    "180",
-    "181",
-    "190",
-    "191",
-    "192",
-    "193",
-    "196",
-    "242",
-    "250",
-    "252",
-    "253",
-    "254",
-    "255",
-    "257",
-    "258",
-    "260",
-    "280",
-    "281",
-    "300",
-    "326",
-    "329",
-    "331",
-    "340",
-    "360",
-    "361",
-    "368",
-    "370",
-    "380",
-    "381",
-    "391",
-    "400",
-    "420",
-    "421",
-    "431",
-    "472",
-    "480",
-    "481",
     "500",
     "501",
-    "570",
-    "580",
-    "590",
-    "591",
-  ])
-);
-
-const TR_UNIFORM_POSTABLE_EXCEPTION_CODES = Object.freeze(
-  new Set([
-    "153",
-    "157",
-    "191",
-    "255",
-    "257",
-    "391",
-    "600",
-    "621",
-    "632",
-    "646",
-    "656",
-    "679",
-    "689",
-    "770",
   ])
 );
 
@@ -2067,16 +1995,7 @@ function shouldForceTrUniformNonPostingByCode(code) {
   if (!normalizedCode) {
     return false;
   }
-  if (TR_UNIFORM_POSTABLE_EXCEPTION_CODES.has(normalizedCode)) {
-    return false;
-  }
-  if (TR_UNIFORM_DEFAULT_NON_POSTING_CODES.has(normalizedCode)) {
-    return true;
-  }
-  if (!/^\d+$/.test(normalizedCode)) {
-    return false;
-  }
-  return Number.parseInt(normalizedCode, 10) >= 600;
+  return TR_UNIFORM_REQUIRED_NON_POSTING_CODES.has(normalizedCode);
 }
 
 function applyTrUniformPostingDefaults(rows = []) {

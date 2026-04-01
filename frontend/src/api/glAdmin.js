@@ -33,6 +33,11 @@ export async function upsertCoa(payload) {
   return response.data;
 }
 
+export async function applyStarterTemplateToCoa(coaId, payload) {
+  const response = await api.post(`/api/v1/gl/coas/${coaId}/starter-template/apply`, payload);
+  return response.data;
+}
+
 export async function listAccounts(params = {}) {
   const response = await api.get(`/api/v1/gl/accounts${toQueryString(params)}`);
   return response.data;

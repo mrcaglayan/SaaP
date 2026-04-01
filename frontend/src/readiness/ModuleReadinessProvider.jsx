@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getModuleReadiness } from "../api/moduleReadiness.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useWorkingContext } from "../context/useWorkingContext.js";
 import { ModuleReadinessContext } from "./moduleReadinessContext.js";
 
 function parsePositiveInt(value) {
@@ -81,6 +82,7 @@ function mergeScopedReadinessSnapshot(previous, next) {
 
 export default function ModuleReadinessProvider({ children }) {
   const { isAuthed } = useAuth();
+  const { workingContext } = useWorkingContext();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [readiness, setReadiness] = useState(null);
@@ -94,7 +96,15 @@ export default function ModuleReadinessProvider({ children }) {
         return null;
       }
 
-      const legalEntityId = parsePositiveInt(options?.legalEntityId);
+      const global = Boolean(options?.global);
+      const legalEntityId =
+        parsePositiveInt(options?.legalEntityId) ||
+        (!global ? parsePositiveInt(workingContext?.legalEntityId) : null);
+      if (!global && !legalEntityId) {
+        setLoading(false);
+        setError("");
+        return null;
+      }
       const params = legalEntityId ? { legalEntityId } : {};
 
       setLoading(true);
@@ -118,7 +128,7 @@ export default function ModuleReadinessProvider({ children }) {
         setLoading(false);
       }
     },
-    [isAuthed]
+    [isAuthed, workingContext?.legalEntityId]
   );
 
   const refreshLegalEntity = useCallback(

@@ -16,7 +16,12 @@ import {
   postCashTransaction,
   sumPostedSessionMovement,
 } from "./cash.queries.js";
-import { assertRegisterOperationalConfig } from "./cash.register.service.js";
+import {
+  assertCashOwnershipScopeAccess,
+  assertRegisterOperationalConfig,
+  buildCashOwnershipScopeFilter,
+  resolveCashOwnershipScope,
+} from "./cash.register.service.js";
 import { createAndPostCashJournalTx } from "./cash.service.js";
 
 const VARIANCE_EPSILON = 0.0001;
@@ -49,10 +54,7 @@ export async function resolveCashSessionScope(sessionId, tenantId) {
     return null;
   }
 
-  return {
-    scopeType: "LEGAL_ENTITY",
-    scopeId: Number(row.legal_entity_id),
-  };
+  return resolveCashOwnershipScope(row);
 }
 
 export async function listCashSessionRows({
@@ -64,7 +66,14 @@ export async function listCashSessionRows({
 }) {
   const params = [tenantId];
   const conditions = ["cs.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "cr.legal_entity_id", params));
+  conditions.push(
+    buildCashOwnershipScopeFilter(req, {
+      buildScopeFilter,
+      legalEntityColumn: "cr.legal_entity_id",
+      operatingUnitColumn: "cr.operating_unit_id",
+      params,
+    })
+  );
 
   if (filters.legalEntityId) {
     assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
@@ -133,10 +142,7 @@ export async function getCashSessionByIdForTenant({
     throw badRequest("Cash session not found");
   }
 
-  assertScopeAccess(req, "legal_entity", row.legal_entity_id, "sessionId");
-  if (row.operating_unit_id) {
-    assertScopeAccess(req, "operating_unit", row.operating_unit_id, "sessionId");
-  }
+  assertCashOwnershipScopeAccess(req, row, assertScopeAccess, "sessionId");
 
   return row;
 }
@@ -161,10 +167,7 @@ export async function openCashSession({
     throw badRequest("Cash register session_mode is NONE");
   }
 
-  assertScopeAccess(req, "legal_entity", register.legal_entity_id, "registerId");
-  if (register.operating_unit_id) {
-    assertScopeAccess(req, "operating_unit", register.operating_unit_id, "registerId");
-  }
+  assertCashOwnershipScopeAccess(req, register, assertScopeAccess, "registerId");
 
   const opened = await withTransaction(async (tx) => {
     await tx.query(
@@ -222,10 +225,7 @@ export async function closeCashSessionById({
       throw badRequest("Only OPEN sessions can be closed");
     }
 
-    assertScopeAccess(req, "legal_entity", session.legal_entity_id, "sessionId");
-    if (session.operating_unit_id) {
-      assertScopeAccess(req, "operating_unit", session.operating_unit_id, "sessionId");
-    }
+    assertCashOwnershipScopeAccess(req, session, assertScopeAccess, "sessionId");
 
     const netMovement = await sumPostedSessionMovement({
       tenantId: payload.tenantId,

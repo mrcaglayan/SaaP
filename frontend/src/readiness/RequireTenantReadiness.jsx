@@ -1,4 +1,6 @@
 import { Navigate, useLocation } from "react-router-dom";
+import { useAuth } from "../auth/useAuth.js";
+import { useWorkingContext } from "../context/useWorkingContext.js";
 import { useI18n } from "../i18n/useI18n.js";
 import { useTenantReadiness } from "./useTenantReadiness.js";
 
@@ -24,10 +26,19 @@ function isTenantSetupAllowedPath(pathname) {
   );
 }
 
+/**
+ * Applies tenant-wide readiness redirects only to setup-capable users. Scoped
+ * operational users should continue working inside an already-ready legal
+ * entity even if another entity is still being onboarded.
+ */
 export default function RequireTenantReadiness({ children }) {
   const location = useLocation();
   const { t } = useI18n();
+  const { hasPermission } = useAuth();
+  const { workingContext } = useWorkingContext();
   const { loading, error, readiness, refresh } = useTenantReadiness();
+  const canRunTenantSetup = hasPermission("onboarding.company.setup");
+  const hasWorkingLegalEntity = Boolean(workingContext?.legalEntityId);
 
   if (loading) {
     return (
@@ -63,6 +74,9 @@ export default function RequireTenantReadiness({ children }) {
   // incomplete so operators can inspect what is blocking close instead of
   // getting bounced to company settings first.
   const isSetupPage = isTenantSetupAllowedPath(location.pathname);
+  if (!canRunTenantSetup && hasWorkingLegalEntity) {
+    return children;
+  }
   if (!isSetupPage) {
     return <Navigate to="/app/ayarlar/sirket-ayarlari" replace />;
   }
