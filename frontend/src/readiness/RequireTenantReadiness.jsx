@@ -35,12 +35,14 @@ export default function RequireTenantReadiness({ children }) {
   const location = useLocation();
   const { t } = useI18n();
   const { hasPermission } = useAuth();
-  const { workingContext } = useWorkingContext();
+  const { loadingBase, preferencesHydrated, workingContext } = useWorkingContext();
   const { loading, error, readiness, refresh } = useTenantReadiness();
   const canRunTenantSetup = hasPermission("onboarding.company.setup");
   const hasWorkingLegalEntity = Boolean(workingContext?.legalEntityId);
+  const workingContextResolved =
+    hasWorkingLegalEntity || (preferencesHydrated && !loadingBase);
 
-  if (loading) {
+  if (loading || (!canRunTenantSetup && !workingContextResolved)) {
     return (
       <div className="grid min-h-[40vh] place-items-center">
         <div className="text-slate-600">{t("readinessGuard.checking")}</div>

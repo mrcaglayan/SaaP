@@ -24,6 +24,29 @@ export function parsePositiveInt(value) {
   return parsed;
 }
 
+export function parseBooleanValue(rawValue, defaultValue = false) {
+  if (rawValue === undefined || rawValue === null) {
+    return defaultValue;
+  }
+  if (typeof rawValue === "boolean") {
+    return rawValue;
+  }
+  if (typeof rawValue === "number") {
+    return rawValue !== 0;
+  }
+  const normalized = String(rawValue).trim().toLowerCase();
+  if (!normalized) {
+    return defaultValue;
+  }
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+  return defaultValue;
+}
+
 export function resolveTenantId(req) {
   const fromBody = parsePositiveInt(req.body?.tenantId);
   const fromQuery = parsePositiveInt(req.query?.tenantId);
