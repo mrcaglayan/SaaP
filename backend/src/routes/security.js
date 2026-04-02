@@ -1,7 +1,12 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import { query, withTransaction } from "../db.js";
-import { assertScopeAccess, invalidateRbacCache, requirePermission } from "../middleware/rbac.js";
+import {
+  assertScopeAccess,
+  buildScopeFilter,
+  invalidateRbacCache,
+  requirePermission,
+} from "../middleware/rbac.js";
 import { logRbacAuditEvent } from "../audit/rbacAuditLogger.js";
 import {
   assertCountryExists,
@@ -41,6 +46,8 @@ function parseBoolean(value) {
 }
 
 const VALID_USER_STATUSES = new Set(["ACTIVE", "DISABLED"]);
+const ENTITY_USER_ADMIN_PERMISSION = "security.user_admin.entity";
+const BRANCH_OPERATOR_ROLE_CODE = "BranchOperator";
 
 function normalizeUserEmail(value) {
   const email = String(value || "")
@@ -128,6 +135,51 @@ async function getRoleForTenant(roleId, tenantId) {
     [roleId, tenantId]
   );
   return roleResult.rows[0] || null;
+}
+
+async function getRoleByCodeForTenant(roleCode, tenantId, runQuery = query) {
+  const roleResult = await runQuery(
+    `SELECT id, tenant_id, code, name, is_system
+     FROM roles
+     WHERE tenant_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, roleCode]
+  );
+  return roleResult.rows[0] || null;
+}
+
+async function getBranchOperatorRoleForTenant(tenantId, runQuery = query) {
+  const role = await getRoleByCodeForTenant(BRANCH_OPERATOR_ROLE_CODE, tenantId, runQuery);
+  if (!role) {
+    throw new Error("BranchOperator role is not configured for this tenant");
+  }
+  return role;
+}
+
+async function lookupUserByEmail(email, runQuery = query) {
+  const result = await runQuery(
+    `SELECT id, tenant_id, email, name, status
+     FROM users
+     WHERE email = ?
+     LIMIT 1`,
+    [email]
+  );
+  return result.rows[0] || null;
+}
+
+async function assertUserHasNoExplicitDataScopes(tenantId, userId, runQuery = query) {
+  const result = await runQuery(
+    `SELECT COUNT(*) AS scope_count
+     FROM data_scopes
+     WHERE tenant_id = ?
+       AND user_id = ?`,
+    [tenantId, userId]
+  );
+  const scopeCount = Number(result.rows[0]?.scope_count || 0);
+  if (scopeCount > 0) {
+    throw badRequest("User has explicit data scopes and must be managed by Security Admin");
+  }
 }
 
 async function isTenantAdminUser(userId, tenantId) {
@@ -420,6 +472,366 @@ router.post(
       ...result.payload,
       idempotentReplay: Boolean(result.idempotentReplay),
     });
+  })
+);
+
+router.get(
+  "/entity-branch-operators",
+  requirePermission(ENTITY_USER_ADMIN_PERMISSION),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const branchOperatorRole = await getBranchOperatorRoleForTenant(tenantId);
+
+    const operatingUnitParams = [tenantId];
+    const operatingUnitConditions = ["ou.tenant_id = ?"];
+    operatingUnitConditions.push(buildScopeFilter(req, "operating_unit", "ou.id", operatingUnitParams));
+
+    const operatingUnitResult = await query(
+      `SELECT
+         ou.id,
+         ou.code,
+         ou.name,
+         ou.status,
+         ou.unit_type,
+         ou.legal_entity_id,
+         le.code AS legal_entity_code,
+         le.name AS legal_entity_name,
+         le.status AS legal_entity_status
+       FROM operating_units ou
+       JOIN legal_entities le
+         ON le.id = ou.legal_entity_id
+        AND le.tenant_id = ou.tenant_id
+       WHERE ${operatingUnitConditions.join(" AND ")}
+       ORDER BY le.code, ou.code, ou.id`,
+      operatingUnitParams
+    );
+
+    const assignmentParams = [tenantId, parsePositiveInt(branchOperatorRole.id)];
+    const assignmentConditions = [
+      "urs.tenant_id = ?",
+      "urs.role_id = ?",
+      "urs.scope_type = 'OPERATING_UNIT'",
+      "urs.effect = 'ALLOW'",
+    ];
+    assignmentConditions.push(
+      buildScopeFilter(req, "operating_unit", "urs.scope_id", assignmentParams)
+    );
+
+    const assignmentResult = await query(
+      `SELECT
+         urs.id,
+         urs.user_id,
+         u.email AS user_email,
+         u.name AS user_name,
+         u.status AS user_status,
+         urs.scope_id AS operating_unit_id,
+         ou.code AS operating_unit_code,
+         ou.name AS operating_unit_name,
+         ou.status AS operating_unit_status,
+         le.id AS legal_entity_id,
+         le.code AS legal_entity_code,
+         le.name AS legal_entity_name,
+         le.status AS legal_entity_status,
+         urs.created_at
+       FROM user_role_scopes urs
+       JOIN users u
+         ON u.id = urs.user_id
+        AND u.tenant_id = urs.tenant_id
+       JOIN operating_units ou
+         ON ou.id = urs.scope_id
+        AND ou.tenant_id = urs.tenant_id
+       JOIN legal_entities le
+         ON le.id = ou.legal_entity_id
+        AND le.tenant_id = ou.tenant_id
+       WHERE ${assignmentConditions.join(" AND ")}
+       ORDER BY le.code, ou.code, u.name, u.email, urs.id`,
+      assignmentParams
+    );
+
+    return res.json({
+      tenantId,
+      role: {
+        id: parsePositiveInt(branchOperatorRole.id),
+        code: branchOperatorRole.code,
+        name: branchOperatorRole.name,
+      },
+      operatingUnits: operatingUnitResult.rows || [],
+      assignments: assignmentResult.rows || [],
+    });
+  })
+);
+
+router.post(
+  "/entity-branch-operators",
+  requirePermission(ENTITY_USER_ADMIN_PERMISSION, {
+    resolveScope: (req) => {
+      const operatingUnitId = parsePositiveInt(req.body?.operatingUnitId);
+      if (!operatingUnitId) {
+        return null;
+      }
+      return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    assertRequiredFields(req.body, ["email", "name", "operatingUnitId"]);
+    const email = normalizeUserEmail(req.body.email);
+    const name = normalizeUserName(req.body.name);
+    const operatingUnitId = parsePositiveInt(req.body.operatingUnitId);
+    if (!operatingUnitId) {
+      throw badRequest("operatingUnitId must be a positive integer");
+    }
+
+    await assertOperatingUnitBelongsToTenant(tenantId, operatingUnitId, "operatingUnitId");
+    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+
+    const actorUserId = parsePositiveInt(req.user?.userId);
+    const operation = await withTransaction(async (tx) => {
+      const branchOperatorRole = await getBranchOperatorRoleForTenant(tenantId, tx.query);
+      const existingUser = await lookupUserByEmail(email, tx.query);
+      const existingUserId = parsePositiveInt(existingUser?.id);
+
+      if (existingUserId && parsePositiveInt(existingUser?.tenant_id) !== tenantId) {
+        throw badRequest("email already exists");
+      }
+
+      if (existingUserId) {
+        // Explicit data scopes override permission-derived scope, so those users
+        // stay on the full security-admin workflow instead of this delegated UI.
+        await assertUserHasNoExplicitDataScopes(tenantId, existingUserId, tx.query);
+      }
+
+      let invite = null;
+      let userId = existingUserId;
+      if (!existingUserId || String(existingUser?.status || "").toUpperCase() !== "ACTIVE") {
+        invite = await createInviteForTenantUser({
+          tenantId,
+          actorUserId,
+          email,
+          name,
+          runQuery: tx.query,
+        });
+        userId = parsePositiveInt(invite.userId);
+      }
+
+      const userResult = await tx.query(
+        `SELECT id, email, name, status
+         FROM users
+         WHERE id = ?
+           AND tenant_id = ?
+         LIMIT 1`,
+        [userId, tenantId]
+      );
+      const managedUser = userResult.rows[0] || null;
+      if (!managedUser) {
+        throw new Error("Unable to resolve tenant user after branch operator invite flow");
+      }
+
+      const existingAssignmentResult = await tx.query(
+        `SELECT id, effect
+         FROM user_role_scopes
+         WHERE tenant_id = ?
+           AND user_id = ?
+           AND role_id = ?
+           AND scope_type = 'OPERATING_UNIT'
+           AND scope_id = ?
+         LIMIT 1`,
+        [tenantId, userId, parsePositiveInt(branchOperatorRole.id), operatingUnitId]
+      );
+      const existingAssignment = existingAssignmentResult.rows[0] || null;
+      if (String(existingAssignment?.effect || "").toUpperCase() === "DENY") {
+        // A delegated entity admin must not silently remove a central deny row.
+        throw badRequest("Branch operator deny assignments must be managed by Security Admin");
+      }
+
+      if (!existingAssignment) {
+        await tx.query(
+          `INSERT INTO user_role_scopes (
+             tenant_id,
+             user_id,
+             role_id,
+             scope_type,
+             scope_id,
+             effect
+           )
+           VALUES (?, ?, ?, 'OPERATING_UNIT', ?, 'ALLOW')`,
+          [tenantId, userId, parsePositiveInt(branchOperatorRole.id), operatingUnitId]
+        );
+      }
+
+      const currentAssignmentResult = await tx.query(
+        `SELECT id
+         FROM user_role_scopes
+         WHERE tenant_id = ?
+           AND user_id = ?
+           AND role_id = ?
+           AND scope_type = 'OPERATING_UNIT'
+           AND scope_id = ?
+         LIMIT 1`,
+        [tenantId, userId, parsePositiveInt(branchOperatorRole.id), operatingUnitId]
+      );
+
+      return {
+        branchOperatorRole,
+        managedUser,
+        invite,
+        assignmentId:
+          parsePositiveInt(currentAssignmentResult.rows[0]?.id) ||
+          parsePositiveInt(existingAssignment?.id),
+        assignmentCreated: !existingAssignment,
+      };
+    });
+
+    await invalidateRbacCache(tenantId);
+
+    if (operation.invite) {
+      await logRbacAuditEvent(req, {
+        tenantId,
+        targetUserId: parsePositiveInt(operation.managedUser.id),
+        action: "entity_user_admin.branch_operator.invite",
+        resourceType: "user_invite",
+        resourceId: parsePositiveInt(operation.invite.id),
+        scopeType: "OPERATING_UNIT",
+        scopeId: operatingUnitId,
+        payload: {
+          userId: parsePositiveInt(operation.managedUser.id),
+          email: operation.managedUser.email,
+          expiresAt: operation.invite.expiresAt,
+          roleCode: operation.branchOperatorRole.code,
+        },
+      });
+    }
+
+    if (operation.assignmentCreated) {
+      await logRbacAuditEvent(req, {
+        tenantId,
+        targetUserId: parsePositiveInt(operation.managedUser.id),
+        action: "entity_user_admin.branch_operator.assignment.create",
+        resourceType: "user_role_scope",
+        resourceId: operation.assignmentId,
+        scopeType: "OPERATING_UNIT",
+        scopeId: operatingUnitId,
+        payload: {
+          userId: parsePositiveInt(operation.managedUser.id),
+          roleId: parsePositiveInt(operation.branchOperatorRole.id),
+          roleCode: operation.branchOperatorRole.code,
+          effect: "ALLOW",
+        },
+      });
+    }
+
+    return res.status(operation.invite || operation.assignmentCreated ? 201 : 200).json({
+      ok: true,
+      assignmentCreated: operation.assignmentCreated,
+      assignmentId: operation.assignmentId,
+      role: {
+        id: parsePositiveInt(operation.branchOperatorRole.id),
+        code: operation.branchOperatorRole.code,
+        name: operation.branchOperatorRole.name,
+      },
+      user: {
+        id: parsePositiveInt(operation.managedUser.id),
+        email: operation.managedUser.email,
+        name: operation.managedUser.name,
+        status: operation.managedUser.status,
+      },
+      invite: operation.invite
+        ? {
+            id: parsePositiveInt(operation.invite.id),
+            userId: parsePositiveInt(operation.invite.userId),
+            email: operation.invite.email,
+            name: operation.invite.name,
+            status: operation.invite.status,
+            expiresAt: operation.invite.expiresAt,
+            inviteUrl: operation.invite.inviteUrl,
+          }
+        : null,
+    });
+  })
+);
+
+router.delete(
+  "/entity-branch-operators/:assignmentId",
+  requirePermission(ENTITY_USER_ADMIN_PERMISSION),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const assignmentId = parsePositiveInt(req.params.assignmentId);
+    if (!assignmentId) {
+      throw badRequest("assignmentId must be a positive integer");
+    }
+
+    const assignmentResult = await query(
+      `SELECT
+         urs.id,
+         urs.user_id,
+         urs.scope_type,
+         urs.scope_id,
+         urs.effect,
+         r.id AS role_id,
+         r.code AS role_code,
+         u.email AS user_email,
+         u.name AS user_name
+       FROM user_role_scopes urs
+       JOIN roles r
+         ON r.id = urs.role_id
+        AND r.tenant_id = urs.tenant_id
+       JOIN users u
+         ON u.id = urs.user_id
+        AND u.tenant_id = urs.tenant_id
+       WHERE urs.id = ?
+         AND urs.tenant_id = ?
+       LIMIT 1`,
+      [assignmentId, tenantId]
+    );
+    const assignment = assignmentResult.rows[0] || null;
+    if (
+      !assignment ||
+      String(assignment.role_code || "") !== BRANCH_OPERATOR_ROLE_CODE ||
+      String(assignment.scope_type || "").toUpperCase() !== "OPERATING_UNIT" ||
+      String(assignment.effect || "").toUpperCase() !== "ALLOW"
+    ) {
+      throw badRequest("Branch operator assignment not found");
+    }
+
+    const operatingUnitId = parsePositiveInt(assignment.scope_id);
+    assertScopeAccess(req, "operating_unit", operatingUnitId, "assignmentId");
+
+    await query(
+      `DELETE FROM user_role_scopes
+       WHERE id = ?
+         AND tenant_id = ?`,
+      [assignmentId, tenantId]
+    );
+    await invalidateRbacCache(tenantId);
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      targetUserId: parsePositiveInt(assignment.user_id),
+      action: "entity_user_admin.branch_operator.assignment.delete",
+      resourceType: "user_role_scope",
+      resourceId: assignmentId,
+      scopeType: "OPERATING_UNIT",
+      scopeId: operatingUnitId,
+      payload: {
+        userId: parsePositiveInt(assignment.user_id),
+        roleId: parsePositiveInt(assignment.role_id),
+        roleCode: assignment.role_code,
+      },
+    });
+
+    return res.json({ ok: true });
   })
 );
 

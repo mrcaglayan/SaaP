@@ -52,6 +52,7 @@ import {
 } from "./orgCurrentAccountHelpers.js";
 
 const UNIT_TYPES = ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"];
+const LEGAL_ENTITY_STATUSES = ["ACTIVE", "INACTIVE"];
 const SHAREHOLDER_TYPES = ["INDIVIDUAL", "CORPORATE"];
 const SHAREHOLDER_STATUSES = ["ACTIVE", "INACTIVE"];
 const SHAREHOLDER_BATCH_QUEUE_STORAGE_KEY =
@@ -63,6 +64,7 @@ const DEFAULT_ENTITY_FORM = {
   taxId: "",
   countryId: "",
   functionalCurrencyCode: "USD",
+  status: "INACTIVE",
   isIntercompanyEnabled: true,
   intercompanyPartnerRequired: false,
   autoProvisionDefaults: true,
@@ -152,6 +154,12 @@ function formatOperatingUnitLabel(unit) {
     return `${code} - ${name}`;
   }
   return code || name || "-";
+}
+
+function getLegalEntityStatusLabel(status, l) {
+  return normalizeUpperText(status) === "INACTIVE"
+    ? l("Inactive", "Pasif")
+    : l("Active", "Aktif");
 }
 
 function formatTimestampLabel(value) {
@@ -516,7 +524,10 @@ export default function OrganizationManagementPage() {
   const canUpsertLegalEntity = hasPermission("org.legal_entity.upsert");
   const canUpsertOperatingUnit = hasPermission("org.operating_unit.upsert");
   const canReadShareholders = hasPermission("org.tree.read");
-  const canUpsertShareholder = hasPermission("org.legal_entity.upsert");
+  const canUpsertShareholder = hasPermission("org.shareholder.upsert");
+  const canManageShareholderCapitalFulfillment = hasPermission(
+    "org.shareholder.capital_fulfillment.upsert"
+  );
   const canUpsertAccounts = hasPermission("gl.account.upsert");
   const canUpsertFiscalCalendar = hasPermission("org.fiscal_calendar.upsert");
   const canGenerateFiscalPeriods = hasPermission("org.fiscal_period.generate");
@@ -1925,7 +1936,7 @@ export default function OrganizationManagementPage() {
     !toNumber(capitalFulfillmentForm.cashSessionId);
   const capitalFulfillmentCanOpen = Boolean(
     selectedShareholderLegalEntityId &&
-    canUpsertShareholder &&
+    canManageShareholderCapitalFulfillment &&
     (canReadBanks || canReadAccounts || canReadCashRegisters) &&
     eligibleShareholdersForCommitmentIncrease.length > 0
   );
@@ -2605,6 +2616,7 @@ export default function OrganizationManagementPage() {
       functionalCurrencyCode: String(row?.functional_currency_code || prev.functionalCurrencyCode || "USD")
         .trim()
         .toUpperCase(),
+      status: normalizeUpperText(row?.status) || "INACTIVE",
       isIntercompanyEnabled:
         row?.is_intercompany_enabled === undefined
           ? true
@@ -2763,6 +2775,7 @@ export default function OrganizationManagementPage() {
         functionalCurrencyCode: entityForm.functionalCurrencyCode
           .trim()
           .toUpperCase(),
+        status: entityForm.status,
         isIntercompanyEnabled: Boolean(entityForm.isIntercompanyEnabled),
         intercompanyPartnerRequired: Boolean(entityForm.intercompanyPartnerRequired),
         autoProvisionDefaults: Boolean(entityForm.autoProvisionDefaults),
@@ -2829,7 +2842,14 @@ export default function OrganizationManagementPage() {
           .join(" ");
         setMessage(`${baseSuccessMessage} ${detailMessage}`.trim());
       } else {
-        setMessage(baseSuccessMessage);
+        const lifecycleMessage =
+          normalizeUpperText(response?.status) === "INACTIVE"
+            ? l(
+                " Saved as inactive, so tenant-wide readiness will ignore this entity until you activate it.",
+                " Pasif kaydedildi; siz aktiflestirene kadar tenant geneli hazirlik bu entity'i dikkate almaz."
+              )
+            : "";
+        setMessage(`${baseSuccessMessage}${lifecycleMessage}`);
       }
       refreshLookups();
       await loadCoreData();
@@ -3217,8 +3237,8 @@ export default function OrganizationManagementPage() {
     if (!canUpsertShareholder) {
       setError(
         l(
-          "Missing permission: org.legal_entity.upsert",
-          "Eksik yetki: org.legal_entity.upsert"
+          "Missing permission: org.shareholder.upsert",
+          "Eksik yetki: org.shareholder.upsert"
         )
       );
       return;
@@ -3384,6 +3404,15 @@ export default function OrganizationManagementPage() {
   }
 
   async function handlePreviewBatchCommitmentJournal() {
+    if (!canUpsertShareholder) {
+      setError(
+        l(
+          "Missing permission: org.shareholder.upsert",
+          "Eksik yetki: org.shareholder.upsert"
+        )
+      );
+      return null;
+    }
     if (shareholderCommitmentModuleNotReady) {
       setError(
         l(
@@ -3440,6 +3469,15 @@ export default function OrganizationManagementPage() {
 
   async function handleCreateBatchCommitmentJournal() {
     if (batchCommitmentSaving) {
+      return;
+    }
+    if (!canUpsertShareholder) {
+      setError(
+        l(
+          "Missing permission: org.shareholder.upsert",
+          "Eksik yetki: org.shareholder.upsert"
+        )
+      );
       return;
     }
     if (shareholderCommitmentModuleNotReady) {
@@ -3644,6 +3682,15 @@ export default function OrganizationManagementPage() {
   }
 
   function openCapitalFulfillmentModal() {
+    if (!canManageShareholderCapitalFulfillment) {
+      setError(
+        l(
+          "Missing permission: org.shareholder.capital_fulfillment.upsert",
+          "Eksik yetki: org.shareholder.capital_fulfillment.upsert"
+        )
+      );
+      return;
+    }
     if (!selectedShareholderLegalEntityId) {
       setError(
         l("Select legal entity first.", "Once istirak / bagli ortak secin.")
@@ -3824,11 +3871,11 @@ export default function OrganizationManagementPage() {
   }
 
   function buildCapitalFulfillmentPayload() {
-    if (!canUpsertShareholder) {
+    if (!canManageShareholderCapitalFulfillment) {
       setError(
         l(
-          "Missing permission: org.legal_entity.upsert",
-          "Eksik yetki: org.legal_entity.upsert"
+          "Missing permission: org.shareholder.capital_fulfillment.upsert",
+          "Eksik yetki: org.shareholder.capital_fulfillment.upsert"
         )
       );
       return null;
@@ -4153,11 +4200,11 @@ export default function OrganizationManagementPage() {
       );
       return;
     }
-    if (!canUpsertShareholder) {
+    if (!canManageShareholderCapitalFulfillment) {
       setError(
         l(
-          "Missing permission: org.legal_entity.upsert",
-          "Eksik yetki: org.legal_entity.upsert"
+          "Missing permission: org.shareholder.capital_fulfillment.upsert",
+          "Eksik yetki: org.shareholder.capital_fulfillment.upsert"
         )
       );
       return;
@@ -4251,8 +4298,8 @@ export default function OrganizationManagementPage() {
     if (!canUpsertShareholder) {
       setError(
         l(
-          "Missing permission: org.legal_entity.upsert",
-          "Eksik yetki: org.legal_entity.upsert"
+          "Missing permission: org.shareholder.upsert",
+          "Eksik yetki: org.shareholder.upsert"
         )
       );
       return;
@@ -4384,8 +4431,8 @@ export default function OrganizationManagementPage() {
     if (!canUpsertShareholder) {
       setError(
         l(
-          "Missing permission: org.legal_entity.upsert",
-          "Eksik yetki: org.legal_entity.upsert"
+          "Missing permission: org.shareholder.upsert",
+          "Eksik yetki: org.shareholder.upsert"
         )
       );
       return;
@@ -4840,6 +4887,23 @@ export default function OrganizationManagementPage() {
                 </option>
               ))}
             </select>
+            <select
+              value={entityForm.status}
+              onChange={(event) =>
+                setEntityForm((prev) => ({
+                  ...prev,
+                  status: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            >
+              {LEGAL_ENTITY_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {getLegalEntityStatusLabel(status, l)}
+                </option>
+              ))}
+            </select>
             <div className="rounded-lg border border-cyan-200 bg-cyan-50/60 px-3 py-3 text-sm md:col-span-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
@@ -5034,6 +5098,7 @@ export default function OrganizationManagementPage() {
                   <th className="px-3 py-2">{l("Group", "Grup")}</th>
                   <th className="px-3 py-2">{l("Country", "Ulke")}</th>
                   <th className="px-3 py-2">{l("Currency", "Para birimi")}</th>
+                  <th className="px-3 py-2">{l("Status", "Durum")}</th>
                   <th className="px-3 py-2">{l("Action", "Islem")}</th>
                 </tr>
               </thead>
@@ -5049,6 +5114,11 @@ export default function OrganizationManagementPage() {
                   const countryLabel = country
                     ? `${country.iso2} - ${country.name}`
                     : "-";
+                  const status = normalizeUpperText(row.status) || "ACTIVE";
+                  const statusTone =
+                    status === "INACTIVE"
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-900";
                   return (
                     <tr key={row.id} className="border-t border-slate-100">
                       <td className="px-3 py-2">{row.id}</td>
@@ -5057,6 +5127,13 @@ export default function OrganizationManagementPage() {
                       <td className="px-3 py-2">{groupLabel}</td>
                       <td className="px-3 py-2">{countryLabel}</td>
                       <td className="px-3 py-2">{row.functional_currency_code}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${statusTone}`}
+                        >
+                          {getLegalEntityStatusLabel(status, l)}
+                        </span>
+                      </td>
                       <td className="px-3 py-2">
                         <button
                           type="button"
@@ -5072,7 +5149,7 @@ export default function OrganizationManagementPage() {
                 })}
                 {legalEntities.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-3 text-slate-500">
+                    <td colSpan={8} className="px-3 py-3 text-slate-500">
                       {l("No legal entities found.", "Istirak / bagli ortak bulunamadi.")}
                     </td>
                   </tr>
@@ -6237,6 +6314,7 @@ export default function OrganizationManagementPage() {
                     await handlePreviewBatchCommitmentJournal();
                   }}
                   disabled={
+                    !canUpsertShareholder ||
                     pendingBatchCommitmentShareholders.length === 0 ||
                     shareholderCommitmentModuleNotReady
                   }
@@ -6612,7 +6690,7 @@ export default function OrganizationManagementPage() {
                               type="button"
                               onClick={() => handleReverseCapitalFulfillment(row)}
                               disabled={
-                                !canUpsertShareholder ||
+                                !canManageShareholderCapitalFulfillment ||
                                 !fulfillmentId ||
                                 String(row.status || "").toUpperCase() === "REVERSED" ||
                                 isReversing

@@ -75,6 +75,10 @@ function getPeriodBounds(periodRow) {
   };
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function comparePeriodsDesc(left, right) {
   const leftYear = Number(left?.fiscal_year ?? left?.fiscalYear ?? 0);
   const rightYear = Number(right?.fiscal_year ?? right?.fiscalYear ?? 0);
@@ -85,6 +89,27 @@ function comparePeriodsDesc(left, right) {
   if (leftPeriod !== rightPeriod) return rightPeriod - leftPeriod;
 
   return Number(right?.id || 0) - Number(left?.id || 0);
+}
+
+function findDefaultFiscalPeriod(rows, referenceDate = todayIsoDate()) {
+  const normalizedReferenceDate = normalizeIsoDate(referenceDate);
+  if (normalizedReferenceDate) {
+    const currentPeriod =
+      (rows || []).find((row) => {
+        const bounds = getPeriodBounds(row);
+        return (
+          bounds.dateFrom &&
+          bounds.dateTo &&
+          bounds.dateFrom <= normalizedReferenceDate &&
+          bounds.dateTo >= normalizedReferenceDate
+        );
+      }) || null;
+    if (currentPeriod) {
+      return currentPeriod;
+    }
+  }
+
+  return (rows || [])[0] || null;
 }
 
 function contextEqual(left, right) {
@@ -312,7 +337,9 @@ export default function WorkingContextProvider({ children }) {
       setLoadingBase(true);
       setError("");
 
-      const lookups = [listLegalEntities({ limit: 500, includeInactive: true })];
+      // Working context should stay on operational entities only; inactive
+      // setup/draft entities remain available from admin screens.
+      const lookups = [listLegalEntities({ limit: 500, status: "ACTIVE" })];
       if (canReadFiscalCalendars) {
         lookups.push(listFiscalCalendars({ limit: 500 }));
       }
@@ -465,9 +492,12 @@ export default function WorkingContextProvider({ children }) {
           const next = { ...previous };
           const selected = findById(rows, next.fiscalPeriodId);
           if (!selected) {
-            const defaultId = getFirstId(rows);
-            next.fiscalPeriodId = defaultId;
-            const defaultBounds = getPeriodBounds(findById(rows, defaultId));
+            // Default to the period containing today. Falling back to the
+            // latest generated period pushes operational pages into future
+            // period 12 when the whole fiscal year already exists.
+            const defaultPeriod = findDefaultFiscalPeriod(rows);
+            next.fiscalPeriodId = toIdString(defaultPeriod?.id);
+            const defaultBounds = getPeriodBounds(defaultPeriod);
             next.dateFrom = defaultBounds.dateFrom;
             next.dateTo = defaultBounds.dateTo;
           } else {

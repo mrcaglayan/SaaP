@@ -31,6 +31,11 @@ export async function getOpsBankPaymentBatchesHealth(params = {}) {
   return response.data;
 }
 
+export async function getOpsCashTransitAttention(params = {}) {
+  const response = await api.get("/api/v1/ops/cash/transit-attention", { params });
+  return response.data;
+}
+
 export async function getOpsFixedAssetActivationAttention(params = {}) {
   const response = await api.get("/api/v1/ops/fixed-assets/activation-attention", { params });
   return response.data;

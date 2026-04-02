@@ -8,6 +8,7 @@ import {
 import {
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
+  getOpsCashTransitAttention,
   getOpsFixedAssetActivationAttention,
   getOpsFixedAssetDepreciationAttention,
   getOpsFixedAssetLateCatchUpAttention,
@@ -312,7 +313,7 @@ function ReadinessSummaryCard({ title, value, subtitle, tone = "slate", locked =
  * year-end review seams instead of introducing another dashboard endpoint.
  */
 export default function Dashboard() {
-  const { t } = useI18n();
+  const { l, t } = useI18n();
   const { hasPermission } = useAuth();
   const { workingContext } = useWorkingContext();
   const {
@@ -327,6 +328,7 @@ export default function Dashboard() {
   } = useTenantReadiness();
 
   const canReadOps = hasPermission("ops.dashboard.read");
+  const canReadCash = hasPermission("cash.txn.read");
   const canReadExceptions = hasPermission("ops.exceptions.read");
   const canReadReadiness = hasPermission("org.tree.read");
   const canReadInventory = hasPermission("inventory.read");
@@ -342,6 +344,7 @@ export default function Dashboard() {
   const [snapshot, setSnapshot] = useState({
     bankReconciliation: null,
     bankPayments: null,
+    cashTransit: null,
     payrollImports: null,
     payrollClose: null,
     jobs: null,
@@ -582,6 +585,13 @@ export default function Dashboard() {
       );
     }
 
+    if (canReadCash) {
+      requestEntries.push({
+        key: "cashTransit",
+        run: () => getOpsCashTransitAttention(scopeParams),
+      });
+    }
+
     if (canReadOps && canReadFixedAssetRuns) {
       requestEntries.push({
         key: "fixedAssetActivationAttention",
@@ -624,6 +634,7 @@ export default function Dashboard() {
       setSnapshot({
         bankReconciliation: null,
         bankPayments: null,
+        cashTransit: null,
         payrollImports: null,
         payrollClose: null,
         jobs: null,
@@ -647,6 +658,7 @@ export default function Dashboard() {
       const nextSnapshot = {
         bankReconciliation: null,
         bankPayments: null,
+        cashTransit: null,
         payrollImports: null,
         payrollClose: null,
         jobs: null,
@@ -687,7 +699,16 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [canReadExceptions, canReadFixedAssetRuns, canReadInventory, canReadOps, inventoryScopeParams, scopeParams, t]);
+  }, [
+    canReadCash,
+    canReadExceptions,
+    canReadFixedAssetRuns,
+    canReadInventory,
+    canReadOps,
+    inventoryScopeParams,
+    scopeParams,
+    t,
+  ]);
 
   const refreshDashboard = useCallback(async () => {
     await Promise.all([load(), loadConsolidationReadiness()]);
@@ -815,6 +836,21 @@ export default function Dashboard() {
     const awaitingAck = toInt(snapshot.bankPayments?.sla?.awaiting_ack_batches, 0);
     return unmatched + awaitingAck;
   }, [snapshot.bankPayments, snapshot.bankReconciliation]);
+
+  const cashTransitIncomingWaitingCount = useMemo(
+    () => toInt(snapshot.cashTransit?.queue?.incoming_waiting_total, 0),
+    [snapshot.cashTransit]
+  );
+
+  const cashTransitPendingDispatchCount = useMemo(
+    () => toInt(snapshot.cashTransit?.queue?.initiated_not_dispatched_total, 0),
+    [snapshot.cashTransit]
+  );
+
+  const cashTransitOldestWaitingHours = useMemo(
+    () => toInt(snapshot.cashTransit?.queue?.oldest_waiting_hours, 0),
+    [snapshot.cashTransit]
+  );
 
   const periodCloseBlockerCount = useMemo(() => {
     const payrollFailedChecks = toInt(
@@ -948,6 +984,7 @@ export default function Dashboard() {
     const firstWindow =
       snapshot.bankReconciliation?.window ||
       snapshot.bankPayments?.window ||
+      snapshot.cashTransit?.window ||
       snapshot.payrollImports?.window ||
       snapshot.payrollClose?.window ||
       snapshot.jobs?.window ||
@@ -988,6 +1025,12 @@ export default function Dashboard() {
         enabled: canReadOps,
       },
       {
+        to: "/app/kasa-transit-transferleri",
+        title: l("Cash Transit Queue", "Kasa Transit Kuyrugu"),
+        hint: `${formatCount(cashTransitIncomingWaitingCount)} ${l("awaiting receipt", "teslim almayi bekliyor")}`,
+        enabled: canReadCash,
+      },
+      {
         to: "/app/ayarlar/operasyon-dashboard",
         title: t("dashboard.links.opsDetail", "Ops Dashboard Detail"),
         hint: `${formatCount(
@@ -1013,7 +1056,18 @@ export default function Dashboard() {
         enabled: canReadInventory,
       },
     ],
-    [canReadExceptions, canReadInventory, canReadOps, inventoryQueueLinks, openExceptionsCount, snapshot, t]
+    [
+      canReadCash,
+      canReadExceptions,
+      canReadInventory,
+      canReadOps,
+      cashTransitIncomingWaitingCount,
+      inventoryQueueLinks,
+      l,
+      openExceptionsCount,
+      snapshot,
+      t,
+    ]
   );
 
   const readinessInlineError = moduleReadinessError || tenantReadinessError || "";
@@ -1118,6 +1172,29 @@ export default function Dashboard() {
           to="/app/banka-mutabakat"
           ctaLabel={t("dashboard.openQueue", "Open queue")}
           locked={!canReadOps}
+        />
+        <MetricCard
+          title={l("Cash Awaiting Receipt", "Teslim Alinacak Kasa Transiti")}
+          value={formatCount(cashTransitIncomingWaitingCount)}
+          subtitle={
+            cashTransitIncomingWaitingCount > 0 || cashTransitPendingDispatchCount > 0
+              ? l(
+                  "{{waiting}} inbound transfers are waiting receipt. {{pending}} are still pending dispatch. Oldest wait: {{hours}}h.",
+                  "{{waiting}} gelen transfer teslim almayi bekliyor. {{pending}} transfer hala sevk bekliyor. En eski bekleme: {{hours}} sa.",
+                  {
+                    waiting: formatCount(cashTransitIncomingWaitingCount),
+                    pending: formatCount(cashTransitPendingDispatchCount),
+                    hours: formatCount(cashTransitOldestWaitingHours),
+                  }
+                )
+              : l(
+                  "No inbound cash transit transfer is currently waiting receipt.",
+                  "Teslim almayi bekleyen gelen kasa transit transferi yok."
+                )
+          }
+          to="/app/kasa-transit-transferleri"
+          ctaLabel={l("Open queue", "Kuyrugu ac")}
+          locked={!canReadCash}
         />
         <MetricCard
           title={t("dashboard.cards.exceptions", "Exceptions")}

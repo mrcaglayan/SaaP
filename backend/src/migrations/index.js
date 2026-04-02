@@ -146,6 +146,7 @@ import migration156LocalClosePacks from "./m156_local_close_packs.js";
 import migration157LocalClosePackReopenRequests from "./m157_local_close_pack_reopen_requests.js";
 import migration158LocalClosePackReportReviews from "./m158_local_close_pack_report_reviews.js";
 import migration159Track51ExportSnapshots from "./m159_track51_export_snapshots.js";
+import migration160CounterpartyRequestWorkflow from "./m160_counterparty_request_workflow.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -296,6 +297,7 @@ const migrations = [
   migration157LocalClosePackReopenRequests,
   migration158LocalClosePackReportReviews,
   migration159Track51ExportSnapshots,
+  migration160CounterpartyRequestWorkflow,
 ];
 
 export default migrations;

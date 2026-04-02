@@ -38,6 +38,33 @@ export async function createCariCounterparty(payload) {
   );
 }
 
+export async function listCariCounterpartyRequests(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cari/counterparty-requests${toCariQueryString(params)}`)
+  );
+}
+
+export async function createCariCounterpartyRequest(payload) {
+  return run(() =>
+    api.post(
+      "/api/v1/cari/counterparty-requests",
+      normalizeCounterpartyPayload(payload)
+    )
+  );
+}
+
+export async function approveCariCounterpartyRequest(requestId, payload = {}) {
+  return run(() =>
+    api.post(`/api/v1/cari/counterparty-requests/${requestId}/approve`, payload)
+  );
+}
+
+export async function rejectCariCounterpartyRequest(requestId, payload = {}) {
+  return run(() =>
+    api.post(`/api/v1/cari/counterparty-requests/${requestId}/reject`, payload)
+  );
+}
+
 export async function updateCariCounterparty(counterpartyId, payload) {
   return run(() =>
     api.put(

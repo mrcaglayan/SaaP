@@ -34,6 +34,23 @@ export async function createSecurityInvite(payload) {
   return response.data;
 }
 
+export async function getEntityBranchOperatorAdminData() {
+  const response = await api.get("/api/v1/security/entity-branch-operators");
+  return response.data;
+}
+
+export async function assignEntityBranchOperator(payload) {
+  const response = await api.post("/api/v1/security/entity-branch-operators", payload);
+  return response.data;
+}
+
+export async function deleteEntityBranchOperatorAssignment(assignmentId) {
+  const response = await api.delete(
+    `/api/v1/security/entity-branch-operators/${assignmentId}`
+  );
+  return response.data;
+}
+
 export async function listRoles(params = {}) {
   const response = await api.get(`/api/v1/security/roles${toQueryString(params)}`);
   return response.data;

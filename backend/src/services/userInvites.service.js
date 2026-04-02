@@ -133,11 +133,19 @@ export async function getInvitePreviewByToken(rawToken) {
   };
 }
 
+/**
+ * Creates or refreshes a tenant-local invite for a disabled or new user.
+ *
+ * Callers may provide a transaction-bound `runQuery` implementation when the
+ * invite must commit together with related tenant setup, role assignment, or
+ * audit-sensitive provisioning work.
+ */
 export async function createInviteForTenantUser({
   tenantId,
   actorUserId = null,
   email,
   name,
+  runQuery = query,
 }) {
   const normalizedTenantId = Number(tenantId);
   if (!Number.isInteger(normalizedTenantId) || normalizedTenantId <= 0) {
@@ -158,7 +166,7 @@ export async function createInviteForTenantUser({
     throw err;
   }
 
-  const userLookup = await query(
+  const userLookup = await runQuery(
     `SELECT id, tenant_id, status
      FROM users
      WHERE email = ?
@@ -180,7 +188,7 @@ export async function createInviteForTenantUser({
       err.status = 400;
       throw err;
     }
-    await query(
+    await runQuery(
       `UPDATE users
        SET name = ?,
            status = 'DISABLED'
@@ -190,7 +198,7 @@ export async function createInviteForTenantUser({
     );
   } else {
     const pendingPasswordHash = await bcrypt.hash(generateInviteToken(), 10);
-    const insertResult = await query(
+    const insertResult = await runQuery(
       `INSERT INTO users (
          tenant_id,
          email,
@@ -204,7 +212,7 @@ export async function createInviteForTenantUser({
     userId = Number(insertResult.rows?.insertId || 0);
   }
 
-  await query(
+  await runQuery(
     `UPDATE user_invites
      SET status = 'REVOKED',
          revoked_at = UTC_TIMESTAMP()
@@ -221,7 +229,7 @@ export async function createInviteForTenantUser({
   const ttlHours = normalizeInviteTtlHours();
   const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
 
-  const inviteInsert = await query(
+  const inviteInsert = await runQuery(
     `INSERT INTO user_invites (
        tenant_id,
        user_id,
@@ -327,4 +335,3 @@ export async function acceptInviteByToken({
     };
   });
 }
-

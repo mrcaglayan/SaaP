@@ -811,7 +811,9 @@ router.get(
 
 router.post(
   "/shareholder-journal-config",
-  requirePermission("org.legal_entity.upsert", {
+  // Shareholder setup is delegated per legal entity and is intentionally kept
+  // separate from the broader legal-entity master maintenance permission.
+  requirePermission("org.shareholder.upsert", {
     resolveScope: (req, tenantId) => {
       const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
       if (legalEntityId) {
@@ -871,7 +873,7 @@ router.get(
 
 router.post(
   "/shareholders",
-  requirePermission("org.legal_entity.upsert", {
+  requirePermission("org.shareholder.upsert", {
     resolveScope: (req, tenantId) => {
       const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
       if (legalEntityId) {
@@ -914,7 +916,7 @@ router.post(
 
 router.post(
   "/shareholders/commitment-journal-batch/preview",
-  requirePermission("org.legal_entity.upsert", {
+  requirePermission("org.shareholder.upsert", {
     resolveScope: (req, tenantId) => {
       const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
       if (legalEntityId) {
@@ -944,7 +946,7 @@ router.post(
 
 router.post(
   "/shareholders/commitment-journal-batch",
-  requirePermission("org.legal_entity.upsert", {
+  requirePermission("org.shareholder.upsert", {
     resolveScope: (req, tenantId) => {
       const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
       if (legalEntityId) {
@@ -1017,7 +1019,7 @@ router.get(
 
 router.post(
   "/shareholders/capital-fulfillments/preview",
-  requirePermission("org.legal_entity.upsert", {
+  requirePermission("org.shareholder.capital_fulfillment.upsert", {
     resolveScope: (req, tenantId) => {
       const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
       if (legalEntityId) {
@@ -1044,7 +1046,7 @@ router.post(
 
 router.post(
   "/shareholders/capital-fulfillments",
-  requirePermission("org.legal_entity.upsert", {
+  requirePermission("org.shareholder.capital_fulfillment.upsert", {
     resolveScope: (req, tenantId) => {
       const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
       if (legalEntityId) {
@@ -1071,7 +1073,7 @@ router.post(
 
 router.post(
   "/shareholders/capital-fulfillments/:id/reverse",
-  requirePermission("org.legal_entity.upsert", {
+  requirePermission("org.shareholder.capital_fulfillment.upsert", {
     resolveScope: async (req) => {
       const fulfillmentId = parsePositiveInt(req.params?.id);
       if (!fulfillmentId) {

@@ -35,6 +35,7 @@ export async function upsertLegalEntityRowTx(
     taxId,
     countryId,
     functionalCurrencyCode,
+    status,
     isIntercompanyEnabled,
     intercompanyPartnerRequired,
   }
@@ -48,15 +49,17 @@ export async function upsertLegalEntityRowTx(
         tax_id,
         country_id,
         functional_currency_code,
+        status,
         is_intercompany_enabled,
         intercompany_partner_required
       )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        name = VALUES(name),
        tax_id = VALUES(tax_id),
        country_id = VALUES(country_id),
        functional_currency_code = VALUES(functional_currency_code),
+       status = VALUES(status),
        group_company_id = VALUES(group_company_id),
        is_intercompany_enabled = VALUES(is_intercompany_enabled),
        intercompany_partner_required = VALUES(intercompany_partner_required)`,
@@ -68,6 +71,7 @@ export async function upsertLegalEntityRowTx(
       taxId,
       countryId,
       functionalCurrencyCode,
+      status,
       isIntercompanyEnabled,
       intercompanyPartnerRequired,
     ]

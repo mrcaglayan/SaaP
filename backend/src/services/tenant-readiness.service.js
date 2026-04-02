@@ -71,6 +71,10 @@ function buildLegalEntityStatusDetails(rows = []) {
   }));
 }
 
+/**
+ * Build a tenant readiness snapshot while ignoring inactive legal entities for
+ * tenant-wide operational blockers.
+ */
 export async function getTenantReadinessSnapshot(
   tenantId,
   { runQuery = query } = {}
@@ -104,7 +108,8 @@ export async function getTenantReadinessSnapshot(
     scalarCount(
       `SELECT COUNT(*) AS count
        FROM legal_entities
-       WHERE tenant_id = ?`,
+       WHERE tenant_id = ?
+         AND status = 'ACTIVE'`,
       [normalizedTenantId],
       runQuery
     ),

@@ -24,6 +24,7 @@ import TaxSetupPage from "./pages/settings/TaxSetupPage.jsx";
 import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
 import UserAssignmentsPage from "./pages/security/UserAssignmentsPage";
 import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
+import BranchOperatorManagementPage from "./pages/security/BranchOperatorManagementPage.jsx";
 import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
 import RawAuditLogsPage from "./pages/security/RawAuditLogsPage.jsx";
 import SensitiveDataAuditPage from "./pages/security/SensitiveDataAuditPage.jsx";
@@ -652,6 +653,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/konsolidasyon-kurulumu",
     childPath: "ayarlar/konsolidasyon-kurulumu",
     element: <ConsolidationSetupPage />,
+  },
+  {
+    appPath: "/app/ayarlar/sube-operatorleri",
+    childPath: "ayarlar/sube-operatorleri",
+    element: <BranchOperatorManagementPage />,
   },
   {
     appPath: "/app/ayarlar/rbac/roles-permissions",

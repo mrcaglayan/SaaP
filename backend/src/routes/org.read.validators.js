@@ -8,11 +8,20 @@ export function requireOrgTenantId(req) {
   return tenantId;
 }
 
+/**
+ * Parse legal-entity list filters, including the optional lifecycle status
+ * used by admin setup surfaces.
+ */
 export function parseLegalEntityReadFilters(rawQuery = {}) {
+  const status = rawQuery.status ? String(rawQuery.status).toUpperCase() : null;
+  if (status && !["ACTIVE", "INACTIVE"].includes(status)) {
+    throw badRequest("status must be ACTIVE or INACTIVE");
+  }
+
   return {
     countryId: parsePositiveInt(rawQuery.countryId),
     groupCompanyId: parsePositiveInt(rawQuery.groupCompanyId),
-    status: rawQuery.status ? String(rawQuery.status).toUpperCase() : null,
+    status,
   };
 }
 

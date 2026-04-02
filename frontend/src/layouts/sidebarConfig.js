@@ -11,6 +11,9 @@ const USER_ASSIGNMENTS_PAGE_PERMISSIONS = [
   "security.role_assignment.read",
   "security.role_assignment.upsert",
 ];
+const BRANCH_OPERATOR_MANAGEMENT_PAGE_PERMISSIONS = [
+  "security.user_admin.entity",
+];
 
 const SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS = [
   "security.data_scope.read",
@@ -609,6 +612,12 @@ export const sidebarItems = [
       {
         label: "Kullanici Yonetimi",
         to: "/app/ayarlar/kullanici-yonetimi",
+      },
+      {
+        label: "Sube Operatorleri",
+        to: "/app/ayarlar/sube-operatorleri",
+        requiredPermissions: BRANCH_OPERATOR_MANAGEMENT_PAGE_PERMISSIONS,
+        implemented: true,
       },
       {
         label: "Roller ve Yetkiler",

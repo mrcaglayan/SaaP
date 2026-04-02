@@ -2,6 +2,7 @@ import { query } from "../db.js";
 import {
   assertScopeAccess,
   buildScopeFilter,
+  getScopeContext,
   requirePermission,
 } from "../middleware/rbac.js";
 import {
@@ -10,6 +11,12 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+
+function forbidden(message) {
+  const err = new Error(message);
+  err.status = 403;
+  return err;
+}
 
 function normalizeSearchText(value, maxLength = 120) {
   const text = String(value || "").trim();
@@ -79,6 +86,45 @@ function buildAccountBreadcrumbResolver(hierarchyRows = []) {
     };
     cache.set(accountId, resolved);
     return resolved;
+  };
+}
+
+async function resolveAccessibleLegalEntityIds(req, tenantId) {
+  const scopeContext = getScopeContext(req);
+  if (!scopeContext) {
+    return { tenantWide: false, legalEntityIds: [] };
+  }
+  if (scopeContext.tenantWide) {
+    return { tenantWide: true, legalEntityIds: [] };
+  }
+
+  const legalEntityIds = new Set(
+    Array.from(scopeContext.legalEntities || []).map((value) => parsePositiveInt(value)).filter(Boolean)
+  );
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || [])
+    .map((value) => parsePositiveInt(value))
+    .filter(Boolean);
+
+  if (operatingUnitIds.length > 0) {
+    const placeholders = operatingUnitIds.map(() => "?").join(", ");
+    const result = await query(
+      `SELECT DISTINCT legal_entity_id
+       FROM operating_units
+       WHERE tenant_id = ?
+         AND id IN (${placeholders})`,
+      [tenantId, ...operatingUnitIds]
+    );
+    for (const row of result.rows || []) {
+      const legalEntityId = parsePositiveInt(row?.legal_entity_id);
+      if (legalEntityId) {
+        legalEntityIds.add(legalEntityId);
+      }
+    }
+  }
+
+  return {
+    tenantWide: false,
+    legalEntityIds: Array.from(legalEntityIds),
   };
 }
 
@@ -174,14 +220,7 @@ export function registerGlReadCoreRoutes(router) {
 
   router.get(
     "/accounts",
-    requirePermission("gl.account.read", {
-      resolveScope: (req) => {
-        const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-        return legalEntityId
-          ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId }
-          : null;
-      },
-    }),
+    requirePermission("gl.account.read"),
     asyncHandler(async (req, res) => {
       const tenantId = resolveTenantId(req);
       if (!tenantId) throw badRequest("tenantId is required");
@@ -197,19 +236,26 @@ export function registerGlReadCoreRoutes(router) {
       const offsetRaw = Number(req.query.offset);
       const offset = Number.isInteger(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0;
 
-      if (legalEntityId) {
-        assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+      const accessibleScope = await resolveAccessibleLegalEntityIds(req, tenantId);
+      if (
+        legalEntityId &&
+        !accessibleScope.tenantWide &&
+        !accessibleScope.legalEntityIds.includes(legalEntityId)
+      ) {
+        throw forbidden("Access denied for legalEntityId");
       }
 
       const conditions = ["c.tenant_id = ?"];
       const params = [tenantId];
-      const legalScopeFilter = buildScopeFilter(
-        req,
-        "legal_entity",
-        "c.legal_entity_id",
-        params
-      );
-      conditions.push(`(c.legal_entity_id IS NULL OR ${legalScopeFilter})`);
+      if (accessibleScope.tenantWide) {
+        conditions.push("(c.legal_entity_id IS NULL OR c.legal_entity_id IS NOT NULL)");
+      } else if (accessibleScope.legalEntityIds.length > 0) {
+        const placeholders = accessibleScope.legalEntityIds.map(() => "?").join(", ");
+        conditions.push(`(c.legal_entity_id IS NULL OR c.legal_entity_id IN (${placeholders}))`);
+        params.push(...accessibleScope.legalEntityIds);
+      } else {
+        conditions.push("c.legal_entity_id IS NULL");
+      }
       if (coaId) {
         conditions.push("a.coa_id = ?");
         params.push(coaId);

@@ -1,4 +1,5 @@
 import { query } from "../db.js";
+import { getScopeContext } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { summarizeLateCatchUpPendingForLegalEntity } from "./fixed-assets.depreciation.service.js";
 
@@ -96,6 +97,61 @@ function buildScopedLegalEntityWhere({
   }
 
   return where;
+}
+
+function appendCashTransitTargetScopeWhere({ req, where, params, buildScopeFilter }) {
+  const scopeContext = getScopeContext(req);
+  if (!scopeContext || scopeContext.tenantWide || typeof buildScopeFilter !== "function") {
+    return;
+  }
+
+  const legalEntityParams = [];
+  const operatingUnitParams = [];
+  const legalEntitySql = buildScopeFilter(req, "legal_entity", "ctt.legal_entity_id", legalEntityParams);
+  const operatingUnitSql = buildScopeFilter(
+    req,
+    "operating_unit",
+    "ctt.target_operating_unit_id",
+    operatingUnitParams
+  );
+
+  const scopeClauses = [];
+  if (legalEntitySql !== "1 = 0") {
+    // Central/HQ targets have no operating-unit id, so keep them visible to
+    // entity-scoped users while still narrowing branch queues to the target OU.
+    scopeClauses.push(`(ctt.target_operating_unit_id IS NULL AND ${legalEntitySql})`);
+  }
+  if (operatingUnitSql !== "1 = 0") {
+    scopeClauses.push(`(${operatingUnitSql})`);
+  }
+
+  if (scopeClauses.length === 0) {
+    where.push("1 = 0");
+    return;
+  }
+
+  where.push(`(${scopeClauses.join(" OR ")})`);
+  params.push(...legalEntityParams, ...operatingUnitParams);
+}
+
+function buildTransitEffectiveTimestampSql(columnName) {
+  if (columnName === "ctt.in_transit_at") {
+    return `CASE
+      WHEN ctt.in_transit_at IS NULL THEN NULL
+      ELSE GREATEST(ctt.in_transit_at, ctt.initiated_at)
+    END`;
+  }
+  if (columnName === "ctt.received_at") {
+    return `CASE
+      WHEN ctt.received_at IS NULL THEN NULL
+      ELSE GREATEST(
+        ctt.received_at,
+        COALESCE(ctt.in_transit_at, ctt.initiated_at),
+        ctt.initiated_at
+      )
+    END`;
+  }
+  return columnName;
 }
 
 function appendBankAccountFilter(where, params, alias, bankAccountId) {
@@ -415,6 +471,185 @@ export async function getOpsBankPaymentBatchesHealth({
       awaiting_ack_batches: toInt(batchKpi.awaiting_ack_batches, 0),
       awaiting_ack_gt_24h: toInt(batchKpi.awaiting_ack_gt_24h, 0),
     },
+  };
+}
+
+/**
+ * Summarize cross-context cash transit items as an operational receive queue.
+ *
+ * Open incoming transfers stay visible regardless of the reporting window,
+ * because operators still need to acknowledge/receive them even if the send
+ * happened in an earlier period. The selected window is only applied to
+ * completed receipts.
+ */
+export async function getOpsCashTransitAttention({
+  req,
+  tenantId,
+  filters = {},
+  buildScopeFilter,
+}) {
+  const window = normalizeWindow(filters, 30);
+  const filteredLegalEntityId = parsePositiveInt(filters.legalEntityId) || null;
+  const effectiveInTransitAtSql = buildTransitEffectiveTimestampSql("ctt.in_transit_at");
+  const effectiveReceivedAtSql = buildTransitEffectiveTimestampSql("ctt.received_at");
+
+  const openParams = [];
+  const openWhere = ["ctt.tenant_id = ?"];
+  openParams.push(tenantId);
+  if (filteredLegalEntityId) {
+    // Cash-transit attention is a target-side operating queue. OU-scoped users
+    // may legitimately work inside a legal entity they do not hold as a direct
+    // RBAC legal-entity scope, so do not pre-block on legal_entity here.
+    openWhere.push("ctt.legal_entity_id = ?");
+    openParams.push(filteredLegalEntityId);
+  }
+  appendCashTransitTargetScopeWhere({
+    req,
+    where: openWhere,
+    params: openParams,
+    buildScopeFilter,
+  });
+  const openWhereSql = openWhere.join(" AND ");
+
+  const queueSummary = await querySingleRow(
+    `SELECT
+        SUM(CASE WHEN ctt.status = 'IN_TRANSIT' THEN 1 ELSE 0 END) AS incoming_waiting_total,
+        SUM(CASE WHEN ctt.status = 'INITIATED' THEN 1 ELSE 0 END) AS initiated_not_dispatched_total,
+        MAX(
+          CASE
+            WHEN ctt.status = 'IN_TRANSIT'
+              THEN TIMESTAMPDIFF(
+                HOUR,
+                COALESCE(${effectiveInTransitAtSql}, ctt.updated_at, ctt.initiated_at),
+                CURRENT_TIMESTAMP
+              )
+            ELSE NULL
+          END
+        ) AS oldest_waiting_hours
+     FROM cash_transit_transfers ctt
+     WHERE ${openWhereSql}`,
+    openParams
+  );
+
+  const queueAging = await querySingleRow(
+    `SELECT
+        SUM(
+          CASE
+            WHEN ctt.status = 'IN_TRANSIT'
+             AND TIMESTAMPDIFF(
+               HOUR,
+               COALESCE(${effectiveInTransitAtSql}, ctt.updated_at, ctt.initiated_at),
+               CURRENT_TIMESTAMP
+             ) <= 24
+              THEN 1
+            ELSE 0
+          END
+        ) AS age_0_24h,
+        SUM(
+          CASE
+            WHEN ctt.status = 'IN_TRANSIT'
+             AND TIMESTAMPDIFF(
+               HOUR,
+               COALESCE(${effectiveInTransitAtSql}, ctt.updated_at, ctt.initiated_at),
+               CURRENT_TIMESTAMP
+             ) BETWEEN 25 AND 72
+              THEN 1
+            ELSE 0
+          END
+        ) AS age_25_72h,
+        SUM(
+          CASE
+            WHEN ctt.status = 'IN_TRANSIT'
+             AND TIMESTAMPDIFF(
+               HOUR,
+               COALESCE(${effectiveInTransitAtSql}, ctt.updated_at, ctt.initiated_at),
+               CURRENT_TIMESTAMP
+             ) > 72
+              THEN 1
+            ELSE 0
+          END
+        ) AS age_73_plus_h
+     FROM cash_transit_transfers ctt
+     WHERE ${openWhereSql}`,
+    openParams
+  );
+
+  const pendingRowsResult = await query(
+    `SELECT
+        ctt.id,
+        ctt.legal_entity_id,
+        ctt.amount,
+        ctt.currency_code,
+        ctt.status,
+        ctt.initiated_at,
+        ${effectiveInTransitAtSql} AS in_transit_at,
+        ctt.target_operating_unit_id,
+        sr.code AS source_cash_register_code,
+        sr.name AS source_cash_register_name,
+        tr.code AS target_cash_register_code,
+        tr.name AS target_cash_register_name,
+        sou.code AS source_operating_unit_code,
+        tou.code AS target_operating_unit_code
+     FROM cash_transit_transfers ctt
+     JOIN cash_registers sr
+       ON sr.id = ctt.source_cash_register_id
+      AND sr.tenant_id = ctt.tenant_id
+     JOIN cash_registers tr
+       ON tr.id = ctt.target_cash_register_id
+      AND tr.tenant_id = ctt.tenant_id
+     LEFT JOIN operating_units sou ON sou.id = ctt.source_operating_unit_id
+     LEFT JOIN operating_units tou ON tou.id = ctt.target_operating_unit_id
+     WHERE ${openWhereSql}
+       AND ctt.status = 'IN_TRANSIT'
+     ORDER BY COALESCE(${effectiveInTransitAtSql}, ctt.updated_at, ctt.initiated_at) ASC, ctt.id ASC
+     LIMIT 5`,
+    openParams
+  );
+
+  const receivedParams = [];
+  const receivedWhere = ["ctt.tenant_id = ?"];
+  receivedParams.push(tenantId);
+  if (filteredLegalEntityId) {
+    receivedWhere.push("ctt.legal_entity_id = ?");
+    receivedParams.push(filteredLegalEntityId);
+  }
+  appendCashTransitTargetScopeWhere({
+    req,
+    where: receivedWhere,
+    params: receivedParams,
+    buildScopeFilter,
+  });
+  receivedWhere.push(`${effectiveReceivedAtSql} >= ?`);
+  receivedParams.push(window.startTs);
+  receivedWhere.push(`${effectiveReceivedAtSql} < ?`);
+  receivedParams.push(window.endExclusiveTs);
+  receivedWhere.push("ctt.status = 'RECEIVED'");
+  const receivedWhereSql = receivedWhere.join(" AND ");
+
+  const receivedSummary = await querySingleRow(
+    `SELECT COUNT(*) AS received_in_window
+     FROM cash_transit_transfers ctt
+     WHERE ${receivedWhereSql}`,
+    receivedParams
+  );
+
+  return {
+    window,
+    filters: {
+      legalEntityId: filteredLegalEntityId,
+    },
+    queue: {
+      incoming_waiting_total: toInt(queueSummary.incoming_waiting_total, 0),
+      initiated_not_dispatched_total: toInt(queueSummary.initiated_not_dispatched_total, 0),
+      received_in_window: toInt(receivedSummary.received_in_window, 0),
+      oldest_waiting_hours: toInt(queueSummary.oldest_waiting_hours, 0),
+      aging_waiting: {
+        "0_24h": toInt(queueAging.age_0_24h, 0),
+        "25_72h": toInt(queueAging.age_25_72h, 0),
+        gt_72h: toInt(queueAging.age_73_plus_h, 0),
+      },
+    },
+    rows: pendingRowsResult.rows || [],
   };
 }
 

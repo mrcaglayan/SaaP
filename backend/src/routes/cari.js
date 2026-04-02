@@ -5,6 +5,7 @@ import {
   requirePermission,
 } from "../middleware/rbac.js";
 import counterpartyRoutes from "./cari.counterparty.routes.js";
+import counterpartyRequestRoutes from "./cari.counterparty-request.routes.js";
 import paymentTermRoutes from "./cari.payment-term.routes.js";
 import documentRoutes from "./cari.document.routes.js";
 import {
@@ -47,6 +48,7 @@ import {
 const router = express.Router();
 
 router.use("/counterparties", counterpartyRoutes);
+router.use("/counterparty-requests", counterpartyRequestRoutes);
 router.use("/payment-terms", paymentTermRoutes);
 router.use("/documents", documentRoutes);
 

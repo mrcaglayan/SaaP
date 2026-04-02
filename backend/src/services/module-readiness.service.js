@@ -989,6 +989,7 @@ async function resolveTargetLegalEntityIds({
     `SELECT id
      FROM legal_entities
      WHERE tenant_id = ?
+       AND status = 'ACTIVE'
      ORDER BY id`,
     [normalizedTenantId]
   );

@@ -249,8 +249,20 @@ const CASH_TRANSIT_BASE_SELECT = `
     ctt.canceled_by_user_id,
     ctt.reversed_by_user_id,
     ctt.initiated_at,
-    ctt.in_transit_at,
-    ctt.received_at,
+    CASE
+      WHEN ctt.in_transit_at IS NULL THEN NULL
+      -- Older rows mixed CURRENT_TIMESTAMP and UTC_TIMESTAMP writes. Clamp the
+      -- display/read model so lifecycle timestamps cannot move backwards.
+      ELSE GREATEST(ctt.in_transit_at, ctt.initiated_at)
+    END AS in_transit_at,
+    CASE
+      WHEN ctt.received_at IS NULL THEN NULL
+      ELSE GREATEST(
+        ctt.received_at,
+        COALESCE(ctt.in_transit_at, ctt.initiated_at),
+        ctt.initiated_at
+      )
+    END AS received_at,
     ctt.canceled_at,
     ctt.reversed_at,
     ctt.cancel_reason,
@@ -785,7 +797,7 @@ export async function findCashTransactionById({
 
 export async function findCashTransactionScopeById({ tenantId, transactionId, runQuery = query }) {
   const result = await runQuery(
-    `SELECT ct.id, cr.legal_entity_id
+    `SELECT ct.id, cr.legal_entity_id, cr.operating_unit_id
      FROM cash_transactions ct
      JOIN cash_registers cr ON cr.id = ct.cash_register_id
      WHERE ct.tenant_id = ?
@@ -992,6 +1004,12 @@ export async function insertCashTransitTransfer({ payload, runQuery = query }) {
   return Number(result.rows?.insertId || 0);
 }
 
+/**
+ * Mark a transit transfer as dispatched from the source register.
+ *
+ * Use CURRENT_TIMESTAMP so the stored lifecycle remains in the same session
+ * time basis as initiated_at, which currently comes from the table default.
+ */
 export async function markCashTransitTransferInTransit({
   tenantId,
   transitTransferId,
@@ -1001,7 +1019,7 @@ export async function markCashTransitTransferInTransit({
     `UPDATE cash_transit_transfers
      SET
        status = 'IN_TRANSIT',
-       in_transit_at = COALESCE(in_transit_at, UTC_TIMESTAMP())
+       in_transit_at = COALESCE(in_transit_at, CURRENT_TIMESTAMP())
      WHERE tenant_id = ?
        AND id = ?
        AND status = 'INITIATED'`,
@@ -1010,6 +1028,12 @@ export async function markCashTransitTransferInTransit({
   return Number(result.rows?.affectedRows || 0);
 }
 
+/**
+ * Mark a transit transfer as received into the target register.
+ *
+ * CURRENT_TIMESTAMP keeps receive timestamps aligned with initiated_at and
+ * in_transit_at without requiring a data backfill for existing rows.
+ */
 export async function markCashTransitTransferReceived({
   tenantId,
   transitTransferId,
@@ -1023,7 +1047,7 @@ export async function markCashTransitTransferReceived({
        transfer_in_cash_transaction_id = ?,
        status = 'RECEIVED',
        received_by_user_id = ?,
-       received_at = COALESCE(received_at, UTC_TIMESTAMP())
+       received_at = COALESCE(received_at, CURRENT_TIMESTAMP())
      WHERE tenant_id = ?
        AND id = ?
        AND status = 'IN_TRANSIT'
@@ -1033,6 +1057,9 @@ export async function markCashTransitTransferReceived({
   return Number(result.rows?.affectedRows || 0);
 }
 
+/**
+ * Mark a transit transfer as canceled before dispatch.
+ */
 export async function markCashTransitTransferCanceled({
   tenantId,
   transitTransferId,
@@ -1045,7 +1072,7 @@ export async function markCashTransitTransferCanceled({
      SET
        status = 'CANCELED',
        canceled_by_user_id = ?,
-       canceled_at = UTC_TIMESTAMP(),
+       canceled_at = CURRENT_TIMESTAMP(),
        cancel_reason = ?
      WHERE tenant_id = ?
        AND id = ?
@@ -1055,6 +1082,9 @@ export async function markCashTransitTransferCanceled({
   return Number(result.rows?.affectedRows || 0);
 }
 
+/**
+ * Mark a transit transfer as reversed after dispatch or receipt reversal.
+ */
 export async function markCashTransitTransferReversed({
   tenantId,
   transitTransferId,
@@ -1067,7 +1097,7 @@ export async function markCashTransitTransferReversed({
      SET
        status = 'REVERSED',
        reversed_by_user_id = ?,
-       reversed_at = UTC_TIMESTAMP(),
+       reversed_at = CURRENT_TIMESTAMP(),
        reverse_reason = ?
      WHERE tenant_id = ?
        AND id = ?

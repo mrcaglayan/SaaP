@@ -71,8 +71,8 @@ export function parseGroupCompanyUpsertInput(req) {
 }
 
 /**
- * Parse and validate legal-entity upsert input, including optional default
- * provisioning controls used by Organization Management.
+ * Parse and validate legal-entity upsert input, including optional lifecycle
+ * status and default provisioning controls used by Organization Management.
  */
 export function parseLegalEntityUpsertInput(req) {
   const tenantId = resolveTenantId(req);
@@ -104,6 +104,7 @@ export function parseLegalEntityUpsertInput(req) {
     functionalCurrencyCode: req.body.functionalCurrencyCode,
     isIntercompanyEnabled: req.body.isIntercompanyEnabled,
     intercompanyPartnerRequired: req.body.intercompanyPartnerRequired,
+    status: normalizeOptionalUpperEnum(req.body.status, ["ACTIVE", "INACTIVE"], "status"),
     autoProvisionDefaults: req.body.autoProvisionDefaults,
     policyPackId: req.body.policyPackId,
     overwriteExistingCoaAccounts: req.body.overwriteExistingCoaAccounts,

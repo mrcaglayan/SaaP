@@ -1335,10 +1335,17 @@ export async function getCounterpartyByIdForTenant({
   return row;
 }
 
-export async function createCounterparty({
+/**
+ * Create one counterparty inside an existing transaction or query context.
+ *
+ * The request-approval workflow uses this helper so it can create the live
+ * counterparty card and update the request status inside one transaction.
+ */
+export async function createCounterpartyTx({
   req,
   payload,
   assertScopeAccess,
+  runQuery = query,
 }) {
   const tenantId = payload.tenantId;
   const legalEntityId = payload.legalEntityId;
@@ -1364,6 +1371,7 @@ export async function createCounterparty({
     tenantId,
     legalEntityId,
     defaultPaymentTermId: payload.defaultPaymentTermId,
+    runQuery,
   });
   await assertCounterpartyMappedAccount({
     tenantId,
@@ -1371,6 +1379,7 @@ export async function createCounterparty({
     accountId: payload.arAccountId,
     fieldLabel: "arAccountId",
     expectedAccountType: "ASSET",
+    runQuery,
   });
   await assertCounterpartyMappedAccount({
     tenantId,
@@ -1378,122 +1387,138 @@ export async function createCounterparty({
     accountId: payload.apAccountId,
     fieldLabel: "apAccountId",
     expectedAccountType: "LIABILITY",
+    runQuery,
   });
   const counterpartyOperatingUnits = await assertCounterpartyOperatingUnitScope({
     tenantId,
     legalEntityId,
     primaryOperatingUnitId: payload.primaryOperatingUnitId,
     operatingUnitIds: payload.operatingUnitIds,
+    runQuery,
   });
 
   await assertCountryIdsExist((payload.addresses || []).map((row) => row.countryId));
 
-  try {
-    const created = await withTransaction(async (tx) => {
-      const insertResult = await tx.query(
-        `INSERT INTO counterparties (
-            tenant_id,
-            legal_entity_id,
-            primary_operating_unit_id,
-            code,
-            name,
-            is_customer,
-            is_vendor,
-            tax_id,
-            email,
-            phone,
-            default_currency_code,
-            default_payment_term_id,
-            ar_account_id,
-            ap_account_id,
-            status,
-            notes
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
-        [
-          tenantId,
-          legalEntityId,
-          counterpartyOperatingUnits.primaryOperatingUnitId,
-          payload.code,
-          payload.name,
-          isCustomer ? 1 : 0,
-          isVendor ? 1 : 0,
-          payload.taxId,
-          payload.email,
-          payload.phone,
-          payload.defaultCurrencyCode,
-          payload.defaultPaymentTermId,
-          payload.arAccountId,
-          payload.apAccountId,
-          payload.status,
-          payload.notes,
-        ]
-      );
-      const counterpartyId = parsePositiveInt(insertResult.rows?.insertId);
-      if (!counterpartyId) {
-        throw new Error("Counterparty create failed");
-      }
+  const insertResult = await runQuery(
+    `INSERT INTO counterparties (
+        tenant_id,
+        legal_entity_id,
+        primary_operating_unit_id,
+        code,
+        name,
+        is_customer,
+        is_vendor,
+        tax_id,
+        email,
+        phone,
+        default_currency_code,
+        default_payment_term_id,
+        ar_account_id,
+        ap_account_id,
+        status,
+        notes
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    [
+      tenantId,
+      legalEntityId,
+      counterpartyOperatingUnits.primaryOperatingUnitId,
+      payload.code,
+      payload.name,
+      isCustomer ? 1 : 0,
+      isVendor ? 1 : 0,
+      payload.taxId,
+      payload.email,
+      payload.phone,
+      payload.defaultCurrencyCode,
+      payload.defaultPaymentTermId,
+      payload.arAccountId,
+      payload.apAccountId,
+      payload.status,
+      payload.notes,
+    ]
+  );
+  const counterpartyId = parsePositiveInt(insertResult.rows?.insertId);
+  if (!counterpartyId) {
+    throw new Error("Counterparty create failed");
+  }
 
-      await replaceCounterpartyOperatingUnitLinks({
-        tenantId,
-        legalEntityId,
-        counterpartyId,
-        operatingUnitIds: counterpartyOperatingUnits.operatingUnitIds,
-        runQuery: tx.query,
-      });
+  await replaceCounterpartyOperatingUnitLinks({
+    tenantId,
+    legalEntityId,
+    counterpartyId,
+    operatingUnitIds: counterpartyOperatingUnits.operatingUnitIds,
+    runQuery,
+  });
 
-      if (Array.isArray(payload.contacts) && payload.contacts.length > 0) {
-        await insertContactRows({
-          tenantId,
-          legalEntityId,
-          counterpartyId,
-          contacts: payload.contacts,
-          runQuery: tx.query,
-        });
-      }
-
-      if (Array.isArray(payload.addresses) && payload.addresses.length > 0) {
-        await insertAddressRows({
-          tenantId,
-          legalEntityId,
-          counterpartyId,
-          addresses: payload.addresses,
-          runQuery: tx.query,
-        });
-      }
-
-      const row = await fetchCounterpartyDetail({
-        tenantId,
-        counterpartyId,
-        runQuery: tx.query,
-      });
-      if (!row) {
-        throw new Error("Counterparty create readback failed");
-      }
-
-      await insertAuditLog({
-        req,
-        runQuery: tx.query,
-        tenantId,
-        userId: payload.userId,
-        action: "cari.counterparty.create",
-        legalEntityId,
-        counterpartyId,
-        payload: {
-          code: row.code,
-          status: row.status,
-          counterpartyType: row.counterpartyType,
-          isCustomer: row.isCustomer,
-          isVendor: row.isVendor,
-          arAccountId: row.arAccountId,
-          apAccountId: row.apAccountId,
-        },
-      });
-
-      return row;
+  if (Array.isArray(payload.contacts) && payload.contacts.length > 0) {
+    await insertContactRows({
+      tenantId,
+      legalEntityId,
+      counterpartyId,
+      contacts: payload.contacts,
+      runQuery,
     });
+  }
 
-    return created;
+  if (Array.isArray(payload.addresses) && payload.addresses.length > 0) {
+    await insertAddressRows({
+      tenantId,
+      legalEntityId,
+      counterpartyId,
+      addresses: payload.addresses,
+      runQuery,
+    });
+  }
+
+  const row = await fetchCounterpartyDetail({
+    tenantId,
+    counterpartyId,
+    runQuery,
+  });
+  if (!row) {
+    throw new Error("Counterparty create readback failed");
+  }
+
+  await insertAuditLog({
+    req,
+    runQuery,
+    tenantId,
+    userId: payload.userId,
+    action: "cari.counterparty.create",
+    legalEntityId,
+    counterpartyId,
+    payload: {
+      code: row.code,
+      status: row.status,
+      counterpartyType: row.counterpartyType,
+      isCustomer: row.isCustomer,
+      isVendor: row.isVendor,
+      arAccountId: row.arAccountId,
+      apAccountId: row.apAccountId,
+    },
+  });
+
+  return row;
+}
+
+/**
+ * Create one counterparty and commit the change inside its own transaction.
+ */
+export async function createCounterparty({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  try {
+    return await withTransaction(async (tx) =>
+      createCounterpartyTx({
+        req,
+        payload,
+        assertScopeAccess,
+        runQuery: tx.query,
+      })
+    );
   } catch (err) {
     if (isDuplicateConstraintError(err)) {
       throw badRequest(

@@ -5,6 +5,7 @@ import { resolveBankAccountScope } from "../services/bank.accounts.service.js";
 import {
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
+  getOpsCashTransitAttention,
   getOpsFixedAssetActivationAttention,
   getOpsFixedAssetDepreciationAttention,
   getOpsFixedAssetLateCatchUpAttention,
@@ -117,6 +118,22 @@ router.get(
   asyncHandler(async (req, res) => {
     const filters = parseOpsCommonFilters(req);
     const result = await getOpsBankPaymentBatchesHealth({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({ tenantId: filters.tenantId, ...result });
+  })
+);
+
+router.get(
+  "/cash/transit-attention",
+  requirePermission("cash.txn.read"),
+  asyncHandler(async (req, res) => {
+    const filters = parseOpsCommonFilters(req);
+    const result = await getOpsCashTransitAttention({
       req,
       tenantId: filters.tenantId,
       filters,

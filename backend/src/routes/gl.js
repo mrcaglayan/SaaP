@@ -4,6 +4,7 @@ import { query, withTransaction } from "../db.js";
 import {
   assertScopeAccess,
   buildScopeFilter,
+  hasScopeAccess,
   requirePermission,
 } from "../middleware/rbac.js";
 import {
@@ -2101,8 +2102,25 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
   if (accountLegalEntityId && accountLegalEntityId !== legalEntityId) {
     throw badRequest(`${lineLabel}.accountId does not belong to legalEntityId`);
   }
-  if (accountLegalEntityId) {
-    assertScopeAccess(req, "legal_entity", accountLegalEntityId, `${lineLabel}.accountId`);
+  const operatingUnitId = parseOptionalPositiveInt(
+    line?.operatingUnitId,
+    `${lineLabel}.operatingUnitId`
+  );
+  const allowAccountViaOperatingUnitScope =
+    options?.allowAccountLegalEntityViaOperatingUnitScope === true;
+  const hasDirectAccountLegalEntityScope = accountLegalEntityId
+    ? hasScopeAccess(req, "legal_entity", accountLegalEntityId)
+    : true;
+  const subledgerReferenceNo = normalizeOptionalShortText(
+    line?.subledgerReferenceNo,
+    `${lineLabel}.subledgerReferenceNo`,
+    100
+  );
+  let selectedUnitHasSubledger = false;
+  if (accountLegalEntityId && !hasDirectAccountLegalEntityScope) {
+    if (!allowAccountViaOperatingUnitScope || !operatingUnitId) {
+      assertScopeAccess(req, "legal_entity", accountLegalEntityId, `${lineLabel}.accountId`);
+    }
   }
   const centralEquityPolicy = await resolveCentralEquityJournalValidationContext(
     req,
@@ -2110,17 +2128,6 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
     legalEntityId,
     options?.centralEquityPolicy || null
   );
-
-  const operatingUnitId = parseOptionalPositiveInt(
-    line?.operatingUnitId,
-    `${lineLabel}.operatingUnitId`
-  );
-  const subledgerReferenceNo = normalizeOptionalShortText(
-    line?.subledgerReferenceNo,
-    `${lineLabel}.subledgerReferenceNo`,
-    100
-  );
-  let selectedUnitHasSubledger = false;
   if (operatingUnitId && isCentralEquityPostingAccount(centralEquityPolicy, accountId)) {
     throw badRequest(
       `${lineLabel}.operatingUnitId is not allowed for central equity lines. Post 500/501 and shareholder capital/commitment lines at legal-entity scope.`
@@ -2144,6 +2151,17 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
     }
     selectedUnitHasSubledger = Boolean(unit.has_subledger);
     assertScopeAccess(req, "operating_unit", operatingUnitId, `${lineLabel}.operatingUnitId`);
+  }
+  if (
+    accountLegalEntityId &&
+    !hasDirectAccountLegalEntityScope &&
+    allowAccountViaOperatingUnitScope
+  ) {
+    if (!operatingUnitId) {
+      throw badRequest(
+        `${lineLabel}.operatingUnitId is required when posting entity-scoped accounts via operating-unit scope`
+      );
+    }
   }
   if (subledgerReferenceNo && !operatingUnitId) {
     throw badRequest(`${lineLabel}.subledgerReferenceNo requires operatingUnitId`);

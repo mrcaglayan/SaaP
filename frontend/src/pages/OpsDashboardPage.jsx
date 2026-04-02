@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   downloadOpsAuditExportCsv,
   downloadOpsUsageExportCsv,
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
+  getOpsCashTransitAttention,
   getOpsJobsHealth,
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
@@ -22,6 +24,12 @@ import { useI18n } from "../i18n/useI18n.js";
 
 function pretty(value) {
   return JSON.stringify(value ?? {}, null, 2);
+}
+
+function formatTransitRouteLabel(row) {
+  const sourceCode = String(row?.source_cash_register_code || "").trim() || `#${row?.id || "-"}`;
+  const targetCode = String(row?.target_cash_register_code || "").trim() || "-";
+  return `${sourceCode} -> ${targetCode}`;
 }
 
 const OPS_DASHBOARD_CONTEXT_MAPPINGS = [
@@ -59,6 +67,7 @@ export default function OpsDashboardPage() {
   const [data, setData] = useState({
     bankReconciliation: null,
     bankPayments: null,
+    cashTransit: null,
     payrollImports: null,
     payrollClose: null,
     jobs: null,
@@ -152,10 +161,11 @@ export default function OpsDashboardPage() {
     setError("");
     setMessage("");
     try {
-      const [bankReconciliation, bankPayments, payrollImports, payrollClose, jobs] =
+      const [bankReconciliation, bankPayments, cashTransit, payrollImports, payrollClose, jobs] =
         await Promise.all([
           getOpsBankReconciliationSummary(queryParams),
           getOpsBankPaymentBatchesHealth(queryParams),
+          getOpsCashTransitAttention(queryParams),
           getOpsPayrollImportHealth(queryParams),
           getOpsPayrollCloseStatus(queryParams),
           getOpsJobsHealth(jobQueryParams),
@@ -164,6 +174,7 @@ export default function OpsDashboardPage() {
       setData({
         bankReconciliation,
         bankPayments,
+        cashTransit,
         payrollImports,
         payrollClose,
         jobs,
@@ -362,6 +373,8 @@ export default function OpsDashboardPage() {
   const jobsTotal = Number(jobsListData.total || 0);
   const jobsHasPrev = jobsOffset > 0;
   const jobsHasNext = jobsOffset + jobsLimit < jobsTotal;
+  const cashTransitQueue = data.cashTransit?.queue || {};
+  const cashTransitRows = Array.isArray(data.cashTransit?.rows) ? data.cashTransit.rows : [];
 
   function downloadBlob({ blob, fileName }) {
     if (typeof window === "undefined" || !blob) {
@@ -556,6 +569,136 @@ export default function OpsDashboardPage() {
       <section className="rounded border bg-white p-4">
         <h2 className="mb-2 font-medium">{t("opsDashboard.sections.bankPayments", "Bank Payment Batches Health")}</h2>
         <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{pretty(data.bankPayments)}</pre>
+      </section>
+
+      <section className="rounded border bg-white p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-medium">
+            {t("opsDashboard.sections.cashTransit", "Cash Transit Queue")}
+          </h2>
+          <Link
+            to="/app/kasa-transit-transferleri"
+            className="rounded border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            {t("opsDashboard.actions.openCashTransitQueue", "Open cash transit queue")}
+          </Link>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded border bg-slate-50 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              {t("opsDashboard.cashTransit.awaitingReceipt", "Awaiting receipt")}
+            </div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">
+              {Number(cashTransitQueue.incoming_waiting_total || 0)}
+            </div>
+          </div>
+          <div className="rounded border bg-slate-50 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              {t("opsDashboard.cashTransit.pendingDispatch", "Pending dispatch")}
+            </div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">
+              {Number(cashTransitQueue.initiated_not_dispatched_total || 0)}
+            </div>
+          </div>
+          <div className="rounded border bg-slate-50 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              {t("opsDashboard.cashTransit.receivedInWindow", "Received in window")}
+            </div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">
+              {Number(cashTransitQueue.received_in_window || 0)}
+            </div>
+          </div>
+          <div className="rounded border bg-slate-50 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              {t("opsDashboard.cashTransit.oldestWaitingHours", "Oldest waiting (hrs)")}
+            </div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">
+              {Number(cashTransitQueue.oldest_waiting_hours || 0)}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <div className="mb-2 text-sm font-medium text-slate-700">
+            {t("opsDashboard.cashTransit.waitingAging", "Waiting aging")}
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded border border-emerald-100 bg-emerald-50 p-3 text-sm">
+              <div className="text-slate-600">0-24h</div>
+              <div className="mt-1 text-lg font-semibold text-emerald-700">
+                {Number(cashTransitQueue.aging_waiting?.["0_24h"] || 0)}
+              </div>
+            </div>
+            <div className="rounded border border-amber-100 bg-amber-50 p-3 text-sm">
+              <div className="text-slate-600">25-72h</div>
+              <div className="mt-1 text-lg font-semibold text-amber-700">
+                {Number(cashTransitQueue.aging_waiting?.["25_72h"] || 0)}
+              </div>
+            </div>
+            <div className="rounded border border-rose-100 bg-rose-50 p-3 text-sm">
+              <div className="text-slate-600">&gt;72h</div>
+              <div className="mt-1 text-lg font-semibold text-rose-700">
+                {Number(cashTransitQueue.aging_waiting?.gt_72h || 0)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <div className="mb-2 text-sm font-medium text-slate-700">
+            {t("opsDashboard.cashTransit.oldestWaitingTransfers", "Oldest waiting transfers")}
+          </div>
+          {cashTransitRows.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {t("opsDashboard.cashTransit.noIncomingWaiting", "No incoming transit transfers are waiting.")}
+            </p>
+          ) : (
+            <div className="overflow-auto rounded border">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-left">
+                  <tr>
+                    <th className="px-3 py-2">#</th>
+                    <th className="px-3 py-2">
+                      {t("opsDashboard.cashTransit.route", "Route")}
+                    </th>
+                    <th className="px-3 py-2">
+                      {t("opsDashboard.cashTransit.amount", "Amount")}
+                    </th>
+                    <th className="px-3 py-2">
+                      {t("opsDashboard.cashTransit.waitingSince", "Waiting since")}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cashTransitRows.map((row) => (
+                    <tr key={`cash-transit-queue-${row?.id}`} className="border-t">
+                      <td className="px-3 py-2 font-medium">#{row?.id || "-"}</td>
+                      <td className="px-3 py-2">
+                        <div>{formatTransitRouteLabel(row)}</div>
+                        <div className="text-xs text-slate-500">
+                          {(row?.source_operating_unit_code || "HQ") +
+                            " -> " +
+                            (row?.target_operating_unit_code || "HQ")}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        {Number(row?.amount || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{" "}
+                        {row?.currency_code || ""}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatDateTime(row?.in_transit_at || row?.initiated_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="rounded border bg-white p-4">

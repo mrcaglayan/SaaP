@@ -13,7 +13,6 @@ import {
   listCashTransactionRows,
   postCashTransactionById,
   receiveCashTransitTransferById,
-  resolveCashTransitTransferScope,
   resolveCashTransactionScope,
   reverseCashTransactionById,
   cancelCashTransactionById,
@@ -185,11 +184,7 @@ router.get(
 
 router.get(
   "/transit/:transitTransferId",
-  requirePermission("cash.txn.read", {
-    resolveScope: async (req, tenantId) => {
-      return resolveCashTransitTransferScope(req.params?.transitTransferId, tenantId);
-    },
-  }),
+  requirePermission("cash.txn.read"),
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
     const transitTransferId = parseCashTransitTransferIdParam(req);
@@ -225,11 +220,7 @@ router.post(
 
 router.post(
   "/transit/:transitTransferId/receive",
-  requirePermission("cash.txn.create", {
-    resolveScope: async (req, tenantId) => {
-      return resolveCashTransitTransferScope(req.params?.transitTransferId, tenantId);
-    },
-  }),
+  requirePermission("cash.txn.create"),
   asyncHandler(async (req, res) => {
     const payload = parseCashTransitTransferReceiveInput(req);
     const result = await receiveCashTransitTransferById({
@@ -245,11 +236,7 @@ router.post(
 
 router.post(
   "/transit/:transitTransferId/cancel",
-  requirePermission("cash.txn.cancel", {
-    resolveScope: async (req, tenantId) => {
-      return resolveCashTransitTransferScope(req.params?.transitTransferId, tenantId);
-    },
-  }),
+  requirePermission("cash.txn.cancel"),
   asyncHandler(async (req, res) => {
     const payload = parseCashTransitTransferCancelInput(req);
     const result = await cancelCashTransitTransferById({

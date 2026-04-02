@@ -35,7 +35,12 @@ import {
   markCashTransactionAsReversed,
   postCashTransaction,
 } from "./cash.queries.js";
-import { assertRegisterOperationalConfig } from "./cash.register.service.js";
+import {
+  assertCashOwnershipScopeAccess,
+  assertRegisterOperationalConfig,
+  buildCashOwnershipScopeFilter,
+  resolveCashOwnershipScope,
+} from "./cash.register.service.js";
 import { createAndPostCashJournalTx } from "./cash.service.js";
 import { applyCashFxPositionForPostedTransactionTx } from "./cash.fx.position.service.js";
 import {
@@ -733,6 +738,67 @@ function assertTransitScopeAccess(req, transferRow, assertScopeAccess, fieldLabe
   }
 }
 
+function canScopeAccess(req, assertScopeAccess, scopeKind, scopeId, fieldLabel) {
+  const normalizedScopeId = parsePositiveInt(scopeId);
+  if (!normalizedScopeId) {
+    return false;
+  }
+  try {
+    assertScopeAccess(req, scopeKind, normalizedScopeId, fieldLabel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function assertTransitParticipantScopeAccess(req, transferRow, assertScopeAccess, fieldLabel) {
+  const legalEntityId = parsePositiveInt(transferRow.legal_entity_id);
+  const sourceOuId = parsePositiveInt(transferRow.source_operating_unit_id);
+  const targetOuId = parsePositiveInt(transferRow.target_operating_unit_id);
+
+  // Transfer worklists should be visible to the receiving or sending branch,
+  // not only to users that hold access to both sides of the move.
+  if (canScopeAccess(req, assertScopeAccess, "legal_entity", legalEntityId, fieldLabel)) {
+    return;
+  }
+  if (canScopeAccess(req, assertScopeAccess, "operating_unit", sourceOuId, fieldLabel)) {
+    return;
+  }
+  if (canScopeAccess(req, assertScopeAccess, "operating_unit", targetOuId, fieldLabel)) {
+    return;
+  }
+
+  assertScopeAccess(req, "legal_entity", legalEntityId, fieldLabel);
+}
+
+function assertTransitReceiveScopeAccess(req, transferRow, assertScopeAccess, fieldLabel) {
+  const legalEntityId = parsePositiveInt(transferRow.legal_entity_id);
+  const targetOuId = parsePositiveInt(transferRow.target_operating_unit_id);
+
+  if (canScopeAccess(req, assertScopeAccess, "legal_entity", legalEntityId, fieldLabel)) {
+    return;
+  }
+  if (canScopeAccess(req, assertScopeAccess, "operating_unit", targetOuId, fieldLabel)) {
+    return;
+  }
+
+  assertScopeAccess(req, "legal_entity", legalEntityId, fieldLabel);
+}
+
+function assertTransitSourceScopeAccess(req, transferRow, assertScopeAccess, fieldLabel) {
+  const legalEntityId = parsePositiveInt(transferRow.legal_entity_id);
+  const sourceOuId = parsePositiveInt(transferRow.source_operating_unit_id);
+
+  if (canScopeAccess(req, assertScopeAccess, "legal_entity", legalEntityId, fieldLabel)) {
+    return;
+  }
+  if (canScopeAccess(req, assertScopeAccess, "operating_unit", sourceOuId, fieldLabel)) {
+    return;
+  }
+
+  assertScopeAccess(req, "legal_entity", legalEntityId, fieldLabel);
+}
+
 function mapCariUnappliedCashRow(row) {
   if (!row) {
     return null;
@@ -1005,10 +1071,7 @@ export async function resolveCashTransactionScope(transactionId, tenantId) {
     return null;
   }
 
-  return {
-    scopeType: "LEGAL_ENTITY",
-    scopeId: Number(row.legal_entity_id),
-  };
+  return resolveCashOwnershipScope(row);
 }
 
 export async function resolveCashTransitTransferScope(transitTransferId, tenantId) {
@@ -1046,7 +1109,7 @@ export async function getCashTransitTransferByIdForTenant({
     throw badRequest("Cash transit transfer not found");
   }
 
-  assertTransitScopeAccess(req, row, assertScopeAccess, "transitTransferId");
+  assertTransitParticipantScopeAccess(req, row, assertScopeAccess, "transitTransferId");
 
   const transferOutTransactionId = parsePositiveInt(row.transfer_out_cash_transaction_id);
   const transferInTransactionId = parsePositiveInt(row.transfer_in_cash_transaction_id);
@@ -1079,7 +1142,27 @@ export async function listCashTransitTransferRows({
 }) {
   const params = [tenantId];
   const conditions = ["ctt.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "ctt.legal_entity_id", params));
+  const transitScopeParams = [];
+  const entityScopeFilter = buildScopeFilter(
+    req,
+    "legal_entity",
+    "ctt.legal_entity_id",
+    transitScopeParams
+  );
+  const sourceOuScopeFilter = buildScopeFilter(
+    req,
+    "operating_unit",
+    "ctt.source_operating_unit_id",
+    transitScopeParams
+  );
+  const targetOuScopeFilter = buildScopeFilter(
+    req,
+    "operating_unit",
+    "ctt.target_operating_unit_id",
+    transitScopeParams
+  );
+  params.push(...transitScopeParams);
+  conditions.push(`(${entityScopeFilter} OR ${sourceOuScopeFilter} OR ${targetOuScopeFilter})`);
 
   if (filters.legalEntityId) {
     assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
@@ -1095,10 +1178,7 @@ export async function listCashTransitTransferRows({
     if (!sourceRegister) {
       throw badRequest("sourceRegisterId not found for tenant");
     }
-    assertScopeAccess(req, "legal_entity", sourceRegister.legal_entity_id, "sourceRegisterId");
-    if (sourceRegister.operating_unit_id) {
-      assertScopeAccess(req, "operating_unit", sourceRegister.operating_unit_id, "sourceRegisterId");
-    }
+    assertCashOwnershipScopeAccess(req, sourceRegister, assertScopeAccess, "sourceRegisterId");
     conditions.push("ctt.source_cash_register_id = ?");
     params.push(filters.sourceRegisterId);
   }
@@ -1111,10 +1191,7 @@ export async function listCashTransitTransferRows({
     if (!targetRegister) {
       throw badRequest("targetRegisterId not found for tenant");
     }
-    assertScopeAccess(req, "legal_entity", targetRegister.legal_entity_id, "targetRegisterId");
-    if (targetRegister.operating_unit_id) {
-      assertScopeAccess(req, "operating_unit", targetRegister.operating_unit_id, "targetRegisterId");
-    }
+    assertCashOwnershipScopeAccess(req, targetRegister, assertScopeAccess, "targetRegisterId");
     conditions.push("ctt.target_cash_register_id = ?");
     params.push(filters.targetRegisterId);
   }
@@ -1163,7 +1240,14 @@ export async function listCashTransactionRows({
 }) {
   const params = [tenantId];
   const conditions = ["ct.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "cr.legal_entity_id", params));
+  conditions.push(
+    buildCashOwnershipScopeFilter(req, {
+      buildScopeFilter,
+      legalEntityColumn: "cr.legal_entity_id",
+      operatingUnitColumn: "cr.operating_unit_id",
+      params,
+    })
+  );
 
   if (filters.legalEntityId) {
     assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
@@ -1179,10 +1263,7 @@ export async function listCashTransactionRows({
     if (!register) {
       throw badRequest("registerId not found for tenant");
     }
-    assertScopeAccess(req, "legal_entity", register.legal_entity_id, "registerId");
-    if (register.operating_unit_id) {
-      assertScopeAccess(req, "operating_unit", register.operating_unit_id, "registerId");
-    }
+    assertCashOwnershipScopeAccess(req, register, assertScopeAccess, "registerId");
 
     conditions.push("ct.cash_register_id = ?");
     params.push(filters.registerId);
@@ -1245,10 +1326,7 @@ export async function getCashTransactionByIdForTenant({
     throw badRequest("Cash transaction not found");
   }
 
-  assertScopeAccess(req, "legal_entity", row.legal_entity_id, "transactionId");
-  if (row.operating_unit_id) {
-    assertScopeAccess(req, "operating_unit", row.operating_unit_id, "transactionId");
-  }
+  assertCashOwnershipScopeAccess(req, row, assertScopeAccess, "transactionId");
 
   return row;
 }
@@ -1486,18 +1564,8 @@ export async function initiateCashTransitTransfer({
         runQuery: tx.query,
       });
 
-      assertScopeAccess(req, "legal_entity", sourceRegister.legal_entity_id, "registerId");
-      if (sourceRegister.operating_unit_id) {
-        assertScopeAccess(req, "operating_unit", sourceRegister.operating_unit_id, "registerId");
-      }
-      assertScopeAccess(req, "legal_entity", targetRegister.legal_entity_id, "targetRegisterId");
-      if (
-        targetRegister.operating_unit_id &&
-        parsePositiveInt(targetRegister.operating_unit_id) !==
-          parsePositiveInt(sourceRegister.operating_unit_id)
-      ) {
-        assertScopeAccess(req, "operating_unit", targetRegister.operating_unit_id, "targetRegisterId");
-      }
+      assertCashOwnershipScopeAccess(req, sourceRegister, assertScopeAccess, "registerId");
+      assertCashOwnershipScopeAccess(req, targetRegister, assertScopeAccess, "targetRegisterId");
 
       if (parsePositiveInt(sourceRegister.id) === parsePositiveInt(targetRegister.id)) {
         throw badRequest("registerId and targetRegisterId must be different");
@@ -1681,7 +1749,7 @@ export async function receiveCashTransitTransferById({
         throw badRequest("Cash transit transfer not found");
       }
 
-      assertTransitScopeAccess(req, transitTransfer, assertScopeAccess, "transitTransferId");
+      assertTransitReceiveScopeAccess(req, transitTransfer, assertScopeAccess, "transitTransferId");
 
       const currentStatus = asUpper(transitTransfer.status);
       const existingTransferInTxnId = parsePositiveInt(transitTransfer.transfer_in_cash_transaction_id);
@@ -1857,7 +1925,7 @@ export async function cancelCashTransitTransferById({
       throw badRequest("Cash transit transfer not found");
     }
 
-    assertTransitScopeAccess(req, transitTransfer, assertScopeAccess, "transitTransferId");
+    assertTransitSourceScopeAccess(req, transitTransfer, assertScopeAccess, "transitTransferId");
 
     const currentStatus = asUpper(transitTransfer.status);
     if (currentStatus === TRANSIT_STATUS_CANCELED) {
@@ -1961,10 +2029,7 @@ export async function createCashTransactionTx(
     requireCashControlledAccount: true,
   });
 
-  assertScopeAccess(req, "legal_entity", register.legal_entity_id, "registerId");
-  if (register.operating_unit_id) {
-    assertScopeAccess(req, "operating_unit", register.operating_unit_id, "registerId");
-  }
+  assertCashOwnershipScopeAccess(req, register, assertScopeAccess, "registerId");
 
   if (Number(register.max_txn_amount || 0) > 0) {
     if (Number(payload.amount) > Number(register.max_txn_amount)) {
@@ -2432,10 +2497,7 @@ async function createOrReplayCariUnappliedForCashTransaction({
       if (!lockedCashTxn) {
         throw badRequest("Cash transaction not found");
       }
-      assertScopeAccess(req, "legal_entity", lockedCashTxn.legal_entity_id, "transactionId");
-      if (lockedCashTxn.operating_unit_id) {
-        assertScopeAccess(req, "operating_unit", lockedCashTxn.operating_unit_id, "transactionId");
-      }
+      assertCashOwnershipScopeAccess(req, lockedCashTxn, assertScopeAccess, "transactionId");
 
       const replayByCashTxn = await fetchCariUnappliedCashByCashTxnId({
         tenantId,
@@ -2662,10 +2724,7 @@ export async function applyCariFromCashTransactionById({
     throw badRequest("Cash transaction not found");
   }
 
-  assertScopeAccess(req, "legal_entity", cashTxn.legal_entity_id, "transactionId");
-  if (cashTxn.operating_unit_id) {
-    assertScopeAccess(req, "operating_unit", cashTxn.operating_unit_id, "transactionId");
-  }
+  assertCashOwnershipScopeAccess(req, cashTxn, assertScopeAccess, "transactionId");
 
   if (asUpper(cashTxn.status) !== "POSTED") {
     throw badRequest("Cash transaction must be POSTED before applying Cari settlement");
@@ -2791,10 +2850,7 @@ export async function cancelCashTransactionById({
       throw badRequest("Cash transaction not found");
     }
 
-    assertScopeAccess(req, "legal_entity", row.legal_entity_id, "transactionId");
-    if (row.operating_unit_id) {
-      assertScopeAccess(req, "operating_unit", row.operating_unit_id, "transactionId");
-    }
+    assertCashOwnershipScopeAccess(req, row, assertScopeAccess, "transactionId");
 
     assertStatusAllowed(
       row.status,
@@ -2873,10 +2929,7 @@ export async function postCashTransactionById({
       throw badRequest("Cash transaction not found");
     }
 
-    assertScopeAccess(req, "legal_entity", row.legal_entity_id, "transactionId");
-    if (row.operating_unit_id) {
-      assertScopeAccess(req, "operating_unit", row.operating_unit_id, "transactionId");
-    }
+    assertCashOwnershipScopeAccess(req, row, assertScopeAccess, "transactionId");
 
     if (asUpper(row.status) === "POSTED") {
       await applyCashFxPositionForPostedTransactionTx({
@@ -3043,10 +3096,7 @@ export async function reverseCashTransactionTx(
   }
 
   if (typeof assertScopeAccess === "function") {
-    assertScopeAccess(req, "legal_entity", original.legal_entity_id, "transactionId");
-    if (original.operating_unit_id) {
-      assertScopeAccess(req, "operating_unit", original.operating_unit_id, "transactionId");
-    }
+    assertCashOwnershipScopeAccess(req, original, assertScopeAccess, "transactionId");
   }
 
   const linkedTransitAsOut = await findCashTransitTransferByOutTransactionId({

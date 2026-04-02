@@ -128,6 +128,28 @@ function normalizeUpperText(value) {
     .toUpperCase();
 }
 
+async function findLegalEntityByCodeTx(tx, { tenantId, code }) {
+  const result = await tx.query(
+    `SELECT id, status
+     FROM legal_entities
+     WHERE tenant_id = ?
+       AND code = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, code]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: parsePositiveInt(row.id),
+    status: normalizeUpperText(row.status) || "ACTIVE",
+  };
+}
+
 function getIndefiniteArticle(value) {
   return /^[AEIOU]/i.test(String(value || "").trim()) ? "an" : "a";
 }
@@ -517,6 +539,7 @@ export async function upsertLegalEntity({
   name,
   taxId,
   functionalCurrencyCode,
+  status,
   isIntercompanyEnabled,
   intercompanyPartnerRequired,
   autoProvisionDefaults,
@@ -561,8 +584,19 @@ export async function upsertLegalEntity({
   const finalFiscalYear = parsePositiveInt(fiscalYear) || new Date().getUTCFullYear();
   const shouldProvisionPaymentTerms =
     finalAutoProvisionDefaults || paymentTerms !== undefined;
+  const requestedStatus = normalizeUpperText(status);
+  if (requestedStatus && !["ACTIVE", "INACTIVE"].includes(requestedStatus)) {
+    throw badRequest("status must be ACTIVE or INACTIVE");
+  }
 
   const operationResult = await withTransaction(async (tx) => {
+    const existingLegalEntity = await findLegalEntityByCodeTx(tx, {
+      tenantId,
+      code: normalizedCode,
+    });
+    // Manual legal entities should not start blocking tenant-wide readiness
+    // until an operator explicitly promotes them into active use.
+    const finalStatus = requestedStatus || existingLegalEntity?.status || "INACTIVE";
     const insertId = await upsertLegalEntityRowTx(tx, {
       tenantId,
       groupCompanyId,
@@ -571,6 +605,7 @@ export async function upsertLegalEntity({
       taxId: taxId ? String(taxId).trim() : null,
       countryId,
       functionalCurrencyCode: normalizedFunctionalCurrencyCode,
+      status: finalStatus,
       isIntercompanyEnabled: finalIntercompanyEnabled,
       intercompanyPartnerRequired: finalPartnerRequired,
     });
@@ -603,6 +638,7 @@ export async function upsertLegalEntity({
 
     return {
       legalEntity,
+      status: finalStatus,
       provisioning,
       paymentTermsProvisioning,
       insertId,
@@ -612,6 +648,7 @@ export async function upsertLegalEntity({
   return {
     id: operationResult.insertId || operationResult.legalEntity.id,
     legalEntityId: operationResult.legalEntity.id,
+    status: operationResult.status,
     autoProvisionDefaults: finalAutoProvisionDefaults,
     policyPackId: finalPolicyPackId || null,
     overwriteExistingCoaAccounts: finalOverwriteExistingCoaAccounts,

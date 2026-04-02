@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  approveCariCounterpartyRequest,
+  createCariCounterpartyRequest,
   createCariCounterparty,
   getCariCounterparty,
+  listCariCounterpartyRequests,
   listCariCounterparties,
+  rejectCariCounterpartyRequest,
   updateCariCounterparty,
 } from "../../api/cariCounterparty.js";
 import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
@@ -91,6 +95,17 @@ function roleBadgeClass(role) {
     return "bg-emerald-100 text-emerald-700";
   }
   return "bg-slate-200 text-slate-700";
+}
+
+function requestStatusBadgeClass(status) {
+  const normalized = String(status || "").toUpperCase();
+  if (normalized === "APPROVED") {
+    return "bg-emerald-100 text-emerald-700";
+  }
+  if (normalized === "REJECTED") {
+    return "bg-rose-100 text-rose-700";
+  }
+  return "bg-amber-100 text-amber-800";
 }
 
 function formatMappedAccountLabel(code, name) {
@@ -424,6 +439,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   const { hasPermission, permissions } = useAuth();
   const canRead = hasPermission("cari.card.read");
+  const canRequest = hasPermission("cari.card.request");
   const canUpsert = hasPermission("cari.card.upsert");
   const canReadOrgTree = hasPermission("org.tree.read");
   const accountPickerGates = useMemo(
@@ -486,6 +502,12 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [totalRows, setTotalRows] = useState(0);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState("");
+  const [requestRows, setRequestRows] = useState([]);
+  const [requestTotalRows, setRequestTotalRows] = useState(0);
+  const [requestLoading, setRequestLoading] = useState(false);
+  const [requestError, setRequestError] = useState("");
+  const [requestMessage, setRequestMessage] = useState("");
+  const [requestActionKey, setRequestActionKey] = useState("");
 
   const [editingId, setEditingId] = useState(null);
   const [editingForm, setEditingForm] = useState(() =>
@@ -533,6 +555,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     return map;
   }, [legalEntities]);
 
+  const operatingUnitById = useMemo(() => {
+    const map = new Map();
+    for (const row of [...createOperatingUnits, ...filterOperatingUnits, ...editOperatingUnits]) {
+      map.set(String(row.id), row);
+    }
+    return map;
+  }, [createOperatingUnits, filterOperatingUnits, editOperatingUnits]);
+
   useEffect(() => {
     setCreateForm(buildInitialCounterpartyForm(config.roleDefault));
     setFilters(createCounterpartyListFilters(config.roleDefault));
@@ -541,6 +571,11 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setFilterOperatingUnitsError("");
     setRows([]);
     setTotalRows(0);
+    setRequestRows([]);
+    setRequestTotalRows(0);
+    setRequestError("");
+    setRequestMessage("");
+    setRequestActionKey("");
     setEditingId(null);
     setEditingForm(buildInitialCounterpartyForm(config.roleDefault));
     setCreateError("");
@@ -1329,6 +1364,37 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     }
   }
 
+  async function loadCounterpartyRequestRows(nextFilters = filters) {
+    if (!canRequest) {
+      setRequestRows([]);
+      setRequestTotalRows(0);
+      setRequestError("");
+      return;
+    }
+
+    const normalizedRole = normalizeFilterRole(nextFilters.role, config.roleDefault);
+    setRequestLoading(true);
+    setRequestError("");
+    try {
+      const response = await listCariCounterpartyRequests({
+        legalEntityId: nextFilters.legalEntityId || undefined,
+        primaryOperatingUnitId: nextFilters.primaryOperatingUnitId || undefined,
+        role: normalizedRole || undefined,
+        mineOnly: canUpsert ? undefined : true,
+        limit: 50,
+        offset: 0,
+      });
+      setRequestRows(Array.isArray(response?.rows) ? response.rows : []);
+      setRequestTotalRows(Number(response?.total || 0));
+    } catch (err) {
+      setRequestRows([]);
+      setRequestTotalRows(0);
+      setRequestError(mapCounterpartyApiError(err, "Failed to load counterparty requests."));
+    } finally {
+      setRequestLoading(false);
+    }
+  }
+
   async function loadPaymentTermsForLegalEntity({
     legalEntityId,
     queryText,
@@ -1456,6 +1522,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       sortDir: normalizeCounterpartyListSortDir(filters.sortDir, "desc"),
     };
     loadCounterpartyRows(normalized);
+    loadCounterpartyRequestRows(normalized);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isListPage, config.roleDefault]);
 
@@ -1464,9 +1531,15 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setCreateError("");
     setCreateMessage("");
     try {
-      const response = await createCariCounterparty(payload);
-      const createdId = response?.row?.id;
-      setCreateMessage(`Counterparty created successfully. id=${createdId || "-"}`);
+      if (!canUpsert && canRequest) {
+        const response = await createCariCounterpartyRequest(payload);
+        const requestId = response?.row?.id;
+        setCreateMessage(`Counterparty request submitted. requestId=${requestId || "-"}`);
+      } else {
+        const response = await createCariCounterparty(payload);
+        const createdId = response?.row?.id;
+        setCreateMessage(`Counterparty created successfully. id=${createdId || "-"}`);
+      }
       setCreateForm((prev) => {
         const reset = buildInitialCounterpartyForm(config.roleDefault);
         return {
@@ -1490,7 +1563,12 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       setCreateInlineApAccountError("");
       setCreateInlineApAccountMessage("");
     } catch (err) {
-      setCreateError(mapCounterpartyApiError(err, "Failed to create counterparty."));
+      setCreateError(
+        mapCounterpartyApiError(
+          err,
+          canUpsert ? "Failed to create counterparty." : "Failed to submit counterparty request."
+        )
+      );
     } finally {
       setCreateSaving(false);
     }
@@ -1552,6 +1630,50 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       setEditError(mapCounterpartyApiError(err, "Failed to update counterparty."));
     } finally {
       setEditSaving(false);
+    }
+  }
+
+  async function handleApproveRequest(requestId) {
+    if (!canUpsert || !requestId) {
+      return;
+    }
+    const decisionComment = window.prompt("Approval note (optional)", "") || "";
+    const actionKey = `approve-${requestId}`;
+    setRequestActionKey(actionKey);
+    setRequestError("");
+    setRequestMessage("");
+    try {
+      const response = await approveCariCounterpartyRequest(requestId, { decisionComment });
+      const createdCounterpartyId = response?.counterparty?.id;
+      setRequestMessage(
+        `Request approved. counterpartyId=${createdCounterpartyId || "-"}`
+      );
+      await loadCounterpartyRows(filters);
+      await loadCounterpartyRequestRows(filters);
+    } catch (err) {
+      setRequestError(mapCounterpartyApiError(err, "Failed to approve counterparty request."));
+    } finally {
+      setRequestActionKey("");
+    }
+  }
+
+  async function handleRejectRequest(requestId) {
+    if (!canUpsert || !requestId) {
+      return;
+    }
+    const decisionComment = window.prompt("Reject reason (optional)", "") || "";
+    const actionKey = `reject-${requestId}`;
+    setRequestActionKey(actionKey);
+    setRequestError("");
+    setRequestMessage("");
+    try {
+      await rejectCariCounterpartyRequest(requestId, { decisionComment });
+      setRequestMessage("Request rejected.");
+      await loadCounterpartyRequestRows(filters);
+    } catch (err) {
+      setRequestError(mapCounterpartyApiError(err, "Failed to reject counterparty request."));
+    } finally {
+      setRequestActionKey("");
     }
   }
 
@@ -2376,10 +2498,19 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     !(Boolean(editApCodeCandidate) && Boolean(editApExactCodeMatch));
 
   function renderCreatePage() {
+    const requestMode = !canUpsert && canRequest;
+    const createTitle = requestMode
+      ? config.roleDefault === "VENDOR"
+        ? "Tedarikci Karti Talebi"
+        : "Musteri Karti Talebi"
+      : config.title;
+    const createDescription = requestMode
+      ? "Yeni kart talebini gonderin. Entity accountant talebi inceleyip canli karti olusturur."
+      : config.subtitle;
     return (
       <CounterpartyForm
-        title={config.title}
-        description={config.subtitle}
+        title={createTitle}
+        description={createDescription}
         mode="create"
         form={createForm}
         setForm={setCreateForm}
@@ -2447,7 +2578,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         accountReadFallbackMessage={
           "Missing permission: gl.account.read. AR/AP account selectors are hidden."
         }
-        canSubmit={canUpsert}
+        canSubmit={canUpsert || canRequest}
         submitting={createSaving}
         onSubmit={handleCreateSubmit}
         onReset={() => {
@@ -2471,10 +2602,15 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
           setCreateInlineApAccountError("");
           setCreateInlineApAccountMessage("");
         }}
-        submitLabel="Create Card"
+        submitLabel={canUpsert ? "Create Card" : canRequest ? "Submit Request" : "Save"}
         serverError={createError}
         serverMessage={createMessage}
-        roleHint={`Default role preset: ${config.roleDefault}`}
+        roleHint={
+          canUpsert
+            ? `Default role preset: ${config.roleDefault}`
+            : `Submit a ${config.roleDefault.toLowerCase()} master request for entity review.`
+        }
+        enforceRoleAccountRequirement={canUpsert}
       />
     );
   }
@@ -2488,19 +2624,21 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
               <h1 className="text-lg font-semibold text-slate-900">{config.title}</h1>
               <p className="mt-1 text-sm text-slate-600">{config.subtitle}</p>
             </div>
-            {canUpsert && config.createPath ? (
+            {(canUpsert || canRequest) && config.createPath ? (
               <Link
                 to={config.createPath}
                 className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               >
-                Create Card
+                {canUpsert ? "Create Card" : "Request Card"}
               </Link>
             ) : null}
           </div>
 
           {!canUpsert ? (
             <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              You only have read permission. Edit actions are disabled.
+              {canRequest
+                ? "You only have read permission on live master data. Submit a request to create a new card."
+                : "You only have read permission. Edit actions are disabled."}
             </div>
           ) : null}
 
@@ -2787,7 +2925,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
             <button
               type="button"
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-              onClick={() => loadCounterpartyRows(filters)}
+              onClick={() => {
+                loadCounterpartyRows(filters);
+                loadCounterpartyRequestRows(filters);
+              }}
               disabled={listLoading}
             >
               {listLoading ? "Loading..." : "Apply Filters"}
@@ -2799,6 +2940,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                 const reset = createCounterpartyListFilters(config.roleDefault);
                 setFilters(reset);
                 loadCounterpartyRows(reset);
+                loadCounterpartyRequestRows(reset);
               }}
               disabled={listLoading}
             >
@@ -2890,6 +3032,154 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
           </div>
           <p className="mt-2 text-xs text-slate-500">Total rows: {totalRows}</p>
         </section>
+
+        {canRequest ? (
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Card Requests</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {canUpsert
+                    ? "Review pending customer/vendor card requests inside your entity scope."
+                    : "Track the card requests you submitted for entity review."}
+                </p>
+              </div>
+              {config.createPath ? (
+                <Link
+                  to={config.createPath}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {canUpsert ? "Open Create Card" : "Submit New Request"}
+                </Link>
+              ) : null}
+            </div>
+
+            {requestError ? (
+              <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {requestError}
+              </div>
+            ) : null}
+            {requestMessage ? (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                {requestMessage}
+              </div>
+            ) : null}
+
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
+                  <tr>
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Role</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Legal Entity</th>
+                    <th className="px-3 py-2">Primary OU</th>
+                    <th className="px-3 py-2">Requester</th>
+                    <th className="px-3 py-2">Decision</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {requestRows.map((row) => (
+                    <tr key={`counterparty-request-row-${row.id}`}>
+                      <td className="px-3 py-2 font-mono text-xs text-slate-800">{row.code}</td>
+                      <td className="px-3 py-2 text-slate-800">
+                        <div>{row.name}</div>
+                        {row.requestedPayload?.notes ? (
+                          <div className="mt-1 text-xs text-slate-500 line-clamp-2">
+                            {row.requestedPayload.notes}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded px-2 py-1 text-xs font-semibold ${roleBadgeClass(
+                            row.requestRole
+                          )}`}
+                        >
+                          {row.requestRole}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded px-2 py-1 text-xs font-semibold ${requestStatusBadgeClass(
+                            row.requestStatus
+                          )}`}
+                        >
+                          {row.requestStatus}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-700">
+                        {legalEntityById.get(String(row.legalEntityId))?.code || row.legalEntityId}
+                      </td>
+                      <td className="px-3 py-2 text-slate-700">
+                        {formatOperatingUnitLabel(
+                          operatingUnitById.get(String(row.primaryOperatingUnitId))?.code,
+                          operatingUnitById.get(String(row.primaryOperatingUnitId))?.name,
+                          row.primaryOperatingUnitId
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-slate-700">
+                        {row.requestedByUserName || row.requestedByUserId || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-slate-700">
+                        {row.requestStatus === "APPROVED" ? (
+                          <span>
+                            {row.createdCounterpartyCode || row.createdCounterpartyId || "-"}
+                          </span>
+                        ) : row.requestStatus === "REJECTED" ? (
+                          row.decisionComment || "Rejected"
+                        ) : (
+                          row.decisionComment || "-"
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {canUpsert && row.requestStatus === "PENDING" ? (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              className="rounded-md border border-emerald-300 px-2 py-1 text-xs font-medium text-emerald-700 disabled:opacity-50"
+                              onClick={() => handleApproveRequest(row.id)}
+                              disabled={Boolean(requestActionKey)}
+                            >
+                              {requestActionKey === `approve-${row.id}` ? "Approving..." : "Approve"}
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-md border border-rose-300 px-2 py-1 text-xs font-medium text-rose-700 disabled:opacity-50"
+                              onClick={() => handleRejectRequest(row.id)}
+                              disabled={Boolean(requestActionKey)}
+                            >
+                              {requestActionKey === `reject-${row.id}` ? "Rejecting..." : "Reject"}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-500">
+                            {row.decidedByUserName || row.decidedByUserId || "-"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {requestRows.length === 0 ? (
+                    <tr>
+                      <td
+                        className="px-3 py-6 text-center text-sm text-slate-500"
+                        colSpan={9}
+                      >
+                        {requestLoading
+                          ? "Loading requests..."
+                          : "No card requests found for current scope."}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">Total requests: {requestTotalRows}</p>
+          </section>
+        ) : null}
 
         {editingId ? (
           <CounterpartyForm

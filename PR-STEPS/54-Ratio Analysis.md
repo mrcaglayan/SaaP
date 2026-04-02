@@ -1,0 +1,1 @@
+Add a module to the Executive GL Dashboard that calculates and visualizes key financial ratios such as Current Ratio (Assets/Liabilities), Debt-to-Equity, and Burn Rate, based on the real-time aggregated GL data from JournalEntry and ChartOfAccount entities.

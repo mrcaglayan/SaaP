@@ -1738,6 +1738,10 @@ export async function createAndPostCashJournalTx(tx, payload) {
   for (let i = 0; i < lines.length; i += 1) {
     // eslint-disable-next-line no-await-in-loop
     await validateJournalLineScope(req, tenantId, legalEntityId, lines[i], i, {
+      // Branch operators post cash into entity-owned accounts through their
+      // operating-unit subledger scope. Keep central lines protected by
+      // requiring an explicit operatingUnitId when legal-entity scope is absent.
+      allowAccountLegalEntityViaOperatingUnitScope: true,
       centralEquityPolicy,
     });
   }
