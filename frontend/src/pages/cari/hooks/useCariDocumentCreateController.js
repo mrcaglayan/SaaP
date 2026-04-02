@@ -1804,6 +1804,7 @@ export default function useCariDocumentCreateController({
       return;
     }
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    const operatingUnitId = toPositiveInt(createForm.operatingUnitId);
     if (!legalEntityId) {
       setCreateCounterpartyOptions([]);
       setCreateCounterpartyLoading(false);
@@ -1816,6 +1817,7 @@ export default function useCariDocumentCreateController({
       try {
         const response = await listCariCounterparties({
           legalEntityId,
+          allowedOperatingUnitId: operatingUnitId || undefined,
           role,
           status: "ACTIVE",
           sortBy: "NAME",
@@ -1836,7 +1838,7 @@ export default function useCariDocumentCreateController({
     return () => {
       active = false;
     };
-  }, [canReadCards, createForm.direction, createForm.legalEntityId]);
+  }, [canReadCards, createForm.direction, createForm.legalEntityId, createForm.operatingUnitId]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
     setCreateCashRegistersError("");

@@ -16,7 +16,74 @@ import {
   fetchTreeLegalEntityRows,
   fetchTreeOperatingUnitRows,
 } from "./org.read.queries.js";
-import { badRequest } from "../routes/_utils.js";
+import { query } from "../db.js";
+import { getScopeContext } from "../middleware/rbac.js";
+import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+
+async function resolveLegalEntityIdsFromScopedOperatingUnits({
+  req,
+  tenantId,
+  runQuery = query,
+}) {
+  const scopeContext = getScopeContext(req);
+  const operatingUnitIds = Array.from(scopeContext?.operatingUnits || [])
+    .map((value) => parsePositiveInt(value))
+    .filter(Boolean);
+  if (operatingUnitIds.length === 0) {
+    return [];
+  }
+
+  const result = await runQuery(
+    `SELECT DISTINCT legal_entity_id
+       FROM operating_units
+      WHERE tenant_id = ?
+        AND id IN (${operatingUnitIds.map(() => "?").join(", ")})`,
+    [tenantId, ...operatingUnitIds]
+  );
+  return Array.from(
+    new Set(
+      (result.rows || [])
+        .map((row) => parsePositiveInt(row.legal_entity_id))
+        .filter(Boolean)
+    )
+  );
+}
+
+async function buildLegalEntityScopeFilter({
+  req,
+  tenantId,
+  columnName,
+  params,
+  runQuery = query,
+}) {
+  const scopeContext = getScopeContext(req);
+  if (!scopeContext) {
+    return "1 = 0";
+  }
+  if (scopeContext.tenantWide) {
+    return "1 = 1";
+  }
+
+  const scopedLegalEntityIds = new Set(
+    Array.from(scopeContext.legalEntities || [])
+      .map((value) => parsePositiveInt(value))
+      .filter(Boolean)
+  );
+  const derivedLegalEntityIds = await resolveLegalEntityIdsFromScopedOperatingUnits({
+    req,
+    tenantId,
+    runQuery,
+  });
+  derivedLegalEntityIds.forEach((id) => scopedLegalEntityIds.add(id));
+
+  const ids = Array.from(scopedLegalEntityIds);
+  if (ids.length === 0) {
+    return "1 = 0";
+  }
+
+  params.push(...ids);
+  return `${columnName} IN (${ids.map(() => "?").join(", ")})`;
+}
 
 export async function listGroupCompanies({ req, tenantId, buildScopeFilter }) {
   const params = [];
@@ -41,6 +108,14 @@ export async function listCurrencies() {
   return fetchCurrencyRows();
 }
 
+/**
+ * List legal entities visible to the current actor.
+ *
+ * OPERATING_UNIT-scoped actors still need to discover their parent legal
+ * entity in selectors and working-context driven forms. Derive those legal
+ * entities from the scoped operating-unit set before applying the final
+ * filter.
+ */
 export async function listLegalEntities({
   req,
   tenantId,
@@ -51,7 +126,14 @@ export async function listLegalEntities({
 
   const params = [tenantId];
   const conditions = ["tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "id", params));
+  conditions.push(
+    await buildLegalEntityScopeFilter({
+      req,
+      tenantId,
+      columnName: "id",
+      params,
+    })
+  );
 
   if (countryId) {
     conditions.push("country_id = ?");
@@ -72,6 +154,14 @@ export async function listLegalEntities({
   });
 }
 
+/**
+ * List operating units visible to the current actor.
+ *
+ * The row-level `operating_unit` scope filter already constrains the result
+ * set. Do not require direct LEGAL_ENTITY scope for the optional
+ * `legalEntityId` filter, otherwise OU-scoped users cannot load their own
+ * branch list inside the parent legal entity.
+ */
 export async function listOperatingUnits({
   req,
   tenantId,
@@ -81,9 +171,6 @@ export async function listOperatingUnits({
 }) {
   const { legalEntityId, operatingUnitId } = filters;
 
-  if (legalEntityId) {
-    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
-  }
   if (operatingUnitId) {
     assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
   }

@@ -18,6 +18,7 @@ import {
 import { listLegalEntities, listOperatingUnits } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
+import { useWorkingContext } from "../../context/useWorkingContext.js";
 import CounterpartyForm from "./CounterpartyForm.jsx";
 import {
   COUNTERPARTY_LIST_SORT_DIRECTIONS,
@@ -438,6 +439,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const isListPage = config.mode === "list";
 
   const { hasPermission, permissions } = useAuth();
+  const { workingContext } = useWorkingContext();
   const canRead = hasPermission("cari.card.read");
   const canRequest = hasPermission("cari.card.request");
   const canUpsert = hasPermission("cari.card.upsert");
@@ -446,6 +448,17 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     () => resolveCounterpartyAccountPickerGates(permissions),
     [permissions]
   );
+  const branchOwnedLiveMode =
+    canUpsert && canRequest && !accountPickerGates.canUpsertGlAccounts;
+  const workingLegalEntityId = String(workingContext?.legalEntityId || "").trim();
+  const workingOperatingUnitId = String(workingContext?.operatingUnitId || "").trim();
+  const canLockCreateOwnershipToWorkingContext =
+    branchOwnedLiveMode && Boolean(workingLegalEntityId) && Boolean(workingOperatingUnitId);
+  const branchOwnedCreateHint = canLockCreateOwnershipToWorkingContext
+    ? "Branch-owned live cards follow your current working entity and branch."
+    : "Set your working entity and branch first to auto-anchor this live card.";
+  const branchOwnedEditHint =
+    "Branch-owned live cards stay on one branch. Use an entity-level role to manage shared or multi-branch cards.";
 
   const [legalEntities, setLegalEntities] = useState([]);
   const [legalEntitiesLoading, setLegalEntitiesLoading] = useState(false);
@@ -683,6 +696,37 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       legalEntityId: String(legalEntities[0].id || ""),
     }));
   }, [createForm.legalEntityId, isCreatePage, legalEntities]);
+
+  useEffect(() => {
+    if (!isCreatePage || !canLockCreateOwnershipToWorkingContext) {
+      return;
+    }
+    setCreateForm((prev) => {
+      const nextLegalEntityId = workingLegalEntityId;
+      const nextOperatingUnitIds = [workingOperatingUnitId];
+      if (
+        String(prev.legalEntityId || "").trim() === nextLegalEntityId &&
+        String(prev.primaryOperatingUnitId || "").trim() === workingOperatingUnitId &&
+        Array.isArray(prev.operatingUnitIds) &&
+        prev.operatingUnitIds.length === 1 &&
+        String(prev.operatingUnitIds[0] || "").trim() === workingOperatingUnitId
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        legalEntityId: nextLegalEntityId,
+        primaryOperatingUnitId: workingOperatingUnitId,
+        operatingUnitIds: nextOperatingUnitIds,
+      };
+    });
+  }, [
+    canLockCreateOwnershipToWorkingContext,
+    isCreatePage,
+    workingLegalEntityId,
+    workingOperatingUnitId,
+    createOperatingUnits,
+  ]);
 
   useEffect(() => {
     if (!isCreatePage) {
@@ -1544,7 +1588,13 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         const reset = buildInitialCounterpartyForm(config.roleDefault);
         return {
           ...reset,
-          legalEntityId: prev.legalEntityId || reset.legalEntityId,
+          legalEntityId:
+            (branchOwnedLiveMode ? workingLegalEntityId : "") ||
+            prev.legalEntityId ||
+            reset.legalEntityId,
+          primaryOperatingUnitId: branchOwnedLiveMode ? workingOperatingUnitId : "",
+          operatingUnitIds:
+            branchOwnedLiveMode && workingOperatingUnitId ? [workingOperatingUnitId] : [],
         };
       });
       setCreatePaymentTermLookupQuery("");
@@ -2169,22 +2219,30 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     [editAccountOptions, editApCodeCandidate]
   );
   const showInlineCreateArAccountPanelInCreateForm =
+    canUpsert &&
+    accountPickerGates.canUpsertGlAccounts &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
     Boolean(createForm.isCustomer) &&
     Boolean(createInlineArAccountName) &&
     !(Boolean(createArCodeCandidate) && Boolean(createArExactCodeMatch));
   const showInlineCreateApAccountPanelInCreateForm =
+    canUpsert &&
+    accountPickerGates.canUpsertGlAccounts &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
     Boolean(createForm.isVendor) &&
     Boolean(createInlineApAccountName) &&
     !(Boolean(createApCodeCandidate) && Boolean(createApExactCodeMatch));
   const showInlineCreateArAccountPanelInEditForm =
+    canUpsert &&
+    accountPickerGates.canUpsertGlAccounts &&
     Boolean(editingId) &&
     Boolean(toPositiveInt(editingForm.legalEntityId)) &&
     Boolean(editingForm.isCustomer) &&
     Boolean(editInlineArAccountName) &&
     !(Boolean(editArCodeCandidate) && Boolean(editArExactCodeMatch));
   const showInlineCreateApAccountPanelInEditForm =
+    canUpsert &&
+    accountPickerGates.canUpsertGlAccounts &&
     Boolean(editingId) &&
     Boolean(toPositiveInt(editingForm.legalEntityId)) &&
     Boolean(editingForm.isVendor) &&
@@ -2459,10 +2517,12 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   const canInlineCreatePaymentTermInCreateForm =
     canUpsert &&
+    !branchOwnedLiveMode &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
     Boolean(createInlinePaymentTermName);
   const canInlineCreatePaymentTermInEditForm =
     canUpsert &&
+    !branchOwnedLiveMode &&
     Boolean(editingId) &&
     Boolean(toPositiveInt(editingForm.legalEntityId)) &&
     Boolean(editInlinePaymentTermName);
@@ -2517,9 +2577,13 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         legalEntities={legalEntities}
         legalEntitiesLoading={legalEntitiesLoading}
         legalEntitiesError={legalEntitiesError}
+        lockLegalEntity={canLockCreateOwnershipToWorkingContext}
+        legalEntityLockHint={branchOwnedLiveMode ? branchOwnedCreateHint : ""}
         operatingUnits={createOperatingUnits}
         operatingUnitsLoading={createOperatingUnitsLoading}
         operatingUnitsError={createOperatingUnitsError}
+        lockOperatingUnitOwnership={canLockCreateOwnershipToWorkingContext}
+        operatingUnitOwnershipHint={branchOwnedLiveMode ? branchOwnedCreateHint : ""}
         paymentTerms={createPaymentTerms}
         paymentTermsLoading={createPaymentTermsLoading}
         paymentTermsError={createPaymentTermsError}
@@ -2582,7 +2646,17 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         submitting={createSaving}
         onSubmit={handleCreateSubmit}
         onReset={() => {
-          setCreateForm(buildInitialCounterpartyForm(config.roleDefault));
+          setCreateForm(() => {
+            const reset = buildInitialCounterpartyForm(config.roleDefault);
+            return {
+              ...reset,
+              legalEntityId:
+                (branchOwnedLiveMode ? workingLegalEntityId : "") || reset.legalEntityId,
+              primaryOperatingUnitId: branchOwnedLiveMode ? workingOperatingUnitId : "",
+              operatingUnitIds:
+                branchOwnedLiveMode && workingOperatingUnitId ? [workingOperatingUnitId] : [],
+            };
+          });
           setCreatePaymentTermLookupQuery("");
           setCreateInlinePaymentTermSaving(false);
           setCreateInlinePaymentTermError("");
@@ -2607,10 +2681,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         serverMessage={createMessage}
         roleHint={
           canUpsert
-            ? `Default role preset: ${config.roleDefault}`
+            ? branchOwnedLiveMode
+              ? `Default role preset: ${config.roleDefault}. Saved as one branch-owned live card.`
+              : `Default role preset: ${config.roleDefault}`
             : `Submit a ${config.roleDefault.toLowerCase()} master request for entity review.`
         }
-        enforceRoleAccountRequirement={canUpsert}
+        enforceRoleAccountRequirement={
+          canUpsert && accountPickerGates.showAccountPickers && !branchOwnedLiveMode
+        }
       />
     );
   }
@@ -3191,9 +3269,13 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
             legalEntities={legalEntities}
             legalEntitiesLoading={legalEntitiesLoading}
             legalEntitiesError={legalEntitiesError}
+            lockLegalEntity={branchOwnedLiveMode}
+            legalEntityLockHint={branchOwnedLiveMode ? branchOwnedEditHint : ""}
             operatingUnits={editOperatingUnits}
             operatingUnitsLoading={editOperatingUnitsLoading}
             operatingUnitsError={editOperatingUnitsError}
+            lockOperatingUnitOwnership={branchOwnedLiveMode}
+            operatingUnitOwnershipHint={branchOwnedLiveMode ? branchOwnedEditHint : ""}
             paymentTerms={editPaymentTerms}
             paymentTermsLoading={editPaymentTermsLoading}
             paymentTermsError={editPaymentTermsError}

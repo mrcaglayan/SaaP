@@ -16,7 +16,6 @@ import {
   createCounterparty,
   getCounterpartyByIdForTenant,
   listCounterpartyRows,
-  resolveCounterpartyScope,
   updateCounterpartyById,
 } from "../services/cari.counterparty.service.js";
 
@@ -26,10 +25,6 @@ router.get(
   "/",
   requirePermission("cari.card.read", {
     resolveScope: async (req) => {
-      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
       const primaryOperatingUnitId = parsePositiveInt(req.query?.primaryOperatingUnitId);
       if (primaryOperatingUnitId) {
         return { scopeType: "OPERATING_UNIT", scopeId: primaryOperatingUnitId };
@@ -38,6 +33,9 @@ router.get(
       if (allowedOperatingUnitId) {
         return { scopeType: "OPERATING_UNIT", scopeId: allowedOperatingUnitId };
       }
+      // List routes rely on row-level scope filtering in the service layer.
+      // Avoid resolving LEGAL_ENTITY scope here so OU-scoped users can search
+      // within their parent entity without an upfront 403.
       return null;
     },
   }),
@@ -60,9 +58,9 @@ router.get(
 router.get(
   "/:id",
   requirePermission("cari.card.read", {
-    resolveScope: async (req, tenantId) => {
-      return resolveCounterpartyScope(req.params?.id, tenantId);
-    },
+    // Detail/edit access is decided in the service layer so OU-scoped users can
+    // open only branch-owned cards without needing direct LEGAL_ENTITY scope.
+    resolveScope: async () => null,
   }),
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
@@ -83,13 +81,9 @@ router.get(
 router.post(
   "/",
   requirePermission("cari.card.upsert", {
-    resolveScope: async (req) => {
-      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
-      return null;
-    },
+    // Create scope is enforced in the service layer so branch-scoped users can
+    // save one in-scope OU-owned card without an upfront LEGAL_ENTITY 403.
+    resolveScope: async () => null,
   }),
   asyncHandler(async (req, res) => {
     const payload = parseCounterpartyCreateInput(req);
@@ -108,17 +102,9 @@ router.post(
 router.put(
   "/:id",
   requirePermission("cari.card.upsert", {
-    resolveScope: async (req, tenantId) => {
-      const scope = await resolveCounterpartyScope(req.params?.id, tenantId);
-      if (scope) {
-        return scope;
-      }
-      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
-      return null;
-    },
+    // Update ownership checks depend on the existing card plus the requested OU
+    // anchors, so the service layer performs the final authorization decision.
+    resolveScope: async () => null,
   }),
   asyncHandler(async (req, res) => {
     const payload = parseCounterpartyUpdateInput(req);

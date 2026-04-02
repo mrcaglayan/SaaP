@@ -290,9 +290,13 @@ export default function CounterpartyForm({
   legalEntities = [],
   legalEntitiesLoading = false,
   legalEntitiesError = "",
+  lockLegalEntity = false,
+  legalEntityLockHint = "",
   operatingUnits = [],
   operatingUnitsLoading = false,
   operatingUnitsError = "",
+  lockOperatingUnitOwnership = false,
+  operatingUnitOwnershipHint = "",
   paymentTerms = [],
   paymentTermsLoading = false,
   paymentTermsError = "",
@@ -659,7 +663,7 @@ export default function CounterpartyForm({
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               value={form.legalEntityId}
               onChange={(event) => updateField("legalEntityId", event.target.value)}
-              disabled={submitting}
+              disabled={submitting || lockLegalEntity}
             >
               <option value="">Select legal entity</option>
               {legalEntityOptions.map((row) => (
@@ -676,7 +680,7 @@ export default function CounterpartyForm({
               placeholder="Legal entity id"
               value={form.legalEntityId}
               onChange={(event) => updateField("legalEntityId", event.target.value)}
-              disabled={submitting}
+              disabled={submitting || lockLegalEntity}
             />
           )}
           {legalEntitiesLoading ? (
@@ -684,6 +688,9 @@ export default function CounterpartyForm({
           ) : null}
           {legalEntitiesError ? (
             <p className="mt-1 text-xs text-amber-700">{legalEntitiesError}</p>
+          ) : null}
+          {legalEntityLockHint ? (
+            <p className="mt-1 text-xs text-slate-500">{legalEntityLockHint}</p>
           ) : null}
           <FieldError message={findFieldError(fieldErrors, "legalEntityId")} />
         </div>
@@ -719,7 +726,7 @@ export default function CounterpartyForm({
             value={selectedPrimaryOperatingUnitId}
             options={operatingUnitLookupOptions}
             loading={operatingUnitsLoading}
-            disabled={submitting || !form.legalEntityId}
+            disabled={submitting || !form.legalEntityId || lockOperatingUnitOwnership}
             placeholder={
               form.legalEntityId
                 ? "Search operating unit code/name"
@@ -738,6 +745,9 @@ export default function CounterpartyForm({
           {operatingUnitsError ? (
             <p className="mt-1 text-xs text-amber-700">{operatingUnitsError}</p>
           ) : null}
+          {operatingUnitOwnershipHint ? (
+            <p className="mt-1 text-xs text-slate-500">{operatingUnitOwnershipHint}</p>
+          ) : null}
         </div>
 
         <div className="md:col-span-2">
@@ -753,7 +763,9 @@ export default function CounterpartyForm({
             <p className="mt-1 text-xs text-slate-500">Select legal entity first.</p>
           ) : operatingUnitOptions.length === 0 ? (
             <p className="mt-1 text-xs text-slate-500">
-              No operating units loaded. Leave empty to keep the counterparty shared across the legal entity.
+              {lockOperatingUnitOwnership
+                ? "No operating units loaded for the current working context."
+                : "No operating units loaded. Leave empty to keep the counterparty shared across the legal entity."}
             </p>
           ) : (
             <div className="mt-2 grid gap-2 md:grid-cols-2">
@@ -771,7 +783,7 @@ export default function CounterpartyForm({
                       onChange={(event) =>
                         toggleAllowedOperatingUnit(operatingUnitId, event.target.checked)
                       }
-                      disabled={submitting}
+                      disabled={submitting || lockOperatingUnitOwnership}
                     />
                     <span>
                       <span className="block font-medium">

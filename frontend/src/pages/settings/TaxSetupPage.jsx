@@ -42,6 +42,7 @@ const TAX_PURPOSE_OPTIONS = [
 "ROUNDING",
 ];
 const DIRECTION_OPTIONS = ["PURCHASE", "SALE"];
+const TAX_SETUP_WRITE_PERMISSION = "tax.setup.write";
 function toPositiveInt(value) {
 const parsed = Number(value);
 return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -268,7 +269,7 @@ export default function TaxSetupPage() {
   const { language } = useI18n();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
 const canRead = hasPermission("org.tree.read");
-const canWrite = hasPermission("onboarding.company.setup");
+const canWrite = hasPermission(TAX_SETUP_WRITE_PERMISSION);
 const canReadAccounts = hasPermission("gl.account.read");
 const canUpsertAccounts = hasPermission("gl.account.upsert");
   const [loading, setLoading] = useState(false);
@@ -523,7 +524,7 @@ useEffect(() => {
 async function onCreateRegime(event) {
   event.preventDefault();
   if (!canWrite) {
-    setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    setError(l("Missing permission: tax.setup.write", "Eksik yetki: tax.setup.write"));
     return;
   }
   const countryId = toPositiveInt(regimeForm.countryId);
@@ -565,7 +566,7 @@ async function onCreateRegime(event) {
 async function onCreateCode(event) {
   event.preventDefault();
   if (!canWrite) {
-    setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    setError(l("Missing permission: tax.setup.write", "Eksik yetki: tax.setup.write"));
     return;
   }
   const regimeId = toPositiveInt(codeForm.regimeId) || activeRegimeId;
@@ -601,7 +602,7 @@ async function onCreateCode(event) {
 async function onCreateRule(event) {
   event.preventDefault();
   if (!canWrite) {
-    setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    setError(l("Missing permission: tax.setup.write", "Eksik yetki: tax.setup.write"));
     return;
   }
   const ruleId = toPositiveInt(editingRuleId);
@@ -717,7 +718,7 @@ async function onCreateRule(event) {
   async function onCreateMapping(event) {
   event.preventDefault();
   if (!canWrite) {
-    setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    setError(l("Missing permission: tax.setup.write", "Eksik yetki: tax.setup.write"));
     return;
   }
   const regimeId = toPositiveInt(mappingForm.regimeId) || activeRegimeId;

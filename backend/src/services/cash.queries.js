@@ -164,6 +164,7 @@ const CASH_TXN_BASE_SELECT = `
     cr.ownership_scope,
     cr.operating_unit_id,
     cr.account_id AS register_account_id,
+    cr.allow_negative AS register_allow_negative,
     cr.variance_gain_account_id AS register_variance_gain_account_id,
     cr.variance_loss_account_id AS register_variance_loss_account_id,
     le.code AS legal_entity_code,
@@ -760,6 +761,70 @@ export async function sumPostedSessionMovement({
     [tenantId, registerId, sessionId]
   );
   return Number(result.rows?.[0]?.net_amount || 0);
+}
+
+/**
+ * Loads the signed posted balance for one register as of a book date so
+ * transaction posting can decide whether the next outbound movement would push
+ * the register below zero.
+ */
+export async function getPostedCashRegisterBalanceAsOfDate({
+  tenantId,
+  registerId,
+  asOfBookDate,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+       COALESCE(
+         SUM(
+           CASE
+             WHEN ct.reversal_of_transaction_id IS NOT NULL THEN -1 * (
+               CASE
+                 WHEN ct.txn_type IN (
+                   'RECEIPT',
+                   'WITHDRAWAL_FROM_BANK',
+                   'TRANSFER_IN',
+                   'OPENING_FLOAT'
+                 ) THEN ct.amount
+                 WHEN ct.txn_type IN (
+                   'PAYOUT',
+                   'DEPOSIT_TO_BANK',
+                   'TRANSFER_OUT',
+                   'CLOSING_ADJUSTMENT'
+                 ) THEN -ct.amount
+                 ELSE 0
+               END
+             )
+             ELSE (
+               CASE
+                 WHEN ct.txn_type IN (
+                   'RECEIPT',
+                   'WITHDRAWAL_FROM_BANK',
+                   'TRANSFER_IN',
+                   'OPENING_FLOAT'
+                 ) THEN ct.amount
+                 WHEN ct.txn_type IN (
+                   'PAYOUT',
+                   'DEPOSIT_TO_BANK',
+                   'TRANSFER_OUT',
+                   'CLOSING_ADJUSTMENT'
+                 ) THEN -ct.amount
+                 ELSE 0
+               END
+             )
+           END
+         ),
+         0
+       ) AS balance_amount
+     FROM cash_transactions ct
+     WHERE ct.tenant_id = ?
+       AND ct.cash_register_id = ?
+       AND ct.status IN ('POSTED', 'REVERSED')
+       AND ct.book_date <= ?`,
+    [tenantId, registerId, asOfBookDate]
+  );
+  return Number(result.rows?.[0]?.balance_amount || 0);
 }
 
 export async function countOpenUnpostedSessionTransactions({

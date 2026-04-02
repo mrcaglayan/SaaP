@@ -1,4 +1,5 @@
 import { query, withTransaction } from "../db.js";
+import { getScopeContext } from "../middleware/rbac.js";
 import {
   assertAccountBelongsToTenant,
   assertCountryExists,
@@ -151,6 +152,83 @@ function buildCounterpartyType({ isCustomer, isVendor }) {
     return "VENDOR";
   }
   return "OTHER";
+}
+
+function hasCounterpartyLegalEntityScope(req, legalEntityId) {
+  const scopeContext = getScopeContext(req);
+  const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!scopeContext || !normalizedLegalEntityId) {
+    return false;
+  }
+  if (scopeContext.tenantWide) {
+    return true;
+  }
+  return scopeContext.legalEntities.has(normalizedLegalEntityId);
+}
+
+function normalizeCounterpartyOperatingUnitIds(operatingUnitIds) {
+  return Array.from(
+    new Set((Array.isArray(operatingUnitIds) ? operatingUnitIds : []).map(parsePositiveInt).filter(Boolean))
+  );
+}
+
+function assertBranchScopedCounterpartyOwnership({
+  req,
+  assertScopeAccess,
+  legalEntityId,
+  primaryOperatingUnitId,
+  operatingUnitIds,
+  label,
+}) {
+  if (hasCounterpartyLegalEntityScope(req, legalEntityId)) {
+    return;
+  }
+
+  const normalizedPrimaryOperatingUnitId = parsePositiveInt(primaryOperatingUnitId) || null;
+  const normalizedOperatingUnitIds = normalizeCounterpartyOperatingUnitIds(operatingUnitIds);
+  if (
+    !normalizedPrimaryOperatingUnitId ||
+    normalizedOperatingUnitIds.length !== 1 ||
+    normalizedOperatingUnitIds[0] !== normalizedPrimaryOperatingUnitId
+  ) {
+    assertScopeAccess(req, "legal_entity", legalEntityId, label);
+    return;
+  }
+
+  assertScopeAccess(req, "operating_unit", normalizedPrimaryOperatingUnitId, label);
+}
+
+function assertCounterpartyMutationScope({
+  req,
+  assertScopeAccess,
+  legalEntityId,
+  primaryOperatingUnitId,
+  operatingUnitIds,
+}) {
+  if (hasCounterpartyLegalEntityScope(req, legalEntityId)) {
+    return;
+  }
+
+  const normalizedPrimaryOperatingUnitId = parsePositiveInt(primaryOperatingUnitId) || null;
+  const normalizedOperatingUnitIds = normalizeCounterpartyOperatingUnitIds(operatingUnitIds);
+
+  // Branch-scoped users can create or keep only one branch-owned live card.
+  if (
+    !normalizedPrimaryOperatingUnitId ||
+    normalizedOperatingUnitIds.length !== 1 ||
+    normalizedOperatingUnitIds[0] !== normalizedPrimaryOperatingUnitId
+  ) {
+    throw badRequest(
+      "Branch-scoped users must assign counterparties to exactly one primary operating unit"
+    );
+  }
+
+  assertScopeAccess(
+    req,
+    "operating_unit",
+    normalizedPrimaryOperatingUnitId,
+    "primaryOperatingUnitId"
+  );
 }
 
 function mapCounterpartyRow(row) {
@@ -1114,6 +1192,56 @@ const COUNTERPARTY_AP_ACCOUNT_CODE_SQL =
 const COUNTERPARTY_AP_ACCOUNT_NAME_SQL =
   "CASE WHEN ap_coa.id IS NULL THEN NULL ELSE ap_acc.name END";
 
+function buildCounterpartyScopeWhere(req, params) {
+  const scopeContext = getScopeContext(req);
+  if (!scopeContext) {
+    return "1 = 0";
+  }
+  if (scopeContext.tenantWide) {
+    return "1 = 1";
+  }
+
+  const clauses = [];
+  const legalEntityIds = Array.from(scopeContext.legalEntities || [])
+    .map((value) => parsePositiveInt(value))
+    .filter(Boolean);
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || [])
+    .map((value) => parsePositiveInt(value))
+    .filter(Boolean);
+
+  if (legalEntityIds.length > 0) {
+    params.push(...legalEntityIds);
+    clauses.push(`c.legal_entity_id IN (${legalEntityIds.map(() => "?").join(", ")})`);
+  }
+
+  if (operatingUnitIds.length > 0) {
+    params.push(...operatingUnitIds);
+    clauses.push(
+      `(
+         c.primary_operating_unit_id IS NOT NULL
+         AND c.primary_operating_unit_id IN (${operatingUnitIds.map(() => "?").join(", ")})
+       )`
+    );
+
+    params.push(...operatingUnitIds);
+    clauses.push(
+      `EXISTS (
+         SELECT 1
+         FROM counterparty_operating_units cou_scope
+         WHERE cou_scope.tenant_id = c.tenant_id
+           AND cou_scope.legal_entity_id = c.legal_entity_id
+           AND cou_scope.counterparty_id = c.id
+           AND cou_scope.operating_unit_id IN (${operatingUnitIds.map(() => "?").join(", ")})
+       )`
+    );
+  }
+
+  if (clauses.length === 0) {
+    return "1 = 0";
+  }
+  return `(${clauses.join(" OR ")})`;
+}
+
 const COUNTERPARTY_LIST_FROM_SQL = `
      FROM counterparties c
      LEFT JOIN payment_terms pt
@@ -1160,6 +1288,12 @@ function resolveCounterpartyListSortExpression(sortBy) {
   return "c.id";
 }
 
+/**
+ * List counterparties visible to the current actor.
+ *
+ * Branch-scoped users can read cards owned by their allowed/primary
+ * operating units even when they do not hold direct LEGAL_ENTITY scope.
+ */
 export async function listCounterpartyRows({
   req,
   tenantId,
@@ -1169,10 +1303,9 @@ export async function listCounterpartyRows({
 }) {
   const params = [tenantId];
   const conditions = ["c.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "c.legal_entity_id", params));
+  conditions.push(buildCounterpartyScopeWhere(req, params));
 
   if (filters.legalEntityId) {
-    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
     conditions.push("c.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }
@@ -1317,6 +1450,13 @@ export async function listCounterpartyRows({
   };
 }
 
+/**
+ * Load one counterparty that the current actor is allowed to maintain.
+ *
+ * Entity-scoped users can open any card in their legal entity, while
+ * branch-scoped users can open only cards anchored to exactly one in-scope
+ * operating unit.
+ */
 export async function getCounterpartyByIdForTenant({
   req,
   tenantId,
@@ -1331,7 +1471,16 @@ export async function getCounterpartyByIdForTenant({
     throw badRequest("Counterparty not found");
   }
 
-  assertScopeAccess(req, "legal_entity", row.legalEntityId, "id");
+  // Edit/detail access follows the same OU ownership rule as live maintenance:
+  // branch-scoped users can open only cards anchored to one in-scope branch.
+  assertBranchScopedCounterpartyOwnership({
+    req,
+    assertScopeAccess,
+    legalEntityId: row.legalEntityId,
+    primaryOperatingUnitId: row.primaryOperatingUnitId,
+    operatingUnitIds: row.operatingUnitIds,
+    label: "id",
+  });
   return row;
 }
 
@@ -1340,6 +1489,7 @@ export async function getCounterpartyByIdForTenant({
  *
  * The request-approval workflow uses this helper so it can create the live
  * counterparty card and update the request status inside one transaction.
+ * Branch-scoped actors may create only one in-scope branch-owned card.
  */
 export async function createCounterpartyTx({
   req,
@@ -1362,7 +1512,6 @@ export async function createCounterpartyTx({
   });
 
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
-  assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
   if (payload.defaultCurrencyCode) {
     await assertCurrencyExists(payload.defaultCurrencyCode, "defaultCurrencyCode");
@@ -1395,6 +1544,13 @@ export async function createCounterpartyTx({
     primaryOperatingUnitId: payload.primaryOperatingUnitId,
     operatingUnitIds: payload.operatingUnitIds,
     runQuery,
+  });
+  assertCounterpartyMutationScope({
+    req,
+    assertScopeAccess,
+    legalEntityId,
+    primaryOperatingUnitId: counterpartyOperatingUnits.primaryOperatingUnitId,
+    operatingUnitIds: counterpartyOperatingUnits.operatingUnitIds,
   });
 
   await assertCountryIdsExist((payload.addresses || []).map((row) => row.countryId));
@@ -1529,6 +1685,12 @@ export async function createCounterparty({
   }
 }
 
+/**
+ * Update one counterparty while preserving entity-vs-branch ownership rules.
+ *
+ * Branch-scoped actors can edit only cards already owned by one in-scope
+ * operating unit, and they must keep the card owned by exactly one such unit.
+ */
 export async function updateCounterpartyById({
   req,
   payload,
@@ -1546,8 +1708,6 @@ export async function updateCounterpartyById({
   }
 
   const existingLegalEntityId = parsePositiveInt(existing.legal_entity_id);
-  assertScopeAccess(req, "legal_entity", existingLegalEntityId, "id");
-
   if (payload.legalEntityId && payload.legalEntityId !== existingLegalEntityId) {
     throw badRequest("legalEntityId cannot be changed for existing counterparty");
   }
@@ -1637,6 +1797,14 @@ export async function updateCounterpartyById({
       const currentOperatingUnitIds = currentOperatingUnits
         .map((row) => parsePositiveInt(row.id))
         .filter(Boolean);
+      assertBranchScopedCounterpartyOwnership({
+        req,
+        assertScopeAccess,
+        legalEntityId,
+        primaryOperatingUnitId: parsePositiveInt(existing.primary_operating_unit_id),
+        operatingUnitIds: currentOperatingUnitIds,
+        label: "id",
+      });
       const legalEntityChanged = legalEntityId !== parsePositiveInt(existing.legal_entity_id);
       const counterpartyOperatingUnits = await assertCounterpartyOperatingUnitScope({
         tenantId,
@@ -1654,6 +1822,13 @@ export async function updateCounterpartyById({
               : currentOperatingUnitIds
             : payload.operatingUnitIds,
         runQuery: tx.query,
+      });
+      assertCounterpartyMutationScope({
+        req,
+        assertScopeAccess,
+        legalEntityId,
+        primaryOperatingUnitId: counterpartyOperatingUnits.primaryOperatingUnitId,
+        operatingUnitIds: counterpartyOperatingUnits.operatingUnitIds,
       });
       await tx.query(
         `UPDATE counterparties

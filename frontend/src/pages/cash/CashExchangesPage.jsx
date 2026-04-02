@@ -405,6 +405,7 @@ export default function CashExchangesPage() {
   const canRead = hasPermission("cash.txn.read");
   const canCreate = hasPermission("cash.txn.create");
   const canReverse = hasPermission("cash.txn.reverse");
+  const canReadAccounts = hasPermission("gl.account.read");
   const canUpsertAccounts = hasPermission("gl.account.upsert");
 
   const [filters, setFilters] = useState(INITIAL_FILTERS);
@@ -680,7 +681,9 @@ export default function CashExchangesPage() {
         listCashExchangeBatches(query),
         listCashRegisters({ limit: 500, offset: 0 }),
         listLegalEntities(),
-        listAccounts({ limit: 1000, offset: 0 }),
+        canReadAccounts
+          ? listAccounts({ limit: 1000, offset: 0 })
+          : Promise.resolve({ rows: [] }),
       ]);
 
       try {
@@ -720,6 +723,10 @@ export default function CashExchangesPage() {
           warnings.push(extractErrorMessage(accountResult.reason, "GL account lookup is unavailable."));
         }
 
+        if (!canReadAccounts) {
+          warnings.push("Missing permission: gl.account.read (GL account lookup)");
+        }
+
         const nextRows = Array.isArray(exchangeResult.value?.rows) ? exchangeResult.value.rows : [];
         setRows(nextRows);
 
@@ -734,7 +741,7 @@ export default function CashExchangesPage() {
         setLoading(false);
       }
     },
-    [canRead]
+    [canRead, canReadAccounts]
   );
 
   useEffect(() => {
@@ -760,7 +767,7 @@ export default function CashExchangesPage() {
     let cancelled = false;
 
     async function loadCashPurposeMappings() {
-      if (!selectedCreateLegalEntityId) {
+      if (!selectedCreateLegalEntityId || !canReadAccounts) {
         setCashPurposeMappingsByPurpose({});
         return;
       }
@@ -768,7 +775,7 @@ export default function CashExchangesPage() {
         const response = await listJournalPurposeAccounts({
           legalEntityId: selectedCreateLegalEntityId,
           moduleKey: "CASH",
-        });
+        }, { skipGlobalErrorToast: true });
         if (cancelled) {
           return;
         }
@@ -784,7 +791,7 @@ export default function CashExchangesPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCreateLegalEntityId]);
+  }, [canReadAccounts, selectedCreateLegalEntityId]);
 
   useEffect(() => {
     const previousSuggestedClearingAccountId = toPositiveInt(

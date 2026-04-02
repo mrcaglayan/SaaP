@@ -37,10 +37,9 @@ function resolveRequestOperatingUnitScope(req) {
       return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
     }
   }
-  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
-  if (legalEntityId) {
-    return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-  }
+  // Let the service layer decide whether legal-entity fallback is valid.
+  // Requesters with OU-only scope must submit one of their own branches, and
+  // they should receive that validation message instead of an early 403.
   return null;
 }
 

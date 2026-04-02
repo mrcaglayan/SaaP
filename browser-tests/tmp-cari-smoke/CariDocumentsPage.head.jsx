@@ -293,8 +293,8 @@ function extractTransferRequiredGuidanceFromError(error) {
     directReason === "TRANSFER_REQUIRED" ? details : null;
   const lineCandidate = Array.isArray(details?.lineErrors)
     ? details.lineErrors.find(
-        (lineError) => String(lineError?.reason || "").trim().toUpperCase() === "TRANSFER_REQUIRED"
-      ) || null
+      (lineError) => String(lineError?.reason || "").trim().toUpperCase() === "TRANSFER_REQUIRED"
+    ) || null
     : null;
   const candidate = lineCandidate || directCandidate;
   if (!candidate) {
@@ -598,9 +598,9 @@ function mapWarehouseLookupOptions(rows = [], l) {
       const scopeLabel =
         ownershipScope === "OPERATING_UNIT"
           ? l(
-              `Branch ${operatingUnitCode || operatingUnitName || `#${operatingUnitId || "?"}`}`,
-              `Sube ${operatingUnitCode || operatingUnitName || `#${operatingUnitId || "?"}`}`
-            )
+            `Branch ${operatingUnitCode || operatingUnitName || `#${operatingUnitId || "?"}`}`,
+            `Sube ${operatingUnitCode || operatingUnitName || `#${operatingUnitId || "?"}`}`
+          )
           : l("Central ownership context", "Merkez sahiplik baglami");
       return {
         value,
@@ -822,25 +822,25 @@ function mapFixedAssetCategoryLookupOptions(
       const setupIssue = buildFixedAssetCategorySetupIssue(row, id);
       const readinessDescription = setupIssue
         ? l(
-            `Missing setup: ${formatFixedAssetCategorySetupRequirementList(
-              setupIssue.missingRequirements,
-              l
-            )}.`,
-            `Eksik kurulum: ${formatFixedAssetCategorySetupRequirementList(
-              setupIssue.missingRequirements,
-              l
-            )}.`
-          )
+          `Missing setup: ${formatFixedAssetCategorySetupRequirementList(
+            setupIssue.missingRequirements,
+            l
+          )}.`,
+          `Eksik kurulum: ${formatFixedAssetCategorySetupRequirementList(
+            setupIssue.missingRequirements,
+            l
+          )}.`
+        )
         : l(
-            `Ready for asset creation. Asset account: ${formatPostableAccountDisplay(
-              account,
-              accountId
-            )}`,
-            `Varlik olusturma icin hazir. Varlik hesabi: ${formatPostableAccountDisplay(
-              account,
-              accountId
-            )}`
-          );
+          `Ready for asset creation. Asset account: ${formatPostableAccountDisplay(
+            account,
+            accountId
+          )}`,
+          `Varlik olusturma icin hazir. Varlik hesabi: ${formatPostableAccountDisplay(
+            account,
+            accountId
+          )}`
+        );
       return {
         value: String(id),
         label: code && name ? `${code} - ${name}` : code || name || `#${id}`,
@@ -922,10 +922,10 @@ function mapFixedAssetLookupOptions(
       const ownerOperatingUnit = operatingUnitsById.get(ownerOperatingUnitId) || null;
       const ownerLabel = ownerOperatingUnitId
         ? formatOperatingUnitDisplay(
-            ownerOperatingUnitId,
-            ownerOperatingUnit?.code,
-            ownerOperatingUnit?.name
-          )
+          ownerOperatingUnitId,
+          ownerOperatingUnit?.code,
+          ownerOperatingUnit?.name
+        )
         : "-";
       const categoryLabel =
         categoryCode && categoryName
@@ -1102,13 +1102,13 @@ function resolveLineDefaultsFromItemCard(itemCard, direction) {
   const postingAccountId =
     normalizedDirection === "AP"
       ? itemCard?.inventoryAssetAccountId ||
-        itemCard?.inventory_asset_account_id ||
-        itemCard?.defaultPurchaseAccountId ||
-        itemCard?.default_purchase_account_id ||
-        ""
+      itemCard?.inventory_asset_account_id ||
+      itemCard?.defaultPurchaseAccountId ||
+      itemCard?.default_purchase_account_id ||
+      ""
       : itemCard?.defaultSalesAccountId ||
-        itemCard?.default_sales_account_id ||
-        "";
+      itemCard?.default_sales_account_id ||
+      "";
   const stockImpactMode = isStockItem
     ? normalizedDirection === "AP"
       ? "RECEIPT_PENDING"
@@ -1197,10 +1197,10 @@ function buildChargeAllocationMethodTransitionPatch(currentLine, nextMethod, lin
       allocatedAmountTxn:
         normalizedMethod === "MANUAL"
           ? String(
-              existingTarget?.allocatedAmountTxn
-              || target.allocatedAmountTxn
-              || ""
-            ).trim()
+            existingTarget?.allocatedAmountTxn
+            || target.allocatedAmountTxn
+            || ""
+          ).trim()
           : String(existingTarget?.allocatedAmountTxn || "").trim(),
     };
   });
@@ -1224,18 +1224,18 @@ function buildItemCardSelectionTransitionPatch(currentLine, itemCard, direction)
   const nextSubledgerType = lineDefaults.stockImpactMode === "NONE" ? "NONE" : "STOCK";
   return lineDefaults.stockImpactMode === "NONE"
     ? {
-        ...lineDefaults,
-        subledgerType: nextSubledgerType,
-        warehouseId: "",
-        warehouseCode: "",
-        warehouseName: "",
-      }
+      ...lineDefaults,
+      subledgerType: nextSubledgerType,
+      warehouseId: "",
+      warehouseCode: "",
+      warehouseName: "",
+    }
     : {
-        ...lineDefaults,
-        subledgerType: nextSubledgerType,
-        chargeAllocationMethod: "NONE",
-        chargeTargets: [],
-      };
+      ...lineDefaults,
+      subledgerType: nextSubledgerType,
+      chargeAllocationMethod: "NONE",
+      chargeTargets: [],
+    };
 }
 
 function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
@@ -1284,10 +1284,10 @@ function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
       subledgerType: "STOCK",
       ...(currentLine.subledgerType === "FIXED_ASSET"
         ? {
-            warehouseId: "",
-            warehouseCode: "",
-            warehouseName: "",
-          }
+          warehouseId: "",
+          warehouseCode: "",
+          warehouseName: "",
+        }
         : {}),
       stockImpactMode: getDefaultStockImpactModeForDirection(direction),
     };
@@ -1298,8 +1298,8 @@ function buildSubledgerTypeTransitionPatch(line, nextSubledgerType, direction) {
     subledgerType: "NONE",
     ...(currentLine.subledgerType === "STOCK"
       ? {
-          itemCardId: "",
-        }
+        itemCardId: "",
+      }
       : {}),
     warehouseId: "",
     warehouseCode: "",
@@ -1517,8 +1517,8 @@ function buildTemplateSafeDraftForm(input = {}) {
     settlementCashRegisterId:
       settlementMode === "IMMEDIATE_CASH"
         ? normalizePositiveIntText(
-            input?.settlementCashRegisterId ?? input?.settlement_cash_register_id
-          )
+          input?.settlementCashRegisterId ?? input?.settlement_cash_register_id
+        )
         : "",
     direction: DOCUMENT_DIRECTIONS.includes(direction) ? direction : baseline.direction,
     documentType: DOCUMENT_TYPES.includes(documentType)
@@ -1625,9 +1625,9 @@ function normalizeVisibleColumnIds(candidateIds, defaultIds) {
   const allowedIds = new Set(fallback);
   const normalized = Array.isArray(candidateIds)
     ? candidateIds
-        .map((value) => String(value || "").trim())
-        .filter((value, index, all) => value && all.indexOf(value) === index)
-        .filter((value) => allowedIds.has(value))
+      .map((value) => String(value || "").trim())
+      .filter((value, index, all) => value && all.indexOf(value) === index)
+      .filter((value) => allowedIds.has(value))
     : [];
   return normalized.length > 0 ? normalized : fallback;
 }
@@ -2013,9 +2013,9 @@ function FixedAssetQuickCreateModal({
     : null;
   const setupRequirementList = selectedCategorySetupIssue
     ? formatFixedAssetCategorySetupRequirementList(
-        selectedCategorySetupIssue.missingRequirements,
-        l
-      )
+      selectedCategorySetupIssue.missingRequirements,
+      l
+    )
     : "";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
@@ -2137,15 +2137,11 @@ function FixedAssetQuickCreateModal({
         {selectedCategory && !selectedCategorySetupIssue ? (
           <p className="mt-3 text-xs text-slate-500">
             {l(
-              `Category defaults will be applied automatically: useful life ${
-                selectedCategory.defaultUsefulLifeMonths || "-"
-              } months, profile #${
-                selectedCategory.defaultDepreciationProfileId || "-"
+              `Category defaults will be applied automatically: useful life ${selectedCategory.defaultUsefulLifeMonths || "-"
+              } months, profile #${selectedCategory.defaultDepreciationProfileId || "-"
               }, salvage rule ${selectedCategory.defaultSalvageRuleType || "NONE"}.`,
-              `Kategori varsayilanlari otomatik uygulanir: faydali omur ${
-                selectedCategory.defaultUsefulLifeMonths || "-"
-              } ay, profil #${
-                selectedCategory.defaultDepreciationProfileId || "-"
+              `Kategori varsayilanlari otomatik uygulanir: faydali omur ${selectedCategory.defaultUsefulLifeMonths || "-"
+              } ay, profil #${selectedCategory.defaultDepreciationProfileId || "-"
               }, hurda kurali ${selectedCategory.defaultSalvageRuleType || "NONE"}.`
             )}
           </p>
@@ -2563,8 +2559,8 @@ function DocumentLineWorkbench({
           const selectedChargeTargetRowIds = new Set(
             Array.isArray(line.chargeTargets)
               ? line.chargeTargets
-                  .map((target) => String(target?.targetRowId || "").trim())
-                  .filter(Boolean)
+                .map((target) => String(target?.targetRowId || "").trim())
+                .filter(Boolean)
               : []
           );
           const activeFixedAssetMode =
@@ -2600,9 +2596,9 @@ function DocumentLineWorkbench({
           ) || null;
           const selectedCategoryLabel = selectedCategory
             ? formatFixedAssetCategoryDisplay(
-                selectedCategory,
-                toPositiveInt(line.fixedAssetCategoryId)
-              )
+              selectedCategory,
+              toPositiveInt(line.fixedAssetCategoryId)
+            )
             : "";
           const selectedCategorySetupIssue =
             isAutoCreateMode && selectedCategory
@@ -2610,9 +2606,9 @@ function DocumentLineWorkbench({
               : null;
           const selectedCategorySetupRequirementList = selectedCategorySetupIssue
             ? formatFixedAssetCategorySetupRequirementList(
-                selectedCategorySetupIssue.missingRequirements,
-                l
-              )
+              selectedCategorySetupIssue.missingRequirements,
+              l
+            )
             : "";
           const selectedTargetAsset = fixedAssetRowsById.get(
             toPositiveInt(line.targetFixedAssetId)
@@ -2625,16 +2621,16 @@ function DocumentLineWorkbench({
             ? selectedTargetAssetNo && selectedTargetAssetName
               ? `${selectedTargetAssetNo} - ${selectedTargetAssetName}`
               : selectedTargetAssetNo
-                || selectedTargetAssetName
-                || `#${toPositiveInt(line.targetFixedAssetId)}`
+              || selectedTargetAssetName
+              || `#${toPositiveInt(line.targetFixedAssetId)}`
             : toPositiveInt(line.targetFixedAssetId)
               ? `#${toPositiveInt(line.targetFixedAssetId)}`
               : "";
           const selectedTargetAssetCategoryLabel = selectedTargetAsset
             ? formatFixedAssetCategoryDisplayFromAssetRow(
-                selectedTargetAsset,
-                fixedAssetCategoriesById
-              )
+              selectedTargetAsset,
+              fixedAssetCategoriesById
+            )
             : "-";
           const selectedTargetAssetCurrencyCode =
             normalizeCurrencyCode(
@@ -2652,7 +2648,7 @@ function DocumentLineWorkbench({
           );
           const selectedTargetAssetRemainingLifeText = formatFixedAssetLifeMonths(
             selectedTargetAsset?.remainingUsefulLifeMonths
-              ?? selectedTargetAsset?.remaining_useful_life_months,
+            ?? selectedTargetAsset?.remaining_useful_life_months,
             l
           );
           const hasRevisedUsefulLifeValue = Boolean(
@@ -2676,15 +2672,15 @@ function DocumentLineWorkbench({
           const perUnitAmount =
             isAutoCreateMode && unitCount
               ? roundDocumentUiAmount(
-                  Number(effectiveLineNetAmountTxn || 0) / unitCount
-                )
+                Number(effectiveLineNetAmountTxn || 0) / unitCount
+              )
               : null;
           const chargeManualDifference =
             isChargeLine && chargeAllocationMethod === "MANUAL"
               ? roundDocumentUiAmount(
-                  Number(line.lineNetAmountTxn || 0)
-                    - Number(chargeLinePreview?.manualTotalTxn || 0)
-                )
+                Number(line.lineNetAmountTxn || 0)
+                - Number(chargeLinePreview?.manualTotalTxn || 0)
+              )
               : null;
           const showPerUnitMetadata = Boolean(isAutoCreateMode && unitCount === 1);
           const previewStatus = normalizeText(line.previewStatus).toUpperCase();
@@ -3926,11 +3922,10 @@ function DocumentLineWorkbench({
                                 return (
                                   <div
                                     key={`charge-target-${line.rowId}-${targetRowId}`}
-                                    className={`rounded-md border px-3 py-3 ${
-                                      isTargetSelected
+                                    className={`rounded-md border px-3 py-3 ${isTargetSelected
                                         ? "border-cyan-300 bg-white"
                                         : "border-cyan-100 bg-cyan-25"
-                                    }`}
+                                      }`}
                                   >
                                     <label className="flex items-start gap-3">
                                       <input
@@ -3994,10 +3989,10 @@ function DocumentLineWorkbench({
                                           value={
                                             Array.isArray(line.chargeTargets)
                                               ? line.chargeTargets.find(
-                                                  (targetRow) =>
-                                                    String(targetRow?.targetRowId || "")
-                                                      === targetRowId
-                                                )?.allocatedAmountTxn || ""
+                                                (targetRow) =>
+                                                  String(targetRow?.targetRowId || "")
+                                                  === targetRowId
+                                              )?.allocatedAmountTxn || ""
                                               : ""
                                           }
                                           onChange={(event) =>
@@ -4035,11 +4030,10 @@ function DocumentLineWorkbench({
                               <MoneyText
                                 amount={chargeManualDifference}
                                 currencyCode={lineCurrencyCode}
-                                className={`inline font-semibold ${
-                                  Math.abs(Number(chargeManualDifference || 0)) > 0.01
+                                className={`inline font-semibold ${Math.abs(Number(chargeManualDifference || 0)) > 0.01
                                     ? "text-rose-700"
                                     : "text-emerald-700"
-                                }`}
+                                  }`}
                               />
                             </p>
                           ) : null}
@@ -4050,9 +4044,9 @@ function DocumentLineWorkbench({
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
                         {isChargeLine
                           ? l(
-                              "Posting Account (ignored for charge lines)",
-                              "Kayit Hesabi (masraf satirinda yok sayilir)"
-                            )
+                            "Posting Account (ignored for charge lines)",
+                            "Kayit Hesabi (masraf satirinda yok sayilir)"
+                          )
                           : l("Posting Account (optional)", "Kayit Hesabi (opsiyonel)")}
                         <select
                           className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -4089,9 +4083,9 @@ function DocumentLineWorkbench({
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
                         {isChargeLine
                           ? l(
-                              "Posting Account ID (ignored for charge lines)",
-                              "Kayit Hesabi ID (masraf satirinda yok sayilir)"
-                            )
+                            "Posting Account ID (ignored for charge lines)",
+                            "Kayit Hesabi ID (masraf satirinda yok sayilir)"
+                          )
                           : l("Posting Account ID (optional)", "Kayit Hesabi ID (opsiyonel)")}
                         <input
                           type="number"
@@ -4338,12 +4332,11 @@ function DocumentLineWorkbench({
                   {l("flows to", "su satirlara dagilir")}:{" "}
                   {chargeLine.allocations.length > 0
                     ? chargeLine.allocations
-                        .map((allocation) =>
-                          `${l("Line", "Satir")} ${allocation.targetLineNo}: ${
-                            allocation.targetDescription || "-"
-                          } (${roundDocumentUiAmount(allocation.allocatedAmountTxn || 0)})`
-                        )
-                        .join(" | ")
+                      .map((allocation) =>
+                        `${l("Line", "Satir")} ${allocation.targetLineNo}: ${allocation.targetDescription || "-"
+                        } (${roundDocumentUiAmount(allocation.allocatedAmountTxn || 0)})`
+                      )
+                      .join(" | ")
                     : l("No targets selected yet.", "Henuz hedef secilmedi.")}
                 </p>
               </div>
@@ -4724,9 +4717,9 @@ function buildDocumentLifecycleEvents(row, translate = (en) => en) {
       at: updatedAt,
       note: updatedAt
         ? translate(
-            "Partially settled (timestamp inferred from updatedAt).",
-            "Kismen mahsuplastirildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
-          )
+          "Partially settled (timestamp inferred from updatedAt).",
+          "Kismen mahsuplastirildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+        )
         : translate("Partially settled.", "Kismen mahsuplastirildi."),
     });
   }
@@ -4736,9 +4729,9 @@ function buildDocumentLifecycleEvents(row, translate = (en) => en) {
       at: updatedAt,
       note: updatedAt
         ? translate(
-            "Settled (timestamp inferred from updatedAt).",
-            "Mahsuplastirildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
-          )
+          "Settled (timestamp inferred from updatedAt).",
+          "Mahsuplastirildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+        )
         : translate("Settled.", "Mahsuplastirildi."),
     });
   }
@@ -4748,9 +4741,9 @@ function buildDocumentLifecycleEvents(row, translate = (en) => en) {
       at: updatedAt || createdAt,
       note: updatedAt
         ? translate(
-            "Cancelled (timestamp inferred from updatedAt).",
-            "Iptal edildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
-          )
+          "Cancelled (timestamp inferred from updatedAt).",
+          "Iptal edildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+        )
         : translate("Cancelled.", "Iptal edildi."),
     });
   }
@@ -4761,9 +4754,9 @@ function buildDocumentLifecycleEvents(row, translate = (en) => en) {
       note: reversedAt
         ? translate("Reversal completed.", "Ters kayit tamamlandi.")
         : translate(
-            "Reversed (timestamp inferred from updatedAt).",
-            "Terslendi (zaman bilgisi updatedAt alanindan tahmin edildi)."
-          ),
+          "Reversed (timestamp inferred from updatedAt).",
+          "Terslendi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+        ),
     });
   }
   return events;
@@ -5007,7 +5000,7 @@ export default function CariDocumentsPage({ direction = "" }) {
               "Improvement effective date cannot be later than the bill document date.",
               "Iyilestirme etkinlik tarihi belge tarihinden daha ileri olamaz."
             );
-        case "targetFixedAssetId is required for AR FIXED_ASSET lines.":
+          case "targetFixedAssetId is required for AR FIXED_ASSET lines.":
             return l(
               "Select the asset being sold on this AR fixed-asset line.",
               "Bu AR duran varlik satirinda satilan varligi secin."
@@ -6092,9 +6085,9 @@ export default function CariDocumentsPage({ direction = "" }) {
     );
     const matchesDraftTotals = Boolean(
       hasDraftTotals &&
-        invalidAmountRows === 0 &&
-        amountsMatch(totalTxn, selectedDocumentAmountTxn) &&
-        amountsMatch(totalBase, selectedDocumentAmountBase)
+      invalidAmountRows === 0 &&
+      amountsMatch(totalTxn, selectedDocumentAmountTxn) &&
+      amountsMatch(totalBase, selectedDocumentAmountBase)
     );
     return {
       lineCount: rows.length,
@@ -6111,9 +6104,9 @@ export default function CariDocumentsPage({ direction = "" }) {
   ]);
   const postingLinesReadyForSubmit = !postForm.usePostingLines || Boolean(
     postFormPostingLineSummary.lineCount > 0 &&
-      postFormPostingLineSummary.hasDraftTotals &&
-      postFormPostingLineSummary.invalidAmountRows === 0 &&
-      postFormPostingLineSummary.matchesDraftTotals
+    postFormPostingLineSummary.hasDraftTotals &&
+    postFormPostingLineSummary.invalidAmountRows === 0 &&
+    postFormPostingLineSummary.matchesDraftTotals
   );
   const selectedDocumentLifecycleMeta = useMemo(
     () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status, l),
@@ -6200,7 +6193,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     () =>
       normalizeCurrencyCode(
         selectedDocumentLegalEntity?.functional_currency_code ||
-          selectedDocumentLegalEntity?.functionalCurrencyCode
+        selectedDocumentLegalEntity?.functionalCurrencyCode
       ),
     [selectedDocumentLegalEntity]
   );
@@ -6246,7 +6239,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     () =>
       normalizeCurrencyCode(
         createSelectedLegalEntity?.functional_currency_code ||
-          createSelectedLegalEntity?.functionalCurrencyCode
+        createSelectedLegalEntity?.functionalCurrencyCode
       ),
     [createSelectedLegalEntity]
   );
@@ -6254,7 +6247,7 @@ export default function CariDocumentsPage({ direction = "" }) {
     () =>
       normalizeCurrencyCode(
         editSelectedLegalEntity?.functional_currency_code ||
-          editSelectedLegalEntity?.functionalCurrencyCode
+        editSelectedLegalEntity?.functionalCurrencyCode
       ),
     [editSelectedLegalEntity]
   );
@@ -6388,9 +6381,9 @@ export default function CariDocumentsPage({ direction = "" }) {
     () =>
       createValidationVisible
         ? translateDocumentMutationLineErrorMap(
-            createValidationResult.lineErrors,
-            translateDocumentMutationError
-          )
+          createValidationResult.lineErrors,
+          translateDocumentMutationError
+        )
         : new Map(),
     [
       createValidationResult.lineErrors,
@@ -6402,9 +6395,9 @@ export default function CariDocumentsPage({ direction = "" }) {
     () =>
       editValidationVisible
         ? translateDocumentMutationLineErrorMap(
-            editValidationResult.lineErrors,
-            translateDocumentMutationError
-          )
+          editValidationResult.lineErrors,
+          translateDocumentMutationError
+        )
         : new Map(),
     [editValidationResult.lineErrors, editValidationVisible, translateDocumentMutationError]
   );
@@ -6691,7 +6684,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   }, [createForm.paymentTermId, createPaymentTermOptions]);
   const createImmediateCashDueDate =
     requiresDueDate(createForm.documentType) &&
-    isImmediateCashSettlementMode(createForm.settlementMode)
+      isImmediateCashSettlementMode(createForm.settlementMode)
       ? normalizeText(createForm.documentDate)
       : "";
   const createPaymentTermDerivedDueDate = resolvePaymentTermDueDateCandidate(
@@ -6700,14 +6693,14 @@ export default function CariDocumentsPage({ direction = "" }) {
   );
   const createDueDateForcedByImmediateCash = Boolean(
     createImmediateCashDueDate &&
-      normalizeText(createForm.dueDate) === createImmediateCashDueDate
+    normalizeText(createForm.dueDate) === createImmediateCashDueDate
   );
   const createDueDateAutoDerived = Boolean(
     !createImmediateCashDueDate &&
-      requiresDueDate(createForm.documentType) &&
-      !createDueDateTouched &&
-      createPaymentTermDerivedDueDate &&
-      normalizeText(createForm.dueDate) === createPaymentTermDerivedDueDate
+    requiresDueDate(createForm.documentType) &&
+    !createDueDateTouched &&
+    createPaymentTermDerivedDueDate &&
+    normalizeText(createForm.dueDate) === createPaymentTermDerivedDueDate
   );
   const createOperatingUnitLookupOptions = useMemo(() => {
     const selectedOperatingUnitId = normalizeText(createForm.operatingUnitId);
@@ -6747,10 +6740,10 @@ export default function CariDocumentsPage({ direction = "" }) {
   );
   const createOperatingUnitDerivedFromCounterpartyPrimary = Boolean(
     selectedCreateCounterpartyPrimaryOperatingUnitId &&
-      !createOperatingUnitOverrideOpen &&
-      (!normalizeText(createForm.operatingUnitId) ||
-        normalizeText(createForm.operatingUnitId) ===
-          selectedCreateCounterpartyPrimaryOperatingUnitId)
+    !createOperatingUnitOverrideOpen &&
+    (!normalizeText(createForm.operatingUnitId) ||
+      normalizeText(createForm.operatingUnitId) ===
+      selectedCreateCounterpartyPrimaryOperatingUnitId)
   );
   const effectiveCreateOperatingUnitId = createOperatingUnitDerivedFromCounterpartyPrimary
     ? selectedCreateCounterpartyPrimaryOperatingUnitId
@@ -6807,7 +6800,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   const editImmediateCashLabel = getImmediateCashSettlementLabel(editForm.direction, l);
   const editImmediateCashDueDate =
     requiresDueDate(editForm.documentType) &&
-    isImmediateCashSettlementMode(editForm.settlementMode)
+      isImmediateCashSettlementMode(editForm.settlementMode)
       ? normalizeText(editForm.documentDate)
       : "";
   const documentPageTitle = getDocumentPageTitle(fixedRouteDirection, l);
@@ -6816,10 +6809,10 @@ export default function CariDocumentsPage({ direction = "" }) {
   const editInlineCounterpartyName = normalizeLookupQuery(editCounterpartyLookupQuery);
   const canInlineCreateCounterpartyInCreateForm = Boolean(
     canCreate &&
-      canReadCards &&
-      canUpsertCards &&
-      toPositiveInt(createForm.legalEntityId) &&
-      createInlineCounterpartyName
+    canReadCards &&
+    canUpsertCards &&
+    toPositiveInt(createForm.legalEntityId) &&
+    createInlineCounterpartyName
   );
   const filterLegalEntityLookupLoading = Boolean(
     workingContextBaseLoading && filterLegalEntityLookupOptions.length === 0
@@ -6829,10 +6822,10 @@ export default function CariDocumentsPage({ direction = "" }) {
   );
   const canInlineCreateCounterpartyInEditForm = Boolean(
     canEditOrCancelSelected &&
-      canReadCards &&
-      canUpsertCards &&
-      toPositiveInt(editForm.legalEntityId) &&
-      editInlineCounterpartyName
+    canReadCards &&
+    canUpsertCards &&
+    toPositiveInt(editForm.legalEntityId) &&
+    editInlineCounterpartyName
   );
 
   function buildSmartResetDraftForm(previousForm) {
@@ -6947,10 +6940,10 @@ export default function CariDocumentsPage({ direction = "" }) {
     setDraftTemplatesError("");
     setDraftTemplatesMessage(
       options?.message ||
-        l(
-          `Draft form copied from document id=${sourceRow?.id || "-"}.`,
-          `Taslak form belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
-        )
+      l(
+        `Draft form copied from document id=${sourceRow?.id || "-"}.`,
+        `Taslak form belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
+      )
     );
     focusCreateDraftSection();
   }
@@ -6974,20 +6967,20 @@ export default function CariDocumentsPage({ direction = "" }) {
       const copiedFromReversalRecord =
         toPositiveInt(
           selectedSnapshot?.reversalOfDocumentId ??
-            selectedSnapshot?.reversal_of_document_id
+          selectedSnapshot?.reversal_of_document_id
         ) &&
         toPositiveInt(sourceRow?.id) !== toPositiveInt(selectedSnapshot?.id);
       copyDocumentIntoCreateDraft(sourceRow, {
         treatDueDateAsDerived: true,
         message: copiedFromReversalRecord
           ? l(
-              `Draft copied from original document id=${sourceRow?.id || "-"} behind reversal record id=${selectedSnapshot?.id || "-"}.`,
-              `Taslak, ters kayit belge id=${selectedSnapshot?.id || "-"} arkasindaki orijinal belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
-            )
+            `Draft copied from original document id=${sourceRow?.id || "-"} behind reversal record id=${selectedSnapshot?.id || "-"}.`,
+            `Taslak, ters kayit belge id=${selectedSnapshot?.id || "-"} arkasindaki orijinal belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
+          )
           : l(
-              `Draft form cloned from document id=${sourceRow?.id || "-"}`,
-              `Taslak form belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
-            ),
+            `Draft form cloned from document id=${sourceRow?.id || "-"}`,
+            `Taslak form belge id=${sourceRow?.id || "-"} kaydindan kopyalandi.`
+          ),
       });
     } catch (error) {
       setDraftTemplatesError(
@@ -7197,10 +7190,10 @@ export default function CariDocumentsPage({ direction = "" }) {
         stockImpactMode: nextMode,
         ...(String(nextMode || "").trim().toUpperCase() === "NONE"
           ? {
-              warehouseId: "",
-              warehouseCode: "",
-              warehouseName: "",
-            }
+            warehouseId: "",
+            warehouseCode: "",
+            warehouseName: "",
+          }
           : {}),
       },
       { resetTaxPreview: true }
@@ -7519,10 +7512,10 @@ export default function CariDocumentsPage({ direction = "" }) {
         stockImpactMode: nextMode,
         ...(String(nextMode || "").trim().toUpperCase() === "NONE"
           ? {
-              warehouseId: "",
-              warehouseCode: "",
-              warehouseName: "",
-            }
+            warehouseId: "",
+            warehouseCode: "",
+            warehouseName: "",
+          }
           : {}),
       },
       { resetTaxPreview: true }
@@ -7614,16 +7607,16 @@ export default function CariDocumentsPage({ direction = "" }) {
       locationOperatingUnitId: locationOperatingUnitId || undefined,
       depreciationProfileId: toPositiveInt(
         selectedCategory?.defaultDepreciationProfileId ??
-          selectedCategory?.default_depreciation_profile_id
+        selectedCategory?.default_depreciation_profile_id
       ) || undefined,
       usefulLifeMonths: toPositiveInt(
         selectedCategory?.defaultUsefulLifeMonths ??
-          selectedCategory?.default_useful_life_months
+        selectedCategory?.default_useful_life_months
       ) || undefined,
     };
     const salvageRuleType = normalizeText(
       selectedCategory?.defaultSalvageRuleType ??
-        selectedCategory?.default_salvage_rule_type
+      selectedCategory?.default_salvage_rule_type
     ).toUpperCase();
     if (payload.name.length === 0) {
       setQuickCreateFixedAssetError(
@@ -7669,8 +7662,8 @@ export default function CariDocumentsPage({ direction = "" }) {
       if (salvageRuleType === "PERCENT_OF_COST") {
         const salvagePercent = Number(
           selectedCategory?.defaultSalvagePercent ??
-            selectedCategory?.default_salvage_percent ??
-            0
+          selectedCategory?.default_salvage_percent ??
+          0
         );
         if (Number.isFinite(salvagePercent)) {
           payload.salvagePercent = salvagePercent;
@@ -7679,8 +7672,8 @@ export default function CariDocumentsPage({ direction = "" }) {
       if (salvageRuleType === "FIXED_BASE_AMOUNT") {
         const salvageAmountBase = Number(
           selectedCategory?.defaultSalvageAmountBase ??
-            selectedCategory?.default_salvage_amount_base ??
-            0
+          selectedCategory?.default_salvage_amount_base ??
+          0
         );
         if (Number.isFinite(salvageAmountBase)) {
           payload.salvageAmountBaseRule = salvageAmountBase;
@@ -8036,24 +8029,24 @@ export default function CariDocumentsPage({ direction = "" }) {
       );
       const nextTargets = hasTarget
         ? existingTargets.filter(
-            (target) => String(target?.targetRowId || "") !== String(targetRowId || "")
-          )
+          (target) => String(target?.targetRowId || "") !== String(targetRowId || "")
+        )
         : [
-            ...existingTargets,
-            {
-              ...targetDraft,
-              allocatedAmountTxn:
-                normalizedMethod === "MANUAL"
-                  ? String(targetDraft.allocatedAmountTxn || "").trim()
-                  : "",
-            },
-          ];
+          ...existingTargets,
+          {
+            ...targetDraft,
+            allocatedAmountTxn:
+              normalizedMethod === "MANUAL"
+                ? String(targetDraft.allocatedAmountTxn || "").trim()
+                : "",
+          },
+        ];
       return currentLines.map((row) =>
         row?.rowId === chargeLineRowId
           ? createDocumentLineDraft({
-              ...row,
-              chargeTargets: nextTargets,
-            })
+            ...row,
+            chargeTargets: nextTargets,
+          })
           : row
       );
     });
@@ -8074,13 +8067,13 @@ export default function CariDocumentsPage({ direction = "" }) {
           ...row,
           chargeTargets: Array.isArray(row?.chargeTargets)
             ? row.chargeTargets.map((target) =>
-                String(target?.targetRowId || "") === String(targetRowId || "")
-                  ? {
-                      ...target,
-                      allocatedAmountTxn: String(nextAmount || "").trim(),
-                    }
-                  : target
-              )
+              String(target?.targetRowId || "") === String(targetRowId || "")
+                ? {
+                  ...target,
+                  allocatedAmountTxn: String(nextAmount || "").trim(),
+                }
+                : target
+            )
             : [],
         });
       })
@@ -8184,8 +8177,8 @@ export default function CariDocumentsPage({ direction = "" }) {
             });
             const taxAmountTxn = Number(
               preview?.breakdown?.taxAmount ??
-                preview?.breakdown?.tax_amount ??
-                0
+              preview?.breakdown?.tax_amount ??
+              0
             );
             nextLines.push(
               createDocumentLineDraft({
@@ -8218,8 +8211,8 @@ export default function CariDocumentsPage({ direction = "" }) {
                     accountId:
                       Number(
                         preview?.mapping?.accountId ||
-                          preview?.mapping?.account_id ||
-                          0
+                        preview?.mapping?.account_id ||
+                        0
                       ) || null,
                   },
                 ],
@@ -8334,9 +8327,9 @@ export default function CariDocumentsPage({ direction = "" }) {
     }
     const resolvedFilters = hasFixedRouteDirection
       ? {
-          ...(nextFilters && typeof nextFilters === "object" ? nextFilters : {}),
-          direction: fixedRouteDirection,
-        }
+        ...(nextFilters && typeof nextFilters === "object" ? nextFilters : {}),
+        direction: fixedRouteDirection,
+      }
       : nextFilters;
     setListLoading(true);
     setListError("");
@@ -10270,9 +10263,9 @@ export default function CariDocumentsPage({ direction = "" }) {
     setPostForm((previous) =>
       previous.usePostingLines
         ? {
-            ...previous,
-            usePostingLines: false,
-          }
+          ...previous,
+          usePostingLines: false,
+        }
         : previous
     );
   }, [selectedDocumentUsesStoredTaxesForPosting]);
@@ -11754,9 +11747,9 @@ export default function CariDocumentsPage({ direction = "" }) {
                     toPositiveInt(filters.legalEntityId)
                       ? l("No counterparties found.", "Cari bulunamadi.")
                       : l(
-                          "Set legalEntityId to load counterparties.",
-                          "Carileri yuklemek icin legalEntityId secin."
-                        )
+                        "Set legalEntityId to load counterparties.",
+                        "Carileri yuklemek icin legalEntityId secin."
+                      )
                   }
                   onChange={(nextValue) =>
                     setFilters((prev) => ({
@@ -11802,11 +11795,10 @@ export default function CariDocumentsPage({ direction = "" }) {
                 type="button"
                 aria-expanded={documentListColumnsOpen}
                 aria-controls="document-list-columns-popover"
-                className={`rounded-md border px-3 py-2 text-xs font-semibold ${
-                  documentListColumnsOpen
+                className={`rounded-md border px-3 py-2 text-xs font-semibold ${documentListColumnsOpen
                     ? "border-cyan-300 bg-cyan-50 text-cyan-800"
                     : "border-slate-300 bg-white text-slate-700"
-                }`}
+                  }`}
                 onClick={() => toggleDocumentListPopover("columns")}
               >
                 {l("Columns", "Kolonlar")}
@@ -11901,11 +11893,10 @@ export default function CariDocumentsPage({ direction = "" }) {
                 type="button"
                 aria-expanded={documentListAdvancedFiltersOpen}
                 aria-controls="document-list-filters-popover"
-                className={`rounded-md border px-3 py-2 text-xs font-semibold ${
-                  documentListAdvancedFiltersOpen
+                className={`rounded-md border px-3 py-2 text-xs font-semibold ${documentListAdvancedFiltersOpen
                     ? "border-cyan-300 bg-cyan-50 text-cyan-800"
                     : "border-slate-300 bg-white text-slate-700"
-                }`}
+                  }`}
                 onClick={() => toggleDocumentListPopover("filters")}
               >
                 {l("Filter", "Filtre")}
@@ -11961,9 +11952,9 @@ export default function CariDocumentsPage({ direction = "" }) {
                               placeholder={
                                 toPositiveInt(filters.legalEntityId)
                                   ? l(
-                                      "Search operating unit code/name",
-                                      "Operasyon birimi kodu/adi ara"
-                                    )
+                                    "Search operating unit code/name",
+                                    "Operasyon birimi kodu/adi ara"
+                                  )
                                   : l("Select legal entity first", "Once tuzel kisilik secin")
                               }
                               noOptionsText={
@@ -12091,11 +12082,10 @@ export default function CariDocumentsPage({ direction = "" }) {
                 type="button"
                 aria-expanded={documentListSavedViewsOpen}
                 aria-controls="document-list-saved-views-popover"
-                className={`rounded-md border px-3 py-2 text-xs font-semibold ${
-                  documentListSavedViewsOpen
+                className={`rounded-md border px-3 py-2 text-xs font-semibold ${documentListSavedViewsOpen
                     ? "border-cyan-300 bg-cyan-50 text-cyan-800"
                     : "border-slate-300 bg-white text-slate-700"
-                }`}
+                  }`}
                 onClick={() => toggleDocumentListPopover("savedViews")}
               >
                 {l("Saved Views", "Kayitli Gorunumler")}
@@ -12275,7 +12265,7 @@ export default function CariDocumentsPage({ direction = "" }) {
                 {l("Clone Selected Document", "Secili Belgeyi Kopyala")}
               </button>
               <select
-                className="min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                className="min-w-55ded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
                 value={selectedDraftTemplateId}
                 onChange={(event) => setSelectedDraftTemplateId(event.target.value)}
                 disabled={
@@ -12486,8 +12476,8 @@ export default function CariDocumentsPage({ direction = "" }) {
                         setCreateOperatingUnitOverrideOpen(
                           Boolean(
                             normalizedOperatingUnitId &&
-                              normalizedOperatingUnitId !==
-                                selectedCreateCounterpartyPrimaryOperatingUnitId
+                            normalizedOperatingUnitId !==
+                            selectedCreateCounterpartyPrimaryOperatingUnitId
                           )
                         );
                       }}
@@ -12818,13 +12808,13 @@ export default function CariDocumentsPage({ direction = "" }) {
               <p className="md:col-span-4 -mt-1 text-[11px] text-slate-500">
                 {createDocumentFxComputation.isLocalCurrency
                   ? l(
-                      `Functional currency is ${createFunctionalCurrencyCode}. FX rate is fixed to 1 and base amount follows the invoice amount.`,
-                      `Fonksiyonel para birimi ${createFunctionalCurrencyCode}. Kur 1 olarak sabitlenir ve baz tutar fatura tutarindan gelir.`
-                    )
+                    `Functional currency is ${createFunctionalCurrencyCode}. FX rate is fixed to 1 and base amount follows the invoice amount.`,
+                    `Fonksiyonel para birimi ${createFunctionalCurrencyCode}. Kur 1 olarak sabitlenir ve baz tutar fatura tutarindan gelir.`
+                  )
                   : l(
-                      `Functional currency is ${createFunctionalCurrencyCode}. Base amount is calculated automatically from invoice amount x FX rate.`,
-                      `Fonksiyonel para birimi ${createFunctionalCurrencyCode}. Baz tutar, fatura tutari x kur ile otomatik hesaplanir.`
-                    )}
+                    `Functional currency is ${createFunctionalCurrencyCode}. Base amount is calculated automatically from invoice amount x FX rate.`,
+                    `Fonksiyonel para birimi ${createFunctionalCurrencyCode}. Baz tutar, fatura tutari x kur ile otomatik hesaplanir.`
+                  )}
               </p>
             ) : null}
             <DocumentLineWorkbench
@@ -12919,12 +12909,11 @@ export default function CariDocumentsPage({ direction = "" }) {
           {l("Page", "Sayfa")} {documentListPage}/{documentListTotalPages}
         </p>
         {documentListFilterControls}
-        <div className="mt-4 max-h-[28rem] overflow-auto rounded-lg border border-slate-200">
+        <div className="mt-4 max-h-112 overflow-auto rounded-lg border border-slate-200">
           <table className="min-w-full text-sm">
             <thead
-              className={`bg-slate-50 text-left text-slate-600 ${
-                documentTablePrefs.stickyHeader ? "sticky top-0 z-10" : ""
-              }`}
+              className={`bg-slate-50 text-left text-slate-600 ${documentTablePrefs.stickyHeader ? "sticky top-0 z-10" : ""
+                }`}
             >
               <tr>
                 {documentVisibleColumns.map((column) => (
@@ -12941,9 +12930,8 @@ export default function CariDocumentsPage({ direction = "" }) {
               {pagedDocumentRows.map((row) => (
                 <tr
                   key={`doc-row-${row.id}`}
-                  className={`border-t border-slate-100 ${
-                    Number(row.id) === Number(selectedDocumentId) ? "bg-cyan-50" : "bg-white"
-                  }`}
+                  className={`border-t border-slate-100 ${Number(row.id) === Number(selectedDocumentId) ? "bg-cyan-50" : "bg-white"
+                    }`}
                 >
                   {documentVisibleColumns.map((column) => (
                     <td
@@ -13117,261 +13105,262 @@ export default function CariDocumentsPage({ direction = "" }) {
                         normalizeText(targetFixedAsset?.name) ||
                         (targetFixedAssetId ? `#${targetFixedAssetId}` : "");
                       return (
-                      <div
-                        key={`detail-line-${line.id || line.lineNo}`}
-                        className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-slate-800">
-                          <span className="font-semibold">
-                            {l("Line", "Satir")} {line.lineNo || "-"} | {line.lineKind || "STANDARD"}
-                          </span>
-                          <span>
-                            {isChargeLine
-                              ? l(
+                        <div
+                          key={`detail-line-${line.id || line.lineNo}`}
+                          className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-800">
+                            <span className="font-semibold">
+                              {l("Line", "Satir")} {line.lineNo || "-"} | {line.lineKind || "STANDARD"}
+                            </span>
+                            <span>
+                              {isChargeLine
+                                ? l(
                                   "Posting account ignored for charge lines",
                                   "Gider dagitim satirlarinda kayit hesabi yok sayilir"
                                 )
-                              : `${l("Posting account", "Kayit hesabi")} #${line.postingAccountId || "-"}`}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-slate-700">
-                          {line.description || "-"}
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-3 text-slate-600">
-                          {isFixedAssetLine ? (
-                            <>
-                              <span>
-                                {l("Fixed asset mode", "Demirbas modu")}: {line.fixedAssetMode || "-"}
-                              </span>
-                              <span>
-                                {l("Fixed asset", "Demirbas")}:{" "}
-                                {targetFixedAssetId ? (
-                                  canReadFixedAssets ? (
-                                    <Link
-                                      to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${targetFixedAssetId}`}
-                                      className="text-cyan-700 hover:underline"
-                                    >
-                                      {targetFixedAssetLabel}
-                                    </Link>
-                                  ) : targetFixedAssetLabel
-                                ) : line.fixedAssetMode === "AUTO_CREATE" ? (
-                                  generatedFixedAssets.length > 0
-                                    ? l(
+                                : `${l("Posting account", "Kayit hesabi")} #${line.postingAccountId || "-"}`}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-slate-700">
+                            {line.description || "-"}
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-3 text-slate-600">
+                            {isFixedAssetLine ? (
+                              <>
+                                <span>
+                                  {l("Fixed asset mode", "Demirbas modu")}: {line.fixedAssetMode || "-"}
+                                </span>
+                                <span>
+                                  {l("Fixed asset", "Demirbas")}:{" "}
+                                  {targetFixedAssetId ? (
+                                    canReadFixedAssets ? (
+                                      <Link
+                                        to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${targetFixedAssetId}`}
+                                        className="text-cyan-700 hover:underline"
+                                      >
+                                        {targetFixedAssetLabel}
+                                      </Link>
+                                    ) : targetFixedAssetLabel
+                                  ) : line.fixedAssetMode === "AUTO_CREATE" ? (
+                                    generatedFixedAssets.length > 0
+                                      ? l(
                                         "Generated assets are listed below",
                                         "Olusan demirbaslar asagida listeleniyor"
                                       )
-                                    : l("Auto-create on post", "Kayitta otomatik olusturulur")
-                                ) : "-"}
+                                      : l("Auto-create on post", "Kayitta otomatik olusturulur")
+                                  ) : "-"}
+                                </span>
+                              </>
+                            ) : (
+                              <span>
+                                {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
                               </span>
-                            </>
-                          ) : (
-                            <span>
-                              {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
-                            </span>
-                          )}
-                          <span>
-                            {l("Qty", "Miktar")}: {line.quantity ?? "-"}
-                          </span>
-                          <span>
-                            {l("Unit price", "Birim fiyat")}: {line.unitPriceTxn ?? "-"}
-                          </span>
-                          <span>
-                            {l("Tax category", "Vergi kategorisi")}: {line.taxCategoryCode || "-"}
-                          </span>
-                          <span>
-                            {l("Stock impact", "Stok etkisi")}: {line.stockImpactMode || "NONE"}
-                          </span>
-                          <span>
-                            {l("Warehouse", "Depo")}:{" "}
-                            {formatWarehouseDisplay(
-                              line.warehouseId,
-                              line.warehouseCode,
-                              line.warehouseName
                             )}
-                          </span>
-                          {isChargeLine ? (
                             <span>
-                              {l("Charge allocation", "Gider dagitimi")}: {chargeAllocationMethod}
+                              {l("Qty", "Miktar")}: {line.quantity ?? "-"}
                             </span>
+                            <span>
+                              {l("Unit price", "Birim fiyat")}: {line.unitPriceTxn ?? "-"}
+                            </span>
+                            <span>
+                              {l("Tax category", "Vergi kategorisi")}: {line.taxCategoryCode || "-"}
+                            </span>
+                            <span>
+                              {l("Stock impact", "Stok etkisi")}: {line.stockImpactMode || "NONE"}
+                            </span>
+                            <span>
+                              {l("Warehouse", "Depo")}:{" "}
+                              {formatWarehouseDisplay(
+                                line.warehouseId,
+                                line.warehouseCode,
+                                line.warehouseName
+                              )}
+                            </span>
+                            {isChargeLine ? (
+                              <span>
+                                {l("Charge allocation", "Gider dagitimi")}: {chargeAllocationMethod}
+                              </span>
+                            ) : null}
+                          </div>
+                          {isChargeLine ? (
+                            <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-slate-700">
+                              <p className="font-semibold text-amber-900">
+                                {l("Charge targets", "Gider hedefleri")}
+                              </p>
+                              {chargeTargets.length === 0 ? (
+                                <p className="mt-1 text-[11px] text-amber-900">
+                                  {l("No stored targets.", "Kayitli hedef yok.")}
+                                </p>
+                              ) : (
+                                <div className="mt-1 flex flex-wrap gap-2">
+                                  {chargeTargets.map((target, targetIndex) => {
+                                    const targetLineNo = toPositiveInt(target?.targetLineNo);
+                                    const targetLine = (selectedSnapshot.lines || []).find(
+                                      (candidate) =>
+                                        toPositiveInt(candidate?.lineNo) === targetLineNo
+                                    );
+                                    const targetLabel = [
+                                      `${l("Line", "Satir")} ${targetLineNo || "-"}`,
+                                      normalizeText(targetLine?.description) || null,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" | ");
+                                    return (
+                                      <span
+                                        key={`detail-line-${line.id || line.lineNo}-charge-target-${targetLineNo || targetIndex}`}
+                                        className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] text-amber-900"
+                                      >
+                                        {targetLabel}
+                                        {target?.allocatedAmountTxn != null ? (
+                                          <>
+                                            {" | "}
+                                            <MoneyText
+                                              amount={target.allocatedAmountTxn}
+                                              currencyCode={
+                                                selectedSnapshot.currencyCodeSnapshot ||
+                                                selectedSnapshot.currencyCode
+                                              }
+                                              className="inline"
+                                            />
+                                          </>
+                                        ) : (
+                                          ` | ${l("Calculated on post", "Kayitta hesaplanir")}`
+                                        )}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+                          {isFixedAssetLine &&
+                            line.fixedAssetMode === "AUTO_CREATE" &&
+                            generatedFixedAssets.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                              <span className="font-semibold text-slate-700">
+                                {l("Generated fixed assets", "Olusan demirbaslar")}:
+                              </span>
+                              {generatedFixedAssets.map((assetRow) => {
+                                const generatedAssetId = toPositiveInt(assetRow?.id);
+                                const generatedAssetLabel =
+                                  normalizeText(assetRow?.assetNo) ||
+                                  normalizeText(assetRow?.name) ||
+                                  (generatedAssetId ? `#${generatedAssetId}` : "-");
+                                const generatedAssetStatus = normalizeText(assetRow?.status);
+                                const generatedAssetUnitNo = toPositiveInt(
+                                  assetRow?.sourceCariDocumentLineUnitNo
+                                );
+                                const chipLabel = [
+                                  generatedAssetUnitNo
+                                    ? `${l("Unit", "Birim")} ${generatedAssetUnitNo}`
+                                    : null,
+                                  generatedAssetLabel,
+                                  generatedAssetStatus || null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" | ");
+                                return generatedAssetId && canReadFixedAssets ? (
+                                  <Link
+                                    key={`generated-fixed-asset-${line.id || line.lineNo}-${generatedAssetId}`}
+                                    to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${generatedAssetId}`}
+                                    className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-1 text-cyan-800 hover:bg-cyan-100 hover:underline"
+                                  >
+                                    {chipLabel}
+                                  </Link>
+                                ) : (
+                                  <span
+                                    key={`generated-fixed-asset-${line.id || line.lineNo}-${generatedAssetId || generatedAssetLabel}`}
+                                    className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-700"
+                                  >
+                                    {chipLabel}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                          <div className="mt-2 grid gap-2 md:grid-cols-3">
+                            <div className="rounded border border-slate-200 bg-white px-2 py-1">
+                              <span className="block text-[11px] uppercase tracking-wide text-slate-500">
+                                {l("Net", "Net")}
+                              </span>
+                              <MoneyText
+                                amount={line.lineNetAmountTxn}
+                                currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
+                              />
+                            </div>
+                            <div className="rounded border border-slate-200 bg-white px-2 py-1">
+                              <span className="block text-[11px] uppercase tracking-wide text-slate-500">
+                                {l("Tax", "Vergi")}
+                              </span>
+                              <MoneyText
+                                amount={line.lineTaxAmountTxn}
+                                currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
+                              />
+                            </div>
+                            <div className="rounded border border-slate-200 bg-white px-2 py-1">
+                              <span className="block text-[11px] uppercase tracking-wide text-slate-500">
+                                {l("Gross", "Brut")}
+                              </span>
+                              <MoneyText
+                                amount={line.lineGrossAmountTxn}
+                                currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
+                              />
+                            </div>
+                          </div>
+                          {Array.isArray(line.taxes) && line.taxes.length > 0 ? (
+                            <ul className="mt-2 space-y-1 text-slate-600">
+                              {line.taxes.map((taxRow) => (
+                                <li key={`detail-line-tax-${line.id || line.lineNo}-${taxRow.componentNo || 0}`}>
+                                  {(taxRow.taxCode || l("Tax", "Vergi"))} | {taxRow.ratePct ?? 0}% |{" "}
+                                  <MoneyText
+                                    amount={taxRow.taxAmountTxn}
+                                    currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
+                                    className="inline"
+                                  />
+                                  {taxRow.taxPurposeCode ? ` | ${taxRow.taxPurposeCode}` : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                          {Array.isArray(line.stockLinks) && line.stockLinks.length > 0 ? (
+                            <ul className="mt-2 space-y-1 text-slate-600">
+                              {line.stockLinks.map((stockLink) => (
+                                <li
+                                  key={`detail-line-stock-${line.id || line.lineNo}-${stockLink.id || stockLink.stockImpactMode}`}
+                                >
+                                  {l("Stock link", "Stok baglantisi")} |{" "}
+                                  {stockLink.stockImpactMode || line.stockImpactMode || "NONE"} |{" "}
+                                  {stockLink.linkStatus || "-"} | {l("Qty", "Miktar")}{" "}
+                                  {stockLink.requestedQuantity ?? "-"}
+                                  {stockLink.inventoryMovementId
+                                    ? ` | ${l("Movement", "Hareket")} #${stockLink.inventoryMovementId}`
+                                    : ""}
+                                  {stockLink.inventoryMovementType
+                                    ? ` | ${stockLink.inventoryMovementType}`
+                                    : ""}
+                                  {stockLink.inventoryValuationStatus
+                                    ? ` | ${stockLink.inventoryValuationStatus}`
+                                    : ""}
+                                  {stockLink.inventoryWarehouseCode
+                                    ? ` | ${l("Warehouse", "Depo")} ${stockLink.inventoryWarehouseCode}`
+                                    : ""}
+                                  {stockLink.reopenedFromStockLinkId
+                                    ? ` | ${l("Reopened from", "Yeniden acilan kaynak")} #${stockLink.reopenedFromStockLinkId}`
+                                    : ""}
+                                  {stockLink.supersededByStockLinkId
+                                    ? ` | ${l("Successor", "Devam baglantisi")} #${stockLink.supersededByStockLinkId}`
+                                    : ""}
+                                  {stockLink.inventoryMovementReversedAt
+                                    ? ` | ${l("Reversed", "Terslendi")} ${stockLink.inventoryMovementReversedAt}`
+                                    : ""}
+                                </li>
+                              ))}
+                            </ul>
                           ) : null}
                         </div>
-                        {isChargeLine ? (
-                          <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-slate-700">
-                            <p className="font-semibold text-amber-900">
-                              {l("Charge targets", "Gider hedefleri")}
-                            </p>
-                            {chargeTargets.length === 0 ? (
-                              <p className="mt-1 text-[11px] text-amber-900">
-                                {l("No stored targets.", "Kayitli hedef yok.")}
-                              </p>
-                            ) : (
-                              <div className="mt-1 flex flex-wrap gap-2">
-                                {chargeTargets.map((target, targetIndex) => {
-                                  const targetLineNo = toPositiveInt(target?.targetLineNo);
-                                  const targetLine = (selectedSnapshot.lines || []).find(
-                                    (candidate) =>
-                                      toPositiveInt(candidate?.lineNo) === targetLineNo
-                                  );
-                                  const targetLabel = [
-                                    `${l("Line", "Satir")} ${targetLineNo || "-"}`,
-                                    normalizeText(targetLine?.description) || null,
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" | ");
-                                  return (
-                                    <span
-                                      key={`detail-line-${line.id || line.lineNo}-charge-target-${targetLineNo || targetIndex}`}
-                                      className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] text-amber-900"
-                                    >
-                                      {targetLabel}
-                                      {target?.allocatedAmountTxn != null ? (
-                                        <>
-                                          {" | "}
-                                          <MoneyText
-                                            amount={target.allocatedAmountTxn}
-                                            currencyCode={
-                                              selectedSnapshot.currencyCodeSnapshot ||
-                                              selectedSnapshot.currencyCode
-                                            }
-                                            className="inline"
-                                          />
-                                        </>
-                                      ) : (
-                                        ` | ${l("Calculated on post", "Kayitta hesaplanir")}`
-                                      )}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        ) : null}
-                        {isFixedAssetLine &&
-                        line.fixedAssetMode === "AUTO_CREATE" &&
-                        generatedFixedAssets.length > 0 ? (
-                          <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                            <span className="font-semibold text-slate-700">
-                              {l("Generated fixed assets", "Olusan demirbaslar")}:
-                            </span>
-                            {generatedFixedAssets.map((assetRow) => {
-                              const generatedAssetId = toPositiveInt(assetRow?.id);
-                              const generatedAssetLabel =
-                                normalizeText(assetRow?.assetNo) ||
-                                normalizeText(assetRow?.name) ||
-                                (generatedAssetId ? `#${generatedAssetId}` : "-");
-                              const generatedAssetStatus = normalizeText(assetRow?.status);
-                              const generatedAssetUnitNo = toPositiveInt(
-                                assetRow?.sourceCariDocumentLineUnitNo
-                              );
-                              const chipLabel = [
-                                generatedAssetUnitNo
-                                  ? `${l("Unit", "Birim")} ${generatedAssetUnitNo}`
-                                  : null,
-                                generatedAssetLabel,
-                                generatedAssetStatus || null,
-                              ]
-                                .filter(Boolean)
-                                .join(" | ");
-                              return generatedAssetId && canReadFixedAssets ? (
-                                <Link
-                                  key={`generated-fixed-asset-${line.id || line.lineNo}-${generatedAssetId}`}
-                                  to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${generatedAssetId}`}
-                                  className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-1 text-cyan-800 hover:bg-cyan-100 hover:underline"
-                                >
-                                  {chipLabel}
-                                </Link>
-                              ) : (
-                                <span
-                                  key={`generated-fixed-asset-${line.id || line.lineNo}-${generatedAssetId || generatedAssetLabel}`}
-                                  className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-700"
-                                >
-                                  {chipLabel}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                        <div className="mt-2 grid gap-2 md:grid-cols-3">
-                          <div className="rounded border border-slate-200 bg-white px-2 py-1">
-                            <span className="block text-[11px] uppercase tracking-wide text-slate-500">
-                              {l("Net", "Net")}
-                            </span>
-                            <MoneyText
-                              amount={line.lineNetAmountTxn}
-                              currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
-                            />
-                          </div>
-                          <div className="rounded border border-slate-200 bg-white px-2 py-1">
-                            <span className="block text-[11px] uppercase tracking-wide text-slate-500">
-                              {l("Tax", "Vergi")}
-                            </span>
-                            <MoneyText
-                              amount={line.lineTaxAmountTxn}
-                              currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
-                            />
-                          </div>
-                          <div className="rounded border border-slate-200 bg-white px-2 py-1">
-                            <span className="block text-[11px] uppercase tracking-wide text-slate-500">
-                              {l("Gross", "Brut")}
-                            </span>
-                            <MoneyText
-                              amount={line.lineGrossAmountTxn}
-                              currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
-                            />
-                          </div>
-                        </div>
-                        {Array.isArray(line.taxes) && line.taxes.length > 0 ? (
-                          <ul className="mt-2 space-y-1 text-slate-600">
-                            {line.taxes.map((taxRow) => (
-                              <li key={`detail-line-tax-${line.id || line.lineNo}-${taxRow.componentNo || 0}`}>
-                                {(taxRow.taxCode || l("Tax", "Vergi"))} | {taxRow.ratePct ?? 0}% |{" "}
-                                <MoneyText
-                                  amount={taxRow.taxAmountTxn}
-                                  currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
-                                  className="inline"
-                                />
-                                {taxRow.taxPurposeCode ? ` | ${taxRow.taxPurposeCode}` : ""}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        {Array.isArray(line.stockLinks) && line.stockLinks.length > 0 ? (
-                          <ul className="mt-2 space-y-1 text-slate-600">
-                            {line.stockLinks.map((stockLink) => (
-                              <li
-                                key={`detail-line-stock-${line.id || line.lineNo}-${stockLink.id || stockLink.stockImpactMode}`}
-                              >
-                                {l("Stock link", "Stok baglantisi")} |{" "}
-                                {stockLink.stockImpactMode || line.stockImpactMode || "NONE"} |{" "}
-                                {stockLink.linkStatus || "-"} | {l("Qty", "Miktar")}{" "}
-                                {stockLink.requestedQuantity ?? "-"}
-                                {stockLink.inventoryMovementId
-                                  ? ` | ${l("Movement", "Hareket")} #${stockLink.inventoryMovementId}`
-                                  : ""}
-                                {stockLink.inventoryMovementType
-                                  ? ` | ${stockLink.inventoryMovementType}`
-                                  : ""}
-                                {stockLink.inventoryValuationStatus
-                                  ? ` | ${stockLink.inventoryValuationStatus}`
-                                  : ""}
-                                {stockLink.inventoryWarehouseCode
-                                  ? ` | ${l("Warehouse", "Depo")} ${stockLink.inventoryWarehouseCode}`
-                                  : ""}
-                                {stockLink.reopenedFromStockLinkId
-                                  ? ` | ${l("Reopened from", "Yeniden acilan kaynak")} #${stockLink.reopenedFromStockLinkId}`
-                                  : ""}
-                                {stockLink.supersededByStockLinkId
-                                  ? ` | ${l("Successor", "Devam baglantisi")} #${stockLink.supersededByStockLinkId}`
-                                  : ""}
-                                {stockLink.inventoryMovementReversedAt
-                                  ? ` | ${l("Reversed", "Terslendi")} ${stockLink.inventoryMovementReversedAt}`
-                                  : ""}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </div>
-                    )})}
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -13410,7 +13399,7 @@ export default function CariDocumentsPage({ direction = "" }) {
                     </button>
                     {toPositiveInt(
                       selectedSnapshot?.reversalOfDocumentId ??
-                        selectedSnapshot?.reversal_of_document_id
+                      selectedSnapshot?.reversal_of_document_id
                     ) ? (
                       <p className="text-[11px] text-slate-500">
                         {l(
@@ -13488,7 +13477,7 @@ export default function CariDocumentsPage({ direction = "" }) {
                           {l("Open in Journal Workbench", "Yevmiye Calisma Ekraninda Ac")}
                         </Link>
                         {Array.isArray(relatedJournal.source_links) &&
-                        relatedJournal.source_links.length > 0 ? (
+                          relatedJournal.source_links.length > 0 ? (
                           <ul className="mt-2 space-y-1">
                             {relatedJournal.source_links.map((linkRow) => (
                               <li
@@ -13668,8 +13657,8 @@ export default function CariDocumentsPage({ direction = "" }) {
                                 </p>
                               ) : null}
                               {!internalCommentMentionLoading &&
-                              !internalCommentMentionError &&
-                              internalCommentMentionRows.length === 0 ? (
+                                !internalCommentMentionError &&
+                                internalCommentMentionRows.length === 0 ? (
                                 <p className="px-2 py-2 text-xs text-cyan-800">
                                   {l(
                                     "No matching teammates found.",
@@ -13678,8 +13667,8 @@ export default function CariDocumentsPage({ direction = "" }) {
                                 </p>
                               ) : null}
                               {!internalCommentMentionLoading &&
-                              !internalCommentMentionError &&
-                              internalCommentMentionRows.length > 0 ? (
+                                !internalCommentMentionError &&
+                                internalCommentMentionRows.length > 0 ? (
                                 <ul className="max-h-40 overflow-auto p-1">
                                   {internalCommentMentionRows.map((row, index) => {
                                     const displayName = normalizeText(row?.name);
@@ -13689,11 +13678,10 @@ export default function CariDocumentsPage({ direction = "" }) {
                                       <li key={`internal-comment-mention-${row?.id || displayEmail || index}`}>
                                         <button
                                           type="button"
-                                          className={`flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs ${
-                                            isHighlighted
+                                          className={`flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs ${isHighlighted
                                               ? "bg-cyan-100 text-cyan-950"
                                               : "text-slate-700 hover:bg-cyan-100/70"
-                                          }`}
+                                            }`}
                                           onMouseEnter={() =>
                                             setInternalCommentMentionHighlightIndex(index)
                                           }
@@ -14013,7 +14001,7 @@ export default function CariDocumentsPage({ direction = "" }) {
                         />
                       </label>
                       {canUpsertCards ? (
-                      <button
+                        <button
                           type="button"
                           className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold normal-case text-slate-700 disabled:opacity-60"
                           onClick={handleInlineCreateCounterpartyForEditForm}
@@ -14023,7 +14011,7 @@ export default function CariDocumentsPage({ direction = "" }) {
                             `Create "${editInlineCounterpartyName || "new counterparty"}" with details`,
                             `"${editInlineCounterpartyName || "yeni cari"}" icin detayli kart ac`
                           )}
-                      </button>
+                        </button>
                       ) : null}
                       {editInlineCounterpartyError ? (
                         <p className="mt-1 text-[11px] normal-case text-rose-700">{editInlineCounterpartyError}</p>
@@ -14211,13 +14199,13 @@ export default function CariDocumentsPage({ direction = "" }) {
                       <p className="mt-2 text-[11px] text-slate-500">
                         {editDocumentFxComputation.isLocalCurrency
                           ? l(
-                              `Functional currency is ${editFunctionalCurrencyCode}. FX rate is fixed to 1 and base amount follows the invoice amount.`,
-                              `Fonksiyonel para birimi ${editFunctionalCurrencyCode}. Kur 1 olarak sabitlenir ve baz tutar fatura tutarindan gelir.`
-                            )
+                            `Functional currency is ${editFunctionalCurrencyCode}. FX rate is fixed to 1 and base amount follows the invoice amount.`,
+                            `Fonksiyonel para birimi ${editFunctionalCurrencyCode}. Kur 1 olarak sabitlenir ve baz tutar fatura tutarindan gelir.`
+                          )
                           : l(
-                              `Functional currency is ${editFunctionalCurrencyCode}. Base amount is calculated automatically from invoice amount x FX rate.`,
-                              `Fonksiyonel para birimi ${editFunctionalCurrencyCode}. Baz tutar, fatura tutari x kur ile otomatik hesaplanir.`
-                            )}
+                            `Functional currency is ${editFunctionalCurrencyCode}. Base amount is calculated automatically from invoice amount x FX rate.`,
+                            `Fonksiyonel para birimi ${editFunctionalCurrencyCode}. Baz tutar, fatura tutari x kur ile otomatik hesaplanir.`
+                          )}
                       </p>
                     ) : null}
                   </div>
@@ -14321,14 +14309,14 @@ export default function CariDocumentsPage({ direction = "" }) {
                       {selectedDocumentLegalEntityId}.
                     </p>
                     {Array.isArray(selectedCariPostingReadiness?.missingPurposeCodes) &&
-                    selectedCariPostingReadiness.missingPurposeCodes.length > 0 ? (
+                      selectedCariPostingReadiness.missingPurposeCodes.length > 0 ? (
                       <p className="mt-1">
                         {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
                         {selectedCariPostingReadiness.missingPurposeCodes.join(", ")}
                       </p>
                     ) : null}
                     {Array.isArray(selectedCariPostingReadiness?.invalidMappings) &&
-                    selectedCariPostingReadiness.invalidMappings.length > 0 ? (
+                      selectedCariPostingReadiness.invalidMappings.length > 0 ? (
                       <ul className="mt-2 list-disc pl-5">
                         {selectedCariPostingReadiness.invalidMappings.map((row, index) => (
                           <li key={`cari-readiness-invalid-${index}`}>
@@ -14412,15 +14400,15 @@ export default function CariDocumentsPage({ direction = "" }) {
                   <p className="mt-1 text-xs text-rose-700">{postOffsetAccountsError}</p>
                 ) : null}
                 {!postOffsetAccountsLoading &&
-                !postOffsetAccountsError &&
-                canReadGlAccounts &&
-                filteredPostOffsetAccountOptions.length === 0 ? (
+                  !postOffsetAccountsError &&
+                  canReadGlAccounts &&
+                  filteredPostOffsetAccountOptions.length === 0 ? (
                   <p className="mt-1 text-xs text-slate-600">
                     {selectedOffsetAccountType && !postForm.showAllOffsetAccounts
                       ? l(
-                          `No postable ${selectedOffsetAccountType} accounts found for selected legal entity.`,
-                          `Secili tuzel kisilik icin kaydedilebilir ${selectedOffsetAccountType} hesap bulunamadi.`
-                        )
+                        `No postable ${selectedOffsetAccountType} accounts found for selected legal entity.`,
+                        `Secili tuzel kisilik icin kaydedilebilir ${selectedOffsetAccountType} hesap bulunamadi.`
+                      )
                       : l("No postable accounts found for selected legal entity.", "Secili tuzel kisilik icin kaydedilebilir hesap bulunamadi.")}
                   </p>
                 ) : null}
@@ -14627,8 +14615,8 @@ export default function CariDocumentsPage({ direction = "" }) {
                       </p>
                     ) : null}
                     {postFormPostingLineSummary.lineCount > 0 &&
-                    postFormPostingLineSummary.hasDraftTotals &&
-                    !postFormPostingLineSummary.matchesDraftTotals ? (
+                      postFormPostingLineSummary.hasDraftTotals &&
+                      !postFormPostingLineSummary.matchesDraftTotals ? (
                       <p className="mt-1 text-xs text-amber-700">
                         {l("Posting line totals must match draft totals before posting.", "Kayit oncesi satir toplamlari taslak toplamlariyla eslesmelidir.")}
                       </p>
@@ -14651,19 +14639,17 @@ export default function CariDocumentsPage({ direction = "" }) {
                     <p className="mt-1 text-xs">
                       {[
                         postTransferGuidance.itemCardCode ||
-                          postTransferGuidance.itemCardName ||
-                          l("Item", "Kalem"),
+                        postTransferGuidance.itemCardName ||
+                        l("Item", "Kalem"),
                         postTransferGuidance.transferSourceWarehouseCode ||
-                        postTransferGuidance.transferSourceWarehouseName
-                          ? `${l("Suggested source", "Onerilen kaynak")}: ${
-                              postTransferGuidance.transferSourceWarehouseCode ||
-                              postTransferGuidance.transferSourceWarehouseName
-                            }`
+                          postTransferGuidance.transferSourceWarehouseName
+                          ? `${l("Suggested source", "Onerilen kaynak")}: ${postTransferGuidance.transferSourceWarehouseCode ||
+                          postTransferGuidance.transferSourceWarehouseName
+                          }`
                           : "",
                         postTransferGuidance.warehouseCode || postTransferGuidance.warehouseName
-                          ? `${l("Target warehouse", "Hedef depo")}: ${
-                              postTransferGuidance.warehouseCode || postTransferGuidance.warehouseName
-                            }`
+                          ? `${l("Target warehouse", "Hedef depo")}: ${postTransferGuidance.warehouseCode || postTransferGuidance.warehouseName
+                          }`
                           : "",
                         postTransferGuidance.requestedQuantity
                           ? `${l("Quantity", "Miktar")}: ${postTransferGuidance.requestedQuantity}`
@@ -14700,13 +14686,13 @@ export default function CariDocumentsPage({ direction = "" }) {
                     <p className="font-semibold">
                       {postFixedAssetImprovementGuidance.reasonCode === "FA_IMPROVEMENT_SAME_DAY_LIFE_CHANGE_CONFLICT"
                         ? l(
-                            "Another same-day life-changing improvement blocks this entry.",
-                            "Ayni gun tarihli baska bir omur degistiren iyilestirme bu kaydi blokluyor."
-                          )
+                          "Another same-day life-changing improvement blocks this entry.",
+                          "Ayni gun tarihli baska bir omur degistiren iyilestirme bu kaydi blokluyor."
+                        )
                         : l(
-                            "A later fixed-asset transaction blocks this earlier improvement.",
-                            "Daha sonraki bir demirbas hareketi bu daha erken iyilestirmeyi blokluyor."
-                          )}
+                          "A later fixed-asset transaction blocks this earlier improvement.",
+                          "Daha sonraki bir demirbas hareketi bu daha erken iyilestirmeyi blokluyor."
+                        )}
                     </p>
                     <p className="mt-1 text-xs">
                       {[
@@ -14718,9 +14704,9 @@ export default function CariDocumentsPage({ direction = "" }) {
                           : "",
                         postFixedAssetImprovementGuidance.blockingTransactionType
                           ? `${l("Type", "Tur")}: ${formatFixedAssetTransactionTypeLabel(
-                              postFixedAssetImprovementGuidance.blockingTransactionType,
-                              l
-                            )}`
+                            postFixedAssetImprovementGuidance.blockingTransactionType,
+                            l
+                          )}`
                           : "",
                         postFixedAssetImprovementGuidance.blockingEffectiveDate
                           ? `${l("Effective date", "Etkinlik tarihi")}: ${postFixedAssetImprovementGuidance.blockingEffectiveDate}`
@@ -14732,22 +14718,21 @@ export default function CariDocumentsPage({ direction = "" }) {
                     <p className="mt-2 text-xs">
                       {postFixedAssetImprovementGuidance.reasonCode === "FA_IMPROVEMENT_SAME_DAY_LIFE_CHANGE_CONFLICT"
                         ? l(
-                            "Only one useful-life-changing improvement is allowed per asset on the same effective date. Open the asset transaction list, reverse or revise the other same-day improvement, then return and post this line again.",
-                            "Ayni etkinlik tarihinde varlik basina yalnizca bir faydali omur degistiren iyilestirmeye izin verilir. Demirbas hareket listesini acin, diger ayni gun iyilestirmesini tersleyin veya duzeltin, sonra geri donup bu satiri yeniden kayda alin."
-                          )
+                          "Only one useful-life-changing improvement is allowed per asset on the same effective date. Open the asset transaction list, reverse or revise the other same-day improvement, then return and post this line again.",
+                          "Ayni etkinlik tarihinde varlik basina yalnizca bir faydali omur degistiren iyilestirmeye izin verilir. Demirbas hareket listesini acin, diger ayni gun iyilestirmesini tersleyin veya duzeltin, sonra geri donup bu satiri yeniden kayda alin."
+                        )
                         : l(
-                            "Do this in order: open the asset transaction list, reverse or correct the later transaction, then return and post this earlier improvement again.",
-                            "Sirayla sunu yapin: demirbas hareket listesini acin, daha sonraki hareketi tersleyin veya duzeltin, sonra geri donup bu daha erken iyilestirmeyi yeniden kayda alin."
-                          )}
+                          "Do this in order: open the asset transaction list, reverse or correct the later transaction, then return and post this earlier improvement again.",
+                          "Sirayla sunu yapin: demirbas hareket listesini acin, daha sonraki hareketi tersleyin veya duzeltin, sonra geri donup bu daha erken iyilestirmeyi yeniden kayda alin."
+                        )}
                     </p>
                     {postFixedAssetImprovementGuidance.assetId ? (
                       <p className="mt-2 text-xs">
                         <Link
-                          to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${postFixedAssetImprovementGuidance.assetId}?tab=transactions${
-                            postFixedAssetImprovementGuidance.blockingTransactionId
+                          to={`${FIXED_ASSET_DETAIL_ROUTE_PREFIX}/${postFixedAssetImprovementGuidance.assetId}?tab=transactions${postFixedAssetImprovementGuidance.blockingTransactionId
                               ? `&transactionId=${postFixedAssetImprovementGuidance.blockingTransactionId}`
                               : ""
-                          }`}
+                            }`}
                           className="font-semibold underline underline-offset-2"
                         >
                           {l("Open asset transactions", "Demirbas hareketlerini ac")}
@@ -14831,9 +14816,8 @@ export default function CariDocumentsPage({ direction = "" }) {
                           ) : (
                             "#-"
                           )}{" "}
-                          {`| ${row.inventoryMovementType || "-"} | ${
-                            row.itemCardCode || row.itemCardName || l("Item", "Kalem")
-                          } | ${row.warehouseCode || row.warehouseName || l("Warehouse", "Depo")}`}
+                          {`| ${row.inventoryMovementType || "-"} | ${row.itemCardCode || row.itemCardName || l("Item", "Kalem")
+                            } | ${row.warehouseCode || row.warehouseName || l("Warehouse", "Depo")}`}
                           {row.documentLineNo ? ` | ${l("Line", "Satir")} ${row.documentLineNo}` : ""}
                           {row.inventoryValuationStatus ? ` | ${row.inventoryValuationStatus}` : ""}
                           {row.suggestedActionMessage ? ` | ${row.suggestedActionMessage}` : ""}

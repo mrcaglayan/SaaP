@@ -359,6 +359,7 @@ export const DOCUMENT_FILTER_CONTEXT_MAPPINGS = [
 
 export const DOCUMENT_CREATE_CONTEXT_MAPPINGS = [
   { stateKey: "legalEntityId" },
+  { stateKey: "operatingUnitId" },
   {
     stateKey: "documentDate",
     contextKey: "dateTo",

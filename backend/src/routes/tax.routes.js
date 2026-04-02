@@ -37,6 +37,7 @@ import {
 } from "../services/tax.setup.service.js";
 
 const router = express.Router();
+const TAX_SETUP_WRITE_PERMISSION = "tax.setup.write";
 
 function resolveLegalEntityScopeFromInput(raw) {
   const legalEntityId = parsePositiveInt(raw?.legalEntityId ?? raw?.legal_entity_id);
@@ -81,7 +82,7 @@ router.get(
 
 router.post(
   "/regimes",
-  requirePermission("onboarding.company.setup", {
+  requirePermission(TAX_SETUP_WRITE_PERMISSION, {
     resolveScope: (req) => resolveLegalEntityScopeFromInput(req.body),
   }),
   asyncHandler(async (req, res) => {
@@ -93,7 +94,7 @@ router.post(
 
 router.patch(
   "/regimes/:regimeId",
-  requirePermission("onboarding.company.setup", {
+  requirePermission(TAX_SETUP_WRITE_PERMISSION, {
     resolveScope: (req, tenantId) => resolveTaxRegimeScope(req.params?.regimeId, tenantId),
   }),
   asyncHandler(async (req, res) => {
@@ -122,7 +123,7 @@ router.get(
 
 router.post(
   "/codes",
-  requirePermission("onboarding.company.setup", {
+  requirePermission(TAX_SETUP_WRITE_PERMISSION, {
     resolveScope: (req, tenantId) => resolveRegimeScopeFromInput(req.body, tenantId),
   }),
   asyncHandler(async (req, res) => {
@@ -134,7 +135,7 @@ router.post(
 
 router.patch(
   "/codes/:codeId",
-  requirePermission("onboarding.company.setup", {
+  requirePermission(TAX_SETUP_WRITE_PERMISSION, {
     resolveScope: (req, tenantId) => resolveTaxCodeScope(req.params?.codeId, tenantId),
   }),
   asyncHandler(async (req, res) => {
@@ -168,7 +169,7 @@ router.get(
 
 router.post(
   "/rules",
-  requirePermission("onboarding.company.setup", {
+  requirePermission(TAX_SETUP_WRITE_PERMISSION, {
     resolveScope: (req, tenantId) => resolveRegimeScopeFromInput(req.body, tenantId),
   }),
   asyncHandler(async (req, res) => {
@@ -180,7 +181,7 @@ router.post(
 
 router.patch(
   "/rules/:ruleId",
-  requirePermission("onboarding.company.setup", {
+  requirePermission(TAX_SETUP_WRITE_PERMISSION, {
     resolveScope: (req, tenantId) => resolveTaxRuleScope(req.params?.ruleId, tenantId),
   }),
   asyncHandler(async (req, res) => {
@@ -212,7 +213,7 @@ router.get(
 
 router.post(
   "/account-mappings",
-  requirePermission("onboarding.company.setup", {
+  requirePermission(TAX_SETUP_WRITE_PERMISSION, {
     resolveScope: (req) => resolveLegalEntityScopeFromInput(req.body),
   }),
   asyncHandler(async (req, res) => {
@@ -224,7 +225,7 @@ router.post(
 
 router.patch(
   "/account-mappings/:mappingId",
-  requirePermission("onboarding.company.setup", {
+  requirePermission(TAX_SETUP_WRITE_PERMISSION, {
     resolveScope: (req, tenantId) =>
       resolveTaxAccountMappingScope(req.params?.mappingId, tenantId),
   }),

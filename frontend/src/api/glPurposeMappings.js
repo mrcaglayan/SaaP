@@ -12,9 +12,10 @@ function toQueryString(params = {}) {
   return query ? `?${query}` : "";
 }
 
-export async function listJournalPurposeAccounts(params = {}) {
+export async function listJournalPurposeAccounts(params = {}, requestConfig = {}) {
   const response = await api.get(
-    `/api/v1/gl/journal-purpose-accounts${toQueryString(params)}`
+    `/api/v1/gl/journal-purpose-accounts${toQueryString(params)}`,
+    requestConfig
   );
   return response.data;
 }

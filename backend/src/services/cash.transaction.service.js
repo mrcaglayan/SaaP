@@ -24,6 +24,7 @@ import {
   findOpenCashSessionByRegisterId,
   findCashSessionById,
   generateCashTxnNoForLegalEntityYearTx,
+  getPostedCashRegisterBalanceAsOfDate,
   insertCashTransitTransfer,
   insertCashTransaction,
   listCashTransitTransfers,
@@ -91,6 +92,75 @@ function isActive(value) {
 
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
+}
+
+function resolveSignedCashTransactionAmount(row) {
+  const normalizedTxnType = asUpper(row?.txn_type);
+  let signedAmount = 0;
+  if (
+    normalizedTxnType === "RECEIPT" ||
+    normalizedTxnType === "WITHDRAWAL_FROM_BANK" ||
+    normalizedTxnType === "TRANSFER_IN" ||
+    normalizedTxnType === "OPENING_FLOAT"
+  ) {
+    signedAmount = Number(row?.amount || 0);
+  } else if (
+    normalizedTxnType === "PAYOUT" ||
+    normalizedTxnType === "DEPOSIT_TO_BANK" ||
+    normalizedTxnType === "TRANSFER_OUT" ||
+    normalizedTxnType === "CLOSING_ADJUSTMENT"
+  ) {
+    signedAmount = Number(row?.amount || 0) * -1;
+  }
+
+  if (parsePositiveInt(row?.reversal_of_transaction_id)) {
+    signedAmount *= -1;
+  }
+
+  return Number(signedAmount.toFixed(6));
+}
+
+async function assertRegisterNegativeBalancePolicyForPost({
+  tenantId,
+  cashTransaction,
+  overrideCashControl,
+  runQuery = query,
+}) {
+  if (parseDbBoolean(cashTransaction?.register_allow_negative)) {
+    return;
+  }
+
+  const registerId = parsePositiveInt(cashTransaction?.cash_register_id);
+  if (!registerId) {
+    throw badRequest("Cash transaction register configuration is invalid");
+  }
+
+  const signedAmount = resolveSignedCashTransactionAmount(cashTransaction);
+  if (signedAmount >= -AMOUNT_EPSILON) {
+    return;
+  }
+
+  const currentBalance = await getPostedCashRegisterBalanceAsOfDate({
+    tenantId,
+    registerId,
+    asOfBookDate: toDateOnly(cashTransaction?.book_date || todayIsoDate(), "bookDate"),
+    runQuery,
+  });
+  const projectedBalance = Number((currentBalance + signedAmount).toFixed(6));
+  if (projectedBalance >= -AMOUNT_EPSILON || overrideCashControl) {
+    return;
+  }
+
+  const registerCode =
+    String(cashTransaction?.cash_register_code || "").trim() || `#${registerId}`;
+  const currencyCode = normalizeCurrency(
+    cashTransaction?.currency_code || cashTransaction?.register_currency_code
+  );
+  throw badRequest(
+    `Posting would drive cash register ${registerCode} below zero (projected balance ${normalizeMoney(
+      projectedBalance
+    )} ${currencyCode || ""}). Enable allowNegative for this register or post with overrideCashControl=true and overrideReason.`
+  );
 }
 
 function assertStatusAllowed(actual, allowedSet, message) {
@@ -2913,6 +2983,10 @@ export async function cancelCashTransactionById({
   });
 }
 
+/**
+ * Posts a cash transaction after validating the register/session state and the
+ * register negative-balance policy.
+ */
 export async function postCashTransactionById({
   req,
   payload,
@@ -2972,6 +3046,14 @@ export async function postCashTransactionById({
         runQuery: tx.query,
       });
     }
+    // Drafts may exist temporarily even when they would overdraw the register;
+    // the actual balance policy is enforced at post time.
+    await assertRegisterNegativeBalancePolicyForPost({
+      tenantId: payload.tenantId,
+      cashTransaction: row,
+      overrideCashControl: payload.overrideCashControl,
+      runQuery: tx.query,
+    });
 
     const posting = await createAndPostCashJournalTx(tx, {
       tenantId: payload.tenantId,
