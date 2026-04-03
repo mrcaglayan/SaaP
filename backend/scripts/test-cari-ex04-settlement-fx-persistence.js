@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { createBootstrapAdmin } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CARI_EX04_FX_TEST_PORT || 3119);
 const BASE_URL =
@@ -164,57 +164,6 @@ async function createTenant(code, name) {
   const tenantId = toNumber(result.rows?.[0]?.id);
   assert(tenantId > 0, `Failed to resolve tenant id for ${code}`);
   return tenantId;
-}
-
-async function createUserWithRole({
-  tenantId,
-  roleCode,
-  email,
-  passwordHash,
-  name,
-}) {
-  await query(
-    `INSERT INTO users (tenant_id, email, password_hash, name, status)
-     VALUES (?, ?, ?, ?, 'ACTIVE')`,
-    [tenantId, email, passwordHash, name]
-  );
-  const userResult = await query(
-    `SELECT id
-     FROM users
-     WHERE tenant_id = ?
-       AND email = ?
-     LIMIT 1`,
-    [tenantId, email]
-  );
-  const userId = toNumber(userResult.rows?.[0]?.id);
-  assert(userId > 0, `Failed to resolve user id for ${email}`);
-
-  const roleResult = await query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = ?
-     LIMIT 1`,
-    [tenantId, roleCode]
-  );
-  const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, `Role not found: ${roleCode}`);
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id,
-        user_id,
-        role_id,
-        scope_type,
-        scope_id,
-        effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
-
-  return { userId, email };
 }
 
 async function bootstrapOrgAndGlBase(token, stamp) {
@@ -613,14 +562,14 @@ async function main() {
   const tenantId = await createTenant(`EX04F_${stamp}`, `EX04 FX Tenant ${stamp}`);
   await seedCore({ ensureDefaultTenantIfMissing: true });
 
-  const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
-  const user = await createUserWithRole({
+  const email = `ex04_fx_admin_${stamp}@example.com`;
+  const { userId } = await createBootstrapAdmin({
     tenantId,
-    roleCode: "TenantAdmin",
-    email: `ex04_fx_admin_${stamp}@example.com`,
-    passwordHash,
+    email,
+    password: TEST_PASSWORD,
     name: "EX04 FX Admin",
   });
+  const user = { userId, email };
 
   const server = startServerProcess();
   let serverStopped = false;

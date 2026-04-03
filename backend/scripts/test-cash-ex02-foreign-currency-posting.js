@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { createBootstrapAdmin } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CASH_EX02_TEST_PORT || 3116);
 const BASE_URL = process.env.CASH_EX02_TEST_BASE_URL || `http://127.0.0.1:${PORT}`;
@@ -140,7 +140,6 @@ async function createTenantAndAdmin() {
   const tenantName = `Cash EX02 ${stamp}`;
   const adminEmail = `cash_ex02_admin_${stamp}@example.com`;
   const password = "CashEX02#12345";
-  const passwordHash = await bcrypt.hash(password, 10);
 
   await query(
     `INSERT INTO tenants (code, name)
@@ -163,42 +162,12 @@ async function createTenantAndAdmin() {
   const tenantId = toNumber(tenantResult.rows?.[0]?.id);
   assert(tenantId > 0, "Failed to resolve tenant");
 
-  await query(
-    `INSERT INTO users (tenant_id, email, password_hash, name, status)
-     VALUES (?, ?, ?, ?, 'ACTIVE')`,
-    [tenantId, adminEmail, passwordHash, "Cash EX02 Admin"]
-  );
-
-  const userResult = await query(
-    `SELECT id
-     FROM users
-     WHERE tenant_id = ?
-       AND email = ?
-     LIMIT 1`,
-    [tenantId, adminEmail]
-  );
-  const userId = toNumber(userResult.rows?.[0]?.id);
-  assert(userId > 0, "Failed to resolve admin user");
-
-  const roleResult = await query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, "Failed to resolve TenantAdmin role");
-
-  await query(
-    `INSERT INTO user_role_scopes (
-       tenant_id, user_id, role_id, scope_type, scope_id, effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
+  const { userId } = await createBootstrapAdmin({
+    tenantId,
+    email: adminEmail,
+    password,
+    name: "Cash EX02 Admin",
+  });
 
   return {
     tenantId,
