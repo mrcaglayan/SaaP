@@ -2,7 +2,7 @@ import { query } from "../db.js";
 import {
   assertScopeAccess,
   buildScopeFilter,
-  getScopeContext,
+  getVisibilityScope,
   requirePermission,
 } from "../middleware/rbac.js";
 import {
@@ -90,7 +90,7 @@ function buildAccountBreadcrumbResolver(hierarchyRows = []) {
 }
 
 async function resolveAccessibleLegalEntityIds(req, tenantId) {
-  const scopeContext = getScopeContext(req);
+  const scopeContext = getVisibilityScope(req);
   if (!scopeContext) {
     return { tenantWide: false, legalEntityIds: [] };
   }

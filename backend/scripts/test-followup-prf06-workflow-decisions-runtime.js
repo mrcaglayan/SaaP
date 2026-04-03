@@ -105,11 +105,12 @@ async function main() {
     "utf8"
   );
   assert(
-    serviceSource.includes("Maker-checker violation") &&
-      serviceSource.includes("min_approver_count") &&
+    serviceSource.includes("ensureUnifiedWorkflowInstanceBridge") &&
+      serviceSource.includes("resolveUnifiedWorkflowDecisionAccessFromRequestRow") &&
+      serviceSource.includes("recordDecision(") &&
       serviceSource.includes("current_step_no") &&
       serviceSource.includes("required_permission_code"),
-    "workflow decision runtime rules are missing maker-checker/min_approver/step permission checks"
+    "workflow decision runtime rules are missing unified bridge/step permission checks"
   );
 
   console.log("PR-F06 workflow instance decisions runtime test passed.");
@@ -119,4 +120,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

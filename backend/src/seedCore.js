@@ -1,5 +1,18 @@
 import { query } from "./db.js";
+import { assertValidPermissionRuleSet } from "./constants/permission-rules.js";
 import { runMigrations } from "./migrationRunner.js";
+import { PERMISSION_GROUP_CODES, PERMISSION_GROUPS } from "./constants/permission-groups.js";
+import { buildCompatibilitySystemRoleDefinitions } from "./services/systemRoles.service.js";
+import {
+  loadActiveLegacyDisabledRoleCodeSet,
+  RETIRED_LEGACY_ROLE_CODES,
+  isRetiredLegacyRoleCode,
+} from "./services/roleMigration.service.js";
+
+function parsePositiveInt(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 
 const BASE_CURRENCIES = [
   ["USD", "US Dollar", 2],
@@ -67,8 +80,13 @@ const PERMISSIONS = [
   ["security.role_assignment.upsert", "Assign roles to users and scopes"],
   ["security.data_scope.read", "Read user data scopes"],
   ["security.data_scope.upsert", "Create/update/delete user data scopes"],
+  ["security.field_visibility.read", "Read field visibility policies"],
+  ["security.field_visibility.write", "Create/update field visibility policies"],
   ["security.user_admin.entity", "Manage branch operator users within entity scope"],
   ["security.audit.read", "Read RBAC audit logs"],
+  ["security.audit.report.generate", "Generate compliance audit reports"],
+  ["security.audit.report.export", "Export compliance audit reports as CSV"],
+  ["security.admin.system", "Manage system administration and onboarding controls"],
   ["gl.book.read", "Read books"],
   ["gl.book.upsert", "Create/update books"],
   ["gl.coa.read", "Read chart of accounts"],
@@ -157,6 +175,10 @@ const PERMISSIONS = [
   ["approvals.requests.submit", "Submit unified approval requests manually (H04)"],
   ["approvals.requests.approve", "Approve unified approval requests (H04)"],
   ["approvals.requests.reject", "Reject unified approval requests (H04)"],
+  ["workflow.definition.read", "Read workflow definitions"],
+  ["workflow.definition.write", "Create/update workflow definitions"],
+  ["workflow.assignment.read", "Read workflow assignments"],
+  ["workflow.assignment.write", "Create/update workflow assignments"],
   ["payroll.runs.read", "Read payroll runs, lines, and payroll import audit trail"],
   ["payroll.runs.import", "Import payroll provider CSV into payroll subledger runs"],
   ["payroll.provider.read", "Read payroll provider adapters, connections, employee refs, and import jobs"],
@@ -197,6 +219,7 @@ const PERMISSIONS = [
   ["payroll.beneficiary.write", "Create/update payroll beneficiary bank master accounts"],
   ["payroll.beneficiary.set_primary", "Set primary payroll beneficiary bank account"],
   ["payroll.beneficiary.snapshot.read", "Read payroll liability beneficiary bank snapshots"],
+  ["payroll.sensitive.read", "Override masking for payroll salary and payroll bank fields"],
   ["payroll.close.read", "Read payroll close controls, checklist results, and close audit"],
   ["payroll.close.prepare", "Prepare payroll close checklist and lock flags for a payroll period"],
   ["payroll.close.request", "Request payroll period close after checklist passes (maker)"],
@@ -207,6 +230,7 @@ const PERMISSIONS = [
   ["payroll.corrections.reverse", "Reverse finalized payroll runs and create linked reversal runs"],
   ["cari.card.read", "Read counterparty (cari) cards"],
   ["cari.card.request", "Submit/read counterparty (cari) master requests"],
+  ["cari.request.review", "Approve/reject counterparty (cari) master requests"],
   ["cari.card.upsert", "Create/update counterparty (cari) cards"],
   ["item.card.read", "Read item cards"],
   ["item.card.upsert", "Create/update item cards"],
@@ -253,7 +277,6 @@ const PERMISSIONS = [
   ["revenue.report.read", "Read revenue-recognition reports"],
   ["fx.rate.bulk_upsert", "Bulk upsert FX rates"],
   ["fx.rate.read", "Read FX rates"],
-  ["tax.setup.write", "Create/update country and legal-entity tax setup"],
   ["intercompany.flag.read", "Read legal entity intercompany flags"],
   ["intercompany.flag.upsert", "Create/update legal entity intercompany flags"],
   ["intercompany.pair.upsert", "Create/update intercompany pairs"],
@@ -280,11 +303,433 @@ const PERMISSIONS = [
   ["onboarding.company.setup", "Run company onboarding bootstrap flow"],
 ];
 
-const ROLE_DEFINITIONS = [
+const VALID_PERMISSION_GROUP_CODES = new Set(PERMISSION_GROUP_CODES);
+const VALID_PERMISSION_CODES = new Set(PERMISSIONS.map(([code]) => code));
+
+function assertKnownPermissionCode(permissionCode) {
+  if (!VALID_PERMISSION_CODES.has(permissionCode)) {
+    throw new Error(`Unknown permission code ${permissionCode} referenced by seeded role`);
+  }
+}
+
+function expandPermissionGroupPermissionCodes(permissionGroupCode, visited = new Set()) {
+  const definition = PERMISSION_GROUPS[permissionGroupCode];
+  if (!definition) {
+    throw new Error(`Unknown permission group ${permissionGroupCode}`);
+  }
+  if (visited.has(permissionGroupCode)) {
+    return [];
+  }
+
+  visited.add(permissionGroupCode);
+
+  const expandedPermissionCodes = [];
+  for (const includedGroupCode of definition.includes || []) {
+    expandedPermissionCodes.push(
+      ...expandPermissionGroupPermissionCodes(includedGroupCode, visited)
+    );
+  }
+  for (const permissionCode of definition.permissions || []) {
+    assertKnownPermissionCode(permissionCode);
+    expandedPermissionCodes.push(permissionCode);
+  }
+
+  return expandedPermissionCodes;
+}
+
+function buildPermissionList({ permissionGroups = [], permissions = [] }) {
+  const resolvedPermissionCodes = [];
+  const seenPermissionCodes = new Set();
+
+  for (const permissionGroupCode of permissionGroups) {
+    for (const permissionCode of expandPermissionGroupPermissionCodes(permissionGroupCode)) {
+      if (seenPermissionCodes.has(permissionCode)) {
+        continue;
+      }
+      seenPermissionCodes.add(permissionCode);
+      resolvedPermissionCodes.push(permissionCode);
+    }
+  }
+
+  for (const permissionCode of permissions) {
+    assertKnownPermissionCode(permissionCode);
+    if (seenPermissionCodes.has(permissionCode)) {
+      continue;
+    }
+    seenPermissionCodes.add(permissionCode);
+    resolvedPermissionCodes.push(permissionCode);
+  }
+
+  return Object.freeze(resolvedPermissionCodes);
+}
+
+const ROLE_SCOPE_CONTEXT_PERMISSION_CODES = Object.freeze([
+  "org.tree.read",
+  "org.fiscal_calendar.read",
+  "org.fiscal_period.read",
+]);
+
+const MASTER_DATA_STEWARD_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["gl.masterdata"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "org.group_company.upsert",
+    "org.legal_entity.upsert",
+    "org.operating_unit.upsert",
+    "org.fiscal_calendar.upsert",
+    "org.fiscal_period.generate",
+    "org.shareholder.upsert",
+    "fx.rate.read",
+    "fx.rate.bulk_upsert",
+  ],
+});
+
+const GL_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["gl.operations"],
+  permissions: [...ROLE_SCOPE_CONTEXT_PERMISSION_CODES, "fx.rate.read"],
+});
+
+const GL_POSTING_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "org.tree.read",
+    "org.fiscal_period.read",
+    "gl.journal.read",
+    "gl.trial_balance.read",
+    "gl.journal.post",
+    "gl.journal.reverse",
+    "gl.period.close",
+  ],
+});
+
+const TREASURY_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["bank.operations"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "cash.register.read",
+    "cash.register.upsert",
+    "cash.session.open",
+    "cash.session.close",
+    "cash.txn.read",
+    "cash.txn.create",
+    "cash.txn.cancel",
+    "cash.txn.post",
+    "cash.txn.reverse",
+    "cash.report.read",
+    "cari.card.read",
+    "cari.doc.read",
+    "cari.report.read",
+    "cari.bank.attach",
+    "cari.bank.apply",
+  ],
+});
+
+const TREASURY_APPROVER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["bank.readonly"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "bank.approvals.policies.create",
+    "bank.approvals.policies.update",
+    "bank.approvals.requests.approve",
+    "bank.approvals.requests.reject",
+    "bank.approvals.requests.approve.payment",
+    "bank.approvals.requests.approve.reconConfig",
+    "bank.approvals.requests.approve.reconOverride",
+    "bank.approvals.requests.approve.manualReturn",
+    "payments.batch.approve",
+    "cash.register.read",
+    "cash.txn.read",
+    "cash.report.read",
+    "cash.variance.approve",
+    "cash.fx.revaluation.override",
+  ],
+});
+
+const PAYROLL_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["payroll.operations"],
+  permissions: ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+});
+
+const PAYROLL_APPROVER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["payroll.readonly", "payroll.governance"],
+  permissions: ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+});
+
+const LOCAL_CLOSE_PREPARER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["close.operator"],
+  permissions: ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+});
+
+const LOCAL_CLOSE_REVIEWER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["close.reviewer"],
+  permissions: ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+});
+
+const GROUP_REPORTING_CONTROLLER_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["gl.readonly"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "fx.rate.read",
+    "intercompany.flag.read",
+    "intercompany.flag.upsert",
+    "intercompany.pair.upsert",
+    "intercompany.reconcile.run",
+    "consolidation.group.read",
+    "consolidation.group.upsert",
+    "consolidation.group_member.upsert",
+    "consolidation.coa_mapping.read",
+    "consolidation.coa_mapping.upsert",
+    "consolidation.elimination_placeholder.read",
+    "consolidation.elimination_placeholder.upsert",
+    "consolidation.run.read",
+    "consolidation.run.create",
+    "consolidation.run.execute",
+    "consolidation.elimination.create",
+    "consolidation.elimination.post",
+    "consolidation.adjustment.create",
+    "consolidation.adjustment.post",
+    "consolidation.run.finalize",
+    "consolidation.report.trial_balance.read",
+    "consolidation.report.summary.read",
+    "consolidation.report.balance_sheet.read",
+    "consolidation.report.income_statement.read",
+  ],
+});
+
+const BRANCH_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["gl.readonly"],
+  permissions: [
+    "org.tree.read",
+    "org.fiscal_period.read",
+    "cash.register.read",
+    "cash.session.open",
+    "cash.session.close",
+    "cash.txn.read",
+    "cash.txn.create",
+    "cash.txn.cancel",
+    "cash.report.read",
+    "cari.card.read",
+    "cari.card.request",
+    "item.card.read",
+    "inventory.read",
+    "fixed_assets.read",
+    "fixed_assets.upsert",
+    "fixed_assets.custodian.read",
+    "fixed_assets.report.read",
+    "cari.doc.read",
+    "cari.doc.create",
+    "cari.doc.update",
+    "cari.settlement.apply",
+    "cari.report.read",
+    "cari.bank.attach",
+    "contract.read",
+    "contract.upsert",
+    "contract.link_document",
+    "revenue.schedule.read",
+    "revenue.schedule.generate",
+    "revenue.run.read",
+    "revenue.run.create",
+    "revenue.report.read",
+  ],
+});
+
+const AUDITOR_READ_ONLY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    ...PERMISSIONS.map(([permissionCode]) => permissionCode).filter((permissionCode) =>
+      permissionCode.endsWith(".read")
+    ),
+    "security.audit.report.generate",
+    "security.audit.report.export",
+  ],
+});
+
+export const ROLE_CAPABILITY_GROUPS = Object.freeze({
+  MasterDataSteward: Object.freeze(["gl.masterdata"]),
+  GLOperator: Object.freeze(["gl.operations"]),
+  GLPostingAuthority: Object.freeze(["gl.posting"]),
+  OUAccountant: Object.freeze(["gl.operations"]),
+  TreasuryOperator: Object.freeze(["bank.operations"]),
+  TreasuryApprover: Object.freeze(["bank.readonly", "bank.governance"]),
+  PayrollOperator: Object.freeze(["payroll.operations"]),
+  PayrollApprover: Object.freeze(["payroll.readonly", "payroll.governance"]),
+  LocalClosePreparer: Object.freeze(["close.operator"]),
+  LocalCloseReviewer: Object.freeze(["close.reviewer"]),
+  GroupReportingController: Object.freeze(["gl.readonly"]),
+  GroupController: Object.freeze([
+    "gl.readonly",
+    "bank.readonly",
+    "close.reviewer",
+    "payroll.readonly",
+  ]),
+  CountryController: Object.freeze([
+    "gl.readonly",
+    "gl.masterdata",
+    "gl.operations",
+    "gl.posting",
+    "bank.operations",
+    "bank.governance",
+    "close.operator",
+    "close.reviewer",
+    "payroll.operations",
+    "payroll.governance",
+  ]),
+  EntityAccountant: Object.freeze([
+    "gl.readonly",
+    "gl.masterdata",
+    "gl.operations",
+    "gl.posting",
+    "bank.operations",
+    "close.operator",
+    "payroll.operations",
+  ]),
+  BranchOperator: Object.freeze([
+    // Branch/OU roles keep GL visibility even after manual posting is removed.
+    "gl.readonly",
+  ]),
+  AuditorReadOnly: Object.freeze([
+    "gl.readonly",
+    "bank.readonly",
+    "payroll.readonly",
+  ]),
+});
+
+const TRANSITIONAL_ROLE_PERMISSION_REMOVALS = Object.freeze({
+  EntityAccountant: new Set([
+    // Transitional SoD cleanup: entity-level operators keep submit/read paths, not checker powers.
+    "payments.batch.approve",
+    "bank.approvals.requests.approve",
+    "bank.approvals.requests.reject",
+    "bank.approvals.requests.approve.payment",
+    "bank.approvals.requests.approve.reconConfig",
+    "bank.approvals.requests.approve.reconOverride",
+    "bank.approvals.requests.approve.manualReturn",
+    "approvals.requests.approve",
+    "approvals.requests.reject",
+    "payroll.settlement.override.approve",
+    "payroll.close.approve",
+  ]),
+});
+
+function validateRoleCapabilityGroups() {
+  for (const [roleCode, capabilityGroups] of Object.entries(ROLE_CAPABILITY_GROUPS)) {
+    for (const capabilityGroup of capabilityGroups) {
+      if (!VALID_PERMISSION_GROUP_CODES.has(capabilityGroup)) {
+        throw new Error(
+          `Unknown capability group ${capabilityGroup} referenced by role ${roleCode}`
+        );
+      }
+    }
+  }
+}
+
+function attachRoleMetadata(roleDefinitions) {
+  validateRoleCapabilityGroups();
+
+  return roleDefinitions.map((roleDefinition) => {
+    const removedPermissions =
+      TRANSITIONAL_ROLE_PERMISSION_REMOVALS[roleDefinition.code] || null;
+    const permissions = removedPermissions
+      ? roleDefinition.permissions.filter((permissionCode) => !removedPermissions.has(permissionCode))
+      : [...roleDefinition.permissions];
+
+    return {
+      ...roleDefinition,
+      permissions,
+      capabilityGroups: [...(ROLE_CAPABILITY_GROUPS[roleDefinition.code] || [])],
+    };
+  });
+}
+
+function validateSeedRoleDefinitions(roleDefinitions) {
+  const warningMessages = [];
+
+  for (const roleDefinition of roleDefinitions) {
+    const subjectLabel = `Role ${roleDefinition.code}`;
+    const evaluation = assertValidPermissionRuleSet({
+      permissionCodes: roleDefinition.permissions,
+      capabilityGroups: roleDefinition.capabilityGroups,
+      subjectLabel,
+    });
+
+    // Retired compatibility roles are preserved only for migration and rollback
+    // recoverability, so their broad historical permission sets should not
+    // block current steady-state seed validation noise.
+    if (
+      isRetiredLegacyRoleCode(roleDefinition.code) ||
+      roleDefinition.code === "SecurityAdmin" ||
+      roleDefinition.code === "SystemAdmin"
+    ) {
+      continue;
+    }
+
+    for (const warning of evaluation.warnings) {
+      warningMessages.push(warning.message);
+    }
+  }
+
+  return warningMessages;
+}
+
+const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
+  ...buildCompatibilitySystemRoleDefinitions(PERMISSIONS.map(([code]) => code), {
+    includeLegacyTenantAdmin: true,
+  }),
+  // Phase 4A introduces the bounded target role catalog additively. Legacy broad
+  // roles remain below only so existing brownfield tenants can still roll back
+  // or complete PR-4C migration safely.
   {
-    code: "TenantAdmin",
-    name: "Tenant Administrator",
-    permissions: PERMISSIONS.map(([code]) => code),
+    code: "MasterDataSteward",
+    name: "Master Data Steward",
+    permissions: MASTER_DATA_STEWARD_PERMISSION_CODES,
+  },
+  {
+    code: "GLOperator",
+    name: "GL Operator",
+    permissions: GL_OPERATOR_PERMISSION_CODES,
+  },
+  {
+    code: "GLPostingAuthority",
+    name: "GL Posting Authority",
+    permissions: GL_POSTING_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "OUAccountant",
+    name: "OU Accountant",
+    permissions: GL_OPERATOR_PERMISSION_CODES,
+  },
+  {
+    code: "TreasuryOperator",
+    name: "Treasury Operator",
+    permissions: TREASURY_OPERATOR_PERMISSION_CODES,
+  },
+  {
+    code: "TreasuryApprover",
+    name: "Treasury Approver",
+    permissions: TREASURY_APPROVER_PERMISSION_CODES,
+  },
+  {
+    code: "PayrollOperator",
+    name: "Payroll Operator",
+    permissions: PAYROLL_OPERATOR_PERMISSION_CODES,
+  },
+  {
+    code: "PayrollApprover",
+    name: "Payroll Approver",
+    permissions: PAYROLL_APPROVER_PERMISSION_CODES,
+  },
+  {
+    code: "LocalClosePreparer",
+    name: "Local Close Preparer",
+    permissions: LOCAL_CLOSE_PREPARER_PERMISSION_CODES,
+  },
+  {
+    code: "LocalCloseReviewer",
+    name: "Local Close Reviewer",
+    permissions: LOCAL_CLOSE_REVIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "GroupReportingController",
+    name: "Group Reporting Controller",
+    permissions: GROUP_REPORTING_CONTROLLER_PERMISSION_CODES,
   },
   {
     code: "GroupController",
@@ -397,6 +842,8 @@ const ROLE_DEFINITIONS = [
       "consolidation.report.summary.read",
       "consolidation.report.balance_sheet.read",
       "consolidation.report.income_statement.read",
+      "workflow.definition.read",
+      "workflow.assignment.read",
     ],
   },
   {
@@ -546,6 +993,7 @@ const ROLE_DEFINITIONS = [
       "payroll.corrections.reverse",
       "cari.card.read",
       "cari.card.request",
+      "cari.request.review",
       "cari.card.upsert",
       "item.card.read",
       "item.card.upsert",
@@ -572,6 +1020,7 @@ const ROLE_DEFINITIONS = [
       "cari.settlement.apply",
       "cari.settlement.reverse",
       "cari.report.read",
+      "cari.audit.read",
       "cari.fx.override",
       "cari.bank.attach",
       "cari.bank.apply",
@@ -592,11 +1041,12 @@ const ROLE_DEFINITIONS = [
       "intercompany.flag.read",
       "intercompany.flag.upsert",
       "fx.rate.read",
-      "tax.setup.write",
       "consolidation.coa_mapping.read",
       "consolidation.coa_mapping.upsert",
       "consolidation.run.read",
       "consolidation.run.execute",
+      "workflow.definition.read",
+      "workflow.assignment.read",
     ],
   },
   {
@@ -740,6 +1190,7 @@ const ROLE_DEFINITIONS = [
       "cash.report.read",
       "cari.card.read",
       "cari.card.request",
+      "cari.request.review",
       "cari.card.upsert",
       "item.card.read",
       "item.card.upsert",
@@ -766,6 +1217,7 @@ const ROLE_DEFINITIONS = [
       "cari.settlement.apply",
       "cari.settlement.reverse",
       "cari.report.read",
+      "cari.audit.read",
       "cari.bank.attach",
       "cari.bank.apply",
       "contract.read",
@@ -785,144 +1237,111 @@ const ROLE_DEFINITIONS = [
       "intercompany.flag.read",
       "intercompany.flag.upsert",
       "fx.rate.read",
-      "tax.setup.write",
       "intercompany.pair.upsert",
       "intercompany.reconcile.run",
       "consolidation.coa_mapping.read",
       "consolidation.coa_mapping.upsert",
       "consolidation.run.read",
       "consolidation.run.execute",
+      "workflow.definition.read",
+      "workflow.assignment.read",
     ],
   },
   {
     code: "BranchOperator",
     name: "Branch Operator",
-    permissions: [
-      "org.tree.read",
-      "org.fiscal_period.read",
-      "gl.book.read",
-      "gl.coa.read",
-      "gl.account.read",
-      "gl.journal.read",
-      "gl.journal.create",
-      "gl.journal.update",
-      "gl.journal.cancel",
-      "gl.journal.post",
-      "gl.trial_balance.read",
-      "gl.report.local.read",
-      "gl.report.ledger.read",
-      "ouclose.read",
-      "ouclose.prepare",
-      "ouclose.submit",
-      "cash.register.read",
-      "cash.session.open",
-      "cash.session.close",
-      "cash.txn.read",
-      "cash.txn.create",
-      "cash.txn.cancel",
-      "cash.report.read",
-      "cari.card.read",
-      "cari.card.request",
-      "cari.card.upsert",
-      "item.card.read",
-      "inventory.read",
-      "fixed_assets.read",
-      "fixed_assets.upsert",
-      "fixed_assets.custodian.read",
-      "fixed_assets.report.read",
-      "cari.doc.read",
-      "cari.doc.create",
-      "cari.doc.update",
-      "cari.settlement.apply",
-      "cari.report.read",
-      "cari.bank.attach",
-      "contract.read",
-      "contract.upsert",
-      "contract.link_document",
-      "revenue.schedule.read",
-      "revenue.schedule.generate",
-      "revenue.run.read",
-      "revenue.run.create",
-      "revenue.report.read",
-    ],
+    permissions: BRANCH_OPERATOR_PERMISSION_CODES,
   },
   {
     code: "AuditorReadOnly",
     name: "Auditor (Read Only)",
-    permissions: [
-      "org.tree.read",
-      "org.fiscal_calendar.read",
-      "org.fiscal_period.read",
-      "gl.book.read",
-      "gl.coa.read",
-      "gl.account.read",
-      "gl.journal.read",
-      "gl.trial_balance.read",
-      "gl.report.local.read",
-      "gl.report.ledger.read",
-      "gl.report.statement.read",
-      "ouclose.read",
-      "cash.register.read",
-      "bank.accounts.read",
-      "bank.connectors.read",
-      "bank.statements.read",
-      "bank.reconcile.read",
-      "bank.reconcile.templates.read",
-      "bank.reconcile.diffprofiles.read",
-      "bank.reconcile.rules.read",
-      "bank.reconcile.exceptions.read",
-      "payments.batch.read",
-      "bank.payments.export.read",
-      "bank.payments.ack.read",
-      "bank.payments.returns.read",
-      "bank.approvals.policies.read",
-      "bank.approvals.requests.read",
-      "approvals.policies.read",
-      "approvals.requests.read",
-      "payroll.runs.read",
-      "payroll.provider.read",
-      "payroll.provider.mapping.read",
-      "payroll.provider.import.read",
-      "security.sensitive_data.audit.read",
-      "ops.jobs.read",
-      "ops.dashboard.read",
-      "ops.exceptions.read",
-      "ops.retention.read",
-      "ops.export_snapshot.read",
-      "payroll.mappings.read",
-      "payroll.liabilities.read",
-      "payroll.ownership.read",
-      "payroll.payment.sync.read",
-      "payroll.settlement.override.read",
-      "payroll.beneficiary.read",
-      "payroll.beneficiary.snapshot.read",
-      "payroll.close.read",
-      "payroll.corrections.read",
-      "cash.txn.read",
-      "cash.report.read",
-      "cari.card.read",
-      "item.card.read",
-      "inventory.read",
-      "fixed_assets.read",
-      "fixed_assets.report.read",
-      "fixed_assets.settings.read",
-      "fixed_assets.custodian.read",
-      "cari.doc.read",
-      "cari.report.read",
-      "cari.audit.read",
-      "contract.read",
-      "revenue.schedule.read",
-      "revenue.run.read",
-      "revenue.report.read",
-      "fx.rate.read",
-      "consolidation.run.read",
-      "consolidation.report.trial_balance.read",
-      "consolidation.report.summary.read",
-      "consolidation.report.balance_sheet.read",
-      "consolidation.report.income_statement.read",
-    ],
+    permissions: AUDITOR_READ_ONLY_PERMISSION_CODES,
   },
-];
+]);
+
+const ACTIVE_ROLE_DEFINITIONS = Object.freeze(
+  ALL_ROLE_DEFINITIONS.filter((roleDefinition) => !isRetiredLegacyRoleCode(roleDefinition.code))
+);
+
+const RETIRED_LEGACY_ROLE_DEFINITIONS = Object.freeze(
+  ALL_ROLE_DEFINITIONS.filter((roleDefinition) => isRetiredLegacyRoleCode(roleDefinition.code))
+);
+
+const FIELD_VISIBILITY_ROLE_PERMISSION_ADDITIONS = Object.freeze({
+  CountryController: ["payroll.sensitive.read"],
+  EntityAccountant: ["payroll.sensitive.read"],
+  PayrollOperator: ["payroll.sensitive.read"],
+  PayrollApprover: ["payroll.sensitive.read"],
+});
+
+const DEFAULT_FIELD_VISIBILITY_POLICY_DEFINITIONS = Object.freeze([
+  {
+    moduleCode: "BANK",
+    objectType: "BANK_ACCOUNT",
+    fieldName: "iban",
+    visibilityRule: "MASKED",
+    appliesToScopeType: "TENANT",
+    requiredPermissionCode: "security.sensitive_data.audit.read",
+  },
+  {
+    moduleCode: "BANK",
+    objectType: "BANK_ACCOUNT",
+    fieldName: "account_no",
+    visibilityRule: "MASKED",
+    appliesToScopeType: "TENANT",
+    requiredPermissionCode: "security.sensitive_data.audit.read",
+  },
+  {
+    moduleCode: "BANK",
+    objectType: "BANK_CONNECTOR",
+    fieldName: "credentials_json",
+    visibilityRule: "HIDDEN",
+    appliesToScopeType: "TENANT",
+    requiredPermissionCode: "security.admin.system",
+  },
+  {
+    moduleCode: "PAYROLL",
+    objectType: "PAYROLL_RUN_LINE",
+    fieldName: "base_salary",
+    visibilityRule: "MASKED",
+    appliesToScopeType: "TENANT",
+    requiredPermissionCode: "payroll.sensitive.read",
+  },
+  {
+    moduleCode: "PAYROLL",
+    objectType: "PAYROLL_RUN_LINE",
+    fieldName: "net_pay",
+    visibilityRule: "MASKED",
+    appliesToScopeType: "TENANT",
+    requiredPermissionCode: "payroll.sensitive.read",
+  },
+  {
+    moduleCode: "PAYROLL",
+    objectType: "BENEFICIARY",
+    fieldName: "iban",
+    visibilityRule: "MASKED",
+    appliesToScopeType: "TENANT",
+    requiredPermissionCode: "payroll.sensitive.read",
+  },
+  {
+    moduleCode: "PAYROLL",
+    objectType: "BENEFICIARY",
+    fieldName: "account_number",
+    visibilityRule: "MASKED",
+    appliesToScopeType: "TENANT",
+    requiredPermissionCode: "payroll.sensitive.read",
+  },
+]);
+
+for (const role of ALL_ROLE_DEFINITIONS) {
+  const additions = FIELD_VISIBILITY_ROLE_PERMISSION_ADDITIONS[role.code] || [];
+  if (additions.length === 0) {
+    continue;
+  }
+  role.permissions = Array.from(new Set([...(role.permissions || []), ...additions]));
+}
+
+const ROLE_DEFINITION_WARNING_MESSAGES = validateSeedRoleDefinitions(ALL_ROLE_DEFINITIONS);
 
 async function upsertCurrencies() {
   for (const [code, name, minorUnits] of BASE_CURRENCIES) {
@@ -999,23 +1418,90 @@ async function getRoleIdsByTenant(tenantId) {
   return map;
 }
 
-async function upsertRolesForTenant(tenantId) {
-  for (const role of ROLE_DEFINITIONS) {
+async function loadRetainedLegacyRoleCodeSetForTenant(tenantId) {
+  const activeLegacyDisabledRoleCodes = await loadActiveLegacyDisabledRoleCodeSet(tenantId);
+  const existingRoleResult = await query(
+    `SELECT code
+     FROM roles
+     WHERE tenant_id = ?
+       AND code IN (${RETIRED_LEGACY_ROLE_CODES.map(() => "?").join(", ")})`,
+    [tenantId, ...RETIRED_LEGACY_ROLE_CODES]
+  );
+
+  return new Set([
+    ...activeLegacyDisabledRoleCodes,
+    ...(existingRoleResult.rows || [])
+      .map((row) => String(row.code || "").trim())
+      .filter((roleCode) => isRetiredLegacyRoleCode(roleCode)),
+  ]);
+}
+
+async function getRoleDefinitionsForTenant(tenantId) {
+  const retainedLegacyRoleCodeSet = await loadRetainedLegacyRoleCodeSetForTenant(tenantId);
+
+  return [
+    ...ACTIVE_ROLE_DEFINITIONS,
+    ...RETIRED_LEGACY_ROLE_DEFINITIONS.filter((roleDefinition) =>
+      retainedLegacyRoleCodeSet.has(roleDefinition.code)
+    ),
+  ];
+}
+
+async function upsertRolesForTenant(tenantId, roleDefinitions) {
+  const activeLegacyDisabledRoleCodes = await loadActiveLegacyDisabledRoleCodeSet(tenantId);
+  for (const role of roleDefinitions) {
     await query(
       `INSERT INTO roles (tenant_id, code, name, is_system)
-       VALUES (?, ?, ?, TRUE)
+       VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          is_system = VALUES(is_system)`,
-      [tenantId, role.code, role.name]
+      [tenantId, role.code, role.name, !activeLegacyDisabledRoleCodes.has(role.code)]
     );
   }
 }
 
-async function assignRolePermissionsForTenant(tenantId, permissionIdByCode) {
+async function upsertFieldVisibilityPoliciesForTenant(tenantId) {
+  for (const policy of DEFAULT_FIELD_VISIBILITY_POLICY_DEFINITIONS) {
+    const scopeType = String(policy.appliesToScopeType || "").trim() || null;
+    const scopeId = scopeType === "TENANT" ? tenantId : parsePositiveInt(policy.appliesToScopeId);
+    await query(
+      `INSERT INTO field_visibility_policies (
+          tenant_id,
+          module_code,
+          object_type,
+          field_name,
+          visibility_rule,
+          applies_to_scope_type,
+          applies_to_scope_id,
+          required_permission_code,
+          is_active,
+          created_by_user_id
+        )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL)
+       ON DUPLICATE KEY UPDATE
+         visibility_rule = VALUES(visibility_rule),
+         required_permission_code = VALUES(required_permission_code),
+         is_active = VALUES(is_active),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        tenantId,
+        policy.moduleCode,
+        policy.objectType,
+        policy.fieldName,
+        policy.visibilityRule,
+        scopeType,
+        scopeId,
+        policy.requiredPermissionCode || null,
+      ]
+    );
+  }
+}
+
+async function assignRolePermissionsForTenant(tenantId, permissionIdByCode, roleDefinitions) {
   const roleIdsByCode = await getRoleIdsByTenant(tenantId);
 
-  for (const role of ROLE_DEFINITIONS) {
+  for (const role of roleDefinitions) {
     const roleId = roleIdsByCode.get(role.code);
     if (!roleId) {
       throw new Error(`Role not found after upsert: ${role.code}`);
@@ -1033,9 +1519,31 @@ async function assignRolePermissionsForTenant(tenantId, permissionIdByCode) {
         [roleId, permissionId]
       );
     }
+
+    const desiredPermissionIds = role.permissions
+      .map((permissionCode) => permissionIdByCode.get(permissionCode))
+      .filter(Boolean);
+
+    // Seeded system roles are authoritative here so transitional SoD cleanup
+    // removes stale checker/posting powers during reseed as well as fresh seed.
+    if (desiredPermissionIds.length === 0) {
+      await query("DELETE FROM role_permissions WHERE role_id = ?", [roleId]);
+      continue;
+    }
+
+    await query(
+      `DELETE FROM role_permissions
+       WHERE role_id = ?
+         AND permission_id NOT IN (${desiredPermissionIds.map(() => "?").join(", ")})`,
+      [roleId, ...desiredPermissionIds]
+    );
   }
 }
 
+/**
+ * Seeds the core reference data, permission catalog, and authoritative seeded
+ * system-role definitions for every tenant.
+ */
 export async function seedCore(options = {}) {
   const {
     defaultTenantCode = "DEFAULT",
@@ -1048,25 +1556,49 @@ export async function seedCore(options = {}) {
   await upsertCountries();
   await upsertPermissions();
 
+  for (const warningMessage of ROLE_DEFINITION_WARNING_MESSAGES) {
+    // Seed/build-time validation should surface soft conflicts without silently mutating them.
+    console.warn(`[seedCore][permission-rules] ${warningMessage}`);
+  }
+
   if (ensureDefaultTenantIfMissing) {
     await ensureDefaultTenant(defaultTenantCode, defaultTenantName);
   }
 
   const tenants = await getTenantIds();
+  const roleDefinitionsByTenantId = new Map();
   for (const tenant of tenants) {
-    await upsertRolesForTenant(tenant.id);
+    const roleDefinitions = await getRoleDefinitionsForTenant(tenant.id);
+    roleDefinitionsByTenantId.set(tenant.id, roleDefinitions);
+    await upsertRolesForTenant(tenant.id, roleDefinitions);
   }
 
   const permissionIdByCode = await getPermissionIdMap();
   for (const tenant of tenants) {
-    await assignRolePermissionsForTenant(tenant.id, permissionIdByCode);
+    await assignRolePermissionsForTenant(
+      tenant.id,
+      permissionIdByCode,
+      roleDefinitionsByTenantId.get(tenant.id) || ACTIVE_ROLE_DEFINITIONS
+    );
+    await upsertFieldVisibilityPoliciesForTenant(tenant.id);
   }
+
+  const retainedLegacyRoleCountByTenant = Object.fromEntries(
+    tenants.map((tenant) => [
+      tenant.code || tenant.id,
+      (roleDefinitionsByTenantId.get(tenant.id) || []).filter((roleDefinition) =>
+        isRetiredLegacyRoleCode(roleDefinition.code)
+      ).length,
+    ])
+  );
 
   return {
     tenantCount: tenants.length,
     currencyCount: BASE_CURRENCIES.length,
     countryCount: BASE_COUNTRIES.length,
     permissionCount: PERMISSIONS.length,
-    roleCountPerTenant: ROLE_DEFINITIONS.length,
+    roleCountPerTenant: ACTIVE_ROLE_DEFINITIONS.length,
+    retainedLegacyRoleCountByTenant,
+    fieldVisibilityPolicyCountPerTenant: DEFAULT_FIELD_VISIBILITY_POLICY_DEFINITIONS.length,
   };
 }

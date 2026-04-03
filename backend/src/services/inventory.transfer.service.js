@@ -25,21 +25,53 @@ import {
   sameOwnershipContext,
 } from "./ownership.context.policy.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
+import {
+  INVENTORY_TRANSFER_STATUS_VALUES,
+  LIFECYCLE_STATUS_CANCELLED,
+  isCancelledLifecycleStatus,
+} from "../constants/lifecycle.js";
+import { submitApprovalRequest } from "./approvalPolicies.service.js";
+import { assertSoD } from "./sod.service.js";
 
-const TRANSFER_STATUS_VALUES = new Set([
-  "INITIATED",
-  "APPROVED",
-  "IN_TRANSIT",
-  "RECEIVED",
-  "CANCELED",
-  "REVERSED",
-]);
+const TRANSFER_STATUS_VALUES = new Set(INVENTORY_TRANSFER_STATUS_VALUES);
 const AMOUNT_SCALE = 6;
 
 function conflict(message) {
   const error = new Error(message);
   error.status = 409;
   return error;
+}
+
+function noopScopeAccess() {
+  return true;
+}
+
+function toUpper(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function buildApprovalRequestSummary(row, prefix = "approval_") {
+  const approvalRequestId = parsePositiveInt(row?.[`${prefix}request_id`]);
+  if (!approvalRequestId) {
+    return null;
+  }
+  return {
+    id: approvalRequestId,
+    requestCode: row?.[`${prefix}request_code`] || null,
+    requestStatus: toUpper(row?.[`${prefix}request_status`]) || null,
+    executionStatus: toUpper(row?.[`${prefix}execution_status`]) || null,
+    currentStepNo: Number(row?.[`${prefix}current_step_no`] || 1),
+    scopeType: toUpper(row?.[`${prefix}scope_type`]) || null,
+    scopeId: parsePositiveInt(row?.[`${prefix}scope_id`]),
+    submittedByUserId: parsePositiveInt(row?.[`${prefix}submitted_by_user_id`]),
+    executedByUserId: parsePositiveInt(row?.[`${prefix}executed_by_user_id`]),
+    submittedAt: row?.[`${prefix}submitted_at`] || null,
+    approvedAt: row?.[`${prefix}approved_at`] || null,
+    rejectedAt: row?.[`${prefix}rejected_at`] || null,
+    withdrawnAt: row?.[`${prefix}withdrawn_at`] || null,
+    executedAt: row?.[`${prefix}executed_at`] || null,
+    executionErrorText: row?.[`${prefix}execution_error_text`] || null,
+  };
 }
 
 function normalizeText(value, maxLength, { required = false, upper = false } = {}) {
@@ -1136,6 +1168,8 @@ function mapTransferRow(row) {
     transferNo: row.transfer_no || null,
     transferDate: row.transfer_date || null,
     status: row.status || null,
+    approvalRequestId: parsePositiveInt(row.approval_request_id),
+    approvalRequest: buildApprovalRequestSummary(row),
     sourceWarehouseId: parsePositiveInt(row.source_warehouse_id),
     sourceWarehouseCode: row.source_warehouse_code || null,
     sourceWarehouseName: row.source_warehouse_name || null,
@@ -1319,6 +1353,21 @@ async function fetchTransferRowById({
         sou.name AS source_operating_unit_name,
         tou.code AS target_operating_unit_code,
         tou.name AS target_operating_unit_name,
+        ar.id AS approval_request_id,
+        ar.request_code AS approval_request_code,
+        ar.request_status AS approval_request_status,
+        ar.current_step_no AS approval_current_step_no,
+        ar.execution_status AS approval_execution_status,
+        ar.scope_type AS approval_scope_type,
+        ar.scope_id AS approval_scope_id,
+        ar.submitted_by_user_id AS approval_submitted_by_user_id,
+        ar.executed_by_user_id AS approval_executed_by_user_id,
+        ar.submitted_at AS approval_submitted_at,
+        ar.approved_at AS approval_approved_at,
+        ar.rejected_at AS approval_rejected_at,
+        ar.withdrawn_at AS approval_withdrawn_at,
+        ar.executed_at AS approval_executed_at,
+        ar.execution_error_text AS approval_execution_error_text,
         sj.journal_no AS shipment_journal_no,
         rj.journal_no AS receipt_journal_no,
         rvj.journal_no AS reversal_journal_no,
@@ -1342,6 +1391,9 @@ async function fetchTransferRowById({
        LEFT JOIN operating_units tou
          ON tou.tenant_id = t.tenant_id
         AND tou.id = t.target_operating_unit_id
+       LEFT JOIN approval_requests ar
+         ON ar.tenant_id = t.tenant_id
+        AND ar.id = t.approval_request_id
        LEFT JOIN journal_entries sj
          ON sj.id = t.shipment_journal_entry_id
        LEFT JOIN journal_entries rj
@@ -1398,6 +1450,22 @@ async function getTransferDetailRow({
     runQuery,
   });
   return row;
+}
+
+async function getTransferIdByApprovalRequestId({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT id
+       FROM inventory_transfers
+      WHERE tenant_id = ?
+        AND approval_request_id = ?
+      LIMIT 1`,
+    [tenantId, approvalRequestId]
+  );
+  return parsePositiveInt(result.rows?.[0]?.id);
 }
 
 function normalizeTransferStatus(value, fieldName = "status") {
@@ -1499,6 +1567,21 @@ export async function listInventoryTransfers({
         sou.name AS source_operating_unit_name,
         tou.code AS target_operating_unit_code,
         tou.name AS target_operating_unit_name,
+        ar.id AS approval_request_id,
+        ar.request_code AS approval_request_code,
+        ar.request_status AS approval_request_status,
+        ar.current_step_no AS approval_current_step_no,
+        ar.execution_status AS approval_execution_status,
+        ar.scope_type AS approval_scope_type,
+        ar.scope_id AS approval_scope_id,
+        ar.submitted_by_user_id AS approval_submitted_by_user_id,
+        ar.executed_by_user_id AS approval_executed_by_user_id,
+        ar.submitted_at AS approval_submitted_at,
+        ar.approved_at AS approval_approved_at,
+        ar.rejected_at AS approval_rejected_at,
+        ar.withdrawn_at AS approval_withdrawn_at,
+        ar.executed_at AS approval_executed_at,
+        ar.execution_error_text AS approval_execution_error_text,
         (
           SELECT COUNT(*)
             FROM inventory_transfer_lines tl
@@ -1519,6 +1602,9 @@ export async function listInventoryTransfers({
        LEFT JOIN operating_units tou
          ON tou.tenant_id = t.tenant_id
         AND tou.id = t.target_operating_unit_id
+       LEFT JOIN approval_requests ar
+         ON ar.tenant_id = t.tenant_id
+        AND ar.id = t.approval_request_id
        LEFT JOIN journal_entries sj
          ON sj.id = t.shipment_journal_entry_id
        LEFT JOIN journal_entries rj
@@ -1758,6 +1844,8 @@ async function updateTransferStatusTx({
 
 export async function approveInventoryTransferById({
   payload,
+  skipUnifiedApprovalGate = false,
+  approvalRequestId = null,
 }) {
   const tenantId = parsePositiveInt(payload?.tenantId);
   const transferId = parsePositiveInt(payload?.transferId);
@@ -1766,18 +1854,179 @@ export async function approveInventoryTransferById({
     throw badRequest("tenantId, transferId, and userId are required");
   }
 
-  return withTransaction((tx) =>
-    updateTransferStatusTx({
+  return withTransaction(async (tx) => {
+    const existingRow = await fetchTransferRowById({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!existingRow) {
+      throw badRequest("Inventory transfer not found");
+    }
+
+    const currentStatus = toUpper(existingRow.status);
+    if (!skipUnifiedApprovalGate && currentStatus === "INITIATED") {
+      const existingApprovalRequestId = parsePositiveInt(existingRow.approval_request_id);
+      if (existingApprovalRequestId) {
+        const existingApprovalResult = await tx.query(
+          `SELECT request_status, execution_status
+             FROM approval_requests
+            WHERE tenant_id = ?
+              AND id = ?
+            LIMIT 1`,
+          [tenantId, existingApprovalRequestId]
+        );
+        const existingApprovalRow = existingApprovalResult.rows?.[0] || null;
+        const existingRequestStatus = toUpper(existingApprovalRow?.request_status);
+        const existingExecutionStatus = toUpper(existingApprovalRow?.execution_status);
+        if (
+          existingApprovalRow &&
+          !["REJECTED", "WITHDRAWN"].includes(existingRequestStatus) &&
+          existingExecutionStatus !== "FAILED"
+        ) {
+          const bridgedRow = await getTransferDetailRow({
+            tenantId,
+            transferId,
+            runQuery: tx.query,
+          });
+          if (bridgedRow) {
+            bridgedRow.approvalRequired = true;
+          }
+          return bridgedRow;
+        }
+      }
+
+      const submission = await submitApprovalRequest({
+        tenantId,
+        userId,
+        requestInput: {
+          moduleCode: "INVENTORY",
+          targetType: "INVENTORY_TRANSFER",
+          targetId: transferId,
+          actionType: "APPROVE",
+          legalEntityId: parsePositiveInt(existingRow.legal_entity_id),
+          actionPayload: {
+            transferId,
+            note: String(payload?.note || "").trim() || null,
+          },
+          targetSnapshot: {
+            module_code: "INVENTORY",
+            target_type: "INVENTORY_TRANSFER",
+            target_id: transferId,
+            legal_entity_id: parsePositiveInt(existingRow.legal_entity_id),
+            transfer_no: existingRow.transfer_no || null,
+            transfer_date: existingRow.transfer_date || null,
+            status: currentStatus,
+            source_warehouse_id: parsePositiveInt(existingRow.source_warehouse_id),
+            target_warehouse_id: parsePositiveInt(existingRow.target_warehouse_id),
+            source_operating_unit_id: parsePositiveInt(existingRow.source_operating_unit_id),
+            target_operating_unit_id: parsePositiveInt(existingRow.target_operating_unit_id),
+          },
+        },
+        runQuery: tx.query,
+      });
+
+      if (submission?.approval_required && parsePositiveInt(submission?.item?.id)) {
+        await tx.query(
+          `UPDATE inventory_transfers
+              SET approval_request_id = ?,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE tenant_id = ?
+              AND id = ?`,
+          [parsePositiveInt(submission.item.id), tenantId, transferId]
+        );
+
+        const bridgedRow = await getTransferDetailRow({
+          tenantId,
+          transferId,
+          runQuery: tx.query,
+        });
+        if (bridgedRow) {
+          bridgedRow.approvalRequired = true;
+        }
+        return bridgedRow;
+      }
+    }
+
+    await assertSoD({
+      tenantId,
+      userId,
+      actionCode: "inventory.transfer.approve",
+      recordType: "INVENTORY_TRANSFER",
+      recordId: transferId,
+      context: {
+        actorUserIds: {
+          initiatedByUserId: existingRow.initiated_by_user_id,
+          approvedByUserId: existingRow.approved_by_user_id,
+        },
+      },
+    });
+
+    return updateTransferStatusTx({
       tenantId,
       transferId,
       userId,
       nextStatus: "APPROVED",
       allowedStatuses: ["INITIATED"],
-      statusFieldAssignmentsSql: "approved_by_user_id = ?, approved_at = CURRENT_TIMESTAMP",
-      statusFieldParams: [userId],
+      statusFieldAssignmentsSql:
+        "approved_by_user_id = ?, approved_at = CURRENT_TIMESTAMP, approval_request_id = COALESCE(?, approval_request_id)",
+      statusFieldParams: [userId, parsePositiveInt(approvalRequestId) || null],
       runQuery: tx.query,
-    })
-  );
+    });
+  });
+}
+
+/**
+ * Execute one approved inventory-transfer approval request through the unified engine.
+ */
+export async function executeApprovedInventoryTransferApproval({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const transferId = parsePositiveInt(payload?.transferId ?? payload?.transfer_id);
+  if (!transferId) {
+    throw badRequest("Approved inventory transfer approval payload is missing transferId");
+  }
+  return approveInventoryTransferById({
+    payload: {
+      tenantId,
+      transferId,
+      userId: parsePositiveInt(approvedByUserId) || null,
+      note:
+        String(
+          payload?.note ?? payload?.decisionNote ?? payload?.decision_note ?? ""
+        ).trim() ||
+        "Approved via unified approval engine",
+    },
+    skipUnifiedApprovalGate: true,
+    approvalRequestId,
+  });
+}
+
+/**
+ * Sync one unified approval request back to its bridged inventory transfer.
+ */
+export async function syncInventoryTransferApprovalRequestBridge({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const transferId = await getTransferIdByApprovalRequestId({
+    tenantId,
+    approvalRequestId,
+    runQuery,
+  });
+  if (!transferId) {
+    return null;
+  }
+  return getTransferDetailRow({
+    tenantId,
+    transferId,
+    runQuery,
+  });
 }
 
 export async function cancelInventoryTransferById({
@@ -1804,7 +2053,7 @@ export async function cancelInventoryTransferById({
     const transferRow = mapTransferRow(lockedHeaderRow);
     const status = normalizeTransferStatus(transferRow?.status);
     if (!["INITIATED", "APPROVED"].includes(status)) {
-      throw conflict(`Transfer cannot move to CANCELED from status ${status || "UNKNOWN"}`);
+      throw conflict(`Transfer cannot move to ${LIFECYCLE_STATUS_CANCELLED} from status ${status || "UNKNOWN"}`);
     }
 
     const transferLineRows = await fetchTransferLinesByTransferId({
@@ -1821,7 +2070,7 @@ export async function cancelInventoryTransferById({
 
     await tx.query(
       `UPDATE inventory_transfers
-          SET status = 'CANCELED',
+          SET status = 'CANCELLED',
               canceled_by_user_id = ?,
               canceled_at = CURRENT_TIMESTAMP,
               cancel_reason = ?,
@@ -2011,7 +2260,7 @@ export async function reverseInventoryTransferById({
     }
     const transferRow = mapTransferRow(lockedHeaderRow);
     const status = normalizeTransferStatus(transferRow?.status);
-    if (status === "CANCELED") {
+    if (isCancelledLifecycleStatus(status)) {
       throw conflict("Canceled transfer cannot be reversed");
     }
     if (status === "REVERSED") {

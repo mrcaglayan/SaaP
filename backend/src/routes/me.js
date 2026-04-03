@@ -15,47 +15,14 @@ import {
   markUserInAppNotificationReadById,
 } from "../services/me.notifications.service.js";
 import { listTenantFeatures } from "../services/me.features.service.js";
+import {
+  buildEmptyEntitlementsResponse,
+  loadUserEntitlements,
+  loadUserPermissionCodes,
+} from "../services/authz.scope.service.js";
+import { listUserApprovalDelegations } from "../services/approval.delegation.service.js";
 
 const router = express.Router();
-
-async function loadPermissionCodes(userId, tenantId) {
-  if (!userId || !tenantId) {
-    return [];
-  }
-
-  try {
-    const permissionResult = await query(
-      `SELECT
-         p.code,
-         SUM(CASE WHEN urs.effect = 'ALLOW' THEN 1 ELSE 0 END) AS allow_count,
-         SUM(
-           CASE
-             WHEN urs.effect = 'DENY' AND urs.scope_type = 'TENANT' THEN 1
-             ELSE 0
-           END
-         ) AS tenant_deny_count
-       FROM user_role_scopes urs
-       JOIN roles r ON r.id = urs.role_id
-       JOIN role_permissions rp ON rp.role_id = r.id
-       JOIN permissions p ON p.id = rp.permission_id
-       WHERE urs.user_id = ?
-         AND urs.tenant_id = ?
-       GROUP BY p.code
-       HAVING allow_count > 0
-          AND tenant_deny_count = 0
-       ORDER BY p.code`,
-      [userId, tenantId]
-    );
-
-    return permissionResult.rows.map((row) => row.code);
-  } catch (err) {
-    // Keep /me backward-compatible if RBAC tables are not migrated yet.
-    if (err?.errno === 1146) {
-      return [];
-    }
-    throw err;
-  }
-}
 
 async function loadUserById(userId) {
   const { rows } = await query(
@@ -245,13 +212,48 @@ router.get("/", requireAuth, async (req, res, next) => {
     const user = await loadUserById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const permissionCodes = await loadPermissionCodes(userId, user.tenant_id);
+    let permissionCodes = [];
+    try {
+      permissionCodes = await loadUserPermissionCodes({
+        userId,
+        tenantId: user.tenant_id,
+      });
+    } catch (err) {
+      // Keep /me backward-compatible if RBAC tables are not migrated yet.
+      if (err?.errno !== 1146) {
+        throw err;
+      }
+    }
 
     return res.json({
       ...user,
       permissionCodes,
     });
   } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /me/entitlements
+router.get("/entitlements", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const tenantId = requireTenantIdForPreferences(user);
+    const entitlements = await loadUserEntitlements({
+      tenantId,
+      userId: user.id,
+    });
+
+    return res.json(entitlements);
+  } catch (err) {
+    if (err?.errno === 1146) {
+      return res.json(
+        buildEmptyEntitlementsResponse(req.user?.tenantId, req.user?.userId)
+      );
+    }
     return next(err);
   }
 });
@@ -473,6 +475,32 @@ router.get("/features", requireAuth, async (req, res, next) => {
       tenantId,
       userId: user.id,
       ...result,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /me/delegations
+router.get("/delegations", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+    const moduleCode = parseModuleCode(req.query?.moduleCode, { required: false });
+
+    const result = await listUserApprovalDelegations({
+      tenantId,
+      userId: user.id,
+      moduleCode: moduleCode || undefined,
+    });
+
+    return res.json({
+      tenantId,
+      userId: user.id,
+      incoming: result.incoming || [],
+      outgoing: result.outgoing || [],
     });
   } catch (err) {
     return next(err);

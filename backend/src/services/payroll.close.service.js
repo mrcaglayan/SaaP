@@ -1,6 +1,7 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { evaluateApprovalNeed, submitApprovalRequest } from "./approvalPolicies.service.js";
+import { assertSoD } from "./sod.service.js";
 
 const CLOSE_STATUS_VALUES = new Set(["DRAFT", "READY", "REQUESTED", "CLOSED", "REOPENED"]);
 const PAYROLL_OWNERSHIP_BLOCKING_STATUSES = Object.freeze([
@@ -1856,12 +1857,19 @@ export async function approveAndClosePayrollPeriod({
       throw makeConflict(`Payroll period close must be REQUESTED before approve-close (current: ${currentStatus})`);
     }
 
-    const requesterId = parsePositiveInt(close.requested_by_user_id);
-    if (requesterId && requesterId === parsePositiveInt(userId)) {
-      const err = new Error("Maker-checker violation: requester cannot approve-close the same payroll period");
-      err.status = 403;
-      throw err;
-    }
+    await assertSoD({
+      tenantId,
+      userId,
+      actionCode: "payroll.close.approve",
+      recordType: "PAYROLL_PERIOD_CLOSE",
+      recordId: closeId,
+      context: {
+        actorUserIds: {
+          requestedByUserId: close.requested_by_user_id,
+          approvedByUserId: close.approved_by_user_id,
+        },
+      },
+    });
 
     const checks = await listPeriodCloseChecks({ tenantId, closeId, runQuery: tx.query });
     assertNoErrorCheckFailures(checks);

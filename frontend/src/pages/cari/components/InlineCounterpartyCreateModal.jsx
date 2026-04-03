@@ -4,7 +4,6 @@ import { listCariPaymentTerms } from "../../../api/cariPaymentTerms.js";
 import { listAccounts, upsertAccount } from "../../../api/glAdmin.js";
 import { listLegalEntities, listOperatingUnits } from "../../../api/orgAdmin.js";
 import { useAuth } from "../../../auth/useAuth.js";
-import { useWorkingContext } from "../../../context/useWorkingContext.js";
 import CounterpartyForm from "../CounterpartyForm.jsx";
 import {
   buildInitialCounterpartyForm,
@@ -32,16 +31,13 @@ function resolveRoleDefault(direction) {
   return "CUSTOMER";
 }
 
-function createSeedForm({ legalEntityId, operatingUnitId = "", direction, name }) {
+function createSeedForm({ legalEntityId, direction, name }) {
   const roleDefault = resolveRoleDefault(direction);
   const normalizedLegalEntityId = normalizeText(legalEntityId);
-  const normalizedOperatingUnitId = normalizeText(operatingUnitId);
   const normalizedName = normalizeText(name);
   return {
     ...buildInitialCounterpartyForm(roleDefault),
     legalEntityId: normalizedLegalEntityId,
-    primaryOperatingUnitId: normalizedOperatingUnitId,
-    operatingUnitIds: normalizedOperatingUnitId ? [normalizedOperatingUnitId] : [],
     code: buildInlineCounterpartyCode({
       legalEntityId: normalizedLegalEntityId || "LE",
       name: normalizedName || roleDefault,
@@ -305,37 +301,15 @@ export default function InlineCounterpartyCreateModal({
   onCreated,
 }) {
   const { hasPermission, permissions } = useAuth();
-  const { workingContext } = useWorkingContext();
   const canUpsert = hasPermission("cari.card.upsert");
-  const canRequest = hasPermission("cari.card.request");
   const canReadOrgTree = hasPermission("org.tree.read");
   const accountPickerGates = useMemo(
     () => resolveCounterpartyAccountPickerGates(permissions),
     [permissions]
   );
-  const branchOwnedLiveMode =
-    canUpsert && canRequest && !accountPickerGates.canUpsertGlAccounts;
-  const workingLegalEntityId = normalizeText(workingContext?.legalEntityId);
-  const workingOperatingUnitId = normalizeText(workingContext?.operatingUnitId);
-  const canLockOwnershipToWorkingContext =
-    branchOwnedLiveMode && Boolean(workingLegalEntityId) && Boolean(workingOperatingUnitId);
-  const branchOwnedHint = canLockOwnershipToWorkingContext
-    ? l(
-        "This live card will be saved for your current working entity and branch only.",
-        "Bu canli kart yalnizca gecerli calisma tuzel kisiligi ve subesi icin kaydedilir."
-      )
-    : l(
-        "Set your working entity and branch first to auto-anchor this live card.",
-        "Bu canli karti otomatik sabitlemek icin once calisma tuzel kisiligini ve subeyi secin."
-      );
 
   const [form, setForm] = useState(() =>
-    createSeedForm({
-      legalEntityId: canLockOwnershipToWorkingContext ? workingLegalEntityId : legalEntityId,
-      operatingUnitId: branchOwnedLiveMode ? workingOperatingUnitId : "",
-      direction,
-      name: initialName,
-    })
+    createSeedForm({ legalEntityId, direction, name: initialName })
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -383,14 +357,7 @@ export default function InlineCounterpartyCreateModal({
     if (!open) {
       return;
     }
-    setForm(
-      createSeedForm({
-        legalEntityId: canLockOwnershipToWorkingContext ? workingLegalEntityId : legalEntityId,
-        operatingUnitId: branchOwnedLiveMode ? workingOperatingUnitId : "",
-        direction,
-        name: initialName,
-      })
-    );
+    setForm(createSeedForm({ legalEntityId, direction, name: initialName }));
     setSaving(false);
     setError("");
     setMessage("");
@@ -417,45 +384,7 @@ export default function InlineCounterpartyCreateModal({
     setInlineApAccountSaving(false);
     setInlineApAccountError("");
     setInlineApAccountMessage("");
-  }, [
-    open,
-    legalEntityId,
-    direction,
-    initialName,
-    canLockOwnershipToWorkingContext,
-    branchOwnedLiveMode,
-    workingLegalEntityId,
-    workingOperatingUnitId,
-  ]);
-
-  useEffect(() => {
-    if (!open || !canLockOwnershipToWorkingContext) {
-      return;
-    }
-    setForm((prev) => {
-      if (
-        normalizeText(prev.legalEntityId) === workingLegalEntityId &&
-        normalizeText(prev.primaryOperatingUnitId) === workingOperatingUnitId &&
-        Array.isArray(prev.operatingUnitIds) &&
-        prev.operatingUnitIds.length === 1 &&
-        normalizeText(prev.operatingUnitIds[0]) === workingOperatingUnitId
-      ) {
-        return prev;
-      }
-      return {
-        ...prev,
-        legalEntityId: workingLegalEntityId,
-        primaryOperatingUnitId: workingOperatingUnitId,
-        operatingUnitIds: [workingOperatingUnitId],
-      };
-    });
-  }, [
-    open,
-    canLockOwnershipToWorkingContext,
-    workingLegalEntityId,
-    workingOperatingUnitId,
-    operatingUnits,
-  ]);
+  }, [open, legalEntityId, direction, initialName]);
 
   useEffect(() => {
     if (!open) {
@@ -1192,13 +1121,9 @@ export default function InlineCounterpartyCreateModal({
           legalEntities={legalEntities}
           legalEntitiesLoading={legalEntitiesLoading}
           legalEntitiesError={legalEntitiesError}
-          lockLegalEntity={canLockOwnershipToWorkingContext}
-          legalEntityLockHint={branchOwnedLiveMode ? branchOwnedHint : ""}
           operatingUnits={operatingUnits}
           operatingUnitsLoading={operatingUnitsLoading}
           operatingUnitsError={operatingUnitsError}
-          lockOperatingUnitOwnership={canLockOwnershipToWorkingContext}
-          operatingUnitOwnershipHint={branchOwnedLiveMode ? branchOwnedHint : ""}
           paymentTerms={paymentTerms}
           paymentTermsLoading={paymentTermsLoading}
           paymentTermsError={paymentTermsError}
@@ -1258,15 +1183,7 @@ export default function InlineCounterpartyCreateModal({
           submitting={saving}
           onSubmit={handleSubmit}
           onReset={() => {
-            setForm(
-              createSeedForm({
-                legalEntityId:
-                  canLockOwnershipToWorkingContext ? workingLegalEntityId : legalEntityId,
-                operatingUnitId: branchOwnedLiveMode ? workingOperatingUnitId : "",
-                direction,
-                name: initialName,
-              })
-            );
+            setForm(createSeedForm({ legalEntityId, direction, name: initialName }));
             setError("");
             setMessage("");
             setArAccountLookupQuery("");
@@ -1293,12 +1210,8 @@ export default function InlineCounterpartyCreateModal({
           serverError={error}
           serverMessage={message}
           roleHint={l(
-            branchOwnedLiveMode
-              ? `Default role preset: ${resolveRoleDefault(direction)}. Saved as one branch-owned live card.`
-              : `Default role preset: ${resolveRoleDefault(direction)}`,
-            branchOwnedLiveMode
-              ? `Varsayilan rol onayari: ${resolveRoleDefault(direction)}. Tek sube sahipliginde canli kart olarak kaydedilir.`
-              : `Varsayilan rol onayari: ${resolveRoleDefault(direction)}`
+            `Default role preset: ${resolveRoleDefault(direction)}`,
+            `Varsayilan rol onayari: ${resolveRoleDefault(direction)}`
           )}
           enforceRoleAccountRequirement={false}
         />

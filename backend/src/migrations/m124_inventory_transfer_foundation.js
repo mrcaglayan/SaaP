@@ -62,7 +62,7 @@ const migration124InventoryTransferFoundation = {
          legal_entity_id BIGINT UNSIGNED NOT NULL,
          transfer_no VARCHAR(60) NOT NULL,
          transfer_date DATE NOT NULL,
-         status ENUM('INITIATED','APPROVED','IN_TRANSIT','RECEIVED','CANCELED','REVERSED') NOT NULL DEFAULT 'INITIATED',
+         status ENUM('INITIATED','APPROVED','IN_TRANSIT','RECEIVED','CANCELLED','REVERSED') NOT NULL DEFAULT 'INITIATED',
          source_warehouse_id BIGINT UNSIGNED NOT NULL,
          target_warehouse_id BIGINT UNSIGNED NOT NULL,
          source_ownership_scope ENUM('CENTRAL','OPERATING_UNIT') NOT NULL,

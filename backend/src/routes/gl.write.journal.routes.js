@@ -18,6 +18,7 @@ import {
   resolveReverseBlock,
   buildReverseBlockMessage,
 } from "../services/gl.reverse-block-destination.service.js";
+import { assertSoD } from "../services/sod.service.js";
 
 const CASH_CONTROL_MODES = new Set(["OFF", "WARN", "ENFORCE"]);
 
@@ -956,6 +957,20 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
         throw badRequest("Only DRAFT journals can be posted");
       }
 
+      await assertSoD({
+        tenantId,
+        userId,
+        actionCode: "gl.journal.post",
+        recordType: "GL_JOURNAL",
+        recordId: journalId,
+        context: {
+          actorUserIds: {
+            createdByUserId: journal.created_by_user_id,
+            postedByUserId: journal.posted_by_user_id,
+          },
+        },
+      });
+
       let postedJournalIds = [journalId];
       let linkedSourceJournalId = null;
       let result = null;
@@ -1088,6 +1103,19 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
           if (!draftJournal) {
             throw badRequest(`Linked journal not found: ${draftJournalId}`);
           }
+          await assertSoD({
+            tenantId,
+            userId,
+            actionCode: "gl.journal.post",
+            recordType: "GL_JOURNAL",
+            recordId: draftJournalId,
+            context: {
+              actorUserIds: {
+                createdByUserId: draftJournal.created_by_user_id,
+                postedByUserId: draftJournal.posted_by_user_id,
+              },
+            },
+          });
           // eslint-disable-next-line no-await-in-loop
           await assertLocalClosePackJournalActionAllowed({
             tenantId,

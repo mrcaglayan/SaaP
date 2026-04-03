@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.TENANT_SAFETY_TEST_PORT || 3108);
 const BASE_URL =
@@ -153,29 +154,8 @@ async function createUser({
   return userId;
 }
 
-async function assignTenantAdminRole(tenantId, userId) {
-  const roleResult = await query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = toNumber(roleResult.rows[0]?.id);
-  assert(roleId > 0, `TenantAdmin role not found for tenant ${tenantId}`);
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id, user_id, role_id, scope_type, scope_id, effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
-
-  return roleId;
+async function assignBroadTestAccess(tenantId, userId) {
+  return assignTestFullAccessRoleToUser(tenantId, userId);
 }
 
 async function getCountry(iso2) {
@@ -235,8 +215,8 @@ async function createTestIdentitySetup() {
     passwordHash,
   });
 
-  await assignTenantAdminRole(tenantAId, tenantAAdminUserId);
-  await assignTenantAdminRole(tenantBId, tenantBAdminUserId);
+  await assignBroadTestAccess(tenantAId, tenantAAdminUserId);
+  await assignBroadTestAccess(tenantBId, tenantBAdminUserId);
 
   return {
     password,

@@ -12,6 +12,10 @@ import {
   reversePayrollRunWithCorrection,
 } from "../../api/payrollCorrections.js";
 import { useAuth } from "../../auth/useAuth.js";
+import {
+  SensitiveFieldsNotice,
+  SensitiveMoneyText,
+} from "../../components/security/SensitiveFieldValue.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
 import {
   buildLifecycleTimelineSteps,
@@ -20,6 +24,10 @@ import {
 } from "../../lifecycle/lifecycleRules.js";
 import MoneyText from "../../components/MoneyText.jsx";
 import { formatMoneyText } from "../../utils/money.js";
+import {
+  filterMaskedFieldSummary,
+  isRestrictedSensitiveValue,
+} from "../../utils/sensitiveFieldUi.js";
 
 function formatDate(value) {
   if (!value) {
@@ -168,7 +176,7 @@ function formatOwnershipContextLabel(line) {
 
 export default function PayrollRunDetailPage() {
   const { runId } = useParams();
-  const { hasPermission } = useAuth();
+  const { hasPermission, isVisibilityNarrowed, maskedFields } = useAuth();
   const canRead = hasPermission("payroll.runs.read");
   const canReview = hasPermission("payroll.runs.review");
   const canFinalize = hasPermission("payroll.runs.finalize");
@@ -204,6 +212,19 @@ export default function PayrollRunDetailPage() {
   );
   const runLifecycleTimeline = useMemo(
     () => buildLifecycleTimelineSteps("payrollRun", row?.status, buildPayrollRunLifecycleEvents(row)),
+    [row]
+  );
+  const payrollMaskedFieldSummary = useMemo(
+    () => filterMaskedFieldSummary(maskedFields, ["base_salary", "net_pay"]),
+    [maskedFields]
+  );
+  const hasRestrictedPayrollLines = useMemo(
+    () =>
+      (row?.lines || []).some(
+        (line) =>
+          isRestrictedSensitiveValue(line?.base_salary) ||
+          isRestrictedSensitiveValue(line?.net_pay)
+      ),
     [row]
   );
 
@@ -437,6 +458,16 @@ export default function PayrollRunDetailPage() {
           {error}
         </div>
       ) : null}
+      <SensitiveFieldsNotice
+        visible={
+          isVisibilityNarrowed ||
+          payrollMaskedFieldSummary.length > 0 ||
+          hasRestrictedPayrollLines
+        }
+        title="Employee-level payroll amounts may be restricted on this run."
+        description="Masked values come from row-scope field visibility. Restricted amounts remain visible as masked values instead of looking like missing data."
+        fieldSummary={payrollMaskedFieldSummary}
+      />
 
       {row ? (
         <>
@@ -1117,25 +1148,31 @@ export default function PayrollRunDetailPage() {
                         ) : null}
                       </td>
                       <td className="p-2">
-                        <MoneyText amount={line.gross_pay} currencyCode={row?.currency_code} />
+                        <SensitiveMoneyText amount={line.gross_pay} currencyCode={row?.currency_code} />
                       </td>
                       <td className="p-2">
-                        <MoneyText amount={line.net_pay} currencyCode={row?.currency_code} />
+                        <SensitiveMoneyText amount={line.net_pay} currencyCode={row?.currency_code} />
                       </td>
                       <td className="p-2">
-                        <MoneyText amount={line.employee_tax} currencyCode={row?.currency_code} />
+                        <SensitiveMoneyText
+                          amount={line.employee_tax}
+                          currencyCode={row?.currency_code}
+                        />
                       </td>
                       <td className="p-2">
-                        <MoneyText
+                        <SensitiveMoneyText
                           amount={line.employee_social_security}
                           currencyCode={row?.currency_code}
                         />
                       </td>
                       <td className="p-2">
-                        <MoneyText amount={line.employer_tax} currencyCode={row?.currency_code} />
+                        <SensitiveMoneyText
+                          amount={line.employer_tax}
+                          currencyCode={row?.currency_code}
+                        />
                       </td>
                       <td className="p-2">
-                        <MoneyText
+                        <SensitiveMoneyText
                           amount={line.employer_social_security}
                           currencyCode={row?.currency_code}
                         />

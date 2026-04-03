@@ -23,7 +23,7 @@ const createTableStatements = [
     tenant_id BIGINT UNSIGNED NOT NULL,
     legal_entity_id BIGINT UNSIGNED NOT NULL,
     voucher_no VARCHAR(60) NOT NULL,
-    status ENUM('DRAFT','POSTED','REVERSED','CANCELED') NOT NULL DEFAULT 'DRAFT',
+    status ENUM('DRAFT','POSTED','REVERSED','CANCELLED') NOT NULL DEFAULT 'DRAFT',
     posting_date DATE NOT NULL,
     ownership_scope ENUM('CENTRAL','OPERATING_UNIT') NOT NULL,
     operating_unit_id BIGINT UNSIGNED NULL,

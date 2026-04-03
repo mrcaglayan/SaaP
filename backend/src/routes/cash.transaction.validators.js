@@ -12,6 +12,7 @@ import {
   requireTenantId,
   requireUserId,
 } from "./cash.validators.common.js";
+import { CASH_TRANSIT_TRANSFER_STATUS_VALUES } from "../constants/lifecycle.js";
 
 const TXN_TYPES = [
   "RECEIPT",
@@ -26,7 +27,7 @@ const TXN_TYPES = [
 ];
 
 const TXN_STATUSES = ["DRAFT", "SUBMITTED", "APPROVED", "POSTED", "REVERSED", "CANCELLED"];
-const TRANSIT_STATUSES = ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"];
+const TRANSIT_STATUSES = [...CASH_TRANSIT_TRANSFER_STATUS_VALUES];
 
 const SOURCE_DOC_TYPES = [
   "AP_PAYMENT",

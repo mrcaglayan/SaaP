@@ -12,10 +12,68 @@ function toQueryString(params = {}) {
   return query ? `?${query}` : "";
 }
 
+function parseDownloadFileName(contentDisposition, fallbackFileName = "export.csv") {
+  const header = String(contentDisposition || "").trim();
+  if (!header) {
+    return fallbackFileName;
+  }
+
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const quotedMatch = header.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+
+  const bareMatch = header.match(/filename=([^;]+)/i);
+  if (bareMatch?.[1]) {
+    return bareMatch[1].trim();
+  }
+
+  return fallbackFileName;
+}
+
 export async function listPermissions(params = {}) {
   const response = await api.get(
     `/api/v1/security/permissions${toQueryString(params)}`
   );
+  return response.data;
+}
+
+export async function listFieldVisibilityPolicies(params = {}) {
+  const response = await api.get(
+    `/api/v1/security/field-visibility-policies${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function getFieldVisibilityPolicy(policyId) {
+  const response = await api.get(`/api/v1/security/field-visibility-policies/${policyId}`);
+  return response.data;
+}
+
+export async function createFieldVisibilityPolicy(payload) {
+  const response = await api.post("/api/v1/security/field-visibility-policies", payload);
+  return response.data;
+}
+
+export async function updateFieldVisibilityPolicy(policyId, payload) {
+  const response = await api.put(
+    `/api/v1/security/field-visibility-policies/${policyId}`,
+    payload
+  );
+  return response.data;
+}
+
+export async function deleteFieldVisibilityPolicy(policyId) {
+  const response = await api.delete(`/api/v1/security/field-visibility-policies/${policyId}`);
   return response.data;
 }
 
@@ -103,6 +161,41 @@ export async function listDataScopes(params = {}) {
   return response.data;
 }
 
+export async function listRoleMigrationRuns() {
+  const response = await api.get("/api/v1/security/role-migrations");
+  return response.data;
+}
+
+export async function getSecurityAdminUiState() {
+  const response = await api.get("/api/v1/security/admin-ui-state");
+  return response.data;
+}
+
+export async function previewRoleMigration(payload = {}) {
+  const response = await api.post("/api/v1/security/role-migrations/preview", payload);
+  return response.data;
+}
+
+export async function getRoleMigrationRun(runId) {
+  const response = await api.get(`/api/v1/security/role-migrations/${runId}`);
+  return response.data;
+}
+
+export async function executeRoleMigration(runId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/security/role-migrations/${runId}/execute`,
+    payload
+  );
+  return response.data;
+}
+
+export async function rollbackRoleMigration(runId) {
+  const response = await api.post(
+    `/api/v1/security/role-migrations/${runId}/rollback`
+  );
+  return response.data;
+}
+
 export async function replaceUserDataScopes(userId, scopes) {
   const response = await api.put(
     `/api/v1/security/data-scopes/users/${userId}/replace`,
@@ -119,6 +212,34 @@ export async function listAuditLogs(params = {}) {
 export async function listRawAuditLogs(params = {}) {
   const response = await api.get(`/api/v1/rbac/raw-audit-logs${toQueryString(params)}`);
   return response.data;
+}
+
+export async function runRbacAccessCheck(payload = {}) {
+  const response = await api.post("/api/v1/rbac/access-check", payload);
+  return response.data;
+}
+
+export async function generateComplianceAuditReport(payload = {}) {
+  const response = await api.post("/api/v1/rbac/audit-reports", payload);
+  return response.data;
+}
+
+export async function exportComplianceAuditReportCsv(params = {}) {
+  const response = await api.get(
+    `/api/v1/rbac/audit-reports/export.csv${toQueryString(params)}`,
+    {
+      responseType: "blob",
+    }
+  );
+
+  return {
+    blob: response.data,
+    fileName: parseDownloadFileName(
+      response.headers?.["content-disposition"],
+      `compliance-audit-report-${Date.now()}.csv`
+    ),
+    rowCount: Number(response.headers?.["x-export-row-count"] || 0) || 0,
+  };
 }
 
 export async function listGroupCompanies() {

@@ -588,7 +588,7 @@ async function main() {
             cancelReason: "Too late",
           },
         }),
-      "Transfer cannot move to CANCELED from status IN_TRANSIT"
+      "Transfer cannot move to CANCELLED from status IN_TRANSIT"
     );
 
     const reverseGateTransfer = await createInventoryTransfer({

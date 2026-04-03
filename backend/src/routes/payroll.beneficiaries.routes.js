@@ -1,5 +1,6 @@
 import express from "express";
 import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
+import { applyFieldVisibility } from "../middleware/fieldVisibility.js";
 import { asyncHandler, parsePositiveInt } from "./_utils.js";
 import {
   createPayrollEmployeeBeneficiaryBankAccount,
@@ -19,6 +20,7 @@ import {
 } from "./payroll.beneficiaries.validators.js";
 
 const router = express.Router();
+const payrollBeneficiaryFieldVisibility = applyFieldVisibility("PAYROLL", "beneficiary");
 
 function resolveLegalEntityScopeFromInput(input) {
   const legalEntityId = parsePositiveInt(input?.legalEntityId ?? input?.legal_entity_id);
@@ -34,6 +36,7 @@ router.get(
   requirePermission("payroll.beneficiary.read", {
     resolveScope: async (req) => resolveLegalEntityScopeFromInput(req.query),
   }),
+  payrollBeneficiaryFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parsePayrollBeneficiaryAccountListInput(req);
     const result = await listPayrollEmployeeBeneficiaryBankAccounts({
@@ -45,9 +48,11 @@ router.get(
       status: payload.status,
       assertScopeAccess,
     });
+    const items = await req.fieldVisibility.applyToRows(result.items || []);
     return res.json({
       tenantId: payload.tenantId,
       ...result,
+      items,
     });
   })
 );
@@ -57,6 +62,7 @@ router.post(
   requirePermission("payroll.beneficiary.write", {
     resolveScope: async (req) => resolveLegalEntityScopeFromInput(req.body),
   }),
+  payrollBeneficiaryFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parsePayrollBeneficiaryAccountCreateInput(req);
     const result = await createPayrollEmployeeBeneficiaryBankAccount({
@@ -66,11 +72,13 @@ router.post(
       input: payload,
       assertScopeAccess,
     });
+    const item = await req.fieldVisibility.applyToRow(result.item);
     return res.status(201).json({
       tenantId: payload.tenantId,
       legalEntityId: payload.legalEntityId,
       employeeCode: payload.employeeCode,
       ...result,
+      item,
     });
   })
 );
@@ -81,6 +89,7 @@ router.patch(
     resolveScope: async (req, tenantId) =>
       resolvePayrollBeneficiaryAccountScope(req.params?.accountId, tenantId),
   }),
+  payrollBeneficiaryFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parsePayrollBeneficiaryAccountUpdateInput(req);
     const result = await updatePayrollEmployeeBeneficiaryBankAccount({
@@ -91,10 +100,12 @@ router.patch(
       input: payload,
       assertScopeAccess,
     });
+    const item = await req.fieldVisibility.applyToRow(result.item);
     return res.json({
       tenantId: payload.tenantId,
       accountId: payload.accountId,
       ...result,
+      item,
     });
   })
 );
@@ -105,6 +116,7 @@ router.post(
     resolveScope: async (req, tenantId) =>
       resolvePayrollBeneficiaryAccountScope(req.params?.accountId, tenantId),
   }),
+  payrollBeneficiaryFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parsePayrollBeneficiarySetPrimaryInput(req);
     const result = await setPrimaryPayrollEmployeeBeneficiaryBankAccount({
@@ -115,10 +127,12 @@ router.post(
       reason: payload.reason,
       assertScopeAccess,
     });
+    const item = await req.fieldVisibility.applyToRow(result.item);
     return res.json({
       tenantId: payload.tenantId,
       accountId: payload.accountId,
       ...result,
+      item,
     });
   })
 );
@@ -129,6 +143,7 @@ router.get(
     resolveScope: async (req, tenantId) =>
       resolvePayrollBeneficiaryLiabilitySnapshotScope(req.params?.liabilityId, tenantId),
   }),
+  payrollBeneficiaryFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parsePayrollLiabilityBeneficiarySnapshotReadInput(req);
     const result = await getPayrollLiabilityBeneficiarySnapshot({
@@ -137,10 +152,17 @@ router.get(
       liabilityId: payload.liabilityId,
       assertScopeAccess,
     });
+    const snapshot = result?.item?.snapshot
+      ? await req.fieldVisibility.applyToRow(result.item.snapshot)
+      : null;
     return res.json({
       tenantId: payload.tenantId,
       liabilityId: payload.liabilityId,
       ...result,
+      item: {
+        ...result.item,
+        snapshot,
+      },
     });
   })
 );

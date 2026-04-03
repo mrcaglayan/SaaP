@@ -60,7 +60,7 @@ const migration029CashTransitWorkflow = {
          target_operating_unit_id BIGINT UNSIGNED NULL,
          transfer_out_cash_transaction_id BIGINT UNSIGNED NOT NULL,
          transfer_in_cash_transaction_id BIGINT UNSIGNED NULL,
-         status ENUM('INITIATED','IN_TRANSIT','RECEIVED','CANCELED','REVERSED') NOT NULL DEFAULT 'INITIATED',
+         status ENUM('INITIATED','IN_TRANSIT','RECEIVED','CANCELLED','REVERSED') NOT NULL DEFAULT 'INITIATED',
          amount DECIMAL(20,6) NOT NULL,
          currency_code CHAR(3) NOT NULL,
          transit_account_id BIGINT UNSIGNED NOT NULL,

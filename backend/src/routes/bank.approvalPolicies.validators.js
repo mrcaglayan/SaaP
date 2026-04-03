@@ -16,6 +16,13 @@ import { badRequest } from "./_utils.js";
 const POLICY_STATUS = ["ACTIVE", "PAUSED", "DISABLED"];
 const SCOPE_TYPES = ["GLOBAL", "LEGAL_ENTITY", "BANK_ACCOUNT"];
 const MODULE_CODES = ["BANK", "PAYROLL"];
+const ESCALATION_TARGET_SCOPE_MODES = [
+  "REQUEST_SCOPE",
+  "REQUEST_SCOPE_PARENT",
+  "ASSIGNMENT_SCOPE",
+  "ASSIGNMENT_SCOPE_PARENT",
+  "CUSTOM",
+];
 
 function normalizeOptionalEnum(value, label, allowedValues) {
   if (value === undefined || value === null || value === "") return null;
@@ -32,6 +39,13 @@ function parseOptionalDate(value, label) {
   const raw = String(value).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw badRequest(`${label} must be YYYY-MM-DD`);
   return raw;
+}
+
+function parseOptionalPositiveInt(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return requirePositiveInt(value, label);
 }
 
 export function parseBankApprovalPoliciesListInput(req) {
@@ -55,6 +69,9 @@ export function parseBankApprovalPolicyIdParam(req) {
   return requirePositiveInt(req.params?.policyId ?? req.params?.id, "policyId");
 }
 
+/**
+ * Parse one bank/payroll approval policy create payload from the compatibility routes.
+ */
 export function parseBankApprovalPolicyCreateInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
@@ -103,11 +120,31 @@ export function parseBankApprovalPolicyCreateInput(req) {
       body.autoExecuteOnFinalApproval ?? body.auto_execute_on_final_approval,
       true
     ),
+    escalationAfterHours: parseOptionalPositiveInt(
+      body.escalationAfterHours ?? body.escalation_after_hours,
+      "escalationAfterHours"
+    ),
+    escalationTargetScopeMode:
+      body.escalationTargetScopeMode === undefined &&
+      body.escalation_target_scope_mode === undefined
+        ? null
+        : normalizeOptionalEnum(
+            body.escalationTargetScopeMode ?? body.escalation_target_scope_mode,
+            "escalationTargetScopeMode",
+            ESCALATION_TARGET_SCOPE_MODES
+          ),
+    escalationMaxCount: parseOptionalPositiveInt(
+      body.escalationMaxCount ?? body.escalation_max_count,
+      "escalationMaxCount"
+    ),
     effectiveFrom: parseOptionalDate(body.effectiveFrom ?? body.effective_from, "effectiveFrom"),
     effectiveTo: parseOptionalDate(body.effectiveTo ?? body.effective_to, "effectiveTo"),
   };
 }
 
+/**
+ * Parse one bank/payroll approval policy patch payload from the compatibility routes.
+ */
 export function parseBankApprovalPolicyUpdateInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
@@ -171,6 +208,29 @@ export function parseBankApprovalPolicyUpdateInput(req) {
     autoExecuteOnFinalApproval:
       body.autoExecuteOnFinalApproval !== undefined || body.auto_execute_on_final_approval !== undefined
         ? parseBooleanFlag(body.autoExecuteOnFinalApproval ?? body.auto_execute_on_final_approval, true)
+        : undefined,
+    escalationAfterHours:
+      body.escalationAfterHours !== undefined || body.escalation_after_hours !== undefined
+        ? parseOptionalPositiveInt(
+            body.escalationAfterHours ?? body.escalation_after_hours,
+            "escalationAfterHours"
+          )
+        : undefined,
+    escalationTargetScopeMode:
+      body.escalationTargetScopeMode !== undefined ||
+      body.escalation_target_scope_mode !== undefined
+        ? normalizeOptionalEnum(
+            body.escalationTargetScopeMode ?? body.escalation_target_scope_mode,
+            "escalationTargetScopeMode",
+            ESCALATION_TARGET_SCOPE_MODES
+          )
+        : undefined,
+    escalationMaxCount:
+      body.escalationMaxCount !== undefined || body.escalation_max_count !== undefined
+        ? parseOptionalPositiveInt(
+            body.escalationMaxCount ?? body.escalation_max_count,
+            "escalationMaxCount"
+          )
         : undefined,
     effectiveFrom:
       body.effectiveFrom !== undefined || body.effective_from !== undefined

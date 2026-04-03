@@ -1035,7 +1035,7 @@ async function main() {
         assertScopeAccess: noScopeGuard,
         skipUnifiedApprovalGate: true,
       }),
-    { status: 403, includes: "Maker-checker violation" }
+    { status: 403, code: "SOD_VIOLATION", includes: "manual settlement override requesters" }
   );
 
   await expectFailure(
@@ -1048,7 +1048,7 @@ async function main() {
         decisionNote: "self reject should fail",
         assertScopeAccess: noScopeGuard,
       }),
-    { status: 403, includes: "Maker-checker violation" }
+    { status: 403, code: "SOD_VIOLATION", includes: "manual settlement override requesters" }
   );
 
   const reject2 = await rejectPayrollManualSettlementRequest({

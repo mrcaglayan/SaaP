@@ -2,6 +2,8 @@ import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertPayrollPeriodActionAllowed } from "./payroll.close.service.js";
 import { evaluateApprovalNeed, submitApprovalRequest } from "./approvalPolicies.service.js";
+import { executeRequest, recordDecision } from "./approval.engine.service.js";
+import { assertSoD } from "./sod.service.js";
 
 const EPSILON = 0.000001;
 
@@ -25,6 +27,30 @@ function amountString(value) {
 
 function safeJson(value) {
   return JSON.stringify(value ?? null);
+}
+
+function buildApprovalRequestSummary(row, prefix = "approval_") {
+  const approvalRequestId = parsePositiveInt(row?.[`${prefix}request_id`]);
+  if (!approvalRequestId) {
+    return null;
+  }
+  return {
+    id: approvalRequestId,
+    requestCode: row?.[`${prefix}request_code`] || null,
+    requestStatus: normalizeUpperText(row?.[`${prefix}request_status`]) || null,
+    executionStatus: normalizeUpperText(row?.[`${prefix}execution_status`]) || null,
+    currentStepNo: Number(row?.[`${prefix}current_step_no`] || 1),
+    scopeType: normalizeUpperText(row?.[`${prefix}scope_type`]) || null,
+    scopeId: parsePositiveInt(row?.[`${prefix}scope_id`]),
+    submittedByUserId: parsePositiveInt(row?.[`${prefix}submitted_by_user_id`]),
+    executedByUserId: parsePositiveInt(row?.[`${prefix}executed_by_user_id`]),
+    submittedAt: row?.[`${prefix}submitted_at`] || null,
+    approvedAt: row?.[`${prefix}approved_at`] || null,
+    rejectedAt: row?.[`${prefix}rejected_at`] || null,
+    withdrawnAt: row?.[`${prefix}withdrawn_at`] || null,
+    executedAt: row?.[`${prefix}executed_at`] || null,
+    executionErrorText: row?.[`${prefix}execution_error_text`] || null,
+  };
 }
 
 function toDateTimeString(value) {
@@ -154,6 +180,9 @@ function mapManualSettlementRequestRow(row, fallbackLiabilityRow = null) {
     rejected_at: row.rejected_at || null,
     decision_note: row.decision_note || null,
     applied_settlement_id: parsePositiveInt(row.applied_settlement_id),
+    approval_request_id: parsePositiveInt(row.approval_request_id),
+    approvalRequestId: parsePositiveInt(row.approval_request_id),
+    approvalRequest: buildApprovalRequestSummary(row),
     created_at: row.created_at || null,
     updated_at: row.updated_at || null,
     liability_type: row.liability_type || null,
@@ -296,6 +325,21 @@ async function getOverrideRequestById({ tenantId, requestId, runQuery = query })
   const result = await runQuery(
     `SELECT
         r.*,
+        ar.id AS approval_request_id,
+        ar.request_code AS approval_request_code,
+        ar.request_status AS approval_request_status,
+        ar.current_step_no AS approval_current_step_no,
+        ar.execution_status AS approval_execution_status,
+        ar.scope_type AS approval_scope_type,
+        ar.scope_id AS approval_scope_id,
+        ar.submitted_by_user_id AS approval_submitted_by_user_id,
+        ar.executed_by_user_id AS approval_executed_by_user_id,
+        ar.submitted_at AS approval_submitted_at,
+        ar.approved_at AS approval_approved_at,
+        ar.rejected_at AS approval_rejected_at,
+        ar.withdrawn_at AS approval_withdrawn_at,
+        ar.executed_at AS approval_executed_at,
+        ar.execution_error_text AS approval_execution_error_text,
         l.run_id,
         l.legal_entity_id,
         l.liability_type,
@@ -312,6 +356,9 @@ async function getOverrideRequestById({ tenantId, requestId, runQuery = query })
        ON l.tenant_id = r.tenant_id
       AND l.legal_entity_id = r.legal_entity_id
       AND l.id = r.payroll_liability_id
+     LEFT JOIN approval_requests ar
+       ON ar.tenant_id = r.tenant_id
+      AND ar.id = r.approval_request_id
      LEFT JOIN operating_units ou
        ON ou.id = l.operating_unit_id
       AND ou.tenant_id = l.tenant_id
@@ -320,6 +367,30 @@ async function getOverrideRequestById({ tenantId, requestId, runQuery = query })
     [tenantId, requestId]
   );
   return result.rows?.[0] || null;
+}
+
+async function getOverrideRequestByApprovalRequestId({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT id
+       FROM payroll_liability_override_requests
+      WHERE tenant_id = ?
+        AND approval_request_id = ?
+      LIMIT 1`,
+    [tenantId, approvalRequestId]
+  );
+  const requestId = parsePositiveInt(result.rows?.[0]?.id);
+  if (!requestId) {
+    return null;
+  }
+  return getOverrideRequestById({
+    tenantId,
+    requestId,
+    runQuery,
+  });
 }
 
 async function getPayrollRunPeriodRow({ tenantId, legalEntityId, runId, runQuery = query }) {
@@ -363,8 +434,23 @@ async function listOverrideRequestsForLiability({
         r.rejected_at,
         r.decision_note,
         r.applied_settlement_id,
+        r.approval_request_id,
         r.created_at,
         r.updated_at,
+        ar.request_code AS approval_request_code,
+        ar.request_status AS approval_request_status,
+        ar.current_step_no AS approval_current_step_no,
+        ar.execution_status AS approval_execution_status,
+        ar.scope_type AS approval_scope_type,
+        ar.scope_id AS approval_scope_id,
+        ar.submitted_by_user_id AS approval_submitted_by_user_id,
+        ar.executed_by_user_id AS approval_executed_by_user_id,
+        ar.submitted_at AS approval_submitted_at,
+        ar.approved_at AS approval_approved_at,
+        ar.rejected_at AS approval_rejected_at,
+        ar.withdrawn_at AS approval_withdrawn_at,
+        ar.executed_at AS approval_executed_at,
+        ar.execution_error_text AS approval_execution_error_text,
         l.liability_type,
         l.liability_group,
         l.ownership_scope,
@@ -379,6 +465,9 @@ async function listOverrideRequestsForLiability({
        ON l.tenant_id = r.tenant_id
       AND l.legal_entity_id = r.legal_entity_id
       AND l.id = r.payroll_liability_id
+     LEFT JOIN approval_requests ar
+       ON ar.tenant_id = r.tenant_id
+      AND ar.id = r.approval_request_id
      LEFT JOIN operating_units ou
        ON ou.id = l.operating_unit_id
       AND ou.tenant_id = l.tenant_id
@@ -580,6 +669,128 @@ async function getSettlementByKey({ tenantId, legalEntityId, settlementKey, runQ
   return result.rows?.[0] || null;
 }
 
+async function getApprovalRequestBridgeRow({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        id,
+        request_status,
+        execution_status,
+        approved_at,
+        rejected_at,
+        executed_at,
+        executed_by_user_id
+     FROM approval_requests
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, approvalRequestId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function getLatestApprovalDecisionRow({
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT decided_by_user_id, comment, decided_at
+       FROM approval_decisions
+      WHERE request_id = ?
+      ORDER BY id DESC
+      LIMIT 1`,
+    [approvalRequestId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function syncPayrollManualSettlementApprovalRequestBridgeTx({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const requestRow = await getOverrideRequestByApprovalRequestId({
+    tenantId,
+    approvalRequestId,
+    runQuery,
+  });
+  if (!requestRow) {
+    return null;
+  }
+
+  const approvalRow = await getApprovalRequestBridgeRow({
+    tenantId,
+    approvalRequestId,
+    runQuery,
+  });
+  if (!approvalRow) {
+    return requestRow;
+  }
+
+  const latestDecision = await getLatestApprovalDecisionRow({
+    approvalRequestId,
+    runQuery,
+  });
+  let nextStatus = "REQUESTED";
+  if (normalizeUpperText(approvalRow.execution_status) === "EXECUTED") {
+    nextStatus = "APPLIED";
+  } else if (normalizeUpperText(approvalRow.request_status) === "REJECTED") {
+    nextStatus = "REJECTED";
+  }
+
+  await runQuery(
+    `UPDATE payroll_liability_override_requests
+        SET status = ?,
+            approved_by_user_id = CASE
+              WHEN ? = 'APPLIED' THEN COALESCE(approved_by_user_id, ?)
+              ELSE approved_by_user_id
+            END,
+            approved_at = CASE
+              WHEN ? = 'APPLIED' THEN COALESCE(approved_at, ?)
+              ELSE approved_at
+            END,
+            rejected_by_user_id = CASE
+              WHEN ? = 'REJECTED' THEN COALESCE(rejected_by_user_id, ?)
+              ELSE rejected_by_user_id
+            END,
+            rejected_at = CASE
+              WHEN ? = 'REJECTED' THEN COALESCE(rejected_at, ?)
+              ELSE rejected_at
+            END,
+            decision_note = COALESCE(?, decision_note),
+            approval_request_id = COALESCE(?, approval_request_id),
+            updated_at = CURRENT_TIMESTAMP
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [
+      nextStatus,
+      nextStatus,
+      parsePositiveInt(approvalRow.executed_by_user_id) ||
+        parsePositiveInt(latestDecision?.decided_by_user_id) ||
+        null,
+      nextStatus,
+      approvalRow.executed_at || approvalRow.approved_at || latestDecision?.decided_at || null,
+      nextStatus,
+      parsePositiveInt(latestDecision?.decided_by_user_id) || null,
+      nextStatus,
+      approvalRow.rejected_at || latestDecision?.decided_at || null,
+      latestDecision?.comment || null,
+      approvalRequestId,
+      tenantId,
+      parsePositiveInt(requestRow.id),
+    ]
+  );
+
+  return getOverrideRequestById({
+    tenantId,
+    requestId: parsePositiveInt(requestRow.id),
+    runQuery,
+  });
+}
+
 export async function resolvePayrollLiabilityScope(liabilityId, tenantId) {
   const parsedTenantId = parsePositiveInt(tenantId);
   const parsedLiabilityId = parsePositiveInt(liabilityId);
@@ -731,8 +942,69 @@ export async function createPayrollManualSettlementRequest({
   });
 
   const request = await getOverrideRequestById({ tenantId, requestId });
+  const governance = await evaluateApprovalNeed({
+    moduleCode: "PAYROLL",
+    tenantId,
+    targetType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+    actionType: "APPLY",
+    legalEntityId,
+    thresholdAmount: requestedAmount,
+    currencyCode: normalizeUpperText(liability.currency_code),
+  });
+
+  let refreshedRequest = request;
+  if (governance?.approval_required && parsePositiveInt(governance?.policy?.id)) {
+    const approvalOwnerContext = buildOwnerContext(liability);
+    const submitRes = await submitApprovalRequest({
+      tenantId,
+      userId,
+      requestInput: {
+        moduleCode: "PAYROLL",
+        targetType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+        targetId: requestId,
+        actionType: "APPLY",
+        legalEntityId,
+        thresholdAmount: requestedAmount,
+        currencyCode: normalizeUpperText(liability.currency_code),
+        actionPayload: {
+          requestId,
+        },
+        targetSnapshot: {
+          module_code: "PAYROLL",
+          target_type: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+          target_id: requestId,
+          legal_entity_id: legalEntityId,
+          run_id: parsePositiveInt(liability.run_id) || null,
+          payroll_liability_id: liabilityId,
+          requested_amount: requestedAmount,
+          currency_code: normalizeUpperText(liability.currency_code),
+          status: "REQUESTED",
+          ownership_scope: approvalOwnerContext.ownership_scope,
+          operating_unit_id: approvalOwnerContext.operating_unit_id,
+          operating_unit_code: approvalOwnerContext.operating_unit_code,
+          operating_unit_name: approvalOwnerContext.operating_unit_name,
+          owner_context_label: approvalOwnerContext.owner_context_label,
+          owner_context: approvalOwnerContext,
+        },
+      },
+    });
+
+    if (submitRes?.approval_required && parsePositiveInt(submitRes?.item?.id)) {
+      await query(
+        `UPDATE payroll_liability_override_requests
+            SET approval_request_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE tenant_id = ?
+            AND legal_entity_id = ?
+            AND id = ?`,
+        [parsePositiveInt(submitRes.item.id), tenantId, legalEntityId, requestId]
+      );
+      refreshedRequest = await getOverrideRequestById({ tenantId, requestId });
+    }
+  }
+
   return {
-    request: mapManualSettlementRequestRow(request, liability),
+    request: mapManualSettlementRequestRow(refreshedRequest, liability),
     idempotent: false,
   };
 }
@@ -753,6 +1025,52 @@ export async function approveApplyPayrollManualSettlementRequest({
 
     const legalEntityId = parsePositiveInt(previewRequestRow.legal_entity_id);
     assertScopeAccess(req, "legal_entity", legalEntityId, "requestId");
+
+    const bridgedApprovalRequestId = parsePositiveInt(previewRequestRow.approval_request_id);
+    if (bridgedApprovalRequestId) {
+      let decisionResult = await recordDecision(
+        bridgedApprovalRequestId,
+        userId,
+        "APPROVE",
+        decisionNote || null
+      );
+      let approvalItem = decisionResult.item || null;
+      if (
+        normalizeUpperText(approvalItem?.requestStatus) === "APPROVED" &&
+        normalizeUpperText(approvalItem?.executionStatus) !== "EXECUTED"
+      ) {
+        const executionResult = await executeRequest(bridgedApprovalRequestId, {
+          executedByUserId: userId,
+        });
+        approvalItem = executionResult.item || approvalItem;
+        decisionResult = {
+          ...decisionResult,
+          item: approvalItem,
+          execution_result:
+            executionResult.execution_result || decisionResult.execution_result || null,
+        };
+      }
+
+      const syncedRequest = await syncPayrollManualSettlementApprovalRequestBridgeTx({
+        tenantId,
+        approvalRequestId: bridgedApprovalRequestId,
+      });
+      const request = mapManualSettlementRequestRow(syncedRequest || previewRequestRow);
+      const settlement = await getSettlementById({
+        tenantId,
+        legalEntityId,
+        settlementId: parsePositiveInt(
+          syncedRequest?.applied_settlement_id ?? previewRequestRow.applied_settlement_id
+        ),
+      });
+      return {
+        request,
+        settlement: settlement ? mapManualSettlementSettlementRow(settlement, request) : null,
+        approval_request: approvalItem,
+        execution_result: decisionResult.execution_result || null,
+        idempotent: Boolean(decisionResult.idempotent),
+      };
+    }
 
     const requestStatus = normalizeUpperText(previewRequestRow.status);
     if (requestStatus === "REQUESTED") {
@@ -804,8 +1122,22 @@ export async function approveApplyPayrollManualSettlementRequest({
           },
         });
 
+        if (parsePositiveInt(submitRes?.item?.id)) {
+          await query(
+            `UPDATE payroll_liability_override_requests
+                SET approval_request_id = ?,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE tenant_id = ?
+                AND legal_entity_id = ?
+                AND id = ?`,
+            [parsePositiveInt(submitRes.item.id), tenantId, legalEntityId, requestId]
+          );
+        }
+
+        const refreshedPreviewRow = await getOverrideRequestById({ tenantId, requestId });
+
         return {
-          request: mapManualSettlementRequestRow(previewRequestRow),
+          request: mapManualSettlementRequestRow(refreshedPreviewRow || previewRequestRow),
           approval_required: true,
           approval_request: submitRes?.item || null,
           idempotent: Boolean(submitRes?.idempotent),
@@ -845,14 +1177,19 @@ export async function approveApplyPayrollManualSettlementRequest({
     if (requestStatus !== "REQUESTED") {
       throw badRequest(`Request status ${requestStatus} cannot be approved/applied`);
     }
-    if (
-      parsePositiveInt(requestRow.requested_by_user_id) &&
-      parsePositiveInt(requestRow.requested_by_user_id) === parsePositiveInt(userId)
-    ) {
-      const err = new Error("Maker-checker violation: requester cannot approve/apply the same request");
-      err.status = 403;
-      throw err;
-    }
+    await assertSoD({
+      tenantId,
+      userId,
+      actionCode: "payroll.settlement.override.approve",
+      recordType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+      recordId: requestId,
+      context: {
+        actorUserIds: {
+          requestedByUserId: requestRow.requested_by_user_id,
+          approvedByUserId: requestRow.approved_by_user_id,
+        },
+      },
+    });
 
     const liability = await getLiabilityForUpdateTx({
       tenantId,
@@ -1005,12 +1342,14 @@ export async function approveApplyPayrollManualSettlementRequest({
            approved_by_user_id = ?,
            approved_at = CURRENT_TIMESTAMP,
            decision_note = ?,
-           applied_settlement_id = COALESCE(applied_settlement_id, ?)
+           applied_settlement_id = COALESCE(applied_settlement_id, ?),
+           approval_request_id = COALESCE(?, approval_request_id)
        WHERE tenant_id = ? AND legal_entity_id = ? AND id = ?`,
       [
         userId,
         decisionNote || null,
         parsePositiveInt(settlement?.id),
+        parsePositiveInt(approvalRequestId) || null,
         tenantId,
         legalEntityId,
         requestId,
@@ -1073,6 +1412,21 @@ export async function executeApprovedPayrollManualSettlementOverride({
   });
 }
 
+/**
+ * Sync one unified approval request back to its bridged payroll override request.
+ */
+export async function syncPayrollManualSettlementApprovalRequestBridge({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  return syncPayrollManualSettlementApprovalRequestBridgeTx({
+    tenantId,
+    approvalRequestId,
+    runQuery,
+  });
+}
+
 export async function rejectPayrollManualSettlementRequest({
   req,
   tenantId,
@@ -1092,6 +1446,26 @@ export async function rejectPayrollManualSettlementRequest({
     const legalEntityId = parsePositiveInt(requestRow.legal_entity_id);
     assertScopeAccess(req, "legal_entity", legalEntityId, "requestId");
 
+    const bridgedApprovalRequestId = parsePositiveInt(requestRow.approval_request_id);
+    if (bridgedApprovalRequestId) {
+      const decisionResult = await recordDecision(
+        bridgedApprovalRequestId,
+        userId,
+        "REJECT",
+        decisionNote || null
+      );
+      const syncedRequestRow = await syncPayrollManualSettlementApprovalRequestBridgeTx({
+        tenantId,
+        approvalRequestId: bridgedApprovalRequestId,
+        runQuery: tx.query,
+      });
+      return {
+        request: mapManualSettlementRequestRow(syncedRequestRow || requestRow),
+        approval_request: decisionResult.item || null,
+        idempotent: Boolean(decisionResult.idempotent),
+      };
+    }
+
     const requestStatus = normalizeUpperText(requestRow.status);
     if (requestStatus === "REJECTED") {
       const request = mapManualSettlementRequestRow(
@@ -1102,14 +1476,19 @@ export async function rejectPayrollManualSettlementRequest({
     if (requestStatus === "APPLIED") {
       throw makeConflict("Applied manual settlement override request cannot be rejected");
     }
-    if (
-      parsePositiveInt(requestRow.requested_by_user_id) &&
-      parsePositiveInt(requestRow.requested_by_user_id) === parsePositiveInt(userId)
-    ) {
-      const err = new Error("Maker-checker violation: requester cannot reject the same request");
-      err.status = 403;
-      throw err;
-    }
+    await assertSoD({
+      tenantId,
+      userId,
+      actionCode: "payroll.settlement.override.approve",
+      recordType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+      recordId: requestId,
+      context: {
+        actorUserIds: {
+          requestedByUserId: requestRow.requested_by_user_id,
+          approvedByUserId: requestRow.approved_by_user_id,
+        },
+      },
+    });
 
     const runPeriodRow = await getPayrollRunPeriodRow({
       tenantId,
@@ -1130,9 +1509,17 @@ export async function rejectPayrollManualSettlementRequest({
        SET status = 'REJECTED',
            rejected_by_user_id = ?,
            rejected_at = CURRENT_TIMESTAMP,
-           decision_note = ?
+           decision_note = ?,
+           approval_request_id = COALESCE(?, approval_request_id)
        WHERE tenant_id = ? AND legal_entity_id = ? AND id = ?`,
-      [userId, decisionNote || "Rejected", tenantId, legalEntityId, requestId]
+      [
+        userId,
+        decisionNote || "Rejected",
+        parsePositiveInt(requestRow.approval_request_id) || null,
+        tenantId,
+        legalEntityId,
+        requestId,
+      ]
     );
 
     const request = mapManualSettlementRequestRow(

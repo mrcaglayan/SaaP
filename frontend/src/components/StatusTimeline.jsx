@@ -4,7 +4,15 @@ function normalizeSteps(steps) {
   return Array.isArray(steps) ? steps : [];
 }
 
-function stateClasses(state) {
+function stateClasses(state, tone = "") {
+  const normalizedTone = String(tone || "").trim().toLowerCase();
+  if (normalizedTone === "attention" || String(state || "").trim().toLowerCase() === "attention") {
+    return {
+      dot: "border-amber-300 bg-amber-500 text-white",
+      line: "bg-amber-200",
+      title: "text-amber-900",
+    };
+  }
   const normalized = String(state || "").trim().toLowerCase();
   if (normalized === "done") {
     return {
@@ -38,6 +46,10 @@ function formatDateTime(value, language) {
   return parsed.toLocaleString(language || undefined);
 }
 
+/**
+ * Render one generic timeline with optional urgency tones for lifecycle and
+ * approval history surfaces.
+ */
 export default function StatusTimeline({
   title,
   steps = [],
@@ -64,7 +76,7 @@ export default function StatusTimeline({
       {rows.length > 0 ? (
         <ol className="mt-3 space-y-3">
           {rows.map((step, index) => {
-            const classes = stateClasses(step?.state);
+            const classes = stateClasses(step?.state, step?.tone);
             const key = String(step?.key || step?.statusCode || index);
             const label = String(step?.label || step?.statusCode || key);
             const description = String(step?.description || "").trim();

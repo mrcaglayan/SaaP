@@ -3,7 +3,8 @@ import { query, withTransaction } from "../db.js";
 import {
   assertScopeAccess,
   buildScopeFilter,
-  getScopeContext,
+  getPermissionScope,
+  getVisibilityScope,
   invalidateRbacCache,
   requirePermission,
 } from "../middleware/rbac.js";
@@ -478,7 +479,7 @@ router.get(
       legalEntities: tree.legalEntities,
       operatingUnits: tree.operatingUnits,
       rbacSource: req.rbac?.source || null,
-      tenantWideScope: Boolean(getScopeContext(req)?.tenantWide),
+      tenantWideScope: Boolean(getVisibilityScope(req)?.tenantWide),
     });
   })
 );
@@ -640,7 +641,7 @@ router.post(
       code,
       name,
       assertScopeAccess,
-      getScopeContext,
+      getPermissionScope,
     });
     await invalidateRbacCache(tenantId);
 

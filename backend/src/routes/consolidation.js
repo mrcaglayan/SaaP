@@ -4439,12 +4439,22 @@ router.post(
     });
     if (!reviewGate.canFinalize) {
       const firstBlocker = reviewGate.blockers?.[0] || null;
+      // Consolidation finalize inherits evaluateWorkflowApprovalGate through the
+      // shared review-gate service, but the route still preserves the explicit
+      // workflow approval contract for callers and regression checks.
+      const workflowGateCode = [
+        "APPROVAL_REQUIRED",
+        "WORKFLOW_NOT_ASSIGNED",
+        "APPROVAL_INSTANCE_REJECTED",
+      ].includes(String(firstBlocker?.code || "").toUpperCase())
+        ? String(firstBlocker.code).toUpperCase()
+        : null;
       return res.status(409).json(
         {
           message:
             firstBlocker?.message ||
             "Consolidation finalize is blocked by review gate checks",
-          code: firstBlocker?.code || "CONSOLIDATION_REVIEW_BLOCKED",
+          code: workflowGateCode || firstBlocker?.code || "CONSOLIDATION_REVIEW_BLOCKED",
           details: {
             reviewGate,
           },

@@ -13,6 +13,7 @@ import {
   replaceWorkflowDefinitionSteps,
   updateWorkflowAssignment,
 } from "../../api/workflows.js";
+import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
@@ -88,13 +89,21 @@ function safeParseJsonArray(rawValue) {
   }
 }
 
+/**
+ * Manages workflow governance definitions, steps, and scope assignments.
+ */
 export default function WorkflowSetupPage() {
-  const { hasPermission } = useAuth();
+  const { getPermissionAccess, hasPermission, user } = useAuth();
   const { language } = useI18n();
   const { getModuleRows, refresh: refreshModuleReadiness } = useModuleReadiness();
+  const tenantScopeId = toPositiveInt(user?.tenant_id);
 
-  const canRead = hasPermission("org.tree.read");
-  const canSetup = hasPermission("onboarding.company.setup");
+  const canReadDefinitions = hasPermission("workflow.definition.read");
+  const definitionWriteAccess = getPermissionAccess("workflow.definition.write");
+  const canWriteDefinitions = definitionWriteAccess.allowed;
+  const canReadAssignments = hasPermission("workflow.assignment.read");
+  const canReadOrgTree = hasPermission("org.tree.read");
+  const canReadWorkflow = canReadDefinitions || canReadAssignments;
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState("");
@@ -128,6 +137,28 @@ export default function WorkflowSetupPage() {
     effectiveFrom: todayIsoDate(),
     status: "ACTIVE",
   });
+  const assignmentScopeId =
+    assignmentForm.scopeType === "TENANT"
+      ? tenantScopeId
+      : assignmentForm.scopeType === "GROUP"
+        ? toPositiveInt(assignmentForm.groupCompanyId)
+        : assignmentForm.scopeType === "LEGAL_ENTITY"
+          ? toPositiveInt(assignmentForm.legalEntityId)
+          : assignmentForm.scopeType === "OPERATING_UNIT"
+            ? toPositiveInt(assignmentForm.operatingUnitId)
+            : null;
+  const assignmentWriteAccess = getPermissionAccess(
+    "workflow.assignment.write",
+    assignmentScopeId
+      ? {
+          scope: {
+            scopeType: assignmentForm.scopeType,
+            scopeId: assignmentScopeId,
+          },
+        }
+      : undefined
+  );
+  const canWriteAssignments = assignmentWriteAccess.allowed;
 
   const l = (en, tr) => (language === "tr" ? tr : en);
 
@@ -154,7 +185,13 @@ export default function WorkflowSetupPage() {
   const workflowTotalCount = workflowReadinessRows.length;
 
   async function loadData() {
-    if (!canRead) {
+    if (!canReadWorkflow && !canReadOrgTree) {
+      setDefinitions([]);
+      setAssignments([]);
+      setGroupCompanies([]);
+      setLegalEntities([]);
+      setOperatingUnits([]);
+      setSelectedDefinitionId("");
       return;
     }
     setLoading(true);
@@ -162,11 +199,11 @@ export default function WorkflowSetupPage() {
     try {
       const [definitionsRes, assignmentsRes, groupsRes, entitiesRes, unitsRes] =
         await Promise.all([
-          listWorkflowDefinitions({ limit: 200 }),
-          listWorkflowAssignments({ limit: 300 }),
-          listGroupCompanies(),
-          listLegalEntities(),
-          listOperatingUnits(),
+          canReadDefinitions ? listWorkflowDefinitions({ limit: 200 }) : Promise.resolve(null),
+          canReadAssignments ? listWorkflowAssignments({ limit: 300 }) : Promise.resolve(null),
+          canReadOrgTree ? listGroupCompanies() : Promise.resolve(null),
+          canReadOrgTree ? listLegalEntities() : Promise.resolve(null),
+          canReadOrgTree ? listOperatingUnits() : Promise.resolve(null),
         ]);
 
       const nextDefinitions = Array.isArray(definitionsRes?.rows) ? definitionsRes.rows : [];
@@ -177,6 +214,9 @@ export default function WorkflowSetupPage() {
       setOperatingUnits(Array.isArray(unitsRes?.rows) ? unitsRes.rows : []);
 
       setSelectedDefinitionId((prev) => {
+        if (nextDefinitions.length === 0) {
+          return "";
+        }
         const current = toPositiveInt(prev);
         if (current && nextDefinitions.some((row) => toPositiveInt(row?.id) === current)) {
           return prev;
@@ -186,7 +226,7 @@ export default function WorkflowSetupPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l("Failed to load workflow setup.", "Workflow kurulumu yuklenemedi.")
+          l("Failed to load workflow governance.", "Workflow yonetimi yuklenemedi.")
       );
     } finally {
       setLoading(false);
@@ -196,18 +236,18 @@ export default function WorkflowSetupPage() {
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canRead]);
+  }, [canReadAssignments, canReadDefinitions, canReadOrgTree]);
 
   useEffect(() => {
-    if (!canRead) {
+    if (!canReadWorkflow) {
       return;
     }
     refreshModuleReadiness({ global: true });
-  }, [canRead, refreshModuleReadiness]);
+  }, [canReadWorkflow, refreshModuleReadiness]);
 
   useEffect(() => {
     const definitionId = toPositiveInt(selectedDefinitionId);
-    if (!definitionId || !canRead) {
+    if (!definitionId || !canReadDefinitions) {
       setStepsJson(JSON.stringify(buildDefaultSteps(selectedDefinition?.processType), null, 2));
       return;
     }
@@ -254,8 +294,13 @@ export default function WorkflowSetupPage() {
 
   async function onCreateDefinition(event) {
     event.preventDefault();
-    if (!canSetup) {
-      setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    if (!canWriteDefinitions) {
+      setError(
+        l(
+          "Missing permission: workflow.definition.write",
+          "Eksik yetki: workflow.definition.write"
+        )
+      );
       return;
     }
 
@@ -287,8 +332,13 @@ export default function WorkflowSetupPage() {
 
   async function onSaveSteps(event) {
     event.preventDefault();
-    if (!canSetup) {
-      setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    if (!canWriteDefinitions) {
+      setError(
+        l(
+          "Missing permission: workflow.definition.write",
+          "Eksik yetki: workflow.definition.write"
+        )
+      );
       return;
     }
 
@@ -323,8 +373,13 @@ export default function WorkflowSetupPage() {
 
   async function onCreateAssignment(event) {
     event.preventDefault();
-    if (!canSetup) {
-      setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
+    if (!canWriteAssignments) {
+      setError(
+        l(
+          "Missing permission: workflow.assignment.write",
+          "Eksik yetki: workflow.assignment.write"
+        )
+      );
       return;
     }
 
@@ -370,7 +425,16 @@ export default function WorkflowSetupPage() {
 
   async function onToggleAssignmentStatus(row) {
     const assignmentId = toPositiveInt(row?.id);
-    if (!assignmentId || !canSetup) {
+    if (!assignmentId) {
+      return;
+    }
+    if (!canWriteAssignments) {
+      setError(
+        l(
+          "Missing permission: workflow.assignment.write",
+          "Eksik yetki: workflow.assignment.write"
+        )
+      );
       return;
     }
     const nextStatus = String(row?.status || "").toUpperCase() === "ACTIVE" ? "INACTIVE" : "ACTIVE";
@@ -395,12 +459,12 @@ export default function WorkflowSetupPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">
-          {l("Workflow Setup", "Workflow Kurulumu")}
+          {l("Workflow Governance", "Workflow Yonetimi")}
         </h1>
         <p className="mt-1 text-sm text-slate-600">
           {l(
-            "Configure period-close, local-close-pack, and consolidation workflow definitions, steps, and assignments.",
-            "Donem kapanisi, yerel kapanis paketi ve konsolidasyon workflow tanimlari, adimlari ve atamalarini yonetin."
+            "Manage workflow definitions, review-step permissions, and scope assignments for period close, local close packs, and consolidation.",
+            "Donem kapanisi, yerel kapanis paketleri ve konsolidasyon icin workflow tanimlarini, inceleme adimi yetkilerini ve kapsam atamalarini yonetin."
           )}
         </p>
       </div>
@@ -429,15 +493,37 @@ export default function WorkflowSetupPage() {
         <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div>
       ) : null}
 
-      {!canRead ? (
+      {!canReadWorkflow ? (
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {l("Missing permission: org.tree.read", "Eksik yetki: org.tree.read")}
+          {l(
+            "Missing workflow read permission: workflow.definition.read or workflow.assignment.read",
+            "Eksik workflow okuma yetkisi: workflow.definition.read veya workflow.assignment.read"
+          )}
+        </div>
+      ) : null}
+      {!canReadOrgTree ? (
+        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {l(
+            "org.tree.read is required to load group, legal entity, and operating unit scope selectors.",
+            "Grup, legal entity ve operating unit kapsam secicilerini yuklemek icin org.tree.read gerekir."
+          )}
         </div>
       ) : null}
 
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Definitions", "Tanimlar")}</h2>
+          <p className="mb-3 text-xs text-slate-500">
+            {l(
+              "Read definitions with workflow.definition.read. Create or update them with workflow.definition.write.",
+              "Tanimlari workflow.definition.read ile goruntuleyin. workflow.definition.write ile olusturun veya guncelleyin."
+            )}
+          </p>
+          <PermissionAccessNotice
+            access={definitionWriteAccess}
+            permissionCode="workflow.definition.write"
+            className="mb-3"
+          />
           <form onSubmit={onCreateDefinition} className="grid gap-2 md:grid-cols-2">
             <input value={definitionForm.code} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, code: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Code", "Kod")} required />
             <input value={definitionForm.name} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, name: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Name", "Ad")} required />
@@ -446,7 +532,7 @@ export default function WorkflowSetupPage() {
             </select>
             <input type="number" min={1} value={definitionForm.versionNo} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, versionNo: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Version", "Versiyon")} />
             <label className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={Boolean(definitionForm.isActive)} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, isActive: event.target.checked }))} />{l("Active", "Aktif")}</label>
-            <button type="submit" disabled={saving === "definition" || !canSetup} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "definition" ? l("Saving...", "Kaydediliyor...") : l("Save definition", "Tanimi kaydet")}</button>
+            <button type="submit" disabled={saving === "definition" || !canWriteDefinitions} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "definition" ? l("Saving...", "Kaydediliyor...") : l("Save definition", "Tanimi kaydet")}</button>
           </form>
 
           <div className="mt-3 max-h-64 overflow-auto rounded border border-slate-200">
@@ -470,15 +556,45 @@ export default function WorkflowSetupPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Steps (JSON)", "Adimlar (JSON)")}</h2>
           <p className="mb-2 text-xs text-slate-500">{selectedDefinition ? `${selectedDefinition.code} (${selectedDefinition.processType})` : l("Select a definition to edit steps.", "Adim duzenlemek icin tanim secin.")}</p>
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
+            <div className="font-semibold">
+              {l("Escalation support", "Escalation destegi")}
+            </div>
+            <p className="mt-1">
+              {l(
+                "Add `escalationAfterHours` to a step when overdue reviews should escalate without leaving the normal pending queue.",
+                "Geciken incelemeler normal pending kuyrugundan cikmadan escalate olsun istiyorsaniz adima `escalationAfterHours` ekleyin."
+              )}
+            </p>
+            <pre className="mt-2 overflow-x-auto rounded border border-amber-200 bg-white/80 p-2 text-[11px] text-amber-950">{`{
+  "stepNo": 2,
+  "stageScopeType": "LEGAL_ENTITY",
+  "requiredPermissionCode": "gl.period.close",
+  "minApproverCount": 1,
+  "allowSelfApprove": false,
+  "escalationAfterHours": 24
+}`}</pre>
+          </div>
           <form onSubmit={onSaveSteps} className="space-y-2">
             <textarea value={stepsJson} onChange={(event) => setStepsJson(event.target.value)} className="min-h-[260px] w-full rounded border border-slate-300 p-2 font-mono text-xs" />
-            <button type="submit" disabled={saving === "steps" || !canSetup || !toPositiveInt(selectedDefinitionId)} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "steps" ? l("Saving...", "Kaydediliyor...") : l("Save steps", "Adimlari kaydet")}</button>
+            <button type="submit" disabled={saving === "steps" || !canWriteDefinitions || !toPositiveInt(selectedDefinitionId)} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "steps" ? l("Saving...", "Kaydediliyor...") : l("Save steps", "Adimlari kaydet")}</button>
           </form>
         </section>
       </div>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Assignments", "Atamalar")}</h2>
+        <p className="mb-3 text-xs text-slate-500">
+          {l(
+            "Read scope assignments with workflow.assignment.read. Create or update them with workflow.assignment.write.",
+            "Kapsam atamalarini workflow.assignment.read ile goruntuleyin. workflow.assignment.write ile olusturun veya guncelleyin."
+          )}
+        </p>
+        <PermissionAccessNotice
+          access={assignmentWriteAccess}
+          permissionCode="workflow.assignment.write"
+          className="mb-3"
+        />
         <form onSubmit={onCreateAssignment} className="grid gap-2 md:grid-cols-4">
           <select value={assignmentForm.processType} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, processType: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm">{PROCESS_TYPES.map((row) => <option key={row} value={row}>{row}</option>)}</select>
           <select value={assignmentForm.workflowDefinitionId} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, workflowDefinitionId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
@@ -508,7 +624,7 @@ export default function WorkflowSetupPage() {
           ) : null}
 
           <select value={assignmentForm.status} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, status: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm"><option value="ACTIVE">ACTIVE</option><option value="INACTIVE">INACTIVE</option></select>
-          <button type="submit" disabled={saving === "assignment" || !canSetup} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "assignment" ? l("Saving...", "Kaydediliyor...") : l("Save assignment", "Atamayi kaydet")}</button>
+          <button type="submit" disabled={saving === "assignment" || !canWriteAssignments} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "assignment" ? l("Saving...", "Kaydediliyor...") : l("Save assignment", "Atamayi kaydet")}</button>
         </form>
 
         <div className="mt-3 max-h-72 overflow-auto rounded border border-slate-200">
@@ -518,6 +634,20 @@ export default function WorkflowSetupPage() {
               {assignments.map((row) => {
                 const assignmentId = toPositiveInt(row?.id);
                 const rowSaving = saving === `assignment-status-${assignmentId}`;
+                const rowScope =
+                  row.operatingUnitId
+                    ? { scopeType: "OPERATING_UNIT", scopeId: row.operatingUnitId }
+                    : row.legalEntityId
+                      ? { scopeType: "LEGAL_ENTITY", scopeId: row.legalEntityId }
+                      : row.groupCompanyId
+                        ? { scopeType: "GROUP", scopeId: row.groupCompanyId }
+                        : tenantScopeId
+                          ? { scopeType: "TENANT", scopeId: tenantScopeId }
+                          : null;
+                const rowWriteAccess = getPermissionAccess(
+                  "workflow.assignment.write",
+                  rowScope ? { scope: rowScope } : undefined
+                );
                 return (
                   <tr key={row.id} className="border-t border-slate-100">
                     <td className="px-2 py-2">#{row.id}</td>
@@ -525,7 +655,7 @@ export default function WorkflowSetupPage() {
                     <td className="px-2 py-2">{row.workflowDefinitionCode} - {row.workflowDefinitionName}</td>
                     <td className="px-2 py-2">{row.status}</td>
                     <td className="px-2 py-2">
-                      <button type="button" onClick={() => onToggleAssignmentStatus(row)} disabled={rowSaving || !canSetup} className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60">{rowSaving ? l("Saving...", "Kaydediliyor...") : row.status === "ACTIVE" ? l("Set INACTIVE", "PASIF yap") : l("Set ACTIVE", "AKTIF yap")}</button>
+                      <button type="button" onClick={() => onToggleAssignmentStatus(row)} disabled={rowSaving || !rowWriteAccess.allowed} className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60">{rowSaving ? l("Saving...", "Kaydediliyor...") : row.status === "ACTIVE" ? l("Set INACTIVE", "PASIF yap") : l("Set ACTIVE", "AKTIF yap")}</button>
                     </td>
                   </tr>
                 );

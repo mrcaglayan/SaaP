@@ -61,3 +61,8 @@ export async function listMeFeatures(params = {}) {
   const response = await api.get(`/me/features${toQueryString(params)}`);
   return response.data;
 }
+
+export async function getMeEntitlements() {
+  const response = await api.get("/me/entitlements");
+  return response.data;
+}

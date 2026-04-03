@@ -14,6 +14,7 @@ const SERVER_START_TIMEOUT_MS = 25_000;
 
 const CARI_PERMISSION_CODES = [
   "cari.card.read",
+  "cari.request.review",
   "cari.card.upsert",
   "cari.doc.read",
   "cari.doc.create",
@@ -31,6 +32,7 @@ const CARI_PERMISSION_CODES = [
 
 const CARI_ROLE_EXPECTATIONS = {
   CountryController: [
+    "cari.request.review",
     "cari.card.upsert",
     "cari.doc.post",
     "cari.doc.reverse",
@@ -41,6 +43,7 @@ const CARI_ROLE_EXPECTATIONS = {
   ],
   EntityAccountant: [
     "cari.card.read",
+    "cari.request.review",
     "cari.card.upsert",
     "cari.doc.create",
     "cari.doc.post",
@@ -418,7 +421,7 @@ async function runApiPermissionAssertions(identity) {
       token: allowedToken,
       method: "GET",
       path: "/api/v1/cari/audit",
-      expectedStatus: 403,
+      expectedStatus: 200,
     });
   } finally {
     if (!serverStopped) {
@@ -476,6 +479,24 @@ async function runFrontendGuardSmokeAssertions() {
   );
 }
 
+async function assertCounterpartyRequestReviewGuards() {
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const routeFilePath = path.resolve(
+    scriptDir,
+    "../src/routes/cari.counterparty-request.routes.js"
+  );
+  const routeSource = await readFile(routeFilePath, "utf8");
+
+  assert(
+    routeSource.includes('requirePermission("cari.request.review"'),
+    "Counterparty request approve/reject routes should use cari.request.review"
+  );
+  assert(
+    !routeSource.includes('requirePermission("cari.card.upsert"'),
+    "Counterparty request approve/reject routes should no longer use cari.card.upsert"
+  );
+}
+
 async function main() {
   await assertCariPermissionsSeededOnce();
   const tenant = await createTenant();
@@ -488,6 +509,7 @@ async function main() {
   await runApiPermissionAssertions(identities);
 
   await runFrontendGuardSmokeAssertions();
+  await assertCounterpartyRequestReviewGuards();
 
   console.log("CARI PR-02 RBAC + seed + guard test passed.");
   console.log(

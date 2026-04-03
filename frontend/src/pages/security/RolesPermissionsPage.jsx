@@ -7,14 +7,22 @@ import {
 } from "../../api/rbacAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import RoleSummaryCard from "./RoleSummaryCard.jsx";
+import SecurityWarningList from "./SecurityWarningList.jsx";
+import { groupRolesForManagement } from "./roleCatalog.js";
 
+/**
+ * Lets security admins review composable-role intent, permission sets, and
+ * permission-rule warnings from one place.
+ */
 export default function RolesPermissionsPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, securityAdminUiState, securityAdminUiStateLoaded } = useAuth();
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [validationWarnings, setValidationWarnings] = useState([]);
   const [roles, setRoles] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [selectedRoleId, setSelectedRoleId] = useState(null);
@@ -60,10 +68,14 @@ export default function RolesPermissionsPage() {
     () => roles.find((row) => Number(row.id) === Number(selectedRoleId)) || null,
     [roles, selectedRoleId]
   );
+  const groupedRoles = useMemo(() => groupRolesForManagement(roles), [roles]);
   const canUpsertRole = hasPermission("security.role.upsert");
   const canReplaceRolePermissions = hasPermission(
     "security.role_permissions.assign"
   );
+  const showFreshTenantAdminNote =
+    securityAdminUiStateLoaded &&
+    Boolean(securityAdminUiState?.roleMigrations?.simplifiedFreshTenantView);
 
   function togglePermission(permissionCode) {
     setSelectedPermissionCodes((prev) => {
@@ -83,6 +95,7 @@ export default function RolesPermissionsPage() {
     setSaving(true);
     setError("");
     setMessage("");
+    setValidationWarnings([]);
     try {
       await createOrUpdateRole({
         code: roleForm.code.trim(),
@@ -109,8 +122,10 @@ export default function RolesPermissionsPage() {
     setSaving(true);
     setError("");
     setMessage("");
+    setValidationWarnings([]);
     try {
-      await replaceRolePermissions(selectedRoleId, selectedPermissionCodes);
+      const response = await replaceRolePermissions(selectedRoleId, selectedPermissionCodes);
+      setValidationWarnings(response?.validationWarnings || []);
       setMessage(t("rolesPermissions.messages.permissionsReplaced"));
       await loadData();
     } catch (err) {
@@ -133,6 +148,13 @@ export default function RolesPermissionsPage() {
         </p>
       </div>
 
+      {showFreshTenantAdminNote ? (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+          This tenant has no retired legacy role assignments, so migration-only admin surfaces stay
+          out of the normal navigation. Use the composable role catalog as the steady-state model.
+        </div>
+      ) : null}
+
       {error && (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error}
@@ -148,6 +170,13 @@ export default function RolesPermissionsPage() {
         onSubmit={handleCreateRole}
         className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-4"
       >
+        <div className="md:col-span-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+          Prefer bounded composable roles for new assignments. Retired legacy roles now stay
+          outside the normal admin catalog and survive only through migration or rollback seams,
+          while companion roles like
+          <span className="font-semibold text-slate-900"> GLPostingAuthority </span>
+          should be paired with a read-bearing accounting role.
+        </div>
         <input
           value={roleForm.code}
           onChange={(event) =>
@@ -183,24 +212,41 @@ export default function RolesPermissionsPage() {
           {loading ? (
             <p className="text-sm text-slate-500">{t("rolesPermissions.sections.loadingRoles")}</p>
           ) : (
-            <div className="space-y-1">
-              {roles.map((role) => (
-                <button
-                  key={role.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedRoleId(role.id);
-                    setSelectedPermissionCodes(role.permissionCodes || []);
-                  }}
-                  className={`w-full rounded-lg px-3 py-2 text-left text-sm ${
-                    Number(role.id) === Number(selectedRoleId)
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-50 text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <div className="font-semibold">{role.code}</div>
-                  <div className="text-xs opacity-80">{role.name}</div>
-                </button>
+            <div className="space-y-4">
+              {groupedRoles.map((group) => (
+                <div key={group.key}>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {group.label}
+                  </div>
+                  <div className="space-y-1">
+                    {group.roles.map((role) => (
+                      <button
+                        key={role.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedRoleId(role.id);
+                          setSelectedPermissionCodes(role.permissionCodes || []);
+                          setValidationWarnings([]);
+                        }}
+                        className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${
+                          Number(role.id) === Number(selectedRoleId)
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-semibold">{role.code}</div>
+                          {role.legacyDisabled ? (
+                            <span className="rounded-full border border-current/20 px-2 py-0.5 text-[11px] font-semibold">
+                              Retired
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-xs opacity-80">{role.name}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           )}
@@ -226,6 +272,15 @@ export default function RolesPermissionsPage() {
                 : t("rolesPermissions.actions.replacePermissions")}
             </button>
           </div>
+          {selectedRole ? (
+            <div className="mb-3 space-y-3">
+              <RoleSummaryCard role={selectedRole} />
+              <SecurityWarningList
+                title="Permission rule warnings"
+                warnings={validationWarnings}
+              />
+            </div>
+          ) : null}
           {loading ? (
             <p className="text-sm text-slate-500">
               {t("rolesPermissions.sections.loadingPermissions")}

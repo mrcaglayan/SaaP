@@ -23,8 +23,35 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+import { parseDateOnly } from "./cash.validators.common.js";
 import { createInviteForTenantUser } from "../services/userInvites.service.js";
 import { executeIdempotentRequest } from "../services/idempotency.service.js";
+import { canManageSecurity } from "../services/systemRoles.service.js";
+import { getUserRoleScopeEffectiveDateGuard } from "../services/authz.scope.service.js";
+import {
+  createRoleMigrationPreviewRun,
+  executeRoleMigrationRun,
+  getRoleMigrationUiState,
+  getRoleMigrationRunDetail,
+  isRoleLegacyDisabled,
+  isRetiredLegacyRoleCode,
+  loadActiveLegacyDisabledRoleCodeSet,
+  listRoleMigrationRuns,
+  rollbackRoleMigrationRun,
+} from "../services/roleMigration.service.js";
+import {
+  assertFieldVisibilityPolicyPermission,
+  createFieldVisibilityPolicy,
+  deactivateFieldVisibilityPolicy,
+  getFieldVisibilityPolicyById,
+  listFieldVisibilityPoliciesForActor,
+  resolveFieldVisibilityPolicyManagementScope,
+  updateFieldVisibilityPolicy,
+} from "../services/fieldVisibilityPolicies.service.js";
+import {
+  assertValidPermissionRuleSet,
+  evaluatePermissionRuleSet,
+} from "../constants/permission-rules.js";
 
 const router = express.Router();
 
@@ -106,6 +133,14 @@ const VALID_SCOPE_TYPES = new Set([
 ]);
 
 const VALID_EFFECTS = new Set(["ALLOW", "DENY"]);
+const VALID_FIELD_VISIBILITY_SCOPE_TYPES = new Set([
+  "GLOBAL",
+  "TENANT",
+  "GROUP",
+  "COUNTRY",
+  "LEGAL_ENTITY",
+  "OPERATING_UNIT",
+]);
 
 function normalizeScopeType(value) {
   const scopeType = String(value || "").toUpperCase();
@@ -123,6 +158,124 @@ function normalizeEffect(value, fallback = "ALLOW") {
     throw badRequest("effect must be ALLOW or DENY");
   }
   return effect;
+}
+
+function normalizeFieldVisibilityScopeType(value, fallback = "GLOBAL") {
+  const scopeType = String(value || fallback).trim().toUpperCase();
+  if (!VALID_FIELD_VISIBILITY_SCOPE_TYPES.has(scopeType)) {
+    throw badRequest(
+      "appliesToScopeType must be GLOBAL, TENANT, GROUP, COUNTRY, LEGAL_ENTITY, or OPERATING_UNIT"
+    );
+  }
+  return scopeType;
+}
+
+async function assertFieldVisibilityPolicyScopeBelongsToTenant(
+  tenantId,
+  scopeType,
+  scopeId
+) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedScopeType = normalizeFieldVisibilityScopeType(scopeType);
+  if (normalizedScopeType === "GLOBAL") {
+    return {
+      appliesToScopeType: null,
+      appliesToScopeId: null,
+    };
+  }
+  if (normalizedScopeType === "TENANT") {
+    const normalizedScopeId = parsePositiveInt(scopeId) || normalizedTenantId;
+    if (normalizedScopeId !== normalizedTenantId) {
+      throw badRequest("Tenant-scoped field visibility policies must use the current tenant id");
+    }
+    return {
+      appliesToScopeType: "TENANT",
+      appliesToScopeId: normalizedTenantId,
+    };
+  }
+
+  const normalizedScopeId = parsePositiveInt(scopeId);
+  if (!normalizedScopeId) {
+    throw badRequest(`appliesToScopeId is required when appliesToScopeType = ${normalizedScopeType}`);
+  }
+
+  if (normalizedScopeType === "GROUP") {
+    await assertGroupCompanyBelongsToTenant(normalizedScopeId, normalizedTenantId);
+  } else if (normalizedScopeType === "COUNTRY") {
+    await assertCountryExists(normalizedScopeId);
+  } else if (normalizedScopeType === "LEGAL_ENTITY") {
+    await assertLegalEntityBelongsToTenant(normalizedScopeId, normalizedTenantId);
+  } else if (normalizedScopeType === "OPERATING_UNIT") {
+    await assertOperatingUnitBelongsToTenant(normalizedScopeId, normalizedTenantId);
+  }
+
+  return {
+    appliesToScopeType: normalizedScopeType,
+    appliesToScopeId: normalizedScopeId,
+  };
+}
+
+function toDateOnly(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const asText = String(value);
+  const dateOnlyMatch = asText.match(/\d{4}-\d{2}-\d{2}/);
+  if (dateOnlyMatch) {
+    return dateOnlyMatch[0];
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function parseOptionalDateFieldValue(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return parseDateOnly(value, label);
+}
+
+function parseOptionalDateField(body, camelKey, snakeKey = camelKey) {
+  const payload = body && typeof body === "object" ? body : {};
+  const hasCamelKey = Object.prototype.hasOwnProperty.call(payload, camelKey);
+  const hasSnakeKey = Object.prototype.hasOwnProperty.call(payload, snakeKey);
+  if (!hasCamelKey && !hasSnakeKey) {
+    return { provided: false, value: null };
+  }
+  const rawValue = hasCamelKey ? payload[camelKey] : payload[snakeKey];
+  return {
+    provided: true,
+    value: parseOptionalDateFieldValue(rawValue, camelKey),
+  };
+}
+
+function resolveAssignmentEffectiveDates(body, existingAssignment = null) {
+  const effectiveFromInput = parseOptionalDateField(
+    body,
+    "effectiveFrom",
+    "effective_from"
+  );
+  const effectiveToInput = parseOptionalDateField(
+    body,
+    "effectiveTo",
+    "effective_to"
+  );
+
+  const effectiveFrom = effectiveFromInput.provided
+    ? effectiveFromInput.value
+    : toDateOnly(existingAssignment?.effective_from);
+  const effectiveTo = effectiveToInput.provided
+    ? effectiveToInput.value
+    : toDateOnly(existingAssignment?.effective_to);
+
+  if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom) {
+    throw badRequest("effectiveTo must be on or after effectiveFrom");
+  }
+
+  return { effectiveFrom, effectiveTo };
 }
 
 async function getRoleForTenant(roleId, tenantId) {
@@ -182,44 +335,70 @@ async function assertUserHasNoExplicitDataScopes(tenantId, userId, runQuery = qu
   }
 }
 
-async function isTenantAdminUser(userId, tenantId) {
-  const normalizedUserId = parsePositiveInt(userId);
-  const normalizedTenantId = parsePositiveInt(tenantId);
-  if (!normalizedUserId || !normalizedTenantId) {
-    return false;
-  }
-
-  const result = await query(
-    `SELECT
-       SUM(CASE WHEN urs.effect = 'ALLOW' THEN 1 ELSE 0 END) AS allow_count,
-       SUM(CASE WHEN urs.effect = 'DENY' THEN 1 ELSE 0 END) AS deny_count
-     FROM user_role_scopes urs
-     JOIN roles r ON r.id = urs.role_id
-     WHERE urs.user_id = ?
-       AND urs.tenant_id = ?
-       AND urs.scope_type = 'TENANT'
-       AND urs.scope_id = ?
-       AND r.tenant_id = ?
-       AND r.code = 'TenantAdmin'
-     LIMIT 1`,
-    [normalizedUserId, normalizedTenantId, normalizedTenantId, normalizedTenantId]
-  );
-
-  const allowCount = Number(result.rows[0]?.allow_count || 0);
-  const denyCount = Number(result.rows[0]?.deny_count || 0);
-  return allowCount > 0 && denyCount === 0;
-}
-
 async function assertSystemRoleManageAllowed(req, tenantId, role) {
   if (!Boolean(role?.is_system)) {
     return;
   }
 
   const actorUserId = parsePositiveInt(req.user?.userId);
-  const canManageSystemRoles = await isTenantAdminUser(actorUserId, tenantId);
+  const canManageSystemRoles = await canManageSecurity(actorUserId, tenantId);
   if (!canManageSystemRoles) {
-    throw forbidden("Only TenantAdmin can manage system role assignments");
+    throw forbidden("Only SecurityAdmin can manage system role assignments");
   }
+}
+
+async function assertRoleAssignmentUpsertAllowed(tenantId, role) {
+  if (!role?.id) {
+    return;
+  }
+  if (isRetiredLegacyRoleCode(role.code)) {
+    throw badRequest(
+      `${role.code || "Role"} is retired and can only be restored through migration or rollback seams`
+    );
+  }
+  const isLegacyDisabled = await isRoleLegacyDisabled(tenantId, role.id);
+  if (isLegacyDisabled) {
+    throw badRequest(
+      `${role.code || "Role"} is disabled by role migration and can only be restored through rollback`
+    );
+  }
+}
+
+function assertRetiredLegacyRoleNotManaged(roleOrCode) {
+  const roleCode =
+    typeof roleOrCode === "string"
+      ? String(roleOrCode || "").trim()
+      : String(roleOrCode?.code || "").trim();
+  if (!isRetiredLegacyRoleCode(roleCode)) {
+    return;
+  }
+  throw badRequest(
+    `${roleCode || "Role"} is retired and is no longer manageable through the normal role admin surfaces`
+  );
+}
+
+async function assertSecurityMigrationManageAllowed(req, tenantId) {
+  const actorUserId = parsePositiveInt(req.user?.userId);
+  const canManageSystemRoles = await canManageSecurity(actorUserId, tenantId);
+  if (!canManageSystemRoles) {
+    throw forbidden("Only SecurityAdmin can manage role migration runs");
+  }
+}
+
+function normalizeRoleCodeList(values) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function normalizePositiveIntList(values) {
+  return Array.from(
+    new Set((Array.isArray(values) ? values : []).map(parsePositiveInt).filter(Boolean))
+  );
 }
 
 async function upsertPermissionAndGetId(permissionCode, runQuery = query) {
@@ -240,6 +419,108 @@ async function upsertPermissionAndGetId(permissionCode, runQuery = query) {
     throw new Error(`Permission lookup failed for ${permissionCode}`);
   }
   return permissionId;
+}
+
+async function loadRolePermissionCodes(roleId, runQuery = query) {
+  const result = await runQuery(
+    `SELECT p.code
+     FROM role_permissions rp
+     JOIN permissions p ON p.id = rp.permission_id
+     WHERE rp.role_id = ?
+     ORDER BY p.code`,
+    [roleId]
+  );
+  return Array.from(
+    new Set(
+      (result.rows || [])
+        .map((row) => String(row.code || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function normalizePermissionCodeList(permissionCodes) {
+  return Array.from(
+    new Set(
+      (Array.isArray(permissionCodes) ? permissionCodes : [])
+        .map((permissionCode) => String(permissionCode || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function validateRolePermissionSetOrThrow(roleCode, permissionCodes) {
+  return assertValidPermissionRuleSet({
+    permissionCodes,
+    subjectLabel: `Role ${roleCode || "UNKNOWN"}`,
+  });
+}
+
+async function buildCombinedRoleAssignmentWarnings({
+  tenantId,
+  userId,
+  scopeType,
+  scopeId,
+  includeRoleId,
+  excludeAssignmentId = null,
+  effect = "ALLOW",
+  asOfDate = null,
+  runQuery = query,
+}) {
+  if (String(effect || "").toUpperCase() !== "ALLOW") {
+    return [];
+  }
+
+  const params = [tenantId, userId, scopeType, scopeId];
+  let excludeAssignmentSql = "";
+  if (parsePositiveInt(excludeAssignmentId)) {
+    excludeAssignmentSql = " AND urs.id <> ?";
+    params.push(parsePositiveInt(excludeAssignmentId));
+  }
+  const effectiveGuard = await getUserRoleScopeEffectiveDateGuard({
+    runQuery,
+    asOfDate,
+  });
+
+  const existingResult = await runQuery(
+    `SELECT DISTINCT p.code
+     FROM user_role_scopes urs
+     JOIN role_permissions rp ON rp.role_id = urs.role_id
+     JOIN permissions p ON p.id = rp.permission_id
+     WHERE urs.tenant_id = ?
+       AND urs.user_id = ?
+       AND urs.scope_type = ?
+       AND urs.scope_id = ?
+       AND urs.effect = 'ALLOW'${excludeAssignmentSql}${effectiveGuard.sql}
+     ORDER BY p.code`,
+    [...params, ...effectiveGuard.params]
+  );
+
+  const permissionCodes = normalizePermissionCodeList(
+    (existingResult.rows || []).map((row) => row.code)
+  );
+
+  const includeRolePermissionCodes = parsePositiveInt(includeRoleId)
+    ? await loadRolePermissionCodes(includeRoleId, runQuery)
+    : [];
+  const combinedPermissionCodes = normalizePermissionCodeList([
+    ...permissionCodes,
+    ...includeRolePermissionCodes,
+  ]);
+
+  const evaluation = evaluatePermissionRuleSet({
+    permissionCodes: combinedPermissionCodes,
+    subjectLabel: `Combined assigned role set at ${scopeType}#${scopeId}`,
+  });
+
+  return [
+    ...evaluation.errors.map((ruleError) => ({
+      ...ruleError,
+      severity: "warn",
+      type: "assignment_rule_warning",
+    })),
+    ...evaluation.warnings,
+  ];
 }
 
 async function assertScopeTargetExists(tenantId, scopeType, scopeId) {
@@ -844,6 +1125,8 @@ router.get(
       throw badRequest("tenantId is required");
     }
 
+    const includeRetiredLegacy =
+      parseBoolean(req.query.includeRetiredLegacy) || parseBoolean(req.query.includeLegacy);
     const includePermissions = parseBoolean(req.query.includePermissions);
     const result = await query(
       `SELECT id, tenant_id, code, name, is_system, created_at
@@ -854,11 +1137,23 @@ router.get(
     );
 
     const rows = result.rows || [];
-    if (!includePermissions || rows.length === 0) {
-      return res.json({ tenantId, rows });
+    const enrichedRows = rows.map((row) => ({
+      ...row,
+      legacyDisabled: false,
+      legacyRetired: isRetiredLegacyRoleCode(row.code),
+    }));
+    const disabledRoleCodeSet = await loadActiveLegacyDisabledRoleCodeSet(tenantId);
+    for (const row of enrichedRows) {
+      row.legacyDisabled = disabledRoleCodeSet.has(String(row.code || "").trim());
+    }
+    const visibleRows = includeRetiredLegacy
+      ? enrichedRows
+      : enrichedRows.filter((row) => !row.legacyRetired);
+    if (!includePermissions || visibleRows.length === 0) {
+      return res.json({ tenantId, rows: visibleRows });
     }
 
-    const roleIds = rows.map((row) => row.id);
+    const roleIds = visibleRows.map((row) => row.id);
     const permissionResult = await query(
       `SELECT rp.role_id, p.code
        FROM role_permissions rp
@@ -876,7 +1171,7 @@ router.get(
       codesByRoleId.get(row.role_id).push(row.code);
     }
 
-    const enriched = rows.map((row) => ({
+    const enriched = visibleRows.map((row) => ({
       ...row,
       permissionCodes: codesByRoleId.get(row.id) || [],
     }));
@@ -901,6 +1196,7 @@ router.post(
     const code = String(req.body.code).trim();
     const name = String(req.body.name).trim();
     const isSystem = Boolean(req.body.isSystem);
+    assertRetiredLegacyRoleNotManaged(code);
 
     const existingRoleResult = await query(
       `SELECT id
@@ -995,14 +1291,22 @@ router.post(
     if (!role) {
       throw badRequest("Role not found");
     }
+    assertRetiredLegacyRoleNotManaged(role);
 
     const permissionCodes = Array.isArray(req.body?.permissionCodes)
-      ? req.body.permissionCodes.map((code) => String(code).trim()).filter(Boolean)
+      ? normalizePermissionCodeList(req.body.permissionCodes)
       : [];
 
     if (permissionCodes.length === 0) {
       throw badRequest("permissionCodes must be a non-empty array");
     }
+
+    const currentPermissionCodes = await loadRolePermissionCodes(roleId);
+    const nextPermissionCodes = normalizePermissionCodeList([
+      ...currentPermissionCodes,
+      ...permissionCodes,
+    ]);
+    const validation = validateRolePermissionSetOrThrow(role.code, nextPermissionCodes);
 
     await withTransaction(async (tx) => {
       for (const permissionCode of permissionCodes) {
@@ -1023,6 +1327,7 @@ router.post(
       ok: true,
       roleId,
       assignedPermissionCount: permissionCodes.length,
+      validationWarnings: validation.warnings,
     });
   })
 );
@@ -1045,6 +1350,7 @@ router.put(
     if (!role) {
       throw badRequest("Role not found");
     }
+    assertRetiredLegacyRoleNotManaged(role);
 
     const permissionCodesRaw = Array.isArray(req.body?.permissionCodes)
       ? req.body.permissionCodes
@@ -1056,6 +1362,7 @@ router.put(
     const normalizedPermissionCodes = Array.from(
       new Set(permissionCodesRaw.map((code) => String(code).trim()).filter(Boolean))
     );
+    const validation = validateRolePermissionSetOrThrow(role.code, normalizedPermissionCodes);
 
     const beforeCodes = await withTransaction(async (tx) => {
       const beforeResult = await tx.query(
@@ -1101,6 +1408,7 @@ router.put(
       ok: true,
       roleId,
       permissionCount: normalizedPermissionCodes.length,
+      validationWarnings: validation.warnings,
     });
   })
 );
@@ -1153,6 +1461,8 @@ router.get(
          urs.scope_type,
          urs.scope_id,
          urs.effect,
+         urs.effective_from,
+         urs.effective_to,
          urs.created_at
        FROM user_role_scopes urs
        JOIN users u ON u.id = urs.user_id
@@ -1209,10 +1519,11 @@ router.post(
       throw badRequest("Role not found");
     }
     await assertSystemRoleManageAllowed(req, tenantId, role);
+    await assertRoleAssignmentUpsertAllowed(tenantId, role);
     await assertScopeTargetExists(tenantId, scopeType, scopeId);
 
     const existingResult = await query(
-      `SELECT id, effect
+      `SELECT id, effect, effective_from, effective_to
        FROM user_role_scopes
        WHERE tenant_id = ?
          AND user_id = ?
@@ -1222,16 +1533,45 @@ router.post(
        LIMIT 1`,
       [tenantId, userId, roleId, scopeType, scopeId]
     );
-    const existingAssignmentId = parsePositiveInt(existingResult.rows[0]?.id);
+    const existingAssignment = existingResult.rows[0] || null;
+    const existingAssignmentId = parsePositiveInt(existingAssignment?.id);
+    const effectiveDates = resolveAssignmentEffectiveDates(req.body, existingAssignment);
+    const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
+      tenantId,
+      userId,
+      scopeType,
+      scopeId,
+      includeRoleId: roleId,
+      effect,
+      asOfDate: effectiveDates.effectiveFrom,
+    });
 
     await query(
       `INSERT INTO user_role_scopes (
-          tenant_id, user_id, role_id, scope_type, scope_id, effect
+          tenant_id,
+          user_id,
+          role_id,
+          scope_type,
+          scope_id,
+          effect,
+          effective_from,
+          effective_to
         )
-       VALUES (?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect)`,
-      [tenantId, userId, roleId, scopeType, scopeId, effect]
+       effect = VALUES(effect),
+       effective_from = VALUES(effective_from),
+       effective_to = VALUES(effective_to)`,
+      [
+        tenantId,
+        userId,
+        roleId,
+        scopeType,
+        scopeId,
+        effect,
+        effectiveDates.effectiveFrom,
+        effectiveDates.effectiveTo,
+      ]
     );
     await invalidateRbacCache(tenantId);
 
@@ -1262,6 +1602,8 @@ router.post(
           scopeType,
           scopeId,
           effect,
+          effectiveFrom: effectiveDates.effectiveFrom,
+          effectiveTo: effectiveDates.effectiveTo,
         },
       });
     }
@@ -1270,6 +1612,9 @@ router.post(
       ok: true,
       created: !existingAssignmentId,
       assignmentId: currentAssignmentId || existingAssignmentId || null,
+      effectiveFrom: effectiveDates.effectiveFrom,
+      effectiveTo: effectiveDates.effectiveTo,
+      assignmentWarnings,
     });
   })
 );
@@ -1308,7 +1653,15 @@ router.put(
     await assertScopeTargetExists(tenantId, scopeType, scopeId);
 
     const assignmentResult = await query(
-      `SELECT id, user_id, role_id, scope_type, scope_id, effect
+      `SELECT
+         id,
+         user_id,
+         role_id,
+         scope_type,
+         scope_id,
+         effect,
+         effective_from,
+         effective_to
        FROM user_role_scopes
        WHERE id = ?
          AND tenant_id = ?
@@ -1324,6 +1677,18 @@ router.put(
       throw badRequest("Role not found");
     }
     await assertSystemRoleManageAllowed(req, tenantId, role);
+    await assertRoleAssignmentUpsertAllowed(tenantId, role);
+    const effectiveDates = resolveAssignmentEffectiveDates(req.body, assignment);
+    const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
+      tenantId,
+      userId: assignment.user_id,
+      scopeType,
+      scopeId,
+      includeRoleId: assignment.role_id,
+      excludeAssignmentId: assignmentId,
+      effect,
+      asOfDate: effectiveDates.effectiveFrom,
+    });
 
     const oldScopeType = String(assignment.scope_type || "").toLowerCase();
     const oldScopeId = parsePositiveInt(assignment.scope_id);
@@ -1335,10 +1700,20 @@ router.put(
       `UPDATE user_role_scopes
        SET scope_type = ?,
            scope_id = ?,
-           effect = ?
+           effect = ?,
+           effective_from = ?,
+           effective_to = ?
        WHERE id = ?
          AND tenant_id = ?`,
-      [scopeType, scopeId, effect, assignmentId, tenantId]
+      [
+        scopeType,
+        scopeId,
+        effect,
+        effectiveDates.effectiveFrom,
+        effectiveDates.effectiveTo,
+        assignmentId,
+        tenantId,
+      ]
     );
     await invalidateRbacCache(tenantId);
 
@@ -1358,11 +1733,15 @@ router.put(
           scopeType: String(assignment.scope_type || "").toUpperCase(),
           scopeId: parsePositiveInt(assignment.scope_id),
           effect: String(assignment.effect || "").toUpperCase(),
+          effectiveFrom: toDateOnly(assignment.effective_from),
+          effectiveTo: toDateOnly(assignment.effective_to),
         },
         after: {
           scopeType,
           scopeId,
           effect,
+          effectiveFrom: effectiveDates.effectiveFrom,
+          effectiveTo: effectiveDates.effectiveTo,
         },
       },
     });
@@ -1373,6 +1752,9 @@ router.put(
       scopeType,
       scopeId,
       effect,
+      effectiveFrom: effectiveDates.effectiveFrom,
+      effectiveTo: effectiveDates.effectiveTo,
+      assignmentWarnings,
     });
   })
 );
@@ -1420,6 +1802,422 @@ router.delete(
     await invalidateRbacCache(tenantId);
 
     return res.json({ ok: true });
+  })
+);
+
+router.get(
+  "/admin-ui-state",
+  requirePermission("security.role.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const actorUserId = parsePositiveInt(req.user?.userId);
+    const canManageSystemRoles = await canManageSecurity(actorUserId, tenantId);
+    const roleMigrations = await getRoleMigrationUiState(tenantId);
+
+    return res.json({
+      tenantId,
+      canManageSecurity: canManageSystemRoles,
+      roleMigrations: {
+        ...roleMigrations,
+        shouldShowInNavigation:
+          canManageSystemRoles && Boolean(roleMigrations.shouldShowInNavigation),
+      },
+    });
+  })
+);
+
+router.get(
+  "/field-visibility-policies",
+  requirePermission("security.field_visibility.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const rows = await listFieldVisibilityPoliciesForActor({
+      actorUserId: parsePositiveInt(req.user?.userId),
+      tenantId,
+      includeInactive: parseBoolean(req.query.includeInactive),
+      moduleCode: req.query.moduleCode || null,
+      objectType: req.query.objectType || null,
+      fieldName: req.query.fieldName || null,
+    });
+
+    return res.json({
+      tenantId,
+      rows,
+    });
+  })
+);
+
+router.get(
+  "/field-visibility-policies/:policyId",
+  requirePermission("security.field_visibility.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const policyId = parsePositiveInt(req.params.policyId);
+    if (!policyId) {
+      throw badRequest("policyId must be a positive integer");
+    }
+
+    const row = await getFieldVisibilityPolicyById({
+      tenantId,
+      policyId,
+    });
+    if (!row) {
+      throw badRequest("Field visibility policy not found");
+    }
+
+    await assertFieldVisibilityPolicyPermission({
+      actorUserId: parsePositiveInt(req.user?.userId),
+      tenantId,
+      permissionCode: "security.field_visibility.read",
+      policyOrScope: row,
+    });
+
+    return res.json(row);
+  })
+);
+
+router.post(
+  "/field-visibility-policies",
+  requirePermission("security.field_visibility.write"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const normalizedScope = await assertFieldVisibilityPolicyScopeBelongsToTenant(
+      tenantId,
+      req.body?.appliesToScopeType,
+      req.body?.appliesToScopeId
+    );
+    await assertFieldVisibilityPolicyPermission({
+      actorUserId: parsePositiveInt(req.user?.userId),
+      tenantId,
+      permissionCode: "security.field_visibility.write",
+      policyOrScope: resolveFieldVisibilityPolicyManagementScope(
+        normalizedScope,
+        tenantId
+      ),
+    });
+
+    const row = await createFieldVisibilityPolicy({
+      tenantId,
+      actorUserId: parsePositiveInt(req.user?.userId),
+      input: {
+        ...req.body,
+        appliesToScopeType: normalizedScope.appliesToScopeType || "GLOBAL",
+        appliesToScopeId: normalizedScope.appliesToScopeId,
+      },
+    });
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      action: "field_visibility_policy.create",
+      resourceType: "field_visibility_policy",
+      resourceId: row?.id,
+      scopeType:
+        row?.appliesToScopeType ||
+        resolveFieldVisibilityPolicyManagementScope(row, tenantId).scopeType,
+      scopeId:
+        row?.appliesToScopeId ||
+        resolveFieldVisibilityPolicyManagementScope(row, tenantId).scopeId,
+      payload: row,
+    });
+
+    return res.status(201).json(row);
+  })
+);
+
+router.put(
+  "/field-visibility-policies/:policyId",
+  requirePermission("security.field_visibility.write"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const policyId = parsePositiveInt(req.params.policyId);
+    if (!policyId) {
+      throw badRequest("policyId must be a positive integer");
+    }
+
+    const existingRow = await getFieldVisibilityPolicyById({
+      tenantId,
+      policyId,
+    });
+    if (!existingRow) {
+      throw badRequest("Field visibility policy not found");
+    }
+
+    await assertFieldVisibilityPolicyPermission({
+      actorUserId: parsePositiveInt(req.user?.userId),
+      tenantId,
+      permissionCode: "security.field_visibility.write",
+      policyOrScope: existingRow,
+    });
+
+    const normalizedScope = await assertFieldVisibilityPolicyScopeBelongsToTenant(
+      tenantId,
+      req.body?.appliesToScopeType ?? existingRow.appliesToScopeType ?? "GLOBAL",
+      req.body?.appliesToScopeId ?? existingRow.appliesToScopeId
+    );
+    await assertFieldVisibilityPolicyPermission({
+      actorUserId: parsePositiveInt(req.user?.userId),
+      tenantId,
+      permissionCode: "security.field_visibility.write",
+      policyOrScope: resolveFieldVisibilityPolicyManagementScope(
+        normalizedScope,
+        tenantId
+      ),
+    });
+
+    const row = await updateFieldVisibilityPolicy({
+      tenantId,
+      policyId,
+      input: {
+        ...req.body,
+        appliesToScopeType: normalizedScope.appliesToScopeType || "GLOBAL",
+        appliesToScopeId: normalizedScope.appliesToScopeId,
+      },
+    });
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      action: "field_visibility_policy.update",
+      resourceType: "field_visibility_policy",
+      resourceId: row?.id,
+      scopeType:
+        row?.appliesToScopeType ||
+        resolveFieldVisibilityPolicyManagementScope(row, tenantId).scopeType,
+      scopeId:
+        row?.appliesToScopeId ||
+        resolveFieldVisibilityPolicyManagementScope(row, tenantId).scopeId,
+      payload: row,
+    });
+
+    return res.json(row);
+  })
+);
+
+router.delete(
+  "/field-visibility-policies/:policyId",
+  requirePermission("security.field_visibility.write"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const policyId = parsePositiveInt(req.params.policyId);
+    if (!policyId) {
+      throw badRequest("policyId must be a positive integer");
+    }
+
+    const existingRow = await getFieldVisibilityPolicyById({
+      tenantId,
+      policyId,
+    });
+    if (!existingRow) {
+      throw badRequest("Field visibility policy not found");
+    }
+
+    await assertFieldVisibilityPolicyPermission({
+      actorUserId: parsePositiveInt(req.user?.userId),
+      tenantId,
+      permissionCode: "security.field_visibility.write",
+      policyOrScope: existingRow,
+    });
+
+    const row = await deactivateFieldVisibilityPolicy({
+      tenantId,
+      policyId,
+    });
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      action: "field_visibility_policy.deactivate",
+      resourceType: "field_visibility_policy",
+      resourceId: row?.id,
+      scopeType:
+        row?.appliesToScopeType ||
+        resolveFieldVisibilityPolicyManagementScope(row, tenantId).scopeType,
+      scopeId:
+        row?.appliesToScopeId ||
+        resolveFieldVisibilityPolicyManagementScope(row, tenantId).scopeId,
+      payload: row,
+    });
+
+    return res.json({
+      ok: true,
+      row,
+    });
+  })
+);
+
+router.get(
+  "/role-migrations",
+  requirePermission("security.role.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    await assertSecurityMigrationManageAllowed(req, tenantId);
+    const runs = await listRoleMigrationRuns({ tenantId });
+
+    return res.json({
+      tenantId,
+      rows: runs,
+    });
+  })
+);
+
+router.post(
+  "/role-migrations/preview",
+  requirePermission("security.role_assignment.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    await assertSecurityMigrationManageAllowed(req, tenantId);
+    const run = await createRoleMigrationPreviewRun({
+      tenantId,
+      actorUserId: parsePositiveInt(req.user?.userId),
+      sourceRoleCodes: normalizeRoleCodeList(req.body?.sourceRoleCodes),
+    });
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      action: "role_migration.preview",
+      resourceType: "role_migration_run",
+      resourceId: run?.id,
+      scopeType: "TENANT",
+      scopeId: tenantId,
+      payload: {
+        runId: run?.id || null,
+        mappingVersion: run?.mappingVersion || null,
+        previewSummary: run?.previewSummary || null,
+      },
+    });
+
+    return res.status(201).json(run);
+  })
+);
+
+router.get(
+  "/role-migrations/:runId",
+  requirePermission("security.role.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    if (!runId) {
+      throw badRequest("runId must be a positive integer");
+    }
+
+    await assertSecurityMigrationManageAllowed(req, tenantId);
+    const run = await getRoleMigrationRunDetail({ tenantId, runId });
+    if (!run) {
+      throw badRequest("Role migration run not found");
+    }
+
+    return res.json(run);
+  })
+);
+
+router.post(
+  "/role-migrations/:runId/execute",
+  requirePermission("security.role_assignment.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    if (!runId) {
+      throw badRequest("runId must be a positive integer");
+    }
+
+    await assertSecurityMigrationManageAllowed(req, tenantId);
+    const run = await executeRoleMigrationRun({
+      tenantId,
+      runId,
+      actorUserId: parsePositiveInt(req.user?.userId),
+      itemIds: normalizePositiveIntList(req.body?.itemIds),
+    });
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      action: "role_migration.execute",
+      resourceType: "role_migration_run",
+      resourceId: run?.id,
+      scopeType: "TENANT",
+      scopeId: tenantId,
+      payload: {
+        runId: run?.id || null,
+        executionSummary: run?.executionSummary || null,
+      },
+    });
+
+    return res.json(run);
+  })
+);
+
+router.post(
+  "/role-migrations/:runId/rollback",
+  requirePermission("security.role_assignment.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    if (!runId) {
+      throw badRequest("runId must be a positive integer");
+    }
+
+    await assertSecurityMigrationManageAllowed(req, tenantId);
+    const run = await rollbackRoleMigrationRun({
+      tenantId,
+      runId,
+      actorUserId: parsePositiveInt(req.user?.userId),
+    });
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      action: "role_migration.rollback",
+      resourceType: "role_migration_run",
+      resourceId: run?.id,
+      scopeType: "TENANT",
+      scopeId: tenantId,
+      payload: {
+        runId: run?.id || null,
+        rollbackSummary: run?.rollbackSummary || null,
+      },
+    });
+
+    return res.json(run);
   })
 );
 

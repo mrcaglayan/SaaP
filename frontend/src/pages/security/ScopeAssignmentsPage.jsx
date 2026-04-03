@@ -10,8 +10,12 @@ import {
   replaceRoleAssignmentScope,
   replaceUserDataScopes,
 } from "../../api/rbacAdmin.js";
+import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import RoleSummaryCard from "./RoleSummaryCard.jsx";
+import SecurityWarningList from "./SecurityWarningList.jsx";
+import { buildScopeLabel } from "./roleCatalog.js";
 
 const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 const EFFECTS = ["ALLOW", "DENY"];
@@ -57,8 +61,12 @@ function getScopeOptions(scopeType, lookups, tenantScopeId) {
   return [];
 }
 
+/**
+ * Lets admins review data-scope visibility and role-assignment scope changes
+ * together, with explicit before/after scope labels and warning feedback.
+ */
 export default function ScopeAssignmentsPage() {
-  const { hasPermission, user } = useAuth();
+  const { getPermissionAccess, hasPermission, user } = useAuth();
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -74,6 +82,7 @@ export default function ScopeAssignmentsPage() {
   });
   const [assignments, setAssignments] = useState([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
+  const [assignmentWarnings, setAssignmentWarnings] = useState([]);
   const [assignmentForm, setAssignmentForm] = useState({
     scopeType: "GROUP",
     scopeId: "",
@@ -87,10 +96,24 @@ export default function ScopeAssignmentsPage() {
   });
   const tenantScopeId = Number(user?.tenant_id || 0);
   const canReadOrgTree = hasPermission("org.tree.read");
-  const canReplaceDataScopes = hasPermission("security.data_scope.upsert");
-  const canReplaceRoleAssignmentScope = hasPermission(
-    "security.role_assignment.upsert"
+  const dataScopeWriteAccess = getPermissionAccess("security.data_scope.upsert");
+  const canReplaceDataScopes = dataScopeWriteAccess.allowed;
+  const assignmentScopeId =
+    assignmentForm.scopeType === "TENANT"
+      ? tenantScopeId
+      : Number(assignmentForm.scopeId || 0);
+  const assignmentScopeWriteAccess = getPermissionAccess(
+    "security.role_assignment.upsert",
+    assignmentScopeId
+      ? {
+          scope: {
+            scopeType: assignmentForm.scopeType,
+            scopeId: assignmentScopeId,
+          },
+        }
+      : undefined
   );
+  const canReplaceRoleAssignmentScope = assignmentScopeWriteAccess.allowed;
 
   async function loadUserListAndLookups() {
     setLoading(true);
@@ -159,6 +182,17 @@ export default function ScopeAssignmentsPage() {
   const assignmentScopeOptions = useMemo(() => {
     return getScopeOptions(assignmentForm.scopeType, lookups, tenantScopeId);
   }, [assignmentForm.scopeType, lookups, tenantScopeId]);
+  const selectedAssignment = useMemo(
+    () =>
+      assignments.find((row) => Number(row.id) === Number(selectedAssignmentId)) || null,
+    [assignments, selectedAssignmentId]
+  );
+  const selectedAssignmentRole = selectedAssignment
+    ? {
+        code: selectedAssignment.role_code,
+        name: selectedAssignment.role_name,
+      }
+    : null;
 
   function addDataScope() {
     const scopeId =
@@ -207,6 +241,7 @@ export default function ScopeAssignmentsPage() {
     setSaving(true);
     setError("");
     setMessage("");
+    setAssignmentWarnings([]);
     try {
       await replaceUserDataScopes(Number(selectedUserId), dataScopes);
       setMessage(t("scopeAssignments.replaceScopesSuccess"));
@@ -230,6 +265,7 @@ export default function ScopeAssignmentsPage() {
     setSaving(true);
     setError("");
     setMessage("");
+    setAssignmentWarnings([]);
     try {
       const scopeId =
         assignmentForm.scopeType === "TENANT" && tenantScopeId
@@ -241,11 +277,12 @@ export default function ScopeAssignmentsPage() {
         return;
       }
 
-      await replaceRoleAssignmentScope(Number(selectedAssignmentId), {
+      const response = await replaceRoleAssignmentScope(Number(selectedAssignmentId), {
         scopeType: assignmentForm.scopeType,
         scopeId,
         effect: assignmentForm.effect,
       });
+      setAssignmentWarnings(response?.assignmentWarnings || []);
       setMessage(t("scopeAssignments.replaceAssignmentSuccess"));
       await loadUserScopeData(selectedUserId);
     } catch (err) {
@@ -299,6 +336,11 @@ export default function ScopeAssignmentsPage() {
         <h2 className="mb-3 text-sm font-semibold text-slate-700">
           {t("scopeAssignments.dataScopesTitle")}
         </h2>
+        <PermissionAccessNotice
+          access={dataScopeWriteAccess}
+          permissionCode="security.data_scope.upsert"
+          className="mb-3"
+        />
         <div className="grid gap-2 md:grid-cols-5">
           <select
             value={draftScope.scopeType}
@@ -378,7 +420,14 @@ export default function ScopeAssignmentsPage() {
                   className="border-t border-slate-100"
                 >
                   <td className="px-3 py-2">{scope.scopeType}</td>
-                  <td className="px-3 py-2">{scope.scopeId}</td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-slate-800">
+                      {buildScopeLabel(scope.scopeType, scope.scopeId, lookups, tenantScopeId)}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {scope.scopeType} #{scope.scopeId}
+                    </div>
+                  </td>
                   <td className="px-3 py-2">{scope.effect}</td>
                   <td className="px-3 py-2">
                     <button
@@ -413,123 +462,187 @@ export default function ScopeAssignmentsPage() {
         </button>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">
-          {t("scopeAssignments.assignmentTitle")}
-        </h2>
-        <form onSubmit={handleReplaceAssignmentScope} className="grid gap-2 md:grid-cols-5">
-          <select
-            value={selectedAssignmentId}
-            onChange={(event) => {
-              const assignmentId = event.target.value;
-              setSelectedAssignmentId(assignmentId);
-              const selected = assignments.find(
-                (row) => Number(row.id) === Number(assignmentId)
-              );
-              if (selected) {
-                setAssignmentForm({
-                  scopeType: String(selected.scope_type || "GROUP"),
-                  scopeId: String(selected.scope_id || ""),
-                  effect: String(selected.effect || "ALLOW"),
-                });
-              }
-            }}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-            required
-          >
-            <option value="">{t("scopeAssignments.selectAssignment")}</option>
-            {assignments.map((assignment) => (
-              <option key={assignment.id} value={assignment.id}>
-                #{assignment.id} {assignment.user_email} {"->"} {assignment.role_code} (
-                {assignment.scope_type}:{assignment.scope_id})
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={assignmentForm.scopeType}
-            onChange={(event) =>
-              setAssignmentForm((prev) => {
-                const scopeType = event.target.value;
-                const options = getScopeOptions(scopeType, lookups, tenantScopeId);
-                return {
-                  ...prev,
-                  scopeType,
-                  scopeId: String(options[0]?.id || ""),
-                };
-              })
-            }
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            required
-          >
-            {SCOPE_TYPES.map((scopeType) => (
-              <option key={scopeType} value={scopeType}>
-                {scopeType}
-              </option>
-            ))}
-          </select>
-
-          {assignmentScopeOptions.length > 0 ? (
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">
+            {t("scopeAssignments.assignmentTitle")}
+          </h2>
+          <PermissionAccessNotice
+            access={assignmentScopeWriteAccess}
+            permissionCode="security.role_assignment.upsert"
+            className="mb-3"
+          />
+          <form onSubmit={handleReplaceAssignmentScope} className="grid gap-2 md:grid-cols-5">
             <select
-              value={assignmentForm.scopeId}
+              value={selectedAssignmentId}
+              onChange={(event) => {
+                const assignmentId = event.target.value;
+                setSelectedAssignmentId(assignmentId);
+                setAssignmentWarnings([]);
+                const selected = assignments.find(
+                  (row) => Number(row.id) === Number(assignmentId)
+                );
+                if (selected) {
+                  setAssignmentForm({
+                    scopeType: String(selected.scope_type || "GROUP"),
+                    scopeId: String(selected.scope_id || ""),
+                    effect: String(selected.effect || "ALLOW"),
+                  });
+                }
+              }}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              required
+            >
+              <option value="">{t("scopeAssignments.selectAssignment")}</option>
+              {assignments.map((assignment) => (
+                <option key={assignment.id} value={assignment.id}>
+                  #{assignment.id} {assignment.user_email} {"->"} {assignment.role_code} (
+                  {assignment.scope_type}:{assignment.scope_id})
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={assignmentForm.scopeType}
               onChange={(event) =>
-                setAssignmentForm((prev) => ({ ...prev, scopeId: event.target.value }))
+                setAssignmentForm((prev) => {
+                  const scopeType = event.target.value;
+                  const options = getScopeOptions(scopeType, lookups, tenantScopeId);
+                  return {
+                    ...prev,
+                    scopeType,
+                    scopeId: String(options[0]?.id || ""),
+                  };
+                })
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
             >
-              <option value="">{t("scopeAssignments.selectScope")}</option>
-              {assignmentScopeOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
+              {SCOPE_TYPES.map((scopeType) => (
+                <option key={scopeType} value={scopeType}>
+                  {scopeType}
                 </option>
               ))}
             </select>
+
+            {assignmentScopeOptions.length > 0 ? (
+              <select
+                value={assignmentForm.scopeId}
+                onChange={(event) =>
+                  setAssignmentForm((prev) => ({ ...prev, scopeId: event.target.value }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                required
+              >
+                <option value="">{t("scopeAssignments.selectScope")}</option>
+                {assignmentScopeOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="number"
+                min={1}
+                value={assignmentForm.scopeId}
+                onChange={(event) =>
+                  setAssignmentForm((prev) => ({ ...prev, scopeId: event.target.value }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder={t("scopeAssignments.columns.scopeId")}
+                required
+              />
+            )}
+
+            <div className="flex gap-2">
+              <select
+                value={assignmentForm.effect}
+                onChange={(event) =>
+                  setAssignmentForm((prev) => ({ ...prev, effect: event.target.value }))
+                }
+                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                required
+              >
+                {EFFECTS.map((effect) => (
+                  <option key={effect} value={effect}>
+                    {effect}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="submit"
+                disabled={
+                  saving ||
+                  !selectedAssignmentId ||
+                  !canReplaceRoleAssignmentScope
+                }
+                className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving
+                  ? t("scopeAssignments.saving")
+                  : t("scopeAssignments.replaceAssignmentButton")}
+              </button>
+            </div>
+
+            <div className="md:col-span-5">
+              <SecurityWarningList
+                title="Assignment warnings"
+                warnings={assignmentWarnings}
+              />
+            </div>
+          </form>
+        </section>
+
+        <div className="space-y-4">
+          {selectedAssignmentRole ? (
+            <>
+              <RoleSummaryCard
+                role={selectedAssignmentRole}
+                scopeType={assignmentForm.scopeType}
+                scopeId={assignmentScopeId}
+                lookups={lookups}
+                tenantScopeId={tenantScopeId}
+              />
+              <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                <h3 className="font-semibold text-slate-800">Scope change preview</h3>
+                <div className="mt-3 grid gap-2">
+                  <div>
+                    <span className="font-semibold text-slate-800">Current scope:</span>{" "}
+                    {selectedAssignment
+                      ? buildScopeLabel(
+                          selectedAssignment.scope_type,
+                          selectedAssignment.scope_id,
+                          lookups,
+                          tenantScopeId
+                        )
+                      : "-"}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-800">Proposed scope:</span>{" "}
+                    {assignmentScopeId
+                      ? buildScopeLabel(
+                          assignmentForm.scopeType,
+                          assignmentScopeId,
+                          lookups,
+                          tenantScopeId
+                        )
+                      : "-"}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-800">Effect:</span>{" "}
+                    {assignmentForm.effect}
+                  </div>
+                </div>
+              </section>
+            </>
           ) : (
-            <input
-              type="number"
-              min={1}
-              value={assignmentForm.scopeId}
-              onChange={(event) =>
-                setAssignmentForm((prev) => ({ ...prev, scopeId: event.target.value }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={t("scopeAssignments.columns.scopeId")}
-              required
-            />
+            <section className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+              Select a role assignment to review the role intent and the before/after scope impact.
+            </section>
           )}
-
-          <div className="flex gap-2">
-            <select
-              value={assignmentForm.effect}
-              onChange={(event) =>
-                setAssignmentForm((prev) => ({ ...prev, effect: event.target.value }))
-              }
-              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              required
-            >
-              {EFFECTS.map((effect) => (
-                <option key={effect} value={effect}>
-                  {effect}
-                </option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              disabled={
-                saving ||
-                !selectedAssignmentId ||
-                !canReplaceRoleAssignmentScope
-              }
-              className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {saving
-                ? t("scopeAssignments.saving")
-                : t("scopeAssignments.replaceAssignmentButton")}
-            </button>
-          </div>
-        </form>
-      </section>
+        </div>
+      </div>
 
       {loading && <p className="text-sm text-slate-500">{t("scopeAssignments.loading")}</p>}
     </div>

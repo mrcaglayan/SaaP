@@ -494,7 +494,7 @@ export async function upsertGroupCompany({
   code,
   name,
   assertScopeAccess,
-  getScopeContext,
+  getPermissionScope,
 }) {
   const normalizedCode = String(code).trim();
   const normalizedName = String(name).trim();
@@ -507,8 +507,8 @@ export async function upsertGroupCompany({
 
   if (existingId) {
     assertScopeAccess(req, "group", existingId, "groupCompanyId");
-  } else if (!getScopeContext(req)?.tenantWide) {
-    throw badRequest("Creating a new group company requires tenant-wide data scope");
+  } else if (!getPermissionScope(req)?.tenantWide) {
+    throw badRequest("Creating a new group company requires tenant-wide permission scope");
   }
 
   const insertId = await upsertGroupCompanyRow({

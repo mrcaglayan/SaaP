@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.PERIOD_CLOSE_TEST_PORT || 3109);
 const BASE_URL =
@@ -139,26 +140,7 @@ async function createTenantAndAdmin() {
   const adminUserId = toNumber(userResult.rows[0]?.id);
   assert(adminUserId > 0, "Failed to resolve adminUserId");
 
-  const roleResult = await query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = toNumber(roleResult.rows[0]?.id);
-  assert(roleId > 0, "Failed to resolve TenantAdmin role");
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id, user_id, role_id, scope_type, scope_id, effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect)`,
-    [tenantId, adminUserId, roleId, tenantId]
-  );
+  await assignTestFullAccessRoleToUser(tenantId, adminUserId);
 
   return { tenantId, adminUserId, adminEmail, password };
 }

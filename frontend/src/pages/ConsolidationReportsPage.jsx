@@ -1828,7 +1828,7 @@ export default function ConsolidationReportsPage() {
                   >
                     {t(
                       "consolidationReports.workflow.openSetup",
-                      "Open workflow setup",
+                      "Open workflow governance",
                     )}
                   </Link>
                 </div>

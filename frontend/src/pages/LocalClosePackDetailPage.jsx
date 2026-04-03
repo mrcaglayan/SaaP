@@ -861,7 +861,7 @@ export default function LocalClosePackDetailPage() {
                           to="/app/ayarlar/workflow-kurulumu"
                           className="rounded-lg border border-current bg-white/70 px-3 py-2 text-xs font-semibold"
                         >
-                          {l("Open workflow setup", "Workflow kurulumunu ac")}
+                          {l("Open workflow governance", "Workflow yonetimini ac")}
                         </Link>
                       ) : null}
                     </div>

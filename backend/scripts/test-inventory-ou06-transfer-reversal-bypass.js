@@ -636,7 +636,7 @@ async function main() {
       },
     });
     assert(
-      canceled.status === "CANCELED" &&
+      canceled.status === "CANCELLED" &&
         Number(canceled.canceledByUserId) === Number(context.userId) &&
         canceled.cancelReason === "OU06 pre-shipment cancel" &&
         !Number(canceled.shipmentJournalEntryId || 0),

@@ -132,10 +132,9 @@ Scope
   - `consolidation.coa_mapping.upsert`
   - `consolidation.run.read`
   - `consolidation.run.execute`
-- Finance ops parity baseline is validated for:
-  - `GroupController`
-  - `CountryController`
-  - `EntityAccountant`
+- Finance ops parity baseline is validated for the active consolidation role:
+  - `GroupReportingController`
+- Legacy broad-role compatibility belongs to the RBAC migration/retirement track, not the steady-state consolidation baseline.
 - Run audit smoke:
   - `cd backend`
   - `npm run test:ux:consolidation-fup-cm02`

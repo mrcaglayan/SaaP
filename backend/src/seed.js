@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import { closePool, query } from "./db.js";
 import { seedCore } from "./seedCore.js";
+import { assignCompatibilityBootstrapRolesToUser } from "./services/systemRoles.service.js";
 
 const email = "test@example.com";
 const password = "123456";
@@ -45,26 +46,16 @@ const run = async () => {
     throw new Error(`Unable to resolve user id for ${email}`);
   }
 
-  const roleResult = await query(
-    `SELECT id FROM roles WHERE tenant_id = ? AND code = 'TenantAdmin' LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = roleResult.rows[0]?.id;
-  if (!roleId) {
-    throw new Error("Unable to resolve TenantAdmin role");
-  }
+  const roleIdsByCode = await assignCompatibilityBootstrapRolesToUser(tenantId, userId);
 
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id, user_id, role_id, scope_type, scope_id, effect
-      )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
-
-  console.log("Seeded:", { email, password, tenantCode, tenantId, userId, roleId });
+  console.log("Seeded:", {
+    email,
+    password,
+    tenantCode,
+    tenantId,
+    userId,
+    roleIdsByCode: Object.fromEntries(roleIdsByCode),
+  });
   await closePool();
   process.exit(0);
 };

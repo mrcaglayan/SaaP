@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listPayrollRuns } from "../../api/payrollRuns.js";
 import { useAuth } from "../../auth/useAuth.js";
-import MoneyText from "../../components/MoneyText.jsx";
+import {
+  SensitiveFieldsNotice,
+  SensitiveMoneyText,
+} from "../../components/security/SensitiveFieldValue.jsx";
+import { filterMaskedFieldSummary } from "../../utils/sensitiveFieldUi.js";
 
 function formatDate(value) {
   if (!value) {
@@ -38,7 +42,7 @@ function sourceLabel(row) {
 }
 
 export default function PayrollRunsPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, isVisibilityNarrowed, maskedFields } = useAuth();
   const canRead = hasPermission("payroll.runs.read");
   const canImport = hasPermission("payroll.runs.import");
 
@@ -52,6 +56,10 @@ export default function PayrollRunsPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const payrollMaskedFieldSummary = filterMaskedFieldSummary(maskedFields, [
+    "base_salary",
+    "net_pay",
+  ]);
 
   async function loadRuns() {
     if (!canRead) {
@@ -116,6 +124,12 @@ export default function PayrollRunsPage() {
           {error}
         </div>
       ) : null}
+      <SensitiveFieldsNotice
+        visible={isVisibilityNarrowed || payrollMaskedFieldSummary.length > 0}
+        title="Payroll compensation details may be restricted on scoped records."
+        description="Run-level totals stay visible, but employee-level compensation fields can appear masked on the detail page when row-scope visibility is narrowed."
+        fieldSummary={payrollMaskedFieldSummary}
+      />
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-4">
@@ -218,10 +232,13 @@ export default function PayrollRunsPage() {
                   <td className="p-2">{formatDate(row.pay_date)}</td>
                   <td className="p-2">{row.employee_count}</td>
                   <td className="p-2">
-                    <MoneyText amount={row.total_gross_pay} currencyCode={row.currency_code} />
+                    <SensitiveMoneyText
+                      amount={row.total_gross_pay}
+                      currencyCode={row.currency_code}
+                    />
                   </td>
                   <td className="p-2">
-                    <MoneyText amount={row.total_net_pay} currencyCode={row.currency_code} />
+                    <SensitiveMoneyText amount={row.total_net_pay} currencyCode={row.currency_code} />
                   </td>
                   <td className="p-2">
                     <div>{row.status}</div>

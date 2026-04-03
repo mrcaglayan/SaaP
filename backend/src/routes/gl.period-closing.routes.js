@@ -13,6 +13,7 @@ import {
   closePeriodStatus,
   listPeriodCloseRuns,
 } from "../services/gl.period-closing.service.js";
+import { loadPermissionBundle } from "../services/authz.scope.service.js";
 import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
 import { evaluateCashFxRevaluationCloseGate } from "../services/cash.fx.revaluation.service.js";
 import {
@@ -145,20 +146,13 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
     permissionCode,
     runQuery = query,
   }) {
-    const result = await runQuery(
-      `SELECT 1
-       FROM user_role_scopes urs
-       JOIN roles r ON r.id = urs.role_id
-       JOIN role_permissions rp ON rp.role_id = r.id
-       JOIN permissions p ON p.id = rp.permission_id
-       WHERE urs.tenant_id = ?
-         AND urs.user_id = ?
-         AND urs.effect = 'ALLOW'
-         AND p.code = ?
-       LIMIT 1`,
-      [tenantId, userId, String(permissionCode || "").trim()]
-    );
-    return Array.isArray(result.rows) && result.rows.length > 0;
+    const bundle = await loadPermissionBundle({
+      tenantId,
+      userId,
+      permissionCode: String(permissionCode || "").trim(),
+      runQuery,
+    });
+    return !bundle?.missingPermission;
   }
 
   router.get(

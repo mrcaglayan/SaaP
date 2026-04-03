@@ -11,25 +11,29 @@ Odak: kullanici olusturma, rol atama, scope yonetimi, test ve dogrulama.
    - Bir veri siniri / sirket alani.
    - Rol degildir.
 
-2. `TenantAdmin`:
-   - Tenant icindeki bir roldur.
+2. `SecurityAdmin`:
+   - Tenant icindeki rol, atama, scope ve security policy yonetim rolu.
    - "Yeni tenant olusturma" yetkisi degildir.
 
-3. `Provider Admin`:
+3. `SystemAdmin`:
+   - Tenant icindeki onboarding, jobs ve operational setup yonetim rolu olabilir.
+   - Security yonetimi ile ayni sey degildir.
+
+4. `Provider Admin`:
    - `/provider/login` uzerinden platform seviyesinde calisir.
    - Yeni tenant olusturabilen tek taraftir.
 
-4. `Role`:
+5. `Role`:
    - Yetki paketi (permission seti).
 
-5. `Permission`:
+6. `Permission`:
    - Tekil islem izni (ornek: `gl.journal.post`).
 
-6. `Scope`:
+7. `Scope`:
    - Yetkinin hangi sinirda gecerli oldugu:
    - `TENANT`, `GROUP`, `COUNTRY`, `LEGAL_ENTITY`, `OPERATING_UNIT`
 
-7. `Data Scope`:
+8. `Data Scope`:
    - Kullanici veri gorunurlugunu ayrica kisitlar.
    - Varsa, pratikte permission scope uzerine ekstra sinir koyar.
 
@@ -57,7 +61,7 @@ Odak: kullanici olusturma, rol atama, scope yonetimi, test ve dogrulama.
 ## 3) On Kosullar
 
 1. Tenant kurulumunun tamam olmasi gerekir (readiness).
-2. Sistemde en az bir `TenantAdmin` kullanici olmasi gerekir.
+2. Sistemde en az bir `SecurityAdmin` kullanici olmasi gerekir.
 3. RBAC ekranlarina girecek kullanicida ilgili security permissionlari olmali.
 
 ---
@@ -67,8 +71,8 @@ Odak: kullanici olusturma, rol atama, scope yonetimi, test ve dogrulama.
 ## Adim 1 - Rol Tasarimini Belirle
 
 Ornek is rolleri:
-1. Grup kontroloru
-2. Entity muhasebecisi
+1. Group reporting controller
+2. GL operator
 3. Sube operatoru
 4. Sadece okuma (auditor)
 
@@ -90,8 +94,9 @@ Islem:
 3. `Rolu Kaydet`
 
 Not:
-1. Seed ile gelen sistem rolleri vardir (`TenantAdmin`, `GroupController`, vb.).
-2. Operasyonel kullanim icin yeni custom rol olusturmak genelde daha guvenlidir.
+1. Seed ile gelen aktif roller vardir (`SecurityAdmin`, `SystemAdmin`, `GLOperator`, `BranchOperator`, `AuditorReadOnly`, vb.).
+2. Retired legacy roller (`TenantAdmin`, `GroupController`, `CountryController`, `EntityAccountant`) fresh tenant akisinda normal atama katalogunun parcasi degildir.
+3. Operasyonel kullanim icin yeni custom rol olusturmak genelde daha guvenlidir.
 
 ---
 
@@ -102,14 +107,18 @@ Ayni ekranda:
 2. Permission checkbox'larini sec.
 3. `Yetkileri Degistir` ile kaydet.
 
-Ornek (entity muhasebe):
+Ornek (GL operator):
 1. `org.tree.read`
 2. `org.fiscal_period.read`
 3. `gl.book.read`
 4. `gl.account.read`
 5. `gl.journal.read`
 6. `gl.journal.create`
-7. `gl.journal.post`
+7. `gl.journal.update`
+8. `gl.journal.cancel`
+
+Not:
+1. Serbest manuel posting gerekiyorsa `GLPostingAuthority`, `GLOperator` ile ayni veya daha genis scope'ta companion rol olarak verilir.
 
 ---
 
@@ -185,11 +194,12 @@ Kontrol edin:
 
 ## 5) Sistem Rol Kurali (Kritik)
 
-`TenantAdmin` gibi sistem rolleri icin:
-1. Atama/degistirme/silme islemlerini sadece tenant-level `TenantAdmin` yapabilir.
-2. Sistem rolu olmayan custom rollerde normal atama akisiniz devam eder.
+`SecurityAdmin` gibi sistem rollerinde:
+1. Rol/atama/scope/security policy yonetimini `SecurityAdmin` tarafinda tutun.
+2. `SystemAdmin`, onboarding ve operasyonel setup icin kullanilabilir; varsayilan security god-mode rolu degildir.
+3. Sistem rolu olmayan custom ve composable rollerde normal atama akisiniz devam eder.
 
-Bu, "yanlislikla herkes TenantAdmin olmasin" diye uygulanir.
+Bu, "yanlislikla herkes tam yetkili olmasin" diye uygulanir.
 
 ---
 
@@ -197,7 +207,7 @@ Bu, "yanlislikla herkes TenantAdmin olmasin" diye uygulanir.
 
 ## Senaryo A - Group bazli kullanici
 
-1. Rol: `GroupController` veya custom grup rolu
+1. Rol: `GroupReportingController` veya custom grup raporlama rolu
 2. Scope: `GROUP = G1`
 3. Beklenen:
    - G1 altindaki entity/sube verisini gorur.
@@ -205,10 +215,11 @@ Bu, "yanlislikla herkes TenantAdmin olmasin" diye uygulanir.
 
 ## Senaryo B - Entity bazli muhasebeci
 
-1. Rol: `EntityAccountant` veya custom
+1. Rol: `GLOperator` (gerekiyorsa companion `GLPostingAuthority` ile)
 2. Scope: `LEGAL_ENTITY = LE1`
 3. Beklenen:
-   - LE1 icin fis olusturur/post eder.
+   - LE1 icin fis taslagi olusturur ve gunceller.
+   - Manuel post gerekiyorsa ayni scope'ta `GLPostingAuthority` gerekir.
    - LE2 icin 403 veya bos liste alir.
 
 ## Senaryo C - Subede operator
@@ -223,7 +234,7 @@ Bu, "yanlislikla herkes TenantAdmin olmasin" diye uygulanir.
 
 ## 7) 10 Dakikalik Smoke Test Listesi
 
-1. TenantAdmin ile giris yap.
+1. SecurityAdmin ile giris yap.
 2. Yeni rol olustur (`SmokeRole`).
 3. Role 2-3 permission ekle.
 4. Yeni kullanici olustur.
@@ -237,7 +248,7 @@ Bu, "yanlislikla herkes TenantAdmin olmasin" diye uygulanir.
 
 ## 8) Sik Sorulan Sorular
 
-1. `TenantAdmin` yeni tenant olusturabilir mi?
+1. `SecurityAdmin` yeni tenant olusturabilir mi?
    - Hayir. Yeni tenant sadece Provider tarafindan olusturulur.
 
 2. Tenant kullanicisi baska tenantin kullanicisini yonetebilir mi?
@@ -255,9 +266,10 @@ Bu, "yanlislikla herkes TenantAdmin olmasin" diye uygulanir.
 
 ## 9) Operasyonel Tavsiyeler
 
-1. Her tenantta en fazla 1-2 kisi `TenantAdmin` olsun.
-2. Gunluk kullanicilar icin custom roller acin.
-3. Atamalari her zaman scope ile sinirlayin.
-4. Periyodik olarak RBAC denetim loglarini kontrol edin.
-5. "Tam yetki ver sonra kisitlariz" yerine "minimum yetkiyle basla" modelini kullanin.
-
+1. Her tenantta az sayida `SecurityAdmin` tutun.
+2. `SystemAdmin` rolunu sadece operasyonel setup ihtiyaci olan kullanicilara verin.
+3. Gunluk kullanicilar icin composable roller (`GLOperator`, `TreasuryOperator`, `PayrollOperator`, `BranchOperator`) veya custom roller acin.
+4. `GLPostingAuthority` gibi companion yetkileri tek basina business persona gibi atamayin.
+5. Atamalari her zaman scope ile sinirlayin.
+6. Periyodik olarak RBAC denetim loglarini kontrol edin.
+7. "Tam yetki ver sonra kisitlariz" yerine "minimum yetkiyle basla" modelini kullanin.

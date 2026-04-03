@@ -4,6 +4,7 @@ import {
   deleteEntityBranchOperatorAssignment,
   getEntityBranchOperatorAdminData,
 } from "../../api/rbacAdmin.js";
+import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 
@@ -26,7 +27,7 @@ function toStatusLabel(value) {
  * only within their manageable operating-unit subtree.
  */
 export default function BranchOperatorManagementPage() {
-  const { hasPermission } = useAuth();
+  const { getPermissionAccess } = useAuth();
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -40,7 +41,19 @@ export default function BranchOperatorManagementPage() {
     email: "",
     operatingUnitId: "",
   });
-  const canManage = hasPermission("security.user_admin.entity");
+  const selectedOperatingUnitId = Number(form.operatingUnitId || 0);
+  const manageAccess = getPermissionAccess(
+    "security.user_admin.entity",
+    selectedOperatingUnitId
+      ? {
+          scope: {
+            scopeType: "OPERATING_UNIT",
+            scopeId: selectedOperatingUnitId,
+          },
+        }
+      : undefined
+  );
+  const canManage = manageAccess.allowed;
 
   async function loadData() {
     setLoading(true);
@@ -205,6 +218,12 @@ export default function BranchOperatorManagementPage() {
           </p>
         ) : (
           <form onSubmit={handleSubmit} className="grid gap-3 md:grid-cols-4">
+            <div className="md:col-span-4">
+              <PermissionAccessNotice
+                access={manageAccess}
+                permissionCode="security.user_admin.entity"
+              />
+            </div>
             <input
               type="text"
               value={form.name}

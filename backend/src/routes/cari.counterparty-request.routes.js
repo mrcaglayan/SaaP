@@ -37,9 +37,10 @@ function resolveRequestOperatingUnitScope(req) {
       return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
     }
   }
-  // Let the service layer decide whether legal-entity fallback is valid.
-  // Requesters with OU-only scope must submit one of their own branches, and
-  // they should receive that validation message instead of an early 403.
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  if (legalEntityId) {
+    return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+  }
   return null;
 }
 
@@ -94,7 +95,7 @@ router.post(
 
 router.post(
   "/:requestId/approve",
-  requirePermission("cari.card.upsert", {
+  requirePermission("cari.request.review", {
     resolveScope: async (req, tenantId) =>
       resolveCounterpartyRequestScope(req.params?.requestId, tenantId),
   }),
@@ -117,13 +118,13 @@ router.post(
 
 router.post(
   "/:requestId/reject",
-  requirePermission("cari.card.upsert", {
+  requirePermission("cari.request.review", {
     resolveScope: async (req, tenantId) =>
       resolveCounterpartyRequestScope(req.params?.requestId, tenantId),
   }),
   asyncHandler(async (req, res) => {
     const payload = parseCounterpartyRequestRejectInput(req);
-    const row = await rejectCounterpartyRequestById({
+    const result = await rejectCounterpartyRequestById({
       req,
       tenantId: payload.tenantId,
       requestId: payload.requestId,
@@ -133,7 +134,7 @@ router.post(
     });
     return res.json({
       tenantId: payload.tenantId,
-      row,
+      ...result,
     });
   })
 );

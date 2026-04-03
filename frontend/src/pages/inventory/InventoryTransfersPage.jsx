@@ -27,7 +27,7 @@ const TRANSFER_STATUS_VALUES = [
   "APPROVED",
   "IN_TRANSIT",
   "RECEIVED",
-  "CANCELED",
+  "CANCELLED",
   "REVERSED",
 ];
 
@@ -110,7 +110,7 @@ function getStatusBadgeClass(value) {
       return "border border-amber-200 bg-amber-50 text-amber-800";
     case "RECEIVED":
       return "border border-emerald-200 bg-emerald-50 text-emerald-800";
-    case "CANCELED":
+    case "CANCELLED":
     case "REVERSED":
       return "border border-rose-200 bg-rose-50 text-rose-800";
     default:
@@ -128,8 +128,8 @@ function getTransferStatusLabel(value, translate = (en) => en) {
       return translate("In transit", "Yolda");
     case "RECEIVED":
       return translate("Received", "Teslim alindi");
-    case "CANCELED":
-      return translate("Canceled", "Iptal edildi");
+    case "CANCELLED":
+      return translate("Cancelled", "Iptal edildi");
     case "REVERSED":
       return translate("Reversed", "Ters kaydedildi");
     default:
@@ -614,7 +614,7 @@ export default function InventoryTransfersPage() {
         },
         {
           key: "canceled",
-          label: l("Canceled", "Iptal edildi"),
+          label: l("Cancelled", "Iptal edildi"),
           value: formatLifecycleValue(selectedRow.canceledAt, selectedRow.canceledByUserId, l),
         },
         {
@@ -838,7 +838,7 @@ export default function InventoryTransfersPage() {
             cancelReason: normalizeText(cancelReason) || undefined,
           });
         },
-        message: l("Transfer canceled.", "Transfer iptal edildi."),
+        message: l("Transfer cancelled.", "Transfer iptal edildi."),
       },
       reverse: {
         run: () => {

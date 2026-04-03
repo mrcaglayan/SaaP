@@ -15,9 +15,21 @@ import {
 import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
 import { listJournalPurposeAccounts } from "../../api/glPurposeMappings.js";
 import Combobox from "../../components/Combobox.jsx";
+import {
+  SensitiveFieldEditHint,
+  SensitiveFieldsNotice,
+  SensitiveFieldValue,
+} from "../../components/security/SensitiveFieldValue.jsx";
 import { listCurrencies, listLegalEntities, listOperatingUnits } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
+import {
+  buildSensitiveUpdateValue,
+  filterMaskedFieldSummary,
+  getSensitiveValueState,
+  isRestrictedSensitiveState,
+  isRestrictedSensitiveValue,
+} from "../../utils/sensitiveFieldUi.js";
 
 const EMPTY_FORM = {
   id: "",
@@ -33,6 +45,11 @@ const EMPTY_FORM = {
   accountNo: "",
   isActive: true,
 };
+
+const EMPTY_BANK_SENSITIVE_STATE = Object.freeze({
+  iban: "empty",
+  accountNo: "empty",
+});
 
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
@@ -230,6 +247,10 @@ function generateProvisionIdempotencyKey() {
 }
 
 function mapRowToForm(row) {
+  const sensitiveState = {
+    iban: getSensitiveValueState(row?.iban, { hiddenWhenMissing: true }),
+    accountNo: getSensitiveValueState(row?.account_no, { hiddenWhenMissing: true }),
+  };
   return {
     id: String(row?.id || ""),
     legalEntityId: String(row?.legal_entity_id || ""),
@@ -240,14 +261,16 @@ function mapRowToForm(row) {
     glAccountId: String(row?.gl_account_id || ""),
     bankName: String(row?.bank_name || ""),
     branchName: String(row?.branch_name || ""),
-    iban: String(row?.iban || ""),
-    accountNo: String(row?.account_no || ""),
+    iban: isRestrictedSensitiveState(sensitiveState.iban) ? "" : String(row?.iban || ""),
+    accountNo: isRestrictedSensitiveState(sensitiveState.accountNo)
+      ? ""
+      : String(row?.account_no || ""),
     isActive: parseDbBoolean(row?.is_active),
   };
 }
 
 export default function BankAccountsPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, isVisibilityNarrowed, maskedFields } = useAuth();
   const { getModuleRow } = useModuleReadiness();
   const canRead = hasPermission("bank.accounts.read");
   const canWrite = hasPermission("bank.accounts.write");
@@ -288,6 +311,11 @@ export default function BankAccountsPage() {
   const [inlineChildCode, setInlineChildCode] = useState("");
   const [inlineChildName, setInlineChildName] = useState("");
   const [inlineChildSaving, setInlineChildSaving] = useState(false);
+  const [formSensitiveState, setFormSensitiveState] = useState(EMPTY_BANK_SENSITIVE_STATE);
+  const [formSensitivePreview, setFormSensitivePreview] = useState({
+    iban: "",
+    accountNo: "",
+  });
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedBankControlParentReadiness = getModuleRow(
@@ -479,6 +507,25 @@ export default function BankAccountsPage() {
     () => buildNextChildAccountCode(accounts, selectedInlineParentAccount),
     [accounts, selectedInlineParentAccount]
   );
+  const bankMaskedFieldSummary = useMemo(
+    () => filterMaskedFieldSummary(maskedFields, ["iban", "account_no", "accountNo"]),
+    [maskedFields]
+  );
+  const hasRestrictedBankRows = useMemo(
+    () =>
+      rows.some(
+        (row) =>
+          isRestrictedSensitiveValue(row?.iban, { hiddenWhenMissing: true }) ||
+          isRestrictedSensitiveValue(row?.account_no, { hiddenWhenMissing: true })
+      ),
+    [rows]
+  );
+  const showSensitiveBankNotice =
+    isVisibilityNarrowed ||
+    bankMaskedFieldSummary.length > 0 ||
+    hasRestrictedBankRows ||
+    isRestrictedSensitiveState(formSensitiveState.iban) ||
+    isRestrictedSensitiveState(formSensitiveState.accountNo);
 
   useEffect(() => {
     if (form.id) {
@@ -715,11 +762,21 @@ export default function BankAccountsPage() {
     setInlineChildParentAccountId("");
     setInlineChildCode("");
     setInlineChildName("");
+    setFormSensitiveState(EMPTY_BANK_SENSITIVE_STATE);
+    setFormSensitivePreview({ iban: "", accountNo: "" });
   }
 
   function startEdit(row) {
     setMessage("");
     setError("");
+    setFormSensitiveState({
+      iban: getSensitiveValueState(row?.iban, { hiddenWhenMissing: true }),
+      accountNo: getSensitiveValueState(row?.account_no, { hiddenWhenMissing: true }),
+    });
+    setFormSensitivePreview({
+      iban: String(row?.iban || ""),
+      accountNo: String(row?.account_no || ""),
+    });
     setForm(mapRowToForm(row));
     setAutoProvisionControlParent(false);
     setProvisionGlAccountName("");
@@ -735,7 +792,7 @@ export default function BankAccountsPage() {
     if (!legalEntityId) {
       throw new Error("legalEntityId is required");
     }
-    return {
+    const payload = {
       legalEntityId,
       operatingUnitId: operatingUnitId || undefined,
       code: String(form.code || "").trim(),
@@ -743,10 +800,20 @@ export default function BankAccountsPage() {
       currencyCode: String(form.currencyCode || "").trim().toUpperCase(),
       bankName: String(form.bankName || "").trim() || null,
       branchName: String(form.branchName || "").trim() || null,
-      iban: String(form.iban || "").trim() || null,
-      accountNo: String(form.accountNo || "").trim() || null,
       isActive: Boolean(form.isActive),
     };
+
+    // Restricted values are rendered replacement-only in the form so operators
+    // do not overwrite stored sensitive data with masked placeholders.
+    const ibanValue = buildSensitiveUpdateValue(form.iban, formSensitiveState.iban);
+    const accountNoValue = buildSensitiveUpdateValue(form.accountNo, formSensitiveState.accountNo);
+    if (ibanValue !== undefined) {
+      payload.iban = ibanValue;
+    }
+    if (accountNoValue !== undefined) {
+      payload.accountNo = accountNoValue;
+    }
+    return payload;
   }
 
   function buildCreatePayloadFromForm() {
@@ -1028,6 +1095,12 @@ export default function BankAccountsPage() {
           {lookupWarning}
         </div>
       ) : null}
+      <SensitiveFieldsNotice
+        visible={showSensitiveBankNotice}
+        title="Sensitive bank identifiers may be restricted on this page."
+        description="Masked values follow row-scope visibility rules. If an edited IBAN or account number is restricted, leave the input blank to keep the stored value or enter a replacement."
+        fieldSummary={bankMaskedFieldSummary}
+      />
 
       {selectedLegalEntityId && selectedBankControlParentReadiness ? (
         <div
@@ -1367,6 +1440,16 @@ export default function BankAccountsPage() {
                   onChange={(event) => setForm((prev) => ({ ...prev, iban: event.target.value }))}
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
                   disabled={!canWrite || saving}
+                  placeholder={
+                    isRestrictedSensitiveState(formSensitiveState.iban)
+                      ? "Enter new IBAN only if you want to replace the stored value"
+                      : ""
+                  }
+                />
+                <SensitiveFieldEditHint
+                  fieldLabel="IBAN"
+                  state={formSensitiveState.iban}
+                  previewValue={formSensitivePreview.iban}
                 />
               </div>
               <div>
@@ -1378,6 +1461,16 @@ export default function BankAccountsPage() {
                   }
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
                   disabled={!canWrite || saving}
+                  placeholder={
+                    isRestrictedSensitiveState(formSensitiveState.accountNo)
+                      ? "Enter new account number only if you want to replace the stored value"
+                      : ""
+                  }
+                />
+                <SensitiveFieldEditHint
+                  fieldLabel="Account number"
+                  state={formSensitiveState.accountNo}
+                  previewValue={formSensitivePreview.accountNo}
                 />
               </div>
             </div>
@@ -1514,9 +1607,20 @@ export default function BankAccountsPage() {
                             {[row.bank_name, row.branch_name].filter(Boolean).join(" / ")}
                           </div>
                         )}
-                        {row.iban ? (
-                          <div className="font-mono text-xs text-slate-500">{row.iban}</div>
-                        ) : null}
+                        <div className="mt-1 space-y-1 text-xs">
+                          <div className="flex flex-wrap items-center gap-2 text-slate-500">
+                            <span className="min-w-10 uppercase tracking-wide text-slate-400">IBAN</span>
+                            <SensitiveFieldValue value={row.iban} hiddenWhenMissing monospace />
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-slate-500">
+                            <span className="min-w-10 uppercase tracking-wide text-slate-400">Acct</span>
+                            <SensitiveFieldValue
+                              value={row.account_no}
+                              hiddenWhenMissing
+                              monospace
+                            />
+                          </div>
+                        </div>
                       </td>
                       <td className="px-2 py-2 text-slate-700">
                         {row.legal_entity_code || "-"}

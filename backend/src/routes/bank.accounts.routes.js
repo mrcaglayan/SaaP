@@ -1,5 +1,6 @@
 import express from "express";
 import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middleware/rbac.js";
+import { applyFieldVisibility } from "../middleware/fieldVisibility.js";
 import { asyncHandler, parseIdempotencyKey, parsePositiveInt } from "./_utils.js";
 import { requireTenantId } from "./cash.validators.common.js";
 import {
@@ -22,6 +23,7 @@ import {
 import { executeIdempotentRequest } from "../services/idempotency.service.js";
 
 const router = express.Router();
+const bankAccountFieldVisibility = applyFieldVisibility("BANK", "bank_account");
 
 function resolveProvisionBankAccountScope(req) {
   const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
@@ -57,11 +59,12 @@ async function handleProvisionControlParentChild(req, res) {
         payload,
         assertScopeAccess,
       });
+      const maskedRow = await req.fieldVisibility.applyToRow(provisioned.row);
       return {
         status: 201,
         payload: {
           tenantId: payload.tenantId,
-          row: provisioned.row,
+          row: maskedRow,
           glAccount: provisioned.glAccount,
         },
       };
@@ -85,6 +88,7 @@ router.get(
       return null;
     },
   }),
+  bankAccountFieldVisibility,
   asyncHandler(async (req, res) => {
     const filters = parseBankAccountReadFilters(req);
     const result = await listBankAccountRows({
@@ -94,9 +98,11 @@ router.get(
       buildScopeFilter,
       assertScopeAccess,
     });
+    const rows = await req.fieldVisibility.applyToRows(result.rows);
     return res.json({
       tenantId: filters.tenantId,
       ...result,
+      rows,
     });
   })
 );
@@ -108,6 +114,7 @@ router.get(
       return resolveBankAccountScope(req.params?.bankAccountId, tenantId);
     },
   }),
+  bankAccountFieldVisibility,
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
     const bankAccountId = parseBankAccountIdParam(req);
@@ -117,9 +124,10 @@ router.get(
       bankAccountId,
       assertScopeAccess,
     });
+    const maskedRow = await req.fieldVisibility.applyToRow(row);
     return res.json({
       tenantId,
-      row,
+      row: maskedRow,
     });
   })
 );
@@ -135,6 +143,7 @@ router.post(
       return null;
     },
   }),
+  bankAccountFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parseBankAccountCreateInput(req);
     const row = await createBankAccount({
@@ -142,9 +151,10 @@ router.post(
       payload,
       assertScopeAccess,
     });
+    const maskedRow = await req.fieldVisibility.applyToRow(row);
     return res.status(201).json({
       tenantId: payload.tenantId,
-      row,
+      row: maskedRow,
     });
   })
 );
@@ -154,6 +164,7 @@ router.post(
   requirePermission("bank.accounts.write", {
     resolveScope: resolveProvisionBankAccountScope,
   }),
+  bankAccountFieldVisibility,
   asyncHandler(handleProvisionControlParentChild)
 );
 
@@ -172,6 +183,7 @@ router.put(
       return null;
     },
   }),
+  bankAccountFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parseBankAccountUpdateInput(req);
     const row = await updateBankAccountById({
@@ -179,9 +191,10 @@ router.put(
       payload,
       assertScopeAccess,
     });
+    const maskedRow = await req.fieldVisibility.applyToRow(row);
     return res.json({
       tenantId: payload.tenantId,
-      row,
+      row: maskedRow,
     });
   })
 );
@@ -193,6 +206,7 @@ router.post(
       return resolveBankAccountScope(req.params?.bankAccountId, tenantId);
     },
   }),
+  bankAccountFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parseBankAccountStatusActionInput(req);
     const row = await setBankAccountActive({
@@ -202,9 +216,10 @@ router.post(
       isActive: true,
       assertScopeAccess,
     });
+    const maskedRow = await req.fieldVisibility.applyToRow(row);
     return res.json({
       tenantId: payload.tenantId,
-      row,
+      row: maskedRow,
     });
   })
 );
@@ -216,6 +231,7 @@ router.post(
       return resolveBankAccountScope(req.params?.bankAccountId, tenantId);
     },
   }),
+  bankAccountFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parseBankAccountStatusActionInput(req);
     const row = await setBankAccountActive({
@@ -225,9 +241,10 @@ router.post(
       isActive: false,
       assertScopeAccess,
     });
+    const maskedRow = await req.fieldVisibility.applyToRow(row);
     return res.json({
       tenantId: payload.tenantId,
-      row,
+      row: maskedRow,
     });
   })
 );

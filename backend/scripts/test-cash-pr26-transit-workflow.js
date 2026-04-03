@@ -1314,8 +1314,8 @@ async function main() {
       expectedStatus: 200,
     });
     assert(
-      String(cancelRes.json?.transfer?.status || "").toUpperCase() === "CANCELED",
-      "Transit transfer must move to CANCELED"
+      String(cancelRes.json?.transfer?.status || "").toUpperCase() === "CANCELLED",
+      "Transit transfer must move to CANCELLED"
     );
     assert(
       String(cancelRes.json?.transferOutTransaction?.status || "").toUpperCase() === "CANCELLED",

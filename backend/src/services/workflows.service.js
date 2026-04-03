@@ -8,9 +8,15 @@ import {
 import {
   LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
 } from "./local.close-packs.shared.js";
+import {
+  recordDecision,
+  submitRequest,
+} from "./approval.engine.service.js";
 
 const FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1 =
   "FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1";
+const WORKFLOW_UNIFIED_MODULE_CODE = "WORKFLOW";
+const WORKFLOW_UNIFIED_ACTION_TYPE = "APPROVE_WORKFLOW";
 
 const WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL = `COALESCE(
       period_close_book.legal_entity_id,
@@ -104,6 +110,291 @@ function isDuplicateKeyError(err) {
   return Number(err?.errno) === 1062 || toUpper(err?.code) === "ER_DUP_ENTRY";
 }
 
+function parseJson(value, fallback = null) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  if (typeof value === "object") {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function safeJson(value) {
+  return JSON.stringify(value ?? null);
+}
+
+function mapWorkflowProcessToUnifiedTargetType(processType) {
+  const normalized = toUpper(processType);
+  if (normalized === "PERIOD_CLOSE") {
+    return "PERIOD_CLOSE_RUN";
+  }
+  if (normalized === "CONSOLIDATION_RUN") {
+    return "CONSOLIDATION_RUN";
+  }
+  if (normalized === "LOCAL_CLOSE_PACK") {
+    return LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE;
+  }
+  return normalized;
+}
+
+function mapStageScopeTypeToUnifiedScopeResolutionMode(stageScopeType) {
+  const normalized = toUpper(stageScopeType);
+  if (normalized === "OPERATING_UNIT") {
+    return "TARGET_OPERATING_UNIT";
+  }
+  if (normalized === "LEGAL_ENTITY") {
+    return "TARGET_LEGAL_ENTITY";
+  }
+  if (normalized === "GROUP") {
+    return "TARGET_GROUP";
+  }
+  return "REQUEST_SCOPE";
+}
+
+function mapUnifiedScopeResolutionModeToStageScopeType(scopeResolutionMode) {
+  const normalized = toUpper(scopeResolutionMode);
+  if (normalized === "TARGET_OPERATING_UNIT") {
+    return "OPERATING_UNIT";
+  }
+  if (normalized === "TARGET_LEGAL_ENTITY") {
+    return "LEGAL_ENTITY";
+  }
+  if (normalized === "TARGET_GROUP") {
+    return "GROUP";
+  }
+  return "GROUP";
+}
+
+function mapWorkflowAssignmentRowToUnifiedScope(row) {
+  const operatingUnitId = parsePositiveInt(
+    row?.operating_unit_id ?? row?.operatingUnitId
+  );
+  if (operatingUnitId) {
+    return {
+      scopeType: "OPERATING_UNIT",
+      scopeId: operatingUnitId,
+    };
+  }
+  const legalEntityId = parsePositiveInt(
+    row?.legal_entity_id ?? row?.legalEntityId
+  );
+  if (legalEntityId) {
+    return {
+      scopeType: "LEGAL_ENTITY",
+      scopeId: legalEntityId,
+    };
+  }
+  const groupCompanyId = parsePositiveInt(
+    row?.group_company_id ?? row?.groupCompanyId
+  );
+  if (groupCompanyId) {
+    return {
+      scopeType: "GROUP",
+      scopeId: groupCompanyId,
+    };
+  }
+  return {
+    scopeType: "TENANT",
+    scopeId: parsePositiveInt(row?.tenant_id ?? row?.tenantId),
+  };
+}
+
+function resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope = {}) {
+  const operatingUnitId =
+    parsePositiveInt(instanceRow?.target_operating_unit_id) ||
+    parsePositiveInt(instanceRow?.targetOperatingUnitId) ||
+    parsePositiveInt(fallbackScope?.operatingUnitId);
+  if (operatingUnitId) {
+    return {
+      scopeType: "OPERATING_UNIT",
+      scopeId: operatingUnitId,
+      legalEntityId:
+        parsePositiveInt(instanceRow?.target_legal_entity_id) ||
+        parsePositiveInt(instanceRow?.targetLegalEntityId) ||
+        parsePositiveInt(fallbackScope?.legalEntityId) ||
+        null,
+      operatingUnitId,
+      groupCompanyId:
+        parsePositiveInt(instanceRow?.target_group_company_id) ||
+        parsePositiveInt(instanceRow?.targetGroupCompanyId) ||
+        parsePositiveInt(fallbackScope?.groupCompanyId) ||
+        null,
+    };
+  }
+
+  const legalEntityId =
+    parsePositiveInt(instanceRow?.target_legal_entity_id) ||
+    parsePositiveInt(instanceRow?.targetLegalEntityId) ||
+    parsePositiveInt(fallbackScope?.legalEntityId);
+  if (legalEntityId) {
+    return {
+      scopeType: "LEGAL_ENTITY",
+      scopeId: legalEntityId,
+      legalEntityId,
+      operatingUnitId: null,
+      groupCompanyId:
+        parsePositiveInt(instanceRow?.target_group_company_id) ||
+        parsePositiveInt(instanceRow?.targetGroupCompanyId) ||
+        parsePositiveInt(fallbackScope?.groupCompanyId) ||
+        null,
+    };
+  }
+
+  const groupCompanyId =
+    parsePositiveInt(instanceRow?.target_group_company_id) ||
+    parsePositiveInt(instanceRow?.targetGroupCompanyId) ||
+    parsePositiveInt(fallbackScope?.groupCompanyId);
+  if (groupCompanyId) {
+    return {
+      scopeType: "GROUP",
+      scopeId: groupCompanyId,
+      legalEntityId: null,
+      operatingUnitId: null,
+      groupCompanyId,
+    };
+  }
+
+  return {
+    scopeType: "TENANT",
+    scopeId:
+      parsePositiveInt(instanceRow?.tenant_id) ||
+      parsePositiveInt(instanceRow?.tenantId),
+    legalEntityId: null,
+    operatingUnitId: null,
+    groupCompanyId: null,
+  };
+}
+
+function buildWorkflowUnifiedTargetSnapshot(instanceRow, fallbackScope = {}) {
+  return {
+    module_code: WORKFLOW_UNIFIED_MODULE_CODE,
+    process_type: toUpper(instanceRow?.process_type ?? instanceRow?.processType),
+    target_type: toUpper(instanceRow?.target_type ?? instanceRow?.targetType),
+    target_id: parsePositiveInt(instanceRow?.target_id ?? instanceRow?.targetId),
+    workflow_definition_id: parsePositiveInt(
+      instanceRow?.workflow_definition_id ?? instanceRow?.workflowDefinitionId
+    ),
+    group_company_id:
+      parsePositiveInt(instanceRow?.target_group_company_id) ||
+      parsePositiveInt(instanceRow?.targetGroupCompanyId) ||
+      parsePositiveInt(fallbackScope?.groupCompanyId) ||
+      null,
+    legal_entity_id:
+      parsePositiveInt(instanceRow?.target_legal_entity_id) ||
+      parsePositiveInt(instanceRow?.targetLegalEntityId) ||
+      parsePositiveInt(fallbackScope?.legalEntityId) ||
+      null,
+    operating_unit_id:
+      parsePositiveInt(instanceRow?.target_operating_unit_id) ||
+      parsePositiveInt(instanceRow?.targetOperatingUnitId) ||
+      parsePositiveInt(fallbackScope?.operatingUnitId) ||
+      null,
+  };
+}
+
+function buildWorkflowUnifiedActionPayload(instanceId, processType) {
+  return {
+    legacy_workflow_instance_id: parsePositiveInt(instanceId),
+    legacy_process_type: toUpper(processType),
+    workflow_bridge: true,
+  };
+}
+
+function buildWorkflowUnifiedRequestCode(tenantId, instanceId) {
+  return `WFR-${parsePositiveInt(tenantId)}-${parsePositiveInt(instanceId)}`;
+}
+
+function buildWorkflowUnifiedPolicySnapshot(definitionRow, stepRows) {
+  const normalizedSteps = (Array.isArray(stepRows) ? stepRows : []).map((step) => ({
+    step_no: Number(step.step_no || step.stepNo || 1),
+    required_permission_code: String(
+      step.required_permission_code ?? step.requiredPermissionCode ?? ""
+    ).trim(),
+    scope_resolution_mode: mapStageScopeTypeToUnifiedScopeResolutionMode(
+      step.stage_scope_type ?? step.stageScopeType
+    ),
+    custom_scope_resolver_key: null,
+    min_approvals: Math.max(
+      1,
+      Number(step.min_approver_count ?? step.minApproverCount ?? 1)
+    ),
+    allow_self_approve: Boolean(
+      toDbBoolean(step.allow_self_approve ?? step.allowSelfApprove)
+    ),
+    escalation_after_hours:
+      parsePositiveInt(step.escalation_after_hours ?? step.escalationAfterHours) ||
+      null,
+  }));
+
+  return {
+    id:
+      parsePositiveInt(definitionRow?.generic_policy_id) ||
+      parsePositiveInt(definitionRow?.genericPolicyId) ||
+      null,
+    tenant_id:
+      parsePositiveInt(definitionRow?.tenant_id) ||
+      parsePositiveInt(definitionRow?.tenantId),
+    module_code: WORKFLOW_UNIFIED_MODULE_CODE,
+    policy_code: String(definitionRow?.code || "").trim().toUpperCase(),
+    policy_name:
+      String(definitionRow?.name || "").trim() ||
+      String(definitionRow?.code || "").trim().toUpperCase(),
+    target_type: mapWorkflowProcessToUnifiedTargetType(
+      definitionRow?.process_type ?? definitionRow?.processType
+    ),
+    action_type: WORKFLOW_UNIFIED_ACTION_TYPE,
+    version_no: Number(definitionRow?.version_no ?? definitionRow?.versionNo ?? 1),
+    scope_type: null,
+    scope_id: null,
+    effective_from: null,
+    effective_to: null,
+    step_count: Math.max(1, normalizedSteps.length),
+    min_approvals: 1,
+    maker_checker_required: false,
+    allow_self_approve: true,
+    auto_execute_on_final_approval: false,
+    escalation_after_hours: null,
+    approver_permission_code:
+      String(normalizedSteps[0]?.required_permission_code || "").trim() ||
+      "approvals.requests.approve",
+    matched_assignment: null,
+    steps: normalizedSteps,
+  };
+}
+
+function mapWorkflowInstanceStatusToUnifiedRequestStatus(status) {
+  const normalized = toUpper(status);
+  if (normalized === "APPROVED") {
+    return "APPROVED";
+  }
+  if (normalized === "REJECTED") {
+    return "REJECTED";
+  }
+  if (normalized === "CANCELLED") {
+    return "WITHDRAWN";
+  }
+  return "PENDING_REVIEW";
+}
+
+function mapUnifiedRequestStatusToWorkflowStatus(requestStatus) {
+  const normalized = toUpper(requestStatus);
+  if (normalized === "APPROVED") {
+    return "APPROVED";
+  }
+  if (normalized === "REJECTED") {
+    return "REJECTED";
+  }
+  if (["WITHDRAWN", "RETURNED"].includes(normalized)) {
+    return "CANCELLED";
+  }
+  return "PENDING";
+}
+
 function mapWorkflowDefinitionRow(row) {
   if (!row) {
     return null;
@@ -114,6 +405,7 @@ function mapWorkflowDefinitionRow(row) {
     code: String(row.code || ""),
     name: String(row.name || ""),
     processType: toUpper(row.process_type),
+    genericPolicyId: parsePositiveInt(row.generic_policy_id),
     isActive: toDbBoolean(row.is_active),
     versionNo: Number(row.version_no || 0),
     createdByUserId: parsePositiveInt(row.created_by_user_id),
@@ -182,6 +474,7 @@ function mapWorkflowInstanceRow(row) {
     targetType: toUpper(row.target_type),
     targetId: parsePositiveInt(row.target_id),
     workflowDefinitionId: parsePositiveInt(row.workflow_definition_id),
+    genericRequestId: parsePositiveInt(row.generic_request_id),
     workflowDefinitionCode: String(row.workflow_definition_code || ""),
     workflowDefinitionName: String(row.workflow_definition_name || ""),
     status: toUpper(row.status),
@@ -217,8 +510,7 @@ function mapWorkflowInstanceDecisionRow(row) {
 }
 
 function assertTenantWideScope(req, label = "tenant fallback scope") {
-  const tenantWide = Boolean(req?.rbac?.scopeContext?.tenantWide);
-  if (!tenantWide) {
+  if (!req?.rbac?.permissionScopeContext?.tenantWide) {
     throw forbidden(`Data scope denied: ${label}`);
   }
 }
@@ -290,116 +582,6 @@ function canReadWorkflowInstanceRow(req, row, assertScopeAccess) {
       return false;
     }
     throw err;
-  }
-}
-
-function resolveDecisionScopeFromStep(instanceRow, stepRow) {
-  const stageScopeType = toUpper(stepRow?.stage_scope_type ?? stepRow?.stageScopeType);
-  if (stageScopeType === "OPERATING_UNIT") {
-    const scopeId = parsePositiveInt(
-      instanceRow?.target_operating_unit_id ?? instanceRow?.targetOperatingUnitId
-    );
-    if (!scopeId) {
-      throw conflict(
-        "Step scope OPERATING_UNIT cannot be resolved for workflow target",
-        "APPROVAL_STEP_PERMISSION_DENIED"
-      );
-    }
-    return { scopeType: "OPERATING_UNIT", scopeId, scopeKind: "operating_unit" };
-  }
-  if (stageScopeType === "LEGAL_ENTITY") {
-    const scopeId = parsePositiveInt(
-      instanceRow?.target_legal_entity_id ?? instanceRow?.targetLegalEntityId
-    );
-    if (!scopeId) {
-      throw conflict(
-        "Step scope LEGAL_ENTITY cannot be resolved for workflow target",
-        "APPROVAL_STEP_PERMISSION_DENIED"
-      );
-    }
-    return { scopeType: "LEGAL_ENTITY", scopeId, scopeKind: "legal_entity" };
-  }
-  if (stageScopeType === "GROUP") {
-    const scopeId = parsePositiveInt(
-      instanceRow?.target_group_company_id ?? instanceRow?.targetGroupCompanyId
-    );
-    if (!scopeId) {
-      throw conflict(
-        "Step scope GROUP cannot be resolved for workflow target",
-        "APPROVAL_STEP_PERMISSION_DENIED"
-      );
-    }
-    return { scopeType: "GROUP", scopeId, scopeKind: "group" };
-  }
-  throw badRequest(`Unsupported stageScopeType: ${stageScopeType}`);
-}
-
-function assertWorkflowDecisionScopeAccess(req, instanceRow, stepRow, assertScopeAccess) {
-  const decisionScope = resolveDecisionScopeFromStep(instanceRow, stepRow);
-  try {
-    assertScopeAccess(
-      req,
-      decisionScope.scopeKind,
-      decisionScope.scopeId,
-      `${decisionScope.scopeKind} decision scope`
-    );
-  } catch (err) {
-    if (Number(err?.status) === 403) {
-      throw forbidden(
-        "Approval decision scope denied for current step",
-        "APPROVAL_STEP_PERMISSION_DENIED"
-      );
-    }
-    throw err;
-  }
-  return decisionScope;
-}
-
-async function loadUserPermissionCodes({ tenantId, userId, runQuery = query }) {
-  if (!parsePositiveInt(tenantId) || !parsePositiveInt(userId)) {
-    return [];
-  }
-  const result = await runQuery(
-    `SELECT
-       p.code,
-       SUM(CASE WHEN urs.effect = 'ALLOW' THEN 1 ELSE 0 END) AS allow_count,
-       SUM(CASE WHEN urs.effect = 'DENY' AND urs.scope_type = 'TENANT' THEN 1 ELSE 0 END) AS tenant_deny_count
-     FROM user_role_scopes urs
-     JOIN roles r ON r.id = urs.role_id
-     JOIN role_permissions rp ON rp.role_id = r.id
-     JOIN permissions p ON p.id = rp.permission_id
-     WHERE urs.user_id = ?
-       AND urs.tenant_id = ?
-     GROUP BY p.code
-     HAVING allow_count > 0
-        AND tenant_deny_count = 0`,
-    [userId, tenantId]
-  );
-  return (result.rows || [])
-    .map((row) => String(row.code || "").trim())
-    .filter(Boolean);
-}
-
-async function assertWorkflowStepPermission({
-  tenantId,
-  userId,
-  requiredPermissionCode,
-  runQuery = query,
-}) {
-  const code = String(requiredPermissionCode || "").trim();
-  if (!code) {
-    throw conflict(
-      "Workflow step is missing required_permission_code",
-      "APPROVAL_STEP_PERMISSION_DENIED"
-    );
-  }
-  const permissionCodes = await loadUserPermissionCodes({
-    tenantId,
-    userId,
-    runQuery,
-  });
-  if (!permissionCodes.includes(code)) {
-    throw forbidden(`Missing permission: ${code}`, "APPROVAL_STEP_PERMISSION_DENIED");
   }
 }
 
@@ -520,6 +702,7 @@ function mapWorkflowGateInstanceRow(row) {
   }
   return {
     id: parsePositiveInt(row.id),
+    genericRequestId: parsePositiveInt(row.generic_request_id),
     status: toUpper(row.status),
     currentStepNo: Number(row.current_step_no || 0),
     workflowDefinitionId: parsePositiveInt(row.workflow_definition_id),
@@ -699,6 +882,749 @@ async function getWorkflowDefinitionMaxStepNo(definitionId, runQuery = query) {
   return Number(result.rows?.[0]?.max_step_no || 0);
 }
 
+async function listWorkflowDefinitionStepRowsRaw(definitionId, runQuery = query) {
+  const result = await runQuery(
+    `SELECT *
+       FROM workflow_definition_steps
+      WHERE workflow_definition_id = ?
+      ORDER BY step_no ASC, id ASC`,
+    [definitionId]
+  );
+  return result.rows || [];
+}
+
+async function listWorkflowAssignmentRowsByDefinitionId({
+  tenantId,
+  definitionId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT *
+       FROM workflow_assignments
+      WHERE tenant_id = ?
+        AND workflow_definition_id = ?
+      ORDER BY id ASC`,
+    [tenantId, definitionId]
+  );
+  return result.rows || [];
+}
+
+async function getUnifiedWorkflowRequestRowById({
+  tenantId,
+  requestId,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const normalizedRequestId = parsePositiveInt(requestId);
+  if (!normalizedRequestId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT *
+       FROM approval_requests
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+    [tenantId, normalizedRequestId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+  return {
+    ...row,
+    policy_snapshot_json: parseJson(row.policy_snapshot_json, {}),
+    target_snapshot_json: parseJson(row.target_snapshot_json, {}),
+    action_payload_json: parseJson(row.action_payload_json, {}),
+    execution_result_json: parseJson(row.execution_result_json, null),
+  };
+}
+
+async function listUnifiedWorkflowDecisionRows({
+  tenantId,
+  requestId,
+  runQuery = query,
+}) {
+  const normalizedRequestId = parsePositiveInt(requestId);
+  if (!normalizedRequestId) {
+    return [];
+  }
+  const result = await runQuery(
+    `SELECT *
+       FROM approval_decisions
+      WHERE tenant_id = ?
+        AND request_id = ?
+      ORDER BY step_no ASC, id ASC`,
+    [tenantId, normalizedRequestId]
+  );
+  return result.rows || [];
+}
+
+function resolveUnifiedWorkflowDecisionAccessFromRequestRow(requestRow) {
+  const policySnapshot = parseJson(requestRow?.policy_snapshot_json, {});
+  const targetSnapshot = parseJson(requestRow?.target_snapshot_json, {});
+  const steps = Array.isArray(policySnapshot?.steps) ? policySnapshot.steps : [];
+  const currentStep = steps.find(
+    (step) => Number(step.step_no || step.stepNo || 1) === Number(requestRow?.current_step_no || 1)
+  );
+  if (!currentStep) {
+    throw conflict(
+      "Unified workflow request has no current approval step",
+      "APPROVAL_STEP_PERMISSION_DENIED"
+    );
+  }
+
+  const scopeResolutionMode = toUpper(
+    currentStep.scope_resolution_mode ?? currentStep.scopeResolutionMode
+  );
+  let scopeType = toUpper(requestRow?.scope_type);
+  let scopeId = parsePositiveInt(requestRow?.scope_id);
+  if (
+    scopeResolutionMode === "POLICY_SCOPE" &&
+    policySnapshot?.scope_type &&
+    policySnapshot?.scope_id
+  ) {
+    scopeType = toUpper(policySnapshot.scope_type);
+    scopeId = parsePositiveInt(policySnapshot.scope_id);
+  } else if (scopeResolutionMode === "TARGET_GROUP") {
+    scopeType = "GROUP";
+    scopeId =
+      parsePositiveInt(targetSnapshot?.group_company_id) ||
+      parsePositiveInt(targetSnapshot?.groupCompanyId) ||
+      (toUpper(requestRow?.scope_type) === "GROUP"
+        ? parsePositiveInt(requestRow?.scope_id)
+        : null);
+  } else if (scopeResolutionMode === "TARGET_LEGAL_ENTITY") {
+    scopeType = "LEGAL_ENTITY";
+    scopeId =
+      parsePositiveInt(requestRow?.legal_entity_id) ||
+      parsePositiveInt(targetSnapshot?.legal_entity_id) ||
+      parsePositiveInt(targetSnapshot?.legalEntityId);
+  } else if (scopeResolutionMode === "TARGET_OPERATING_UNIT") {
+    scopeType = "OPERATING_UNIT";
+    scopeId =
+      parsePositiveInt(requestRow?.operating_unit_id) ||
+      parsePositiveInt(targetSnapshot?.operating_unit_id) ||
+      parsePositiveInt(targetSnapshot?.operatingUnitId);
+  }
+
+  if (!scopeType || !scopeId) {
+    throw conflict(
+      "Unified workflow request cannot resolve the current decision scope",
+      "APPROVAL_STEP_PERMISSION_DENIED"
+    );
+  }
+
+  return {
+    stepNo: Number(currentStep.step_no || currentStep.stepNo || 1),
+    stageScopeType: mapUnifiedScopeResolutionModeToStageScopeType(
+      currentStep.scope_resolution_mode ?? currentStep.scopeResolutionMode
+    ),
+    requiredPermissionCode: String(
+      currentStep.required_permission_code ?? currentStep.requiredPermissionCode ?? ""
+    ).trim(),
+    minApproverCount: Math.max(
+      1,
+      Number(currentStep.min_approvals ?? currentStep.minApprovals ?? 1)
+    ),
+    allowSelfApprove: Boolean(
+      toDbBoolean(currentStep.allow_self_approve ?? currentStep.allowSelfApprove)
+    ),
+    scope: {
+      scopeType,
+      scopeId,
+    },
+  };
+}
+
+async function upsertUnifiedWorkflowPolicyMirrorTx({
+  tenantId,
+  definitionRow,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedDefinitionId = parsePositiveInt(definitionRow?.id);
+  if (!normalizedTenantId || !normalizedDefinitionId) {
+    throw badRequest("Workflow definition is required for generic policy mirroring");
+  }
+
+  const stepRows = await listWorkflowDefinitionStepRowsRaw(
+    normalizedDefinitionId,
+    runQuery
+  );
+  const assignmentRows = await listWorkflowAssignmentRowsByDefinitionId({
+    tenantId: normalizedTenantId,
+    definitionId: normalizedDefinitionId,
+    runQuery,
+  });
+  const targetType = mapWorkflowProcessToUnifiedTargetType(
+    definitionRow.process_type ?? definitionRow.processType
+  );
+  const firstStepPermissionCode =
+    String(
+      stepRows[0]?.required_permission_code ??
+        stepRows[0]?.requiredPermissionCode ??
+        ""
+    ).trim() || "approvals.requests.approve";
+
+  const insertResult = await runQuery(
+    `INSERT INTO approval_policies (
+       tenant_id,
+       module_code,
+       policy_code,
+       policy_name,
+       target_type,
+       action_type,
+       version_no,
+       scope_type,
+       scope_id,
+       effective_from,
+       effective_to,
+       step_count,
+       min_approvals,
+       maker_checker_required,
+       allow_self_approve,
+       auto_execute_on_final_approval,
+       escalation_after_hours,
+       min_amount,
+       max_amount,
+       currency_code,
+       approver_permission_code,
+       is_active,
+       created_by_user_id,
+       updated_by_user_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, 1, 0, 1, 0, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       id = LAST_INSERT_ID(id),
+       policy_name = VALUES(policy_name),
+       target_type = VALUES(target_type),
+       step_count = VALUES(step_count),
+       approver_permission_code = VALUES(approver_permission_code),
+       is_active = VALUES(is_active),
+       updated_by_user_id = VALUES(updated_by_user_id)`,
+    [
+      normalizedTenantId,
+      WORKFLOW_UNIFIED_MODULE_CODE,
+      String(definitionRow.code || "").trim().toUpperCase(),
+      String(definitionRow.name || "").trim() ||
+        String(definitionRow.code || "").trim().toUpperCase(),
+      targetType,
+      WORKFLOW_UNIFIED_ACTION_TYPE,
+      Number(definitionRow.version_no ?? definitionRow.versionNo ?? 1),
+      Math.max(1, stepRows.length),
+      firstStepPermissionCode,
+      toDbBoolean(definitionRow.is_active ?? definitionRow.isActive) ? 1 : 0,
+      parsePositiveInt(
+        definitionRow.created_by_user_id ?? definitionRow.createdByUserId
+      ),
+      parsePositiveInt(
+        definitionRow.created_by_user_id ?? definitionRow.createdByUserId
+      ),
+    ]
+  );
+  const genericPolicyId = parsePositiveInt(insertResult.rows?.insertId);
+  if (!genericPolicyId) {
+    throw conflict("Failed to mirror workflow definition into approval_policies");
+  }
+
+  await runQuery(
+    `UPDATE workflow_definitions
+        SET generic_policy_id = ?
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [genericPolicyId, normalizedTenantId, normalizedDefinitionId]
+  );
+
+  await runQuery(
+    `DELETE FROM approval_policy_steps
+      WHERE tenant_id = ?
+        AND policy_id = ?`,
+    [normalizedTenantId, genericPolicyId]
+  );
+  for (const stepRow of stepRows) {
+    // eslint-disable-next-line no-await-in-loop
+    await runQuery(
+      `INSERT INTO approval_policy_steps (
+         tenant_id,
+         policy_id,
+         step_no,
+         required_permission_code,
+         scope_resolution_mode,
+         custom_scope_resolver_key,
+         min_approvals,
+         allow_self_approve,
+         escalation_after_hours
+       ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+      [
+        normalizedTenantId,
+        genericPolicyId,
+        Number(stepRow.step_no || 1),
+        String(stepRow.required_permission_code || "").trim(),
+        mapStageScopeTypeToUnifiedScopeResolutionMode(stepRow.stage_scope_type),
+        Math.max(1, Number(stepRow.min_approver_count || 1)),
+        toDbBoolean(stepRow.allow_self_approve) ? 1 : 0,
+        parsePositiveInt(stepRow.escalation_after_hours) || null,
+      ]
+    );
+  }
+
+  await runQuery(
+    `DELETE FROM approval_policy_assignments
+      WHERE tenant_id = ?
+        AND policy_id = ?`,
+    [normalizedTenantId, genericPolicyId]
+  );
+  for (const assignmentRow of assignmentRows) {
+    const assignmentScope = mapWorkflowAssignmentRowToUnifiedScope(assignmentRow);
+    // eslint-disable-next-line no-await-in-loop
+    await runQuery(
+      `INSERT INTO approval_policy_assignments (
+         tenant_id,
+         policy_id,
+         scope_type,
+         scope_id,
+         effective_from,
+         effective_to,
+         is_active
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        normalizedTenantId,
+        genericPolicyId,
+        assignmentScope.scopeType,
+        assignmentScope.scopeId,
+        assignmentRow.effective_from || null,
+        assignmentRow.effective_to || null,
+        toUpper(assignmentRow.status || "ACTIVE") === "ACTIVE" ? 1 : 0,
+      ]
+    );
+  }
+
+  return {
+    genericPolicyId,
+    stepRows,
+    assignmentRows,
+  };
+}
+
+/**
+ * Ensure one workflow definition is mirrored into the generic approval-policy schema.
+ */
+export async function ensureUnifiedWorkflowPolicyForDefinition({
+  tenantId,
+  definitionId,
+  runQuery = query,
+}) {
+  const definitionRow = await assertWorkflowDefinitionExists(
+    tenantId,
+    definitionId,
+    runQuery
+  );
+  return upsertUnifiedWorkflowPolicyMirrorTx({
+    tenantId,
+    definitionRow,
+    runQuery,
+  });
+}
+
+async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
+  tenantId,
+  instanceRow,
+  genericRequestId,
+  policyId,
+  runQuery = query,
+  fallbackScope = {},
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedInstanceId = parsePositiveInt(instanceRow?.id);
+  const normalizedRequestId = parsePositiveInt(genericRequestId);
+  const normalizedPolicyId = parsePositiveInt(policyId);
+  if (!normalizedTenantId || !normalizedInstanceId || !normalizedRequestId) {
+    throw badRequest("Workflow instance bridge sync requires tenant, instance, and request ids");
+  }
+
+  const definitionRow = await assertWorkflowDefinitionExists(
+    normalizedTenantId,
+    parsePositiveInt(instanceRow.workflow_definition_id),
+    runQuery
+  );
+  const stepRows = await listWorkflowDefinitionStepRowsRaw(
+    parsePositiveInt(instanceRow.workflow_definition_id),
+    runQuery
+  );
+  const requestScope = resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope);
+  const targetSnapshot = buildWorkflowUnifiedTargetSnapshot(instanceRow, fallbackScope);
+  const policySnapshot = buildWorkflowUnifiedPolicySnapshot(
+    {
+      ...definitionRow,
+      generic_policy_id:
+        normalizedPolicyId ||
+        parsePositiveInt(definitionRow.generic_policy_id) ||
+        null,
+    },
+    stepRows
+  );
+  const requestStatus = mapWorkflowInstanceStatusToUnifiedRequestStatus(
+    instanceRow.status
+  );
+  const resolvedAt = instanceRow.resolved_at || instanceRow.updated_at || null;
+
+  await runQuery(
+    `UPDATE approval_requests
+        SET policy_id = ?,
+            policy_version_no = ?,
+            module_code = ?,
+            target_type = ?,
+            target_id = ?,
+            scope_type = ?,
+            scope_id = ?,
+            legal_entity_id = ?,
+            operating_unit_id = ?,
+            request_status = ?,
+            current_step_no = ?,
+            execution_status = 'NOT_EXECUTED',
+            submitted_by_user_id = ?,
+            submitted_at = ?,
+            approved_at = ?,
+            rejected_at = ?,
+            withdrawn_at = ?,
+            executed_at = NULL,
+            executed_by_user_id = NULL,
+            last_activity_at = CURRENT_TIMESTAMP,
+            policy_snapshot_json = ?,
+            target_snapshot_json = ?,
+            action_payload_json = ?,
+            execution_result_json = NULL,
+            execution_error_text = NULL
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [
+      normalizedPolicyId || parsePositiveInt(definitionRow.generic_policy_id),
+      Number(definitionRow.version_no || 1),
+      WORKFLOW_UNIFIED_MODULE_CODE,
+      toUpper(instanceRow.target_type),
+      parsePositiveInt(instanceRow.target_id),
+      requestScope.scopeType,
+      requestScope.scopeId,
+      requestScope.legalEntityId || null,
+      requestScope.operatingUnitId || null,
+      requestStatus,
+      Math.max(1, Number(instanceRow.current_step_no || 1)),
+      parsePositiveInt(instanceRow.requested_by_user_id),
+      instanceRow.requested_at || instanceRow.created_at || null,
+      requestStatus === "APPROVED" ? resolvedAt : null,
+      requestStatus === "REJECTED" ? resolvedAt : null,
+      requestStatus === "WITHDRAWN" ? resolvedAt : null,
+      safeJson(policySnapshot),
+      safeJson(targetSnapshot),
+      safeJson(
+        buildWorkflowUnifiedActionPayload(instanceRow.id, instanceRow.process_type)
+      ),
+      normalizedTenantId,
+      normalizedRequestId,
+    ]
+  );
+
+  await runQuery(
+    `DELETE FROM approval_decisions
+      WHERE tenant_id = ?
+        AND request_id = ?`,
+    [normalizedTenantId, normalizedRequestId]
+  );
+
+  const legacyDecisionRows = await listWorkflowInstanceDecisionRows({
+    tenantId: normalizedTenantId,
+    instanceId: normalizedInstanceId,
+    runQuery,
+  });
+  for (const row of legacyDecisionRows) {
+    // eslint-disable-next-line no-await-in-loop
+    await runQuery(
+      `INSERT INTO approval_decisions (
+         tenant_id,
+         request_id,
+         step_no,
+         decision,
+         decided_by_user_id,
+         acting_user_id,
+         delegator_user_id,
+         delegation_id,
+         reviewer_authority_user_id,
+         comment,
+         decided_at
+       ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+      [
+        normalizedTenantId,
+        normalizedRequestId,
+        Number(row.stepNo || 1),
+        toUpper(row.decision),
+        parsePositiveInt(row.decisionByUserId),
+        parsePositiveInt(row.decisionByUserId),
+        parsePositiveInt(row.decisionByUserId),
+        row.decisionNote || null,
+        row.createdAt || null,
+      ]
+    );
+  }
+}
+
+async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
+  tenantId,
+  genericRequestId,
+  runQuery = query,
+}) {
+  const requestRow = await getUnifiedWorkflowRequestRowById({
+    tenantId,
+    requestId: genericRequestId,
+    runQuery,
+    forUpdate: true,
+  });
+  if (!requestRow) {
+    throw notFound("Unified workflow approval request not found");
+  }
+
+  const result = await runQuery(
+    `SELECT *
+       FROM workflow_instances
+      WHERE tenant_id = ?
+        AND generic_request_id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [tenantId, parsePositiveInt(genericRequestId)]
+  );
+  const legacyRow = result.rows?.[0] || null;
+  if (!legacyRow) {
+    throw notFound("Workflow instance bridge row not found");
+  }
+
+  const decisionRows = await listUnifiedWorkflowDecisionRows({
+    tenantId,
+    requestId: genericRequestId,
+    runQuery,
+  });
+  const legacyStatus = mapUnifiedRequestStatusToWorkflowStatus(
+    requestRow.request_status
+  );
+  const latestDecision = decisionRows[decisionRows.length - 1] || null;
+  const resolvedAt =
+    requestRow.approved_at ||
+    requestRow.rejected_at ||
+    requestRow.withdrawn_at ||
+    null;
+  const resolutionNote =
+    latestDecision?.comment ||
+    legacyRow.resolution_note ||
+    (legacyStatus === "APPROVED"
+      ? "Approved through unified workflow engine"
+      : legacyStatus === "REJECTED"
+        ? "Rejected through unified workflow engine"
+        : legacyStatus === "CANCELLED"
+          ? "Cancelled from unified workflow bridge"
+          : null);
+
+  await runQuery(
+    `UPDATE workflow_instances
+        SET status = ?,
+            current_step_no = ?,
+            resolved_at = ?,
+            resolution_note = ?,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [
+      legacyStatus,
+      Math.max(1, Number(requestRow.current_step_no || 1)),
+      ["APPROVED", "REJECTED", "CANCELLED"].includes(legacyStatus)
+        ? resolvedAt
+        : null,
+      ["APPROVED", "REJECTED", "CANCELLED"].includes(legacyStatus)
+        ? resolutionNote
+        : null,
+      tenantId,
+      parsePositiveInt(legacyRow.id),
+    ]
+  );
+
+  await runQuery(
+    `DELETE FROM workflow_instance_decisions
+      WHERE workflow_instance_id = ?`,
+    [parsePositiveInt(legacyRow.id)]
+  );
+  for (const decisionRow of decisionRows) {
+    const legacyDecisionCode =
+      toUpper(decisionRow.decision) === "RETURN"
+        ? "REJECT"
+        : toUpper(decisionRow.decision);
+    // eslint-disable-next-line no-await-in-loop
+    await runQuery(
+      `INSERT INTO workflow_instance_decisions (
+         workflow_instance_id,
+         step_no,
+         decision,
+         decision_by_user_id,
+         decision_note,
+         created_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        parsePositiveInt(legacyRow.id),
+        Number(decisionRow.step_no || 1),
+        legacyDecisionCode,
+        parsePositiveInt(decisionRow.decided_by_user_id),
+        decisionRow.comment || null,
+        decisionRow.decided_at || null,
+      ]
+    );
+  }
+
+  return {
+    row: await getWorkflowInstanceRowById({
+      tenantId,
+      instanceId: parsePositiveInt(legacyRow.id),
+      runQuery,
+    }),
+    decisions: await listWorkflowInstanceDecisionRows({
+      tenantId,
+      instanceId: parsePositiveInt(legacyRow.id),
+      runQuery,
+    }),
+    request: requestRow,
+  };
+}
+
+/**
+ * Ensure one workflow instance has a bridged generic approval request.
+ */
+export async function ensureUnifiedWorkflowInstanceBridge({
+  tenantId,
+  instanceId,
+  requestedByUserId = null,
+  fallbackScope = {},
+  resetToPending = false,
+  runQuery = query,
+}) {
+  const instanceRow = await getWorkflowInstanceRowById({
+    tenantId,
+    instanceId,
+    runQuery,
+    forUpdate: resetToPending,
+  });
+  if (!instanceRow) {
+    throw notFound("Workflow instance not found");
+  }
+
+  const definitionMirror = await ensureUnifiedWorkflowPolicyForDefinition({
+    tenantId,
+    definitionId: parsePositiveInt(instanceRow.workflow_definition_id),
+    runQuery,
+  });
+  const genericPolicyId = parsePositiveInt(definitionMirror.genericPolicyId);
+  if (!genericPolicyId) {
+    throw conflict("Workflow definition is missing a generic approval-policy mirror");
+  }
+
+  let genericRequestId = parsePositiveInt(instanceRow.generic_request_id);
+  if (!genericRequestId) {
+    const requestScope = resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope);
+    const submitterUserId =
+      parsePositiveInt(requestedByUserId) ||
+      parsePositiveInt(instanceRow.requested_by_user_id);
+    const submitResult = await submitRequest(
+      genericPolicyId,
+      mapWorkflowProcessToUnifiedTargetType(instanceRow.process_type),
+      parsePositiveInt(instanceRow.target_id),
+      { tenantId, userId: submitterUserId },
+      {
+        idempotencyKey: `WORKFLOW-INSTANCE:${parsePositiveInt(instanceRow.id)}`,
+        scopeType: requestScope.scopeType,
+        scopeId: requestScope.scopeId,
+        legalEntityId: requestScope.legalEntityId || null,
+        operatingUnitId: requestScope.operatingUnitId || null,
+        targetSnapshot: buildWorkflowUnifiedTargetSnapshot(instanceRow, fallbackScope),
+        actionPayload: buildWorkflowUnifiedActionPayload(
+          instanceRow.id,
+          instanceRow.process_type
+        ),
+      },
+      { runQuery }
+    );
+    genericRequestId = parsePositiveInt(submitResult?.item?.id);
+    if (!genericRequestId) {
+      throw conflict("Failed to bridge workflow instance into approval_requests");
+    }
+    await runQuery(
+      `UPDATE workflow_instances
+          SET generic_request_id = ?
+        WHERE tenant_id = ?
+          AND id = ?`,
+      [genericRequestId, tenantId, parsePositiveInt(instanceRow.id)]
+    );
+  }
+
+  if (
+    resetToPending ||
+    toUpper(instanceRow.status) !== "PENDING" ||
+    Number(instanceRow.current_step_no || 1) !== 1
+  ) {
+    await syncUnifiedWorkflowRequestFromLegacyInstanceTx({
+      tenantId,
+      instanceRow,
+      genericRequestId,
+      policyId: genericPolicyId,
+      runQuery,
+      fallbackScope,
+    });
+  }
+
+  return getWorkflowInstanceRowById({
+    tenantId,
+    instanceId: parsePositiveInt(instanceRow.id),
+    runQuery,
+  });
+}
+
+/**
+ * Cancel one bridged workflow approval request from a legacy compatibility path.
+ */
+export async function cancelUnifiedWorkflowInstanceBridge({
+  tenantId,
+  instanceId,
+  resolutionNote = null,
+  runQuery = query,
+}) {
+  const instanceRow = await getWorkflowInstanceRowById({
+    tenantId,
+    instanceId,
+    runQuery,
+    forUpdate: true,
+  });
+  if (!instanceRow || !parsePositiveInt(instanceRow.generic_request_id)) {
+    return instanceRow;
+  }
+
+  await runQuery(
+    `UPDATE approval_requests
+        SET request_status = 'WITHDRAWN',
+            withdrawn_at = COALESCE(withdrawn_at, CURRENT_TIMESTAMP),
+            last_activity_at = CURRENT_TIMESTAMP,
+            execution_error_text = NULL
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [tenantId, parsePositiveInt(instanceRow.generic_request_id)]
+  );
+  await runQuery(
+    `UPDATE workflow_instances
+        SET resolution_note = COALESCE(?, resolution_note)
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [resolutionNote || null, tenantId, parsePositiveInt(instanceRow.id)]
+  );
+
+  return getWorkflowInstanceRowById({
+    tenantId,
+    instanceId: parsePositiveInt(instanceRow.id),
+    runQuery,
+  });
+}
+
 async function assertWorkflowDefinitionExists(tenantId, definitionId, runQuery = query) {
   const row = await getWorkflowDefinitionRowById({
     tenantId,
@@ -853,6 +1779,9 @@ export async function resolveWorkflowInstanceScope(instanceId, tenantId) {
   return null;
 }
 
+/**
+ * Evaluate whether one target action is blocked by the configured workflow gate.
+ */
 export async function evaluateWorkflowApprovalGate({
   tenantId,
   processType,
@@ -979,6 +1908,26 @@ export async function evaluateWorkflowApprovalGate({
     });
   }
 
+  if (parsePositiveInt(instanceRow?.id)) {
+    const bridgedInstance = await ensureUnifiedWorkflowInstanceBridge({
+      tenantId: normalizedTenantId,
+      instanceId: parsePositiveInt(instanceRow.id),
+      requestedByUserId: normalizedRequestedByUserId,
+      fallbackScope: scope,
+      runQuery,
+    });
+    if (parsePositiveInt(bridgedInstance?.generic_request_id)) {
+      const synced = await syncLegacyWorkflowInstanceFromUnifiedRequestTx({
+        tenantId: normalizedTenantId,
+        genericRequestId: parsePositiveInt(bridgedInstance.generic_request_id),
+        runQuery,
+      });
+      instanceRow = synced?.row || bridgedInstance;
+    } else {
+      instanceRow = bridgedInstance;
+    }
+  }
+
   const instanceStatus = toUpper(instanceRow?.status);
   if (instanceStatus === "APPROVED") {
     return makeWorkflowGateResult({
@@ -1091,6 +2040,9 @@ export async function listWorkflowInstances({
   };
 }
 
+/**
+ * Load one workflow instance after ensuring its unified approval bridge is current.
+ */
 export async function getWorkflowInstanceById({
   req,
   tenantId,
@@ -1107,7 +2059,7 @@ export async function getWorkflowInstanceById({
     throw badRequest("instanceId is required");
   }
 
-  const row = await getWorkflowInstanceRowById({
+  let row = await getWorkflowInstanceRowById({
     tenantId: normalizedTenantId,
     instanceId: normalizedInstanceId,
     runQuery,
@@ -1115,6 +2067,23 @@ export async function getWorkflowInstanceById({
   if (!row) {
     throw notFound("Workflow instance not found");
   }
+  row = await withTransaction(async (tx) => {
+    const bridged = await ensureUnifiedWorkflowInstanceBridge({
+      tenantId: normalizedTenantId,
+      instanceId: normalizedInstanceId,
+      requestedByUserId: parsePositiveInt(row?.requested_by_user_id),
+      runQuery: tx.query,
+    });
+    if (!parsePositiveInt(bridged?.generic_request_id)) {
+      return bridged || row;
+    }
+    const synced = await syncLegacyWorkflowInstanceFromUnifiedRequestTx({
+      tenantId: normalizedTenantId,
+      genericRequestId: parsePositiveInt(bridged.generic_request_id),
+      runQuery: tx.query,
+    });
+    return synced?.row || bridged || row;
+  });
   assertWorkflowInstanceScopeAccess(req, row, assertScopeAccess);
 
   const decisions = await listWorkflowInstanceDecisionRows({
@@ -1145,25 +2114,9 @@ function assertInstanceIsDecisionable(row) {
   }
 }
 
-async function loadCurrentWorkflowStepOrThrow({
-  workflowDefinitionId,
-  stepNo,
-  runQuery = query,
-}) {
-  const step = await getWorkflowDefinitionStepRowByNo({
-    definitionId: workflowDefinitionId,
-    stepNo,
-    runQuery,
-  });
-  if (!step) {
-    throw conflict(
-      `Workflow definition step not found for step_no=${stepNo}`,
-      "APPROVAL_STEP_PERMISSION_DENIED"
-    );
-  }
-  return step;
-}
-
+/**
+ * Resolve the current-step permission and scope needed to decide one workflow instance.
+ */
 export async function resolveWorkflowDecisionPermissionAccess({
   tenantId,
   instanceId,
@@ -1186,32 +2139,46 @@ export async function resolveWorkflowDecisionPermissionAccess({
   if (!instanceRow) {
     throw notFound("Workflow instance not found");
   }
-  assertInstanceIsDecisionable(instanceRow);
-
-  const currentStep = await loadCurrentWorkflowStepOrThrow({
-    workflowDefinitionId: parsePositiveInt(instanceRow.workflow_definition_id),
-    stepNo: Number(instanceRow.current_step_no || 0),
-    runQuery,
-  });
-  const requiredPermissionCode = String(
-    currentStep.required_permission_code || ""
-  ).trim();
-  if (!requiredPermissionCode) {
+  const bridgedRow = await withTransaction(async (tx) =>
+    ensureUnifiedWorkflowInstanceBridge({
+      tenantId: normalizedTenantId,
+      instanceId: normalizedInstanceId,
+      requestedByUserId: parsePositiveInt(instanceRow.requested_by_user_id),
+      runQuery: tx.query,
+    })
+  );
+  if (!parsePositiveInt(bridgedRow?.generic_request_id)) {
     throw conflict(
-      "Workflow step is missing required_permission_code",
+      "Workflow instance is missing its unified approval bridge",
       "APPROVAL_STEP_PERMISSION_DENIED"
     );
   }
-  const scope = resolveDecisionScopeFromStep(instanceRow, currentStep);
+
+  const synced = await syncLegacyWorkflowInstanceFromUnifiedRequestTx({
+    tenantId: normalizedTenantId,
+    genericRequestId: parsePositiveInt(bridgedRow.generic_request_id),
+    runQuery,
+  });
+  const effectiveInstanceRow = synced?.row || bridgedRow || instanceRow;
+  assertInstanceIsDecisionable(effectiveInstanceRow);
+  const requestRow = await getUnifiedWorkflowRequestRowById({
+    tenantId: normalizedTenantId,
+    requestId: parsePositiveInt(effectiveInstanceRow.generic_request_id),
+    runQuery,
+  });
+  const unifiedAccess = resolveUnifiedWorkflowDecisionAccessFromRequestRow(
+    requestRow
+  );
 
   return {
-    requiredPermissionCode,
+    requiredPermissionCode: unifiedAccess.requiredPermissionCode,
     scope: {
-      scopeType: scope.scopeType,
-      scopeId: scope.scopeId,
+      scopeType: unifiedAccess.scope.scopeType,
+      scopeId: unifiedAccess.scope.scopeId,
     },
-    stepNo: Number(currentStep.step_no || 0),
-    stageScopeType: toUpper(currentStep.stage_scope_type),
+    stepNo: unifiedAccess.stepNo,
+    stageScopeType: unifiedAccess.stageScopeType,
+    minApproverCount: unifiedAccess.minApproverCount,
   };
 }
 
@@ -1220,6 +2187,7 @@ async function createWorkflowDecision({
   input,
   decision,
   assertScopeAccess,
+  runQuery = query,
 }) {
   const tenantId = parsePositiveInt(input?.tenantId);
   const instanceId = parsePositiveInt(input?.instanceId);
@@ -1239,170 +2207,78 @@ async function createWorkflowDecision({
   if (!["APPROVE", "REJECT"].includes(decisionCode)) {
     throw badRequest("decision must be APPROVE or REJECT");
   }
-
-  return withTransaction(async (tx) => {
-    const instanceRow = await getWorkflowInstanceRowById({
-      tenantId,
-      instanceId,
-      runQuery: tx.query,
-      forUpdate: true,
-    });
-    if (!instanceRow) {
-      throw notFound("Workflow instance not found");
-    }
-    assertInstanceIsDecisionable(instanceRow);
-
-    const currentStepNo = Number(instanceRow.current_step_no || 0);
-    const workflowDefinitionId = parsePositiveInt(instanceRow.workflow_definition_id);
-    const currentStep = await loadCurrentWorkflowStepOrThrow({
-      workflowDefinitionId,
-      stepNo: currentStepNo,
-      runQuery: tx.query,
-    });
-
-    await assertWorkflowStepPermission({
-      tenantId,
-      userId,
-      requiredPermissionCode: currentStep.required_permission_code,
-      runQuery: tx.query,
-    });
-    assertWorkflowDecisionScopeAccess(req, instanceRow, currentStep, assertScopeAccess);
-
-    if (
-      decisionCode === "APPROVE" &&
-      !toDbBoolean(currentStep.allow_self_approve) &&
-      parsePositiveInt(instanceRow.requested_by_user_id) === userId
-    ) {
-      throw forbidden(
-        "Maker-checker violation: requester cannot approve own step",
-        "APPROVAL_STEP_PERMISSION_DENIED"
-      );
-    }
-
-    const existingDecisionRes = await tx.query(
-      `SELECT id
-       FROM workflow_instance_decisions
-       WHERE workflow_instance_id = ?
-         AND step_no = ?
-         AND decision_by_user_id = ?
-       LIMIT 1`,
-      [instanceId, currentStepNo, userId]
-    );
-    if (existingDecisionRes.rows?.[0]?.id) {
-      throw conflict(
-        "Decision already exists for this user at current step",
-        "APPROVAL_STEP_ALREADY_DECIDED"
-      );
-    }
-
-    try {
-      await tx.query(
-        `INSERT INTO workflow_instance_decisions (
-           workflow_instance_id,
-           step_no,
-           decision,
-           decision_by_user_id,
-           decision_note
-         ) VALUES (?, ?, ?, ?, ?)`,
-        [instanceId, currentStepNo, decisionCode, userId, decisionNote]
-      );
-    } catch (err) {
-      if (isDuplicateKeyError(err)) {
-        throw conflict(
-          "Decision already exists for this user at current step",
-          "APPROVAL_STEP_ALREADY_DECIDED"
-        );
-      }
-      throw err;
-    }
-
-    let advanced = false;
-    let resolved = false;
-    if (decisionCode === "REJECT") {
-      await tx.query(
-        `UPDATE workflow_instances
-         SET status = 'REJECTED',
-             resolved_at = CURRENT_TIMESTAMP,
-             resolution_note = ?
-         WHERE tenant_id = ?
-           AND id = ?`,
-        [decisionNote || "Rejected", tenantId, instanceId]
-      );
-      resolved = true;
-    } else {
-      const statsResult = await tx.query(
-        `SELECT COUNT(DISTINCT decision_by_user_id) AS approve_count
-         FROM workflow_instance_decisions
-         WHERE workflow_instance_id = ?
-           AND step_no = ?
-           AND decision = 'APPROVE'`,
-        [instanceId, currentStepNo]
-      );
-      const approveCount = Number(statsResult.rows?.[0]?.approve_count || 0);
-      const minApproverCount = Math.max(
-        1,
-        Number(currentStep.min_approver_count || 1)
-      );
-
-      if (approveCount >= minApproverCount) {
-        const maxStepNo = await getWorkflowDefinitionMaxStepNo(
-          workflowDefinitionId,
-          tx.query
-        );
-        if (currentStepNo >= maxStepNo) {
-          await tx.query(
-            `UPDATE workflow_instances
-             SET status = 'APPROVED',
-                 resolved_at = CURRENT_TIMESTAMP,
-                 resolution_note = ?
-             WHERE tenant_id = ?
-               AND id = ?`,
-            [
-              decisionNote ||
-                `Approved at final step ${currentStepNo} (min approvers: ${minApproverCount})`,
-              tenantId,
-              instanceId,
-            ]
-          );
-          resolved = true;
-        } else {
-          await tx.query(
-            `UPDATE workflow_instances
-             SET current_step_no = ?
-             WHERE tenant_id = ?
-               AND id = ?`,
-            [currentStepNo + 1, tenantId, instanceId]
-          );
-          advanced = true;
-        }
-      }
-    }
-
-    const instance = await getWorkflowInstanceRowById({
-      tenantId,
-      instanceId,
-      runQuery: tx.query,
-    });
-    const decisions = await listWorkflowInstanceDecisionRows({
-      tenantId,
-      instanceId,
-      runQuery: tx.query,
-    });
-
-    return {
-      row: mapWorkflowInstanceRow(instance),
-      decisions,
-      currentStepNo,
-      minApproverCount: Number(currentStep.min_approver_count || 1),
-      stageScopeType: toUpper(currentStep.stage_scope_type),
-      requiredPermissionCode: String(currentStep.required_permission_code || ""),
-      advanced,
-      resolved,
-      decision: decisionCode,
-    };
+  let bridgedInstance = await getWorkflowInstanceRowById({
+    tenantId,
+    instanceId,
+    runQuery,
   });
+  if (!bridgedInstance) {
+    throw notFound("Workflow instance not found");
+  }
+
+  bridgedInstance = await withTransaction(async (tx) =>
+    ensureUnifiedWorkflowInstanceBridge({
+      tenantId,
+      instanceId,
+      requestedByUserId: parsePositiveInt(bridgedInstance.requested_by_user_id),
+      runQuery: tx.query,
+    })
+  );
+  if (!parsePositiveInt(bridgedInstance?.generic_request_id)) {
+    throw conflict(
+      "Workflow instance is missing its unified approval bridge",
+      "APPROVAL_STEP_PERMISSION_DENIED"
+    );
+  }
+  assertWorkflowInstanceScopeAccess(req, bridgedInstance, assertScopeAccess);
+
+  const unifiedRequestRow = await getUnifiedWorkflowRequestRowById({
+    tenantId,
+    requestId: parsePositiveInt(bridgedInstance.generic_request_id),
+    runQuery,
+  });
+  const unifiedAccess = resolveUnifiedWorkflowDecisionAccessFromRequestRow(
+    unifiedRequestRow
+  );
+  const decisionResult = await recordDecision(
+    parsePositiveInt(bridgedInstance.generic_request_id),
+    userId,
+    decisionCode,
+    decisionNote
+  );
+  const synced = await withTransaction(async (tx) =>
+    syncLegacyWorkflowInstanceFromUnifiedRequestTx({
+      tenantId,
+      genericRequestId: parsePositiveInt(bridgedInstance.generic_request_id),
+      runQuery: tx.query,
+    })
+  );
+  const syncedRow = synced?.row || bridgedInstance;
+  const syncedStatus = toUpper(syncedRow?.status);
+  const advanced =
+    decisionCode === "APPROVE" &&
+    syncedStatus === "PENDING" &&
+    Number(syncedRow?.current_step_no ?? syncedRow?.currentStepNo ?? 0) >
+      unifiedAccess.stepNo;
+  const resolved = ["APPROVED", "REJECTED", "CANCELLED"].includes(syncedStatus);
+
+  return {
+    row: mapWorkflowInstanceRow(syncedRow),
+    decisions: synced?.decisions || [],
+    currentStepNo: unifiedAccess.stepNo,
+    minApproverCount: unifiedAccess.minApproverCount,
+    stageScopeType: unifiedAccess.stageScopeType,
+    requiredPermissionCode: unifiedAccess.requiredPermissionCode,
+    advanced,
+    resolved,
+    decision: decisionCode,
+    executionResult: decisionResult?.execution_result || null,
+  };
 }
 
+/**
+ * Record one approve decision against the current workflow step.
+ */
 export async function approveWorkflowInstance({
   req,
   input,
@@ -1416,6 +2292,9 @@ export async function approveWorkflowInstance({
   });
 }
 
+/**
+ * Record one reject decision against the current workflow step.
+ */
 export async function rejectWorkflowInstance({
   req,
   input,
@@ -1519,6 +2398,9 @@ export async function getWorkflowDefinitionById({
   return mapWorkflowDefinitionRow(row);
 }
 
+/**
+ * Create one workflow definition and refresh its generic approval-policy mirror.
+ */
 export async function createWorkflowDefinition({
   input,
   runQuery = query,
@@ -1555,7 +2437,17 @@ export async function createWorkflowDefinition({
       ]
     );
     const definitionId = parsePositiveInt(insertResult.rows?.insertId);
-    const row = await getWorkflowDefinitionRowById({
+    let row = await getWorkflowDefinitionRowById({
+      tenantId,
+      definitionId,
+      runQuery,
+    });
+    await ensureUnifiedWorkflowPolicyForDefinition({
+      tenantId,
+      definitionId,
+      runQuery,
+    });
+    row = await getWorkflowDefinitionRowById({
       tenantId,
       definitionId,
       runQuery,
@@ -1569,6 +2461,9 @@ export async function createWorkflowDefinition({
   }
 }
 
+/**
+ * Update one workflow definition and refresh its generic approval-policy mirror.
+ */
 export async function updateWorkflowDefinition({
   input,
   runQuery = query,
@@ -1634,7 +2529,17 @@ export async function updateWorkflowDefinition({
     throw err;
   }
 
-  const updated = await getWorkflowDefinitionRowById({
+  let updated = await getWorkflowDefinitionRowById({
+    tenantId,
+    definitionId,
+    runQuery,
+  });
+  await ensureUnifiedWorkflowPolicyForDefinition({
+    tenantId,
+    definitionId,
+    runQuery,
+  });
+  updated = await getWorkflowDefinitionRowById({
     tenantId,
     definitionId,
     runQuery,
@@ -1672,6 +2577,9 @@ export async function listWorkflowDefinitionSteps({
   return (result.rows || []).map(mapWorkflowDefinitionStepRow);
 }
 
+/**
+ * Replace the ordered step set for one workflow definition and refresh the generic mirror.
+ */
 export async function replaceWorkflowDefinitionSteps({ input }) {
   const tenantId = parsePositiveInt(input?.tenantId);
   const definitionId = parsePositiveInt(input?.definitionId);
@@ -1727,6 +2635,11 @@ export async function replaceWorkflowDefinitionSteps({ input }) {
        ORDER BY step_no ASC, id ASC`,
       [definitionId]
     );
+    await ensureUnifiedWorkflowPolicyForDefinition({
+      tenantId,
+      definitionId,
+      runQuery: tx.query,
+    });
     return (rows.rows || []).map(mapWorkflowDefinitionStepRow);
   });
 }
@@ -1833,6 +2746,9 @@ export async function listWorkflowAssignments({
   };
 }
 
+/**
+ * Create one workflow assignment and refresh the related generic approval-policy mirror.
+ */
 export async function createWorkflowAssignment({
   req,
   input,
@@ -1898,9 +2814,17 @@ export async function createWorkflowAssignment({
     assignmentId,
     runQuery,
   });
+  await ensureUnifiedWorkflowPolicyForDefinition({
+    tenantId,
+    definitionId: parsePositiveInt(input.workflowDefinitionId),
+    runQuery,
+  });
   return mapWorkflowAssignmentRow(row);
 }
 
+/**
+ * Update one workflow assignment and refresh the affected generic approval-policy mirrors.
+ */
 export async function updateWorkflowAssignment({
   req,
   input,
@@ -2011,6 +2935,21 @@ export async function updateWorkflowAssignment({
     assignmentId,
     runQuery,
   });
+  await ensureUnifiedWorkflowPolicyForDefinition({
+    tenantId,
+    definitionId: next.workflowDefinitionId,
+    runQuery,
+  });
+  if (
+    parsePositiveInt(existing.workflow_definition_id) &&
+    parsePositiveInt(existing.workflow_definition_id) !== next.workflowDefinitionId
+  ) {
+    await ensureUnifiedWorkflowPolicyForDefinition({
+      tenantId,
+      definitionId: parsePositiveInt(existing.workflow_definition_id),
+      runQuery,
+    });
+  }
   return mapWorkflowAssignmentRow(row);
 }
 

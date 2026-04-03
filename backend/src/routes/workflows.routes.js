@@ -32,6 +32,7 @@ import {
   updateWorkflowAssignment,
   updateWorkflowDefinition,
 } from "../services/workflows.service.js";
+import { resolveRowScope } from "../services/authz.scope.service.js";
 
 const router = express.Router();
 
@@ -48,28 +49,20 @@ async function runPermissionMiddleware(middleware, req, res) {
 }
 
 function resolveScopeFromInput(rawValue) {
-  const operatingUnitId = parsePositiveInt(
-    rawValue?.operatingUnitId ?? rawValue?.operating_unit_id
-  );
-  if (operatingUnitId) {
-    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
-  }
-
-  const legalEntityId = parsePositiveInt(
-    rawValue?.legalEntityId ?? rawValue?.legal_entity_id
-  );
-  if (legalEntityId) {
-    return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-  }
-
-  const groupCompanyId = parsePositiveInt(
-    rawValue?.groupCompanyId ?? rawValue?.group_company_id
-  );
-  if (groupCompanyId) {
-    return { scopeType: "GROUP", scopeId: groupCompanyId };
-  }
-
-  return null;
+  const resolvedScope = resolveRowScope({
+    operatingUnitId: parsePositiveInt(
+      rawValue?.operatingUnitId ?? rawValue?.operating_unit_id
+    ),
+    legalEntityId: parsePositiveInt(
+      rawValue?.legalEntityId ?? rawValue?.legal_entity_id
+    ),
+    groupCompanyId: parsePositiveInt(
+      rawValue?.groupCompanyId ?? rawValue?.group_company_id
+    ),
+  });
+  return resolvedScope
+    ? { scopeType: resolvedScope.scopeType, scopeId: resolvedScope.scopeId }
+    : null;
 }
 
 async function enforceDecisionPermission(req, res, tenantId, instanceId) {
@@ -94,7 +87,7 @@ async function enforceDecisionPermission(req, res, tenantId, instanceId) {
 
 router.get(
   "/definitions",
-  requirePermission("org.tree.read"),
+  requirePermission("workflow.definition.read"),
   async (req, res, next) => {
     try {
       const input = parseWorkflowDefinitionsListInput(req);
@@ -114,7 +107,7 @@ router.get(
 
 router.post(
   "/definitions",
-  requirePermission("onboarding.company.setup"),
+  requirePermission("workflow.definition.write"),
   async (req, res, next) => {
     try {
       const input = parseWorkflowDefinitionCreateInput(req);
@@ -132,7 +125,7 @@ router.post(
 
 router.patch(
   "/definitions/:definitionId",
-  requirePermission("onboarding.company.setup"),
+  requirePermission("workflow.definition.write"),
   async (req, res, next) => {
     try {
       const input = parseWorkflowDefinitionUpdateInput(req);
@@ -150,7 +143,7 @@ router.patch(
 
 router.get(
   "/definitions/:definitionId/steps",
-  requirePermission("org.tree.read"),
+  requirePermission("workflow.definition.read"),
   async (req, res, next) => {
     try {
       const tenantId = requireTenantId(req);
@@ -169,7 +162,7 @@ router.get(
 
 router.post(
   "/definitions/:definitionId/steps",
-  requirePermission("onboarding.company.setup"),
+  requirePermission("workflow.definition.write"),
   async (req, res, next) => {
     try {
       const input = parseWorkflowDefinitionStepsReplaceInput(req);
@@ -188,7 +181,7 @@ router.post(
 
 router.get(
   "/assignments",
-  requirePermission("org.tree.read", {
+  requirePermission("workflow.assignment.read", {
     resolveScope: (req) => resolveScopeFromInput(req.query),
   }),
   async (req, res, next) => {
@@ -212,7 +205,7 @@ router.get(
 
 router.post(
   "/assignments",
-  requirePermission("onboarding.company.setup", {
+  requirePermission("workflow.assignment.write", {
     resolveScope: (req) => resolveScopeFromInput(req.body),
   }),
   async (req, res, next) => {
@@ -236,7 +229,7 @@ router.post(
 
 router.patch(
   "/assignments/:assignmentId",
-  requirePermission("onboarding.company.setup", {
+  requirePermission("workflow.assignment.write", {
     resolveScope: (req, tenantId) =>
       resolveWorkflowAssignmentScope(req.params?.assignmentId, tenantId),
   }),

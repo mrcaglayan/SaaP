@@ -11,6 +11,9 @@ import {
   isFinancialLocalClosePackReopenAction,
   resolveLocalClosePackRowScope,
 } from "./local.close-packs.shared.js";
+import { submitApprovalRequest } from "./approvalPolicies.service.js";
+import { executeRequest, recordDecision } from "./approval.engine.service.js";
+import { assertSoD } from "./sod.service.js";
 
 const FINANCIALLY_REOPENABLE_PACK_STATUSES = new Set(["APPROVED", "LOCKED"]);
 
@@ -76,17 +79,69 @@ function mapLocalClosePackReopenRequestRow(row) {
     requestedAt: toDateTime(row.requested_at),
     reviewedAt: toDateTime(row.reviewed_at),
     decisionNote: row.decision_note || null,
+    approvalRequestId: parsePositiveInt(row.approval_request_id),
+    approvalRequest: buildApprovalRequestSummary(row),
     createdAt: toDateTime(row.created_at),
     updatedAt: toDateTime(row.updated_at),
   };
 }
 
+function buildApprovalRequestSummary(row, prefix = "approval_") {
+  const approvalRequestId = parsePositiveInt(row?.[`${prefix}request_id`]);
+  if (!approvalRequestId) {
+    return null;
+  }
+  return {
+    id: approvalRequestId,
+    requestCode: row?.[`${prefix}request_code`] || null,
+    requestStatus: toUpperText(row?.[`${prefix}request_status`]) || null,
+    executionStatus: toUpperText(row?.[`${prefix}execution_status`]) || null,
+    currentStepNo: Number(row?.[`${prefix}current_step_no`] || 1),
+    scopeType: toUpperText(row?.[`${prefix}scope_type`]) || null,
+    scopeId: parsePositiveInt(row?.[`${prefix}scope_id`]),
+    submittedByUserId: parsePositiveInt(row?.[`${prefix}submitted_by_user_id`]),
+    executedByUserId: parsePositiveInt(row?.[`${prefix}executed_by_user_id`]),
+    submittedAt: toDateTime(row?.[`${prefix}submitted_at`]),
+    approvedAt: toDateTime(row?.[`${prefix}approved_at`]),
+    rejectedAt: toDateTime(row?.[`${prefix}rejected_at`]),
+    withdrawnAt: toDateTime(row?.[`${prefix}withdrawn_at`]),
+    executedAt: toDateTime(row?.[`${prefix}executed_at`]),
+    executionErrorText: row?.[`${prefix}execution_error_text`] || null,
+  };
+}
+
+function getLocalClosePackReopenApprovalActionType(requestedActionType) {
+  return isFinancialLocalClosePackReopenAction(requestedActionType) ? "REOPEN" : "APPROVE";
+}
+
+function noopScopeAccess() {
+  return true;
+}
+
 function buildLocalClosePackReopenRequestBaseSelect(whereSql) {
   return `SELECT
       lcrr.*,
+      ar.id AS approval_request_id,
+      ar.request_code AS approval_request_code,
+      ar.request_status AS approval_request_status,
+      ar.current_step_no AS approval_current_step_no,
+      ar.execution_status AS approval_execution_status,
+      ar.scope_type AS approval_scope_type,
+      ar.scope_id AS approval_scope_id,
+      ar.submitted_by_user_id AS approval_submitted_by_user_id,
+      ar.executed_by_user_id AS approval_executed_by_user_id,
+      ar.submitted_at AS approval_submitted_at,
+      ar.approved_at AS approval_approved_at,
+      ar.rejected_at AS approval_rejected_at,
+      ar.withdrawn_at AS approval_withdrawn_at,
+      ar.executed_at AS approval_executed_at,
+      ar.execution_error_text AS approval_execution_error_text,
       requester.name AS requested_by_user_name,
       reviewer.name AS reviewed_by_user_name
     FROM local_close_pack_reopen_requests lcrr
+    LEFT JOIN approval_requests ar
+      ON ar.tenant_id = lcrr.tenant_id
+     AND ar.id = lcrr.approval_request_id
     LEFT JOIN users requester ON requester.id = lcrr.requested_by_user_id
     LEFT JOIN users reviewer ON reviewer.id = lcrr.reviewed_by_user_id
     WHERE ${whereSql}`;
@@ -165,6 +220,21 @@ async function loadPendingReopenRequestRow({
   }
 }
 
+async function loadLocalClosePackReopenRequestByApprovalRequestId({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `${buildLocalClosePackReopenRequestBaseSelect(
+      "lcrr.tenant_id = ? AND lcrr.approval_request_id = ?"
+    )}
+     LIMIT 1`,
+    [tenantId, approvalRequestId]
+  );
+  return result.rows?.[0] || null;
+}
+
 function assertLocalClosePackScopeAccess(req, packRow, assertScopeAccess) {
   const scope = resolveLocalClosePackRowScope(packRow);
   if (!scope) {
@@ -239,6 +309,115 @@ async function assertPublishedPeriodGovernanceIfNeeded(req, packRow, requestRow)
             scopeId: scope.scopeId,
           }
         : null,
+  });
+}
+
+async function loadApprovalRequestBridgeRow({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        id,
+        request_status,
+        execution_status,
+        approved_at,
+        rejected_at,
+        executed_at,
+        executed_by_user_id
+     FROM approval_requests
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, approvalRequestId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function loadLatestApprovalDecisionRow({
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT decided_by_user_id, comment, decided_at
+       FROM approval_decisions
+      WHERE request_id = ?
+      ORDER BY id DESC
+      LIMIT 1`,
+    [approvalRequestId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function syncLocalClosePackReopenApprovalRequestBridgeTx({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const localRow = await loadLocalClosePackReopenRequestByApprovalRequestId({
+    tenantId,
+    approvalRequestId,
+    runQuery,
+  });
+  if (!localRow) {
+    return null;
+  }
+
+  const approvalRow = await loadApprovalRequestBridgeRow({
+    tenantId,
+    approvalRequestId,
+    runQuery,
+  });
+  if (!approvalRow) {
+    return localRow;
+  }
+
+  const latestDecision = await loadLatestApprovalDecisionRow({
+    approvalRequestId,
+    runQuery,
+  });
+  let nextRequestStatus = "REQUESTED";
+  if (toUpperText(approvalRow.execution_status) === "EXECUTED") {
+    nextRequestStatus = "EXECUTED";
+  } else if (toUpperText(approvalRow.request_status) === "REJECTED") {
+    nextRequestStatus = "REJECTED";
+  } else if (toUpperText(approvalRow.request_status) === "APPROVED") {
+    nextRequestStatus = "APPROVED";
+  }
+
+  await runQuery(
+    `UPDATE local_close_pack_reopen_requests
+        SET request_status = ?,
+            reviewed_by_user_id = ?,
+            reviewed_at = ?,
+            decision_note = COALESCE(?, decision_note),
+            approval_request_id = COALESCE(?, approval_request_id),
+            updated_at = CURRENT_TIMESTAMP
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [
+      nextRequestStatus,
+      parsePositiveInt(latestDecision?.decided_by_user_id) ||
+        parsePositiveInt(approvalRow.executed_by_user_id) ||
+        null,
+      approvalRow.executed_at ||
+        approvalRow.rejected_at ||
+        approvalRow.approved_at ||
+        latestDecision?.decided_at ||
+        null,
+      latestDecision?.comment || null,
+      approvalRequestId,
+      tenantId,
+      parsePositiveInt(localRow.id),
+    ]
+  );
+
+  return loadLocalClosePackReopenRequestRow({
+    tenantId,
+    packId: parsePositiveInt(localRow.local_close_pack_id),
+    requestId: parsePositiveInt(localRow.id),
+    runQuery,
   });
 }
 
@@ -386,6 +565,66 @@ export async function createLocalClosePackReopenRequest({
     runQuery,
   });
 
+  let approvalRequestId = null;
+  if (requestRow) {
+    const approvalActionType = getLocalClosePackReopenApprovalActionType(
+      input.requestedActionType
+    );
+    const submission = await submitApprovalRequest({
+      tenantId: input.tenantId,
+      userId: input.userId,
+      requestInput: {
+        moduleCode: "LOCAL_CLOSE",
+        targetType: "LOCAL_CLOSE_PACK_REOPEN_REQUEST",
+        targetId: parsePositiveInt(requestRow.id),
+        actionType: approvalActionType,
+        legalEntityId: parsePositiveInt(packRow.legal_entity_id),
+        operatingUnitId: parsePositiveInt(packRow.operating_unit_id) || null,
+        actionPayload: {
+          requestId: parsePositiveInt(requestRow.id),
+          packId: input.packId,
+          requestedActionType: toUpperText(input.requestedActionType),
+        },
+        targetSnapshot: {
+          module_code: "LOCAL_CLOSE",
+          target_type: "LOCAL_CLOSE_PACK_REOPEN_REQUEST",
+          target_id: parsePositiveInt(requestRow.id),
+          local_close_pack_id: input.packId,
+          legal_entity_id: parsePositiveInt(packRow.legal_entity_id),
+          operating_unit_id: parsePositiveInt(packRow.operating_unit_id) || null,
+          requested_action_type: toUpperText(input.requestedActionType),
+          downstream_stage: toUpperText(input.downstreamStage),
+          requires_high_governance: Boolean(requiresHighGovernance),
+          execution_resolver_key:
+            approvalActionType === "REOPEN"
+              ? "LOCAL_CLOSE:LOCAL_CLOSE_PACK_REOPEN_REQUEST:REOPEN"
+              : null,
+        },
+      },
+      runQuery,
+    });
+
+    if (submission?.approval_required && parsePositiveInt(submission?.item?.id)) {
+      approvalRequestId = parsePositiveInt(submission.item.id);
+      await runQuery(
+        `UPDATE local_close_pack_reopen_requests
+            SET approval_request_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE tenant_id = ?
+            AND local_close_pack_id = ?
+            AND id = ?`,
+        [approvalRequestId, input.tenantId, input.packId, parsePositiveInt(requestRow.id)]
+      );
+    }
+  }
+
+  const refreshedRequestRow = await loadLocalClosePackReopenRequestRow({
+    tenantId: input.tenantId,
+    packId: input.packId,
+    requestId: parsePositiveInt(requestRow?.id),
+    runQuery,
+  });
+
   await writeLocalClosePackAuditLog({
     runQuery,
     req,
@@ -401,11 +640,12 @@ export async function createLocalClosePackReopenRequest({
       requestedActionType: input.requestedActionType,
       downstreamStage: input.downstreamStage,
       requiresHighGovernance,
+      approvalRequestId,
     },
   });
 
   return {
-    row: mapLocalClosePackReopenRequestRow(requestRow),
+    row: mapLocalClosePackReopenRequestRow(refreshedRequestRow || requestRow),
     entityReadiness: await getEntityCloseReadiness({
       tenantId: input.tenantId,
       legalEntityId: parsePositiveInt(packRow.legal_entity_id),
@@ -423,6 +663,8 @@ export async function approveLocalClosePackReopenRequest({
   req,
   input,
   assertScopeAccess,
+  skipUnifiedApprovalGate = false,
+  approvalRequestId = null,
 }) {
   return withTransaction(async (tx) => {
     const packRow = await loadLocalClosePackHeader({
@@ -452,7 +694,69 @@ export async function approveLocalClosePackReopenRequest({
       );
     }
 
-    await assertPublishedPeriodGovernanceIfNeeded(req, packRow, requestRow);
+    if (!skipUnifiedApprovalGate) {
+      await assertPublishedPeriodGovernanceIfNeeded(req, packRow, requestRow);
+    }
+
+    const bridgedApprovalRequestId =
+      parsePositiveInt(approvalRequestId) || parsePositiveInt(requestRow.approval_request_id);
+    if (!skipUnifiedApprovalGate && bridgedApprovalRequestId) {
+      let decisionResult = await recordDecision(
+        bridgedApprovalRequestId,
+        input.userId,
+        "APPROVE",
+        input.decisionNote || null
+      );
+      let approvalItem = decisionResult.item || null;
+      if (
+        toUpperText(approvalItem?.requestStatus) === "APPROVED" &&
+        toUpperText(approvalItem?.executionStatus) !== "EXECUTED" &&
+        getLocalClosePackReopenApprovalActionType(requestRow.requested_action_type) === "REOPEN"
+      ) {
+        const executionResult = await executeRequest(bridgedApprovalRequestId, {
+          executedByUserId: input.userId,
+        });
+        approvalItem = executionResult.item || approvalItem;
+        decisionResult = {
+          ...decisionResult,
+          item: approvalItem,
+          execution_result:
+            executionResult.execution_result || decisionResult.execution_result || null,
+        };
+      }
+
+      const syncedRequestRow = await syncLocalClosePackReopenApprovalRequestBridgeTx({
+        tenantId: input.tenantId,
+        approvalRequestId: bridgedApprovalRequestId,
+        runQuery: tx.query,
+      });
+      return {
+        row: mapLocalClosePackReopenRequestRow(syncedRequestRow || requestRow),
+        approvalRequest: approvalItem,
+        executionResult: decisionResult.execution_result || null,
+        entityReadiness: await getEntityCloseReadiness({
+          tenantId: input.tenantId,
+          legalEntityId: parsePositiveInt(packRow.legal_entity_id),
+          bookId: parsePositiveInt(packRow.book_id),
+          fiscalPeriodId: parsePositiveInt(packRow.fiscal_period_id),
+          runQuery: tx.query,
+        }),
+      };
+    }
+
+    await assertSoD({
+      tenantId: input.tenantId,
+      userId: input.userId,
+      actionCode: "local.close.reopen.review",
+      recordType: "LOCAL_CLOSE_PACK_REOPEN_REQUEST",
+      recordId: input.requestId,
+      context: {
+        actorUserIds: {
+          requestedByUserId: requestRow.requested_by_user_id,
+          reviewedByUserId: requestRow.reviewed_by_user_id,
+        },
+      },
+    });
 
     const requestActionType = toUpperText(requestRow.requested_action_type);
     let requestStatus = "APPROVED";
@@ -484,7 +788,8 @@ export async function approveLocalClosePackReopenRequest({
        SET request_status = ?,
            reviewed_by_user_id = ?,
            reviewed_at = CURRENT_TIMESTAMP,
-           decision_note = ?
+           decision_note = ?,
+           approval_request_id = COALESCE(?, approval_request_id)
        WHERE tenant_id = ?
          AND local_close_pack_id = ?
          AND id = ?`,
@@ -492,6 +797,7 @@ export async function approveLocalClosePackReopenRequest({
         requestStatus,
         input.userId,
         input.decisionNote || null,
+        bridgedApprovalRequestId || null,
         input.tenantId,
         input.packId,
         input.requestId,
@@ -550,6 +856,8 @@ export async function rejectLocalClosePackReopenRequest({
   req,
   input,
   assertScopeAccess,
+  skipUnifiedApprovalGate = false,
+  approvalRequestId = null,
 }) {
   return withTransaction(async (tx) => {
     const packRow = await loadLocalClosePackHeader({
@@ -579,20 +887,66 @@ export async function rejectLocalClosePackReopenRequest({
       );
     }
 
-    await assertPublishedPeriodGovernanceIfNeeded(req, packRow, requestRow);
+    if (!skipUnifiedApprovalGate) {
+      await assertPublishedPeriodGovernanceIfNeeded(req, packRow, requestRow);
+    }
+
+    const bridgedApprovalRequestId =
+      parsePositiveInt(approvalRequestId) || parsePositiveInt(requestRow.approval_request_id);
+    if (!skipUnifiedApprovalGate && bridgedApprovalRequestId) {
+      const decisionResult = await recordDecision(
+        bridgedApprovalRequestId,
+        input.userId,
+        "REJECT",
+        input.decisionNote || null
+      );
+      const syncedRequestRow = await syncLocalClosePackReopenApprovalRequestBridgeTx({
+        tenantId: input.tenantId,
+        approvalRequestId: bridgedApprovalRequestId,
+        runQuery: tx.query,
+      });
+
+      return {
+        row: mapLocalClosePackReopenRequestRow(syncedRequestRow || requestRow),
+        approvalRequest: decisionResult.item || null,
+        entityReadiness: await getEntityCloseReadiness({
+          tenantId: input.tenantId,
+          legalEntityId: parsePositiveInt(packRow.legal_entity_id),
+          bookId: parsePositiveInt(packRow.book_id),
+          fiscalPeriodId: parsePositiveInt(packRow.fiscal_period_id),
+          runQuery: tx.query,
+        }),
+      };
+    }
+
+    await assertSoD({
+      tenantId: input.tenantId,
+      userId: input.userId,
+      actionCode: "local.close.reopen.review",
+      recordType: "LOCAL_CLOSE_PACK_REOPEN_REQUEST",
+      recordId: input.requestId,
+      context: {
+        actorUserIds: {
+          requestedByUserId: requestRow.requested_by_user_id,
+          reviewedByUserId: requestRow.reviewed_by_user_id,
+        },
+      },
+    });
 
     await tx.query(
       `UPDATE local_close_pack_reopen_requests
        SET request_status = 'REJECTED',
            reviewed_by_user_id = ?,
            reviewed_at = CURRENT_TIMESTAMP,
-           decision_note = ?
+           decision_note = ?,
+           approval_request_id = COALESCE(?, approval_request_id)
        WHERE tenant_id = ?
          AND local_close_pack_id = ?
          AND id = ?`,
       [
         input.userId,
         input.decisionNote || null,
+        bridgedApprovalRequestId || null,
         input.tenantId,
         input.packId,
         input.requestId,
@@ -635,6 +989,68 @@ export async function rejectLocalClosePackReopenRequest({
 }
 
 /**
+ * Execute one approved financial local close-pack reopen request.
+ */
+export async function executeApprovedLocalClosePackReopenRequest({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const requestId = parsePositiveInt(payload?.requestId ?? payload?.request_id);
+  let requestRow =
+    requestId &&
+    (await loadLocalClosePackReopenRequestRow({
+      tenantId,
+      packId: parsePositiveInt(payload?.packId ?? payload?.pack_id),
+      requestId,
+      runQuery: query,
+    }));
+
+  if (!requestRow) {
+    requestRow = await loadLocalClosePackReopenRequestByApprovalRequestId({
+      tenantId,
+      approvalRequestId,
+      runQuery: query,
+    });
+  }
+  if (!requestRow) {
+    throw badRequest("Approved local close-pack reopen payload is missing request identity");
+  }
+
+  return approveLocalClosePackReopenRequest({
+    req: null,
+    input: {
+      tenantId,
+      packId: parsePositiveInt(requestRow.local_close_pack_id),
+      requestId: parsePositiveInt(requestRow.id),
+      userId: parsePositiveInt(approvedByUserId) || null,
+      decisionNote:
+        String(payload?.decisionNote ?? payload?.decision_note ?? "").trim() ||
+        "Approved via unified approval engine",
+    },
+    assertScopeAccess: noopScopeAccess,
+    skipUnifiedApprovalGate: true,
+    approvalRequestId,
+  });
+}
+
+/**
+ * Sync one unified approval request back to its bridged local close-pack reopen request.
+ */
+export async function syncLocalClosePackReopenApprovalRequestBridge({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  return syncLocalClosePackReopenApprovalRequestBridgeTx({
+    tenantId,
+    approvalRequestId,
+    runQuery,
+  });
+}
+
+/**
  * Load the derived entity readiness for the entity/book/period behind one local close pack.
  */
 export async function getLocalClosePackEntityReadinessByPackId({
@@ -668,6 +1084,8 @@ export default {
   createLocalClosePackReopenRequest,
   approveLocalClosePackReopenRequest,
   rejectLocalClosePackReopenRequest,
+  executeApprovedLocalClosePackReopenRequest,
+  syncLocalClosePackReopenApprovalRequestBridge,
   getLocalClosePackEntityReadinessByPackId,
   findBlockingLocalClosePackForJournalAction,
   assertLocalClosePackJournalActionAllowed,

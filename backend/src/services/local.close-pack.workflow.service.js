@@ -9,6 +9,10 @@ import {
   resolveLocalClosePackRowScope,
 } from "./local.close-packs.shared.js";
 import { getRevrecYearEndContinuityReview } from "./revrec.year-end-review.service.js";
+import {
+  cancelUnifiedWorkflowInstanceBridge,
+  ensureUnifiedWorkflowInstanceBridge,
+} from "./workflows.service.js";
 
 const SUBMITTABLE_LOCAL_CLOSE_PACK_STATUSES = new Set([
   "NOT_OPENED",
@@ -887,6 +891,19 @@ async function prepareWorkflowInstanceForSubmission({
     });
   }
 
+  instanceRow = await ensureUnifiedWorkflowInstanceBridge({
+    tenantId,
+    instanceId: parsePositiveInt(instanceRow.id),
+    requestedByUserId: userId,
+    fallbackScope: {
+      groupCompanyId: parsePositiveInt(packRow.group_company_id),
+      legalEntityId: parsePositiveInt(packRow.legal_entity_id),
+      operatingUnitId: parsePositiveInt(packRow.operating_unit_id),
+    },
+    resetToPending: true,
+    runQuery,
+  });
+
   return mapWorkflowGateSummary({
     enabled: true,
     required: true,
@@ -1066,6 +1083,13 @@ async function cancelWorkflowInstanceForReturn({
       parsePositiveInt(instanceRow.id),
     ]
   );
+
+  await cancelUnifiedWorkflowInstanceBridge({
+    tenantId,
+    instanceId: parsePositiveInt(instanceRow.id),
+    resolutionNote: decisionNote || "Returned for correction",
+    runQuery,
+  });
 
   instanceRow = await loadWorkflowInstanceById({
     tenantId,

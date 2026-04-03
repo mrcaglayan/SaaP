@@ -5,15 +5,9 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 import { requireUserId } from "./cash.validators.common.js";
+import { INVENTORY_TRANSFER_STATUS_VALUES } from "../constants/lifecycle.js";
 
-const TRANSFER_STATUS_VALUES = [
-  "INITIATED",
-  "APPROVED",
-  "IN_TRANSIT",
-  "RECEIVED",
-  "CANCELED",
-  "REVERSED",
-];
+const TRANSFER_STATUS_VALUES = [...INVENTORY_TRANSFER_STATUS_VALUES];
 
 function requireTenantId(req) {
   const tenantId = resolveTenantId(req);

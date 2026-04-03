@@ -1,6 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  CASH_TRANSIT_TRANSFER_STATUS_VALUES,
+  INVENTORY_TRANSFER_STATUS_VALUES,
+  STOCK_LANDED_COST_VOUCHER_STATUS_VALUES,
+  STOCK_LANDED_COST_VOUCHER_UI_STATUS_VALUES,
+} from "../src/constants/lifecycle.js";
 
 const errorResponseRef = { $ref: "#/components/responses/ErrorResponse" };
 const createdResponseRef = { $ref: "#/components/responses/CreatedResponse" };
@@ -159,7 +165,7 @@ const CASH_INTEGRATION_LINK_STATUSES = [
   "FAILED",
 ];
 const CASH_FX_FALLBACK_MODES = ["EXACT_ONLY", "PRIOR_DATE"];
-const CASH_TRANSIT_STATUSES = ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"];
+const CASH_TRANSIT_STATUSES = [...CASH_TRANSIT_TRANSFER_STATUS_VALUES];
 
 function normalizeApiPath(input) {
   const normalized = String(input || "")
@@ -2539,7 +2545,7 @@ function applyCashOperationOverrides(specObject) {
         "status",
         {
           type: "string",
-          enum: ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"],
+          enum: [...CASH_TRANSIT_TRANSFER_STATUS_VALUES],
         },
         false,
         "Transit status filter"
@@ -2676,7 +2682,7 @@ function applyInventoryOperationOverrides(specObject) {
     },
     InventoryTransferStatus: {
       type: "string",
-      enum: ["INITIATED", "APPROVED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"],
+      enum: [...INVENTORY_TRANSFER_STATUS_VALUES],
     },
     InventoryTransferEvidenceStatus: {
       type: "string",
@@ -3431,11 +3437,11 @@ function applyInventoryOperationOverrides(specObject) {
     },
     InventoryLandedCostVoucherStatus: {
       type: "string",
-      enum: ["DRAFT", "POSTED", "REVERSED", "CANCELED"],
+      enum: [...STOCK_LANDED_COST_VOUCHER_STATUS_VALUES],
     },
     InventoryLandedCostVoucherUiStatus: {
       type: "string",
-      enum: ["DRAFT", "POSTED", "REVERSED", "CANCELED", "REVERSAL_BLOCKED"],
+      enum: [...STOCK_LANDED_COST_VOUCHER_UI_STATUS_VALUES],
     },
     InventoryLandedCostAllocationMethod: {
       type: "string",

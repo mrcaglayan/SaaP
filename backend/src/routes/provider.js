@@ -5,6 +5,12 @@ import { query, withTransaction } from "../db.js";
 import { invalidateRbacCache } from "../middleware/rbac.js";
 import { normalizeFeatureCode } from "../services/features.catalog.js";
 import {
+  assignCompatibilityBootstrapRolesToUser,
+  ensureCompatibilitySystemRolesForTenant,
+  SECURITY_ADMIN_ROLE_CODE,
+  SYSTEM_ADMIN_ROLE_CODE,
+} from "../services/systemRoles.service.js";
+import {
   asyncHandler,
   assertRequiredFields,
   badRequest,
@@ -327,51 +333,21 @@ async function getProviderTenantRow(tenantId) {
   return result.rows[0] ? mapTenantRow(result.rows[0]) : null;
 }
 
-async function ensureTenantAdminRole(tx, tenantId) {
-  const roleResult = await tx.query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId]
-  );
-  let roleId = parsePositiveInt(roleResult.rows[0]?.id);
-
-  if (!roleId) {
-    const insertRoleResult = await tx.query(
-      `INSERT INTO roles (tenant_id, code, name, is_system)
-       VALUES (?, 'TenantAdmin', 'Tenant Administrator', TRUE)`,
-      [tenantId]
-    );
-    roleId = parsePositiveInt(insertRoleResult.rows.insertId);
+async function ensureCompatibilityBootstrapRoles(tx, tenantId) {
+  try {
+    return await ensureCompatibilitySystemRolesForTenant(tenantId, {
+      runQuery: (sql, params) => tx.query(sql, params),
+    });
+  } catch (error) {
+    if (
+      String(error?.message || "").includes("Permissions catalog is empty")
+    ) {
+      throw badRequest(
+        "Permissions catalog is empty. Run core seed before provider provisioning."
+      );
+    }
+    throw error;
   }
-
-  if (!roleId) {
-    throw new Error("Failed to initialize TenantAdmin role");
-  }
-
-  const permissionResult = await tx.query(`SELECT id FROM permissions ORDER BY id`);
-  const permissionIds = (permissionResult.rows || [])
-    .map((row) => parsePositiveInt(row.id))
-    .filter(Boolean);
-
-  if (permissionIds.length === 0) {
-    throw badRequest(
-      "Permissions catalog is empty. Run core seed before provider provisioning."
-    );
-  }
-
-  for (const permissionId of permissionIds) {
-    // eslint-disable-next-line no-await-in-loop
-    await tx.query(
-      `INSERT IGNORE INTO role_permissions (role_id, permission_id)
-       VALUES (?, ?)`,
-      [roleId, permissionId]
-    );
-  }
-
-  return roleId;
 }
 
 async function upsertTenantFeature(tx, { tenantId, featureCode, isEnabled }) {
@@ -437,7 +413,12 @@ async function createTenantWithAdmin(tx, input) {
     throw new Error("Failed to create tenant");
   }
 
-  const roleId = await ensureTenantAdminRole(tx, tenantId);
+  const roleIdsByCode = await ensureCompatibilityBootstrapRoles(tx, tenantId);
+  const securityAdminRoleId = roleIdsByCode.get(SECURITY_ADMIN_ROLE_CODE);
+  const systemAdminRoleId = roleIdsByCode.get(SYSTEM_ADMIN_ROLE_CODE);
+  if (!securityAdminRoleId || !systemAdminRoleId) {
+    throw new Error("Failed to initialize compatibility admin roles");
+  }
 
   const userInsertResult = await tx.query(
     `INSERT INTO users (
@@ -455,20 +436,10 @@ async function createTenantWithAdmin(tx, input) {
     throw new Error("Failed to create admin user");
   }
 
-  await tx.query(
-    `INSERT INTO user_role_scopes (
-        tenant_id,
-        user_id,
-        role_id,
-        scope_type,
-        scope_id,
-        effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
+  await assignCompatibilityBootstrapRolesToUser(tenantId, userId, {
+    runQuery: (sql, params) => tx.query(sql, params),
+    roleIdsByCode,
+  });
 
   await upsertTenantFeature(tx, {
     tenantId,
@@ -483,7 +454,11 @@ async function createTenantWithAdmin(tx, input) {
     adminUserId: userId,
     adminEmail,
     adminName,
-    adminRoleId: roleId,
+    adminRoleId: securityAdminRoleId,
+    adminRoleIds: {
+      [SECURITY_ADMIN_ROLE_CODE]: securityAdminRoleId,
+      [SYSTEM_ADMIN_ROLE_CODE]: systemAdminRoleId,
+    },
     taxEngineEnabled: enableTaxEngine,
   };
 }

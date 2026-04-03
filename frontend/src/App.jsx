@@ -18,13 +18,19 @@ import WorkflowSetupPage from "./pages/settings/WorkflowSetupPage.jsx";
 import GlReclassificationPage from "./pages/settings/GlReclassificationPage.jsx";
 import HesapPlaniOlustur from "./pages/settings/HesapPlaniOlustur";
 import OrganizationManagementPage from "./pages/settings/OrganizationManagementPage";
+import MyDelegationsPage from "./pages/settings/MyDelegationsPage.jsx";
 import FxRatesPage from "./pages/settings/FxRatesPage";
 import ConsolidationSetupPage from "./pages/settings/ConsolidationSetupPage";
 import TaxSetupPage from "./pages/settings/TaxSetupPage.jsx";
 import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
+import FieldVisibilityPoliciesPage from "./pages/security/FieldVisibilityPoliciesPage.jsx";
+import ApprovalDelegationsPage from "./pages/security/ApprovalDelegationsPage.jsx";
 import UserAssignmentsPage from "./pages/security/UserAssignmentsPage";
 import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
 import BranchOperatorManagementPage from "./pages/security/BranchOperatorManagementPage.jsx";
+import RoleMigrationsPage from "./pages/security/RoleMigrationsPage.jsx";
+import AccessDebuggerPage from "./pages/security/AccessDebuggerPage.jsx";
+import ComplianceReportsPage from "./pages/security/ComplianceReportsPage.jsx";
 import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
 import RawAuditLogsPage from "./pages/security/RawAuditLogsPage.jsx";
 import SensitiveDataAuditPage from "./pages/security/SensitiveDataAuditPage.jsx";
@@ -630,6 +636,11 @@ const implementedRoutes = [
     element: <GlReclassificationPage />,
   },
   {
+    appPath: "/app/ayarlar/delegasyonlarim",
+    childPath: "ayarlar/delegasyonlarim",
+    element: <MyDelegationsPage />,
+  },
+  {
     appPath: "/app/ayarlar/sirket-ayarlari",
     childPath: "ayarlar/sirket-ayarlari",
     element: <CompanyOnboardingPage />,
@@ -673,6 +684,31 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/rbac/scope-assignments",
     childPath: "ayarlar/rbac/scope-assignments",
     element: <ScopeAssignmentsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/field-visibility-policies",
+    childPath: "ayarlar/rbac/field-visibility-policies",
+    element: <FieldVisibilityPoliciesPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/role-migrations",
+    childPath: "ayarlar/rbac/role-migrations",
+    element: <RoleMigrationsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/delegations",
+    childPath: "ayarlar/rbac/delegations",
+    element: <ApprovalDelegationsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/access-debugger",
+    childPath: "ayarlar/rbac/access-debugger",
+    element: <AccessDebuggerPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/compliance-reports",
+    childPath: "ayarlar/rbac/compliance-reports",
+    element: <ComplianceReportsPage />,
   },
   {
     appPath: "/app/ayarlar/rbac/audit-logs",

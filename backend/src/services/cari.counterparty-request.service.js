@@ -1,6 +1,17 @@
 import { query, withTransaction } from "../db.js";
-import { getScopeContext, hasScopeAccess } from "../middleware/rbac.js";
+import { getVisibilityScope, hasScopeAccess } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import {
+  buildVisibilityScopeWhereClause,
+  loadUserPermissionCodes,
+} from "./authz.scope.service.js";
+import {
+  evaluateApprovalNeed,
+  recordDecision,
+  registerApprovalExecutionResolver,
+  submitRequest,
+} from "./approval.engine.service.js";
+import { assertSoD } from "./sod.service.js";
 import {
   assertCountryExists,
   assertLegalEntityBelongsToTenant,
@@ -11,6 +22,11 @@ import { createCounterpartyTx } from "./cari.counterparty.service.js";
 const REQUEST_STATUS_PENDING = "PENDING";
 const REQUEST_STATUS_APPROVED = "APPROVED";
 const REQUEST_STATUS_REJECTED = "REJECTED";
+const REQUEST_STATUS_CANCELLED = "CANCELLED";
+const CARI_COUNTERPARTY_APPROVAL_TARGET_TYPE = "COUNTERPARTY_REQUEST";
+const CARI_COUNTERPARTY_APPROVAL_ACTION_TYPE = "CREATE";
+const CARI_COUNTERPARTY_APPROVAL_EXECUTION_RESOLVER_KEY =
+  "CARI_COUNTERPARTY_REQUEST_CREATE";
 
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
@@ -85,9 +101,90 @@ function buildRequestRoleCode({ isCustomer, isVendor }) {
   return "OTHER";
 }
 
+function toUpper(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function isCounterpartyUnifiedApprovalEnabled() {
+  const raw = String(
+    process.env.CARI_COUNTERPARTY_REQUEST_UNIFIED_APPROVAL ?? "1"
+  ).trim();
+  return !["0", "false", "off", "no"].includes(raw.toLowerCase());
+}
+
+function mapEffectiveRequestStatus(row) {
+  const approvalRequestStatus = toUpper(
+    row?.approval_request_status ?? row?.approvalRequestStatus
+  );
+  if (!approvalRequestStatus) {
+    return row?.request_status || REQUEST_STATUS_PENDING;
+  }
+  if (approvalRequestStatus === "APPROVED") {
+    return REQUEST_STATUS_APPROVED;
+  }
+  if (approvalRequestStatus === "REJECTED") {
+    return REQUEST_STATUS_REJECTED;
+  }
+  if (approvalRequestStatus === "WITHDRAWN") {
+    return REQUEST_STATUS_CANCELLED;
+  }
+  return REQUEST_STATUS_PENDING;
+}
+
+function buildApprovalRequestSummary(row) {
+  const approvalRequestId = parsePositiveInt(
+    row?.approval_request_id ?? row?.approvalRequestId
+  );
+  if (!approvalRequestId) {
+    return null;
+  }
+  return {
+    id: approvalRequestId,
+    requestCode: row.approval_request_code || null,
+    requestStatus: toUpper(row.approval_request_status) || null,
+    executionStatus: toUpper(row.approval_execution_status) || null,
+    currentStepNo: Number(row.approval_current_step_no || 1),
+    scopeType: toUpper(row.approval_scope_type) || null,
+    scopeId: parsePositiveInt(row.approval_scope_id),
+    submittedByUserId: parsePositiveInt(row.approval_submitted_by_user_id),
+    executedByUserId: parsePositiveInt(row.approval_executed_by_user_id),
+    submittedAt: row.approval_submitted_at || null,
+    approvedAt: row.approval_approved_at || null,
+    rejectedAt: row.approval_rejected_at || null,
+    withdrawnAt: row.approval_withdrawn_at || null,
+    executedAt: row.approval_executed_at || null,
+    executionErrorText: row.approval_execution_error_text || null,
+  };
+}
+
+function buildUnifiedRequestScope(row) {
+  const approvalScopeType = toUpper(row?.approval_scope_type);
+  const approvalScopeId = parsePositiveInt(row?.approval_scope_id);
+  if (approvalScopeType && approvalScopeId) {
+    return {
+      scopeType: approvalScopeType,
+      scopeId: approvalScopeId,
+    };
+  }
+  const primaryOperatingUnitId = parsePositiveInt(row?.primary_operating_unit_id);
+  if (primaryOperatingUnitId) {
+    return {
+      scopeType: "OPERATING_UNIT",
+      scopeId: primaryOperatingUnitId,
+    };
+  }
+  return {
+    scopeType: "LEGAL_ENTITY",
+    scopeId: parsePositiveInt(row?.legal_entity_id),
+  };
+}
+
 function mapCounterpartyRequestRow(row) {
   const isCustomer = parseDbBoolean(row.is_customer);
   const isVendor = parseDbBoolean(row.is_vendor);
+  const approvalRequest = buildApprovalRequestSummary(row);
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -98,7 +195,8 @@ function mapCounterpartyRequestRow(row) {
     isCustomer,
     isVendor,
     requestRole: buildRequestRoleCode({ isCustomer, isVendor }),
-    requestStatus: row.request_status || REQUEST_STATUS_PENDING,
+    requestStatus:
+      row.effective_request_status || mapEffectiveRequestStatus(row) || REQUEST_STATUS_PENDING,
     requestedPayload: parseStoredJson(row.requested_payload_json),
     requestedByUserId: parsePositiveInt(row.requested_by_user_id),
     requestedByUserName: row.requested_by_user_name || null,
@@ -111,6 +209,7 @@ function mapCounterpartyRequestRow(row) {
     decidedAt: row.decided_at || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
+    approvalRequest,
   };
 }
 
@@ -198,61 +297,22 @@ async function insertCounterpartyRequestAuditLog({
   );
 }
 
-async function loadUserPermissionCodes({ tenantId, userId, runQuery = query }) {
-  if (!parsePositiveInt(tenantId) || !parsePositiveInt(userId)) {
-    return [];
-  }
-  const result = await runQuery(
-    `SELECT
-       p.code,
-       SUM(CASE WHEN urs.effect = 'ALLOW' THEN 1 ELSE 0 END) AS allow_count,
-       SUM(CASE WHEN urs.effect = 'DENY' AND urs.scope_type = 'TENANT' THEN 1 ELSE 0 END) AS tenant_deny_count
-     FROM user_role_scopes urs
-     JOIN roles r ON r.id = urs.role_id
-     JOIN role_permissions rp ON rp.role_id = r.id
-     JOIN permissions p ON p.id = rp.permission_id
-     WHERE urs.user_id = ?
-       AND urs.tenant_id = ?
-     GROUP BY p.code
-     HAVING allow_count > 0
-        AND tenant_deny_count = 0`,
-    [userId, tenantId]
-  );
-  return (result.rows || []).map((row) => String(row.code || "").trim()).filter(Boolean);
-}
-
 function buildCounterpartyRequestScopeWhere(req, params) {
-  const scopeContext = getScopeContext(req);
-  if (!scopeContext) {
-    return "1 = 0";
-  }
-  if (scopeContext.tenantWide) {
-    return "1 = 1";
-  }
-
-  const clauses = [];
-  const legalEntityIds = Array.from(scopeContext.legalEntities || []).filter(Boolean);
-  const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
-
-  if (legalEntityIds.length > 0) {
-    params.push(...legalEntityIds);
-    clauses.push(`r.legal_entity_id IN (${legalEntityIds.map(() => "?").join(", ")})`);
-  }
-  if (operatingUnitIds.length > 0) {
-    params.push(...operatingUnitIds);
-    clauses.push(
-      `(
-         r.primary_operating_unit_id IS NOT NULL
-         AND r.primary_operating_unit_id IN (${operatingUnitIds.map(() => "?").join(", ")})
-       )`
-    );
-  }
-
-  if (clauses.length === 0) {
-    return "1 = 0";
-  }
-  return `(${clauses.join(" OR ")})`;
+  return buildVisibilityScopeWhereClause(getVisibilityScope(req), params, {
+    LEGAL_ENTITY: { idColumn: "r.legal_entity_id" },
+    OPERATING_UNIT: { idColumn: "r.primary_operating_unit_id" },
+  });
 }
+
+const COUNTERPARTY_REQUEST_EFFECTIVE_STATUS_SQL = `
+  CASE
+    WHEN ar.id IS NULL THEN r.request_status
+    WHEN ar.request_status = 'APPROVED' THEN 'APPROVED'
+    WHEN ar.request_status = 'REJECTED' THEN 'REJECTED'
+    WHEN ar.request_status = 'WITHDRAWN' THEN 'CANCELLED'
+    ELSE 'PENDING'
+  END
+`;
 
 async function fetchCounterpartyRequestRow({
   tenantId,
@@ -263,8 +323,24 @@ async function fetchCounterpartyRequestRow({
   const result = await runQuery(
     `SELECT
         r.*,
+        ${COUNTERPARTY_REQUEST_EFFECTIVE_STATUS_SQL} AS effective_request_status,
         requester.name AS requested_by_user_name,
         decider.name AS decided_by_user_name,
+        ar.id AS approval_request_id,
+        ar.request_code AS approval_request_code,
+        ar.request_status AS approval_request_status,
+        ar.current_step_no AS approval_current_step_no,
+        ar.execution_status AS approval_execution_status,
+        ar.scope_type AS approval_scope_type,
+        ar.scope_id AS approval_scope_id,
+        ar.submitted_by_user_id AS approval_submitted_by_user_id,
+        ar.executed_by_user_id AS approval_executed_by_user_id,
+        ar.submitted_at AS approval_submitted_at,
+        ar.approved_at AS approval_approved_at,
+        ar.rejected_at AS approval_rejected_at,
+        ar.withdrawn_at AS approval_withdrawn_at,
+        ar.executed_at AS approval_executed_at,
+        ar.execution_error_text AS approval_execution_error_text,
         cp.code AS created_counterparty_code,
         cp.name AS created_counterparty_name
      FROM counterparty_requests r
@@ -274,6 +350,9 @@ async function fetchCounterpartyRequestRow({
      LEFT JOIN users decider
        ON decider.tenant_id = r.tenant_id
       AND decider.id = r.decided_by_user_id
+     LEFT JOIN approval_requests ar
+       ON ar.tenant_id = r.tenant_id
+      AND ar.id = r.approval_request_id
      LEFT JOIN counterparties cp
        ON cp.tenant_id = r.tenant_id
       AND cp.legal_entity_id = r.legal_entity_id
@@ -286,8 +365,157 @@ async function fetchCounterpartyRequestRow({
   return result.rows?.[0] || null;
 }
 
+async function applyUnifiedCounterpartyApprovalExecution({
+  request,
+  executedByUserId,
+}) {
+  return withTransaction(async (tx) => {
+    const requestRow = await fetchCounterpartyRequestRow({
+      tenantId: request.tenantId,
+      requestId: request.targetId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!requestRow) {
+      throw badRequest("Counterparty request not found for approval execution");
+    }
+
+    if (parsePositiveInt(requestRow.created_counterparty_id)) {
+      return {
+        request: mapCounterpartyRequestRow(requestRow),
+        counterparty: {
+          id: parsePositiveInt(requestRow.created_counterparty_id),
+          code: requestRow.created_counterparty_code || null,
+          name: requestRow.created_counterparty_name || null,
+        },
+      };
+    }
+
+    const requestedPayload = parseStoredJson(requestRow.requested_payload_json);
+    if (!requestedPayload || typeof requestedPayload !== "object") {
+      throw badRequest("Requested payload is missing or invalid");
+    }
+
+    let createdRow;
+    try {
+      createdRow = await createCounterpartyTx({
+        req: {
+          headers: {},
+          requestId: request.requestCode || null,
+        },
+        payload: {
+          ...requestedPayload,
+          tenantId: request.tenantId,
+          userId: parsePositiveInt(executedByUserId) || null,
+        },
+        runQuery: tx.query,
+        skipScopeAccessValidation: true,
+      });
+    } catch (err) {
+      if (Number(err?.errno) === 1062) {
+        throw badRequest("Counterparty code must be unique within tenant and legalEntityId");
+      }
+      throw err;
+    }
+
+    await tx.query(
+      `UPDATE counterparty_requests
+       SET request_status = ?,
+           decided_by_user_id = COALESCE(?, decided_by_user_id),
+           created_counterparty_id = ?,
+           decided_at = COALESCE(decided_at, CURRENT_TIMESTAMP)
+       WHERE tenant_id = ?
+         AND id = ?`,
+      [
+        REQUEST_STATUS_APPROVED,
+        parsePositiveInt(executedByUserId) || null,
+        createdRow.id,
+        request.tenantId,
+        request.targetId,
+      ]
+    );
+
+    const approvedRow = await fetchCounterpartyRequestRow({
+      tenantId: request.tenantId,
+      requestId: request.targetId,
+      runQuery: tx.query,
+    });
+    return {
+      request: mapCounterpartyRequestRow(approvedRow),
+      counterparty: createdRow,
+    };
+  });
+}
+
+function ensureCounterpartyApprovalResolverRegistered() {
+  registerApprovalExecutionResolver(CARI_COUNTERPARTY_APPROVAL_EXECUTION_RESOLVER_KEY, {
+    async execute({ request, executedByUserId }) {
+      return applyUnifiedCounterpartyApprovalExecution({
+        request,
+        executedByUserId,
+      });
+    },
+  });
+}
+
+async function syncCounterpartyRequestDecisionState({
+  req,
+  tenantId,
+  requestId,
+  userId,
+  decisionComment,
+  requestStatus,
+  action,
+  createdCounterpartyId = null,
+  runQuery = query,
+}) {
+  const requestRow = await fetchCounterpartyRequestRow({
+    tenantId,
+    requestId,
+    runQuery,
+  });
+  if (!requestRow) {
+    throw badRequest("Counterparty request not found");
+  }
+
+  await runQuery(
+    `UPDATE counterparty_requests
+     SET request_status = ?,
+         decision_comment = ?,
+         decided_by_user_id = ?,
+         created_counterparty_id = COALESCE(?, created_counterparty_id),
+         decided_at = CURRENT_TIMESTAMP
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [
+      requestStatus,
+      decisionComment || null,
+      parsePositiveInt(userId) || null,
+      parsePositiveInt(createdCounterpartyId) || null,
+      tenantId,
+      requestId,
+    ]
+  );
+
+  await insertCounterpartyRequestAuditLog({
+    req,
+    runQuery,
+    tenantId,
+    userId,
+    action,
+    requestId,
+    legalEntityId: parsePositiveInt(requestRow.legal_entity_id),
+    payload: {
+      decisionComment: decisionComment || null,
+      approvalRequestId: parsePositiveInt(requestRow.approval_request_id) || null,
+      finalApproval: requestStatus === REQUEST_STATUS_APPROVED,
+      createdCounterpartyId: parsePositiveInt(createdCounterpartyId) || null,
+    },
+  });
+}
+
 /**
- * Resolve one request to its legal-entity scope for route protection.
+ * Resolve one request to its authoritative review scope for route protection.
  */
 export async function resolveCounterpartyRequestScope(requestId, tenantId) {
   const parsedRequestId = parsePositiveInt(requestId);
@@ -302,10 +530,7 @@ export async function resolveCounterpartyRequestScope(requestId, tenantId) {
   if (!row) {
     return null;
   }
-  return {
-    scopeType: "LEGAL_ENTITY",
-    scopeId: parsePositiveInt(row.legal_entity_id),
-  };
+  return buildUnifiedRequestScope(row);
 }
 
 /**
@@ -319,7 +544,7 @@ export async function listCounterpartyRequestRows({
 }) {
   const userId = parsePositiveInt(req.user?.userId);
   const permissionCodes = await loadUserPermissionCodes({ tenantId, userId });
-  const canReviewAll = permissionCodes.includes("cari.card.upsert");
+  const canReviewAll = permissionCodes.includes("cari.request.review");
   const params = [tenantId];
   const conditions = ["r.tenant_id = ?"];
 
@@ -341,7 +566,7 @@ export async function listCounterpartyRequestRows({
     params.push(filters.primaryOperatingUnitId);
   }
   if (filters.status) {
-    conditions.push("r.request_status = ?");
+    conditions.push(`(${COUNTERPARTY_REQUEST_EFFECTIVE_STATUS_SQL}) = ?`);
     params.push(filters.status);
   }
   if (filters.role === "CUSTOMER") {
@@ -370,6 +595,9 @@ export async function listCounterpartyRequestRows({
   const totalResult = await query(
     `SELECT COUNT(*) AS row_count
      FROM counterparty_requests r
+     LEFT JOIN approval_requests ar
+       ON ar.tenant_id = r.tenant_id
+      AND ar.id = r.approval_request_id
      WHERE ${whereSql}`,
     params
   );
@@ -378,8 +606,24 @@ export async function listCounterpartyRequestRows({
   const result = await query(
     `SELECT
         r.*,
+        ${COUNTERPARTY_REQUEST_EFFECTIVE_STATUS_SQL} AS effective_request_status,
         requester.name AS requested_by_user_name,
         decider.name AS decided_by_user_name,
+        ar.id AS approval_request_id,
+        ar.request_code AS approval_request_code,
+        ar.request_status AS approval_request_status,
+        ar.current_step_no AS approval_current_step_no,
+        ar.execution_status AS approval_execution_status,
+        ar.scope_type AS approval_scope_type,
+        ar.scope_id AS approval_scope_id,
+        ar.submitted_by_user_id AS approval_submitted_by_user_id,
+        ar.executed_by_user_id AS approval_executed_by_user_id,
+        ar.submitted_at AS approval_submitted_at,
+        ar.approved_at AS approval_approved_at,
+        ar.rejected_at AS approval_rejected_at,
+        ar.withdrawn_at AS approval_withdrawn_at,
+        ar.executed_at AS approval_executed_at,
+        ar.execution_error_text AS approval_execution_error_text,
         cp.code AS created_counterparty_code,
         cp.name AS created_counterparty_name
      FROM counterparty_requests r
@@ -389,13 +633,16 @@ export async function listCounterpartyRequestRows({
      LEFT JOIN users decider
        ON decider.tenant_id = r.tenant_id
       AND decider.id = r.decided_by_user_id
+     LEFT JOIN approval_requests ar
+       ON ar.tenant_id = r.tenant_id
+      AND ar.id = r.approval_request_id
      LEFT JOIN counterparties cp
        ON cp.tenant_id = r.tenant_id
       AND cp.legal_entity_id = r.legal_entity_id
       AND cp.id = r.created_counterparty_id
      WHERE ${whereSql}
      ORDER BY
-       CASE r.request_status
+       CASE (${COUNTERPARTY_REQUEST_EFFECTIVE_STATUS_SQL})
          WHEN 'PENDING' THEN 0
          WHEN 'APPROVED' THEN 1
          WHEN 'REJECTED' THEN 2
@@ -414,48 +661,15 @@ export async function listCounterpartyRequestRows({
   };
 }
 
-/**
- * Submit one counterparty request without direct master upsert.
- */
-export async function createCounterpartyRequest({
+async function createCounterpartyRequestLegacy({
   req,
   payload,
-  assertScopeAccess,
+  tenantId,
+  legalEntityId,
+  primaryOperatingUnitId,
+  requestedOperatingUnitIds,
+  storedPayload,
 }) {
-  const tenantId = payload.tenantId;
-  const legalEntityId = payload.legalEntityId;
-  const primaryOperatingUnitId = parsePositiveInt(payload.primaryOperatingUnitId);
-
-  await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
-  const requestedOperatingUnitIds = await assertRequestedOperatingUnits({
-    tenantId,
-    legalEntityId,
-    primaryOperatingUnitId,
-    operatingUnitIds: payload.operatingUnitIds,
-  });
-
-  await assertRequestedCountriesExist(payload.addresses);
-
-  const hasLegalEntityScope = hasScopeAccess(req, "legal_entity", legalEntityId);
-  if (hasLegalEntityScope) {
-    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
-  } else {
-    if (requestedOperatingUnitIds.length === 0) {
-      throw badRequest(
-        "primaryOperatingUnitId or operatingUnitIds is required when requester lacks legalEntity scope"
-      );
-    }
-    for (const operatingUnitId of requestedOperatingUnitIds) {
-      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitIds[]");
-    }
-  }
-
-  const storedPayload = {
-    ...payload,
-    operatingUnitIds: requestedOperatingUnitIds,
-    primaryOperatingUnitId,
-  };
-
   return withTransaction(async (tx) => {
     const insertResult = await tx.query(
       `INSERT INTO counterparty_requests (
@@ -515,10 +729,7 @@ export async function createCounterpartyRequest({
   });
 }
 
-/**
- * Approve one pending request and create the live counterparty card.
- */
-export async function approveCounterpartyRequestById({
+async function approveCounterpartyRequestByIdLegacy({
   req,
   tenantId,
   requestId,
@@ -536,15 +747,25 @@ export async function approveCounterpartyRequestById({
     if (!requestRow) {
       throw badRequest("Counterparty request not found");
     }
-    assertScopeAccess(req, "legal_entity", requestRow.legal_entity_id, "requestId");
+    const requestScope = buildUnifiedRequestScope(requestRow);
+    assertScopeAccess(req, requestScope.scopeType.toLowerCase(), requestScope.scopeId, "requestId");
     if (String(requestRow.request_status || "").toUpperCase() !== REQUEST_STATUS_PENDING) {
       throw badRequest(
         `Only PENDING requests can be approved (current: ${requestRow.request_status || "-"})`
       );
     }
-    if (parsePositiveInt(requestRow.requested_by_user_id) === parsePositiveInt(userId)) {
-      throw forbiddenError("Maker-checker violation: requester cannot approve own request");
-    }
+    await assertSoD({
+      tenantId,
+      userId,
+      actionCode: "cari.request.review",
+      recordType: "COUNTERPARTY_REQUEST",
+      recordId: requestId,
+      context: {
+        actorUserIds: {
+          requestedByUserId: requestRow.requested_by_user_id,
+        },
+      },
+    });
 
     const requestedPayload = parseStoredJson(requestRow.requested_payload_json);
     if (!requestedPayload || typeof requestedPayload !== "object") {
@@ -560,8 +781,8 @@ export async function approveCounterpartyRequestById({
           tenantId,
           userId,
         },
-        assertScopeAccess,
         runQuery: tx.query,
+        skipScopeAccessValidation: true,
       });
     } catch (err) {
       if (Number(err?.errno) === 1062) {
@@ -615,10 +836,7 @@ export async function approveCounterpartyRequestById({
   });
 }
 
-/**
- * Reject one pending request without creating a live counterparty.
- */
-export async function rejectCounterpartyRequestById({
+async function rejectCounterpartyRequestByIdLegacy({
   req,
   tenantId,
   requestId,
@@ -636,15 +854,25 @@ export async function rejectCounterpartyRequestById({
     if (!requestRow) {
       throw badRequest("Counterparty request not found");
     }
-    assertScopeAccess(req, "legal_entity", requestRow.legal_entity_id, "requestId");
+    const requestScope = buildUnifiedRequestScope(requestRow);
+    assertScopeAccess(req, requestScope.scopeType.toLowerCase(), requestScope.scopeId, "requestId");
     if (String(requestRow.request_status || "").toUpperCase() !== REQUEST_STATUS_PENDING) {
       throw badRequest(
         `Only PENDING requests can be rejected (current: ${requestRow.request_status || "-"})`
       );
     }
-    if (parsePositiveInt(requestRow.requested_by_user_id) === parsePositiveInt(userId)) {
-      throw forbiddenError("Maker-checker violation: requester cannot reject own request");
-    }
+    await assertSoD({
+      tenantId,
+      userId,
+      actionCode: "cari.request.review",
+      recordType: "COUNTERPARTY_REQUEST",
+      recordId: requestId,
+      context: {
+        actorUserIds: {
+          requestedByUserId: requestRow.requested_by_user_id,
+        },
+      },
+    });
 
     await tx.query(
       `UPDATE counterparty_requests
@@ -683,4 +911,337 @@ export async function rejectCounterpartyRequestById({
     });
     return mapCounterpartyRequestRow(rejectedRow);
   });
+}
+
+/**
+ * Submit one counterparty request without granting direct master-data edit power.
+ */
+export async function createCounterpartyRequest({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  const tenantId = payload.tenantId;
+  const legalEntityId = payload.legalEntityId;
+  const requestedPrimaryOperatingUnitId = parsePositiveInt(payload.primaryOperatingUnitId);
+
+  await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+  const requestedOperatingUnitIds = await assertRequestedOperatingUnits({
+    tenantId,
+    legalEntityId,
+    primaryOperatingUnitId: requestedPrimaryOperatingUnitId,
+    operatingUnitIds: payload.operatingUnitIds,
+  });
+  const primaryOperatingUnitId =
+    requestedPrimaryOperatingUnitId || requestedOperatingUnitIds[0] || null;
+
+  await assertRequestedCountriesExist(payload.addresses);
+
+  const hasLegalEntityScope = hasScopeAccess(req, "legal_entity", legalEntityId);
+  if (hasLegalEntityScope) {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+  } else {
+    if (requestedOperatingUnitIds.length === 0) {
+      throw badRequest(
+        "primaryOperatingUnitId or operatingUnitIds is required when requester lacks legalEntity scope"
+      );
+    }
+    for (const operatingUnitId of requestedOperatingUnitIds) {
+      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitIds[]");
+    }
+  }
+
+  const storedPayload = {
+    ...payload,
+    operatingUnitIds: requestedOperatingUnitIds,
+    primaryOperatingUnitId,
+  };
+
+  if (!isCounterpartyUnifiedApprovalEnabled()) {
+    return createCounterpartyRequestLegacy({
+      req,
+      payload,
+      tenantId,
+      legalEntityId,
+      primaryOperatingUnitId,
+      requestedOperatingUnitIds,
+      storedPayload,
+    });
+  }
+
+  const approvalNeed = await evaluateApprovalNeed(
+    "CARI",
+    CARI_COUNTERPARTY_APPROVAL_TARGET_TYPE,
+    CARI_COUNTERPARTY_APPROVAL_ACTION_TYPE,
+    {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: primaryOperatingUnitId || null,
+    }
+  );
+
+  if (!approvalNeed?.approvalRequired || !parsePositiveInt(approvalNeed?.policy?.id)) {
+    return createCounterpartyRequestLegacy({
+      req,
+      payload,
+      tenantId,
+      legalEntityId,
+      primaryOperatingUnitId,
+      requestedOperatingUnitIds,
+      storedPayload,
+    });
+  }
+
+  ensureCounterpartyApprovalResolverRegistered();
+
+  return withTransaction(async (tx) => {
+    const insertResult = await tx.query(
+      `INSERT INTO counterparty_requests (
+          tenant_id,
+          legal_entity_id,
+          primary_operating_unit_id,
+          code,
+          name,
+          is_customer,
+          is_vendor,
+          request_status,
+          requested_payload_json,
+          requested_by_user_id
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        primaryOperatingUnitId || null,
+        payload.code,
+        payload.name,
+        payload.isCustomer ? 1 : 0,
+        payload.isVendor ? 1 : 0,
+        safeStringify(storedPayload),
+        payload.userId,
+      ]
+    );
+    const requestId = parsePositiveInt(insertResult.rows?.insertId);
+    if (!requestId) {
+      throw new Error("Counterparty request create failed");
+    }
+
+    const submitRes = await submitRequest(
+      approvalNeed.policy.id,
+      CARI_COUNTERPARTY_APPROVAL_TARGET_TYPE,
+      requestId,
+      { tenantId, userId: payload.userId },
+      {
+        legalEntityId,
+        operatingUnitId: primaryOperatingUnitId || null,
+        scopeType: approvalNeed.requestScope?.scopeType || null,
+        scopeId: approvalNeed.requestScope?.scopeId || null,
+        idempotencyKey: `CARI_COUNTERPARTY_REQUEST:${tenantId}:${requestId}`,
+        targetSnapshot: {
+          counterpartyRequestId: requestId,
+          code: payload.code,
+          name: payload.name,
+          executionResolverKey: CARI_COUNTERPARTY_APPROVAL_EXECUTION_RESOLVER_KEY,
+        },
+        actionPayload: {
+          executionResolverKey: CARI_COUNTERPARTY_APPROVAL_EXECUTION_RESOLVER_KEY,
+        },
+      },
+      { runQuery: tx.query }
+    );
+
+    await tx.query(
+      `UPDATE counterparty_requests
+       SET approval_request_id = ?
+       WHERE tenant_id = ?
+         AND id = ?`,
+      [parsePositiveInt(submitRes.item?.id) || null, tenantId, requestId]
+    );
+
+    await insertCounterpartyRequestAuditLog({
+      req,
+      runQuery: tx.query,
+      tenantId,
+      userId: payload.userId,
+      action: "cari.counterparty_request.submit",
+      requestId,
+      legalEntityId,
+      payload: {
+        code: payload.code,
+        name: payload.name,
+        isCustomer: Boolean(payload.isCustomer),
+        isVendor: Boolean(payload.isVendor),
+        primaryOperatingUnitId: primaryOperatingUnitId || null,
+        operatingUnitIds: requestedOperatingUnitIds,
+        approvalRequestId: parsePositiveInt(submitRes.item?.id) || null,
+        approvalPolicyId: parsePositiveInt(approvalNeed.policy?.id) || null,
+        approvalEngine: "UNIFIED",
+      },
+    });
+
+    const createdRow = await fetchCounterpartyRequestRow({
+      tenantId,
+      requestId,
+      runQuery: tx.query,
+    });
+    return mapCounterpartyRequestRow(createdRow);
+  });
+}
+
+/**
+ * Record one review approval on a counterparty request.
+ */
+export async function approveCounterpartyRequestById({
+  req,
+  tenantId,
+  requestId,
+  userId,
+  decisionComment,
+  assertScopeAccess,
+}) {
+  const requestRow = await fetchCounterpartyRequestRow({
+    tenantId,
+    requestId,
+  });
+  if (!requestRow) {
+    throw badRequest("Counterparty request not found");
+  }
+
+  const requestScope = buildUnifiedRequestScope(requestRow);
+  assertScopeAccess(req, requestScope.scopeType.toLowerCase(), requestScope.scopeId, "requestId");
+
+  if (
+    !isCounterpartyUnifiedApprovalEnabled() ||
+    !parsePositiveInt(requestRow.approval_request_id)
+  ) {
+    return approveCounterpartyRequestByIdLegacy({
+      req,
+      tenantId,
+      requestId,
+      userId,
+      decisionComment,
+      assertScopeAccess,
+    });
+  }
+
+  ensureCounterpartyApprovalResolverRegistered();
+
+  const approvalResult = await recordDecision(
+    requestRow.approval_request_id,
+    userId,
+    "APPROVE",
+    decisionComment || null
+  );
+
+  const unifiedRequest = approvalResult.item || null;
+  const finalApproved = toUpper(unifiedRequest?.requestStatus) === "APPROVED";
+  const executedCounterpartyId = parsePositiveInt(
+    approvalResult.execution_result?.counterparty?.id ??
+      approvalResult.execution_result?.counterpartyId
+  );
+
+  if (finalApproved) {
+    await syncCounterpartyRequestDecisionState({
+      req,
+      tenantId,
+      requestId,
+      userId,
+      decisionComment,
+      requestStatus: REQUEST_STATUS_APPROVED,
+      action: "cari.counterparty_request.approve",
+      createdCounterpartyId: executedCounterpartyId || null,
+    });
+  } else {
+    await insertCounterpartyRequestAuditLog({
+      req,
+      tenantId,
+      userId,
+      action: "cari.counterparty_request.approve",
+      requestId,
+      legalEntityId: parsePositiveInt(requestRow.legal_entity_id),
+      payload: {
+        decisionComment: decisionComment || null,
+        approvalRequestId: parsePositiveInt(requestRow.approval_request_id) || null,
+        finalApproval: false,
+        approvalRequestStatus: unifiedRequest?.requestStatus || null,
+        currentStepNo: Number(unifiedRequest?.currentStepNo || 1),
+      },
+    });
+  }
+
+  const refreshedRow = await fetchCounterpartyRequestRow({
+    tenantId,
+    requestId,
+  });
+  return {
+    request: mapCounterpartyRequestRow(refreshedRow),
+    counterparty:
+      approvalResult.execution_result?.counterparty ||
+      approvalResult.execution_result ||
+      null,
+    approvalRequest: unifiedRequest,
+  };
+}
+
+/**
+ * Record one review rejection on a counterparty request.
+ */
+export async function rejectCounterpartyRequestById({
+  req,
+  tenantId,
+  requestId,
+  userId,
+  decisionComment,
+  assertScopeAccess,
+}) {
+  const requestRow = await fetchCounterpartyRequestRow({
+    tenantId,
+    requestId,
+  });
+  if (!requestRow) {
+    throw badRequest("Counterparty request not found");
+  }
+
+  const requestScope = buildUnifiedRequestScope(requestRow);
+  assertScopeAccess(req, requestScope.scopeType.toLowerCase(), requestScope.scopeId, "requestId");
+
+  if (
+    !isCounterpartyUnifiedApprovalEnabled() ||
+    !parsePositiveInt(requestRow.approval_request_id)
+  ) {
+    return rejectCounterpartyRequestByIdLegacy({
+      req,
+      tenantId,
+      requestId,
+      userId,
+      decisionComment,
+      assertScopeAccess,
+    });
+  }
+
+  const approvalResult = await recordDecision(
+    requestRow.approval_request_id,
+    userId,
+    "REJECT",
+    decisionComment || null
+  );
+
+  await syncCounterpartyRequestDecisionState({
+    req,
+    tenantId,
+    requestId,
+    userId,
+    decisionComment,
+    requestStatus: REQUEST_STATUS_REJECTED,
+    action: "cari.counterparty_request.reject",
+  });
+
+  const refreshedRow = await fetchCounterpartyRequestRow({
+    tenantId,
+    requestId,
+  });
+  return {
+    row: mapCounterpartyRequestRow(refreshedRow),
+    approvalRequest: approvalResult.item || null,
+  };
 }

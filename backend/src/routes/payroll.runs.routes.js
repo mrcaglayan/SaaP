@@ -1,5 +1,6 @@
 import express from "express";
 import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middleware/rbac.js";
+import { applyFieldVisibility } from "../middleware/fieldVisibility.js";
 import { parsePositiveInt } from "./_utils.js";
 import { asyncHandler } from "./_utils.js";
 import { requireTenantId } from "./cash.validators.common.js";
@@ -18,6 +19,7 @@ import {
 } from "./payroll.runs.validators.js";
 
 const router = express.Router();
+const payrollRunLineFieldVisibility = applyFieldVisibility("PAYROLL", "payroll_run_line");
 
 async function resolvePayrollRunsListScope(req) {
   const legalEntityId = parsePositiveInt(req.query?.legalEntityId ?? req.query?.legal_entity_id);
@@ -42,6 +44,7 @@ router.post(
       return null;
     },
   }),
+  payrollRunLineFieldVisibility,
   asyncHandler(async (req, res) => {
     const payload = parsePayrollRunImportInput(req);
     const row = await importPayrollRunCsv({
@@ -49,10 +52,14 @@ router.post(
       payload,
       assertScopeAccess,
     });
+    const maskedLines = await req.fieldVisibility.applyToRows(row.lines || []);
 
     return res.status(201).json({
       tenantId: payload.tenantId,
-      row,
+      row: {
+        ...row,
+        lines: maskedLines,
+      },
     });
   })
 );
@@ -86,6 +93,7 @@ router.get(
       return resolvePayrollRunScope(req.params?.runId, tenantId);
     },
   }),
+  payrollRunLineFieldVisibility,
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
     const runId = parsePayrollRunIdParam(req);
@@ -95,9 +103,13 @@ router.get(
       runId,
       assertScopeAccess,
     });
+    const maskedLines = await req.fieldVisibility.applyToRows(row.lines || []);
     return res.json({
       tenantId,
-      row,
+      row: {
+        ...row,
+        lines: maskedLines,
+      },
     });
   })
 );
@@ -109,6 +121,7 @@ router.get(
       return resolvePayrollRunScope(req.params?.runId, tenantId);
     },
   }),
+  payrollRunLineFieldVisibility,
   asyncHandler(async (req, res) => {
     const filters = parsePayrollRunLineListFilters(req);
     const result = await listPayrollRunLineRows({
@@ -118,10 +131,12 @@ router.get(
       filters,
       assertScopeAccess,
     });
+    const rows = await req.fieldVisibility.applyToRows(result.rows);
     return res.json({
       tenantId: filters.tenantId,
       runId: filters.runId,
       ...result,
+      rows,
     });
   })
 );

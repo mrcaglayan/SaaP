@@ -1,1021 +1,1668 @@
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { query } from "../db.js";
+import { SOD_RULES } from "../constants/sod-rules.js";
+import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
-  createLocalClosePackComment,
-  createLocalClosePackEvidence,
-  deleteLocalClosePackEvidence,
-  downloadLocalClosePackEvidence,
-  getLocalClosePack,
-  listLocalClosePackAudit,
-  listLocalClosePackComments,
-  listLocalClosePackEvidence,
-  listLocalClosePackReopenRequests,
-  listLocalClosePackReportReviews,
-  uploadLocalClosePackEvidenceContent,
-} from "../api/localClosePacks.js";
-import { buildLocalReportLocation } from "../api/glReports.js";
-import { useAuth } from "../auth/useAuth.js";
-import { useI18n } from "../i18n/useI18n.js";
-const TAB_KEYS = Object.freeze([
-  "overview",
-  "checklist",
-  "reports",
-  "exceptions",
-  "evidence",
-  "comments",
-  "audit",
+  checkUserHasPermissionAtScope,
+  doesScopeIncludeScope,
+  getUserRoleScopeEffectiveDateGuard,
+  loadUserEntitlements,
+  normalizeAuthzScope,
+} from "./authz.scope.service.js";
+import { buildCsv } from "../utils/tabularExport.js";
+const REPORT_TYPES = new Set([
+  "ACCESS_MATRIX",
+  "SOD_ANALYSIS",
+  "APPROVAL_COVERAGE",
+  "DELEGATION_LOG",
+  "FULL",
 ]);
-function toPositiveInt(value) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+const REPORT_FORMATS = new Set(["JSON", "CSV"]);
+const APPROVAL_COVERAGE_ACTION_CATALOG = Object.freeze([
+  Object.freeze({
+    moduleCode: "PAYMENTS",
+    targetType: "PAYMENT_BATCH",
+    actionType: "APPROVE",
+    label: "Payment batch approval",
+    uncoveredNote: "Payment batches have no unified approval policy configured.",
+  }),
+  Object.freeze({
+    moduleCode: "PAYROLL",
+    targetType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+    actionType: "APPLY",
+    label: "Payroll manual settlement override apply",
+    uncoveredNote: "Payroll manual settlement overrides have no approval policy configured.",
+  }),
+  Object.freeze({
+    moduleCode: "PAYROLL",
+    targetType: "PAYROLL_PERIOD_CLOSE",
+    actionType: "APPROVE_CLOSE",
+    label: "Payroll period close approval",
+    uncoveredNote: "Payroll period close approvals have no policy configured.",
+  }),
+  Object.freeze({
+    moduleCode: "PAYROLL",
+    targetType: "PAYROLL_PERIOD_CLOSE",
+    actionType: "REOPEN",
+    label: "Payroll period reopen approval",
+    uncoveredNote: "Payroll period reopen approvals have no policy configured.",
+  }),
+  Object.freeze({
+    moduleCode: "CARI",
+    targetType: "COUNTERPARTY_REQUEST",
+    actionType: "CREATE",
+    label: "Counterparty request review",
+    uncoveredNote: "Counterparty request creation/review has no approval policy configured.",
+  }),
+  Object.freeze({
+    moduleCode: "INVENTORY",
+    targetType: "INVENTORY_TRANSFER",
+    actionType: "APPROVE",
+    label: "Inventory transfer approval",
+    uncoveredNote: "Inventory transfers have no approval policy configured.",
+  }),
+  Object.freeze({
+    moduleCode: "LOCAL_CLOSE",
+    targetType: "LOCAL_CLOSE_PACK_REOPEN_REQUEST",
+    actionType: "REOPEN",
+    label: "Local close pack reopen approval",
+    uncoveredNote: "Local close pack reopen requests have no approval policy configured.",
+  }),
+]);
+const SOD_RULE_MITIGATION_ACTION_MAP = Object.freeze({
+  "payments.batch.create-approve.same-record": {
+    moduleCode: "PAYMENTS",
+    targetType: "PAYMENT_BATCH",
+    actionType: "APPROVE",
+  },
+  "payroll.override.request-approve.same-record": {
+    moduleCode: "PAYROLL",
+    targetType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+    actionType: "APPLY",
+  },
+  "payroll.close.request-approve.same-record": {
+    moduleCode: "PAYROLL",
+    targetType: "PAYROLL_PERIOD_CLOSE",
+    actionType: "APPROVE_CLOSE",
+  },
+  "cari.request-review.same-record": {
+    moduleCode: "CARI",
+    targetType: "COUNTERPARTY_REQUEST",
+    actionType: "CREATE",
+  },
+  "inventory.transfer.initiate-approve.same-record": {
+    moduleCode: "INVENTORY",
+    targetType: "INVENTORY_TRANSFER",
+    actionType: "APPROVE",
+  },
+});
+function normalizeUpperText(value) {
+  return String(value || "").trim().toUpperCase();
 }
-function formatDateTime(value) {
+function parseDateOnly(value) {
   if (!value) {
-    return "-";
+    return null;
+  }
+  const dateOnlyMatch = String(value).match(/\d{4}-\d{2}-\d{2}/);
+  if (dateOnlyMatch) {
+    return dateOnlyMatch[0];
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return String(value);
+    return null;
   }
-  return parsed.toLocaleString();
+  return parsed.toISOString().slice(0, 10);
 }
-function formatFileSize(bytes) {
-  const parsed = Number(bytes);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return "-";
+function parseDateTime(value) {
+  if (!value) {
+    return null;
   }
-  const units = ["B", "KB", "MB", "GB"];
-  let size = parsed;
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
   }
-  return `${size.toFixed(unitIndex === 0 ? 0 : unitIndex === 1 ? 1 : 2)} ${units[unitIndex]}`;
+  return parsed.toISOString();
 }
-function triggerBlobDownload(blob, fileName) {
-  const objectUrl = window.URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = String(fileName || "").trim() || "evidence.bin";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.URL.revokeObjectURL(objectUrl);
+function toEndOfDayIso(value) {
+  const dateOnly = parseDateOnly(value);
+  return dateOnly ? `${dateOnly} 23:59:59` : null;
 }
-function formatScopeLabel(pack, l) {
-  if (String(pack?.closeScopeType || "").toUpperCase() === "OPERATING_UNIT") {
-    const code = String(pack?.operatingUnitCode || "").trim();
-    const name = String(pack?.operatingUnitName || "").trim();
-    return code && name ? `${code} - ${name}` : code || name || l("Operating unit", "Isletme birimi");
-  }
-  return l("HQ / Central", "Merkez / HQ");
+function toNumberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
-function getStatusTone(status) {
-  switch (String(status || "").trim().toUpperCase()) {
-    case "APPROVED":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "LOCKED":
-      return "border-cyan-200 bg-cyan-50 text-cyan-700";
-    case "READY_FOR_REVIEW":
-      return "border-violet-200 bg-violet-50 text-violet-700";
-    case "RETURNED":
-    case "REOPENED":
-      return "border-amber-200 bg-amber-50 text-amber-700";
-    default:
-      return "border-slate-200 bg-slate-100 text-slate-700";
-  }
+function toBoolean(value) {
+  return value === true || value === 1 || value === "1";
 }
-function getStatusLabel(status, l) {
-  switch (String(status || "").trim().toUpperCase()) {
-    case "NOT_OPENED":
-      return l("Not opened", "Acilmadi");
-    case "OPEN":
-      return l("Open", "Acik");
-    case "IN_PROGRESS":
-      return l("In progress", "Devam ediyor");
-    case "READY_FOR_REVIEW":
-      return l("Ready for review", "Incelemeye hazir");
-    case "RETURNED":
-      return l("Returned", "Iade edildi");
-    case "APPROVED":
-      return l("Approved", "Onaylandi");
-    case "LOCKED":
-      return l("Locked", "Kilitlendi");
-    case "REOPENED":
-      return l("Reopened", "Yeniden acildi");
-    default:
-      return status || "-";
-  }
+function scopeRank(scopeType) {
+  if (scopeType === "OPERATING_UNIT") return 5;
+  if (scopeType === "LEGAL_ENTITY") return 4;
+  if (scopeType === "COUNTRY") return 3;
+  if (scopeType === "GROUP") return 2;
+  if (scopeType === "TENANT") return 1;
+  return 0;
 }
-function getReadinessLabel(state, l) {
-  switch (String(state || "").trim().toUpperCase()) {
-    case "NOT_READY":
-      return l("Not ready", "Hazir degil");
-    case "PARTIALLY_READY":
-      return l("Partially ready", "Kismen hazir");
-    case "READY_FOR_ENTITY_REVIEW":
-      return l("Ready for entity review", "Varlik incelemesine hazir");
-    case "ENTITY_REOPENED":
-      return l("Entity reopened", "Varlik yeniden acildi");
-    default:
-      return state || "-";
+function scopeKey(scopeType, scopeId) {
+  const normalizedScopeType = normalizeUpperText(scopeType);
+  const normalizedScopeId = parsePositiveInt(scopeId);
+  if (!normalizedScopeType || !normalizedScopeId) {
+    return null;
   }
+  return `${normalizedScopeType}:${normalizedScopeId}`;
 }
-function buildPackReportLaunches(pack, l) {
-  if (!pack) {
-    return [];
+function normalizeScopeOrNull(scope, tenantId) {
+  if (!scope) {
+    return null;
   }
-  const packScopedParams =
-    String(pack.closeScopeType || "").toUpperCase() === "OPERATING_UNIT"
-      ? {
-        operatingUnitScope: "OPERATING_UNIT",
-        operatingUnitId: pack.operatingUnitId,
-      }
-      : {
-        operatingUnitScope: "CENTRAL",
-      };
-  const baseParams = {
-    legalEntityId: pack.legalEntityId,
-    bookId: pack.bookId,
-    fiscalPeriodId: pack.fiscalPeriodId,
-    closePackId: pack.id,
-  };
-  return [
-    {
-      key: "trialBalance",
-      title: l("Mizan", "Mizan"),
-      launchMode: "PACK_SCOPE",
-      scopeNote: l("Exact pack scope", "Paket scope'u birebir"),
-      href: buildLocalReportLocation("trialBalance", {
-        ...baseParams,
-        ...packScopedParams,
-        closeLaunchMode: "PACK_SCOPE",
-      }),
-    },
-    {
-      key: "generalLedger",
-      title: l("Defter-i Kebir", "Defter-i Kebir"),
-      launchMode: "PACK_SCOPE",
-      scopeNote: l("Exact pack scope", "Paket scope'u birebir"),
-      href: buildLocalReportLocation("generalLedger", {
-        ...baseParams,
-        ...packScopedParams,
-        closeLaunchMode: "PACK_SCOPE",
-      }),
-    },
-    {
-      key: "subsidiaryLedger",
-      title: l("Muavin", "Muavin"),
-      launchMode: "PACK_SCOPE",
-      scopeNote: l("Exact pack scope", "Paket scope'u birebir"),
-      href: buildLocalReportLocation("subsidiaryLedger", {
-        ...baseParams,
-        ...packScopedParams,
-        closeLaunchMode: "PACK_SCOPE",
-      }),
-    },
-    {
-      key: "balanceSheet",
-      title: l("Bilanco", "Bilanco"),
-      launchMode: "ENTITY_STATEMENT_FALLBACK",
-      scopeNote: l(
-        "Statutory entity-level statement with pack context preserved",
-        "Paket baglami korunan statutor entity duzeyi tablo"
-      ),
-      href: buildLocalReportLocation("balanceSheet", {
-        ...baseParams,
-        closeLaunchMode: "ENTITY_STATEMENT_FALLBACK",
-      }),
-    },
-    {
-      key: "incomeStatement",
-      title: l("Gelir Tablosu", "Gelir Tablosu"),
-      launchMode: "ENTITY_STATEMENT_FALLBACK",
-      scopeNote: l(
-        "Statutory entity-level statement with pack context preserved",
-        "Paket baglami korunan statutor entity duzeyi tablo"
-      ),
-      href: buildLocalReportLocation("incomeStatement", {
-        ...baseParams,
-        closeLaunchMode: "ENTITY_STATEMENT_FALLBACK",
-      }),
-    },
-  ];
+  const scopeType = scope.scopeType ?? scope.scope_type;
+  const scopeId = scope.scopeId ?? scope.scope_id;
+  if (scopeType === undefined && scopeId === undefined) {
+    return null;
+  }
+  return normalizeAuthzScope({ scopeType, scopeId }, tenantId);
 }
-function deriveChecklist(pack, reportReviews, evidenceRows, commentRows, reopenRows, entityReadiness, l) {
-  const requiredReportCount = Number(pack?.requiredReportCount || 0) || 5;
-  const reviewedReportCount = Array.isArray(reportReviews) ? reportReviews.length : 0;
-  const pendingReopenCount = (Array.isArray(reopenRows) ? reopenRows : []).filter(
-    (row) => String(row?.requestStatus || "").toUpperCase() === "REQUESTED"
-  ).length;
-  const invalidatingScopeCount = Array.isArray(entityReadiness?.invalidatingScopes)
-    ? entityReadiness.invalidatingScopes.length
-    : 0;
-  return [
-    {
-      title: l("Required report reviews", "Gerekli rapor incelemeleri"),
-      detail: `${reviewedReportCount}/${requiredReportCount}`,
-      done: reviewedReportCount >= requiredReportCount,
-    },
-    {
-      title: l("Evidence pack attachments", "Kanit paketi ekleri"),
-      detail: `${Array.isArray(evidenceRows) ? evidenceRows.length : 0}`,
-      done: Array.isArray(evidenceRows) && evidenceRows.length > 0,
-    },
-    {
-      title: l("Internal commentary captured", "Dahili yorum kaydi"),
-      detail: `${Array.isArray(commentRows) ? commentRows.length : 0}`,
-      done: Array.isArray(commentRows) && commentRows.length > 0,
-      optional: true,
-    },
-    {
-      title: l("Pending reopen requests cleared", "Bekleyen yeniden acmalar kapatildi"),
-      detail: `${pendingReopenCount}`,
-      done: pendingReopenCount === 0,
-    },
-    {
-      title: l("Entity readiness stable", "Varlik hazirligi stabil"),
-      detail: invalidatingScopeCount
-        ? `${invalidatingScopeCount} ${l("invalidating scopes", "invalidate eden scope")}`
-        : l("No invalidating scopes", "Invalidate eden scope yok"),
-      done: invalidatingScopeCount === 0,
-    },
-  ];
-}
-function SectionCard({ title, subtitle, children }) {
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 px-5 py-4">
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-        {subtitle ? <p className="mt-1 text-sm text-slate-600">{subtitle}</p> : null}
-      </div>
-      <div className="p-5">{children}</div>
-    </section>
-  );
-}
-function TabButton({ active, onClick, children }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-xl px-4 py-2 text-sm font-medium transition ${active
-          ? "bg-slate-900 text-white shadow-sm"
-          : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900"
-        }`}
-    >
-      {children}
-    </button>
-  );
-}
-/**
-+ * First-pass RP07 local close-pack detail shell with reports, evidence,
-+ * comments, reopen context, and audit in one page.
-+ */
-export default function LocalClosePackDetailPage() {
-  const { packId } = useParams();
-  const { hasPermission } = useAuth();
-  const { language } = useI18n();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const isTr = language === "tr";
-  const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
-  const canRead = hasPermission("ouclose.read");
-  const canPrepare = hasPermission("ouclose.prepare");
-  const normalizedPackId = toPositiveInt(packId);
-  const requestedTab = String(searchParams.get("tab") || "overview").trim().toLowerCase();
-  const [activeTab, setActiveTab] = useState(
-    TAB_KEYS.includes(requestedTab) ? requestedTab : "overview"
-  );
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [pack, setPack] = useState(null);
-  const [entityReadiness, setEntityReadiness] = useState(null);
-  const [reportReviews, setReportReviews] = useState([]);
-  const [evidenceRows, setEvidenceRows] = useState([]);
-  const [commentRows, setCommentRows] = useState([]);
-  const [auditRows, setAuditRows] = useState([]);
-  const [reopenRows, setReopenRows] = useState([]);
-  const [uploadDraft, setUploadDraft] = useState({ file: null, note: "", displayName: "" });
-  const [uploading, setUploading] = useState(false);
-  const [downloadId, setDownloadId] = useState(null);
-  const [deleteId, setDeleteId] = useState(null);
-  const [commentBody, setCommentBody] = useState("");
-  const [commentSaving, setCommentSaving] = useState(false);
-  useEffect(() => {
-    const normalizedTab = TAB_KEYS.includes(requestedTab) ? requestedTab : "overview";
-    setActiveTab((prev) => (prev === normalizedTab ? prev : normalizedTab));
-  }, [requestedTab]);
-  useEffect(() => {
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("tab", activeTab);
-    if (nextParams.toString() !== searchParams.toString()) {
-      setSearchParams(nextParams, { replace: true });
-    }
-  }, [activeTab, searchParams, setSearchParams]);
-  const loadWorkspaceData = useCallback(async () => {
-    if (!canRead || !normalizedPackId) {
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const [packResponse, reviewResponse, evidenceResponse, commentResponse, auditResponse, reopenResponse] =
-        await Promise.all([
-          getLocalClosePack(normalizedPackId),
-          listLocalClosePackReportReviews(normalizedPackId),
-          listLocalClosePackEvidence(normalizedPackId),
-          listLocalClosePackComments(normalizedPackId),
-          listLocalClosePackAudit(normalizedPackId, { limit: 100, includePayload: true }),
-          listLocalClosePackReopenRequests(normalizedPackId),
-        ]);
-      setPack(packResponse?.row || null);
-      setEntityReadiness(packResponse?.entityReadiness || null);
-      setReportReviews(Array.isArray(reviewResponse?.rows) ? reviewResponse.rows : []);
-      setEvidenceRows(Array.isArray(evidenceResponse?.rows) ? evidenceResponse.rows : []);
-      setCommentRows(Array.isArray(commentResponse?.rows) ? commentResponse.rows : []);
-      setAuditRows(Array.isArray(auditResponse?.rows) ? auditResponse.rows : []);
-      setReopenRows(Array.isArray(reopenResponse?.rows) ? reopenResponse.rows : []);
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-        l("Failed to load the local close pack.", "Yerel kapanis paketi yuklenemedi.")
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [canRead, l, normalizedPackId]);
-  useEffect(() => {
-    void loadWorkspaceData();
-  }, [loadWorkspaceData]);
-  const reportLaunches = useMemo(() => buildPackReportLaunches(pack, l), [l, pack]);
-  const reviewByKey = useMemo(
-    () =>
-      new Map(
-        (Array.isArray(reportReviews) ? reportReviews : []).map((row) => [row.reportKey, row])
-      ),
-    [reportReviews]
-  );
-  const checklistItems = useMemo(
-    () => deriveChecklist(pack, reportReviews, evidenceRows, commentRows, reopenRows, entityReadiness, l),
-    [commentRows, entityReadiness, evidenceRows, l, pack, reportReviews, reopenRows]
-  );
-  async function handleAttachEvidence(event) {
-    event.preventDefault();
-    if (!canPrepare || !normalizedPackId || !uploadDraft.file) {
-      return;
-    }
-    setUploading(true);
-    setError("");
-    setMessage("");
-    try {
-      const createResponse = await createLocalClosePackEvidence(normalizedPackId, {
-        fileName: uploadDraft.file.name,
-        contentType: uploadDraft.file.type || undefined,
-        displayName: String(uploadDraft.displayName || "").trim() || undefined,
-        note: String(uploadDraft.note || "").trim() || undefined,
-      });
-      const evidenceId = toPositiveInt(createResponse?.row?.id);
-      if (!evidenceId) {
-        throw new Error("Evidence draft id is missing");
-      }
-      await uploadLocalClosePackEvidenceContent(
-        normalizedPackId,
-        evidenceId,
-        uploadDraft.file,
-        { contentType: uploadDraft.file.type || undefined }
-      );
-      setUploadDraft({ file: null, note: "", displayName: "" });
-      setMessage(l("Evidence attached.", "Kanit eklendi."));
-      await loadWorkspaceData();
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-        err?.message ||
-        l("Failed to attach evidence.", "Kanit eklenemedi.")
-      );
-    } finally {
-      setUploading(false);
-    }
+function normalizeScopeFilter(input) {
+  const tenantId = parsePositiveInt(input?.tenantId ?? input?.tenant_id);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
   }
-  async function handleDownloadEvidence(row) {
-    const evidenceId = toPositiveInt(row?.id);
-    if (!normalizedPackId || !evidenceId) {
-      return;
-    }
-    setDownloadId(evidenceId);
-    setError("");
-    try {
-      const payload = await downloadLocalClosePackEvidence(normalizedPackId, evidenceId);
-      triggerBlobDownload(payload.blob, payload.fileName || row?.fileName);
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-        l("Failed to download evidence.", "Kanit indirilemedi.")
-      );
-    } finally {
-      setDownloadId(null);
-    }
-  }
-  async function handleDeleteEvidence(evidenceId) {
-    if (!canPrepare || !normalizedPackId || !evidenceId) {
-      return;
-    }
-    setDeleteId(evidenceId);
-    setError("");
-    try {
-      await deleteLocalClosePackEvidence(normalizedPackId, evidenceId);
-      setMessage(l("Evidence deleted.", "Kanit silindi."));
-      await loadWorkspaceData();
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-        l("Failed to delete evidence.", "Kanit silinemedi.")
-      );
-    } finally {
-      setDeleteId(null);
-    }
-  }
-  async function handleCreateComment(event) {
-    event.preventDefault();
-    if (!canPrepare || !normalizedPackId || !String(commentBody || "").trim()) {
-      return;
-    }
-    setCommentSaving(true);
-    setError("");
-    try {
-      await createLocalClosePackComment(normalizedPackId, {
-        body: String(commentBody || "").trim(),
-      });
-      setCommentBody("");
-      setMessage(l("Comment added.", "Yorum eklendi."));
-      await loadWorkspaceData();
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-        l("Failed to add comment.", "Yorum eklenemedi.")
-      );
-    } finally {
-      setCommentSaving(false);
-    }
-  }
-  if (!canRead) {
-    return (
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-        {l("Missing permission: ouclose.read", "Eksik yetki: ouclose.read")}
-      </div>
+  const reportType = normalizeUpperText(input?.reportType ?? input?.report_type || "FULL");
+  if (!REPORT_TYPES.has(reportType)) {
+    throw badRequest(
+      "reportType must be ACCESS_MATRIX, SOD_ANALYSIS, APPROVAL_COVERAGE, DELEGATION_LOG, or FULL"
     );
   }
-  return (
-    <div className="space-y-4">
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <Link
-                to="/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri"
-                className="hover:text-slate-700"
-              >
-                {l("Local Close Workspace", "Yerel Kapanis Calisma Alani")}
-              </Link>
-            </div>
-            <h1 className="mt-1 text-2xl font-semibold text-slate-900">
-              {pack?.legalEntityCode || pack?.legalEntityName || l("Local Close Pack", "Yerel Kapanis Paketi")}
-            </h1>
-            <p className="mt-2 max-w-4xl text-sm text-slate-600">
-              {l(
-                "RP07 gathers the local report family, evidence pack, comments, reopen context, and audit around one pack without widening the workflow policy itself.",
-                "RP07, workflow politikasini genisletmeden yerel rapor ailesini, kanit paketini, yorumlari, yeniden acma baglamini ve denetim izini tek bir paket etrafinda toplar."
-              )}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void loadWorkspaceData()}
-            disabled={loading}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
-          >
-            {loading ? l("Refreshing...", "Yenileniyor...") : l("Refresh", "Yenile")}
-          </button>
-        </div>
-        {pack ? (
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                {l("Scope", "Scope")}
-              </div>
-              <div className="mt-1 text-sm font-semibold text-slate-900">{formatScopeLabel(pack, l)}</div>
-              <div className="mt-1 text-xs text-slate-500">
-                {(pack.bookCode || pack.bookName || "-")} | {pack.periodName || "-"}
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                {l("Status", "Durum")}
-              </div>
-              <div className="mt-1">
-                <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${getStatusTone(pack.status)}`}>
-                  {getStatusLabel(pack.status, l)}
-                </span>
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {l("Entity readiness", "Varlik hazirligi")}: {getReadinessLabel(entityReadiness?.state, l)}
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                {l("Completion", "Tamamlanma")}
-              </div>
-              <div className="mt-1 text-sm font-semibold text-slate-900">
-                {pack.completionPercentage || 0}%
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {pack.reportReviewCount || 0}/{pack.requiredReportCount || 0}{" "}
-                {l("reviewed reports", "incelenen rapor")}
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                {l("Issues", "Sorunlar")}
-              </div>
-              <div className="mt-1 text-sm font-semibold text-slate-900">
-                {l("Blockers", "Blokajlar")}: {pack.blockerCount || 0}
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {l("Warnings", "Uyarilar")}: {pack.warningCount || 0} |{" "}
-                {l("Pending reopens", "Bekleyen yeniden acmalar")}: {pack.pendingReopenRequestCount || 0}
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                {l("Last activity", "Son aktivite")}
-              </div>
-              <div className="mt-1 text-sm font-semibold text-slate-900">
-                {formatDateTime(pack.lastActivityAt)}
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {l("Submitted", "Gonderildi")}: {formatDateTime(pack.submittedAt)}
-              </div>
-            </div>
-          </div>
-        ) : null}
-      </section>
-      {error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </div>
-      ) : null}
-      {message ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-          {message}
-        </div>
-      ) : null}
-      <div className="flex flex-wrap gap-2">
-        {TAB_KEYS.map((tabKey) => (
-          <TabButton
-            key={tabKey}
-            active={activeTab === tabKey}
-            onClick={() => setActiveTab(tabKey)}
-          >
-            {tabKey === "overview"
-              ? l("Overview", "Genel Bakis")
-              : tabKey === "checklist"
-                ? l("Checklist", "Kontrol Listesi")
-                : tabKey === "reports"
-                  ? l("Reports", "Raporlar")
-                  : tabKey === "exceptions"
-                    ? l("Exceptions", "Istisnalar")
-                    : tabKey === "evidence"
-                      ? l("Evidence", "Kanit")
-                      : tabKey === "comments"
-                        ? l("Comments", "Yorumlar")
-                        : l("Audit Trail", "Denetim Izi")}
-          </TabButton>
-        ))}
-      </div>
-      {activeTab === "overview" ? (
-        <SectionCard
-          title={l("Pack Overview", "Paket Ozeti")}
-          subtitle={l(
-            "This shell keeps the close context, readiness subset, and timestamps visible while RP08/RP09 workflow policy stays in its own slices.",
-            "Bu kabuk, RP08/RP09 workflow politikasi kendi dilimlerinde kalirken kapanis baglamini, hazirlik alt kumesini ve zaman damgalarini gorunur tutar."
-          )}
-        >
-          {pack ? (
-            <dl className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Legal entity", "Yasal varlik")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">
-                  {(pack.legalEntityCode || "-")} {pack.legalEntityName || ""}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Book", "Defter")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">
-                  {(pack.bookCode || "-")} {pack.bookName || ""}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Fiscal period", "Mali donem")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">{pack.periodName || "-"}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Owner", "Sahip")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">{pack.ownerUserName || "-"}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Reviewer", "Inceleyen")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">{pack.reviewerUserName || "-"}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Workflow gate", "Workflow kapisi")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">
-                  {pack.workflowInstanceStatus || l("Not linked yet", "Henuz bagli degil")}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Approved at", "Onay zamani")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">{formatDateTime(pack.approvedAt)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Locked at", "Kilit zamani")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">{formatDateTime(pack.lockedAt)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {l("Reopened at", "Yeniden acma zamani")}
-                </dt>
-                <dd className="mt-1 text-sm text-slate-900">{formatDateTime(pack.reopenedAt)}</dd>
-              </div>
-            </dl>
-          ) : (
-            <div className="text-sm text-slate-500">
-              {loading ? l("Loading pack...", "Paket yukleniyor...") : "-"}
-            </div>
-          )}
-          {entityReadiness ? (
-            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">
-                {l("Entity readiness subset", "Varlik hazirlik alt kumesi")}
-              </div>
-              <div className="mt-2 text-sm text-slate-700">
-                {getReadinessLabel(entityReadiness.state, l)} | {entityReadiness.approvedOrLockedMandatoryScopeCount || 0}/
-                {entityReadiness.mandatoryScopeCount || 0} {l("mandatory scopes approved or locked", "zorunlu scope onayli veya kilitli")}
-              </div>
-              {Array.isArray(entityReadiness.missingMandatoryScopes) &&
-                entityReadiness.missingMandatoryScopes.length > 0 ? (
-                <div className="mt-2 text-xs text-slate-500">
-                  {l("Missing mandatory scopes:", "Eksik zorunlu scope'lar:")}{" "}
-                  {entityReadiness.missingMandatoryScopes
-                    .map((row) =>
-                      row.closeScopeType === "OPERATING_UNIT"
-                        ? `${row.operatingUnitCode || row.operatingUnitName || row.scopeKey}`
-                        : l("HQ / Central", "Merkez / HQ")
-                    )
-                    .join(", ")}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </SectionCard>
-      ) : null}
-      {activeTab === "checklist" ? (
-        <SectionCard
-          title={l("First-pass checklist", "Ilk gecis kontrol listesi")}
-          subtitle={l(
-            "RP07 keeps the checklist derived and explainable instead of introducing a second child-state engine before RP08 gates are hardened.",
-            "RP07, RP08 kapilari sertlestirilmeden once ikinci bir child-state motoru getirmek yerine kontrol listesini turetilmis ve aciklanabilir tutar."
-          )}
-        >
-          <div className="space-y-3">
-            {checklistItems.map((item) => (
-              <div
-                key={item.title}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
-              >
-                <div>
-                  <div className="text-sm font-semibold text-slate-900">{item.title}</div>
-                  <div className="mt-1 text-xs text-slate-500">{item.detail}</div>
-                </div>
-                <span
-                  className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${item.done
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                      : item.optional
-                        ? "border-amber-200 bg-amber-50 text-amber-700"
-                        : "border-slate-200 bg-slate-100 text-slate-700"
-                    }`}
-                >
-                  {item.done
-                    ? l("Done", "Tamam")
-                    : item.optional
-                      ? l("Optional", "Opsiyonel")
-                      : l("Open", "Acik")}
-                </span>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      ) : null}
-      {activeTab === "reports" ? (
-        <SectionCard
-          title={l("Report launch pad", "Rapor baslatma alani")}
-          subtitle={l(
-            "Pack-scoped summary/detail launches stay exact-scope where the repo supports it. Statutory statements stay entity-level and preserve the pack context explicitly.",
-            "Repo destekledigi yerde pack-scope ozet/detay baslatmalari birebir scope'ta kalir. Statutor tablolar entity duzeyinde kalir ve paket baglamini acik sekilde korur."
-          )}
-        >
-          <div className="mb-4 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
-            {l(
-              "Reviewed report fingerprints are captured from the launched report page header. Use the buttons below to open each report with the pack context prefilled, then mark that instance reviewed inside the report.",
-              "Incelenen rapor fingerprint'leri baslatilan rapor sayfasi basligindan kaydedilir. Asagidaki butonlarla her raporu paket baglami hazir dolu olarak acin, sonra o instance'i rapor icinden incelendi diye isaretleyin."
-            )}
-          </div>
-          <div className="grid gap-4 xl:grid-cols-2">
-            {reportLaunches.map((launch) => {
-              const reviewRow = reviewByKey.get(launch.key) || null;
-              return (
-                <div key={launch.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-base font-semibold text-slate-900">{launch.title}</h3>
-                      <div className="mt-1 text-xs text-slate-500">{launch.scopeNote}</div>
-                    </div>
-                    <Link
-                      to={launch.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-lg border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-semibold text-white"
-                    >
-                      {l("Open report", "Raporu ac")}
-                    </Link>
-                  </div>
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-                    {reviewRow ? (
-                      <>
-                        <div>
-                          {l("Last reviewed", "Son inceleme")}: {formatDateTime(reviewRow.reviewedAt)}
-                        </div>
-                        <div className="mt-1 font-mono text-[11px] text-slate-500">
-                          {reviewRow.fingerprintSha256 || "-"}
-                        </div>
-                      </>
-                    ) : (
-                      l("No reviewed instance captured yet.", "Henuz incelenmis instance kaydi yok.")
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </SectionCard>
-      ) : null}
-      {activeTab === "exceptions" ? (
-        <SectionCard
-          title={l("Exceptions and reopen context", "Istisnalar ve yeniden acma baglami")}
-          subtitle={l(
-            "RP07 surfaces the existing reopen/readiness contract but intentionally does not widen the reopen policy itself.",
-            "RP07 mevcut yeniden acma/hazirlik kontratini gorunur kilar, ancak yeniden acma politikasini bilerek genisletmez."
-          )}
-        >
-          <div className="space-y-4">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">
-                {l("Invalidating scopes", "Invalidate eden scope'lar")}
-              </div>
-              {Array.isArray(entityReadiness?.invalidatingScopes) &&
-                entityReadiness.invalidatingScopes.length > 0 ? (
-                <ul className="mt-2 space-y-2 text-sm text-slate-700">
-                  {entityReadiness.invalidatingScopes.map((row) => (
-                    <li key={`${row.scopeKey}-${row.status}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                      {row.closeScopeType === "OPERATING_UNIT"
-                        ? `${row.operatingUnitCode || row.operatingUnitName || row.scopeKey}`
-                        : l("HQ / Central", "Merkez / HQ")}{" "}
-                      | {getStatusLabel(row.status, l)}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="mt-2 text-sm text-slate-500">
-                  {l("No invalidating scopes currently surfaced.", "Su anda invalidate eden scope gorunmuyor.")}
-                </div>
-              )}
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">
-                {l("Reopen requests", "Yeniden acma talepleri")}
-              </div>
-              {reopenRows.length > 0 ? (
-                <div className="mt-2 space-y-2">
-                  {reopenRows.map((row) => (
-                    <div key={row.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                      <div className="font-semibold">
-                        #{row.id} | {row.requestedActionType || "-"} | {row.requestStatus || "-"}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {formatDateTime(row.requestedAt)} | {row.reasonCode || "-"}
-                      </div>
-                      {row.explanation ? <div className="mt-1 text-xs text-slate-600">{row.explanation}</div> : null}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-2 text-sm text-slate-500">
-                  {l("No reopen requests recorded for this pack.", "Bu paket icin yeniden acma talebi kaydi yok.")}
-                </div>
-              )}
-            </div>
-          </div>
-        </SectionCard>
-      ) : null}
-      {activeTab === "evidence" ? (
-        <SectionCard
-          title={l("Evidence pack", "Kanit paketi")}
-          subtitle={l(
-            "This first pass reuses the shared evidence store and keeps pack-scoped file support inside the local-close route family.",
-            "Bu ilk gecis paylasilan kanit storesunu yeniden kullanir ve pack-scope dosya destegini yerel kapanis route ailesinin icinde tutar."
-          )}
-        >
-          {canPrepare ? (
-            <form onSubmit={handleAttachEvidence} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <input
-                type="file"
-                onChange={(event) =>
-                  setUploadDraft((prev) => ({
-                    ...prev,
-                    file: event.target.files?.[0] || null,
-                  }))
-                }
-                className="block w-full text-xs text-slate-700 file:mr-2 file:rounded file:border file:border-slate-300 file:bg-white file:px-2 file:py-1 file:text-xs file:font-semibold file:text-slate-700"
-                disabled={uploading}
-              />
-              <input
-                value={uploadDraft.displayName}
-                onChange={(event) =>
-                  setUploadDraft((prev) => ({ ...prev, displayName: event.target.value }))
-                }
-                placeholder={l("Optional display name", "Opsiyonel gorunen ad")}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                disabled={uploading}
-              />
-              <input
-                value={uploadDraft.note}
-                onChange={(event) =>
-                  setUploadDraft((prev) => ({ ...prev, note: event.target.value }))
-                }
-                placeholder={l("Optional note", "Opsiyonel not")}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                disabled={uploading}
-              />
-              <button
-                type="submit"
-                disabled={!uploadDraft.file || uploading}
-                className="rounded-lg border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              >
-                {uploading ? l("Uploading...", "Yukleniyor...") : l("Attach evidence", "Kanit ekle")}
-              </button>
-            </form>
-          ) : null}
-          <div className="mt-4 space-y-2">
-            {evidenceRows.length > 0 ? (
-              evidenceRows.map((row) => (
-                <div key={row.id} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">
-                        {row.displayName || row.fileName || "-"}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {row.fileName || "-"} | {formatFileSize(row.fileSizeBytes)} | {row.contentType || "-"}
-                      </div>
-                      {row.note ? <div className="mt-1 text-xs text-slate-600">{row.note}</div> : null}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleDownloadEvidence(row)}
-                        disabled={downloadId === row.id}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
-                      >
-                        {downloadId === row.id ? l("Downloading...", "Indiriliyor...") : l("Download", "Indir")}
-                      </button>
-                      {canPrepare ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteEvidence(row.id)}
-                          disabled={deleteId === row.id}
-                          className="rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-60"
-                        >
-                          {deleteId === row.id ? l("Deleting...", "Siliniyor...") : l("Delete", "Sil")}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                {l("No evidence attached yet.", "Henuz ekli kanit yok.")}
-              </div>
-            )}
-          </div>
-        </SectionCard>
-      ) : null}
-      {activeTab === "comments" ? (
-        <SectionCard
-          title={l("Comments", "Yorumlar")}
-          subtitle={l(
-            "RP07 keeps comments lightweight and pack-scoped so review explanations can sit beside evidence and audit before later governance slices add stronger mandatory-comment rules.",
-            "RP07 yorumlari hafif ve pack-scope tutar; boylece sonraki governance dilimleri daha guclu zorunlu-yorum kurallari eklemeden once inceleme aciklamalari kanit ve denetimin yaninda durabilir."
-          )}
-        >
-          {canPrepare ? (
-            <form onSubmit={handleCreateComment} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <textarea
-                value={commentBody}
-                onChange={(event) => setCommentBody(event.target.value)}
-                rows={4}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={l("Add internal close-pack comment...", "Dahili kapanis paketi yorumu ekleyin...")}
-                disabled={commentSaving}
-              />
-              <button
-                type="submit"
-                disabled={!String(commentBody || "").trim() || commentSaving}
-                className="rounded-lg border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              >
-                {commentSaving ? l("Saving...", "Kaydediliyor...") : l("Add comment", "Yorum ekle")}
-              </button>
-            </form>
-          ) : null}
-          <div className="mt-4 space-y-2">
-            {commentRows.length > 0 ? (
-              commentRows.map((row) => (
-                <div key={row.id} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="whitespace-pre-wrap text-sm text-slate-800">{row.body || "-"}</div>
-                  <div className="mt-2 text-xs text-slate-500">
-                    {formatDateTime(row.createdAt)} | {row.createdByUserName || row.createdByUserEmail || row.createdByUserId || "-"}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                {l("No internal comments yet.", "Henuz dahili yorum yok.")}
-              </div>
-            )}
-          </div>
-        </SectionCard>
-      ) : null}
-      {activeTab === "audit" ? (
-        <SectionCard
-          title={l("Audit trail", "Denetim izi")}
-          subtitle={l(
-            "This tab reads the shared audit_logs table for the pack and any governed reopen actions tied back through the pack id payload.",
-            "Bu sekme paylasilan audit_logs tablosunu, paket ve paket id payload'i uzerinden geri baglanan governed reopen aksiyonlari icin okur."
-          )}
-        >
-          <div className="space-y-2">
-            {auditRows.length > 0 ? (
-              auditRows.map((row) => (
-                <div key={row.auditLogId} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-slate-900">{row.action || "-"}</div>
-                    <div className="text-xs text-slate-500">{formatDateTime(row.createdAt)}</div>
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {row.actorName || row.actorEmail || row.actorUserId || "-"} | {row.resourceType || "-"}:{row.resourceId || "-"}
-                  </div>
-                  {row.payload ? (
-                    <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-900 p-3 text-[11px] text-slate-100">
-                      {JSON.stringify(row.payload, null, 2)}
-                    </pre>
-                  ) : null}
-                </div>
-              ))
-            ) : (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                {l("No audit rows found yet.", "Henuz denetim kaydi bulunmadi.")}
-              </div>
-            )}
-          </div>
-        </SectionCard>
-      ) : null}
-    </div>
+  const format = normalizeUpperText(input?.format || "JSON");
+  if (!REPORT_FORMATS.has(format)) {
+    throw badRequest("format must be JSON or CSV");
+  }
+  const asOfDate = parseDateOnly(input?.asOfDate ?? input?.as_of_date);
+  if ((input?.asOfDate || input?.as_of_date) && !asOfDate) {
+    throw badRequest("asOfDate must be a valid YYYY-MM-DD date");
+  }
+  const scopeType = input?.scopeType ?? input?.scope_type;
+  const scopeId = input?.scopeId ?? input?.scope_id;
+  if ((scopeType && !scopeId) || (!scopeType && scopeId)) {
+    throw badRequest("scopeType and scopeId must be provided together");
+  }
+  return {
+    tenantId,
+    reportType,
+    format,
+    asOfDate: asOfDate || new Date().toISOString().slice(0, 10),
+    scopeFilter: normalizeScopeOrNull(
+      scopeType || scopeId ? { scopeType, scopeId } : null,
+      tenantId
+    ),
+  };
+}
+async function loadScopeReferences(tenantId, runQuery = query) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const [tenantResult, groupResult, countryResult, legalEntityResult, operatingUnitResult] =
+    await Promise.all([
+      runQuery(
+        `SELECT id, code, name
+         FROM tenants
+         WHERE id = ?
+         LIMIT 1`,
+        [normalizedTenantId]
+      ),
+      runQuery(
+        `SELECT id, code, name
+         FROM group_companies
+         WHERE tenant_id = ?`,
+        [normalizedTenantId]
+      ),
+      runQuery(
+        `SELECT id, iso2 AS code, name
+         FROM countries`,
+        []
+      ),
+      runQuery(
+        `SELECT id, code, name
+         FROM legal_entities
+         WHERE tenant_id = ?`,
+        [normalizedTenantId]
+      ),
+      runQuery(
+        `SELECT id, code, name
+         FROM operating_units
+         WHERE tenant_id = ?`,
+        [normalizedTenantId]
+      ),
+    ]);
+  function mapRows(rows = []) {
+    return new Map(
+      rows
+        .map((row) => [
+          parsePositiveInt(row?.id),
+          {
+            id: parsePositiveInt(row?.id),
+            code: String(row?.code || "").trim() || null,
+            name: String(row?.name || "").trim() || null,
+          },
+        ])
+        .filter(([id]) => id)
+    );
+  }
+  return {
+    TENANT: mapRows(tenantResult.rows || []),
+    GROUP: mapRows(groupResult.rows || []),
+    COUNTRY: mapRows(countryResult.rows || []),
+    LEGAL_ENTITY: mapRows(legalEntityResult.rows || []),
+    OPERATING_UNIT: mapRows(operatingUnitResult.rows || []),
+  };
+}
+function resolveScopeName(scopeReferences, scopeType, scopeId) {
+  const normalizedScopeType = normalizeUpperText(scopeType);
+  const normalizedScopeId = parsePositiveInt(scopeId);
+  if (!normalizedScopeType || !normalizedScopeId) {
+    return null;
+  }
+  const byType = scopeReferences?.[normalizedScopeType];
+  const match = byType instanceof Map ? byType.get(normalizedScopeId) : null;
+  if (!match) {
+    return `${normalizedScopeType} ${normalizedScopeId}`;
+  }
+  return match.name || match.code || `${normalizedScopeType} ${normalizedScopeId}`;
+}
+function formatScopeLabel(scopeReferences, scopeType, scopeId) {
+  const normalizedScopeType = normalizeUpperText(scopeType);
+  const normalizedScopeId = parsePositiveInt(scopeId);
+  if (!normalizedScopeType || !normalizedScopeId) {
+    return "";
+  }
+  return `${normalizedScopeType}:${normalizedScopeId} (${resolveScopeName(
+    scopeReferences,
+    normalizedScopeType,
+    normalizedScopeId
+  )})`;
+}
+function mapScopeWithName(scopeReferences, scopeType, scopeId) {
+  const normalizedScopeType = normalizeUpperText(scopeType);
+  const normalizedScopeId = parsePositiveInt(scopeId);
+  if (!normalizedScopeType || !normalizedScopeId) {
+    return null;
+  }
+  return {
+    type: normalizedScopeType,
+    id: normalizedScopeId,
+    name: resolveScopeName(scopeReferences, normalizedScopeType, normalizedScopeId),
+  };
+}
+function withinDateWindow(startDate, endDate, asOfDate) {
+  if (startDate && asOfDate < startDate) {
+    return false;
+  }
+  if (endDate && asOfDate > endDate) {
+    return false;
+  }
+  return true;
+}
+function resolveDelegationState(row, asOfDate) {
+  const revokedAtDate = parseDateOnly(row?.revoked_at ?? row?.revokedAt);
+  if ((revokedAtDate && revokedAtDate <= asOfDate) || row?.is_active === 0 || row?.isActive === false) {
+    return "REVOKED";
+  }
+  const effectiveFrom = parseDateOnly(row?.effective_from ?? row?.effectiveFrom);
+  const effectiveTo = parseDateOnly(row?.effective_to ?? row?.effectiveTo);
+  if (effectiveFrom && asOfDate < effectiveFrom) {
+    return "UPCOMING";
+  }
+  if (effectiveTo && asOfDate > effectiveTo) {
+    return "EXPIRED";
+  }
+  return "ACTIVE";
+}
+async function scopesIntersect(
+  tenantId,
+  leftScope,
+  rightScope,
+  runQuery = query,
+  cache = null
+) {
+  if (!rightScope) {
+    return true;
+  }
+  const normalizedLeftScope = normalizeScopeOrNull(leftScope, tenantId);
+  const normalizedRightScope = normalizeScopeOrNull(rightScope, tenantId);
+  if (!normalizedLeftScope || !normalizedRightScope) {
+    return false;
+  }
+  const cacheKey = cache
+    ? `${scopeKey(normalizedLeftScope.scopeType, normalizedLeftScope.scopeId)}|${scopeKey(
+        normalizedRightScope.scopeType,
+        normalizedRightScope.scopeId
+      )}`
+    : null;
+  if (cacheKey && cache?.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+  let intersects =
+    normalizedLeftScope.scopeType === normalizedRightScope.scopeType &&
+    normalizedLeftScope.scopeId === normalizedRightScope.scopeId;
+  if (!intersects) {
+    intersects = await doesScopeIncludeScope(
+      tenantId,
+      normalizedLeftScope,
+      normalizedRightScope,
+      runQuery
+    );
+  }
+  if (!intersects) {
+    intersects = await doesScopeIncludeScope(
+      tenantId,
+      normalizedRightScope,
+      normalizedLeftScope,
+      runQuery
+    );
+  }
+  if (cacheKey) {
+    cache.set(cacheKey, intersects);
+  }
+  return intersects;
+}
+async function resolveOverlapScope(
+  tenantId,
+  leftScope,
+  rightScope,
+  runQuery = query,
+  cache = null
+) {
+  const normalizedLeftScope = normalizeScopeOrNull(leftScope, tenantId);
+  const normalizedRightScope = normalizeScopeOrNull(rightScope, tenantId);
+  if (!normalizedLeftScope || !normalizedRightScope) {
+    return null;
+  }
+  if (
+    normalizedLeftScope.scopeType === normalizedRightScope.scopeType &&
+    normalizedLeftScope.scopeId === normalizedRightScope.scopeId
+  ) {
+    return normalizedLeftScope;
+  }
+  if (
+    await scopesIntersect(
+      tenantId,
+      normalizedLeftScope,
+      normalizedRightScope,
+      runQuery,
+      cache
+    )
+  ) {
+    return scopeRank(normalizedLeftScope.scopeType) >= scopeRank(normalizedRightScope.scopeType)
+      ? normalizedLeftScope
+      : normalizedRightScope;
+  }
+  return null;
+}
+async function loadTenantUsers(tenantId, runQuery = query) {
+  const result = await runQuery(
+    `SELECT id, email, name, status, created_at
+     FROM users
+     WHERE tenant_id = ?
+     ORDER BY name ASC, email ASC, id ASC`,
+    [tenantId]
+  );
+  return (result.rows || []).map((row) => ({
+    id: parsePositiveInt(row?.id),
+    email: String(row?.email || "").trim() || null,
+    name: String(row?.name || "").trim() || null,
+    status: String(row?.status || "").trim() || null,
+    createdAt: parseDateTime(row?.created_at),
+  }));
+}
+async function loadRoleAssignmentsAsOf(tenantId, asOfDate, runQuery = query) {
+  const effectiveGuard = await getUserRoleScopeEffectiveDateGuard(runQuery, asOfDate);
+  const result = await runQuery(
+    `SELECT
+        urs.id,
+        urs.user_id,
+        urs.role_id,
+        urs.scope_type,
+        urs.scope_id,
+        urs.effect,
+        urs.effective_from,
+        urs.effective_to,
+        urs.created_at,
+        r.code AS role_code,
+        r.name AS role_name
+       FROM user_role_scopes urs
+       JOIN roles r
+         ON r.id = urs.role_id
+        AND r.tenant_id = urs.tenant_id
+      WHERE urs.tenant_id = ?${effectiveGuard.sql}
+      ORDER BY urs.user_id ASC, urs.id ASC`,
+    [tenantId, ...effectiveGuard.params]
+  );
+  return (result.rows || []).map((row) => ({
+    id: parsePositiveInt(row?.id),
+    userId: parsePositiveInt(row?.user_id),
+    roleId: parsePositiveInt(row?.role_id),
+    roleCode: String(row?.role_code || "").trim() || null,
+    roleName: String(row?.role_name || "").trim() || null,
+    scopeType: normalizeUpperText(row?.scope_type),
+    scopeId: parsePositiveInt(row?.scope_id),
+    effect: normalizeUpperText(row?.effect),
+    effectiveFrom: parseDateOnly(row?.effective_from),
+    effectiveTo: parseDateOnly(row?.effective_to),
+    createdAt: parseDateTime(row?.created_at),
+  }));
+}
+async function loadRolePermissions(roleIds, runQuery = query) {
+  const normalizedRoleIds = Array.from(
+    new Set((Array.isArray(roleIds) ? roleIds : []).map(parsePositiveInt).filter(Boolean))
+  );
+  if (normalizedRoleIds.length === 0) {
+    return new Map();
+  }
+  const result = await runQuery(
+    `SELECT rp.role_id, p.code
+     FROM role_permissions rp
+     JOIN permissions p ON p.id = rp.permission_id
+     WHERE rp.role_id IN (${normalizedRoleIds.map(() => "?").join(", ")})
+     ORDER BY rp.role_id ASC, p.code ASC`,
+    normalizedRoleIds
+  );
+  const permissionsByRoleId = new Map();
+  for (const row of result.rows || []) {
+    const roleId = parsePositiveInt(row?.role_id);
+    const permissionCode = String(row?.code || "").trim();
+    if (!roleId || !permissionCode) {
+      continue;
+    }
+    if (!permissionsByRoleId.has(roleId)) {
+      permissionsByRoleId.set(roleId, new Set());
+    }
+    permissionsByRoleId.get(roleId).add(permissionCode);
+  }
+  return permissionsByRoleId;
+}
+async function loadDataScopes(tenantId, runQuery = query) {
+  const result = await runQuery(
+    `SELECT id, user_id, scope_type, scope_id, effect, created_at
+     FROM data_scopes
+     WHERE tenant_id = ?
+     ORDER BY user_id ASC, id ASC`,
+    [tenantId]
+  );
+  return (result.rows || []).map((row) => ({
+    id: parsePositiveInt(row?.id),
+    userId: parsePositiveInt(row?.user_id),
+    scopeType: normalizeUpperText(row?.scope_type),
+    scopeId: parsePositiveInt(row?.scope_id),
+    effect: normalizeUpperText(row?.effect),
+    createdAt: parseDateTime(row?.created_at),
+  }));
+}
+async function loadDelegations(tenantId, asOfDate, runQuery = query) {
+  const asOfEnd = toEndOfDayIso(asOfDate);
+  const result = await runQuery(
+    `SELECT
+        d.*,
+        delegator.name AS delegator_user_name,
+        delegator.email AS delegator_user_email,
+        delegate_user.name AS delegate_user_name,
+        delegate_user.email AS delegate_user_email
+       FROM approval_delegations d
+       LEFT JOIN users delegator
+         ON delegator.tenant_id = d.tenant_id
+        AND delegator.id = d.delegator_user_id
+       LEFT JOIN users delegate_user
+         ON delegate_user.tenant_id = d.tenant_id
+        AND delegate_user.id = d.delegate_user_id
+      WHERE d.tenant_id = ?
+        AND d.created_at <= ?
+      ORDER BY d.id DESC`,
+    [tenantId, asOfEnd]
+  );
+  return (result.rows || []).map((row) => ({
+    id: parsePositiveInt(row?.id),
+    tenantId: parsePositiveInt(row?.tenant_id),
+    delegatorUserId: parsePositiveInt(row?.delegator_user_id),
+    delegatorUserName: String(row?.delegator_user_name || "").trim() || null,
+    delegatorUserEmail: String(row?.delegator_user_email || "").trim() || null,
+    delegateUserId: parsePositiveInt(row?.delegate_user_id),
+    delegateUserName: String(row?.delegate_user_name || "").trim() || null,
+    delegateUserEmail: String(row?.delegate_user_email || "").trim() || null,
+    moduleCode: normalizeUpperText(row?.module_code) || null,
+    scopeType: normalizeUpperText(row?.scope_type),
+    scopeId: parsePositiveInt(row?.scope_id),
+    effectiveFrom: parseDateOnly(row?.effective_from),
+    effectiveTo: parseDateOnly(row?.effective_to),
+    note: String(row?.note || "").trim() || null,
+    isActive: toBoolean(row?.is_active),
+    revokedAt: parseDateTime(row?.revoked_at),
+    revokedReason: String(row?.revoked_reason || "").trim() || null,
+    createdAt: parseDateTime(row?.created_at),
+    state: resolveDelegationState(row, asOfDate),
+  }));
+}
+async function loadDelegationDecisionDetails(
+  tenantId,
+  asOfDate,
+  delegationIds,
+  runQuery = query
+) {
+  const normalizedDelegationIds = Array.from(
+    new Set((Array.isArray(delegationIds) ? delegationIds : []).map(parsePositiveInt).filter(Boolean))
+  );
+  if (normalizedDelegationIds.length === 0) {
+    return [];
+  }
+  const asOfEnd = toEndOfDayIso(asOfDate);
+  const result = await runQuery(
+    `SELECT
+        d.delegation_id,
+        d.request_id,
+        d.decision,
+        d.decided_at,
+        r.request_code,
+        r.module_code,
+        r.target_type
+       FROM approval_decisions d
+       JOIN approval_requests r
+         ON r.tenant_id = d.tenant_id
+        AND r.id = d.request_id
+      WHERE d.tenant_id = ?
+        AND d.delegation_id IN (${normalizedDelegationIds.map(() => "?").join(", ")})
+        AND d.decided_at <= ?
+      ORDER BY d.delegation_id ASC, d.decided_at ASC, d.id ASC`,
+    [tenantId, ...normalizedDelegationIds, asOfEnd]
+  );
+  return (result.rows || []).map((row) => ({
+    delegationId: parsePositiveInt(row?.delegation_id),
+    requestId: parsePositiveInt(row?.request_id),
+    requestCode: String(row?.request_code || "").trim() || null,
+    action: normalizeUpperText(row?.decision),
+    moduleCode: normalizeUpperText(row?.module_code),
+    targetType: normalizeUpperText(row?.target_type),
+    decidedAt: parseDateTime(row?.decided_at),
+  }));
+}
+async function loadApprovalPoliciesAsOf(tenantId, asOfDate, runQuery = query) {
+  const policyResult = await runQuery(
+    `SELECT *
+     FROM approval_policies
+     WHERE tenant_id = ?
+       AND is_active = 1
+       AND (effective_from IS NULL OR effective_from <= ?)
+       AND (effective_to IS NULL OR effective_to >= ?)
+     ORDER BY module_code ASC, target_type ASC, action_type ASC, id ASC`,
+    [tenantId, asOfDate, asOfDate]
+  );
+  const policies = (policyResult.rows || []).map((row) => ({
+    id: parsePositiveInt(row?.id),
+    moduleCode: normalizeUpperText(row?.module_code),
+    policyCode: String(row?.policy_code || "").trim() || null,
+    policyName: String(row?.policy_name || "").trim() || null,
+    targetType: normalizeUpperText(row?.target_type),
+    actionType: normalizeUpperText(row?.action_type),
+    versionNo: Number(row?.version_no || 1),
+    scopeType: normalizeUpperText(row?.scope_type) || null,
+    scopeId: parsePositiveInt(row?.scope_id),
+    effectiveFrom: parseDateOnly(row?.effective_from),
+    effectiveTo: parseDateOnly(row?.effective_to),
+    minApprovals: Number(row?.min_approvals || 1),
+    makerCheckerRequired: toBoolean(row?.maker_checker_required),
+    autoExecuteOnFinalApproval: toBoolean(row?.auto_execute_on_final_approval),
+    minAmount: toNumberOrNull(row?.min_amount),
+    maxAmount: toNumberOrNull(row?.max_amount),
+    currencyCode: String(row?.currency_code || "").trim() || null,
+    approverPermissionCode: String(row?.approver_permission_code || "").trim() || null,
+  }));
+  const policyIds = policies.map((policy) => policy.id).filter(Boolean);
+  if (policyIds.length === 0) {
+    return [];
+  }
+  const [assignmentResult, stepResult] = await Promise.all([
+    runQuery(
+      `SELECT *
+       FROM approval_policy_assignments
+       WHERE tenant_id = ?
+         AND policy_id IN (${policyIds.map(() => "?").join(", ")})
+         AND is_active = 1
+         AND (effective_from IS NULL OR effective_from <= ?)
+         AND (effective_to IS NULL OR effective_to >= ?)
+       ORDER BY policy_id ASC, scope_type ASC, scope_id ASC, id ASC`,
+      [tenantId, ...policyIds, asOfDate, asOfDate]
+    ),
+    runQuery(
+      `SELECT policy_id, COUNT(*) AS step_count
+       FROM approval_policy_steps
+       WHERE tenant_id = ?
+         AND policy_id IN (${policyIds.map(() => "?").join(", ")})
+       GROUP BY policy_id`,
+      [tenantId, ...policyIds]
+    ),
+  ]);
+  const assignmentsByPolicyId = new Map();
+  for (const row of assignmentResult.rows || []) {
+    const policyId = parsePositiveInt(row?.policy_id);
+    if (!policyId) {
+      continue;
+    }
+    if (!assignmentsByPolicyId.has(policyId)) {
+      assignmentsByPolicyId.set(policyId, []);
+    }
+    assignmentsByPolicyId.get(policyId).push({
+      scopeType: normalizeUpperText(row?.scope_type),
+      scopeId: parsePositiveInt(row?.scope_id),
+      effectiveFrom: parseDateOnly(row?.effective_from),
+      effectiveTo: parseDateOnly(row?.effective_to),
+    });
+  }
+  const stepCountByPolicyId = new Map();
+  for (const row of stepResult.rows || []) {
+    const policyId = parsePositiveInt(row?.policy_id);
+    if (!policyId) {
+      continue;
+    }
+    stepCountByPolicyId.set(policyId, Number(row?.step_count || 0));
+  }
+  return policies.map((policy) => {
+    const assignments = assignmentsByPolicyId.get(policy.id) || [];
+    const applicabilityScopes =
+      assignments.length > 0
+        ? assignments.map((assignment) => ({
+            scopeType: assignment.scopeType,
+            scopeId: assignment.scopeId,
+          }))
+        : policy.scopeType && policy.scopeId
+          ? [{ scopeType: policy.scopeType, scopeId: policy.scopeId }]
+          : [{ scopeType: "TENANT", scopeId: tenantId }];
+    return {
+      ...policy,
+      assignments,
+      applicabilityScopes,
+      stepCount: Math.max(1, Number(stepCountByPolicyId.get(policy.id) || 0)),
+    };
+  });
+}
+async function loadActiveApprovalCoverage(tenantId, asOfDate, scopeFilter, runQuery = query) {
+  const policies = await loadApprovalPoliciesAsOf(tenantId, asOfDate, runQuery);
+  const scopeIntersectionCache = new Map();
+  const filteredPolicies = [];
+  for (const policy of policies) {
+    const relevantScopes = [];
+    for (const scope of policy.applicabilityScopes) {
+      if (
+        await scopesIntersect(
+          tenantId,
+          scope,
+          scopeFilter,
+          runQuery,
+          scopeIntersectionCache
+        )
+      ) {
+        relevantScopes.push(scope);
+      }
+    }
+    if (relevantScopes.length === 0 && scopeFilter) {
+      continue;
+    }
+    filteredPolicies.push({
+      ...policy,
+      relevantScopes: relevantScopes.length > 0 ? relevantScopes : [...policy.applicabilityScopes],
+    });
+  }
+  const grouped = new Map();
+  for (const policy of filteredPolicies) {
+    const key = `${policy.moduleCode}|${policy.targetType}|${policy.actionType}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        moduleCode: policy.moduleCode,
+        targetType: policy.targetType,
+        actionType: policy.actionType,
+        policyCount: 0,
+        policies: [],
+        relevantScopes: [],
+      });
+    }
+    const entry = grouped.get(key);
+    entry.policyCount += 1;
+    entry.policies.push(policy);
+    for (const scope of policy.relevantScopes) {
+      const token = scopeKey(scope.scopeType, scope.scopeId);
+      if (!token) {
+        continue;
+      }
+      if (!entry.relevantScopes.some((candidate) => scopeKey(candidate.scopeType, candidate.scopeId) === token)) {
+        entry.relevantScopes.push(scope);
+      }
+    }
+  }
+  return {
+    policies: filteredPolicies,
+    groups: Array.from(grouped.values()),
+  };
+}
+function groupEffectivePermissions(entitlements, scopeReferences) {
+  const grouped = new Map();
+  for (const entry of entitlements?.permissions || []) {
+    const permissionCode = String(entry?.code || "").trim();
+    const scopeType = normalizeUpperText(entry?.scopeType);
+    const scopeIds = Array.isArray(entry?.scopeIds) ? entry.scopeIds : [];
+    if (!permissionCode || !scopeType || scopeIds.length === 0) {
+      continue;
+    }
+    if (!grouped.has(permissionCode)) {
+      grouped.set(permissionCode, {
+        code: permissionCode,
+        visibilityNarrowed: Boolean(entry?.visibilityNarrowed),
+        scopes: [],
+      });
+    }
+    const permissionEntry = grouped.get(permissionCode);
+    for (const scopeId of scopeIds) {
+      const normalizedScopeId = parsePositiveInt(scopeId);
+      const token = scopeKey(scopeType, normalizedScopeId);
+      if (!token) {
+        continue;
+      }
+      if (permissionEntry.scopes.some((scope) => scopeKey(scope.type, scope.id) === token)) {
+        continue;
+      }
+      permissionEntry.scopes.push({
+        type: scopeType,
+        id: normalizedScopeId,
+        name: resolveScopeName(scopeReferences, scopeType, normalizedScopeId),
+      });
+    }
+  }
+  return Array.from(grouped.values()).sort((left, right) => left.code.localeCompare(right.code));
+}
+async function buildAccessMatrixReport(input, options = {}) {
+  const { tenantId, asOfDate, scopeFilter } = input;
+  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
+  const [users, assignments, dataScopes, entitlementsByUser, delegations, scopeReferences] =
+    await Promise.all([
+      loadTenantUsers(tenantId, runQuery),
+      loadRoleAssignmentsAsOf(tenantId, asOfDate, runQuery),
+      loadDataScopes(tenantId, runQuery),
+      Promise.resolve(null),
+      loadDelegations(tenantId, asOfDate, runQuery),
+      loadScopeReferences(tenantId, runQuery),
+    ]);
+  const entitlementsMap = new Map();
+  await Promise.all(
+    users.map(async (user) => {
+      const entitlements = await loadUserEntitlements({
+        tenantId,
+        userId: user.id,
+        runQuery,
+        asOfDate,
+      });
+      entitlementsMap.set(user.id, entitlements);
+    })
+  );
+  const assignmentsByUserId = new Map();
+  for (const assignment of assignments) {
+    if (!assignmentsByUserId.has(assignment.userId)) {
+      assignmentsByUserId.set(assignment.userId, []);
+    }
+    assignmentsByUserId.get(assignment.userId).push(assignment);
+  }
+  const dataScopesByUserId = new Map();
+  for (const dataScope of dataScopes) {
+    if (!dataScopesByUserId.has(dataScope.userId)) {
+      dataScopesByUserId.set(dataScope.userId, []);
+    }
+    dataScopesByUserId.get(dataScope.userId).push(dataScope);
+  }
+  const delegationsByUserId = new Map();
+  for (const delegation of delegations) {
+    if (delegation.state !== "ACTIVE") {
+      continue;
+    }
+    const outgoingEntry = {
+      relation: "OUTGOING",
+      id: delegation.id,
+      moduleCode: delegation.moduleCode,
+      scopeType: delegation.scopeType,
+      scopeId: delegation.scopeId,
+      scopeName: resolveScopeName(scopeReferences, delegation.scopeType, delegation.scopeId),
+      effectiveFrom: delegation.effectiveFrom,
+      effectiveTo: delegation.effectiveTo,
+      note: delegation.note,
+      counterpartyUserId: delegation.delegateUserId,
+      counterpartyName: delegation.delegateUserName,
+      counterpartyEmail: delegation.delegateUserEmail,
+    };
+    const incomingEntry = {
+      relation: "INCOMING",
+      id: delegation.id,
+      moduleCode: delegation.moduleCode,
+      scopeType: delegation.scopeType,
+      scopeId: delegation.scopeId,
+      scopeName: resolveScopeName(scopeReferences, delegation.scopeType, delegation.scopeId),
+      effectiveFrom: delegation.effectiveFrom,
+      effectiveTo: delegation.effectiveTo,
+      note: delegation.note,
+      counterpartyUserId: delegation.delegatorUserId,
+      counterpartyName: delegation.delegatorUserName,
+      counterpartyEmail: delegation.delegatorUserEmail,
+    };
+    if (!delegationsByUserId.has(delegation.delegatorUserId)) {
+      delegationsByUserId.set(delegation.delegatorUserId, []);
+    }
+    delegationsByUserId.get(delegation.delegatorUserId).push(outgoingEntry);
+    if (!delegationsByUserId.has(delegation.delegateUserId)) {
+      delegationsByUserId.set(delegation.delegateUserId, []);
+    }
+    delegationsByUserId.get(delegation.delegateUserId).push(incomingEntry);
+  }
+  const scopeIntersectionCache = new Map();
+  const matrix = [];
+  for (const user of users) {
+    const rawRoles = assignmentsByUserId.get(user.id) || [];
+    const roles = [];
+    for (const assignment of rawRoles) {
+      const relevant = await scopesIntersect(
+        tenantId,
+        {
+          scopeType: assignment.scopeType,
+          scopeId: assignment.scopeId,
+        },
+        scopeFilter,
+        runQuery,
+        scopeIntersectionCache
+      );
+      if (!relevant) {
+        continue;
+      }
+      roles.push({
+        assignmentId: assignment.id,
+        roleCode: assignment.roleCode,
+        roleName: assignment.roleName,
+        scopeType: assignment.scopeType,
+        scopeId: assignment.scopeId,
+        scopeName: resolveScopeName(scopeReferences, assignment.scopeType, assignment.scopeId),
+        effect: assignment.effect,
+        assignedAt: assignment.createdAt,
+        effectiveFrom: assignment.effectiveFrom,
+        effectiveTo: assignment.effectiveTo,
+      });
+    }
+    const entitlements = entitlementsMap.get(user.id) || null;
+    const effectivePermissions = [];
+    for (const permission of groupEffectivePermissions(entitlements, scopeReferences)) {
+      const scopes = [];
+      for (const scope of permission.scopes) {
+        const relevant = await scopesIntersect(
+          tenantId,
+          {
+            scopeType: scope.type,
+            scopeId: scope.id,
+          },
+          scopeFilter,
+          runQuery,
+          scopeIntersectionCache
+        );
+        if (relevant) {
+          scopes.push(scope);
+        }
+      }
+      if (scopes.length === 0 && scopeFilter) {
+        continue;
+      }
+      effectivePermissions.push({
+        code: permission.code,
+        visibilityNarrowed: permission.visibilityNarrowed,
+        scopes: scopes.length > 0 ? scopes : permission.scopes,
+      });
+    }
+    const visibilityOverrides = entitlements?.visibilityOverrides || [];
+    const dataScopeEntries = [];
+    for (const visibilityOverride of visibilityOverrides) {
+      const relevant = await scopesIntersect(
+        tenantId,
+        {
+          scopeType: visibilityOverride.scopeType,
+          scopeId: visibilityOverride.scopeId,
+        },
+        scopeFilter,
+        runQuery,
+        scopeIntersectionCache
+      );
+      if (!relevant) {
+        continue;
+      }
+      dataScopeEntries.push({
+        scopeType: visibilityOverride.scopeType,
+        scopeId: visibilityOverride.scopeId,
+        scopeName: resolveScopeName(
+          scopeReferences,
+          visibilityOverride.scopeType,
+          visibilityOverride.scopeId
+        ),
+        effect: visibilityOverride.effect,
+      });
+    }
+    const rawDelegations = delegationsByUserId.get(user.id) || [];
+    const activeDelegations = [];
+    for (const delegation of rawDelegations) {
+      const relevant = await scopesIntersect(
+        tenantId,
+        {
+          scopeType: delegation.scopeType,
+          scopeId: delegation.scopeId,
+        },
+        scopeFilter,
+        runQuery,
+        scopeIntersectionCache
+      );
+      if (relevant) {
+        activeDelegations.push(delegation);
+      }
+    }
+    if (
+      scopeFilter &&
+      roles.length === 0 &&
+      effectivePermissions.length === 0 &&
+      dataScopeEntries.length === 0 &&
+      activeDelegations.length === 0
+    ) {
+      continue;
+    }
+    matrix.push({
+      userId: user.id,
+      userName: user.name,
+      email: user.email,
+      status: user.status,
+      roles,
+      effectivePermissions,
+      dataScopes: dataScopeEntries,
+      activeDelegations,
+      scopeSummary: entitlements?.scopeSummary || null,
+      isVisibilityNarrowed: Boolean(entitlements?.isVisibilityNarrowed),
+    });
+  }
+  return {
+    reportType: "ACCESS_MATRIX",
+    asOfDate,
+    matrix,
+    summary: {
+      totalUsers: matrix.length,
+      usersWithRoles: matrix.filter((row) => row.roles.length > 0).length,
+      usersWithEffectivePermissions: matrix.filter((row) => row.effectivePermissions.length > 0)
+        .length,
+      usersWithDataScopes: matrix.filter((row) => row.dataScopes.length > 0).length,
+      usersWithActiveDelegations: matrix.filter((row) => row.activeDelegations.length > 0).length,
+    },
+  };
+}
+async function buildSodAnalysisReport(input, options = {}) {
+  const { tenantId, asOfDate, scopeFilter } = input;
+  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
+  const [users, assignments, rolePermissions, scopeReferences, coverage] = await Promise.all([
+    loadTenantUsers(tenantId, runQuery),
+    loadRoleAssignmentsAsOf(tenantId, asOfDate, runQuery),
+    Promise.resolve(null),
+    loadScopeReferences(tenantId, runQuery),
+    loadActiveApprovalCoverage(tenantId, asOfDate, scopeFilter, runQuery),
+  ]);
+  const permissionsByRoleId = await loadRolePermissions(
+    assignments.map((assignment) => assignment.roleId),
+    runQuery
+  );
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const assignmentsByUserId = new Map();
+  for (const assignment of assignments) {
+    if (assignment.effect !== "ALLOW") {
+      continue;
+    }
+    const permissionCodes = permissionsByRoleId.get(assignment.roleId) || new Set();
+    if (!assignmentsByUserId.has(assignment.userId)) {
+      assignmentsByUserId.set(assignment.userId, []);
+    }
+    assignmentsByUserId.get(assignment.userId).push({
+      ...assignment,
+      permissionCodes,
+    });
+  }
+  const scopeIntersectionCache = new Map();
+  const permissionCheckCache = new Map();
+  async function hasPermissionAtScope(userId, permissionCode, scope) {
+    const cacheKey = `${userId}|${permissionCode}|${scopeKey(scope.scopeType, scope.scopeId)}`;
+    if (permissionCheckCache.has(cacheKey)) {
+      return permissionCheckCache.get(cacheKey);
+    }
+    const result = await checkUserHasPermissionAtScope(
+      userId,
+      tenantId,
+      permissionCode,
+      scope.scopeType,
+      scope.scopeId,
+      { runQuery, asOfDate }
+    );
+    permissionCheckCache.set(cacheKey, result);
+    return result;
+  }
+  const conflictsByKey = new Map();
+  for (const rule of SOD_RULES) {
+    for (const [userId, userAssignments] of assignmentsByUserId.entries()) {
+      const assignmentsA = userAssignments.filter((assignment) =>
+        assignment.permissionCodes.has(rule.action_a)
+      );
+      const assignmentsB = userAssignments.filter((assignment) =>
+        assignment.permissionCodes.has(rule.action_b)
+      );
+      if (assignmentsA.length === 0 || assignmentsB.length === 0) {
+        continue;
+      }
+      for (const assignmentA of assignmentsA) {
+        for (const assignmentB of assignmentsB) {
+          const overlapScope = await resolveOverlapScope(
+            tenantId,
+            {
+              scopeType: assignmentA.scopeType,
+              scopeId: assignmentA.scopeId,
+            },
+            {
+              scopeType: assignmentB.scopeType,
+              scopeId: assignmentB.scopeId,
+            },
+            runQuery,
+            scopeIntersectionCache
+          );
+          if (!overlapScope) {
+            continue;
+          }
+          if (
+            !(await scopesIntersect(
+              tenantId,
+              overlapScope,
+              scopeFilter,
+              runQuery,
+              scopeIntersectionCache
+            ))
+          ) {
+            continue;
+          }
+          const [hasActionA, hasActionB] = await Promise.all([
+            hasPermissionAtScope(userId, rule.action_a, overlapScope),
+            hasPermissionAtScope(userId, rule.action_b, overlapScope),
+          ]);
+          if (!hasActionA || !hasActionB) {
+            continue;
+          }
+          const key = `${userId}|${rule.code}`;
+          if (!conflictsByKey.has(key)) {
+            const user = usersById.get(userId) || {};
+            conflictsByKey.set(key, {
+              userId,
+              userName: user.name || null,
+              email: user.email || null,
+              conflictRule: {
+                code: rule.code,
+                actionA: rule.action_a,
+                actionB: rule.action_b,
+                severity: rule.enforcement,
+                scope: rule.scope,
+                reason: rule.reason,
+              },
+              roleA: assignmentA.roleCode,
+              roleB: assignmentB.roleCode,
+              roleCodesA: new Set(),
+              roleCodesB: new Set(),
+              overlappingScopes: [],
+              mitigatingControls: [],
+            });
+          }
+          const conflict = conflictsByKey.get(key);
+          conflict.roleCodesA.add(assignmentA.roleCode);
+          conflict.roleCodesB.add(assignmentB.roleCode);
+          const overlapToken = scopeKey(overlapScope.scopeType, overlapScope.scopeId);
+          if (
+            overlapToken &&
+            !conflict.overlappingScopes.some(
+              (scope) => scopeKey(scope.type, scope.id) === overlapToken
+            )
+          ) {
+            conflict.overlappingScopes.push(
+              mapScopeWithName(scopeReferences, overlapScope.scopeType, overlapScope.scopeId)
+            );
+          }
+        }
+      }
+    }
+  }
+  for (const conflict of conflictsByKey.values()) {
+    const mitigationTarget = SOD_RULE_MITIGATION_ACTION_MAP[conflict.conflictRule.code];
+    if (!mitigationTarget) {
+      continue;
+    }
+    for (const scope of conflict.overlappingScopes) {
+      const relevantCoverage = coverage.groups.find(
+        (group) =>
+          group.moduleCode === mitigationTarget.moduleCode &&
+          group.targetType === mitigationTarget.targetType &&
+          group.actionType === mitigationTarget.actionType &&
+          group.relevantScopes.some(
+            (candidate) =>
+              candidate.scopeType === scope.type && candidate.scopeId === scope.id
+          )
+      );
+      if (!relevantCoverage) {
+        continue;
+      }
+      const mitigationLabel = `Approval policy configured for ${mitigationTarget.moduleCode}/${mitigationTarget.targetType}/${mitigationTarget.actionType} at ${formatScopeLabel(
+        scopeReferences,
+        scope.type,
+        scope.id
+      )}`;
+      if (!conflict.mitigatingControls.includes(mitigationLabel)) {
+        conflict.mitigatingControls.push(mitigationLabel);
+      }
+    }
+  }
+  const conflicts = Array.from(conflictsByKey.values())
+    .map((conflict) => ({
+      ...conflict,
+      roleCodesA: Array.from(conflict.roleCodesA).filter(Boolean).sort(),
+      roleCodesB: Array.from(conflict.roleCodesB).filter(Boolean).sort(),
+      mitigatingControls: [...conflict.mitigatingControls],
+    }))
+    .sort((left, right) => {
+      if (left.userName && right.userName && left.userName !== right.userName) {
+        return left.userName.localeCompare(right.userName);
+      }
+      return left.userId - right.userId;
+    });
+  return {
+    reportType: "SOD_ANALYSIS",
+    asOfDate,
+    conflicts,
+    summary: {
+      totalUsers: users.length,
+      usersWithConflicts: new Set(conflicts.map((conflict) => conflict.userId)).size,
+      blockLevelConflicts: conflicts.filter(
+        (conflict) => conflict.conflictRule.severity === "block"
+      ).length,
+      warnLevelConflicts: conflicts.filter(
+        (conflict) => conflict.conflictRule.severity === "warn"
+      ).length,
+      mitigatedConflicts: conflicts.filter((conflict) => conflict.mitigatingControls.length > 0)
+        .length,
+      unmitigatedConflicts: conflicts.filter(
+        (conflict) => conflict.mitigatingControls.length === 0
+      ).length,
+    },
+  };
+}
+async function buildApprovalCoverageReport(input, options = {}) {
+  const { tenantId, asOfDate, scopeFilter } = input;
+  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
+  const [coverage, scopeReferences] = await Promise.all([
+    loadActiveApprovalCoverage(tenantId, asOfDate, scopeFilter, runQuery),
+    loadScopeReferences(tenantId, runQuery),
+  ]);
+  const coveredActions = coverage.groups
+    .map((group) => ({
+      moduleCode: group.moduleCode,
+      targetType: group.targetType,
+      actionType: group.actionType,
+      policyCount: group.policyCount,
+      policies: group.policies.map((policy) => ({
+        id: policy.id,
+        policyCode: policy.policyCode,
+        policyName: policy.policyName,
+        versionNo: policy.versionNo,
+        minAmount: policy.minAmount,
+        maxAmount: policy.maxAmount,
+        currencyCode: policy.currencyCode,
+        requiredApprovals: policy.minApprovals,
+        makerCheckerRequired: policy.makerCheckerRequired,
+        autoExecuteOnFinalApproval: policy.autoExecuteOnFinalApproval,
+        steps: policy.stepCount,
+        approverPermissionCode: policy.approverPermissionCode,
+        applicabilityScopes: policy.relevantScopes.map((scope) =>
+          mapScopeWithName(scopeReferences, scope.scopeType, scope.scopeId)
+        ),
+      })),
+    }))
+    .sort((left, right) => {
+      if (left.moduleCode !== right.moduleCode) {
+        return left.moduleCode.localeCompare(right.moduleCode);
+      }
+      if (left.targetType !== right.targetType) {
+        return left.targetType.localeCompare(right.targetType);
+      }
+      return left.actionType.localeCompare(right.actionType);
+    });
+  const coveredActionKeys = new Set(
+    coveredActions.map(
+      (action) => `${action.moduleCode}|${action.targetType}|${action.actionType}`
+    )
+  );
+  const uncoveredActions = APPROVAL_COVERAGE_ACTION_CATALOG.filter((entry) => {
+    const key = `${entry.moduleCode}|${entry.targetType}|${entry.actionType}`;
+    return !coveredActionKeys.has(key);
+  }).map((entry) => ({
+    moduleCode: entry.moduleCode,
+    targetType: entry.targetType,
+    actionType: entry.actionType,
+    note: entry.uncoveredNote,
+  }));
+  return {
+    reportType: "APPROVAL_COVERAGE",
+    asOfDate,
+    coveredActions,
+    uncoveredActions,
+    summary: {
+      coveredActionCount: coveredActions.length,
+      uncoveredActionCount: uncoveredActions.length,
+      policyCount: coverage.policies.length,
+    },
+  };
+}
+async function buildDelegationLogReport(input, options = {}) {
+  const { tenantId, asOfDate, scopeFilter } = input;
+  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
+  const [delegations, scopeReferences] = await Promise.all([
+    loadDelegations(tenantId, asOfDate, runQuery),
+    loadScopeReferences(tenantId, runQuery),
+  ]);
+  const scopeIntersectionCache = new Map();
+  const filteredDelegations = [];
+  for (const delegation of delegations) {
+    const relevant = await scopesIntersect(
+      tenantId,
+      {
+        scopeType: delegation.scopeType,
+        scopeId: delegation.scopeId,
+      },
+      scopeFilter,
+      runQuery,
+      scopeIntersectionCache
+    );
+    if (!relevant) {
+      continue;
+    }
+    filteredDelegations.push(delegation);
+  }
+  const decisionDetails = await loadDelegationDecisionDetails(
+    tenantId,
+    asOfDate,
+    filteredDelegations.map((delegation) => delegation.id),
+    runQuery
+  );
+  const detailsByDelegationId = new Map();
+  for (const detail of decisionDetails) {
+    if (!detailsByDelegationId.has(detail.delegationId)) {
+      detailsByDelegationId.set(detail.delegationId, []);
+    }
+    detailsByDelegationId.get(detail.delegationId).push(detail);
+  }
+  const delegationsReportRows = filteredDelegations.map((delegation) => {
+    const details = detailsByDelegationId.get(delegation.id) || [];
+    return {
+      id: delegation.id,
+      delegatorUserId: delegation.delegatorUserId,
+      delegatorName: delegation.delegatorUserName,
+      delegateUserId: delegation.delegateUserId,
+      delegateName: delegation.delegateUserName,
+      moduleCode: delegation.moduleCode,
+      scopeType: delegation.scopeType,
+      scopeId: delegation.scopeId,
+      scopeName: resolveScopeName(scopeReferences, delegation.scopeType, delegation.scopeId),
+      effectiveFrom: delegation.effectiveFrom,
+      effectiveTo: delegation.effectiveTo,
+      reason: delegation.note,
+      status: delegation.state,
+      revokedAt: delegation.revokedAt,
+      revokedReason: delegation.revokedReason,
+      decisionsActedOn: details.length,
+      decisionDetails: details,
+    };
+  });
+  return {
+    reportType: "DELEGATION_LOG",
+    asOfDate,
+    delegations: delegationsReportRows,
+    summary: {
+      totalDelegations: delegationsReportRows.length,
+      activeDelegations: delegationsReportRows.filter((row) => row.status === "ACTIVE").length,
+      revokedDelegations: delegationsReportRows.filter((row) => row.status === "REVOKED").length,
+      expiredDelegations: delegationsReportRows.filter((row) => row.status === "EXPIRED").length,
+      delegatedDecisionCount: delegationsReportRows.reduce(
+        (total, row) => total + row.decisionsActedOn,
+        0
+      ),
+    },
+  };
+}
+function flattenAccessMatrixCsvRows(report) {
+  const rows = [];
+  for (const entry of report.matrix || []) {
+    const roleSummary = (entry.roles || [])
+      .map((role) => `${role.roleCode}@${role.scopeType}:${role.scopeId}`)
+      .join("; ");
+    const dataScopeSummary = (entry.dataScopes || [])
+      .map((scope) => `${scope.scopeType}:${scope.scopeId}:${scope.effect}`)
+      .join("; ");
+    const delegationSummary = (entry.activeDelegations || [])
+      .map(
+        (delegation) =>
+          `${delegation.relation}:${delegation.counterpartyName || delegation.counterpartyUserId}@${delegation.scopeType}:${delegation.scopeId}`
+      )
+      .join("; ");
+    if ((entry.effectivePermissions || []).length === 0) {
+      rows.push({
+        tenantId: null,
+        asOfDate: report.asOfDate,
+        userId: entry.userId,
+        userName: entry.userName,
+        email: entry.email,
+        permissionCode: "",
+        permissionScopeType: "",
+        permissionScopeId: "",
+        permissionScopeName: "",
+        assignedRoles: roleSummary,
+        dataScopes: dataScopeSummary,
+        activeDelegations: delegationSummary,
+      });
+      continue;
+    }
+    for (const permission of entry.effectivePermissions || []) {
+      for (const scope of permission.scopes || []) {
+        rows.push({
+          tenantId: null,
+          asOfDate: report.asOfDate,
+          userId: entry.userId,
+          userName: entry.userName,
+          email: entry.email,
+          permissionCode: permission.code,
+          permissionScopeType: scope.type,
+          permissionScopeId: scope.id,
+          permissionScopeName: scope.name,
+          assignedRoles: roleSummary,
+          dataScopes: dataScopeSummary,
+          activeDelegations: delegationSummary,
+        });
+      }
+    }
+  }
+  return rows;
+}
+function flattenSodCsvRows(report, scopeReferences) {
+  return (report.conflicts || []).map((conflict) => ({
+    asOfDate: report.asOfDate,
+    userId: conflict.userId,
+    userName: conflict.userName,
+    email: conflict.email,
+    ruleCode: conflict.conflictRule.code,
+    actionA: conflict.conflictRule.actionA,
+    actionB: conflict.conflictRule.actionB,
+    severity: conflict.conflictRule.severity,
+    roleCodesA: (conflict.roleCodesA || []).join("; "),
+    roleCodesB: (conflict.roleCodesB || []).join("; "),
+    overlappingScopes: (conflict.overlappingScopes || [])
+      .map((scope) => formatScopeLabel(scopeReferences, scope.type, scope.id))
+      .join("; "),
+    mitigatingControls: (conflict.mitigatingControls || []).join("; "),
+  }));
+}
+function flattenApprovalCoverageCsvRows(report, scopeReferences) {
+  const rows = [];
+  for (const coveredAction of report.coveredActions || []) {
+    for (const policy of coveredAction.policies || []) {
+      rows.push({
+        asOfDate: report.asOfDate,
+        coverageStatus: "COVERED",
+        moduleCode: coveredAction.moduleCode,
+        targetType: coveredAction.targetType,
+        actionType: coveredAction.actionType,
+        policyId: policy.id,
+        policyCode: policy.policyCode,
+        requiredApprovals: policy.requiredApprovals,
+        steps: policy.steps,
+        makerCheckerRequired: policy.makerCheckerRequired ? "true" : "false",
+        applicabilityScopes: (policy.applicabilityScopes || [])
+          .map((scope) => formatScopeLabel(scopeReferences, scope.type, scope.id))
+          .join("; "),
+        note: "",
+      });
+    }
+  }
+  for (const uncoveredAction of report.uncoveredActions || []) {
+    rows.push({
+      asOfDate: report.asOfDate,
+      coverageStatus: "UNCOVERED",
+      moduleCode: uncoveredAction.moduleCode,
+      targetType: uncoveredAction.targetType,
+      actionType: uncoveredAction.actionType,
+      policyId: "",
+      policyCode: "",
+      requiredApprovals: "",
+      steps: "",
+      makerCheckerRequired: "",
+      applicabilityScopes: "",
+      note: uncoveredAction.note,
+    });
+  }
+  return rows;
+}
+function flattenDelegationLogCsvRows(report, scopeReferences) {
+  const rows = [];
+  for (const delegation of report.delegations || []) {
+    const decisionDetails = Array.isArray(delegation.decisionDetails)
+      ? delegation.decisionDetails
+      : [];
+    if (decisionDetails.length === 0) {
+      rows.push({
+        asOfDate: report.asOfDate,
+        delegationId: delegation.id,
+        delegatorName: delegation.delegatorName,
+        delegateName: delegation.delegateName,
+        moduleCode: delegation.moduleCode,
+        scope: formatScopeLabel(scopeReferences, delegation.scopeType, delegation.scopeId),
+        effectiveFrom: delegation.effectiveFrom,
+        effectiveTo: delegation.effectiveTo,
+        status: delegation.status,
+        reason: delegation.reason,
+        requestId: "",
+        requestCode: "",
+        decisionAction: "",
+        decisionModule: "",
+        decidedAt: "",
+      });
+      continue;
+    }
+    for (const detail of decisionDetails) {
+      rows.push({
+        asOfDate: report.asOfDate,
+        delegationId: delegation.id,
+        delegatorName: delegation.delegatorName,
+        delegateName: delegation.delegateName,
+        moduleCode: delegation.moduleCode,
+        scope: formatScopeLabel(scopeReferences, delegation.scopeType, delegation.scopeId),
+        effectiveFrom: delegation.effectiveFrom,
+        effectiveTo: delegation.effectiveTo,
+        status: delegation.status,
+        reason: delegation.reason,
+        requestId: detail.requestId,
+        requestCode: detail.requestCode,
+        decisionAction: detail.action,
+        decisionModule: detail.moduleCode,
+        decidedAt: detail.decidedAt,
+      });
+    }
+  }
+  return rows;
+}
+function buildCsvPayload(report, scopeReferences, tenantId) {
+  if (report.reportType === "ACCESS_MATRIX") {
+    const rows = flattenAccessMatrixCsvRows(report);
+    const csv = buildCsv(
+      [
+        { header: "as_of_date", value: (row) => row.asOfDate },
+        { header: "user_id", value: (row) => row.userId },
+        { header: "user_name", value: (row) => row.userName },
+        { header: "email", value: (row) => row.email },
+        { header: "permission_code", value: (row) => row.permissionCode },
+        { header: "permission_scope_type", value: (row) => row.permissionScopeType },
+        { header: "permission_scope_id", value: (row) => row.permissionScopeId },
+        { header: "permission_scope_name", value: (row) => row.permissionScopeName },
+        { header: "assigned_roles", value: (row) => row.assignedRoles },
+        { header: "data_scopes", value: (row) => row.dataScopes },
+        { header: "active_delegations", value: (row) => row.activeDelegations },
+      ],
+      rows
+    );
+    return {
+      csv,
+      fileName: `rbac-access-matrix-${tenantId}-${report.asOfDate}.csv`,
+      rowCount: rows.length,
+    };
+  }
+  if (report.reportType === "SOD_ANALYSIS") {
+    const rows = flattenSodCsvRows(report, scopeReferences);
+    const csv = buildCsv(
+      [
+        { header: "as_of_date", value: (row) => row.asOfDate },
+        { header: "user_id", value: (row) => row.userId },
+        { header: "user_name", value: (row) => row.userName },
+        { header: "email", value: (row) => row.email },
+        { header: "rule_code", value: (row) => row.ruleCode },
+        { header: "action_a", value: (row) => row.actionA },
+        { header: "action_b", value: (row) => row.actionB },
+        { header: "severity", value: (row) => row.severity },
+        { header: "role_codes_a", value: (row) => row.roleCodesA },
+        { header: "role_codes_b", value: (row) => row.roleCodesB },
+        { header: "overlapping_scopes", value: (row) => row.overlappingScopes },
+        { header: "mitigating_controls", value: (row) => row.mitigatingControls },
+      ],
+      rows
+    );
+    return {
+      csv,
+      fileName: `rbac-sod-analysis-${tenantId}-${report.asOfDate}.csv`,
+      rowCount: rows.length,
+    };
+  }
+  if (report.reportType === "APPROVAL_COVERAGE") {
+    const rows = flattenApprovalCoverageCsvRows(report, scopeReferences);
+    const csv = buildCsv(
+      [
+        { header: "as_of_date", value: (row) => row.asOfDate },
+        { header: "coverage_status", value: (row) => row.coverageStatus },
+        { header: "module_code", value: (row) => row.moduleCode },
+        { header: "target_type", value: (row) => row.targetType },
+        { header: "action_type", value: (row) => row.actionType },
+        { header: "policy_id", value: (row) => row.policyId },
+        { header: "policy_code", value: (row) => row.policyCode },
+        { header: "required_approvals", value: (row) => row.requiredApprovals },
+        { header: "steps", value: (row) => row.steps },
+        { header: "maker_checker_required", value: (row) => row.makerCheckerRequired },
+        { header: "applicability_scopes", value: (row) => row.applicabilityScopes },
+        { header: "note", value: (row) => row.note },
+      ],
+      rows
+    );
+    return {
+      csv,
+      fileName: `rbac-approval-coverage-${tenantId}-${report.asOfDate}.csv`,
+      rowCount: rows.length,
+    };
+  }
+  if (report.reportType === "DELEGATION_LOG") {
+    const rows = flattenDelegationLogCsvRows(report, scopeReferences);
+    const csv = buildCsv(
+      [
+        { header: "as_of_date", value: (row) => row.asOfDate },
+        { header: "delegation_id", value: (row) => row.delegationId },
+        { header: "delegator_name", value: (row) => row.delegatorName },
+        { header: "delegate_name", value: (row) => row.delegateName },
+        { header: "module_code", value: (row) => row.moduleCode },
+        { header: "scope", value: (row) => row.scope },
+        { header: "effective_from", value: (row) => row.effectiveFrom },
+        { header: "effective_to", value: (row) => row.effectiveTo },
+        { header: "status", value: (row) => row.status },
+        { header: "reason", value: (row) => row.reason },
+        { header: "request_id", value: (row) => row.requestId },
+        { header: "request_code", value: (row) => row.requestCode },
+        { header: "decision_action", value: (row) => row.decisionAction },
+        { header: "decision_module", value: (row) => row.decisionModule },
+        { header: "decided_at", value: (row) => row.decidedAt },
+      ],
+      rows
+    );
+    return {
+      csv,
+      fileName: `rbac-delegation-log-${tenantId}-${report.asOfDate}.csv`,
+      rowCount: rows.length,
+    };
+  }
+  throw badRequest("CSV export is only supported for individual report families");
+}/**
++ * Build one point-in-time compliance audit report from the current RBAC,
++ * approval, and delegation seams without duplicating entitlement logic.
++ */
+export async function buildComplianceAuditReport(input, options = {}) {
+  const normalizedInput = normalizeScopeFilter(input);
+  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
+  const reportBuilders = {
+    ACCESS_MATRIX: buildAccessMatrixReport,
+    SOD_ANALYSIS: buildSodAnalysisReport,
+    APPROVAL_COVERAGE: buildApprovalCoverageReport,
+    DELEGATION_LOG: buildDelegationLogReport,
+  };
+  if (normalizedInput.reportType === "FULL") {
+    const [accessMatrix, sodAnalysis, approvalCoverage, delegationLog] = await Promise.all([
+      buildAccessMatrixReport(normalizedInput, { runQuery }),
+      buildSodAnalysisReport(normalizedInput, { runQuery }),
+      buildApprovalCoverageReport(normalizedInput, { runQuery }),
+      buildDelegationLogReport(normalizedInput, { runQuery }),
+    ]);
+    return {
+      tenantId: normalizedInput.tenantId,
+      reportType: "FULL",
+      asOfDate: normalizedInput.asOfDate,
+      generatedAt: new Date().toISOString(),
+      scopeFilter: normalizedInput.scopeFilter,
+      reports: {
+        accessMatrix,
+        sodAnalysis,
+        approvalCoverage,
+        delegationLog,
+      },
+    };
+  }
+  const report = await reportBuilders[normalizedInput.reportType](normalizedInput, {
+    runQuery,
+  });
+  return {
+    tenantId: normalizedInput.tenantId,
+    reportType: normalizedInput.reportType,
+    asOfDate: normalizedInput.asOfDate,
+    generatedAt: new Date().toISOString(),
+    scopeFilter: normalizedInput.scopeFilter,
+    report,
+  };
+}/**
++ * Build one CSV export for an individual compliance audit report family.
++ */
+export async function buildComplianceAuditReportCsv(input, options = {}) {
+  const normalizedInput = normalizeScopeFilter({
+    ...input,
+    format: "CSV",
+  });
+  if (normalizedInput.reportType === "FULL") {
+    throw badRequest("CSV export is only supported for a single reportType, not FULL");
+  }
+  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
+  const [wrappedReport, scopeReferences] = await Promise.all([
+    buildComplianceAuditReport(normalizedInput, { runQuery }),
+    loadScopeReferences(normalizedInput.tenantId, runQuery),
+  ]);
+  return buildCsvPayload(
+    wrappedReport.report,
+    scopeReferences,
+    normalizedInput.tenantId
   );
 }
+export default {
+  buildComplianceAuditReport,
+  buildComplianceAuditReportCsv,
+};

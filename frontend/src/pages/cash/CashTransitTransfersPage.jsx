@@ -10,7 +10,7 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
-const TRANSIT_STATUSES = ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"];
+const TRANSIT_STATUSES = ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELLED", "REVERSED"];
 
 const INITIAL_FILTERS = {
   legalEntityId: "",
@@ -151,7 +151,7 @@ function statusClassName(status) {
   if (normalized === "INITIATED") {
     return "bg-sky-100 text-sky-700";
   }
-  if (normalized === "CANCELED") {
+  if (normalized === "CANCELLED") {
     return "bg-rose-100 text-rose-700";
   }
   if (normalized === "REVERSED") {

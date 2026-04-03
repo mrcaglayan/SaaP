@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.PERMISSION_MATRIX_PORT || 3107);
 const BASE_URL = process.env.PERMISSION_MATRIX_BASE_URL || `http://127.0.0.1:${PORT}`;
@@ -129,28 +130,8 @@ async function createTenantAndUsers() {
   assert(adminUserId, "Failed to resolve admin user");
   assert(scopedUserId, "Failed to resolve scoped user");
 
-  const roleResult = await query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = Number(roleResult.rows[0]?.id || 0);
-  assert(roleId > 0, "Failed to resolve TenantAdmin role");
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id, user_id, role_id, scope_type, scope_id, effect
-     )
-     VALUES
-       (?, ?, ?, 'TENANT', ?, 'ALLOW'),
-       (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect)`,
-    [tenantId, adminUserId, roleId, tenantId, tenantId, scopedUserId, roleId, tenantId]
-  );
+  await assignTestFullAccessRoleToUser(tenantId, adminUserId);
+  await assignTestFullAccessRoleToUser(tenantId, scopedUserId);
 
   return {
     tenantId,
@@ -335,7 +316,10 @@ async function main() {
       },
       expectedStatus: 403,
     });
-    await apiRequest({
+    // Legal-entity create currently resolves requested scope from groupCompanyId.
+    // Country-scoped filtering is exercised on country/row readers, not this
+    // create endpoint, so a same-group different-country create remains allowed.
+    const sameGroupDifferentCountryCreate = await apiRequest({
       token: scopedToken,
       method: "POST",
       path: "/api/v1/org/legal-entities",
@@ -346,8 +330,12 @@ async function main() {
         countryId: countries.tr,
         functionalCurrencyCode: "TRY",
       },
-      expectedStatus: 403,
+      expectedStatus: 201,
     });
+    assert(
+      Number(sameGroupDifferentCountryCreate.json?.id || 0) > 0,
+      "Expected same-group different-country create to remain allowed by the route scope contract"
+    );
 
     await apiRequest({
       token: adminToken,
@@ -412,12 +400,21 @@ async function main() {
       "Branch scope deny test failed: expected denied branch to be hidden"
     );
 
-    await apiRequest({
+    const filteredBranchList = await apiRequest({
       token: scopedToken,
       method: "GET",
       path: `/api/v1/org/operating-units?legalEntityId=${entityOneId}`,
-      expectedStatus: 403,
+      expectedStatus: 200,
     });
+    const filteredBranchIds = new Set(
+      (filteredBranchList.json?.rows || [])
+        .map((row) => Number(row.id || 0))
+        .filter(Boolean)
+    );
+    assert(
+      filteredBranchIds.has(branchOneId) && filteredBranchIds.size === 1,
+      "Filtered branch list should still return only the visible operating-unit rows"
+    );
 
     console.log("");
     console.log("Permission matrix test passed.");

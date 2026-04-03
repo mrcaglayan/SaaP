@@ -81,6 +81,17 @@ async function main() {
       routeSource.includes('"/definitions/:definitionId/steps"'),
     "workflow routes are missing expected API endpoints"
   );
+  assert(
+    routeSource.includes('requirePermission("workflow.definition.read")') &&
+      routeSource.includes('requirePermission("workflow.definition.write")') &&
+      routeSource.includes('requirePermission("workflow.assignment.read"') &&
+      routeSource.includes('requirePermission("workflow.assignment.write"'),
+    "workflow definitions/assignments routes should use workflow read/write permissions"
+  );
+  assert(
+    !routeSource.includes('requirePermission("onboarding.company.setup"'),
+    "workflow definitions/assignments routes should no longer use onboarding.company.setup"
+  );
 
   const serviceSource = await readFile(
     path.resolve(root, "backend/src/services/workflows.service.js"),
@@ -100,4 +111,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

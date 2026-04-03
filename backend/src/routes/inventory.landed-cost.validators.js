@@ -1,9 +1,10 @@
 import { badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
 import { requireUserId } from "./cash.validators.common.js";
 import { normalizeOwnershipContextInput } from "../services/ownership.context.policy.service.js";
+import { STOCK_LANDED_COST_VOUCHER_STATUS_VALUES } from "../constants/lifecycle.js";
 
 const ALLOCATION_METHOD_VALUES = ["EQUAL", "BY_AMOUNT", "BY_QTY", "MANUAL"];
-const VOUCHER_STATUS_VALUES = ["DRAFT", "POSTED", "REVERSED", "CANCELED"];
+const VOUCHER_STATUS_VALUES = [...STOCK_LANDED_COST_VOUCHER_STATUS_VALUES];
 
 function requireTenantId(req) {
   const tenantId = resolveTenantId(req);

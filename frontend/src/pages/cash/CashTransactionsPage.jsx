@@ -1011,7 +1011,7 @@ export default function CashTransactionsPage() {
     if (normalized === "REVERSED") {
       return t("cashTransactions.values.statusReversed");
     }
-    if (normalized === "CANCELLED" || normalized === "CANCELED") {
+    if (normalized === "CANCELLED") {
       return t("cashTransactions.values.statusCancelled");
     }
     return normalized;
@@ -1030,7 +1030,7 @@ export default function CashTransactionsPage() {
     if (normalized === "RECEIVED") {
       return t("cashTransactions.values.transitStatusReceived");
     }
-    if (normalized === "CANCELED" || normalized === "CANCELLED") {
+    if (normalized === "CANCELLED") {
       return t("cashTransactions.values.transitStatusCanceled");
     }
     if (normalized === "REVERSED") {

@@ -25,6 +25,8 @@
     "job:secrets:migrate": "node scripts/secrets-backfill-reencrypt.js",
     "job:retention:schedule-due": "node scripts/retention-schedule-due-policies.js",
     "jobs:retention:scheduler": "node scripts/run-retention-scheduler.js",
+    "job:approval:escalation:schedule-due": "node scripts/approval-escalation-schedule-due.js",
+    "jobs:approval:escalation:scheduler": "node scripts/run-approval-escalation-scheduler.js",
     "test:permission-matrix": "node scripts/test-permission-matrix.js",
     "test:cash-pr06": "node scripts/test-cash-pr06-register-session.js",
     "test:cash-pr07": "node scripts/test-cash-pr07-lifecycle.js",
@@ -312,7 +314,8 @@
     "test:tenant-safety": "node scripts/test-tenant-safety-and-transactions.js",
     "test:period-close": "node scripts/test-period-close-process.js",
     "test:intercompany-consolidation": "node scripts/test-intercompany-and-consolidation-reports.js",
-    "test:release-gate:core": "npm run test:permission-matrix && npm run test:ux:rswire02 && npm run test:ux:rswire03 && npm run test:ux:rsrep01 && npm run test:ux:rsclose01 && npm run test:ux:rsstat01 && npm run test:ux:rsrecon01 && npm run test:ux:consolidation-prcm && npm run test:ux:consolidation-cbr06 && npm run test:ux:consolidation-fup-cm02 && npm run test:ux:consolidation-fup-cm03 && npm run test:ux:consolidation-fup-cm04 && npm run test:ux:consolidation-fup-cm05 && npm run test:ux:consolidation-fup-cm06 && npm run test:ux:consolidation-fup-cm07 && npm run test:cash-fx-full-release-gate && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:cash-register-ownership && npm run test:shareholder-capital && npm run test:ou:self-balancing:release-gate && npm run test:ou:current-account-automation:release-gate && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-quality-gate && npm run test:inventory:release-gate && npm run test:inventory:lcv07-release-gate",
+    "test:security:governance-release-gate": "node scripts/test-security-governance-release-gate.js",
+    "test:release-gate:core": "npm run test:permission-matrix && npm run test:security:governance-release-gate && npm run test:ux:rswire02 && npm run test:ux:rswire03 && npm run test:ux:rsrep01 && npm run test:ux:rsclose01 && npm run test:ux:rsstat01 && npm run test:ux:rsrecon01 && npm run test:ux:consolidation-prcm && npm run test:ux:consolidation-cbr06 && npm run test:ux:consolidation-fup-cm02 && npm run test:ux:consolidation-fup-cm03 && npm run test:ux:consolidation-fup-cm04 && npm run test:ux:consolidation-fup-cm05 && npm run test:ux:consolidation-fup-cm06 && npm run test:ux:consolidation-fup-cm07 && npm run test:cash-fx-full-release-gate && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:cash-register-ownership && npm run test:shareholder-capital && npm run test:ou:self-balancing:release-gate && npm run test:ou:current-account-automation:release-gate && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-quality-gate && npm run test:inventory:release-gate && npm run test:inventory:lcv07-release-gate",
     "test:release-gate": "node scripts/test-release-gate.js"
   },
   "keywords": [],

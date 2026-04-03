@@ -9,6 +9,8 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { insertPostedJournalWithLinesTx } from "./inventory.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
+import { submitApprovalRequest } from "./approvalPolicies.service.js";
+import { assertSoD } from "./sod.service.js";
 
 const ACTIVE_BATCH_STATUSES = ["DRAFT", "APPROVED", "EXPORTED", "POSTED"];
 
@@ -68,6 +70,9 @@ function decoratePaymentBatchHeaderRow(row) {
     bank_operating_unit_id: parsePositiveInt(row.bank_operating_unit_id),
     payer_context_scope: buildPayerContextScope(row),
     payer_context_label: formatPayerContextLabel(row),
+    approval_request_id: parsePositiveInt(row.approval_request_id),
+    approvalRequestId: parsePositiveInt(row.approval_request_id),
+    approvalRequest: buildApprovalRequestSummary(row),
   };
 }
 
@@ -262,6 +267,38 @@ function conflictError(message) {
   return err;
 }
 
+function noopScopeAccess() {
+  return true;
+}
+
+function toUpper(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function buildApprovalRequestSummary(row, prefix = "approval_") {
+  const approvalRequestId = parsePositiveInt(row?.[`${prefix}request_id`]);
+  if (!approvalRequestId) {
+    return null;
+  }
+  return {
+    id: approvalRequestId,
+    requestCode: row?.[`${prefix}request_code`] || null,
+    requestStatus: toUpper(row?.[`${prefix}request_status`]) || null,
+    executionStatus: toUpper(row?.[`${prefix}execution_status`]) || null,
+    currentStepNo: Number(row?.[`${prefix}current_step_no`] || 1),
+    scopeType: toUpper(row?.[`${prefix}scope_type`]) || null,
+    scopeId: parsePositiveInt(row?.[`${prefix}scope_id`]),
+    submittedByUserId: parsePositiveInt(row?.[`${prefix}submitted_by_user_id`]),
+    executedByUserId: parsePositiveInt(row?.[`${prefix}executed_by_user_id`]),
+    submittedAt: row?.[`${prefix}submitted_at`] || null,
+    approvedAt: row?.[`${prefix}approved_at`] || null,
+    rejectedAt: row?.[`${prefix}rejected_at`] || null,
+    withdrawnAt: row?.[`${prefix}withdrawn_at`] || null,
+    executedAt: row?.[`${prefix}executed_at`] || null,
+    executionErrorText: row?.[`${prefix}execution_error_text`] || null,
+  };
+}
+
 function forbiddenError(message) {
   const err = new Error(message);
   err.status = 403;
@@ -396,6 +433,7 @@ async function findPaymentBatchHeaderById({ tenantId, batchId, runQuery = query 
         pb.currency_code,
         pb.total_amount,
         pb.status,
+        pb.approval_request_id,
         pb.governance_approval_status,
         pb.governance_approval_request_id,
         pb.governance_approved_at,
@@ -427,6 +465,21 @@ async function findPaymentBatchHeaderById({ tenantId, batchId, runQuery = query 
         ba.operating_unit_id AS bank_operating_unit_id,
         ou.code AS bank_operating_unit_code,
         ou.name AS bank_operating_unit_name,
+        ar.id AS approval_request_id,
+        ar.request_code AS approval_request_code,
+        ar.request_status AS approval_request_status,
+        ar.current_step_no AS approval_current_step_no,
+        ar.execution_status AS approval_execution_status,
+        ar.scope_type AS approval_scope_type,
+        ar.scope_id AS approval_scope_id,
+        ar.submitted_by_user_id AS approval_submitted_by_user_id,
+        ar.executed_by_user_id AS approval_executed_by_user_id,
+        ar.submitted_at AS approval_submitted_at,
+        ar.approved_at AS approval_approved_at,
+        ar.rejected_at AS approval_rejected_at,
+        ar.withdrawn_at AS approval_withdrawn_at,
+        ar.executed_at AS approval_executed_at,
+        ar.execution_error_text AS approval_execution_error_text,
         le.code AS legal_entity_code,
         le.name AS legal_entity_name
      FROM payment_batches pb
@@ -437,6 +490,9 @@ async function findPaymentBatchHeaderById({ tenantId, batchId, runQuery = query 
      LEFT JOIN operating_units ou
        ON ou.id = ba.operating_unit_id
       AND ou.tenant_id = ba.tenant_id
+     LEFT JOIN approval_requests ar
+       ON ar.tenant_id = pb.tenant_id
+      AND ar.id = pb.approval_request_id
      JOIN legal_entities le
        ON le.id = pb.legal_entity_id
        AND le.tenant_id = pb.tenant_id
@@ -461,6 +517,7 @@ async function findPaymentBatchHeaderForUpdate({ tenantId, batchId, runQuery }) 
         currency_code,
         total_amount,
         status,
+        approval_request_id,
         bank_file_format_code,
         bank_export_status,
         bank_ack_status,
@@ -656,6 +713,22 @@ async function buildPaymentBatchDetail({ tenantId, batchId, runQuery = query }) 
     exports,
     audit,
   };
+}
+
+async function getPaymentBatchByApprovalRequestId({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT id
+       FROM payment_batches
+      WHERE tenant_id = ?
+        AND approval_request_id = ?
+      LIMIT 1`,
+    [tenantId, approvalRequestId]
+  );
+  return parsePositiveInt(result.rows?.[0]?.id);
 }
 
 async function writePaymentBatchAudit({
@@ -1220,6 +1293,7 @@ export async function listPaymentBatchRows({
         pb.currency_code,
         pb.total_amount,
         pb.status,
+        pb.approval_request_id,
         pb.governance_approval_status,
         pb.governance_approval_request_id,
         pb.governance_approved_at,
@@ -1238,6 +1312,21 @@ export async function listPaymentBatchRows({
         ba.operating_unit_id AS bank_operating_unit_id,
         ou.code AS bank_operating_unit_code,
         ou.name AS bank_operating_unit_name,
+        ar.id AS approval_request_id,
+        ar.request_code AS approval_request_code,
+        ar.request_status AS approval_request_status,
+        ar.current_step_no AS approval_current_step_no,
+        ar.execution_status AS approval_execution_status,
+        ar.scope_type AS approval_scope_type,
+        ar.scope_id AS approval_scope_id,
+        ar.submitted_by_user_id AS approval_submitted_by_user_id,
+        ar.executed_by_user_id AS approval_executed_by_user_id,
+        ar.submitted_at AS approval_submitted_at,
+        ar.approved_at AS approval_approved_at,
+        ar.rejected_at AS approval_rejected_at,
+        ar.withdrawn_at AS approval_withdrawn_at,
+        ar.executed_at AS approval_executed_at,
+        ar.execution_error_text AS approval_execution_error_text,
         le.code AS legal_entity_code,
         le.name AS legal_entity_name,
         (SELECT COUNT(*) FROM payment_batch_lines pbl WHERE pbl.batch_id = pb.id AND pbl.tenant_id = pb.tenant_id) AS line_count,
@@ -1251,6 +1340,9 @@ export async function listPaymentBatchRows({
      LEFT JOIN operating_units ou
        ON ou.id = ba.operating_unit_id
       AND ou.tenant_id = ba.tenant_id
+     LEFT JOIN approval_requests ar
+       ON ar.tenant_id = pb.tenant_id
+      AND ar.id = pb.approval_request_id
      JOIN legal_entities le
        ON le.id = pb.legal_entity_id
       AND le.tenant_id = pb.tenant_id
@@ -1468,6 +1560,68 @@ export async function createPaymentBatch({
   }
 }
 
+async function approvePaymentBatchDirect({
+  runQuery,
+  tenantId,
+  batchId,
+  userId,
+  approveInput,
+  approvalRequestId = null,
+}) {
+  const current = await findPaymentBatchHeaderForUpdate({
+    tenantId,
+    batchId,
+    runQuery,
+  });
+  if (!current) {
+    throw badRequest("Payment batch not found");
+  }
+
+  if (normalizeUpperText(current.status) !== "DRAFT") {
+    throw badRequest("Only DRAFT batches can be approved");
+  }
+
+  await assertSoD({
+    tenantId,
+    userId,
+    actionCode: "payments.batch.approve",
+    recordType: "PAYMENT_BATCH",
+    recordId: batchId,
+    context: {
+      actorUserIds: {
+        createdByUserId: current.created_by_user_id,
+        approvedByUserId: current.approved_by_user_id,
+        postedByUserId: current.posted_by_user_id,
+      },
+    },
+  });
+
+  await runQuery(
+    `UPDATE payment_batches
+       SET status = 'APPROVED',
+           approved_by_user_id = ?,
+           approved_at = CURRENT_TIMESTAMP
+       WHERE tenant_id = ?
+         AND id = ?`,
+    [userId, tenantId, batchId]
+  );
+
+  await writePaymentBatchAudit({
+    tenantId,
+    legalEntityId: current.legal_entity_id,
+    batchId,
+    action: "APPROVED",
+    payload: {
+      note: approveInput?.note || null,
+      approvalRequestId: parsePositiveInt(approvalRequestId) || null,
+      same_user_approval:
+        parsePositiveInt(current.created_by_user_id) === parsePositiveInt(userId),
+    },
+    userId,
+    runQuery,
+  });
+}
+
 export async function approvePaymentBatch({
   req,
   tenantId,
@@ -1475,6 +1629,8 @@ export async function approvePaymentBatch({
   userId,
   approveInput,
   assertScopeAccess,
+  skipUnifiedApprovalGate = false,
+  approvalRequestId = null,
 }) {
   await withTransaction(async (tx) => {
     const current = await findPaymentBatchHeaderForUpdate({
@@ -1488,40 +1644,163 @@ export async function approvePaymentBatch({
 
     assertScopeAccess(req, "legal_entity", current.legal_entity_id, "batchId");
 
-    if (normalizeUpperText(current.status) !== "DRAFT") {
-      throw badRequest("Only DRAFT batches can be approved");
+    if (!skipUnifiedApprovalGate && normalizeUpperText(current.status) === "DRAFT") {
+      const existingApprovalRequestId = parsePositiveInt(current.approval_request_id);
+      if (existingApprovalRequestId) {
+        const existingApprovalResult = await tx.query(
+          `SELECT request_status, execution_status
+             FROM approval_requests
+            WHERE tenant_id = ?
+              AND id = ?
+            LIMIT 1`,
+          [tenantId, existingApprovalRequestId]
+        );
+        const existingApprovalRow = existingApprovalResult.rows?.[0] || null;
+        const existingRequestStatus = toUpper(existingApprovalRow?.request_status);
+        const existingExecutionStatus = toUpper(existingApprovalRow?.execution_status);
+        if (
+          existingApprovalRow &&
+          !["REJECTED", "WITHDRAWN"].includes(existingRequestStatus) &&
+          existingExecutionStatus !== "FAILED"
+        ) {
+          return;
+        }
+      }
+
+      const submission = await submitApprovalRequest({
+        tenantId,
+        userId,
+        requestInput: {
+          moduleCode: "PAYMENTS",
+          targetType: "PAYMENT_BATCH",
+          targetId: batchId,
+          actionType: "APPROVE",
+          legalEntityId: parsePositiveInt(current.legal_entity_id),
+          thresholdAmount: toAmount(current.total_amount),
+          currencyCode: normalizeUpperText(current.currency_code || ""),
+          actionPayload: {
+            batchId,
+            note: approveInput?.note || null,
+          },
+          targetSnapshot: {
+            module_code: "PAYMENTS",
+            target_type: "PAYMENT_BATCH",
+            target_id: batchId,
+            legal_entity_id: parsePositiveInt(current.legal_entity_id),
+            bank_account_id: parsePositiveInt(current.bank_account_id),
+            batch_no: current.batch_no || null,
+            currency_code: normalizeUpperText(current.currency_code || ""),
+            total_amount: toAmount(current.total_amount),
+            status: normalizeUpperText(current.status || ""),
+          },
+        },
+        runQuery: tx.query,
+      });
+
+      if (submission?.approval_required && parsePositiveInt(submission?.item?.id)) {
+        await tx.query(
+          `UPDATE payment_batches
+              SET approval_request_id = ?,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE tenant_id = ?
+              AND id = ?`,
+          [parsePositiveInt(submission.item.id), tenantId, batchId]
+        );
+
+        await writePaymentBatchAudit({
+          tenantId,
+          legalEntityId: current.legal_entity_id,
+          batchId,
+          action: "STATUS",
+          payload: {
+            approvalRequestId: parsePositiveInt(submission.item.id),
+            approvalPolicyId: parsePositiveInt(
+              submission.item.policyId ?? submission.item.policy_id
+            ),
+            approvalEngine: "UNIFIED",
+            approvalRequested: true,
+            note: approveInput?.note || null,
+          },
+          userId,
+          runQuery: tx.query,
+        });
+        return;
+      }
     }
 
-    await tx.query(
-      `UPDATE payment_batches
-       SET status = 'APPROVED',
-           approved_by_user_id = ?,
-           approved_at = CURRENT_TIMESTAMP
-       WHERE tenant_id = ?
-         AND id = ?`,
-      [userId, tenantId, batchId]
-    );
-
-    await writePaymentBatchAudit({
-      tenantId,
-      legalEntityId: current.legal_entity_id,
-      batchId,
-      action: "APPROVED",
-      payload: {
-        note: approveInput?.note || null,
-        same_user_approval:
-          parsePositiveInt(current.created_by_user_id) === parsePositiveInt(userId),
-      },
-      userId,
+    await approvePaymentBatchDirect({
       runQuery: tx.query,
+      tenantId,
+      batchId,
+      userId,
+      approveInput,
+      approvalRequestId,
     });
   });
 
-  return getPaymentBatchDetailByIdForTenant({
+  const row = await getPaymentBatchDetailByIdForTenant({
     req,
     tenantId,
     batchId,
     assertScopeAccess,
+  });
+  if (parsePositiveInt(row?.approvalRequestId) && normalizeUpperText(row?.status) === "DRAFT") {
+    row.approvalRequired = true;
+  }
+  return row;
+}
+
+/**
+ * Execute one approved payment-batch approval request through the unified engine.
+ */
+export async function executeApprovedPaymentBatchApproval({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const batchId = parsePositiveInt(payload?.batchId ?? payload?.batch_id);
+  if (!batchId) {
+    throw badRequest("Approved payment batch approval payload is missing batchId");
+  }
+  return approvePaymentBatch({
+    req: null,
+    tenantId,
+    batchId,
+    userId: parsePositiveInt(approvedByUserId) || null,
+    approveInput: {
+      note:
+        String(
+          payload?.note ?? payload?.decisionNote ?? payload?.decision_note ?? ""
+        ).trim() ||
+        "Approved via unified approval engine",
+    },
+    assertScopeAccess: noopScopeAccess,
+    skipUnifiedApprovalGate: true,
+    approvalRequestId,
+  });
+}
+
+/**
+ * Sync one unified approval request back to its bridged payment batch.
+ */
+export async function syncPaymentBatchApprovalRequestBridge({
+  tenantId,
+  approvalRequestId,
+  runQuery = query,
+}) {
+  const batchId = await getPaymentBatchByApprovalRequestId({
+    tenantId,
+    approvalRequestId,
+    runQuery,
+  });
+  if (!batchId) {
+    return null;
+  }
+  return buildPaymentBatchDetail({
+    tenantId,
+    batchId,
+    runQuery,
   });
 }
 

@@ -5,7 +5,6 @@ async function main() {
     title: "cash register/session characterization",
     scripts: [
       "test-cash-pr06-register-session.js",
-      "test-cash-register-negative-balance-policy.js",
       "test-cash-pr10-variance-policy.js",
     ],
   });

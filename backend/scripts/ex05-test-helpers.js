@@ -3,8 +3,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import {
+  assignCompatibilityBootstrapRolesToUser,
+  ensureCompatibilitySystemRolesForTenant,
+} from "../src/services/systemRoles.service.js";
 
 export const TEST_FISCAL_YEAR = 2026;
+export const TEST_FULL_ACCESS_ROLE_CODE = "TEST_FULL_ACCESS_ADMIN";
+export const TEST_FULL_ACCESS_ROLE_NAME = "Test Full Access Admin";
 
 export function assert(condition, message) {
   if (!condition) {
@@ -106,7 +112,98 @@ export async function createTenant(code, name) {
   return tenantId;
 }
 
-export async function createTenantAdmin({
+/**
+ * Ensures a tenant-scoped test role exists with every permission bound.
+ *
+ * Fresh tenants no longer seed `TenantAdmin`, but a long tail of
+ * characterization tests still needs one broad operator actor. This helper
+ * provisions a test-only full-access role without reintroducing the retired
+ * legacy role into the steady-state catalog.
+ */
+export async function ensureTestFullAccessRole(tenantId) {
+  const normalizedTenantId = toNumber(tenantId);
+  assert(normalizedTenantId > 0, "tenantId is required for test full-access role setup");
+
+  const permissionRows = await query(
+    `SELECT id
+     FROM permissions
+     ORDER BY id`
+  );
+  const permissionIds = (permissionRows.rows || [])
+    .map((row) => toNumber(row?.id))
+    .filter((permissionId) => permissionId > 0);
+  assert(permissionIds.length > 0, "Permission catalog must exist before test role setup");
+
+  await query(
+    `INSERT INTO roles (tenant_id, code, name, is_system)
+     VALUES (?, ?, ?, FALSE)
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name),
+       is_system = VALUES(is_system)`,
+    [normalizedTenantId, TEST_FULL_ACCESS_ROLE_CODE, TEST_FULL_ACCESS_ROLE_NAME]
+  );
+
+  const roleResult = await query(
+    `SELECT id
+     FROM roles
+     WHERE tenant_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [normalizedTenantId, TEST_FULL_ACCESS_ROLE_CODE]
+  );
+  const roleId = toNumber(roleResult.rows?.[0]?.id);
+  assert(roleId > 0, "Test full-access role not found after setup");
+
+  for (const permissionId of permissionIds) {
+    // Keep the role additive/idempotent so repeated seed/test runs stay stable.
+    // eslint-disable-next-line no-await-in-loop
+    await query(
+      `INSERT IGNORE INTO role_permissions (role_id, permission_id)
+       VALUES (?, ?)`,
+      [roleId, permissionId]
+    );
+  }
+
+  return roleId;
+}
+
+/**
+ * Assigns the fresh-tenant bootstrap roles plus the test-only full-access role
+ * to a user at tenant scope.
+ */
+export async function assignTestFullAccessRoleToUser(tenantId, userId) {
+  const normalizedTenantId = toNumber(tenantId);
+  const normalizedUserId = toNumber(userId);
+  assert(normalizedTenantId > 0, "tenantId is required to assign test full-access access");
+  assert(normalizedUserId > 0, "userId is required to assign test full-access access");
+
+  await ensureCompatibilitySystemRolesForTenant(normalizedTenantId);
+  await assignCompatibilityBootstrapRolesToUser(normalizedTenantId, normalizedUserId);
+
+  const testRoleId = await ensureTestFullAccessRole(normalizedTenantId);
+  await query(
+    `INSERT INTO user_role_scopes (
+        tenant_id,
+        user_id,
+        role_id,
+        scope_type,
+        scope_id,
+        effect
+     )
+     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
+     ON DUPLICATE KEY UPDATE
+       effect = VALUES(effect)`,
+    [normalizedTenantId, normalizedUserId, testRoleId, normalizedTenantId]
+  );
+
+  return testRoleId;
+}
+
+/**
+ * Creates a broad-access test admin for a tenant without relying on the
+ * retired `TenantAdmin` compatibility role.
+ */
+export async function createBootstrapAdmin({
   tenantId,
   email,
   password,
@@ -129,32 +226,27 @@ export async function createTenantAdmin({
   const userId = toNumber(userResult.rows?.[0]?.id);
   assert(userId > 0, `Failed to resolve user id for ${email}`);
 
-  const roleResult = await query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, "TenantAdmin role not found");
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id,
-        user_id,
-        role_id,
-        scope_type,
-        scope_id,
-        effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
+  await assignTestFullAccessRoleToUser(tenantId, userId);
 
   return { userId };
+}
+
+/**
+ * Backward-compatible alias for older characterization tests that still import
+ * the legacy helper name.
+ */
+export async function createTenantAdmin({
+  tenantId,
+  email,
+  password,
+  name = "EX05 Admin",
+}) {
+  return createBootstrapAdmin({
+    tenantId,
+    email,
+    password,
+    name,
+  });
 }
 
 export async function login({ baseUrl, email, password }) {
@@ -424,7 +516,11 @@ export async function upsertRevaluationPurposeAccounts({
   );
 }
 
-export async function seedAndCreateTenantAdmin({
+/**
+ * Seeds baseline tenant metadata, then creates a broad-access fresh-tenant
+ * admin using the post-PR-6A bootstrap model.
+ */
+export async function seedAndCreateBootstrapAdmin({
   tenantCode,
   tenantName,
   adminEmail,
@@ -433,12 +529,30 @@ export async function seedAndCreateTenantAdmin({
   await seedCore({ ensureDefaultTenantIfMissing: true });
   const tenantId = await createTenant(tenantCode, tenantName);
   await seedCore({ ensureDefaultTenantIfMissing: true });
-  const { userId } = await createTenantAdmin({
+  const { userId } = await createBootstrapAdmin({
     tenantId,
     email: adminEmail,
     password: adminPassword,
   });
   return { tenantId, userId };
+}
+
+/**
+ * Backward-compatible alias for older characterization tests that still import
+ * the legacy helper name.
+ */
+export async function seedAndCreateTenantAdmin({
+  tenantCode,
+  tenantName,
+  adminEmail,
+  adminPassword,
+}) {
+  return seedAndCreateBootstrapAdmin({
+    tenantCode,
+    tenantName,
+    adminEmail,
+    adminPassword,
+  });
 }
 
 export function findRegularPeriodByNo(periodRows, periodNo) {

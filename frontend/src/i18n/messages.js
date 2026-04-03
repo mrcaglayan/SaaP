@@ -112,6 +112,12 @@ export const messages = {
       accessDeniedTitle: "Erisim reddedildi",
       accessDeniedDescription:
         "Kullanici giris yapmis, ancak bu modulu acmak icin gerekli yetki yok.",
+      requiredPermissionsLabel: "Gerekli yetkiler:",
+      missingPermissionLine: "Eksik yetki: {{permission}}",
+      scopeMismatchDescription:
+        "Bu yetkiye sahipsiniz, ancak secili kapsam icin kullanamiyorsunuz.",
+      visibilityNarrowedDescription:
+        "Gorunurluk atadiginiz kapsamlarla sinirlandirildi; bu nedenle bazi kayitlar ve islemler kullanilamaz kalabilir.",
       providerSessionLoading: "Provider oturumu yukleniyor...",
     },
     providerLogin: {
@@ -435,6 +441,7 @@ export const messages = {
         "/app/ayarlar/rbac/roles-permissions": "Roller ve Yetkiler",
         "/app/ayarlar/rbac/user-assignments": "Kullanici Rol Atamalari",
         "/app/ayarlar/rbac/scope-assignments": "Scope Atamalari",
+        "/app/ayarlar/rbac/access-debugger": "Erisim Hata Ayiklayici",
         "/app/ayarlar/rbac/audit-logs": "RBAC Denetim Loglari",
         "/app/ayarlar/rbac/raw-audit-logs": "Ham Denetim Loglari",
         "/app/ayarlar/rbac/sensitive-data-audit":
@@ -443,7 +450,7 @@ export const messages = {
         "/app/ayarlar/organizasyon-yonetimi": "Organizasyon Yonetimi",
         "/app/ayarlar/hesap-plani-olustur": "Hesap Plani Olustur",
         "/app/ayarlar/hesap-plani-ayarlari": "Hesap Plani Ayarlari",
-        "/app/ayarlar/workflow-kurulumu": "Workflow Kurulumu",
+        "/app/ayarlar/workflow-kurulumu": "Workflow Yonetimi",
         "/app/ayarlar/hesap-yeniden-siniflandirma":
           "Hesap Yeniden Siniflandirma",
         "/app/ayarlar/kur-yonetimi": "Kur Yonetimi",
@@ -981,7 +988,7 @@ export const messages = {
         "Run #{{id}} | Grup: {{groupCode}} - {{groupName}} | Donem: {{fiscalYear}}-P{{periodNo}} ({{periodName}}) | Durum: {{status}}",
       workflow: {
         title: "Workflow onay kapisi durumu",
-        openSetup: "Workflow kurulumunu ac",
+        openSetup: "Workflow yonetimini ac",
         loading: "Workflow kapi durumu yukleniyor...",
         loadFailed: "Workflow kapi durumu yuklenemedi.",
         summary: "Durum: {{status}} | Mevcut adim: {{step}} | Tanim: {{definitionCode}}",
@@ -1151,7 +1158,7 @@ export const messages = {
     },
     rolesPermissions: {
       title: "Rol ve Yetki Yonetimi",
-      subtitle: "Rolleri olusturun ve role ait yetki matrisini guncelleyin.",
+      subtitle: "Rolleri olusturun ve rol bazinda acik yetki atamalarini yonetin.",
       errors: {
         loadFailed: "Roller ve yetkiler yuklenemedi",
         missingUpsertPermission: "Eksik yetki: security.role.upsert",
@@ -1164,7 +1171,7 @@ export const messages = {
         permissionsReplaced: "Rol yetkileri degistirildi.",
       },
       placeholders: {
-        roleCode: "Rol kodu (orn. CountryController)",
+        roleCode: "Rol kodu (orn. FinanceReadOnly)",
         roleName: "Rol adi",
       },
       actions: {
@@ -1250,6 +1257,97 @@ export const messages = {
         summary: "Sayfa {{page}} / {{totalPages}} | Toplam kayit: {{total}}",
         previous: "Onceki",
         next: "Sonraki",
+      },
+    },
+    accessDebugger: {
+      loading: "Erisim zinciri yukleniyor...",
+      empty: "Katmanli erisim zincirini gormek icin bir kontrol calistirin.",
+      labels: {
+        yes: "Evet",
+        no: "Hayir",
+      },
+      actions: {
+        whyCantIDoThis: "Bunu neden yapamiyorum?",
+        explainAccess: "Erisimi Acikla",
+        run: "Erisim Kontrolunu Calistir",
+        running: "Kontrol ediliyor...",
+        reset: "Sifirla",
+        close: "Kapat",
+      },
+      modal: {
+        title: "Bunu neden yapamiyorum?",
+        subtitle:
+          "Bu islem icin yetki, kapsam, gorunurluk ve diger yonetisim katmanlarini inceleyin.",
+      },
+      page: {
+        title: "Erisim Hata Ayiklayici",
+        subtitle:
+          "Bir kullanicinin yetki zincirini katman katman inceleyin; capability, scope, gorunurluk, SoD ve workflow etkilerini ayni yerde gorun.",
+        noteTitle: "Yonetici gorunumu",
+        noteBody:
+          "Bu panel diger kullanicilarin erisim zincirini aciklar. Diger kullanicilar icin kontrol backend tarafinda yalnizca SecurityAdmin kapsaminda acilir.",
+      },
+      form: {
+        userPlaceholder: "Kullanici secin",
+        permissionPlaceholder: "Yetki kodu (orn. payments.batch.approve)",
+        noScope: "Kapsam secme",
+        scopePlaceholder: "Kapsam secin",
+        scopeId: "Scope ID",
+        advanced: "Gelismis baglam",
+        moduleCode: "Modul kodu",
+        objectType: "Nesne tipi",
+        fieldName: "Alan adi",
+        workflowRequestId: "Workflow request ID",
+        actionCode: "Aksiyon kodu",
+        recordType: "Kayit tipi",
+        recordId: "Kayit ID",
+      },
+      errors: {
+        loadLookupsFailed: "Kullanici veya scope lookup verileri yuklenemedi.",
+        targetUserRequired: "Hedef kullanici secimi zorunludur.",
+        runFailed: "Erisim zinciri kontrolu calistirilamadi.",
+      },
+      summary: {
+        allowed: "Erisim acik",
+        denied: "Erisim engelli",
+        selfCheck: "Bu sonuc kullanicinin kendi erisim zinciridir.",
+        adminCheck: "Bu sonuc yonetici tarafindan calistirilan kullanici erisim zinciridir.",
+        permission: "Yetki",
+        scope: "Istenen kapsam",
+        targetUser: "Hedef kullanici",
+        visibilityNarrowed: "Gorunurluk daraltildi",
+        maskedFields: "Maskelenen alanlar",
+        recommendations: "Onerilen sonraki adimlar",
+        layers: "Katman sonuclari",
+        technicalDetails: "Teknik detaylar",
+        notProvided: "Belirtilmedi",
+      },
+      layers: {
+        capability: "Capability",
+        scopeEntitlement: "Scope entitlement",
+        visibilityPolicy: "Visibility policy",
+        sod: "SoD",
+        workflow: "Workflow",
+        businessState: "Business state",
+        fieldVisibility: "Field visibility",
+      },
+      recommendations: {
+        missingPermission:
+          "{{permission}} yetkisini gerekli ise SecurityAdmin uzerinden atayin.",
+        scopeDenied:
+          "Yetkiyi {{scopeType}} #{{scopeId}} kapsaminda verin veya kullanicinin mevcut kapsamiyla uyumlu bir kapsam secin.",
+        visibilityDenied:
+          "Kullanici veri scope gorunurlugunu gozden gecirin. Aksiyon kapsaminda yetki var, ancak satir gorunurlugu daha dar.",
+        fieldVisibility:
+          "Alan tam gorunur olmaliysa {{permission}} kapsamli override yetkisini degerlendirin.",
+        sod:
+          "Ayni kayitta ayristirma kuralini karsilamak icin farkli bir onaylayan veya operator kullanin.",
+        workflow:
+          "Workflow onay adimini tamamlayin veya dogru onaylayani belirleyin.",
+        businessState:
+          "Kayittaki is durumu engelini cozup islemi tekrar deneyin.",
+        visibilityNarrowed:
+          "Bazi kayitlar atanan data scope'lari nedeniyle gorunmez kalabilir.",
       },
     },
     cashControlMode: {
@@ -2234,7 +2332,7 @@ export const messages = {
         company: "Sirket Kurulumu",
         org: "Organizasyon Kurulumu",
         gl: "GL Kurulumu",
-        workflow: "Workflow Kurulumu",
+        workflow: "Workflow Yonetimi",
       },
       bootstrap: {
         title: "Tek tikla temel kurulum",
@@ -2361,6 +2459,12 @@ export const messages = {
       accessDeniedTitle: "Access denied",
       accessDeniedDescription:
         "Your user is authenticated but does not have the required permission for this module.",
+      requiredPermissionsLabel: "Required permissions:",
+      missingPermissionLine: "Missing permission: {{permission}}",
+      scopeMismatchDescription:
+        "You have this permission, but not for the selected scope.",
+      visibilityNarrowedDescription:
+        "Visibility is narrowed to assigned scopes, so some records or actions may still stay unavailable.",
       providerSessionLoading: "Loading provider session...",
     },
     providerLogin: {
@@ -2684,6 +2788,7 @@ export const messages = {
         "/app/ayarlar/rbac/roles-permissions": "Roles and Permissions",
         "/app/ayarlar/rbac/user-assignments": "User Role Assignments",
         "/app/ayarlar/rbac/scope-assignments": "Scope Assignments",
+        "/app/ayarlar/rbac/access-debugger": "Access Debugger",
         "/app/ayarlar/rbac/audit-logs": "RBAC Audit Logs",
         "/app/ayarlar/rbac/raw-audit-logs": "Raw Audit Logs",
         "/app/ayarlar/rbac/sensitive-data-audit":
@@ -2692,7 +2797,7 @@ export const messages = {
         "/app/ayarlar/organizasyon-yonetimi": "Organization Management",
         "/app/ayarlar/hesap-plani-olustur": "Create Chart of Accounts",
         "/app/ayarlar/hesap-plani-ayarlari": "Chart of Accounts Settings",
-        "/app/ayarlar/workflow-kurulumu": "Workflow Setup",
+        "/app/ayarlar/workflow-kurulumu": "Workflow Governance",
         "/app/ayarlar/hesap-yeniden-siniflandirma":
           "GL Reclassification Workbench",
         "/app/ayarlar/kur-yonetimi": "FX Rate Management",
@@ -3231,7 +3336,7 @@ export const messages = {
         "Run #{{id}} | Group: {{groupCode}} - {{groupName}} | Period: {{fiscalYear}}-P{{periodNo}} ({{periodName}}) | Status: {{status}}",
       workflow: {
         title: "Workflow approval gate status",
-        openSetup: "Open workflow setup",
+        openSetup: "Open workflow governance",
         loading: "Loading workflow gate status...",
         loadFailed: "Failed to load workflow gate status.",
         summary: "Status: {{status}} | Current step: {{step}} | Definition: {{definitionCode}}",
@@ -3401,7 +3506,7 @@ export const messages = {
     },
     rolesPermissions: {
       title: "Roles & Permissions Management",
-      subtitle: "Create roles and replace permission matrix per role.",
+      subtitle: "Create roles and manage explicit permission assignments per role.",
       errors: {
         loadFailed: "Failed to load roles and permissions",
         missingUpsertPermission: "Missing permission: security.role.upsert",
@@ -3414,7 +3519,7 @@ export const messages = {
         permissionsReplaced: "Role permissions replaced.",
       },
       placeholders: {
-        roleCode: "Role code (e.g. CountryController)",
+        roleCode: "Role code (e.g. FinanceReadOnly)",
         roleName: "Role name",
       },
       actions: {
@@ -3500,6 +3605,97 @@ export const messages = {
         summary: "Page {{page}} of {{totalPages}} | Total records: {{total}}",
         previous: "Previous",
         next: "Next",
+      },
+    },
+    accessDebugger: {
+      loading: "Loading access chain...",
+      empty: "Run a check to inspect the layered access chain.",
+      labels: {
+        yes: "Yes",
+        no: "No",
+      },
+      actions: {
+        whyCantIDoThis: "Why can't I do this?",
+        explainAccess: "Explain Access",
+        run: "Run Access Check",
+        running: "Checking access...",
+        reset: "Reset",
+        close: "Close",
+      },
+      modal: {
+        title: "Why can't I do this?",
+        subtitle:
+          "Review permission, scope, visibility, and governance layers for this action.",
+      },
+      page: {
+        title: "Access Debugger",
+        subtitle:
+          "Inspect one user's access chain across capability, scope, visibility, SoD, workflow, and field masking from one place.",
+        noteTitle: "Admin view",
+        noteBody:
+          "This panel can inspect another user's access chain. Cross-user checks are still enforced by the backend SecurityAdmin gate.",
+      },
+      form: {
+        userPlaceholder: "Select user",
+        permissionPlaceholder: "Permission code (e.g. payments.batch.approve)",
+        noScope: "No scope",
+        scopePlaceholder: "Select scope",
+        scopeId: "Scope ID",
+        advanced: "Advanced context",
+        moduleCode: "Module code",
+        objectType: "Object type",
+        fieldName: "Field name",
+        workflowRequestId: "Workflow request ID",
+        actionCode: "Action code",
+        recordType: "Record type",
+        recordId: "Record ID",
+      },
+      errors: {
+        loadLookupsFailed: "Failed to load users or scope lookups.",
+        targetUserRequired: "A target user is required.",
+        runFailed: "Failed to run the access check.",
+      },
+      summary: {
+        allowed: "Access allowed",
+        denied: "Access blocked",
+        selfCheck: "This result reflects the user's own access chain.",
+        adminCheck: "This result was run by an admin against the target user's access chain.",
+        permission: "Permission",
+        scope: "Requested scope",
+        targetUser: "Target user",
+        visibilityNarrowed: "Visibility narrowed",
+        maskedFields: "Masked fields",
+        recommendations: "Recommended next steps",
+        layers: "Layer results",
+        technicalDetails: "Technical details",
+        notProvided: "Not provided",
+      },
+      layers: {
+        capability: "Capability",
+        scopeEntitlement: "Scope entitlement",
+        visibilityPolicy: "Visibility policy",
+        sod: "SoD",
+        workflow: "Workflow",
+        businessState: "Business state",
+        fieldVisibility: "Field visibility",
+      },
+      recommendations: {
+        missingPermission:
+          "Ask a Security Admin to assign {{permission}} if this action should be available.",
+        scopeDenied:
+          "Assign the permission at {{scopeType}} #{{scopeId}} or choose a scope the user already holds.",
+        visibilityDenied:
+          "Review the user's data-scope visibility. The action scope exists, but row visibility is narrower.",
+        fieldVisibility:
+          "Grant the scoped override {{permission}} if this field should be fully visible.",
+        sod:
+          "Use a different reviewer or operator on this record to satisfy segregation-of-duties rules.",
+        workflow:
+          "Complete the required workflow approval step before retrying this action.",
+        businessState:
+          "Resolve the blocking business-state condition on the record before retrying.",
+        visibilityNarrowed:
+          "Some records may still stay hidden because data visibility is narrowed to assigned scopes.",
       },
     },
     cashControlMode: {
@@ -3990,7 +4186,7 @@ export const messages = {
         transitStatusInitiated: "Initiated",
         transitStatusInTransit: "In transit",
         transitStatusReceived: "Received",
-        transitStatusCanceled: "Canceled",
+        transitStatusCanceled: "Cancelled",
         transitStatusReversed: "Reversed",
         transitBadge: "Transit #{{transferId}} ({{status}})",
         transitPairBadge: "OUT #{{outTxnId}} / IN #{{inTxnId}}",
@@ -4487,7 +4683,7 @@ export const messages = {
         company: "Company Setup",
         org: "Org Setup",
         gl: "GL Setup",
-        workflow: "Workflow Setup",
+        workflow: "Workflow Governance",
       },
       bootstrap: {
         title: "One-click baseline bootstrap",

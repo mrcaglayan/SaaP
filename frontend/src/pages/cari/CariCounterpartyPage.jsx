@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   approveCariCounterpartyRequest,
   createCariCounterpartyRequest,
@@ -10,6 +10,11 @@ import {
   rejectCariCounterpartyRequest,
   updateCariCounterparty,
 } from "../../api/cariCounterparty.js";
+import {
+  approveApprovalRequest as approveUnifiedApprovalRequest,
+  getApprovalRequestDelegationPreview,
+  rejectApprovalRequest as rejectUnifiedApprovalRequest,
+} from "../../api/approvalDelegations.js";
 import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
 import {
   createCariPaymentTerm,
@@ -17,8 +22,15 @@ import {
 } from "../../api/cariPaymentTerms.js";
 import { listLegalEntities, listOperatingUnits } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import ApprovalActionDialog from "../../components/approval/ApprovalActionDialog.jsx";
+import {
+  buildApprovalDelegationActionNotice,
+  buildApprovalDelegationDrawerNotice,
+} from "../../components/approval/approvalDelegationUi.js";
+import ApprovalExecutionStatusBadge from "../../components/approval/ApprovalExecutionStatusBadge.jsx";
+import ApprovalRequestDrawer from "../../components/approval/ApprovalRequestDrawer.jsx";
+import ApprovalRequestStatusBadge from "../../components/approval/ApprovalRequestStatusBadge.jsx";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
-import { useWorkingContext } from "../../context/useWorkingContext.js";
 import CounterpartyForm from "./CounterpartyForm.jsx";
 import {
   COUNTERPARTY_LIST_SORT_DIRECTIONS,
@@ -98,15 +110,21 @@ function roleBadgeClass(role) {
   return "bg-slate-200 text-slate-700";
 }
 
-function requestStatusBadgeClass(status) {
-  const normalized = String(status || "").toUpperCase();
-  if (normalized === "APPROVED") {
-    return "bg-emerald-100 text-emerald-700";
+function toUpperText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function formatDateTimeLabel(value) {
+  if (!value) {
+    return "-";
   }
-  if (normalized === "REJECTED") {
-    return "bg-rose-100 text-rose-700";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
   }
-  return "bg-amber-100 text-amber-800";
+  return parsed.toLocaleString();
 }
 
 function formatMappedAccountLabel(code, name) {
@@ -132,6 +150,218 @@ function formatOperatingUnitLabel(code, name, id) {
   }
   const parsedId = toPositiveInt(id);
   return parsedId ? `#${parsedId}` : "-";
+}
+
+function formatApprovalScopeLabel(row, legalEntityById, operatingUnitById) {
+  const scopeType = toUpperText(row?.approvalRequest?.scopeType);
+  const scopeId = toPositiveInt(row?.approvalRequest?.scopeId);
+  if (scopeType === "OPERATING_UNIT") {
+    return `Operating Unit ${formatOperatingUnitLabel(
+      operatingUnitById.get(String(scopeId))?.code,
+      operatingUnitById.get(String(scopeId))?.name,
+      scopeId
+    )}`;
+  }
+  if (scopeType === "LEGAL_ENTITY") {
+    return `Legal Entity ${legalEntityById.get(String(scopeId))?.code || scopeId || "-"}`;
+  }
+  if (scopeType) {
+    return `${scopeType} ${scopeId ? `#${scopeId}` : ""}`.trim();
+  }
+  if (toPositiveInt(row?.primaryOperatingUnitId)) {
+    return `Operating Unit ${formatOperatingUnitLabel(
+      operatingUnitById.get(String(row.primaryOperatingUnitId))?.code,
+      operatingUnitById.get(String(row.primaryOperatingUnitId))?.name,
+      row.primaryOperatingUnitId
+    )}`;
+  }
+  return `Legal Entity ${
+    legalEntityById.get(String(row?.legalEntityId))?.code || row?.legalEntityId || "-"
+  }`;
+}
+
+function buildRequestDecisionSummary(row) {
+  const reviewStatus = toUpperText(row?.approvalRequest?.requestStatus || row?.requestStatus);
+  if (reviewStatus === "ESCALATED") {
+    return "Escalated review pending";
+  }
+  if (row?.requestStatus === "APPROVED") {
+    return row?.createdCounterpartyCode || row?.createdCounterpartyId || "Approved";
+  }
+  if (row?.requestStatus === "REJECTED") {
+    return row?.decisionComment || "Rejected";
+  }
+  if (row?.approvalRequest?.executionStatus === "FAILED") {
+    return row?.approvalRequest?.executionErrorText || "Execution failed";
+  }
+  return row?.decisionComment || "Awaiting review";
+}
+
+function buildApprovalTimelineItems(row) {
+  const approvalRequest = row?.approvalRequest || null;
+  const reviewStatus = toUpperText(approvalRequest?.requestStatus || row?.requestStatus);
+  const executionStatus = toUpperText(
+    approvalRequest?.executionStatus || row?.executionStatus
+  );
+  const requestedBy = row?.requestedByUserName || row?.requestedByUserId || "Requester";
+  const decidedBy = row?.decidedByUserName || row?.decidedByUserId || "Reviewer";
+  const timelineItems = [];
+
+  if (approvalRequest?.submittedAt || row?.createdAt) {
+    timelineItems.push({
+      key: "submitted",
+      label: "Submitted for Review",
+      description: "The request entered the approval queue.",
+      at: approvalRequest?.submittedAt || row?.createdAt,
+      actor: requestedBy,
+      note: approvalRequest?.requestCode || "",
+      state: "done",
+    });
+  }
+
+  if (reviewStatus === "ESCALATED") {
+    timelineItems.push({
+      key: "escalated",
+      label: "Escalated",
+      description: "The request stayed in the same review queue and was escalated for urgent attention.",
+      at: row?.updatedAt || row?.decidedAt || null,
+      actor: "",
+      note:
+        approvalRequest?.currentStepNo != null
+          ? `Current step ${approvalRequest.currentStepNo}`
+          : "Urgent reviewer follow-up",
+      state: "attention",
+      tone: "attention",
+    });
+  }
+
+  if (
+    reviewStatus === "PENDING_REVIEW" ||
+    reviewStatus === "ESCALATED" ||
+    row?.requestStatus === "PENDING"
+  ) {
+    timelineItems.push({
+      key: "pending-review",
+      label: reviewStatus === "ESCALATED" ? "Escalated Review" : "Awaiting Review",
+      description:
+        reviewStatus === "ESCALATED"
+          ? "The request is still actionable in the normal review queue."
+          : "A reviewer still needs to record a decision.",
+      at: null,
+      actor: "",
+      note:
+        approvalRequest?.currentStepNo != null
+          ? `Current step ${approvalRequest.currentStepNo}`
+          : "Pending reviewer action",
+      state: reviewStatus === "ESCALATED" ? "attention" : "current",
+      tone: reviewStatus === "ESCALATED" ? "attention" : "",
+    });
+  }
+
+  if (approvalRequest?.approvedAt) {
+    timelineItems.push({
+      key: "approved",
+      label: "Approved",
+      description: "The review stage reached final approval.",
+      at: approvalRequest.approvedAt,
+      actor: decidedBy,
+      note: row?.decisionComment || "",
+      state: executionStatus === "NOT_EXECUTED" || executionStatus === "FAILED" ? "current" : "done",
+    });
+  }
+
+  if (approvalRequest?.rejectedAt || row?.requestStatus === "REJECTED") {
+    timelineItems.push({
+      key: "rejected",
+      label: "Rejected",
+      description: "The request was rejected during review.",
+      at: approvalRequest?.rejectedAt || row?.decidedAt,
+      actor: decidedBy,
+      note: row?.decisionComment || "",
+      state: "done",
+    });
+  }
+
+  if (approvalRequest?.withdrawnAt || row?.requestStatus === "CANCELLED") {
+    timelineItems.push({
+      key: "withdrawn",
+      label: "Withdrawn",
+      description: "The request was withdrawn before execution.",
+      at: approvalRequest?.withdrawnAt || row?.updatedAt,
+      actor: requestedBy,
+      note: "",
+      state: "done",
+    });
+  }
+
+  if (approvalRequest?.executedAt || executionStatus === "EXECUTED") {
+    timelineItems.push({
+      key: "executed",
+      label: "Executed",
+      description: row?.createdCounterpartyId
+        ? "A live counterparty card was created from the approved request."
+        : "The approved request was executed.",
+      at: approvalRequest?.executedAt || row?.updatedAt,
+      actor: approvalRequest?.executedByUserId || "",
+      note: row?.createdCounterpartyCode || row?.createdCounterpartyId || "",
+      state: "done",
+    });
+  }
+
+  if (executionStatus === "FAILED") {
+    timelineItems.push({
+      key: "execution-failed",
+      label: "Execution Failed",
+      description: "Review completed, but the execution step failed.",
+      at: approvalRequest?.updatedAt || row?.updatedAt,
+      actor: "",
+      note: approvalRequest?.executionErrorText || "",
+      state: "attention",
+      tone: "attention",
+    });
+  }
+
+  if (timelineItems.length === 0 && row?.createdAt) {
+    timelineItems.push({
+      key: "created",
+      label: "Request Created",
+      description: "Legacy request activity is available without detailed review history.",
+      at: row.createdAt,
+      actor: requestedBy,
+      note: "",
+      state: "done",
+    });
+  }
+
+  return timelineItems;
+}
+
+function buildRequestStatusNotice(row) {
+  const reviewStatus = toUpperText(row?.approvalRequest?.requestStatus || row?.requestStatus);
+  if (reviewStatus !== "ESCALATED") {
+    return null;
+  }
+  return {
+    tone: "attention",
+    title: "Escalated but still actionable",
+    description:
+      "This request has been escalated for urgency. It stays in the same pending queue and can still be approved or rejected here.",
+  };
+}
+
+function matchesApprovalRequestId(row, approvalRequestId) {
+  const normalizedApprovalRequestId = toPositiveInt(approvalRequestId);
+  if (!normalizedApprovalRequestId || !row) {
+    return false;
+  }
+  return (
+    toPositiveInt(row?.approvalRequest?.id) === normalizedApprovalRequestId ||
+    toPositiveInt(row?.id) === normalizedApprovalRequestId
+  );
+}
+
+function canUseDelegatedDecision(preview) {
+  return preview?.authorityMode === "DIRECT" || preview?.authorityMode === "DELEGATED";
 }
 
 function normalizeFilterRole(value, fallback) {
@@ -433,32 +663,26 @@ function buildNextInlineChildCode(accounts, parentAccount) {
   return "";
 }
 
+/**
+ * Renders counterparty create/list flows while separating request review authority
+ * from live card edit authority.
+ */
 export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const config = PAGE_CONFIG[pageKey] || PAGE_CONFIG.buyerList;
   const isCreatePage = config.mode === "create";
   const isListPage = config.mode === "list";
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const { hasPermission, permissions } = useAuth();
-  const { workingContext } = useWorkingContext();
+  const { hasPermission, permissions, user } = useAuth();
   const canRead = hasPermission("cari.card.read");
   const canRequest = hasPermission("cari.card.request");
   const canUpsert = hasPermission("cari.card.upsert");
+  const canReviewRequests = hasPermission("cari.request.review");
   const canReadOrgTree = hasPermission("org.tree.read");
   const accountPickerGates = useMemo(
     () => resolveCounterpartyAccountPickerGates(permissions),
     [permissions]
   );
-  const branchOwnedLiveMode =
-    canUpsert && canRequest && !accountPickerGates.canUpsertGlAccounts;
-  const workingLegalEntityId = String(workingContext?.legalEntityId || "").trim();
-  const workingOperatingUnitId = String(workingContext?.operatingUnitId || "").trim();
-  const canLockCreateOwnershipToWorkingContext =
-    branchOwnedLiveMode && Boolean(workingLegalEntityId) && Boolean(workingOperatingUnitId);
-  const branchOwnedCreateHint = canLockCreateOwnershipToWorkingContext
-    ? "Branch-owned live cards follow your current working entity and branch."
-    : "Set your working entity and branch first to auto-anchor this live card.";
-  const branchOwnedEditHint =
-    "Branch-owned live cards stay on one branch. Use an entity-level role to manage shared or multi-branch cards.";
 
   const [legalEntities, setLegalEntities] = useState([]);
   const [legalEntitiesLoading, setLegalEntitiesLoading] = useState(false);
@@ -521,6 +745,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [requestError, setRequestError] = useState("");
   const [requestMessage, setRequestMessage] = useState("");
   const [requestActionKey, setRequestActionKey] = useState("");
+  const [activeRequestId, setActiveRequestId] = useState(null);
+  const [requestActionDialog, setRequestActionDialog] = useState(null);
+  const [delegationPreview, setDelegationPreview] = useState(null);
+  const [delegationPreviewLoading, setDelegationPreviewLoading] = useState(false);
 
   const [editingId, setEditingId] = useState(null);
   const [editingForm, setEditingForm] = useState(() =>
@@ -576,6 +804,80 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     return map;
   }, [createOperatingUnits, filterOperatingUnits, editOperatingUnits]);
 
+  const activeRequestRow = useMemo(
+    () => requestRows.find((row) => row.id === activeRequestId) || null,
+    [activeRequestId, requestRows]
+  );
+
+  useEffect(() => {
+    if (!activeRequestId || requestLoading || activeRequestRow) {
+      return;
+    }
+    setActiveRequestId(null);
+    setRequestActionDialog(null);
+  }, [activeRequestId, activeRequestRow, requestLoading]);
+
+  useEffect(() => {
+    const requestedApprovalRequestId = searchParams.get("approvalRequestId");
+    if (!requestedApprovalRequestId || requestLoading || requestRows.length === 0) {
+      return;
+    }
+    const match = requestRows.find((row) =>
+      matchesApprovalRequestId(row, requestedApprovalRequestId)
+    );
+    if (!match || toPositiveInt(activeRequestId) === toPositiveInt(match.id)) {
+      return;
+    }
+    setRequestError("");
+    setRequestActionDialog(null);
+    setActiveRequestId(match.id);
+  }, [activeRequestId, requestLoading, requestRows, searchParams]);
+
+  useEffect(() => {
+    const activeApprovalRequestId = toPositiveInt(activeRequestRow?.approvalRequest?.id);
+    if (!activeApprovalRequestId) {
+      return;
+    }
+    if (searchParams.get("approvalRequestId") === String(activeApprovalRequestId)) {
+      return;
+    }
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.set("approvalRequestId", String(activeApprovalRequestId));
+    setSearchParams(nextSearchParams, { replace: true });
+  }, [activeRequestRow, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const approvalRequestId = toPositiveInt(activeRequestRow?.approvalRequest?.id);
+    if (!approvalRequestId) {
+      setDelegationPreview(null);
+      setDelegationPreviewLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDelegationPreviewLoading(true);
+    getApprovalRequestDelegationPreview(approvalRequestId)
+      .then((response) => {
+        if (!cancelled) {
+          setDelegationPreview(response?.row || null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDelegationPreview(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDelegationPreviewLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRequestRow]);
+
   useEffect(() => {
     setCreateForm(buildInitialCounterpartyForm(config.roleDefault));
     setFilters(createCounterpartyListFilters(config.roleDefault));
@@ -589,6 +891,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setRequestError("");
     setRequestMessage("");
     setRequestActionKey("");
+    setActiveRequestId(null);
+    setRequestActionDialog(null);
+    setDelegationPreview(null);
+    setDelegationPreviewLoading(false);
     setEditingId(null);
     setEditingForm(buildInitialCounterpartyForm(config.roleDefault));
     setCreateError("");
@@ -696,37 +1002,6 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       legalEntityId: String(legalEntities[0].id || ""),
     }));
   }, [createForm.legalEntityId, isCreatePage, legalEntities]);
-
-  useEffect(() => {
-    if (!isCreatePage || !canLockCreateOwnershipToWorkingContext) {
-      return;
-    }
-    setCreateForm((prev) => {
-      const nextLegalEntityId = workingLegalEntityId;
-      const nextOperatingUnitIds = [workingOperatingUnitId];
-      if (
-        String(prev.legalEntityId || "").trim() === nextLegalEntityId &&
-        String(prev.primaryOperatingUnitId || "").trim() === workingOperatingUnitId &&
-        Array.isArray(prev.operatingUnitIds) &&
-        prev.operatingUnitIds.length === 1 &&
-        String(prev.operatingUnitIds[0] || "").trim() === workingOperatingUnitId
-      ) {
-        return prev;
-      }
-      return {
-        ...prev,
-        legalEntityId: nextLegalEntityId,
-        primaryOperatingUnitId: workingOperatingUnitId,
-        operatingUnitIds: nextOperatingUnitIds,
-      };
-    });
-  }, [
-    canLockCreateOwnershipToWorkingContext,
-    isCreatePage,
-    workingLegalEntityId,
-    workingOperatingUnitId,
-    createOperatingUnits,
-  ]);
 
   useEffect(() => {
     if (!isCreatePage) {
@@ -1409,7 +1684,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   }
 
   async function loadCounterpartyRequestRows(nextFilters = filters) {
-    if (!canRequest) {
+    if (!canRequest && !canReviewRequests) {
       setRequestRows([]);
       setRequestTotalRows(0);
       setRequestError("");
@@ -1424,7 +1699,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         legalEntityId: nextFilters.legalEntityId || undefined,
         primaryOperatingUnitId: nextFilters.primaryOperatingUnitId || undefined,
         role: normalizedRole || undefined,
-        mineOnly: canUpsert ? undefined : true,
+        mineOnly: canReviewRequests ? undefined : true,
         limit: 50,
         offset: 0,
       });
@@ -1578,7 +1853,12 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       if (!canUpsert && canRequest) {
         const response = await createCariCounterpartyRequest(payload);
         const requestId = response?.row?.id;
-        setCreateMessage(`Counterparty request submitted. requestId=${requestId || "-"}`);
+        const approvalRequestCode = response?.row?.approvalRequest?.requestCode;
+        setCreateMessage(
+          `Counterparty request submitted for review. requestId=${requestId || "-"}${
+            approvalRequestCode ? ` approvalRequest=${approvalRequestCode}` : ""
+          }`
+        );
       } else {
         const response = await createCariCounterparty(payload);
         const createdId = response?.row?.id;
@@ -1588,13 +1868,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         const reset = buildInitialCounterpartyForm(config.roleDefault);
         return {
           ...reset,
-          legalEntityId:
-            (branchOwnedLiveMode ? workingLegalEntityId : "") ||
-            prev.legalEntityId ||
-            reset.legalEntityId,
-          primaryOperatingUnitId: branchOwnedLiveMode ? workingOperatingUnitId : "",
-          operatingUnitIds:
-            branchOwnedLiveMode && workingOperatingUnitId ? [workingOperatingUnitId] : [],
+          legalEntityId: prev.legalEntityId || reset.legalEntityId,
         };
       });
       setCreatePaymentTermLookupQuery("");
@@ -1683,47 +1957,112 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     }
   }
 
-  async function handleApproveRequest(requestId) {
-    if (!canUpsert || !requestId) {
+  function openRequestDrawer(requestId) {
+    if (!requestId) {
       return;
     }
-    const decisionComment = window.prompt("Approval note (optional)", "") || "";
+    setRequestError("");
+    setRequestActionDialog(null);
+    setActiveRequestId(requestId);
+  }
+
+  const openRequestAction = useCallback((actionType, requestId) => {
+    if (!requestId) {
+      return;
+    }
+    const requestRow = requestRows.find((row) => Number(row.id) === Number(requestId)) || null;
+    setRequestError("");
+    setRequestActionDialog({
+      actionType,
+      requestId,
+      approvalRequestId: toPositiveInt(requestRow?.approvalRequest?.id) || null,
+    });
+  }, [requestRows]);
+
+  async function handleApproveRequest(
+    requestId,
+    decisionComment = "",
+    approvalRequestId = null
+  ) {
+    if (!requestId) {
+      return false;
+    }
     const actionKey = `approve-${requestId}`;
     setRequestActionKey(actionKey);
     setRequestError("");
     setRequestMessage("");
     try {
-      const response = await approveCariCounterpartyRequest(requestId, { decisionComment });
+      const response = approvalRequestId
+        ? await approveUnifiedApprovalRequest(approvalRequestId, { decisionComment })
+        : canReviewRequests
+          ? await approveCariCounterpartyRequest(requestId, { decisionComment })
+          : (() => {
+              throw new Error("Missing permission: cari.request.review");
+            })();
       const createdCounterpartyId = response?.counterparty?.id;
       setRequestMessage(
-        `Request approved. counterpartyId=${createdCounterpartyId || "-"}`
-      );
+          `Request approved. counterpartyId=${createdCounterpartyId || "-"}`  
+        );
       await loadCounterpartyRows(filters);
       await loadCounterpartyRequestRows(filters);
+      return true;
     } catch (err) {
       setRequestError(mapCounterpartyApiError(err, "Failed to approve counterparty request."));
+      return false;
     } finally {
       setRequestActionKey("");
     }
   }
 
-  async function handleRejectRequest(requestId) {
-    if (!canUpsert || !requestId) {
-      return;
+  async function handleRejectRequest(
+    requestId,
+    decisionComment = "",
+    approvalRequestId = null
+  ) {
+    if (!requestId) {
+      return false;
     }
-    const decisionComment = window.prompt("Reject reason (optional)", "") || "";
     const actionKey = `reject-${requestId}`;
     setRequestActionKey(actionKey);
     setRequestError("");
     setRequestMessage("");
     try {
-      await rejectCariCounterpartyRequest(requestId, { decisionComment });
+      if (approvalRequestId) {
+        await rejectUnifiedApprovalRequest(approvalRequestId, { decisionComment });
+      } else if (canReviewRequests) {
+        await rejectCariCounterpartyRequest(requestId, { decisionComment });
+      } else {
+        throw new Error("Missing permission: cari.request.review");
+      }
       setRequestMessage("Request rejected.");
       await loadCounterpartyRequestRows(filters);
+      return true;
     } catch (err) {
       setRequestError(mapCounterpartyApiError(err, "Failed to reject counterparty request."));
+      return false;
     } finally {
       setRequestActionKey("");
+    }
+  }
+
+  async function handleConfirmRequestAction(decisionComment) {
+    if (!requestActionDialog?.requestId) {
+      return;
+    }
+    const wasSuccessful =
+      requestActionDialog.actionType === "APPROVE"
+        ? await handleApproveRequest(
+            requestActionDialog.requestId,
+            decisionComment,
+            requestActionDialog.approvalRequestId
+          )
+        : await handleRejectRequest(
+            requestActionDialog.requestId,
+            decisionComment,
+            requestActionDialog.approvalRequestId
+          );
+    if (wasSuccessful) {
+      setRequestActionDialog(null);
     }
   }
 
@@ -2219,30 +2558,22 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     [editAccountOptions, editApCodeCandidate]
   );
   const showInlineCreateArAccountPanelInCreateForm =
-    canUpsert &&
-    accountPickerGates.canUpsertGlAccounts &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
     Boolean(createForm.isCustomer) &&
     Boolean(createInlineArAccountName) &&
     !(Boolean(createArCodeCandidate) && Boolean(createArExactCodeMatch));
   const showInlineCreateApAccountPanelInCreateForm =
-    canUpsert &&
-    accountPickerGates.canUpsertGlAccounts &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
     Boolean(createForm.isVendor) &&
     Boolean(createInlineApAccountName) &&
     !(Boolean(createApCodeCandidate) && Boolean(createApExactCodeMatch));
   const showInlineCreateArAccountPanelInEditForm =
-    canUpsert &&
-    accountPickerGates.canUpsertGlAccounts &&
     Boolean(editingId) &&
     Boolean(toPositiveInt(editingForm.legalEntityId)) &&
     Boolean(editingForm.isCustomer) &&
     Boolean(editInlineArAccountName) &&
     !(Boolean(editArCodeCandidate) && Boolean(editArExactCodeMatch));
   const showInlineCreateApAccountPanelInEditForm =
-    canUpsert &&
-    accountPickerGates.canUpsertGlAccounts &&
     Boolean(editingId) &&
     Boolean(toPositiveInt(editingForm.legalEntityId)) &&
     Boolean(editingForm.isVendor) &&
@@ -2517,12 +2848,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   const canInlineCreatePaymentTermInCreateForm =
     canUpsert &&
-    !branchOwnedLiveMode &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
     Boolean(createInlinePaymentTermName);
   const canInlineCreatePaymentTermInEditForm =
     canUpsert &&
-    !branchOwnedLiveMode &&
     Boolean(editingId) &&
     Boolean(toPositiveInt(editingForm.legalEntityId)) &&
     Boolean(editInlinePaymentTermName);
@@ -2557,6 +2886,174 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     Boolean(editInlineApAccountName) &&
     !(Boolean(editApCodeCandidate) && Boolean(editApExactCodeMatch));
 
+  const activeRequestTimelineItems = useMemo(
+    () => buildApprovalTimelineItems(activeRequestRow),
+    [activeRequestRow]
+  );
+  const activeRequestStatusNotice = useMemo(
+    () => buildRequestStatusNotice(activeRequestRow),
+    [activeRequestRow]
+  );
+  const activeDrawerDelegationNotice = useMemo(
+    () => buildApprovalDelegationDrawerNotice(delegationPreview),
+    [delegationPreview]
+  );
+  const activeActionDelegationNotice = useMemo(
+    () =>
+      buildApprovalDelegationActionNotice(
+        delegationPreview,
+        requestActionDialog?.actionType === "REJECT" ? "Reject" : "Approve"
+      ),
+    [delegationPreview, requestActionDialog]
+  );
+
+  const activeRequestSummaryItems = useMemo(() => {
+    if (!activeRequestRow) {
+      return [];
+    }
+    const approvalRequest = activeRequestRow.approvalRequest || null;
+    const reviewScopeLabel = formatApprovalScopeLabel(
+      activeRequestRow,
+      legalEntityById,
+      operatingUnitById
+    );
+    return [
+      {
+        key: "requested-card",
+        label: "Requested Card",
+        value: `${activeRequestRow.code || "-"} - ${activeRequestRow.name || "-"}`,
+        helperText: activeRequestRow.requestRole || "",
+      },
+      {
+        key: "requester",
+        label: "Requester",
+        value: activeRequestRow.requestedByUserName || activeRequestRow.requestedByUserId || "-",
+        helperText: `Submitted ${formatDateTimeLabel(
+          approvalRequest?.submittedAt || activeRequestRow.createdAt
+        )}`,
+      },
+      {
+        key: "review-scope",
+        label: "Review Scope",
+        value: reviewScopeLabel,
+        helperText:
+          approvalRequest?.currentStepNo != null
+            ? `Current step ${approvalRequest.currentStepNo}`
+            : "Legacy request flow",
+      },
+      {
+        key: "reviewer",
+        label: "Latest Reviewer",
+        value: activeRequestRow.decidedByUserName || activeRequestRow.decidedByUserId || "Pending",
+        helperText: activeRequestRow.decidedAt
+          ? `Decision recorded ${formatDateTimeLabel(activeRequestRow.decidedAt)}`
+          : "No final decision recorded yet",
+      },
+      {
+        key: "live-card",
+        label: "Live Card",
+        value:
+          activeRequestRow.createdCounterpartyCode ||
+          activeRequestRow.createdCounterpartyId ||
+          "Not created yet",
+        helperText: activeRequestRow.createdCounterpartyName || "",
+      },
+      {
+        key: "review-result",
+        label: "Review Outcome",
+        value: buildRequestDecisionSummary(activeRequestRow),
+        helperText: approvalRequest?.requestCode || `Request #${activeRequestRow.id}`,
+      },
+    ];
+  }, [activeRequestRow, legalEntityById, operatingUnitById]);
+
+  const activeRequestActions = useMemo(() => {
+    if (!activeRequestRow || (!canReviewRequests && !canRequest)) {
+      return [];
+    }
+    const reviewStatus = toUpperText(
+      activeRequestRow.approvalRequest?.requestStatus || activeRequestRow.requestStatus
+    );
+    const isReviewable = ["PENDING", "PENDING_REVIEW", "ESCALATED"].includes(reviewStatus);
+    const isRequester =
+      Number(user?.id || 0) > 0 &&
+      Number(user?.id || 0) === Number(activeRequestRow.requestedByUserId || 0);
+    const approveBusy = requestActionKey === `approve-${activeRequestRow.id}`;
+    const rejectBusy = requestActionKey === `reject-${activeRequestRow.id}`;
+    const canResolveDecision = canReviewRequests || canUseDelegatedDecision(delegationPreview);
+
+    return [
+      {
+        key: "approve",
+        label: "Approve",
+        tone: "approve",
+        busy: approveBusy,
+        busyLabel: "Approving...",
+        disabled: !canResolveDecision || !isReviewable || Boolean(requestActionKey),
+        description: !canResolveDecision
+          ? "Missing permission: cari.request.review"
+          : !isReviewable
+            ? "Only pending or escalated review requests can be approved."
+            : canUseDelegatedDecision(delegationPreview) &&
+              !canReviewRequests &&
+              activeActionDelegationNotice?.description
+              ? activeActionDelegationNotice.description
+            : reviewStatus === "ESCALATED"
+              ? "Escalated requests stay actionable in the normal review queue."
+              : "Record an approval decision at the request scope.",
+        onClick: () => openRequestAction("APPROVE", activeRequestRow.id),
+      },
+      {
+        key: "reject",
+        label: "Reject",
+        tone: "reject",
+        busy: rejectBusy,
+        busyLabel: "Rejecting...",
+        disabled: !canResolveDecision || !isReviewable || Boolean(requestActionKey),
+        description: !canResolveDecision
+          ? "Missing permission: cari.request.review"
+          : !isReviewable
+            ? "Only pending or escalated review requests can be rejected."
+            : canUseDelegatedDecision(delegationPreview) &&
+              !canReviewRequests &&
+              activeActionDelegationNotice?.description
+              ? activeActionDelegationNotice.description
+            : reviewStatus === "ESCALATED"
+              ? "Escalated requests stay actionable in the normal review queue."
+              : "Reject the request with an optional review comment.",
+        onClick: () => openRequestAction("REJECT", activeRequestRow.id),
+      },
+      {
+        key: "return",
+        label: "Return for Revision",
+        tone: "return",
+        disabled: true,
+        description:
+          "Return routing is planned for the shared approval UX, but the CARI pilot does not expose that endpoint yet.",
+        onClick: undefined,
+      },
+      {
+        key: "withdraw",
+        label: "Withdraw",
+        tone: "withdraw",
+        disabled: true,
+        description: isRequester
+          ? "Withdraw is planned for the shared approval UX, but the CARI pilot does not expose that endpoint yet."
+          : "Only the original requester should withdraw, and the CARI pilot does not expose that endpoint yet.",
+        onClick: undefined,
+      },
+    ];
+  }, [
+    activeActionDelegationNotice,
+    activeRequestRow,
+    canRequest,
+    canReviewRequests,
+    delegationPreview,
+    openRequestAction,
+    requestActionKey,
+    user,
+  ]);
+
   function renderCreatePage() {
     const requestMode = !canUpsert && canRequest;
     const createTitle = requestMode
@@ -2565,7 +3062,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         : "Musteri Karti Talebi"
       : config.title;
     const createDescription = requestMode
-      ? "Yeni kart talebini gonderin. Entity accountant talebi inceleyip canli karti olusturur."
+      ? "Yeni kart talebini gonderin. Kapsam icindeki inceleme yetkilisi talebi inceler; canli kart duzenleme yetkisi ayri kalir."
       : config.subtitle;
     return (
       <CounterpartyForm
@@ -2577,13 +3074,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         legalEntities={legalEntities}
         legalEntitiesLoading={legalEntitiesLoading}
         legalEntitiesError={legalEntitiesError}
-        lockLegalEntity={canLockCreateOwnershipToWorkingContext}
-        legalEntityLockHint={branchOwnedLiveMode ? branchOwnedCreateHint : ""}
         operatingUnits={createOperatingUnits}
         operatingUnitsLoading={createOperatingUnitsLoading}
         operatingUnitsError={createOperatingUnitsError}
-        lockOperatingUnitOwnership={canLockCreateOwnershipToWorkingContext}
-        operatingUnitOwnershipHint={branchOwnedLiveMode ? branchOwnedCreateHint : ""}
         paymentTerms={createPaymentTerms}
         paymentTermsLoading={createPaymentTermsLoading}
         paymentTermsError={createPaymentTermsError}
@@ -2646,17 +3139,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         submitting={createSaving}
         onSubmit={handleCreateSubmit}
         onReset={() => {
-          setCreateForm(() => {
-            const reset = buildInitialCounterpartyForm(config.roleDefault);
-            return {
-              ...reset,
-              legalEntityId:
-                (branchOwnedLiveMode ? workingLegalEntityId : "") || reset.legalEntityId,
-              primaryOperatingUnitId: branchOwnedLiveMode ? workingOperatingUnitId : "",
-              operatingUnitIds:
-                branchOwnedLiveMode && workingOperatingUnitId ? [workingOperatingUnitId] : [],
-            };
-          });
+          setCreateForm(buildInitialCounterpartyForm(config.roleDefault));
           setCreatePaymentTermLookupQuery("");
           setCreateInlinePaymentTermSaving(false);
           setCreateInlinePaymentTermError("");
@@ -2676,19 +3159,17 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
           setCreateInlineApAccountError("");
           setCreateInlineApAccountMessage("");
         }}
-        submitLabel={canUpsert ? "Create Card" : canRequest ? "Submit Request" : "Save"}
+        submitLabel={canUpsert ? "Create Card" : canRequest ? "Submit for Review" : "Save"}
         serverError={createError}
         serverMessage={createMessage}
         roleHint={
           canUpsert
-            ? branchOwnedLiveMode
-              ? `Default role preset: ${config.roleDefault}. Saved as one branch-owned live card.`
+            ? `Default role preset: ${config.roleDefault}`
+            : canRequest
+              ? `Submit a ${config.roleDefault.toLowerCase()} master request for review. Review authority stays separate from live card edit authority.`
               : `Default role preset: ${config.roleDefault}`
-            : `Submit a ${config.roleDefault.toLowerCase()} master request for entity review.`
         }
-        enforceRoleAccountRequirement={
-          canUpsert && accountPickerGates.showAccountPickers && !branchOwnedLiveMode
-        }
+        enforceRoleAccountRequirement={canUpsert}
       />
     );
   }
@@ -2707,16 +3188,20 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                 to={config.createPath}
                 className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               >
-                {canUpsert ? "Create Card" : "Request Card"}
+                {canUpsert ? "Create Card" : "Submit for Review"}
               </Link>
             ) : null}
           </div>
 
           {!canUpsert ? (
             <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {canRequest
-                ? "You only have read permission on live master data. Submit a request to create a new card."
-                : "You only have read permission. Edit actions are disabled."}
+              {canReviewRequests && canRequest
+                ? "You can submit and review in-scope counterparty requests, but live master-data editing stays disabled."
+                : canReviewRequests
+                  ? "You can review in-scope counterparty requests, but live master-data editing stays disabled."
+                  : canRequest
+                    ? "You can submit counterparty requests, but live master-data editing stays disabled."
+                    : "You only have read permission. Edit actions are disabled."}
             </div>
           ) : null}
 
@@ -3111,23 +3596,26 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
           <p className="mt-2 text-xs text-slate-500">Total rows: {totalRows}</p>
         </section>
 
-        {canRequest ? (
+        {canRequest || canReviewRequests ? (
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-slate-900">Card Requests</h2>
+                <h2 className="text-base font-semibold text-slate-900">Counterparty Requests</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  {canUpsert
-                    ? "Review pending customer/vendor card requests inside your entity scope."
-                    : "Track the card requests you submitted for entity review."}
+                  {canReviewRequests
+                    ? "Review customer/vendor card requests in your scope with separate review and execution states. Live card maintenance remains a separate edit authority."
+                    : "Track the counterparty requests you submitted for review, including their review and execution status."}
+                </p>
+                <p className="mt-2 text-xs text-slate-500">
+                  Escalated requests stay in the same pending queue and remain reviewable here.
                 </p>
               </div>
-              {config.createPath ? (
+              {config.createPath && (canUpsert || canRequest) ? (
                 <Link
                   to={config.createPath}
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  {canUpsert ? "Open Create Card" : "Submit New Request"}
+                  {canUpsert ? "Open Create Card" : "Open Submit for Review Form"}
                 </Link>
               ) : null}
             </div>
@@ -3150,20 +3638,34 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                     <th className="px-3 py-2">Code</th>
                     <th className="px-3 py-2">Name</th>
                     <th className="px-3 py-2">Role</th>
-                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Review / Execution</th>
                     <th className="px-3 py-2">Legal Entity</th>
                     <th className="px-3 py-2">Primary OU</th>
                     <th className="px-3 py-2">Requester</th>
-                    <th className="px-3 py-2">Decision</th>
+                    <th className="px-3 py-2">Approval Detail</th>
                     <th className="px-3 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {requestRows.map((row) => (
-                    <tr key={`counterparty-request-row-${row.id}`}>
+                  {requestRows.map((row) => {
+                    const reviewStatus = row.approvalRequest?.requestStatus || row.requestStatus;
+                    const isEscalated = toUpperText(reviewStatus) === "ESCALATED";
+                    const isReviewable = ["PENDING", "PENDING_REVIEW", "ESCALATED"].includes(
+                      toUpperText(reviewStatus)
+                    );
+                    return (
+                    <tr
+                      key={`counterparty-request-row-${row.id}`}
+                      className={isEscalated ? "bg-amber-50/70" : ""}
+                    >
                       <td className="px-3 py-2 font-mono text-xs text-slate-800">{row.code}</td>
                       <td className="px-3 py-2 text-slate-800">
                         <div>{row.name}</div>
+                        {row.approvalRequest?.requestCode ? (
+                          <div className="mt-1 font-mono text-[11px] text-slate-500">
+                            {row.approvalRequest.requestCode}
+                          </div>
+                        ) : null}
                         {row.requestedPayload?.notes ? (
                           <div className="mt-1 text-xs text-slate-500 line-clamp-2">
                             {row.requestedPayload.notes}
@@ -3180,13 +3682,12 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                         </span>
                       </td>
                       <td className="px-3 py-2">
-                        <span
-                          className={`inline-flex rounded px-2 py-1 text-xs font-semibold ${requestStatusBadgeClass(
-                            row.requestStatus
-                          )}`}
-                        >
-                          {row.requestStatus}
-                        </span>
+                        <div className="flex flex-col items-start gap-1">
+                          <ApprovalRequestStatusBadge
+                            status={row.approvalRequest?.requestStatus || row.requestStatus}
+                          />
+                          <ApprovalExecutionStatusBadge status={row.approvalRequest?.executionStatus} />
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-slate-700">
                         {legalEntityById.get(String(row.legalEntityId))?.code || row.legalEntityId}
@@ -3202,44 +3703,40 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                         {row.requestedByUserName || row.requestedByUserId || "-"}
                       </td>
                       <td className="px-3 py-2 text-slate-700">
-                        {row.requestStatus === "APPROVED" ? (
-                          <span>
-                            {row.createdCounterpartyCode || row.createdCounterpartyId || "-"}
-                          </span>
-                        ) : row.requestStatus === "REJECTED" ? (
-                          row.decisionComment || "Rejected"
-                        ) : (
-                          row.decisionComment || "-"
-                        )}
+                        <div className="space-y-1">
+                          <div className="text-xs font-medium text-slate-700">
+                            {buildRequestDecisionSummary(row)}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            {row.approvalRequest?.currentStepNo != null
+                              ? `Current step ${row.approvalRequest.currentStepNo}`
+                              : "Legacy review flow"}
+                          </div>
+                          {isEscalated ? (
+                            <div className="text-[11px] font-semibold text-amber-800">
+                              Escalated and still actionable in this queue
+                            </div>
+                          ) : null}
+                          <div className="text-[11px] text-slate-500">
+                            {formatApprovalScopeLabel(row, legalEntityById, operatingUnitById)}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right">
-                        {canUpsert && row.requestStatus === "PENDING" ? (
-                          <div className="flex justify-end gap-2">
-                            <button
-                              type="button"
-                              className="rounded-md border border-emerald-300 px-2 py-1 text-xs font-medium text-emerald-700 disabled:opacity-50"
-                              onClick={() => handleApproveRequest(row.id)}
-                              disabled={Boolean(requestActionKey)}
-                            >
-                              {requestActionKey === `approve-${row.id}` ? "Approving..." : "Approve"}
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-md border border-rose-300 px-2 py-1 text-xs font-medium text-rose-700 disabled:opacity-50"
-                              onClick={() => handleRejectRequest(row.id)}
-                              disabled={Boolean(requestActionKey)}
-                            >
-                              {requestActionKey === `reject-${row.id}` ? "Rejecting..." : "Reject"}
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-500">
-                            {row.decidedByUserName || row.decidedByUserId || "-"}
-                          </span>
-                        )}
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            onClick={() => openRequestDrawer(row.id)}
+                            disabled={Boolean(requestActionKey)}
+                          >
+                            {canReviewRequests && isReviewable ? "Review" : "View"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {requestRows.length === 0 ? (
                     <tr>
                       <td
@@ -3248,7 +3745,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                       >
                         {requestLoading
                           ? "Loading requests..."
-                          : "No card requests found for current scope."}
+                          : "No counterparty requests found for current scope."}
                       </td>
                     </tr>
                   ) : null}
@@ -3258,6 +3755,111 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
             <p className="mt-2 text-xs text-slate-500">Total requests: {requestTotalRows}</p>
           </section>
         ) : null}
+
+        {activeRequestRow ? (
+          <ApprovalRequestDrawer
+            open={Boolean(activeRequestRow)}
+            onClose={() => {
+              setActiveRequestId(null);
+              setRequestActionDialog(null);
+              setDelegationPreview(null);
+              setDelegationPreviewLoading(false);
+              if (searchParams.get("approvalRequestId")) {
+                const nextSearchParams = new URLSearchParams(searchParams);
+                nextSearchParams.delete("approvalRequestId");
+                setSearchParams(nextSearchParams, { replace: true });
+              }
+            }}
+            title="Counterparty Request Review"
+            subtitle={`${activeRequestRow.code || "-"} - ${activeRequestRow.name || "-"}`}
+            requestCode={activeRequestRow.approvalRequest?.requestCode || `Request #${activeRequestRow.id}`}
+            requestStatus={activeRequestRow.approvalRequest?.requestStatus || activeRequestRow.requestStatus}
+            executionStatus={activeRequestRow.approvalRequest?.executionStatus}
+            summaryItems={activeRequestSummaryItems}
+            timelineItems={activeRequestTimelineItems}
+            timelineTitle="Decision & Escalation History"
+            statusNotice={activeRequestStatusNotice}
+            actions={activeRequestActions}
+          >
+            {delegationPreviewLoading ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                Checking approval authority for this request...
+              </div>
+            ) : activeDrawerDelegationNotice ? (
+              <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-900">
+                <div className="font-semibold">{activeDrawerDelegationNotice.title}</div>
+                <p className="mt-1">{activeDrawerDelegationNotice.description}</p>
+              </div>
+            ) : null}
+            {requestError ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                {requestError}
+              </div>
+            ) : null}
+            {requestMessage ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                {requestMessage}
+              </div>
+            ) : null}
+            {!activeRequestRow.approvalRequest ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                This row was created before the unified approval pilot or through the legacy flow, so only the
+                collapsed request status is historically available.
+              </div>
+            ) : null}
+            {activeRequestRow.requestedPayload?.notes ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Request Notes
+                </div>
+                <p className="mt-2 text-sm text-slate-700">{activeRequestRow.requestedPayload.notes}</p>
+              </div>
+            ) : null}
+            {activeRequestRow.approvalRequest?.executionErrorText ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                <div className="font-semibold text-rose-900">Execution Error</div>
+                <p className="mt-2">{activeRequestRow.approvalRequest.executionErrorText}</p>
+              </div>
+            ) : null}
+          </ApprovalRequestDrawer>
+        ) : null}
+
+        <ApprovalActionDialog
+          key={
+            requestActionDialog
+              ? `${requestActionDialog.actionType}-${requestActionDialog.requestId}`
+              : "request-action-closed"
+          }
+          open={Boolean(requestActionDialog && activeRequestRow)}
+          title={
+            requestActionDialog?.actionType === "APPROVE"
+              ? "Approve Counterparty Request"
+              : "Reject Counterparty Request"
+          }
+          description={
+            requestActionDialog?.actionType === "APPROVE"
+              ? "Record an approval decision for this scoped request."
+              : "Reject the request and keep the live counterparty card unchanged."
+          }
+          commentLabel={
+            requestActionDialog?.actionType === "APPROVE" ? "Review note" : "Rejection reason"
+          }
+          commentPlaceholder={
+            requestActionDialog?.actionType === "APPROVE"
+              ? "Optional reviewer note"
+              : "Optional rejection reason"
+          }
+          confirmLabel={requestActionDialog?.actionType === "APPROVE" ? "Approve" : "Reject"}
+          confirmBusyLabel={
+            requestActionDialog?.actionType === "APPROVE" ? "Approving..." : "Rejecting..."
+          }
+          confirmTone={requestActionDialog?.actionType === "APPROVE" ? "approve" : "reject"}
+          authorityNotice={activeActionDelegationNotice}
+          submitting={Boolean(requestActionKey)}
+          error={requestError}
+          onClose={() => setRequestActionDialog(null)}
+          onConfirm={handleConfirmRequestAction}
+        />
 
         {editingId ? (
           <CounterpartyForm
@@ -3269,13 +3871,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
             legalEntities={legalEntities}
             legalEntitiesLoading={legalEntitiesLoading}
             legalEntitiesError={legalEntitiesError}
-            lockLegalEntity={branchOwnedLiveMode}
-            legalEntityLockHint={branchOwnedLiveMode ? branchOwnedEditHint : ""}
             operatingUnits={editOperatingUnits}
             operatingUnitsLoading={editOperatingUnitsLoading}
             operatingUnitsError={editOperatingUnitsError}
-            lockOperatingUnitOwnership={branchOwnedLiveMode}
-            operatingUnitOwnershipHint={branchOwnedLiveMode ? branchOwnedEditHint : ""}
             paymentTerms={editPaymentTerms}
             paymentTermsLoading={editPaymentTermsLoading}
             paymentTermsError={editPaymentTermsError}

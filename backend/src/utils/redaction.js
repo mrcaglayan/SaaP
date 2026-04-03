@@ -15,11 +15,29 @@ const DEFAULT_SENSITIVE_KEY_FRAGMENTS = [
   "routing_number",
 ];
 
+/**
+ * Masks a string while preserving the trailing characters that operators need
+ * for safe identification.
+ */
 export function maskString(value, { keepEnd = 4 } = {}) {
   const text = String(value || "");
   if (!text) return "";
   if (text.length <= keepEnd) return "*".repeat(text.length);
   return `${"*".repeat(Math.max(4, text.length - keepEnd))}${text.slice(-keepEnd)}`;
+}
+
+/**
+ * Returns a display-only last-4 representation for bank-account-like values.
+ */
+export function last4(value) {
+  const compact = String(value || "")
+    .replace(/\s+/g, "")
+    .trim();
+  if (!compact) return "";
+  if (compact.length <= 4) {
+    return `****${compact}`;
+  }
+  return `****${compact.slice(-4)}`;
 }
 
 function looksSensitiveKey(key) {
@@ -51,6 +69,31 @@ export function redactObject(input) {
   return out;
 }
 
+/**
+ * Applies one field-visibility rule to a single response value.
+ */
+export function applyVisibilityRule(value, visibilityRule) {
+  const normalizedRule = String(visibilityRule || "FULL")
+    .trim()
+    .toUpperCase();
+  if (normalizedRule === "HIDDEN") {
+    return undefined;
+  }
+  if (normalizedRule === "MASKED") {
+    if (value === null || value === undefined || value === "") {
+      return value;
+    }
+    return typeof value === "string" ? maskString(value) : "***";
+  }
+  if (normalizedRule === "LAST_4") {
+    if (value === null || value === undefined || value === "") {
+      return value;
+    }
+    return last4(value);
+  }
+  return value;
+}
+
 export function redactRawPayloadText(text, { maxLen = 4000 } = {}) {
   const raw = String(text || "");
   if (!raw) return raw;
@@ -70,8 +113,9 @@ export function redactRawPayloadText(text, { maxLen = 4000 } = {}) {
 }
 
 export default {
+  applyVisibilityRule,
+  last4,
   maskString,
   redactObject,
   redactRawPayloadText,
 };
-

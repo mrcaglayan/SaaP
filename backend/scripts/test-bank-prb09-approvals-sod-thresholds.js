@@ -142,17 +142,17 @@ async function createUser({ tenantId, email, name, passwordHash }) {
   return userId;
 }
 
-async function assignTenantAdminRole({ tenantId, userId }) {
+async function assignRole({ tenantId, userId, roleCode }) {
   const roleRows = await query(
     `SELECT id
      FROM roles
      WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
+       AND code = ?
      LIMIT 1`,
-    [tenantId]
+    [tenantId, roleCode]
   );
   const roleId = toNumber(roleRows.rows?.[0]?.id);
-  assert(roleId > 0, "TenantAdmin role not found for tenant");
+  assert(roleId > 0, `${roleCode} role not found for tenant`);
 
   await query(
     `INSERT INTO user_role_scopes (
@@ -187,7 +187,16 @@ async function main() {
     passwordHash,
   });
 
-  await assignTenantAdminRole({ tenantId, userId: approverUserId });
+  await assignRole({
+    tenantId,
+    userId: requesterUserId,
+    roleCode: "TreasuryApprover",
+  });
+  await assignRole({
+    tenantId,
+    userId: approverUserId,
+    roleCode: "TreasuryApprover",
+  });
 
   const policy = await createBankApprovalPolicy({
     req: null,

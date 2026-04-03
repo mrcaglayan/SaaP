@@ -2619,1581 +2619,6 @@
         }
       }
     },
-    "/api/v1/gl/ledger-report": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "getGeneralLedgerReport",
-        "summary": "Get shared local ledger detail report",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "bookId",
-            "required": true,
-            "description": "Book identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "legalEntityId",
-            "required": false,
-            "description": "Optional legal entity identifier that must match the selected book",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "accountId",
-            "required": false,
-            "description": "Exact account identifier. Use either accountId or accountCodeFrom/accountCodeTo.",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "accountCodeFrom",
-            "required": false,
-            "description": "Start of account code range. Use together with accountCodeTo, or alone for an exact code-range anchor.",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "accountCodeTo",
-            "required": false,
-            "description": "End of account code range. Use together with accountCodeFrom, or alone for an exact code-range anchor.",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodId",
-            "required": false,
-            "description": "Single fiscal period identifier. Use either fiscalPeriodId/fiscalPeriodIdFrom/fiscalPeriodIdTo or dateFrom/dateTo.",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodIdFrom",
-            "required": false,
-            "description": "Start fiscal period identifier for a fiscal-period range.",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodIdTo",
-            "required": false,
-            "description": "End fiscal period identifier for a fiscal-period range.",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "dateFrom",
-            "required": false,
-            "description": "Start date for date-range ledger reads in YYYY-MM-DD format. Use together with dateTo.",
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          },
-          {
-            "in": "query",
-            "name": "dateTo",
-            "required": false,
-            "description": "End date for date-range ledger reads in YYYY-MM-DD format. Use together with dateFrom.",
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          },
-          {
-            "in": "query",
-            "name": "operatingUnitScope",
-            "required": false,
-            "description": "Operating-unit scope selector",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ALL",
-                "OPERATING_UNIT",
-                "CENTRAL"
-              ],
-              "default": "ALL"
-            }
-          },
-          {
-            "in": "query",
-            "name": "operatingUnitId",
-            "required": false,
-            "description": "Operating unit identifier. Required when operatingUnitScope=OPERATING_UNIT.",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "subledgerReferenceNo",
-            "required": false,
-            "description": "Subledger reference filter",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "sourceType",
-            "required": false,
-            "description": "Journal source category filter",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "sourceModule",
-            "required": false,
-            "description": "Compatibility alias over the same journal source category used by sourceType",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "description": "Journal status filter",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "DRAFT",
-                "POSTED",
-                "REVERSED",
-                "CANCELLED"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "includeReversed",
-            "required": false,
-            "description": "Whether to include reversed journals",
-            "schema": {
-              "type": "boolean",
-              "default": false
-            }
-          },
-          {
-            "in": "query",
-            "name": "groupBy",
-            "required": false,
-            "description": "Optional grouped totals over the canonical row-level ledger detail payload",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "NONE",
-                "MONTH",
-                "SOURCE_TYPE",
-                "OPERATING_UNIT",
-                "SUBLEDGER_REF"
-              ],
-              "default": "NONE"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200,
-              "default": 50
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0
-            }
-          },
-          {
-            "in": "query",
-            "name": "sortBy",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ENTRY_DATE",
-                "JOURNAL_NO",
-                "REFERENCE_NO",
-                "DOCUMENT_DATE"
-              ],
-              "default": "ENTRY_DATE"
-            }
-          },
-          {
-            "in": "query",
-            "name": "sortDirection",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ASC",
-                "DESC"
-              ],
-              "default": "ASC"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Shared local ledger detail report",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/balance-sheet-report": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "getLocalBalanceSheetReport",
-        "summary": "Get local legal-entity balance sheet",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "bookId",
-            "required": true,
-            "description": "Book identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodId",
-            "required": true,
-            "description": "Selected fiscal period identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "legalEntityId",
-            "required": false,
-            "description": "Optional legal entity identifier that must match the selected book",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "includeZero",
-            "required": false,
-            "description": "Whether to include zero-value rows in the statement output",
-            "schema": {
-              "type": "boolean",
-              "default": false
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Local balance sheet report",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/income-statement-report": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "getLocalIncomeStatementReport",
-        "summary": "Get local legal-entity income statement",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "bookId",
-            "required": true,
-            "description": "Book identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodId",
-            "required": true,
-            "description": "Selected fiscal period identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "legalEntityId",
-            "required": false,
-            "description": "Optional legal entity identifier that must match the selected book",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "includeZero",
-            "required": false,
-            "description": "Whether to include zero-value rows in the statement output",
-            "schema": {
-              "type": "boolean",
-              "default": false
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Local income statement report",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/statement-account-summary": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "getLocalStatementAccountSummary",
-        "summary": "Get statement-row account summary drillthrough",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "bookId",
-            "required": true,
-            "description": "Book identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodId",
-            "required": true,
-            "description": "Selected fiscal period identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "legalEntityId",
-            "required": false,
-            "description": "Optional legal entity identifier that must match the selected book",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "statementType",
-            "required": true,
-            "description": "Statement family to resolve the row from",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "BALANCE_SHEET",
-                "INCOME_STATEMENT"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "statementRowKey",
-            "required": true,
-            "description": "Statement row key",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Statement-row account summary drillthrough",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/cari-control-reconciliation": {
-      "get": {
-        "tags": [
-          "GL",
-          "Cari"
-        ],
-        "operationId": "getCariControlReconciliationReport",
-        "summary": "Get first-pass GL-vs-CARI control-account reconciliation",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "bookId",
-            "required": true,
-            "description": "Book identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodId",
-            "required": true,
-            "description": "Selected fiscal period identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "legalEntityId",
-            "required": false,
-            "description": "Optional legal entity identifier that must match the selected book",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "counterpartyId",
-            "required": false,
-            "description": "Optional exact counterparty filter",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "operatingUnitScope",
-            "required": false,
-            "description": "Operating-unit scope selector",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ALL",
-                "OPERATING_UNIT",
-                "CENTRAL"
-              ],
-              "default": "ALL"
-            }
-          },
-          {
-            "in": "query",
-            "name": "operatingUnitId",
-            "required": false,
-            "description": "Operating unit identifier. Required when operatingUnitScope=OPERATING_UNIT.",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "direction",
-            "required": false,
-            "description": "Optional AR/AP direction filter",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ALL",
-                "AR",
-                "AP"
-              ],
-              "default": "ALL"
-            }
-          },
-          {
-            "in": "query",
-            "name": "rowStatus",
-            "required": false,
-            "description": "Whether to return all grouped rows or only exception rows",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ALL",
-                "EXCEPTIONS_ONLY"
-              ],
-              "default": "ALL"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 500,
-              "default": 200
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "RP10 first-pass control-account reconciliation report",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/cari-control-reconciliation/detail": {
-      "get": {
-        "tags": [
-          "GL",
-          "Cari"
-        ],
-        "operationId": "getCariControlReconciliationDetail",
-        "summary": "Get journal and source drillthrough for one RP10 reconciliation row",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "bookId",
-            "required": true,
-            "description": "Book identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodId",
-            "required": true,
-            "description": "Selected fiscal period identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "legalEntityId",
-            "required": false,
-            "description": "Optional legal entity identifier that must match the selected book",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "counterpartyId",
-            "required": false,
-            "description": "Optional exact counterparty filter",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "operatingUnitScope",
-            "required": false,
-            "description": "Operating-unit scope selector",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ALL",
-                "OPERATING_UNIT",
-                "CENTRAL"
-              ],
-              "default": "ALL"
-            }
-          },
-          {
-            "in": "query",
-            "name": "operatingUnitId",
-            "required": false,
-            "description": "Operating unit identifier. Required when operatingUnitScope=OPERATING_UNIT.",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "direction",
-            "required": false,
-            "description": "Optional AR/AP direction filter",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ALL",
-                "AR",
-                "AP"
-              ],
-              "default": "ALL"
-            }
-          },
-          {
-            "in": "query",
-            "name": "rowKey",
-            "required": true,
-            "description": "Reconciliation row key returned from the summary endpoint",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Journal and source drillthrough for one reconciliation row",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "listLocalClosePacks",
-        "summary": "List local close packs for the workspace shell",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 500,
-              "default": 100
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0
-            }
-          },
-          {
-            "in": "query",
-            "name": "legalEntityId",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "bookId",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "fiscalPeriodId",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "operatingUnitId",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "closeScopeType",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "OPERATING_UNIT",
-                "CENTRAL"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "NOT_OPENED",
-                "OPEN",
-                "IN_PROGRESS",
-                "READY_FOR_REVIEW",
-                "RETURNED",
-                "APPROVED",
-                "LOCKED",
-                "REOPENED",
-                "SUPERSEDED"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Local close pack workspace rows",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "createLocalClosePack",
-        "summary": "Create a local close pack header",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created local close pack",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "409": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "getLocalClosePack",
-        "summary": "Get one local close pack with readiness context",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Local close pack detail",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}/report-reviews": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "listLocalClosePackReportReviews",
-        "summary": "List captured reviewed-report fingerprints for one local close pack",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Reviewed-report fingerprints for one local close pack",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "upsertLocalClosePackReportReview",
-        "summary": "Persist the reviewed-report fingerprint for one local close pack",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Saved reviewed-report fingerprint",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}/evidence": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "listLocalClosePackEvidence",
-        "summary": "List evidence attachments for one local close pack",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Evidence attachments for one local close pack",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "createLocalClosePackEvidenceDraft",
-        "summary": "Create the metadata shell for one local close-pack evidence attachment",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created evidence draft shell",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}/content": {
-      "put": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "uploadLocalClosePackEvidenceContent",
-        "summary": "Upload binary content for one local close-pack evidence attachment",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "path",
-            "name": "evidenceId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/octet-stream": {
-              "schema": {
-                "type": "string",
-                "format": "binary"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Uploaded evidence binary content",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}/download": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "downloadLocalClosePackEvidence",
-        "summary": "Download binary content for one local close-pack evidence attachment",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "path",
-            "name": "evidenceId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Binary evidence payload",
-            "content": {
-              "application/octet-stream": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}": {
-      "delete": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "deleteLocalClosePackEvidence",
-        "summary": "Delete one local close-pack evidence attachment",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "path",
-            "name": "evidenceId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Deleted local close-pack evidence attachment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}/comments": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "listLocalClosePackComments",
-        "summary": "List internal comments for one local close pack",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Internal comments for one local close pack",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "createLocalClosePackComment",
-        "summary": "Create an internal comment for one local close pack",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created local close-pack internal comment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}/audit": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "listLocalClosePackAuditTrail",
-        "summary": "List audit history for one local close pack",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200,
-              "default": 50
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0
-            }
-          },
-          {
-            "in": "query",
-            "name": "includePayload",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Audit history for one local close pack",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/gl/local-close-packs/{packId}/reopen-requests": {
-      "get": {
-        "tags": [
-          "GL"
-        ],
-        "operationId": "listLocalClosePackReopenRequests",
-        "summary": "List governed reopen requests for one local close pack",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "packId",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "requestStatus",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "REQUESTED",
-                "APPROVED",
-                "REJECTED",
-                "EXECUTED"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Reopen requests for one local close pack",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "404": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
     "/api/v1/gl/period-closing/runs": {
       "get": {
         "tags": [
@@ -6166,6 +4591,168 @@
         }
       }
     },
+    "/api/v1/approvals/delegations": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "getApiV1ApprovalsDelegations",
+        "summary": "Auto-generated: GET /api/v1/approvals/delegations",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "postApiV1ApprovalsDelegations",
+        "summary": "Auto-generated: POST /api/v1/approvals/delegations",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/delegations/{delegationId}": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "getApiV1ApprovalsDelegationsDelegationid",
+        "summary": "Auto-generated: GET /api/v1/approvals/delegations/{delegationId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "delegationId",
+            "required": true,
+            "description": "delegationId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/approvals/delegations/{delegationId}/revoke": {
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "postApiV1ApprovalsDelegationsDelegationidRevoke",
+        "summary": "Auto-generated: POST /api/v1/approvals/delegations/{delegationId}/revoke",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "delegationId",
+            "required": true,
+            "description": "delegationId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/approvals/policies": {
       "get": {
         "tags": [
@@ -6486,6 +5073,48 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/approvals/requests/{requestId}/delegation-preview": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "getApiV1ApprovalsRequestsRequestidDelegationPreview",
+        "summary": "Auto-generated: GET /api/v1/approvals/requests/{requestId}/delegation-preview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "description": "requestId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
       }
     },
     "/api/v1/approvals/requests/{requestId}/reject": {
@@ -9977,6 +8606,178 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CounterpartyUpsertInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/counterparty-requests": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariCounterpartyRequests",
+        "summary": "Cari endpoint: GET /api/v1/cari/counterparty-requests",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariCounterpartyRequests",
+        "summary": "Cari endpoint: POST /api/v1/cari/counterparty-requests",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/counterparty-requests/{requestId}/approve": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariCounterpartyRequestsRequestidApprove",
+        "summary": "Cari endpoint: POST /api/v1/cari/counterparty-requests/{requestId}/approve",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "description": "requestId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/counterparty-requests/{requestId}/reject": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariCounterpartyRequestsRequestidReject",
+        "summary": "Cari endpoint: POST /api/v1/cari/counterparty-requests/{requestId}/reject",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "description": "requestId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
               }
             }
           }
@@ -13544,7 +12345,7 @@
                 "INITIATED",
                 "IN_TRANSIT",
                 "RECEIVED",
-                "CANCELED",
+                "CANCELLED",
                 "REVERSED"
               ]
             }
@@ -14859,6 +13660,100 @@
             "name": "groupId",
             "required": true,
             "description": "groupId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/consolidation/runs/{runId}/report-snapshots/member-support": {
+      "post": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "postApiV1ConsolidationRunsRunidReportSnapshotsMemberSupport",
+        "summary": "Auto-generated: POST /api/v1/consolidation/runs/{runId}/report-snapshots/member-support",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/consolidation/runs/{runId}/review-gate": {
+      "get": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "getApiV1ConsolidationRunsRunidReviewGate",
+        "summary": "Auto-generated: GET /api/v1/consolidation/runs/{runId}/review-gate",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -19044,6 +17939,178 @@
         }
       }
     },
+    "/api/v1/gl/balance-sheet-report": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlBalanceSheetReport",
+        "summary": "Auto-generated: GET /api/v1/gl/balance-sheet-report",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/cari-control-reconciliation": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlCariControlReconciliation",
+        "summary": "Auto-generated: GET /api/v1/gl/cari-control-reconciliation",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/cari-control-reconciliation/detail": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlCariControlReconciliationDetail",
+        "summary": "Auto-generated: GET /api/v1/gl/cari-control-reconciliation/detail",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/coas/{coaId}/starter-template/apply": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlCoasCoaidStarterTemplateApply",
+        "summary": "Auto-generated: POST /api/v1/gl/coas/{coaId}/starter-template/apply",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "coaId",
+            "required": true,
+            "description": "coaId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/income-statement-report": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlIncomeStatementReport",
+        "summary": "Auto-generated: GET /api/v1/gl/income-statement-report",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/gl/journal-purpose-accounts": {
       "get": {
         "tags": [
@@ -19146,6 +18213,1054 @@
             "name": "journalId",
             "required": true,
             "description": "journalId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/ledger-report": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLedgerReport",
+        "summary": "Auto-generated: GET /api/v1/gl/ledger-report",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLocalClosePacks",
+        "summary": "Auto-generated: GET /api/v1/gl/local-close-packs",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacks",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLocalClosePacksPackid",
+        "summary": "Auto-generated: GET /api/v1/gl/local-close-packs/{packId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/approve": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidApprove",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/approve",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/audit": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLocalClosePacksPackidAudit",
+        "summary": "Auto-generated: GET /api/v1/gl/local-close-packs/{packId}/audit",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/comments": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLocalClosePacksPackidComments",
+        "summary": "Auto-generated: GET /api/v1/gl/local-close-packs/{packId}/comments",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidComments",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/comments",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/evidence": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLocalClosePacksPackidEvidence",
+        "summary": "Auto-generated: GET /api/v1/gl/local-close-packs/{packId}/evidence",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidEvidence",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/evidence",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}": {
+      "delete": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "deleteApiV1GlLocalClosePacksPackidEvidenceEvidenceid",
+        "summary": "Auto-generated: DELETE /api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}/content": {
+      "put": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "putApiV1GlLocalClosePacksPackidEvidenceEvidenceidContent",
+        "summary": "Auto-generated: PUT /api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}/content",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}/download": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLocalClosePacksPackidEvidenceEvidenceidDownload",
+        "summary": "Auto-generated: GET /api/v1/gl/local-close-packs/{packId}/evidence/{evidenceId}/download",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "evidenceId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/lock": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidLock",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/lock",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/reopen-requests": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLocalClosePacksPackidReopenRequests",
+        "summary": "Auto-generated: GET /api/v1/gl/local-close-packs/{packId}/reopen-requests",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidReopenRequests",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/reopen-requests",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/reopen-requests/{requestId}/approve": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidReopenRequestsRequestidApprove",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/reopen-requests/{requestId}/approve",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "description": "requestId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/reopen-requests/{requestId}/reject": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidReopenRequestsRequestidReject",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/reopen-requests/{requestId}/reject",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "description": "requestId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/report-reviews": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlLocalClosePacksPackidReportReviews",
+        "summary": "Auto-generated: GET /api/v1/gl/local-close-packs/{packId}/report-reviews",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidReportReviews",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/report-reviews",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/return": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidReturn",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/return",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/local-close-packs/{packId}/submit": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlLocalClosePacksPackidSubmit",
+        "summary": "Auto-generated: POST /api/v1/gl/local-close-packs/{packId}/submit",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "description": "packId identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -19300,6 +19415,36 @@
                 "$ref": "#/components/schemas/AnyObject"
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/statement-account-summary": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlStatementAccountSummary",
+        "summary": "Auto-generated: GET /api/v1/gl/statement-account-summary",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
           }
         }
       }
@@ -21939,6 +22084,36 @@
         ],
         "operationId": "getApiV1OpsBankReconciliationSummary",
         "summary": "Auto-generated: GET /api/v1/ops/bank/reconciliation-summary",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/ops/cash/transit-attention": {
+      "get": {
+        "tags": [
+          "Ops"
+        ],
+        "operationId": "getApiV1OpsCashTransitAttention",
+        "summary": "Auto-generated: GET /api/v1/ops/cash/transit-attention",
         "responses": {
           "200": {
             "description": "Successful response",
@@ -26746,6 +26921,116 @@
         }
       }
     },
+    "/api/v1/rbac/access-check": {
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1RbacAccessCheck",
+        "summary": "Auto-generated: POST /api/v1/rbac/access-check",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rbac/audit-reports": {
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1RbacAuditReports",
+        "summary": "Auto-generated: POST /api/v1/rbac/audit-reports",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rbac/audit-reports/export.csv": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "getApiV1RbacAuditReportsExportCsv",
+        "summary": "Auto-generated: GET /api/v1/rbac/audit-reports/export.csv",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/revenue-recognition/accruals/generate": {
       "post": {
         "tags": [
@@ -27783,6 +28068,346 @@
         }
       }
     },
+    "/api/v1/security/admin-ui-state": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "getApiV1SecurityAdminUiState",
+        "summary": "Auto-generated: GET /api/v1/security/admin-ui-state",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/security/entity-branch-operators": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "getApiV1SecurityEntityBranchOperators",
+        "summary": "Auto-generated: GET /api/v1/security/entity-branch-operators",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1SecurityEntityBranchOperators",
+        "summary": "Auto-generated: POST /api/v1/security/entity-branch-operators",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/entity-branch-operators/{assignmentId}": {
+      "delete": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "deleteApiV1SecurityEntityBranchOperatorsAssignmentid",
+        "summary": "Auto-generated: DELETE /api/v1/security/entity-branch-operators/{assignmentId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignmentId",
+            "required": true,
+            "description": "assignmentId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/security/field-visibility-policies": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "getApiV1SecurityFieldVisibilityPolicies",
+        "summary": "Auto-generated: GET /api/v1/security/field-visibility-policies",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1SecurityFieldVisibilityPolicies",
+        "summary": "Auto-generated: POST /api/v1/security/field-visibility-policies",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/field-visibility-policies/{policyId}": {
+      "delete": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "deleteApiV1SecurityFieldVisibilityPoliciesPolicyid",
+        "summary": "Auto-generated: DELETE /api/v1/security/field-visibility-policies/{policyId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policyId",
+            "required": true,
+            "description": "policyId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "getApiV1SecurityFieldVisibilityPoliciesPolicyid",
+        "summary": "Auto-generated: GET /api/v1/security/field-visibility-policies/{policyId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policyId",
+            "required": true,
+            "description": "policyId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "putApiV1SecurityFieldVisibilityPoliciesPolicyid",
+        "summary": "Auto-generated: PUT /api/v1/security/field-visibility-policies/{policyId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policyId",
+            "required": true,
+            "description": "policyId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/security/invites": {
       "post": {
         "tags": [
@@ -27811,6 +28436,222 @@
             "$ref": "#/components/responses/ErrorResponse"
           }
         },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/role-migrations": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "getApiV1SecurityRoleMigrations",
+        "summary": "Auto-generated: GET /api/v1/security/role-migrations",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/security/role-migrations/preview": {
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1SecurityRoleMigrationsPreview",
+        "summary": "Auto-generated: POST /api/v1/security/role-migrations/preview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/role-migrations/{runId}": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "getApiV1SecurityRoleMigrationsRunid",
+        "summary": "Auto-generated: GET /api/v1/security/role-migrations/{runId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/security/role-migrations/{runId}/execute": {
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1SecurityRoleMigrationsRunidExecute",
+        "summary": "Auto-generated: POST /api/v1/security/role-migrations/{runId}/execute",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/role-migrations/{runId}/rollback": {
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1SecurityRoleMigrationsRunidRollback",
+        "summary": "Auto-generated: POST /api/v1/security/role-migrations/{runId}/rollback",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "requestBody": {
           "required": false,
           "content": {
@@ -29257,6 +30098,66 @@
         }
       }
     },
+    "/me/delegations": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "getMeDelegations",
+        "summary": "Auto-generated: GET /me/delegations",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/me/entitlements": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "getMeEntitlements",
+        "summary": "Auto-generated: GET /me/entitlements",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/me/features": {
       "get": {
         "tags": [
@@ -29853,7 +30754,7 @@
           "INITIATED",
           "IN_TRANSIT",
           "RECEIVED",
-          "CANCELED",
+          "CANCELLED",
           "REVERSED"
         ]
       },
@@ -43011,7 +43912,7 @@
           "APPROVED",
           "IN_TRANSIT",
           "RECEIVED",
-          "CANCELED",
+          "CANCELLED",
           "REVERSED"
         ]
       },
@@ -45125,7 +46026,7 @@
           "DRAFT",
           "POSTED",
           "REVERSED",
-          "CANCELED"
+          "CANCELLED"
         ]
       },
       "InventoryLandedCostVoucherUiStatus": {
@@ -45134,7 +46035,7 @@
           "DRAFT",
           "POSTED",
           "REVERSED",
-          "CANCELED",
+          "CANCELLED",
           "REVERSAL_BLOCKED"
         ]
       },

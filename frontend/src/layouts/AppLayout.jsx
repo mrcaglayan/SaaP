@@ -475,12 +475,32 @@ function hasRequiredFeatures(item, hasAnyFeature) {
   return hasAnyFeature(requiredFeatureCodes);
 }
 
+function isVisibleForSecurityAdminUiState(
+  item,
+  securityAdminUiState,
+  securityAdminUiStateLoaded
+) {
+  const adminUiStateKey = String(item?.adminUiStateKey || "").trim();
+  if (!adminUiStateKey) {
+    return true;
+  }
+  if (!securityAdminUiStateLoaded) {
+    return false;
+  }
+  if (adminUiStateKey === "roleMigrations") {
+    return Boolean(securityAdminUiState?.roleMigrations?.shouldShowInNavigation);
+  }
+  return true;
+}
+
 function annotateSidebarItemsWithAccess(
   items,
   hasAnyPermission,
   hasAnyFeature,
   includeUnimplemented,
-  t
+  t,
+  securityAdminUiState,
+  securityAdminUiStateLoaded
 ) {
   if (!Array.isArray(items)) {
     return [];
@@ -498,12 +518,17 @@ function annotateSidebarItemsWithAccess(
       : [];
     const hasAccess = hasRequiredPermissions(item, hasAnyPermission);
     const hasFeatureAccess = hasRequiredFeatures(item, hasAnyFeature);
+    const hasAdminUiAccess = isVisibleForSecurityAdminUiState(
+      item,
+      securityAdminUiState,
+      securityAdminUiStateLoaded
+    );
     const lockedReason =
       !hasAccess && requiredPermissions.length > 0
         ? `${t("layout.permissionRequired", "Permission required")}: ${requiredPermissions.join(", ")}`
         : "";
 
-    if (!hasFeatureAccess) {
+    if (!hasFeatureAccess || !hasAdminUiAccess) {
       continue;
     }
 
@@ -526,7 +551,9 @@ function annotateSidebarItemsWithAccess(
       hasAnyPermission,
       hasAnyFeature,
       includeUnimplemented,
-      t
+      t,
+      securityAdminUiState,
+      securityAdminUiStateLoaded
     );
     if (children.length === 0) {
       continue;
@@ -546,8 +573,15 @@ function annotateSidebarItemsWithAccess(
 }
 
 export default function AppLayout() {
-  const { user, logout, hasAnyPermission, hasAnyFeature, hasAllPermissions } =
-    useAuth();
+  const {
+    user,
+    logout,
+    hasAnyPermission,
+    hasAnyFeature,
+    hasAllPermissions,
+    securityAdminUiState,
+    securityAdminUiStateLoaded,
+  } = useAuth();
   const { t } = useI18n();
   const {
     loading: readinessLoading,
@@ -587,9 +621,18 @@ export default function AppLayout() {
         hasAnyPermission,
         hasAnyFeature,
         canViewUnimplementedModules,
-        t
+        t,
+        securityAdminUiState,
+        securityAdminUiStateLoaded
       ),
-    [hasAnyFeature, hasAnyPermission, canViewUnimplementedModules, t]
+    [
+      hasAnyFeature,
+      hasAnyPermission,
+      canViewUnimplementedModules,
+      t,
+      securityAdminUiState,
+      securityAdminUiStateLoaded,
+    ]
   );
   const readinessChip = useMemo(
     () =>

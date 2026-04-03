@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { listLegalEntities } from "../../api/orgAdmin.js";
+import {
+  SensitiveFieldEditHint,
+  SensitiveFieldsNotice,
+  SensitiveFieldValue,
+} from "../../components/security/SensitiveFieldValue.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import {
   createPayrollBeneficiaryAccount,
@@ -7,8 +12,19 @@ import {
   setPrimaryPayrollBeneficiaryAccount,
   updatePayrollBeneficiaryAccount,
 } from "../../api/payrollBeneficiaries.js";
+import {
+  buildSensitiveUpdateValue,
+  filterMaskedFieldSummary,
+  getSensitiveValueState,
+  isRestrictedSensitiveState,
+  isRestrictedSensitiveValue,
+} from "../../utils/sensitiveFieldUi.js";
 
 const LOOKUP_REQUIRED_ERROR = "legalEntityId ve employeeCode gerekli.";
+const EMPTY_BENEFICIARY_SENSITIVE_STATE = Object.freeze({
+  iban: "empty",
+  accountNumber: "empty",
+});
 
 function formatDate(value) {
   if (!value) return "-";
@@ -18,6 +34,10 @@ function formatDate(value) {
 }
 
 function toPatchForm(row) {
+  const sensitiveState = {
+    iban: getSensitiveValueState(row?.iban, { hiddenWhenMissing: true }),
+    accountNumber: getSensitiveValueState(row?.account_number, { hiddenWhenMissing: true }),
+  };
   if (!row) {
     return {
       accountHolderName: "",
@@ -32,8 +52,10 @@ function toPatchForm(row) {
   return {
     accountHolderName: row.account_holder_name || "",
     bankName: row.bank_name || "",
-    iban: row.iban || "",
-    accountNumber: row.account_number || "",
+    iban: isRestrictedSensitiveState(sensitiveState.iban) ? "" : row.iban || "",
+    accountNumber: isRestrictedSensitiveState(sensitiveState.accountNumber)
+      ? ""
+      : row.account_number || "",
     status: row.status || "ACTIVE",
     verificationStatus: row.verification_status || "UNVERIFIED",
     reason: "Updated via payroll-beneficiaries page",
@@ -41,7 +63,7 @@ function toPatchForm(row) {
 }
 
 export default function PayrollBeneficiariesPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, isVisibilityNarrowed, maskedFields } = useAuth();
   const canRead = hasPermission("payroll.beneficiary.read");
   const canWrite = hasPermission("payroll.beneficiary.write");
   const canSetPrimary = hasPermission("payroll.beneficiary.set_primary");
@@ -77,6 +99,13 @@ export default function PayrollBeneficiariesPage() {
   const [message, setMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
   const [hasLoadedRows, setHasLoadedRows] = useState(false);
+  const [patchSensitiveState, setPatchSensitiveState] = useState(
+    EMPTY_BENEFICIARY_SENSITIVE_STATE
+  );
+  const [patchSensitivePreview, setPatchSensitivePreview] = useState({
+    iban: "",
+    accountNumber: "",
+  });
 
   const selectedRow = useMemo(
     () => rows.find((row) => Number(row.id) === Number(selectedId)) || null,
@@ -90,6 +119,26 @@ export default function PayrollBeneficiariesPage() {
     [legalEntities]
   );
   const canLoadRows = Boolean(canRead && filters.legalEntityId && filters.employeeCode && !loading);
+  const beneficiaryMaskedFieldSummary = useMemo(
+    () =>
+      filterMaskedFieldSummary(maskedFields, ["iban", "account_number", "accountNumber"]),
+    [maskedFields]
+  );
+  const hasRestrictedBeneficiaryRows = useMemo(
+    () =>
+      rows.some(
+        (row) =>
+          isRestrictedSensitiveValue(row?.iban, { hiddenWhenMissing: true }) ||
+          isRestrictedSensitiveValue(row?.account_number, { hiddenWhenMissing: true })
+      ),
+    [rows]
+  );
+  const showSensitiveBeneficiaryNotice =
+    isVisibilityNarrowed ||
+    beneficiaryMaskedFieldSummary.length > 0 ||
+    hasRestrictedBeneficiaryRows ||
+    isRestrictedSensitiveState(patchSensitiveState.iban) ||
+    isRestrictedSensitiveState(patchSensitiveState.accountNumber);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +191,8 @@ export default function PayrollBeneficiariesPage() {
     setHasLoadedRows(false);
     setSelectedId(null);
     setPatchForm(toPatchForm(null));
+    setPatchSensitiveState(EMPTY_BENEFICIARY_SENSITIVE_STATE);
+    setPatchSensitivePreview({ iban: "", accountNumber: "" });
     setError((prev) => (prev === LOOKUP_REQUIRED_ERROR ? "" : prev));
   }, [filters.legalEntityId, filters.employeeCode, filters.currencyCode, filters.status]);
 
@@ -177,16 +228,30 @@ export default function PayrollBeneficiariesPage() {
           items.find((row) => Number(row.id) === Number(selectedId))?.id || items[0].id;
         setSelectedId(nextSelected);
         const row = items.find((x) => Number(x.id) === Number(nextSelected));
+        setPatchSensitiveState({
+          iban: getSensitiveValueState(row?.iban, { hiddenWhenMissing: true }),
+          accountNumber: getSensitiveValueState(row?.account_number, {
+            hiddenWhenMissing: true,
+          }),
+        });
+        setPatchSensitivePreview({
+          iban: String(row?.iban || ""),
+          accountNumber: String(row?.account_number || ""),
+        });
         setPatchForm(toPatchForm(row));
       } else {
         setSelectedId(null);
         setPatchForm(toPatchForm(null));
+        setPatchSensitiveState(EMPTY_BENEFICIARY_SENSITIVE_STATE);
+        setPatchSensitivePreview({ iban: "", accountNumber: "" });
       }
     } catch (err) {
       setRows([]);
       setHasLoadedRows(false);
       setSelectedId(null);
       setPatchForm(toPatchForm(null));
+      setPatchSensitiveState(EMPTY_BENEFICIARY_SENSITIVE_STATE);
+      setPatchSensitivePreview({ iban: "", accountNumber: "" });
       setError(err?.response?.data?.message || "Payroll beneficiary listesi yuklenemedi");
     } finally {
       setLoading(false);
@@ -195,7 +260,40 @@ export default function PayrollBeneficiariesPage() {
 
   function selectRow(row) {
     setSelectedId(row.id);
+    setPatchSensitiveState({
+      iban: getSensitiveValueState(row?.iban, { hiddenWhenMissing: true }),
+      accountNumber: getSensitiveValueState(row?.account_number, { hiddenWhenMissing: true }),
+    });
+    setPatchSensitivePreview({
+      iban: String(row?.iban || ""),
+      accountNumber: String(row?.account_number || ""),
+    });
     setPatchForm(toPatchForm(row));
+  }
+
+  function buildPatchPayload() {
+    const payload = {
+      ...patchForm,
+    };
+
+    // Restricted beneficiary fields are replacement-only so masked UI values do
+    // not overwrite the stored bank coordinates during a normal edit.
+    const ibanValue = buildSensitiveUpdateValue(patchForm.iban, patchSensitiveState.iban);
+    const accountNumberValue = buildSensitiveUpdateValue(
+      patchForm.accountNumber,
+      patchSensitiveState.accountNumber
+    );
+    if (ibanValue === undefined) {
+      delete payload.iban;
+    } else {
+      payload.iban = ibanValue;
+    }
+    if (accountNumberValue === undefined) {
+      delete payload.accountNumber;
+    } else {
+      payload.accountNumber = accountNumberValue;
+    }
+    return payload;
   }
 
   async function handleCreate(e) {
@@ -232,7 +330,7 @@ export default function PayrollBeneficiariesPage() {
     setError("");
     setMessage("");
     try {
-      await updatePayrollBeneficiaryAccount(selectedRow.id, patchForm);
+      await updatePayrollBeneficiaryAccount(selectedRow.id, buildPatchPayload());
       setMessage(`Hesap #${selectedRow.id} guncellendi.`);
       await loadRows();
     } catch (err) {
@@ -309,6 +407,12 @@ export default function PayrollBeneficiariesPage() {
           {lookupWarning}
         </div>
       ) : null}
+      <SensitiveFieldsNotice
+        visible={showSensitiveBeneficiaryNotice}
+        title="Sensitive payroll bank details may be restricted on this page."
+        description="Masked beneficiary bank values follow row-scope visibility rules. If a selected IBAN or account number is restricted, leave the input blank to keep the stored value or enter a replacement."
+        fieldSummary={beneficiaryMaskedFieldSummary}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_1.2fr]">
         <div className="space-y-6">
@@ -427,10 +531,23 @@ export default function PayrollBeneficiariesPage() {
                           </td>
                           <td className="p-2">
                             <div>{row.currency_code}</div>
-                            <div className="text-xs text-slate-500">
-                              {row.iban
-                                ? `IBAN ****${String(row.iban).slice(-4)}`
-                                : `ACCT ****${row.account_last4 || "?"}`}
+                            <div className="mt-1 space-y-1 text-xs text-slate-500">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="min-w-10 uppercase tracking-wide text-slate-400">
+                                  IBAN
+                                </span>
+                                <SensitiveFieldValue value={row.iban} hiddenWhenMissing monospace />
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="min-w-10 uppercase tracking-wide text-slate-400">
+                                  Acct
+                                </span>
+                                <SensitiveFieldValue
+                                  value={row.account_number}
+                                  hiddenWhenMissing
+                                  monospace
+                                />
+                              </div>
                             </div>
                           </td>
                           <td className="p-2">
@@ -650,12 +767,26 @@ export default function PayrollBeneficiariesPage() {
                   className="rounded border border-slate-300 px-2 py-1.5 text-sm md:col-span-2"
                   placeholder="IBAN"
                 />
+                <div className="md:col-span-2">
+                  <SensitiveFieldEditHint
+                    fieldLabel="IBAN"
+                    state={patchSensitiveState.iban}
+                    previewValue={patchSensitivePreview.iban}
+                  />
+                </div>
                 <input
                   value={patchForm.accountNumber}
                   onChange={(e) => setPatchForm((p) => ({ ...p, accountNumber: e.target.value }))}
                   className="rounded border border-slate-300 px-2 py-1.5 text-sm md:col-span-2"
                   placeholder="accountNumber"
                 />
+                <div className="md:col-span-2">
+                  <SensitiveFieldEditHint
+                    fieldLabel="Account number"
+                    state={patchSensitiveState.accountNumber}
+                    previewValue={patchSensitivePreview.accountNumber}
+                  />
+                </div>
                 <select
                   value={patchForm.status}
                   onChange={(e) => setPatchForm((p) => ({ ...p, status: e.target.value }))}

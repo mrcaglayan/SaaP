@@ -90,8 +90,7 @@ function isDuplicateKeyError(err) {
   return Number(err?.errno) === 1062 || u(err?.code) === "ER_DUP_ENTRY";
 }
 function assertTenantWideScope(req, label = "tenant-wide scope") {
-  const isTenantWide = Boolean(req?.rbac?.scopeContext?.tenantWide);
-  if (!isTenantWide) {
+  if (!req?.rbac?.permissionScopeContext?.tenantWide) {
     throw forbidden(`Data scope denied: ${label}`);
   }
 }

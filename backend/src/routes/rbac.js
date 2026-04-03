@@ -1,6 +1,12 @@
 import express from "express";
 import { query } from "../db.js";
-import { getScopeContext, requirePermission } from "../middleware/rbac.js";
+import { getVisibilityScope, requirePermission } from "../middleware/rbac.js";
+import { buildVisibilityScopeWhereClause } from "../services/authz.scope.service.js";
+import { evaluateAccessCheck } from "../services/rbac.diagnostics.service.js";
+import {
+  buildComplianceAuditReport,
+  buildComplianceAuditReportCsv,
+} from "../services/rbac.auditReport.service.js";
 import {
   asyncHandler,
   badRequest,
@@ -38,41 +44,68 @@ function parsePagination(queryParams) {
   return { page, pageSize, offset };
 }
 
-function buildScopedVisibilityCondition(scopeContext, params) {
-  if (!scopeContext) {
-    return "1 = 0";
-  }
-  if (scopeContext.tenantWide) {
-    return "1 = 1";
-  }
-
-  const clauses = [];
-  const byType = [
-    ["GROUP", scopeContext.groups],
-    ["COUNTRY", scopeContext.countries],
-    ["LEGAL_ENTITY", scopeContext.legalEntities],
-    ["OPERATING_UNIT", scopeContext.operatingUnits],
-  ];
-
-  for (const [scopeType, set] of byType) {
-    const ids = Array.from(set || []);
-    if (ids.length === 0) {
-      continue;
-    }
-    params.push(...ids);
-    clauses.push(
-      `(l.scope_type = '${scopeType}' AND l.scope_id IN (${ids
-        .map(() => "?")
-        .join(", ")}))`
-    );
-  }
-
-  if (clauses.length === 0) {
-    return "1 = 0";
-  }
-
-  return `(${clauses.join(" OR ")})`;
+function buildAuditReportInput(req) {
+  const source = req.method === "GET" ? req.query || {} : req.body || {};
+  return {
+    ...source,
+    tenantId: resolveTenantId(req),
+  };
 }
+
+router.post(
+  "/access-check",
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const actorUserId = parsePositiveInt(req.user?.userId);
+    if (!actorUserId) {
+      throw badRequest("Authenticated user context is required");
+    }
+
+    const result = await evaluateAccessCheck({
+      ...(req.body || {}),
+      tenantId,
+      actorUserId,
+    });
+
+    return res.json(result);
+  })
+);
+
+router.post(
+  "/audit-reports",
+  requirePermission("security.audit.report.generate"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const result = await buildComplianceAuditReport(buildAuditReportInput(req));
+    return res.json(result);
+  })
+);
+
+router.get(
+  "/audit-reports/export.csv",
+  requirePermission("security.audit.report.export"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const payload = await buildComplianceAuditReportCsv(buildAuditReportInput(req));
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${payload.fileName}"`);
+    res.setHeader("X-Export-Row-Count", String(payload.rowCount));
+    return res.status(200).send(payload.csv);
+  })
+);
 
 router.get(
   "/audit-logs",
@@ -108,8 +141,15 @@ router.get(
     const conditions = ["l.tenant_id = ?"];
     const params = [tenantId];
 
-    const scopeContext = getScopeContext(req);
-    conditions.push(buildScopedVisibilityCondition(scopeContext, params));
+    const scopeContext = getVisibilityScope(req);
+    conditions.push(
+      buildVisibilityScopeWhereClause(scopeContext, params, {
+        GROUP: { typeColumn: "l.scope_type", idColumn: "l.scope_id" },
+        COUNTRY: { typeColumn: "l.scope_type", idColumn: "l.scope_id" },
+        LEGAL_ENTITY: { typeColumn: "l.scope_type", idColumn: "l.scope_id" },
+        OPERATING_UNIT: { typeColumn: "l.scope_type", idColumn: "l.scope_id" },
+      })
+    );
 
     if (scopeType) {
       conditions.push("l.scope_type = ?");
@@ -241,8 +281,15 @@ router.get(
     const conditions = ["l.tenant_id = ?"];
     const params = [tenantId];
 
-    const scopeContext = getScopeContext(req);
-    conditions.push(buildScopedVisibilityCondition(scopeContext, params));
+    const scopeContext = getVisibilityScope(req);
+    conditions.push(
+      buildVisibilityScopeWhereClause(scopeContext, params, {
+        GROUP: { typeColumn: "l.scope_type", idColumn: "l.scope_id" },
+        COUNTRY: { typeColumn: "l.scope_type", idColumn: "l.scope_id" },
+        LEGAL_ENTITY: { typeColumn: "l.scope_type", idColumn: "l.scope_id" },
+        OPERATING_UNIT: { typeColumn: "l.scope_type", idColumn: "l.scope_id" },
+      })
+    );
 
     if (scopeType) {
       conditions.push("l.scope_type = ?");

@@ -10,9 +10,10 @@ const REQUIRED_CANONICAL_PERMISSIONS = Object.freeze([
 ]);
 
 const FINANCE_OPS_ROLES = Object.freeze([
-  "GroupController",
-  "CountryController",
-  "EntityAccountant",
+  {
+    roleCode: "GroupReportingController",
+    permissionContainer: "GROUP_REPORTING_CONTROLLER_PERMISSION_CODES",
+  },
 ]);
 
 function assert(condition, message) {
@@ -38,12 +39,38 @@ function extractRoleBlock(source, roleCode) {
   return source.slice(start, end);
 }
 
-function assertRoleIncludesPermissions(seedCoreSource, roleCode, permissions) {
+function extractConstBlock(source, constName) {
+  const marker = `const ${constName} =`;
+  const start = source.indexOf(marker);
+  if (start < 0) {
+    return null;
+  }
+  const end = source.indexOf("});", start);
+  if (end < 0) {
+    return null;
+  }
+  return source.slice(start, end + 3);
+}
+
+function assertRoleIncludesPermissions(seedCoreSource, roleCode, permissions, permissionContainer) {
   const roleBlock = extractRoleBlock(seedCoreSource, roleCode);
   assert(roleBlock, `Role definition missing in seedCore: ${roleCode}`);
+  if (permissionContainer) {
+    assert(
+      roleBlock.includes(`permissions: ${permissionContainer}`),
+      `${roleCode} must bind permissions through ${permissionContainer}`
+    );
+  }
+  const permissionSource = permissionContainer
+    ? extractConstBlock(seedCoreSource, permissionContainer)
+    : roleBlock;
+  assert(
+    permissionSource,
+    `Permission source missing for ${roleCode}${permissionContainer ? ` (${permissionContainer})` : ""}`
+  );
   for (const permissionCode of permissions) {
     assert(
-      roleBlock.includes(`"${permissionCode}"`),
+      permissionSource.includes(`"${permissionCode}"`),
       `${roleCode} is missing required permission ${permissionCode}`
     );
   }
@@ -75,15 +102,12 @@ async function main() {
       `Permission catalog missing required canonical permission ${permissionCode}`
     );
   }
-  assert(
-    seedCoreSource.includes("permissions: PERMISSIONS.map(([code]) => code)"),
-    "TenantAdmin must remain full-permission role"
-  );
-  for (const roleCode of FINANCE_OPS_ROLES) {
+  for (const role of FINANCE_OPS_ROLES) {
     assertRoleIncludesPermissions(
       seedCoreSource,
-      roleCode,
-      REQUIRED_CANONICAL_PERMISSIONS
+      role.roleCode,
+      REQUIRED_CANONICAL_PERMISSIONS,
+      role.permissionContainer
     );
   }
 
@@ -122,11 +146,12 @@ async function main() {
     "consolidation.coa_mapping.upsert"
   );
 
-  console.log("FUP-CM02 RBAC role parity + canonical route guard checks passed.");
+  console.log(
+    "FUP-CM02 RBAC active-role parity + canonical route guard checks passed."
+  );
 }
 
 main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

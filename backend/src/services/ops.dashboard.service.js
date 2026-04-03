@@ -1,5 +1,5 @@
 import { query } from "../db.js";
-import { getScopeContext } from "../middleware/rbac.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { summarizeLateCatchUpPendingForLegalEntity } from "./fixed-assets.depreciation.service.js";
 
@@ -100,7 +100,7 @@ function buildScopedLegalEntityWhere({
 }
 
 function appendCashTransitTargetScopeWhere({ req, where, params, buildScopeFilter }) {
-  const scopeContext = getScopeContext(req);
+  const scopeContext = getVisibilityScope(req);
   if (!scopeContext || scopeContext.tenantWide || typeof buildScopeFilter !== "function") {
     return;
   }

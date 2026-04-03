@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "timers/promises";
 import { query } from "./db.js";
 import { runMigrations } from "./migrationRunner.js";
 import { seedCore } from "./seedCore.js";
+import { assignCompatibilityBootstrapRolesToUser } from "./services/systemRoles.service.js";
 
 const REQUIRED_REQUEST_IDS = Array.from({ length: 84 }, (_, index) => index + 1);
 
@@ -480,34 +481,7 @@ async function ensureTenantAndAdmin(tenantPayload) {
     throw new Error(`Invalid user id for email: ${adminEmail}`);
   }
 
-  const roleRow = await queryOne(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId],
-    "TenantAdmin role not found for tenant"
-  );
-  const roleId = parsePositiveInt(roleRow.id);
-  if (!roleId) {
-    throw new Error("Invalid TenantAdmin role id");
-  }
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id,
-        user_id,
-        role_id,
-        scope_type,
-        scope_id,
-        effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
+  await assignCompatibilityBootstrapRolesToUser(tenantId, userId);
 
   return {
     tenantId,

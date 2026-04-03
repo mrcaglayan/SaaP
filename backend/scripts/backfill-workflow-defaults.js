@@ -1,4 +1,5 @@
 import { closePool, query, withTransaction } from "../src/db.js";
+import { ensureUnifiedWorkflowPolicyForDefinition } from "../src/services/workflows.service.js";
 
 const PROCESS_DEFAULTS = Object.freeze([
   {
@@ -437,6 +438,11 @@ async function main() {
         processType: item.processType,
         workflowDefinitionId: definitionId,
         groupCompanyId: item.groupCompanyId,
+      });
+      await ensureUnifiedWorkflowPolicyForDefinition({
+        tenantId: item.tenantId,
+        definitionId,
+        runQuery: tx.query,
       });
       if (assignment.action === "inserted") {
         metrics.assignmentInsertedCount += 1;

@@ -1,3 +1,4 @@
+import approvalEscalationHandler from "./approvalEscalation.handler.js";
 import bankFeedPullHandler from "./bankFeedPull.handler.js";
 import bankWebhookProcessHandler from "./bankWebhookProcess.handler.js";
 import cashFxRevaluationRunHandler from "./cashFxRevaluationRun.handler.js";
@@ -7,6 +8,7 @@ import payrollImportApplyHandler from "./payrollImportApply.handler.js";
 import secretsBackfillReencryptHandler from "./secretsBackfillReencrypt.handler.js";
 
 const HANDLERS = {
+  APPROVAL_ESCALATION_SWEEP: approvalEscalationHandler,
   BANK_FEED_PULL: bankFeedPullHandler,
   BANK_WEBHOOK_PROCESS: bankWebhookProcessHandler,
   CASH_FX_REVALUATION_RUN: cashFxRevaluationRunHandler,

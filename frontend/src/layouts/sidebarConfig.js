@@ -20,6 +20,24 @@ const SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS = [
   "security.data_scope.upsert",
   "security.role_assignment.read",
 ];
+const ROLE_MIGRATIONS_PAGE_PERMISSIONS = [
+  "security.role.read",
+];
+const ACCESS_DEBUGGER_PAGE_PERMISSIONS = [
+  "security.role_assignment.read",
+];
+const COMPLIANCE_REPORTS_PAGE_PERMISSIONS = [
+  "security.audit.report.generate",
+  "security.audit.report.export",
+];
+const FIELD_VISIBILITY_POLICIES_PAGE_PERMISSIONS = [
+  "security.field_visibility.read",
+  "security.field_visibility.write",
+];
+const APPROVAL_DELEGATIONS_PAGE_PERMISSIONS = [
+  "approvals.policies.read",
+  "approvals.policies.write",
+];
 
 const AUDIT_LOGS_PAGE_PERMISSIONS = ["security.audit.read"];
 const SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS = [
@@ -42,7 +60,12 @@ const GL_SETUP_PAGE_PERMISSIONS = [
   "gl.account.upsert",
   "gl.account_mapping.upsert",
 ];
-const WORKFLOW_SETUP_PAGE_PERMISSIONS = ["org.tree.read", "onboarding.company.setup"];
+const WORKFLOW_SETUP_PAGE_PERMISSIONS = [
+  "workflow.definition.read",
+  "workflow.definition.write",
+  "workflow.assignment.read",
+  "workflow.assignment.write",
+];
 const RECLASS_PAGE_PERMISSIONS = [
   "org.tree.read",
   "gl.book.read",
@@ -71,7 +94,7 @@ const CONSOLIDATION_REPORT_PAGE_PERMISSIONS = [
 const FX_RATE_PAGE_PERMISSIONS = ["fx.rate.read", "fx.rate.bulk_upsert"];
 const TAX_SETUP_PAGE_PERMISSIONS = [
   "org.tree.read",
-  "tax.setup.write",
+  "onboarding.company.setup",
 ];
 const CONSOLIDATION_SETUP_PAGE_PERMISSIONS = [
   "consolidation.group.read",
@@ -614,6 +637,11 @@ export const sidebarItems = [
         to: "/app/ayarlar/kullanici-yonetimi",
       },
       {
+        label: "Delegasyonlarim",
+        to: "/app/ayarlar/delegasyonlarim",
+        implemented: true,
+      },
+      {
         label: "Sube Operatorleri",
         to: "/app/ayarlar/sube-operatorleri",
         requiredPermissions: BRANCH_OPERATOR_MANAGEMENT_PAGE_PERMISSIONS,
@@ -635,6 +663,37 @@ export const sidebarItems = [
         label: "Scope Atamalari",
         to: "/app/ayarlar/rbac/scope-assignments",
         requiredPermissions: SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Alan Gorunurluk Politikalari",
+        to: "/app/ayarlar/rbac/field-visibility-policies",
+        requiredPermissions: FIELD_VISIBILITY_POLICIES_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Rol Gecisleri",
+        to: "/app/ayarlar/rbac/role-migrations",
+        requiredPermissions: ROLE_MIGRATIONS_PAGE_PERMISSIONS,
+        adminUiStateKey: "roleMigrations",
+        implemented: true,
+      },
+      {
+        label: "Onay Delegasyonlari",
+        to: "/app/ayarlar/rbac/delegations",
+        requiredPermissions: APPROVAL_DELEGATIONS_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Erisim Hata Ayiklayici",
+        to: "/app/ayarlar/rbac/access-debugger",
+        requiredPermissions: ACCESS_DEBUGGER_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Uyum Raporlari",
+        to: "/app/ayarlar/rbac/compliance-reports",
+        requiredPermissions: COMPLIANCE_REPORTS_PAGE_PERMISSIONS,
         implemented: true,
       },
       {
@@ -703,7 +762,7 @@ export const sidebarItems = [
         implemented: true,
       },
       {
-        label: "Workflow Kurulumu",
+        label: "Workflow Yonetimi",
         to: "/app/ayarlar/workflow-kurulumu",
         requiredPermissions: WORKFLOW_SETUP_PAGE_PERMISSIONS,
         implemented: true,

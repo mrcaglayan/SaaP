@@ -147,8 +147,17 @@ import migration157LocalClosePackReopenRequests from "./m157_local_close_pack_re
 import migration158LocalClosePackReportReviews from "./m158_local_close_pack_report_reviews.js";
 import migration159Track51ExportSnapshots from "./m159_track51_export_snapshots.js";
 import migration160CounterpartyRequestWorkflow from "./m160_counterparty_request_workflow.js";
-import migration161TaxSetupWritePermission from "./m161_tax_setup_write_permission.js";
-import migration162BranchOperatorCounterpartyUpsert from "./m162_branch_operator_counterparty_upsert.js";
+import migration161LifecycleCancelledNormalization from "./m161_lifecycle_cancelled_normalization.js";
+import migration162TemporalRoleAssignments from "./m162_temporal_role_assignments.js";
+import migration163GenericApprovalEngineSchema from "./m163_generic_approval_engine_schema.js";
+import migration164CounterpartyRequestUnifiedApprovalBridge from "./m164_counterparty_request_unified_approval_bridge.js";
+import migration165BankApprovalGenericBridge from "./m165_bank_approval_generic_bridge.js";
+import migration166WorkflowGenericBridge from "./m166_workflow_generic_bridge.js";
+import migration167RemainingAdHocApprovalBridges from "./m167_remaining_ad_hoc_approval_bridges.js";
+import migration168RoleMigrationTool from "./m168_role_migration_tool.js";
+import migration169FieldVisibilityPolicies from "./m169_field_visibility_policies.js";
+import migration170ApprovalEscalationEngine from "./m170_approval_escalation_engine.js";
+import migration171ApprovalDelegations from "./m171_approval_delegations.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -300,8 +309,17 @@ const migrations = [
   migration158LocalClosePackReportReviews,
   migration159Track51ExportSnapshots,
   migration160CounterpartyRequestWorkflow,
-  migration161TaxSetupWritePermission,
-  migration162BranchOperatorCounterpartyUpsert,
+  migration161LifecycleCancelledNormalization,
+  migration162TemporalRoleAssignments,
+  migration163GenericApprovalEngineSchema,
+  migration164CounterpartyRequestUnifiedApprovalBridge,
+  migration165BankApprovalGenericBridge,
+  migration166WorkflowGenericBridge,
+  migration167RemainingAdHocApprovalBridges,
+  migration168RoleMigrationTool,
+  migration169FieldVisibilityPolicies,
+  migration170ApprovalEscalationEngine,
+  migration171ApprovalDelegations,
 ];
 
 export default migrations;
