@@ -1,4 +1,5 @@
 import { query, withTransaction } from "../db.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 function u(value) {
@@ -49,12 +50,12 @@ function hydrate(row) {
 }
 
 function getAllowedLegalEntityIdsFromReq(req) {
-  const ids = Array.from(req?.rbac?.scopeContext?.legalEntities || []);
+  const ids = Array.from(getVisibilityScope(req)?.legalEntities || []);
   return ids.map((id) => parsePositiveInt(id)).filter(Boolean);
 }
 
 function buildPolicyScopeWhere(req, alias, params) {
-  if (req?.rbac?.scopeContext?.tenantWide) return "1 = 1";
+  if (getVisibilityScope(req)?.tenantWide) return "1 = 1";
   const ids = getAllowedLegalEntityIdsFromReq(req);
   if (ids.length === 0) {
     return `${alias}.scope_type = 'GLOBAL'`;

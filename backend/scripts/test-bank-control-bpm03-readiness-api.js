@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { closePool, query } from "../src/db.js";
-import { seedAndCreateTenantAdmin } from "./ex05-test-helpers.js";
+import { seedAndCreateBootstrapAdmin } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.BPM03_TEST_PORT || 3144);
 const BASE_URL = process.env.BPM03_TEST_BASE_URL || `http://127.0.0.1:${PORT}`;
@@ -256,7 +256,7 @@ async function main() {
     "OpenAPI must advertise the neutral control-parent provisioning contract only"
   );
 
-  const identity = await seedAndCreateTenantAdmin({
+  const identity = await seedAndCreateBootstrapAdmin({
     tenantCode,
     tenantName: `BPM03 Tenant ${stamp}`,
     adminEmail,

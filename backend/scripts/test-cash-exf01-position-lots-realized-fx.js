@@ -8,7 +8,7 @@ import {
   createRegister,
   insertFxRate,
   login,
-  seedAndCreateTenantAdmin,
+  seedAndCreateBootstrapAdmin,
   startServerProcess,
   toNumber,
   waitForServer,
@@ -29,7 +29,7 @@ async function main() {
   const tenantName = `EXF01 Tenant ${stamp}`;
   const adminEmail = `exf01_admin_${stamp}@example.com`;
 
-  const identity = await seedAndCreateTenantAdmin({
+  const identity = await seedAndCreateBootstrapAdmin({
     tenantCode,
     tenantName,
     adminEmail,

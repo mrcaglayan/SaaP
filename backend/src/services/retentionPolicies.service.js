@@ -1,4 +1,5 @@
 import { query, withTransaction } from "../db.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 const POLICY_STATUSES = new Set(["ACTIVE", "PAUSED", "DISABLED"]);
@@ -207,7 +208,7 @@ function buildScopedLegalEntityClause({
     conditions.push(`${alias}.legal_entity_id = ?`);
     params.push(leId);
   } else if (typeof buildScopeFilter === "function") {
-    if (req?.rbac?.scopeContext?.tenantWide) {
+    if (getVisibilityScope(req)?.tenantWide) {
       conditions.push("1 = 1");
     } else {
       conditions.push(buildScopeFilter(req, "legal_entity", `${alias}.legal_entity_id`, params));

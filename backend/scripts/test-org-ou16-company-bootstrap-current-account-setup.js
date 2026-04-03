@@ -7,7 +7,7 @@ import {
   apiRequest,
   assert,
   login,
-  seedAndCreateTenantAdmin,
+  seedAndCreateBootstrapAdmin,
   startServerProcess,
   toNumber,
   waitForServer,
@@ -72,10 +72,10 @@ function buildCompanyBootstrapPayload({
   };
 }
 
-async function createTenantAdminSession(stamp, suffix) {
+async function createBootstrapAdminSession(stamp, suffix) {
   const email = `ou16_${suffix}_${stamp}@example.com`;
   const password = "OU16Bootstrap#12345";
-  const identity = await seedAndCreateTenantAdmin({
+  const identity = await seedAndCreateBootstrapAdmin({
     tenantCode: `OU16_${suffix}_${stamp}`,
     tenantName: `OU16 ${suffix} ${stamp}`,
     adminEmail: email,
@@ -201,13 +201,13 @@ async function main() {
     "Onboarding backend must preview eligibility and apply current-account config inside the bootstrap transaction"
   );
 
-  const previewSeed = await createTenantAdminSession(Date.now(), "preview");
+  const previewSeed = await createBootstrapAdminSession(Date.now(), "preview");
   const configuredStamp = Date.now();
-  const configuredSeed = await createTenantAdminSession(configuredStamp, "configured");
+  const configuredSeed = await createBootstrapAdminSession(configuredStamp, "configured");
   const skippedStamp = Date.now();
-  const skippedSeed = await createTenantAdminSession(skippedStamp, "skipped");
+  const skippedSeed = await createBootstrapAdminSession(skippedStamp, "skipped");
   const staleStamp = Date.now();
-  const staleSeed = await createTenantAdminSession(staleStamp, "stale");
+  const staleSeed = await createBootstrapAdminSession(staleStamp, "stale");
 
   const server = startServerProcess({ port: PORT });
   let serverStopped = false;

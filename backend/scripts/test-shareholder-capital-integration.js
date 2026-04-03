@@ -7,7 +7,7 @@ import {
   assert,
   bootstrapOrgBookCoa,
   login,
-  seedAndCreateTenantAdmin,
+  seedAndCreateBootstrapAdmin,
   startServerProcess,
   toNumber,
   waitForServer,
@@ -445,7 +445,7 @@ async function main() {
   const server = startServerProcess({ port: PORT });
 
   try {
-    const identity = await seedAndCreateTenantAdmin({
+    const identity = await seedAndCreateBootstrapAdmin({
       tenantCode,
       tenantName: `Shareholder Capital ${stamp}`,
       adminEmail,

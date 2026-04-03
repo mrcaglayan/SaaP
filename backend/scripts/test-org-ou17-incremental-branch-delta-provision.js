@@ -5,7 +5,7 @@ import {
   assert,
   bootstrapOrgBookCoa,
   login,
-  seedAndCreateTenantAdmin,
+  seedAndCreateBootstrapAdmin,
   startServerProcess,
   toNumber,
   waitForServer,
@@ -191,7 +191,7 @@ function assertSnapshotEqual(actual, expected, label) {
 async function main() {
   const stamp = Date.now();
   const suffix = String(stamp).slice(-6);
-  const identity = await seedAndCreateTenantAdmin({
+  const identity = await seedAndCreateBootstrapAdmin({
     tenantCode: `OU17_${stamp}`,
     tenantName: `OU17 ${stamp}`,
     adminEmail: `ou17_admin_${stamp}@example.com`,

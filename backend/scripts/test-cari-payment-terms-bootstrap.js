@@ -3,6 +3,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import {
+  assignScopedTestFullAccessRoleToUser,
+  TEST_FULL_ACCESS_ROLE_CODE,
+} from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CARI_PAYMENT_TERMS_BOOTSTRAP_TEST_PORT || 3130);
 const BASE_URL =
@@ -151,16 +155,28 @@ async function createUserWithRole({
   const userId = toNumber(userResult.rows?.[0]?.id);
   assert(userId > 0, `Failed to resolve user id for ${email}`);
 
+  const normalizedRoleCode = String(roleCode || "").trim().toUpperCase();
+  if (!normalizedRoleCode) {
+    return { userId, email };
+  }
+  if (normalizedRoleCode === TEST_FULL_ACCESS_ROLE_CODE) {
+    await assignScopedTestFullAccessRoleToUser({
+      tenantId,
+      userId,
+    });
+    return { userId, email };
+  }
+
   const roleResult = await query(
     `SELECT id
      FROM roles
      WHERE tenant_id = ?
        AND code = ?
      LIMIT 1`,
-    [tenantId, roleCode]
+    [tenantId, normalizedRoleCode]
   );
   const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, `Role not found: ${roleCode}`);
+  assert(roleId > 0, `Role not found: ${normalizedRoleCode}`);
 
   await query(
     `INSERT INTO user_role_scopes (
@@ -245,28 +261,28 @@ async function main() {
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
   const adminA = await createUserWithRole({
     tenantId: tenantAId,
-    roleCode: "TenantAdmin",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari_pterm_admin_a_${stamp}@example.com`,
     passwordHash,
     name: "Cari Payment Term Bootstrap Admin A",
   });
   const adminB = await createUserWithRole({
     tenantId: tenantBId,
-    roleCode: "TenantAdmin",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari_pterm_admin_b_${stamp}@example.com`,
     passwordHash,
     name: "Cari Payment Term Bootstrap Admin B",
   });
   const adminC = await createUserWithRole({
     tenantId: tenantCId,
-    roleCode: "TenantAdmin",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari_pterm_admin_c_${stamp}@example.com`,
     passwordHash,
     name: "Cari Payment Term Bootstrap Admin C",
   });
   const noSetupUser = await createUserWithRole({
     tenantId: tenantAId,
-    roleCode: "EntityAccountant",
+    roleCode: null,
     email: `cari_pterm_nosetup_${stamp}@example.com`,
     passwordHash,
     name: "Cari Payment Term Bootstrap No Setup",

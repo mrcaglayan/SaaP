@@ -26,6 +26,7 @@ const GOVERNANCE_BACKEND_TESTS = Object.freeze([
   "test-security-pr5e-compliance-audit-report-package.js",
   "test-security-pr6a-legacy-role-retirement.js",
   "test-security-pr6e-field-visibility-policy-admin.js",
+  "test-security-branch-operator-management-smoke.js",
   "test-consolidation-fup-cm02-rbac-parity.js",
 ]);
 

@@ -168,17 +168,27 @@ export async function ensureTestFullAccessRole(tenantId) {
 }
 
 /**
- * Assigns the fresh-tenant bootstrap roles plus the test-only full-access role
- * to a user at tenant scope.
+ * Grants the test-only full-access role at an explicit permission scope and,
+ * when needed, attaches explicit data scopes for visibility narrowing tests.
  */
-export async function assignTestFullAccessRoleToUser(tenantId, userId) {
+export async function assignScopedTestFullAccessRoleToUser({
+  tenantId,
+  userId,
+  scopeType = "TENANT",
+  scopeId = tenantId,
+  effect = "ALLOW",
+  dataScopes = [],
+}) {
   const normalizedTenantId = toNumber(tenantId);
   const normalizedUserId = toNumber(userId);
-  assert(normalizedTenantId > 0, "tenantId is required to assign test full-access access");
-  assert(normalizedUserId > 0, "userId is required to assign test full-access access");
+  const normalizedScopeType = asUpper(scopeType || "TENANT");
+  const normalizedEffect = asUpper(effect || "ALLOW");
+  const normalizedScopeId =
+    normalizedScopeType === "TENANT" ? normalizedTenantId : toNumber(scopeId);
 
-  await ensureCompatibilitySystemRolesForTenant(normalizedTenantId);
-  await assignCompatibilityBootstrapRolesToUser(normalizedTenantId, normalizedUserId);
+  assert(normalizedTenantId > 0, "tenantId is required to assign scoped test full-access access");
+  assert(normalizedUserId > 0, "userId is required to assign scoped test full-access access");
+  assert(normalizedScopeId > 0, `scopeId is required for scopeType=${normalizedScopeType}`);
 
   const testRoleId = await ensureTestFullAccessRole(normalizedTenantId);
   await query(
@@ -190,13 +200,72 @@ export async function assignTestFullAccessRoleToUser(tenantId, userId) {
         scope_id,
         effect
      )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
+     VALUES (?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        effect = VALUES(effect)`,
-    [normalizedTenantId, normalizedUserId, testRoleId, normalizedTenantId]
+    [
+      normalizedTenantId,
+      normalizedUserId,
+      testRoleId,
+      normalizedScopeType,
+      normalizedScopeId,
+      normalizedEffect,
+    ]
   );
 
+  for (const dataScope of Array.isArray(dataScopes) ? dataScopes : []) {
+    const dataScopeType = asUpper(dataScope?.scopeType || "");
+    const dataScopeId = toNumber(dataScope?.scopeId);
+    const dataScopeEffect = asUpper(dataScope?.effect || "ALLOW");
+    if (!dataScopeType || dataScopeId <= 0) {
+      throw new Error("dataScopes entries require scopeType and scopeId");
+    }
+    // Explicit data scopes let tests model visibility narrowing independently
+    // from the broad permission catalog granted by the test-only role.
+    // eslint-disable-next-line no-await-in-loop
+    await query(
+      `INSERT INTO data_scopes (
+          tenant_id,
+          user_id,
+          scope_type,
+          scope_id,
+          effect,
+          created_by_user_id
+       )
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         effect = VALUES(effect),
+         created_by_user_id = VALUES(created_by_user_id)`,
+      [
+        normalizedTenantId,
+        normalizedUserId,
+        dataScopeType,
+        dataScopeId,
+        dataScopeEffect,
+        normalizedUserId,
+      ]
+    );
+  }
+
   return testRoleId;
+}
+
+/**
+ * Assigns the fresh-tenant bootstrap roles plus the test-only full-access role
+ * to a user at tenant scope.
+ */
+export async function assignTestFullAccessRoleToUser(tenantId, userId) {
+  const normalizedTenantId = toNumber(tenantId);
+  const normalizedUserId = toNumber(userId);
+  assert(normalizedTenantId > 0, "tenantId is required to assign test full-access access");
+  assert(normalizedUserId > 0, "userId is required to assign test full-access access");
+
+  await ensureCompatibilitySystemRolesForTenant(normalizedTenantId);
+  await assignCompatibilityBootstrapRolesToUser(normalizedTenantId, normalizedUserId);
+  return assignScopedTestFullAccessRoleToUser({
+    tenantId: normalizedTenantId,
+    userId: normalizedUserId,
+  });
 }
 
 /**

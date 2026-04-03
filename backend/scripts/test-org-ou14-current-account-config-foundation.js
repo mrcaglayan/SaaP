@@ -5,7 +5,7 @@ import {
   assert,
   bootstrapOrgBookCoa,
   login,
-  seedAndCreateTenantAdmin,
+  seedAndCreateBootstrapAdmin,
   startServerProcess,
   toNumber,
   waitForServer,
@@ -107,7 +107,7 @@ async function listCurrentAccountConfigs({
 
 async function main() {
   const stamp = Date.now();
-  const identity = await seedAndCreateTenantAdmin({
+  const identity = await seedAndCreateBootstrapAdmin({
     tenantCode: `OU14_${stamp}`,
     tenantName: `OU14 ${stamp}`,
     adminEmail: `ou14_admin_${stamp}@example.com`,

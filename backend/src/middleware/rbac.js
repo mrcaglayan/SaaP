@@ -202,9 +202,6 @@ export function requirePermission(permissionCode, options = {}) {
         source: permissionBundle.source || "permission_scopes",
         permissionScopeContext: permissionBundle.permissionScopeContext,
         visibilityScopeContext: permissionBundle.visibilityScopeContext,
-        // Effective scope kept for backward-compatible list-filtering readers.
-        // New code should use getVisibilityScope() or getPermissionScope() instead.
-        scopeContext: visibilityScope,
       };
 
       return next();

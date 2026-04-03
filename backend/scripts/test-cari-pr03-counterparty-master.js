@@ -3,6 +3,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import {
+  assignScopedTestFullAccessRoleToUser,
+  TEST_FULL_ACCESS_ROLE_CODE,
+} from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CARI_PR03_TEST_PORT || 3122);
 const BASE_URL =
@@ -291,16 +295,31 @@ async function createUserWithRole({
   const userId = toNumber(userResult.rows?.[0]?.id);
   assert(userId > 0, `Failed to resolve user id for ${email}`);
 
+  const normalizedRoleCode = String(roleCode || "").trim().toUpperCase();
+  if (!normalizedRoleCode) {
+    return { userId, email };
+  }
+  if (normalizedRoleCode === TEST_FULL_ACCESS_ROLE_CODE) {
+    await assignScopedTestFullAccessRoleToUser({
+      tenantId,
+      userId,
+      scopeType: permissionScopeType,
+      scopeId: permissionScopeId,
+      dataScopes,
+    });
+    return { userId, email };
+  }
+
   const roleResult = await query(
     `SELECT id
      FROM roles
      WHERE tenant_id = ?
        AND code = ?
      LIMIT 1`,
-    [tenantId, roleCode]
+    [tenantId, normalizedRoleCode]
   );
   const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, `Role not found: ${roleCode}`);
+  assert(roleId > 0, `Role not found: ${normalizedRoleCode}`);
 
   await query(
     `INSERT INTO user_role_scopes (
@@ -398,7 +417,7 @@ async function main() {
 
   const tenantWideIdentity = await createUserWithRole({
     tenantId: tenantAId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari03_tenantwide_${stamp}@example.com`,
     passwordHash,
     name: "CARI03 Tenant Wide",
@@ -406,7 +425,7 @@ async function main() {
 
   const leScopedIdentity = await createUserWithRole({
     tenantId: tenantAId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari03_scoped_${stamp}@example.com`,
     passwordHash,
     name: "CARI03 Scoped",
@@ -421,7 +440,7 @@ async function main() {
 
   const otherTenantIdentity = await createUserWithRole({
     tenantId: tenantBId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari03_other_tenant_${stamp}@example.com`,
     passwordHash,
     name: "CARI03 Other Tenant",

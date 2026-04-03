@@ -46,6 +46,41 @@
       "packageScriptName": "test:ux:raw-audit-logs-smoke"
     },
     {
+      "routePath": "/app/ayarlar/delegasyonlarim",
+      "smokeScriptPath": "backend/scripts/test-approvals-ui5d-delegation-ux.js",
+      "packageScriptName": "test:ux:delegation-ux"
+    },
+    {
+      "routePath": "/app/ayarlar/sube-operatorleri",
+      "smokeScriptPath": "backend/scripts/test-security-branch-operator-management-smoke.js",
+      "packageScriptName": "test:ux:branch-operators-smoke"
+    },
+    {
+      "routePath": "/app/ayarlar/rbac/field-visibility-policies",
+      "smokeScriptPath": "backend/scripts/test-security-pr6e-field-visibility-policy-admin.js",
+      "packageScriptName": "test:ux:field-visibility-policies"
+    },
+    {
+      "routePath": "/app/ayarlar/rbac/role-migrations",
+      "smokeScriptPath": "backend/scripts/test-security-pr4c-role-migration-tool.js",
+      "packageScriptName": "test:ux:role-migrations-smoke"
+    },
+    {
+      "routePath": "/app/ayarlar/rbac/delegations",
+      "smokeScriptPath": "backend/scripts/test-approvals-ui5d-delegation-ux.js",
+      "packageScriptName": "test:ux:delegation-ux"
+    },
+    {
+      "routePath": "/app/ayarlar/rbac/access-debugger",
+      "smokeScriptPath": "backend/scripts/test-security-pr5b-access-debugger.js",
+      "packageScriptName": "test:ux:access-debugger-smoke"
+    },
+    {
+      "routePath": "/app/ayarlar/rbac/compliance-reports",
+      "smokeScriptPath": "backend/scripts/test-security-pr5e-compliance-audit-report-package.js",
+      "packageScriptName": "test:ux:compliance-reports-smoke"
+    },
+    {
       "routePath": "/app/bilanco",
       "smokeScriptPath": "backend/scripts/test-ux-rsstat01-local-statements-contract.js",
       "packageScriptName": "test:ux:rsstat01"

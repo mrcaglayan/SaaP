@@ -1,5 +1,6 @@
 
 import { query } from "../db.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   assertCountryExists,
@@ -115,7 +116,7 @@ function canReadLegalEntityScopedRow(req, row, assertScopeAccess, key = "legal_e
       throw err;
     }
   }
-  return Boolean(req?.rbac?.scopeContext?.tenantWide);
+  return Boolean(getVisibilityScope(req)?.tenantWide);
 }
 function mapTaxRegimeRow(row) {
   if (!row) {

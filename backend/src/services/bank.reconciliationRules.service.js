@@ -1,4 +1,5 @@
 import { query } from "../db.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { evaluateBankApprovalNeed } from "./bank.governance.service.js";
 import { submitBankApprovalRequest } from "./bank.approvals.service.js";
@@ -27,12 +28,12 @@ function hydrateRuleRow(row) {
 }
 
 function getAllowedLegalEntityIdsFromReq(req) {
-  const ids = Array.from(req?.rbac?.scopeContext?.legalEntities || []);
+  const ids = Array.from(getVisibilityScope(req)?.legalEntities || []);
   return ids.map((id) => parsePositiveInt(id)).filter(Boolean);
 }
 
 function buildRuleScopeWhere(req, alias, params) {
-  const tenantWide = Boolean(req?.rbac?.scopeContext?.tenantWide);
+  const tenantWide = Boolean(getVisibilityScope(req)?.tenantWide);
   if (tenantWide) {
     return "1 = 1";
   }

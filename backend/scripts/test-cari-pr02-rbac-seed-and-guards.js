@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CARI_PR02_TEST_PORT || 3121);
 const BASE_URL =
@@ -31,27 +32,15 @@ const CARI_PERMISSION_CODES = [
 ];
 
 const CARI_ROLE_EXPECTATIONS = {
-  CountryController: [
-    "cari.request.review",
-    "cari.card.upsert",
-    "cari.doc.post",
-    "cari.doc.reverse",
-    "cari.settlement.apply",
-    "cari.settlement.reverse",
-    "cari.fx.override",
-    "cari.bank.apply",
-  ],
-  EntityAccountant: [
+  BranchOperator: [
     "cari.card.read",
-    "cari.request.review",
-    "cari.card.upsert",
+    "cari.card.request",
+    "cari.doc.read",
     "cari.doc.create",
-    "cari.doc.post",
-    "cari.doc.reverse",
+    "cari.doc.update",
     "cari.settlement.apply",
-    "cari.settlement.reverse",
+    "cari.report.read",
     "cari.bank.attach",
-    "cari.bank.apply",
   ],
   AuditorReadOnly: [
     "cari.card.read",
@@ -348,31 +337,24 @@ async function createUsersAndAssignments({ tenantId, stamp }) {
     `SELECT id, code
      FROM roles
      WHERE tenant_id = ?
-       AND code IN ('EntityAccountant', 'AuditorReadOnly')`,
+       AND code IN ('AuditorReadOnly')`,
     [tenantId]
   );
   const roleIdByCode = new Map(
     roleRows.rows.map((row) => [String(row.code), toNumber(row.id)])
   );
 
-  const entityAccountantRoleId = roleIdByCode.get("EntityAccountant");
   const auditorRoleId = roleIdByCode.get("AuditorReadOnly");
-  assert(entityAccountantRoleId > 0, "EntityAccountant role not found");
   assert(auditorRoleId > 0, "AuditorReadOnly role not found");
 
+  await assignTestFullAccessRoleToUser(tenantId, allowedUserId);
   await query(
     `INSERT INTO user_role_scopes (
         tenant_id, user_id, role_id, scope_type, scope_id, effect
       )
-      VALUES
-        (?, ?, ?, 'TENANT', ?, 'ALLOW'),
-        (?, ?, ?, 'TENANT', ?, 'ALLOW')
+      VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
       ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
     [
-      tenantId,
-      allowedUserId,
-      entityAccountantRoleId,
-      tenantId,
       tenantId,
       deniedUserId,
       auditorRoleId,
@@ -472,7 +454,7 @@ async function runFrontendGuardSmokeAssertions() {
     }
   }
   const permissionGuardPattern =
-    /element=\{withPermissionGuard\(\s*route\.appPath,\s*route\.element(?:,\s*hasAnyFeature)?\s*\)\}/m;
+    /element=\{withPermissionGuard\(\s*route\.appPath,\s*route\.element,\s*hasAnyFeature,\s*\)\}/m;
   assert(
     permissionGuardPattern.test(appSource),
     "App routes should be wrapped with permission guard"

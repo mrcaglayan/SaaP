@@ -3,6 +3,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import {
+  assignScopedTestFullAccessRoleToUser,
+  TEST_FULL_ACCESS_ROLE_CODE,
+} from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CARI_PR08_TEST_PORT || 3127);
 const BASE_URL = process.env.CARI_PR08_TEST_BASE_URL || `http://127.0.0.1:${PORT}`;
@@ -153,16 +157,28 @@ async function createUserWithRole({
   const userId = toNumber(userResult.rows?.[0]?.id);
   assert(userId > 0, `Failed to resolve user id for ${email}`);
 
+  const normalizedRoleCode = String(roleCode || "").trim().toUpperCase();
+  if (!normalizedRoleCode) {
+    return { userId, email };
+  }
+  if (normalizedRoleCode === TEST_FULL_ACCESS_ROLE_CODE) {
+    await assignScopedTestFullAccessRoleToUser({
+      tenantId,
+      userId,
+    });
+    return { userId, email };
+  }
+
   const roleResult = await query(
     `SELECT id
      FROM roles
      WHERE tenant_id = ?
        AND code = ?
      LIMIT 1`,
-    [tenantId, roleCode]
+    [tenantId, normalizedRoleCode]
   );
   const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, `Role not found: ${roleCode}`);
+  assert(roleId > 0, `Role not found: ${normalizedRoleCode}`);
 
   await query(
     `INSERT INTO user_role_scopes (
@@ -591,7 +607,7 @@ async function main() {
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
   const user = await createUserWithRole({
     tenantId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari08_${stamp}@example.com`,
     passwordHash,
     name: "CARI08 Accountant",

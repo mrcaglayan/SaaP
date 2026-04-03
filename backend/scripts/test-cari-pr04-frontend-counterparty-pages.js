@@ -135,7 +135,7 @@ async function main() {
   }
 
   const permissionGuardPattern =
-    /element=\{withPermissionGuard\(\s*route\.appPath,\s*route\.element(?:,\s*hasAnyFeature)?\s*\)\}/m;
+    /element=\{withPermissionGuard\(\s*route\.appPath,\s*route\.element,\s*hasAnyFeature,\s*\)\}/m;
   assert(
     permissionGuardPattern.test(appSource),
     "App routes should stay wrapped in permission guard"

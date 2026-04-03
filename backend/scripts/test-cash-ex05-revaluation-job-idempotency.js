@@ -11,7 +11,7 @@ import {
   findRegularPeriodByNo,
   insertFxRate,
   login,
-  seedAndCreateTenantAdmin,
+  seedAndCreateBootstrapAdmin,
   startServerProcess,
   toNumber,
   upsertRevaluationPurposeAccounts,
@@ -43,7 +43,7 @@ async function main() {
   const tenantName = `EX05 Job Tenant ${stamp}`;
   const adminEmail = `ex05_job_admin_${stamp}@example.com`;
 
-  const identity = await seedAndCreateTenantAdmin({
+  const identity = await seedAndCreateBootstrapAdmin({
     tenantCode,
     tenantName,
     adminEmail,

@@ -5,7 +5,7 @@ import {
   assert,
   bootstrapOrgBookCoa,
   login,
-  seedAndCreateTenantAdmin,
+  seedAndCreateBootstrapAdmin,
   startServerProcess,
   toNumber,
   waitForServer,
@@ -167,7 +167,7 @@ async function main() {
 
   const stamp = Date.now();
   const suffix = String(stamp).slice(-6);
-  const identity = await seedAndCreateTenantAdmin({
+  const identity = await seedAndCreateBootstrapAdmin({
     tenantCode: `OU19_${stamp}`,
     tenantName: `OU19 ${stamp}`,
     adminEmail: `ou19_admin_${stamp}@example.com`,

@@ -3,6 +3,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import {
+  assignScopedTestFullAccessRoleToUser,
+  TEST_FULL_ACCESS_ROLE_CODE,
+} from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CARI_PR06_TEST_PORT || 3125);
 const BASE_URL =
@@ -162,16 +166,31 @@ async function createUserWithRole({
   const userId = toNumber(userResult.rows?.[0]?.id);
   assert(userId > 0, `Failed to resolve user id for ${email}`);
 
+  const normalizedRoleCode = String(roleCode || "").trim().toUpperCase();
+  if (!normalizedRoleCode) {
+    return { userId, email };
+  }
+  if (normalizedRoleCode === TEST_FULL_ACCESS_ROLE_CODE) {
+    await assignScopedTestFullAccessRoleToUser({
+      tenantId,
+      userId,
+      scopeType: permissionScopeType,
+      scopeId: permissionScopeId,
+      dataScopes,
+    });
+    return { userId, email };
+  }
+
   const roleResult = await query(
     `SELECT id
      FROM roles
      WHERE tenant_id = ?
        AND code = ?
      LIMIT 1`,
-    [tenantId, roleCode]
+    [tenantId, normalizedRoleCode]
   );
   const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, `Role not found: ${roleCode}`);
+  assert(roleId > 0, `Role not found: ${normalizedRoleCode}`);
 
   await query(
     `INSERT INTO user_role_scopes (
@@ -618,21 +637,21 @@ async function main() {
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
   const tenantWideIdentity = await createUserWithRole({
     tenantId: tenantAId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari06_tenantwide_${stamp}@example.com`,
     passwordHash,
     name: "CARI06 Tenant Wide",
   });
   const overrideIdentity = await createUserWithRole({
     tenantId: tenantAId,
-    roleCode: "CountryController",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari06_override_${stamp}@example.com`,
     passwordHash,
     name: "CARI06 FX Override",
   });
   const scopedIdentity = await createUserWithRole({
     tenantId: tenantAId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari06_scoped_${stamp}@example.com`,
     passwordHash,
     name: "CARI06 Scoped",
@@ -646,7 +665,7 @@ async function main() {
   });
   const otherTenantIdentity = await createUserWithRole({
     tenantId: tenantBId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari06_other_${stamp}@example.com`,
     passwordHash,
     name: "CARI06 Other Tenant",

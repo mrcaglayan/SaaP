@@ -3,6 +3,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import {
+  assignScopedTestFullAccessRoleToUser,
+  TEST_FULL_ACCESS_ROLE_CODE,
+} from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CARI_PR09_TEST_PORT || 3128);
 const BASE_URL = process.env.CARI_PR09_TEST_BASE_URL || `http://127.0.0.1:${PORT}`;
@@ -152,16 +156,30 @@ async function createUserWithScopedRole({
   const userId = toNumber(userResult.rows?.[0]?.id);
   assert(userId > 0, `Failed to resolve user id for ${email}`);
 
+  const normalizedRoleCode = String(roleCode || "").trim().toUpperCase();
+  if (!normalizedRoleCode) {
+    return { userId, email };
+  }
+  if (normalizedRoleCode === TEST_FULL_ACCESS_ROLE_CODE) {
+    await assignScopedTestFullAccessRoleToUser({
+      tenantId,
+      userId,
+      scopeType,
+      scopeId,
+    });
+    return { userId, email };
+  }
+
   const roleResult = await query(
     `SELECT id
      FROM roles
      WHERE tenant_id = ?
        AND code = ?
      LIMIT 1`,
-    [tenantId, roleCode]
+    [tenantId, normalizedRoleCode]
   );
   const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, `Role not found: ${roleCode}`);
+  assert(roleId > 0, `Role not found: ${normalizedRoleCode}`);
 
   const resolvedScopeId = scopeType === "TENANT" ? tenantId : toNumber(scopeId);
   assert(resolvedScopeId > 0, `scopeId is required for scopeType=${scopeType}`);
@@ -647,7 +665,7 @@ async function main() {
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
   const adminUser = await createUserWithScopedRole({
     tenantId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari09_admin_${stamp}@example.com`,
     passwordHash,
     name: "CARI09 Admin",
@@ -655,7 +673,7 @@ async function main() {
   });
   const scopedUser = await createUserWithScopedRole({
     tenantId,
-    roleCode: "EntityAccountant",
+    roleCode: TEST_FULL_ACCESS_ROLE_CODE,
     email: `cari09_scope_${stamp}@example.com`,
     passwordHash,
     name: "CARI09 Scoped",
