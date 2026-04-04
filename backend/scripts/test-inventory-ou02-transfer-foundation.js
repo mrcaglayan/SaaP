@@ -18,6 +18,7 @@ import {
 import { createInventoryWarehouse } from "../src/services/inventory.service.js";
 import { createItemCard } from "../src/services/item.card.service.js";
 import { closePool, query } from "../src/db.js";
+import { createInventoryOuCrossEntityFixture } from "./inventory-ou-smoke-fixture.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -73,50 +74,9 @@ function uniqueCode(prefix) {
 }
 
 async function loadSmokeContext() {
-  const result = await query(
-    `SELECT
-        ou.id,
-        ou.legal_entity_id,
-        le.tenant_id,
-        le.code AS legal_entity_code
-       FROM operating_units ou
-       JOIN legal_entities le
-         ON le.tenant_id = ou.tenant_id
-        AND le.id = ou.legal_entity_id
-      WHERE ou.status = 'ACTIVE'
-        AND le.status = 'ACTIVE'
-      ORDER BY le.id ASC, ou.id ASC`
-  );
-  const rows = Array.isArray(result.rows) ? result.rows : [];
-  assert(rows.length > 0, "Expected active operating units for OU02 smoke");
-
-  let primary = null;
-  let alternate = null;
-  for (const candidate of rows) {
-    const candidateAlternate =
-      rows.find(
-        (row) =>
-          Number(row.tenant_id) === Number(candidate.tenant_id) &&
-          Number(row.legal_entity_id) !== Number(candidate.legal_entity_id)
-      ) || null;
-    if (candidateAlternate) {
-      primary = candidate;
-      alternate = candidateAlternate;
-      break;
-    }
-  }
-
-  assert(
-    primary && alternate,
-    "Expected one tenant with active operating units across at least two legal entities for OU02 smoke"
-  );
-
-  return {
-    tenantId: Number(primary.tenant_id),
-    legalEntityId: Number(primary.legal_entity_id),
-    operatingUnitId: Number(primary.id),
-    alternateLegalEntityId: Number(alternate.legal_entity_id),
-  };
+  return createInventoryOuCrossEntityFixture({
+    prefix: "INVOU02",
+  });
 }
 
 async function main() {
@@ -241,6 +201,8 @@ async function main() {
   );
 
   const context = await loadSmokeContext();
+  const actingUserId = context.userId;
+  const approverUserId = context.approverUserId;
   const warehouseIds = [];
   const itemCardIds = [];
   const transferIds = [];
@@ -249,7 +211,7 @@ async function main() {
     const centralWarehouse = await createInventoryWarehouse({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         ownershipScope: "CENTRAL",
         code: uniqueCode("OU02C"),
@@ -262,7 +224,7 @@ async function main() {
     const sourceOuWarehouse = await createInventoryWarehouse({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         ownershipScope: "OPERATING_UNIT",
         operatingUnitId: context.operatingUnitId,
@@ -276,7 +238,7 @@ async function main() {
     const sameContextCentralWarehouse = await createInventoryWarehouse({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         ownershipScope: "CENTRAL",
         code: uniqueCode("OU02S"),
@@ -289,7 +251,7 @@ async function main() {
     const alternateLegalEntityWarehouse = await createInventoryWarehouse({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.alternateLegalEntityId,
         ownershipScope: "CENTRAL",
         code: uniqueCode("OU02X"),
@@ -314,7 +276,7 @@ async function main() {
     const createdTransfer = await createInventoryTransfer({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         transferDate: "2026-03-13",
         sourceWarehouseId: Number(centralWarehouse.id),
@@ -371,7 +333,7 @@ async function main() {
         createInventoryTransfer({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             legalEntityId: context.legalEntityId,
             transferDate: "2026-03-13",
             sourceWarehouseId: Number(centralWarehouse.id),
@@ -387,7 +349,7 @@ async function main() {
         createInventoryTransfer({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             legalEntityId: context.legalEntityId,
             transferDate: "2026-03-13",
             sourceWarehouseId: Number(centralWarehouse.id),
@@ -403,7 +365,7 @@ async function main() {
         createInventoryTransfer({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             legalEntityId: context.legalEntityId,
             transferDate: "2026-03-13",
             sourceWarehouseId: Number(centralWarehouse.id),
@@ -417,7 +379,7 @@ async function main() {
     const approvalTransfer = await createInventoryTransfer({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         transferDate: "2026-03-13",
         sourceWarehouseId: Number(centralWarehouse.id),
@@ -430,12 +392,12 @@ async function main() {
     const approvedRow = await approveInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: approverUserId,
         transferId: Number(approvalTransfer.id),
       },
     });
     assert(
-      approvedRow.status === "APPROVED" && approvedRow.approvedByUserId === 7,
+      approvedRow.status === "APPROVED" && approvedRow.approvedByUserId === approverUserId,
       "Approve action should move transfer to APPROVED"
     );
 
@@ -444,7 +406,7 @@ async function main() {
         approveInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: approverUserId,
             transferId: Number(approvalTransfer.id),
           },
         }),
@@ -454,7 +416,7 @@ async function main() {
     const shipGateTransfer = await createInventoryTransfer({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         transferDate: "2026-03-13",
         sourceWarehouseId: Number(centralWarehouse.id),
@@ -469,7 +431,7 @@ async function main() {
         shipInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(shipGateTransfer.id),
           },
         }),
@@ -479,7 +441,7 @@ async function main() {
     await approveInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: approverUserId,
         transferId: Number(shipGateTransfer.id),
       },
     });
@@ -489,7 +451,7 @@ async function main() {
         shipInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(shipGateTransfer.id),
           },
         }),
@@ -499,7 +461,7 @@ async function main() {
     const shipTwiceTransfer = await createInventoryTransfer({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         transferDate: "2026-03-13",
         sourceWarehouseId: Number(centralWarehouse.id),
@@ -516,7 +478,7 @@ async function main() {
         shipInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(shipTwiceTransfer.id),
           },
         }),
@@ -526,7 +488,7 @@ async function main() {
     const receiveGateTransfer = await createInventoryTransfer({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         transferDate: "2026-03-13",
         sourceWarehouseId: Number(centralWarehouse.id),
@@ -541,7 +503,7 @@ async function main() {
         receiveInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(receiveGateTransfer.id),
           },
         }),
@@ -556,7 +518,7 @@ async function main() {
         receiveInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(receiveGateTransfer.id),
           },
         }),
@@ -566,7 +528,7 @@ async function main() {
     const cancelGateTransfer = await createInventoryTransfer({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         transferDate: "2026-03-13",
         sourceWarehouseId: Number(centralWarehouse.id),
@@ -583,7 +545,7 @@ async function main() {
         cancelInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(cancelGateTransfer.id),
             cancelReason: "Too late",
           },
@@ -594,7 +556,7 @@ async function main() {
     const reverseGateTransfer = await createInventoryTransfer({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         legalEntityId: context.legalEntityId,
         transferDate: "2026-03-13",
         sourceWarehouseId: Number(centralWarehouse.id),
@@ -606,7 +568,7 @@ async function main() {
     await cancelInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         transferId: Number(reverseGateTransfer.id),
         cancelReason: "Cancel for reverse test",
       },
@@ -616,7 +578,7 @@ async function main() {
         reverseInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(reverseGateTransfer.id),
             reverseReason: "Should fail",
           },

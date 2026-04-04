@@ -43,20 +43,27 @@ export function roundAmount(value) {
   return Number(Number(value || 0).toFixed(6));
 }
 
+function createTenantWideScopeContext() {
+  return {
+    tenantWide: true,
+    groups: new Set(),
+    countries: new Set(),
+    legalEntities: new Set(),
+    operatingUnits: new Set(),
+  };
+}
+
 export function buildReq(tenantId, userId) {
+  const scopeContext = createTenantWideScopeContext();
   return {
     user: {
       tenantId,
       userId,
     },
     rbac: {
-      scopeContext: {
-        tenantWide: true,
-        groups: new Set(),
-        countries: new Set(),
-        legalEntities: new Set(),
-        operatingUnits: new Set(),
-      },
+      scopeContext,
+      permissionScopeContext: scopeContext,
+      visibilityScopeContext: createTenantWideScopeContext(),
     },
     headers: {},
   };

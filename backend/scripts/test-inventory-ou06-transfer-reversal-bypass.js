@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closePool, query } from "../src/db.js";
 import { assertLegalEntityBelongsToTenant } from "../src/tenantGuards.js";
+import { createInventoryOuAccountingFixture } from "./inventory-ou-smoke-fixture.js";
 import { createItemCard } from "../src/services/item.card.service.js";
 import {
   approveInventoryTransferById,
@@ -50,10 +51,6 @@ function uniqueCode(prefix) {
   return `${prefix}${token}`.slice(0, 40).toUpperCase();
 }
 
-function todayDateOnly() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function buildReq(tenantId, userId) {
   return {
     user: {
@@ -66,49 +63,9 @@ function buildReq(tenantId, userId) {
 }
 
 async function loadSmokeContext() {
-  const today = todayDateOnly();
-  const result = await query(
-    `SELECT
-        le.tenant_id,
-        le.id AS legal_entity_id,
-        le.code AS legal_entity_code,
-        le.functional_currency_code,
-        coa.id AS coa_id,
-        u.id AS user_id
-       FROM legal_entities le
-       JOIN charts_of_accounts coa
-         ON coa.tenant_id = le.tenant_id
-        AND coa.legal_entity_id = le.id
-        AND coa.scope = 'LEGAL_ENTITY'
-       JOIN users u
-         ON u.tenant_id = le.tenant_id
-       JOIN books b
-         ON b.tenant_id = le.tenant_id
-        AND b.legal_entity_id = le.id
-       JOIN fiscal_periods fp
-         ON fp.calendar_id = b.calendar_id
-       LEFT JOIN period_statuses ps
-         ON ps.book_id = b.id
-        AND ps.fiscal_period_id = fp.id
-      WHERE le.status = 'ACTIVE'
-        AND ? BETWEEN fp.start_date AND fp.end_date
-        AND (ps.status IS NULL OR ps.status = 'OPEN')
-      ORDER BY le.id ASC,
-        CASE WHEN b.book_type = 'LOCAL' THEN 0 ELSE 1 END
-      LIMIT 1`,
-    [today]
-  );
-  const row = result.rows?.[0] || null;
-  assert(row, "Expected one active legal entity with an open fiscal period covering today");
-  return {
-    tenantId: Number(row.tenant_id),
-    legalEntityId: Number(row.legal_entity_id),
-    legalEntityCode: String(row.legal_entity_code || ""),
-    functionalCurrencyCode: String(row.functional_currency_code || "").trim().toUpperCase(),
-    coaId: Number(row.coa_id),
-    userId: Number(row.user_id),
-    postingDate: today,
-  };
+  return createInventoryOuAccountingFixture({
+    prefix: "INVOU06",
+  });
 }
 
 async function createLeafAccount({
@@ -289,7 +246,8 @@ async function loadStockLinkForDocument(documentId) {
 
 async function createApprovedTransfer({
   tenantId,
-  userId,
+  actingUserId,
+  approverUserId,
   legalEntityId,
   transferDate,
   sourceWarehouseId,
@@ -301,7 +259,7 @@ async function createApprovedTransfer({
   const created = await createInventoryTransfer({
     payload: {
       tenantId,
-      userId,
+      userId: actingUserId,
       legalEntityId,
       transferDate,
       sourceWarehouseId,
@@ -318,7 +276,7 @@ async function createApprovedTransfer({
   return approveInventoryTransferById({
     payload: {
       tenantId,
-      userId,
+      userId: approverUserId,
       transferId: Number(created.id),
     },
   });
@@ -445,7 +403,9 @@ async function main() {
   );
 
   const context = await loadSmokeContext();
-  const req = buildReq(context.tenantId, context.userId);
+  const actingUserId = context.userId;
+  const approverUserId = context.approverUserId;
+  const req = buildReq(context.tenantId, actingUserId);
   const createdAccountIds = [];
   const createdUnitIds = [];
   const warehouseIds = [];
@@ -559,7 +519,7 @@ async function main() {
       centralSource: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: context.userId,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "CENTRAL",
           operatingUnitId: null,
@@ -571,7 +531,7 @@ async function main() {
       ouTarget: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: context.userId,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "OPERATING_UNIT",
           operatingUnitId: unit.id,
@@ -602,7 +562,6 @@ async function main() {
 
     const seededReceiptMovementId = await insertReceiptCostLayer({
       tenantId: context.tenantId,
-      userId: context.userId,
       legalEntityId: context.legalEntityId,
       warehouseId: Number(warehouses.centralSource.id),
       itemCardId: Number(stockedItem.id),
@@ -617,7 +576,8 @@ async function main() {
 
     const cancelTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
-      userId: context.userId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.centralSource.id),
@@ -630,14 +590,14 @@ async function main() {
     const canceled = await cancelInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: context.userId,
+        userId: actingUserId,
         transferId: Number(cancelTransfer.id),
         cancelReason: "OU06 pre-shipment cancel",
       },
     });
     assert(
       canceled.status === "CANCELLED" &&
-        Number(canceled.canceledByUserId) === Number(context.userId) &&
+        Number(canceled.canceledByUserId) === Number(actingUserId) &&
         canceled.cancelReason === "OU06 pre-shipment cancel" &&
         !Number(canceled.shipmentJournalEntryId || 0),
       "Cancel should work only before shipment and persist cancel metadata"
@@ -645,7 +605,8 @@ async function main() {
 
     const inTransitTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
-      userId: context.userId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.centralSource.id),
@@ -662,7 +623,7 @@ async function main() {
     const inTransitShipped = await shipInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: context.userId,
+        userId: actingUserId,
         transferId: Number(inTransitTransfer.id),
       },
     });
@@ -683,7 +644,7 @@ async function main() {
     const inTransitReversed = await reverseInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: context.userId,
+        userId: actingUserId,
         transferId: Number(inTransitTransfer.id),
         reverseReason: "OU06 reverse in transit",
       },
@@ -691,7 +652,7 @@ async function main() {
     journalEntryIds.push(Number(inTransitReversed.reversalJournalEntryId));
     assert(
       inTransitReversed.status === "REVERSED" &&
-        Number(inTransitReversed.reversedByUserId) === Number(context.userId) &&
+        Number(inTransitReversed.reversedByUserId) === Number(actingUserId) &&
         inTransitReversed.reverseReason === "OU06 reverse in transit" &&
         Number(inTransitReversed.reversalJournalEntryId) > 0,
       "In-transit reverse should mark the transfer reversed and persist reversal metadata"
@@ -731,7 +692,8 @@ async function main() {
     );
     const receivedTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
-      userId: context.userId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.centralSource.id),
@@ -752,7 +714,7 @@ async function main() {
     const receivedShipped = await shipInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: context.userId,
+        userId: actingUserId,
         transferId: Number(receivedTransfer.id),
       },
     });
@@ -763,7 +725,7 @@ async function main() {
     const receivedCompleted = await receiveInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: context.userId,
+        userId: actingUserId,
         transferId: Number(receivedTransfer.id),
       },
     });
@@ -786,7 +748,7 @@ async function main() {
     const receivedReversed = await reverseInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: context.userId,
+        userId: actingUserId,
         transferId: Number(receivedTransfer.id),
         reverseReason: "OU06 reverse received",
       },
@@ -861,7 +823,6 @@ async function main() {
 
     const counterparty = await createCounterpartyFixture({
       tenantId: context.tenantId,
-      userId: context.userId,
       legalEntityId: context.legalEntityId,
       currencyCode: context.functionalCurrencyCode,
     });
@@ -883,7 +844,7 @@ async function main() {
         createInventoryMovementFromStockLink({
           payload: {
             tenantId: context.tenantId,
-            userId: context.userId,
+            userId: actingUserId,
             legalEntityId: context.legalEntityId,
             warehouseId: Number(warehouses.centralSource.id),
             sourceStockLinkId: Number(mismatchStockLink.id),
@@ -902,17 +863,87 @@ async function main() {
 
     console.log("Inventory OU06 transfer reversal and bypass smoke passed.");
   } finally {
-    const uniqueTransferIds = Array.from(new Set(transferIds.filter(Boolean)));
-    const uniqueJournalEntryIds = Array.from(new Set(journalEntryIds.filter(Boolean)));
-    const uniqueIssueMovementIds = Array.from(new Set(issueMovementIds.filter(Boolean)));
-    const uniqueCostLayerMovementIds = Array.from(new Set(costLayerMovementIds.filter(Boolean)));
-    const uniqueMovementIds = Array.from(new Set(allMovementIds.filter(Boolean)));
+    const cleanupTransferIdSet = new Set(
+      transferIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupJournalEntryIdSet = new Set(
+      journalEntryIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupIssueMovementIdSet = new Set(
+      issueMovementIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupCostLayerMovementIdSet = new Set(
+      costLayerMovementIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupMovementIdSet = new Set(
+      allMovementIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
     const uniqueDocumentIds = Array.from(new Set(documentIds.filter(Boolean)));
     const uniqueCounterpartyIds = Array.from(new Set(counterpartyIds.filter(Boolean)));
     const uniqueWarehouseIds = Array.from(new Set(warehouseIds.filter(Boolean)));
     const uniqueItemCardIds = Array.from(new Set(itemCardIds.filter(Boolean)));
     const uniqueOperatingUnitIds = Array.from(new Set(createdUnitIds.filter(Boolean)));
     const uniqueAccountIds = Array.from(new Set(createdAccountIds.filter(Boolean)));
+    if (uniqueWarehouseIds.length > 0) {
+      const warehousePlaceholders = uniqueWarehouseIds.map(() => "?").join(",");
+      const discoveredTransferResult = await query(
+        `SELECT id
+           FROM inventory_transfers
+          WHERE source_warehouse_id IN (${warehousePlaceholders})
+             OR target_warehouse_id IN (${warehousePlaceholders})`,
+        [...uniqueWarehouseIds, ...uniqueWarehouseIds]
+      );
+      for (const row of discoveredTransferResult.rows || []) {
+        const transferId = Number(row.id);
+        if (Number.isFinite(transferId) && transferId > 0) {
+          cleanupTransferIdSet.add(transferId);
+        }
+      }
+    }
+
+    const uniqueTransferIds = Array.from(cleanupTransferIdSet);
+    if (uniqueTransferIds.length > 0) {
+      const transferPlaceholders = uniqueTransferIds.map(() => "?").join(",");
+      const discoveredJournalEntryResult = await query(
+        `SELECT DISTINCT journal_entry_id AS id
+           FROM journal_source_links
+          WHERE source_ref_type = 'INVENTORY_TRANSFER'
+            AND source_ref_id IN (${transferPlaceholders})
+            AND journal_entry_id IS NOT NULL`,
+        uniqueTransferIds
+      );
+      for (const row of discoveredJournalEntryResult.rows || []) {
+        const journalEntryId = Number(row.id);
+        if (Number.isFinite(journalEntryId) && journalEntryId > 0) {
+          cleanupJournalEntryIdSet.add(journalEntryId);
+        }
+      }
+
+      const discoveredMovementResult = await query(
+        `SELECT id, movement_type
+           FROM inventory_movements
+          WHERE source_document_type = 'INVENTORY_TRANSFER'
+            AND source_document_id IN (${transferPlaceholders})`,
+        uniqueTransferIds
+      );
+      for (const row of discoveredMovementResult.rows || []) {
+        const movementId = Number(row.id);
+        if (!Number.isFinite(movementId) || movementId <= 0) {
+          continue;
+        }
+        cleanupMovementIdSet.add(movementId);
+        if (String(row.movement_type || "").trim().toUpperCase() === "RECEIPT") {
+          cleanupCostLayerMovementIdSet.add(movementId);
+        } else {
+          cleanupIssueMovementIdSet.add(movementId);
+        }
+      }
+    }
+
+    const uniqueJournalEntryIds = Array.from(cleanupJournalEntryIdSet);
+    const uniqueIssueMovementIds = Array.from(cleanupIssueMovementIdSet);
+    const uniqueCostLayerMovementIds = Array.from(cleanupCostLayerMovementIdSet);
+    const uniqueMovementIds = Array.from(cleanupMovementIdSet);
     if (uniqueTransferIds.length > 0) {
       await query(
         `DELETE FROM inventory_transfer_lines

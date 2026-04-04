@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closePool, query } from "../src/db.js";
 import { assertLegalEntityBelongsToTenant } from "../src/tenantGuards.js";
+import { createInventoryOuAccountingFixture } from "./inventory-ou-smoke-fixture.js";
 import { createItemCard } from "../src/services/item.card.service.js";
 import {
   approveInventoryTransferById,
@@ -49,11 +50,11 @@ function uniqueCode(prefix) {
   return `${prefix}${token}`.slice(0, 40).toUpperCase();
 }
 
-function buildReq(tenantId) {
+function buildReq(tenantId, userId) {
   return {
     user: {
       tenantId,
-      userId: 7,
+      userId,
     },
     body: {},
     query: {},
@@ -61,45 +62,9 @@ function buildReq(tenantId) {
 }
 
 async function loadSmokeContext() {
-  const result = await query(
-    `SELECT
-        le.tenant_id,
-        le.id AS legal_entity_id,
-        le.code AS legal_entity_code,
-        le.functional_currency_code,
-        coa.id AS coa_id,
-        fp.start_date AS posting_date
-       FROM legal_entities le
-       JOIN charts_of_accounts coa
-         ON coa.tenant_id = le.tenant_id
-        AND coa.legal_entity_id = le.id
-        AND coa.scope = 'LEGAL_ENTITY'
-       JOIN books b
-         ON b.tenant_id = le.tenant_id
-        AND b.legal_entity_id = le.id
-       JOIN fiscal_periods fp
-         ON fp.calendar_id = b.calendar_id
-       LEFT JOIN period_statuses ps
-         ON ps.book_id = b.id
-        AND ps.fiscal_period_id = fp.id
-      WHERE le.status = 'ACTIVE'
-        AND (ps.status IS NULL OR ps.status = 'OPEN')
-      ORDER BY
-        le.id ASC,
-        CASE WHEN b.book_type = 'LOCAL' THEN 0 ELSE 1 END,
-        fp.start_date ASC
-      LIMIT 1`
-  );
-  const row = result.rows?.[0] || null;
-  assert(row, "Expected one active legal entity with an open fiscal period");
-  return {
-    tenantId: Number(row.tenant_id),
-    legalEntityId: Number(row.legal_entity_id),
-    legalEntityCode: String(row.legal_entity_code || ""),
-    functionalCurrencyCode: String(row.functional_currency_code || "").trim().toUpperCase(),
-    coaId: Number(row.coa_id),
-    postingDate: String(row.posting_date || "").slice(0, 10),
-  };
+  return createInventoryOuAccountingFixture({
+    prefix: "INVOU04",
+  });
 }
 
 async function assertInventoryTransferSourceTypeSchema() {
@@ -362,6 +327,8 @@ async function sumRemainingLayerQuantity(warehouseId, itemCardId) {
 
 async function createApprovedTransfer({
   tenantId,
+  actingUserId,
+  approverUserId,
   legalEntityId,
   transferDate,
   sourceWarehouseId,
@@ -373,7 +340,7 @@ async function createApprovedTransfer({
   const created = await createInventoryTransfer({
     payload: {
       tenantId,
-      userId: 7,
+      userId: actingUserId,
       legalEntityId,
       transferDate,
       sourceWarehouseId,
@@ -390,7 +357,7 @@ async function createApprovedTransfer({
   const approved = await approveInventoryTransferById({
     payload: {
       tenantId,
-      userId: 7,
+      userId: approverUserId,
       transferId: Number(created.id),
     },
   });
@@ -472,7 +439,9 @@ async function main() {
   await assertInventoryTransferSourceTypeSchema();
 
   const context = await loadSmokeContext();
-  const req = buildReq(context.tenantId);
+  const actingUserId = context.userId;
+  const approverUserId = context.approverUserId;
+  const req = buildReq(context.tenantId, actingUserId);
   const createdAccountIds = [];
   const createdUnitIds = [];
   const createdPartnerMappings = [];
@@ -703,7 +672,7 @@ async function main() {
       centralShip: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "CENTRAL",
           code: uniqueCode("OU04CS"),
@@ -714,7 +683,7 @@ async function main() {
       centralReceive: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "CENTRAL",
           code: uniqueCode("OU04CR"),
@@ -725,7 +694,7 @@ async function main() {
       centralMissingMap: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "CENTRAL",
           code: uniqueCode("OU04CM"),
@@ -736,7 +705,7 @@ async function main() {
       centralMissingTransit: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "CENTRAL",
           code: uniqueCode("OU04CT"),
@@ -747,7 +716,7 @@ async function main() {
       centralInsufficient: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "CENTRAL",
           code: uniqueCode("OU04CI"),
@@ -758,7 +727,7 @@ async function main() {
       ouA: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "OPERATING_UNIT",
           operatingUnitId: unitA.id,
@@ -770,7 +739,7 @@ async function main() {
       ouB: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "OPERATING_UNIT",
           operatingUnitId: unitB.id,
@@ -782,7 +751,7 @@ async function main() {
       ouPartial: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "OPERATING_UNIT",
           operatingUnitId: unitPartial.id,
@@ -911,6 +880,8 @@ async function main() {
 
     const centralToOuTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.centralShip.id),
@@ -923,14 +894,14 @@ async function main() {
     const centralToOuShipped = await shipInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         transferId: Number(centralToOuTransfer.id),
       },
     });
     const centralLine = centralToOuShipped.lines?.[0] || null;
     assert(
       centralToOuShipped.status === "IN_TRANSIT" &&
-        Number(centralToOuShipped.shippedByUserId) === 7 &&
+        Number(centralToOuShipped.shippedByUserId) === actingUserId &&
         Number(centralToOuShipped.shipmentJournalEntryId) > 0,
       "CENTRAL -> OU shipment should set IN_TRANSIT and header journal fields"
     );
@@ -1016,6 +987,8 @@ async function main() {
 
     const ouToCentralTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.ouA.id),
@@ -1028,7 +1001,7 @@ async function main() {
     const ouToCentralShipped = await shipInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         transferId: Number(ouToCentralTransfer.id),
       },
     });
@@ -1070,6 +1043,8 @@ async function main() {
 
     const ouToOuTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.ouA.id),
@@ -1082,7 +1057,7 @@ async function main() {
     const ouToOuShipped = await shipInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         transferId: Number(ouToOuTransfer.id),
       },
     });
@@ -1126,6 +1101,8 @@ async function main() {
     );
     const missingMappingTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.centralMissingMap.id),
@@ -1140,7 +1117,7 @@ async function main() {
         shipInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(missingMappingTransfer.id),
           },
         }),
@@ -1168,6 +1145,8 @@ async function main() {
 
     const noTransitTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.centralMissingTransit.id),
@@ -1182,7 +1161,7 @@ async function main() {
         shipInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(noTransitTransfer.id),
           },
         }),
@@ -1191,6 +1170,8 @@ async function main() {
 
     const insufficientTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.centralInsufficient.id),
@@ -1205,7 +1186,7 @@ async function main() {
         shipInventoryTransferById({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: actingUserId,
             transferId: Number(insufficientTransfer.id),
           },
         }),
@@ -1214,40 +1195,102 @@ async function main() {
 
     console.log("Inventory OU04 shipment self-balancing smoke passed.");
   } finally {
-    if (transferIds.length > 0) {
+    const cleanupTransferIdSet = new Set(
+      transferIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    if (warehouseIds.length > 0) {
+      const warehousePlaceholders = warehouseIds.map(() => "?").join(",");
+      const discoveredTransferResult = await query(
+        `SELECT id
+           FROM inventory_transfers
+          WHERE source_warehouse_id IN (${warehousePlaceholders})
+             OR target_warehouse_id IN (${warehousePlaceholders})`,
+        [...warehouseIds, ...warehouseIds]
+      );
+      for (const row of discoveredTransferResult.rows || []) {
+        const transferId = Number(row.id);
+        if (Number.isFinite(transferId) && transferId > 0) {
+          cleanupTransferIdSet.add(transferId);
+        }
+      }
+    }
+    const cleanupTransferIds = Array.from(cleanupTransferIdSet);
+    const cleanupJournalEntryIdSet = new Set(
+      journalEntryIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupMovementIdSet = new Set(
+      movementIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+
+    if (cleanupTransferIds.length > 0) {
+      const transferPlaceholders = cleanupTransferIds.map(() => "?").join(",");
+      const discoveredJournalEntryResult = await query(
+        `SELECT DISTINCT journal_entry_id AS id
+           FROM journal_source_links
+          WHERE source_ref_type = 'INVENTORY_TRANSFER'
+            AND source_ref_id IN (${transferPlaceholders})
+            AND journal_entry_id IS NOT NULL`,
+        cleanupTransferIds
+      );
+      for (const row of discoveredJournalEntryResult.rows || []) {
+        const journalEntryId = Number(row.id);
+        if (Number.isFinite(journalEntryId) && journalEntryId > 0) {
+          cleanupJournalEntryIdSet.add(journalEntryId);
+        }
+      }
+
+      const discoveredMovementResult = await query(
+        `SELECT id
+           FROM inventory_movements
+          WHERE source_document_type = 'INVENTORY_TRANSFER'
+            AND source_document_id IN (${transferPlaceholders})`,
+        cleanupTransferIds
+      );
+      for (const row of discoveredMovementResult.rows || []) {
+        const movementId = Number(row.id);
+        if (Number.isFinite(movementId) && movementId > 0) {
+          cleanupMovementIdSet.add(movementId);
+        }
+      }
+    }
+
+    const cleanupJournalEntryIds = Array.from(cleanupJournalEntryIdSet);
+    const cleanupMovementIds = Array.from(cleanupMovementIdSet);
+
+    if (cleanupTransferIds.length > 0) {
       await query(
         `DELETE FROM inventory_transfer_lines
-          WHERE inventory_transfer_id IN (${transferIds.map(() => "?").join(",")})`,
-        transferIds
+          WHERE inventory_transfer_id IN (${cleanupTransferIds.map(() => "?").join(",")})`,
+        cleanupTransferIds
       );
       await query(
         `DELETE FROM inventory_transfers
-          WHERE id IN (${transferIds.map(() => "?").join(",")})`,
-        transferIds
+          WHERE id IN (${cleanupTransferIds.map(() => "?").join(",")})`,
+        cleanupTransferIds
       );
     }
-    if (movementIds.length > 0) {
+    if (cleanupMovementIds.length > 0) {
       await query(
         `DELETE FROM inventory_issue_layer_consumptions
-          WHERE issue_movement_id IN (${movementIds.map(() => "?").join(",")})`,
-        movementIds
+          WHERE issue_movement_id IN (${cleanupMovementIds.map(() => "?").join(",")})`,
+        cleanupMovementIds
       );
     }
-    if (journalEntryIds.length > 0) {
+    if (cleanupJournalEntryIds.length > 0) {
       await query(
         `DELETE FROM journal_source_links
-          WHERE journal_entry_id IN (${journalEntryIds.map(() => "?").join(",")})`,
-        journalEntryIds
+          WHERE journal_entry_id IN (${cleanupJournalEntryIds.map(() => "?").join(",")})`,
+        cleanupJournalEntryIds
       );
       await query(
         `DELETE FROM journal_lines
-          WHERE journal_entry_id IN (${journalEntryIds.map(() => "?").join(",")})`,
-        journalEntryIds
+          WHERE journal_entry_id IN (${cleanupJournalEntryIds.map(() => "?").join(",")})`,
+        cleanupJournalEntryIds
       );
       await query(
         `DELETE FROM journal_entries
-          WHERE id IN (${journalEntryIds.map(() => "?").join(",")})`,
-        journalEntryIds
+          WHERE id IN (${cleanupJournalEntryIds.map(() => "?").join(",")})`,
+        cleanupJournalEntryIds
       );
     }
     if (receiptMovementIds.length > 0) {
@@ -1257,11 +1300,11 @@ async function main() {
         receiptMovementIds
       );
     }
-    if (movementIds.length > 0) {
+    if (cleanupMovementIds.length > 0) {
       await query(
         `DELETE FROM inventory_movements
-          WHERE id IN (${movementIds.map(() => "?").join(",")})`,
-        movementIds
+          WHERE id IN (${cleanupMovementIds.map(() => "?").join(",")})`,
+        cleanupMovementIds
       );
     }
     if (warehouseIds.length > 0) {
@@ -1278,21 +1321,13 @@ async function main() {
         itemCardIds
       );
     }
-    if (createdPartnerMappings.length > 0) {
-      const conditions = createdPartnerMappings
-        .map(() => "(operating_unit_id = ? AND partner_operating_unit_id = ?)")
-        .join(" OR ");
-      const params = createdPartnerMappings.flatMap(([sourceId, targetId]) => [
-        sourceId,
-        targetId,
-      ]);
+    if (createdUnitIds.length > 0) {
       await query(
         `DELETE FROM operating_unit_partner_current_accounts
-          WHERE ${conditions}`,
-        params
+          WHERE operating_unit_id IN (${createdUnitIds.map(() => "?").join(",")})
+             OR partner_operating_unit_id IN (${createdUnitIds.map(() => "?").join(",")})`,
+        [...createdUnitIds, ...createdUnitIds]
       );
-    }
-    if (createdUnitIds.length > 0) {
       await query(
         `DELETE FROM operating_units
           WHERE id IN (${createdUnitIds.map(() => "?").join(",")})`,

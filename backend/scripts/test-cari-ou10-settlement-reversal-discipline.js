@@ -369,6 +369,7 @@ async function main() {
         payload: {
           tenantId: fixture.tenantId,
           transactionId: cashTransactionId,
+          reversalDate: TEST_DATE,
           reverseReason: "OU10 downstream-linked cash reverse should block",
           userId: fixture.userId,
         },
@@ -387,6 +388,7 @@ async function main() {
     payload: {
       tenantId: fixture.tenantId,
       transactionId: cashTransactionId,
+      reversalDate: TEST_DATE,
       reverseReason: "OU10 cash reversal after downstream reverse",
       userId: fixture.userId,
     },

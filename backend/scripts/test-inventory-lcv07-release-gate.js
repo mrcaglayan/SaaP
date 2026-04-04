@@ -9,6 +9,10 @@ function assert(condition, message) {
   }
 }
 
+function normalizeGeneratedText(value) {
+  return String(value || "").replace(/\r\n/g, "\n");
+}
+
 async function runCommand(command, args, cwd, label = command) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -87,7 +91,8 @@ async function main() {
   await runNpmScript("openapi:generate", backendRoot);
   const openapiSourceAfterGenerate = await readFile(openapiPath, "utf8");
   assert(
-    openapiSourceBeforeGenerate === openapiSourceAfterGenerate,
+    normalizeGeneratedText(openapiSourceBeforeGenerate) ===
+      normalizeGeneratedText(openapiSourceAfterGenerate),
     "OpenAPI drift detected: regenerate backend/openapi.yaml and re-run the release gate"
   );
   await runNpmScript("check:openapi:parse", backendRoot);

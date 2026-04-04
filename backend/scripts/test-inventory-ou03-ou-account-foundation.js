@@ -8,6 +8,7 @@ import {
   upsertOperatingUnitPartnerCurrentAccount,
 } from "../src/services/org.write.service.js";
 import { assertLegalEntityBelongsToTenant } from "../src/tenantGuards.js";
+import { createInventoryOuAccountingFixture } from "./inventory-ou-smoke-fixture.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -36,29 +37,9 @@ function uniqueCode(prefix) {
 }
 
 async function loadSmokeContext() {
-  const result = await query(
-    `SELECT
-        le.tenant_id,
-        le.id AS legal_entity_id,
-        le.code AS legal_entity_code,
-        coa.id AS coa_id
-       FROM legal_entities le
-       JOIN charts_of_accounts coa
-         ON coa.tenant_id = le.tenant_id
-        AND coa.legal_entity_id = le.id
-        AND coa.scope = 'LEGAL_ENTITY'
-      WHERE le.status = 'ACTIVE'
-      ORDER BY le.id ASC
-      LIMIT 1`
-  );
-  const row = result.rows?.[0] || null;
-  assert(row, "Expected one active legal entity with a legal-entity chart of accounts");
-  return {
-    tenantId: Number(row.tenant_id),
-    legalEntityId: Number(row.legal_entity_id),
-    legalEntityCode: String(row.legal_entity_code || ""),
-    coaId: Number(row.coa_id),
-  };
+  return createInventoryOuAccountingFixture({
+    prefix: "INVOU03",
+  });
 }
 
 async function createLeafAccount({
@@ -484,21 +465,13 @@ async function main() {
 
     console.log("Inventory OU03 self-balancing foundation smoke passed.");
   } finally {
-    if (createdPartnerMappings.length > 0) {
-      const conditions = createdPartnerMappings
-        .map(() => "(operating_unit_id = ? AND partner_operating_unit_id = ?)")
-        .join(" OR ");
-      const params = createdPartnerMappings.flatMap(([sourceId, targetId]) => [
-        sourceId,
-        targetId,
-      ]);
+    if (createdUnitIds.length > 0) {
       await query(
         `DELETE FROM operating_unit_partner_current_accounts
-         WHERE ${conditions}`,
-        params
+         WHERE operating_unit_id IN (${createdUnitIds.map(() => "?").join(",")})
+            OR partner_operating_unit_id IN (${createdUnitIds.map(() => "?").join(",")})`,
+        [...createdUnitIds, ...createdUnitIds]
       );
-    }
-    if (createdUnitIds.length > 0) {
       await query(
         `DELETE FROM operating_units
          WHERE id IN (${createdUnitIds.map(() => "?").join(",")})`,

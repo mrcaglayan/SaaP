@@ -10,6 +10,7 @@ import {
   listInventoryWarehouses,
 } from "../src/services/inventory.service.js";
 import { closePool, query } from "../src/db.js";
+import { createInventoryOuCrossEntityFixture } from "./inventory-ou-smoke-fixture.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -64,50 +65,9 @@ function uniqueCode(prefix) {
 }
 
 async function loadSmokeContext() {
-  const operatingUnitsResult = await query(
-    `SELECT
-        ou.id,
-        ou.legal_entity_id,
-        ou.code,
-        le.tenant_id,
-        le.code AS legal_entity_code
-       FROM operating_units ou
-       JOIN legal_entities le
-         ON le.tenant_id = ou.tenant_id
-        AND le.id = ou.legal_entity_id
-      WHERE ou.status = 'ACTIVE'
-        AND le.status = 'ACTIVE'
-      ORDER BY le.id ASC, ou.id ASC`
-  );
-  const rows = Array.isArray(operatingUnitsResult.rows) ? operatingUnitsResult.rows : [];
-  assert(rows.length > 0, "Expected at least one active operating unit for OU01 smoke");
-
-  let primary = null;
-  let mismatch = null;
-  for (const candidate of rows) {
-    const candidateMismatch =
-      rows.find(
-        (row) =>
-          Number(row.tenant_id) === Number(candidate.tenant_id) &&
-          Number(row.legal_entity_id) !== Number(candidate.legal_entity_id)
-      ) || null;
-    if (candidateMismatch) {
-      primary = candidate;
-      mismatch = candidateMismatch;
-      break;
-    }
-  }
-  assert(
-    primary && mismatch,
-    "Expected one tenant with operating units across at least two legal entities for OU01 mismatch smoke"
-  );
-
-  return {
-    tenantId: Number(primary.tenant_id),
-    legalEntityId: Number(primary.legal_entity_id),
-    operatingUnitId: Number(primary.id),
-    mismatchOperatingUnitId: Number(mismatch.id),
-  };
+  return createInventoryOuCrossEntityFixture({
+    prefix: "INVOU01",
+  });
 }
 
 async function main() {
@@ -206,10 +166,10 @@ async function main() {
   try {
     const centralWarehouse = await createInventoryWarehouse({
       payload: {
-        tenantId: context.tenantId,
-        userId: 7,
-        legalEntityId: context.legalEntityId,
-        ownershipScope: "CENTRAL",
+            tenantId: context.tenantId,
+            userId: context.userId,
+            legalEntityId: context.legalEntityId,
+            ownershipScope: "CENTRAL",
         code: uniqueCode("OU01C"),
         name: "OU01 Central Warehouse",
         status: "ACTIVE",
@@ -226,7 +186,7 @@ async function main() {
     const ouWarehouse = await createInventoryWarehouse({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: context.userId,
         legalEntityId: context.legalEntityId,
         ownershipScope: "OPERATING_UNIT",
         operatingUnitId: context.operatingUnitId,
@@ -286,7 +246,7 @@ async function main() {
         createInventoryWarehouse({
           payload: {
             tenantId: context.tenantId,
-            userId: 7,
+            userId: context.userId,
             legalEntityId: context.legalEntityId,
             ownershipScope: "OPERATING_UNIT",
             operatingUnitId: context.mismatchOperatingUnitId,

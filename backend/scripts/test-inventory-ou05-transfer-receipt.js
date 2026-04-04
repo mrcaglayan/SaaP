@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closePool, query } from "../src/db.js";
 import { assertLegalEntityBelongsToTenant } from "../src/tenantGuards.js";
+import { createInventoryOuAccountingFixture } from "./inventory-ou-smoke-fixture.js";
 import { createItemCard } from "../src/services/item.card.service.js";
 import {
   approveInventoryTransferById,
@@ -30,11 +31,11 @@ function uniqueCode(prefix) {
   return `${prefix}${token}`.slice(0, 40).toUpperCase();
 }
 
-function buildReq(tenantId) {
+function buildReq(tenantId, userId) {
   return {
     user: {
       tenantId,
-      userId: 7,
+      userId,
     },
     body: {},
     query: {},
@@ -42,45 +43,9 @@ function buildReq(tenantId) {
 }
 
 async function loadSmokeContext() {
-  const result = await query(
-    `SELECT
-        le.tenant_id,
-        le.id AS legal_entity_id,
-        le.code AS legal_entity_code,
-        le.functional_currency_code,
-        coa.id AS coa_id,
-        fp.start_date AS posting_date
-       FROM legal_entities le
-       JOIN charts_of_accounts coa
-         ON coa.tenant_id = le.tenant_id
-        AND coa.legal_entity_id = le.id
-        AND coa.scope = 'LEGAL_ENTITY'
-       JOIN books b
-         ON b.tenant_id = le.tenant_id
-        AND b.legal_entity_id = le.id
-       JOIN fiscal_periods fp
-         ON fp.calendar_id = b.calendar_id
-       LEFT JOIN period_statuses ps
-         ON ps.book_id = b.id
-        AND ps.fiscal_period_id = fp.id
-      WHERE le.status = 'ACTIVE'
-        AND (ps.status IS NULL OR ps.status = 'OPEN')
-      ORDER BY
-        le.id ASC,
-        CASE WHEN b.book_type = 'LOCAL' THEN 0 ELSE 1 END,
-        fp.start_date ASC
-      LIMIT 1`
-  );
-  const row = result.rows?.[0] || null;
-  assert(row, "Expected one active legal entity with an open fiscal period");
-  return {
-    tenantId: Number(row.tenant_id),
-    legalEntityId: Number(row.legal_entity_id),
-    legalEntityCode: String(row.legal_entity_code || ""),
-    functionalCurrencyCode: String(row.functional_currency_code || "").trim().toUpperCase(),
-    coaId: Number(row.coa_id),
-    postingDate: String(row.posting_date || "").slice(0, 10),
-  };
+  return createInventoryOuAccountingFixture({
+    prefix: "INVOU05",
+  });
 }
 
 async function createLeafAccount({
@@ -298,6 +263,8 @@ async function sumRemainingLayerQuantity(warehouseId, itemCardId) {
 
 async function createApprovedTransfer({
   tenantId,
+  actingUserId,
+  approverUserId,
   legalEntityId,
   transferDate,
   sourceWarehouseId,
@@ -309,7 +276,7 @@ async function createApprovedTransfer({
   const created = await createInventoryTransfer({
     payload: {
       tenantId,
-      userId: 7,
+      userId: actingUserId,
       legalEntityId,
       transferDate,
       sourceWarehouseId,
@@ -326,7 +293,7 @@ async function createApprovedTransfer({
   const approved = await approveInventoryTransferById({
     payload: {
       tenantId,
-      userId: 7,
+      userId: approverUserId,
       transferId: Number(created.id),
     },
   });
@@ -370,7 +337,9 @@ async function main() {
   );
 
   const context = await loadSmokeContext();
-  const req = buildReq(context.tenantId);
+  const actingUserId = context.userId;
+  const approverUserId = context.approverUserId;
+  const req = buildReq(context.tenantId, actingUserId);
   const createdAccountIds = [];
   const createdUnitIds = [];
   const warehouseIds = [];
@@ -458,7 +427,7 @@ async function main() {
       centralShip: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "CENTRAL",
           operatingUnitId: null,
@@ -470,7 +439,7 @@ async function main() {
       centralReceive: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "CENTRAL",
           operatingUnitId: null,
@@ -482,7 +451,7 @@ async function main() {
       ouShip: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "OPERATING_UNIT",
           operatingUnitId: unit.id,
@@ -494,7 +463,7 @@ async function main() {
       ouReceive: await createInventoryWarehouse({
         payload: {
           tenantId: context.tenantId,
-          userId: 7,
+          userId: actingUserId,
           legalEntityId: context.legalEntityId,
           ownershipScope: "OPERATING_UNIT",
           operatingUnitId: unit.id,
@@ -576,6 +545,8 @@ async function main() {
 
     const centralToOuTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.centralShip.id),
@@ -588,7 +559,7 @@ async function main() {
     const centralToOuShipped = await shipInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         transferId: Number(centralToOuTransfer.id),
       },
     });
@@ -603,7 +574,7 @@ async function main() {
     const centralToOuReceived = await receiveInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         transferId: Number(centralToOuTransfer.id),
       },
     });
@@ -614,7 +585,7 @@ async function main() {
 
     assert(
       centralToOuReceived.status === "RECEIVED" &&
-        Number(centralToOuReceived.receivedByUserId) === 7 &&
+        Number(centralToOuReceived.receivedByUserId) === actingUserId &&
         Number(centralToOuReceived.receiptJournalEntryId) > 0,
       "CENTRAL -> OU receive should set RECEIVED and header receipt journal fields"
     );
@@ -716,6 +687,8 @@ async function main() {
 
     const ouToCentralTransfer = await createApprovedTransfer({
       tenantId: context.tenantId,
+      actingUserId,
+      approverUserId,
       legalEntityId: context.legalEntityId,
       transferDate: context.postingDate,
       sourceWarehouseId: Number(warehouses.ouShip.id),
@@ -728,7 +701,7 @@ async function main() {
     const ouToCentralShipped = await shipInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         transferId: Number(ouToCentralTransfer.id),
       },
     });
@@ -743,7 +716,7 @@ async function main() {
     const ouToCentralReceived = await receiveInventoryTransferById({
       payload: {
         tenantId: context.tenantId,
-        userId: 7,
+        userId: actingUserId,
         transferId: Number(ouToCentralTransfer.id),
       },
     });
@@ -789,12 +762,83 @@ async function main() {
 
     console.log("Inventory OU05 transfer receipt smoke passed.");
   } finally {
-    const uniqueTransferIds = Array.from(new Set(transferIds.filter(Boolean)));
-    const uniqueJournalEntryIds = Array.from(new Set(journalEntryIds.filter(Boolean)));
-    const uniqueIssueMovementIds = Array.from(new Set(issueMovementIds.filter(Boolean)));
-    const uniqueReceiptMovementIds = Array.from(new Set(receiptMovementIds.filter(Boolean)));
-    const uniqueMovementIds = Array.from(new Set(allMovementIds.filter(Boolean)));
+    const cleanupTransferIdSet = new Set(
+      transferIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupJournalEntryIdSet = new Set(
+      journalEntryIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupIssueMovementIdSet = new Set(
+      issueMovementIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupReceiptMovementIdSet = new Set(
+      receiptMovementIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
+    const cleanupMovementIdSet = new Set(
+      allMovementIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    );
     const uniqueWarehouseIds = Array.from(new Set(warehouseIds.filter(Boolean)));
+
+    if (uniqueWarehouseIds.length > 0) {
+      const warehousePlaceholders = uniqueWarehouseIds.map(() => "?").join(",");
+      const discoveredTransferResult = await query(
+        `SELECT id
+           FROM inventory_transfers
+          WHERE source_warehouse_id IN (${warehousePlaceholders})
+             OR target_warehouse_id IN (${warehousePlaceholders})`,
+        [...uniqueWarehouseIds, ...uniqueWarehouseIds]
+      );
+      for (const row of discoveredTransferResult.rows || []) {
+        const transferId = Number(row.id);
+        if (Number.isFinite(transferId) && transferId > 0) {
+          cleanupTransferIdSet.add(transferId);
+        }
+      }
+    }
+
+    const uniqueTransferIds = Array.from(cleanupTransferIdSet);
+    if (uniqueTransferIds.length > 0) {
+      const transferPlaceholders = uniqueTransferIds.map(() => "?").join(",");
+      const discoveredJournalEntryResult = await query(
+        `SELECT DISTINCT journal_entry_id AS id
+           FROM journal_source_links
+          WHERE source_ref_type = 'INVENTORY_TRANSFER'
+            AND source_ref_id IN (${transferPlaceholders})
+            AND journal_entry_id IS NOT NULL`,
+        uniqueTransferIds
+      );
+      for (const row of discoveredJournalEntryResult.rows || []) {
+        const journalEntryId = Number(row.id);
+        if (Number.isFinite(journalEntryId) && journalEntryId > 0) {
+          cleanupJournalEntryIdSet.add(journalEntryId);
+        }
+      }
+
+      const discoveredMovementResult = await query(
+        `SELECT id, movement_type
+           FROM inventory_movements
+          WHERE source_document_type = 'INVENTORY_TRANSFER'
+            AND source_document_id IN (${transferPlaceholders})`,
+        uniqueTransferIds
+      );
+      for (const row of discoveredMovementResult.rows || []) {
+        const movementId = Number(row.id);
+        if (!Number.isFinite(movementId) || movementId <= 0) {
+          continue;
+        }
+        cleanupMovementIdSet.add(movementId);
+        if (String(row.movement_type || "").trim().toUpperCase() === "RECEIPT") {
+          cleanupReceiptMovementIdSet.add(movementId);
+        } else {
+          cleanupIssueMovementIdSet.add(movementId);
+        }
+      }
+    }
+
+    const uniqueJournalEntryIds = Array.from(cleanupJournalEntryIdSet);
+    const uniqueIssueMovementIds = Array.from(cleanupIssueMovementIdSet);
+    const uniqueReceiptMovementIds = Array.from(cleanupReceiptMovementIdSet);
+    const uniqueMovementIds = Array.from(cleanupMovementIdSet);
     const uniqueItemCardIds = Array.from(new Set(itemCardIds.filter(Boolean)));
     const uniqueOperatingUnitIds = Array.from(new Set(createdUnitIds.filter(Boolean)));
     const uniqueAccountIds = Array.from(new Set(createdAccountIds.filter(Boolean)));

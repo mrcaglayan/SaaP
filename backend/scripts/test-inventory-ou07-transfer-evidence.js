@@ -37,6 +37,10 @@ function uniqueCode(prefix) {
   return `${prefix}${token}`.slice(0, 40).toUpperCase();
 }
 
+function normalizeSourceText(value) {
+  return String(value || "").replace(/\r\n/g, "\n");
+}
+
 function todayDateOnly() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -200,6 +204,7 @@ async function main() {
     path.resolve(root, "frontend/src/pages/inventory/InventoryTransfersPage.jsx"),
     "utf8"
   );
+  const normalizedEvidenceRouteSource = normalizeSourceText(evidenceRouteSource);
 
   assert(
     evidenceServiceSource.includes('SOURCE_REF_TYPE_INVENTORY_TRANSFER = "INVENTORY_TRANSFER"') &&
@@ -213,12 +218,13 @@ async function main() {
     "Evidence service should expose inventory transfer evidence lifecycle helpers"
   );
   assert(
-    evidenceRouteSource.includes('router.get(\n  "/"') &&
-      evidenceRouteSource.includes('router.post(\n  "/"') &&
-      evidenceRouteSource.includes('"/:evidenceId/content"') &&
-      evidenceRouteSource.includes('"/:evidenceId/download"') &&
-      evidenceRouteSource.includes('requirePermission("inventory.read"') &&
-      evidenceRouteSource.includes('requirePermission("inventory.upsert"'),
+    normalizedEvidenceRouteSource.includes('router.get(\n  "/"') &&
+      normalizedEvidenceRouteSource.includes('router.post(\n  "/"') &&
+      normalizedEvidenceRouteSource.includes('router.delete(\n  "/:evidenceId"') &&
+      normalizedEvidenceRouteSource.includes('"/:evidenceId/content"') &&
+      normalizedEvidenceRouteSource.includes('"/:evidenceId/download"') &&
+      normalizedEvidenceRouteSource.includes('requirePermission("inventory.read"') &&
+      normalizedEvidenceRouteSource.includes('requirePermission("inventory.upsert"'),
     "Inventory transfer evidence routes should provide list/create/upload/download/delete with inventory permission guards"
   );
   assert(
