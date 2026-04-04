@@ -516,6 +516,7 @@ export default function OrganizationManagementPage() {
   const { getModuleRow, refreshLegalEntity } = useModuleReadiness();
   const isTr = language === "tr";
   const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
+  const canRunTenantSetup = hasPermission("onboarding.company.setup");
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadFiscalCalendars = hasPermission("org.fiscal_calendar.read");
   const canReadFiscalPeriods = hasPermission("org.fiscal_period.read");
@@ -535,6 +536,18 @@ export default function OrganizationManagementPage() {
   const canWriteBanks = hasPermission("bank.accounts.write");
   const canReadCashRegisters = hasPermission("cash.register.read");
   const canReadCashSessions = canReadCashRegisters;
+  const isScopedCapitalFulfillmentOperator = Boolean(
+    canManageShareholderCapitalFulfillment &&
+      !canRunTenantSetup &&
+      !canUpsertShareholder &&
+      !canUpsertAccounts &&
+      !canUpsertGroupCompany &&
+      !canUpsertLegalEntity &&
+      !canUpsertOperatingUnit &&
+      !canUpsertFiscalCalendar &&
+      !canGenerateFiscalPeriods
+  );
+  const showTenantReadinessChecklist = !isScopedCapitalFulfillmentOperator;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -4658,7 +4671,7 @@ export default function OrganizationManagementPage() {
 
   return (
     <div className="space-y-4">
-      <TenantReadinessChecklist />
+      {showTenantReadinessChecklist ? <TenantReadinessChecklist /> : null}
 
       <div>
         <h1 className="text-xl font-semibold text-slate-900">
@@ -6138,253 +6151,306 @@ export default function OrganizationManagementPage() {
             </button>
           </div>
           {selectedShareholderLegalEntityId ? (
-            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <div className="text-xs font-semibold text-slate-700">
-                {l(
-                  "Kurulum Adimlari / Next Recommended Action",
-                  "Kurulum Adimlari / Sonraki Onerilen Aksiyon"
-                )}
-              </div>
-              <div className="mt-2 grid gap-1 md:grid-cols-2">
-                {shareholderSetupSteps.map((step) => (
-                  <div
-                    key={step.key}
-                    className="flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1 text-xs"
-                  >
-                    <span className="text-slate-700">{step.label}</span>
-                    <span
-                      className={`rounded px-2 py-0.5 font-semibold ${step.status === "DONE"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : step.status === "CURRENT"
-                          ? "bg-sky-100 text-sky-800"
-                          : "bg-slate-100 text-slate-700"
-                        }`}
-                    >
-                      {step.status === "DONE"
-                        ? l("Done", "Tamam")
-                        : step.status === "CURRENT"
-                          ? l("Current", "Siradaki")
-                          : l("Waiting", "Bekliyor")}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {nextShareholderSetupStep ? (
-                <div className="mt-2 rounded border border-sky-200 bg-sky-50 px-2 py-2 text-xs text-sky-900">
-                  <span className="font-semibold">
-                    {l("Next recommended action:", "Sonraki onerilen aksiyon:")}
-                  </span>{" "}
-                  {nextShareholderSetupStep.label}
-                </div>
-              ) : null}
-              {selectedShareholderCommitmentReadiness ? (
-                <div
-                  className={`mt-2 rounded border px-2 py-2 text-xs ${selectedShareholderCommitmentReadiness.ready
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                    : "border-amber-200 bg-amber-50 text-amber-900"
-                    }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold">
-                      {l(
-                        "Module readiness: shareholder commitment",
-                        "Modul hazirligi: ortak taahhut"
-                      )}
-                    </span>
-                    <span
-                      className={`rounded px-2 py-0.5 font-semibold ${selectedShareholderCommitmentReadiness.ready
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-amber-100 text-amber-800"
-                        }`}
-                    >
-                      {selectedShareholderCommitmentReadiness.ready
-                        ? l("READY", "HAZIR")
-                        : l("NOT READY", "HAZIR DEGIL")}
-                    </span>
-                  </div>
-                  {!selectedShareholderCommitmentReadiness.ready ? (
-                    <>
-                      {Array.isArray(
-                        selectedShareholderCommitmentReadiness.missingPurposeCodes
-                      ) &&
-                        selectedShareholderCommitmentReadiness.missingPurposeCodes.length > 0 ? (
-                        <p className="mt-1">
-                          {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
-                          {selectedShareholderCommitmentReadiness.missingPurposeCodes.join(
-                            ", "
-                          )}
-                        </p>
-                      ) : null}
-                      {Array.isArray(
-                        selectedShareholderCommitmentReadiness.invalidMappings
-                      ) &&
-                        selectedShareholderCommitmentReadiness.invalidMappings.length > 0 ? (
-                        <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                          {selectedShareholderCommitmentReadiness.invalidMappings.map(
-                            (row, index) => (
-                              <li key={`shareholder-readiness-invalid-${index}`}>
-                                {String(row?.purposeCode || "-")}:{" "}
-                                {formatShareholderReadinessReason(row?.reason, l)}
-                              </li>
-                            )
-                          )}
-                        </ul>
-                      ) : null}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Link
-                          to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
-                          className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
-                        >
-                          {l("Fix manually", "Elle duzelt")}
-                        </Link>
-                        <Link
-                          to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
-                          className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
-                        >
-                          {l("Use template", "Sablon kullan")}
-                        </Link>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    document
-                      .getElementById("shareholder-parent-mapping-form")
-                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                  }
-                  className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
-                >
-                  {l("Parent eslemeye git", "Parent eslemeye git")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAutoSubAccountSetupModalOpen(true)}
-                  disabled={
-                    !canUpsertAccounts ||
-                    !hasShareholderParentMapping ||
-                    (!hasMissingCreditEquitySubAccount &&
-                      !hasMissingDebitEquitySubAccount)
-                  }
-                  className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
-                >
-                  {l("Otomatik alt hesap olustur", "Otomatik alt hesap olustur")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    document
-                      .getElementById("shareholder-form-block")
-                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                  }
-                  className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
-                >
-                  {l("Ortak ekle", "Ortak ekle")}
-                </button>
-                <button
-                  type="button"
-                  onClick={openCommitmentIncreaseModal}
-                  disabled={
-                    !canUpsertShareholder ||
-                    eligibleShareholdersForCommitmentIncrease.length === 0
-                  }
-                  className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
-                >
-                  {l("Sermaye taahhut arttirimi", "Sermaye taahhut arttirimi")}
-                </button>
-                <button
-                  type="button"
-                  onClick={openCapitalFulfillmentModal}
-                  disabled={!capitalFulfillmentCanOpen}
-                  className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
-                >
-                  {l("Record capital fulfillment", "Sermaye karsilamasi kaydet")}
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setBatchCommitmentDate(
-                      shareholderForm.commitmentDate ||
-                      new Date().toISOString().slice(0, 10)
-                    );
-                    setBatchCommitmentModalOpen(true);
-                    await handlePreviewBatchCommitmentJournal();
-                  }}
-                  disabled={
-                    !canUpsertShareholder ||
-                    pendingBatchCommitmentShareholders.length === 0 ||
-                    shareholderCommitmentModuleNotReady
-                  }
-                  className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
-                >
-                  {l("Toplu fis onizle", "Toplu fis onizle")}
-                </button>
-              </div>
-              <div className="mt-3 grid gap-1 md:grid-cols-2">
-                {selectedShareholderSetupChecks.map((check) => (
-                  <div
-                    key={check.key}
-                    className="flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1 text-xs"
-                  >
-                    <span className="text-slate-700">{check.label}</span>
-                    <span
-                      className={`rounded px-2 py-0.5 font-semibold ${check.ready
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-amber-100 text-amber-800"
-                        }`}
-                    >
-                      {check.ready ? l("OK", "Tamam") : l("Missing", "Eksik")}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {selectedShareholderMissingChecks.length > 0 ? (
-                <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-xs text-amber-900">
-                  <div className="font-semibold">
-                    {l(
-                      "System notice: complete missing setup before relying on automatic commitment journals.",
-                      "Sistem uyarisi: otomatik taahhut yevmiyesine gecmeden once eksik kurulumlari tamamlayin."
-                    )}
-                  </div>
-                  {parentMappingStatus.reasons.length > 0 ? (
-                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                      {parentMappingStatus.reasons.slice(0, 3).map((reason) => (
-                        <li key={reason}>{reason}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        document
-                          .getElementById("shareholder-form-block")
-                          ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                      }
-                      className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
-                    >
-                      {l("Go to shareholder form", "Ortak formuna git")}
-                    </button>
-                    <Link
-                      to="/app/ayarlar/hesap-plani-ayarlari"
-                      className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
-                    >
-                      {l("Open GL setup", "GL ayarlarini ac")}
-                    </Link>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-2 rounded border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs text-emerald-800">
+            isScopedCapitalFulfillmentOperator ? (
+              <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
+                <div className="text-xs font-semibold text-sky-900">
                   {l(
-                    "System notice: setup is complete for automatic capital commitment draft journals.",
-                    "Sistem bildirimi: otomatik sermaye taahhut taslak yevmiyesi icin kurulum tamamlandi."
+                    "Capital fulfillment workspace",
+                    "Sermaye karsilama calisma alani"
                   )}
                 </div>
-              )}
-            </div>
+                <p className="mt-1 text-xs text-sky-800">
+                  {l(
+                    "Tenant-wide onboarding readiness does not block your scoped work here. Posting follows legal-entity prerequisites only.",
+                    "Tenant geneli onboarding hazirligi burada sizin scope'lu calismanizi bloklamaz. Posting sadece legal entity on kosullarina gore ilerler."
+                  )}
+                </p>
+                <div className="mt-2 grid gap-1 text-xs text-sky-900 md:grid-cols-2">
+                  <div className="rounded border border-sky-200 bg-white px-2 py-1">
+                    {l(
+                      "Shareholder must have capital and commitment sub-accounts.",
+                      "Ortaga sermaye ve taahhut alt hesaplari tanimli olmalidir."
+                    )}
+                  </div>
+                  <div className="rounded border border-sky-200 bg-white px-2 py-1">
+                    {l(
+                      "Contribution date must be inside an OPEN fiscal period.",
+                      "Katki tarihi OPEN durumundaki mali donem icinde olmalidir."
+                    )}
+                  </div>
+                  <div className="rounded border border-sky-200 bg-white px-2 py-1">
+                    {l(
+                      "Selected bank, cash, or asset destination must be available in this legal entity.",
+                      "Secilen banka, kasa veya varlik hedefi bu legal entity icinde kullanilabilir olmalidir."
+                    )}
+                  </div>
+                  <div className="rounded border border-sky-200 bg-white px-2 py-1">
+                    {l(
+                      "OU-targeted posting still requires internal current-account readiness.",
+                      "OU hedefli posting icin ic cari hesap hazirligi yine gereklidir."
+                    )}
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={openCapitalFulfillmentModal}
+                    disabled={!capitalFulfillmentCanOpen}
+                    className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    {l("Record capital fulfillment", "Sermaye karsilamasi kaydet")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold text-slate-700">
+                  {l(
+                    "Kurulum Adimlari / Next Recommended Action",
+                    "Kurulum Adimlari / Sonraki Onerilen Aksiyon"
+                  )}
+                </div>
+                <div className="mt-2 grid gap-1 md:grid-cols-2">
+                  {shareholderSetupSteps.map((step) => (
+                    <div
+                      key={step.key}
+                      className="flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1 text-xs"
+                    >
+                      <span className="text-slate-700">{step.label}</span>
+                      <span
+                        className={`rounded px-2 py-0.5 font-semibold ${step.status === "DONE"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : step.status === "CURRENT"
+                            ? "bg-sky-100 text-sky-800"
+                            : "bg-slate-100 text-slate-700"
+                          }`}
+                      >
+                        {step.status === "DONE"
+                          ? l("Done", "Tamam")
+                          : step.status === "CURRENT"
+                            ? l("Current", "Siradaki")
+                            : l("Waiting", "Bekliyor")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {nextShareholderSetupStep ? (
+                  <div className="mt-2 rounded border border-sky-200 bg-sky-50 px-2 py-2 text-xs text-sky-900">
+                    <span className="font-semibold">
+                      {l("Next recommended action:", "Sonraki onerilen aksiyon:")}
+                    </span>{" "}
+                    {nextShareholderSetupStep.label}
+                  </div>
+                ) : null}
+                {selectedShareholderCommitmentReadiness ? (
+                  <div
+                    className={`mt-2 rounded border px-2 py-2 text-xs ${selectedShareholderCommitmentReadiness.ready
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-amber-200 bg-amber-50 text-amber-900"
+                      }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold">
+                        {l(
+                          "Module readiness: shareholder commitment",
+                          "Modul hazirligi: ortak taahhut"
+                        )}
+                      </span>
+                      <span
+                        className={`rounded px-2 py-0.5 font-semibold ${selectedShareholderCommitmentReadiness.ready
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-amber-100 text-amber-800"
+                          }`}
+                      >
+                        {selectedShareholderCommitmentReadiness.ready
+                          ? l("READY", "HAZIR")
+                          : l("NOT READY", "HAZIR DEGIL")}
+                      </span>
+                    </div>
+                    {!selectedShareholderCommitmentReadiness.ready ? (
+                      <>
+                        {Array.isArray(
+                          selectedShareholderCommitmentReadiness.missingPurposeCodes
+                        ) &&
+                          selectedShareholderCommitmentReadiness.missingPurposeCodes.length > 0 ? (
+                          <p className="mt-1">
+                            {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
+                            {selectedShareholderCommitmentReadiness.missingPurposeCodes.join(
+                              ", "
+                            )}
+                          </p>
+                        ) : null}
+                        {Array.isArray(
+                          selectedShareholderCommitmentReadiness.invalidMappings
+                        ) &&
+                          selectedShareholderCommitmentReadiness.invalidMappings.length > 0 ? (
+                          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                            {selectedShareholderCommitmentReadiness.invalidMappings.map(
+                              (row, index) => (
+                                <li key={`shareholder-readiness-invalid-${index}`}>
+                                  {String(row?.purposeCode || "-")}:{" "}
+                                  {formatShareholderReadinessReason(row?.reason, l)}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        ) : null}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Link
+                            to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
+                            className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                          >
+                            {l("Fix manually", "Elle duzelt")}
+                          </Link>
+                          <Link
+                            to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
+                            className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                          >
+                            {l("Use template", "Sablon kullan")}
+                          </Link>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      document
+                        .getElementById("shareholder-parent-mapping-form")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                    }
+                    className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                  >
+                    {l("Parent eslemeye git", "Parent eslemeye git")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAutoSubAccountSetupModalOpen(true)}
+                    disabled={
+                      !canUpsertAccounts ||
+                      !hasShareholderParentMapping ||
+                      (!hasMissingCreditEquitySubAccount &&
+                        !hasMissingDebitEquitySubAccount)
+                    }
+                    className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    {l("Otomatik alt hesap olustur", "Otomatik alt hesap olustur")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      document
+                        .getElementById("shareholder-form-block")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                    }
+                    className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                  >
+                    {l("Ortak ekle", "Ortak ekle")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openCommitmentIncreaseModal}
+                    disabled={
+                      !canUpsertShareholder ||
+                      eligibleShareholdersForCommitmentIncrease.length === 0
+                    }
+                    className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    {l("Sermaye taahhut arttirimi", "Sermaye taahhut arttirimi")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openCapitalFulfillmentModal}
+                    disabled={!capitalFulfillmentCanOpen}
+                    className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    {l("Record capital fulfillment", "Sermaye karsilamasi kaydet")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setBatchCommitmentDate(
+                        shareholderForm.commitmentDate ||
+                        new Date().toISOString().slice(0, 10)
+                      );
+                      setBatchCommitmentModalOpen(true);
+                      await handlePreviewBatchCommitmentJournal();
+                    }}
+                    disabled={
+                      !canUpsertShareholder ||
+                      pendingBatchCommitmentShareholders.length === 0 ||
+                      shareholderCommitmentModuleNotReady
+                    }
+                    className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    {l("Toplu fis onizle", "Toplu fis onizle")}
+                  </button>
+                </div>
+                <div className="mt-3 grid gap-1 md:grid-cols-2">
+                  {selectedShareholderSetupChecks.map((check) => (
+                    <div
+                      key={check.key}
+                      className="flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1 text-xs"
+                    >
+                      <span className="text-slate-700">{check.label}</span>
+                      <span
+                        className={`rounded px-2 py-0.5 font-semibold ${check.ready
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-amber-100 text-amber-800"
+                          }`}
+                      >
+                        {check.ready ? l("OK", "Tamam") : l("Missing", "Eksik")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {selectedShareholderMissingChecks.length > 0 ? (
+                  <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-xs text-amber-900">
+                    <div className="font-semibold">
+                      {l(
+                        "System notice: complete missing setup before relying on automatic commitment journals.",
+                        "Sistem uyarisi: otomatik taahhut yevmiyesine gecmeden once eksik kurulumlari tamamlayin."
+                      )}
+                    </div>
+                    {parentMappingStatus.reasons.length > 0 ? (
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                        {parentMappingStatus.reasons.slice(0, 3).map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          document
+                            .getElementById("shareholder-form-block")
+                            ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                        }
+                        className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                      >
+                        {l("Go to shareholder form", "Ortak formuna git")}
+                      </button>
+                      <Link
+                        to="/app/ayarlar/hesap-plani-ayarlari"
+                        className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                      >
+                        {l("Open GL setup", "GL ayarlarini ac")}
+                      </Link>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs text-emerald-800">
+                    {l(
+                      "System notice: setup is complete for automatic capital commitment draft journals.",
+                      "Sistem bildirimi: otomatik sermaye taahhut taslak yevmiyesi icin kurulum tamamlandi."
+                    )}
+                  </div>
+                )}
+              </div>
+            )
           ) : null}
           {selectedShareholderLegalEntityId ? (
             <form

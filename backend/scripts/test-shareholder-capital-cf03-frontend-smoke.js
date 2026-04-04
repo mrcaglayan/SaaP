@@ -32,6 +32,11 @@ async function main() {
       pageSource.includes("createBankAccount") &&
       pageSource.includes("provisionBankAccountControlParentChild") &&
       pageSource.includes("capitalFulfillmentModalOpen") &&
+      pageSource.includes("isScopedCapitalFulfillmentOperator") &&
+      pageSource.includes("showTenantReadinessChecklist") &&
+      pageSource.includes(
+        "Tenant-wide onboarding readiness does not block your scoped work here."
+      ) &&
       pageSource.includes("Record capital fulfillment") &&
       pageSource.includes("Create bank") &&
       pageSource.includes("control-parent") &&
@@ -42,7 +47,7 @@ async function main() {
       pageSource.includes("handleCreateCapitalFulfillment") &&
       pageSource.includes("Preview fulfillment") &&
       pageSource.includes("Post fulfillment"),
-    "OrganizationManagementPage should provide bank-backed capital fulfillment modal with inline neutral control-parent bank creation plus preview/post actions"
+    "OrganizationManagementPage should provide bank-backed capital fulfillment modal with inline neutral control-parent bank creation plus preview/post actions, while hiding tenant-wide readiness noise for scoped capital-fulfillment operators"
   );
 
   const openapiSource = await readFile(path.resolve(root, "backend/openapi.yaml"), "utf8");
