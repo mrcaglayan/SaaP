@@ -10,6 +10,8 @@ const SETUP_ALLOWLIST = new Set([
   "/app/ayarlar/hesap-plani-olustur",
   "/app/ayarlar/hesap-plani-ayarlari",
   "/app/ayarlar/workflow-kurulumu",
+  "/app/ayarlar/kullanici-yonetimi",
+  "/app/ayarlar/sube-operatorleri",
   "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
   "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",
   "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
@@ -24,6 +26,11 @@ function isTenantSetupAllowedPath(pathname) {
   return normalizedPath.startsWith(
     "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri/"
   );
+}
+
+function isSecurityAdminAllowedPath(pathname) {
+  const normalizedPath = String(pathname || "").trim();
+  return normalizedPath.startsWith("/app/ayarlar/rbac/");
 }
 
 /**
@@ -75,7 +82,9 @@ export default function RequireTenantReadiness({ children }) {
   // Keep the close-control surfaces reachable even when tenant readiness is
   // incomplete so operators can inspect what is blocking close instead of
   // getting bounced to company settings first.
-  const isSetupPage = isTenantSetupAllowedPath(location.pathname);
+  const isSetupPage =
+    isTenantSetupAllowedPath(location.pathname) ||
+    isSecurityAdminAllowedPath(location.pathname);
   if (!canRunTenantSetup && hasWorkingLegalEntity) {
     return children;
   }
