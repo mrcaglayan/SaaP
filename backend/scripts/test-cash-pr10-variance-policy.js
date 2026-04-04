@@ -199,7 +199,7 @@ async function createTenantAndUsers() {
   const accountantUserId = toNumber(usersResult.rows?.[0]?.id);
   assert(adminUserId > 0 && accountantUserId > 0, "Failed to resolve users");
 
-  await assignTenantRoleByCode(tenantId, accountantUserId, "EntityAccountant");
+  await assignTenantRoleByCode(tenantId, accountantUserId, "TreasuryOperator");
 
   return {
     tenantId,
