@@ -29,6 +29,12 @@ This runbook covers setup, posting, reversal, and cash-transfer follow-up for sh
 - If no bank account exists for the selected legal entity / OU scope, Organization Management can create it inline during capital fulfillment without leaving the modal.
 - Cash-register destinations must be configured in `cash_registers`.
 
+## Recommended RBAC
+
+- Assign `ShareholderCapitalOperator` at `LEGAL_ENTITY` scope for steady-state capital fulfillment.
+- Keep `MasterDataSteward` responsible for shareholder/account setup.
+- Add `bank.accounts.write` only when the same user should create missing bank destinations inline from the fulfillment modal.
+
 ## Posting Rules
 
 - Shareholder capital and commitment lines remain central.

@@ -3,7 +3,7 @@ import { invalidateRbacCache } from "../middleware/rbac.js";
 
 const MISSING_TABLE_ERRNOS = new Set([1146]);
 
-export const ROLE_MIGRATION_MAPPING_VERSION = "pr4c-v1";
+export const ROLE_MIGRATION_MAPPING_VERSION = "pr4c-v2";
 
 const LEGACY_ROLE_MIGRATION_RULES = Object.freeze({
   TenantAdmin: Object.freeze({
@@ -14,16 +14,21 @@ const LEGACY_ROLE_MIGRATION_RULES = Object.freeze({
     ]),
   }),
   GroupController: Object.freeze({
-    targetRoleCodes: Object.freeze(["GroupReportingController"]),
+    targetRoleCodes: Object.freeze([
+      "GroupReportingController",
+      "ShareholderCapitalOperator",
+    ]),
     notes: Object.freeze([
       "GroupController is narrowed to GroupReportingController in the composable model.",
-      "Review whether any legacy master-data or close-review responsibilities need separate reassignment after migration.",
+      "Shareholder capital fulfillment now lands on ShareholderCapitalOperator so brownfield tenants do not lose that workflow during migration.",
+      "Review whether any other legacy master-data or close-review responsibilities need separate reassignment after migration.",
     ]),
   }),
   CountryController: Object.freeze({
     targetRoleCodes: Object.freeze([
       "GLOperator",
       "GLPostingAuthority",
+      "ShareholderCapitalOperator",
       "TreasuryApprover",
       "PayrollApprover",
       "LocalCloseReviewer",
@@ -31,11 +36,13 @@ const LEGACY_ROLE_MIGRATION_RULES = Object.freeze({
     notes: Object.freeze([
       "CountryController maps to bounded review/approval roles at the same scope.",
       "Master-data stewardship is intentionally not auto-granted here.",
+      "Shareholder capital fulfillment now migrates to the dedicated ShareholderCapitalOperator role.",
     ]),
   }),
   EntityAccountant: Object.freeze({
     targetRoleCodes: Object.freeze([
       "GLOperator",
+      "ShareholderCapitalOperator",
       "TreasuryOperator",
       "PayrollOperator",
       "LocalClosePreparer",
@@ -43,6 +50,7 @@ const LEGACY_ROLE_MIGRATION_RULES = Object.freeze({
     notes: Object.freeze([
       "EntityAccountant maps to operator/preparer roles at the same scope.",
       "GLPostingAuthority is not auto-added; assign it only where manual posting is explicitly approved.",
+      "Shareholder capital fulfillment now migrates to the dedicated ShareholderCapitalOperator role.",
     ]),
   }),
 });

@@ -59,6 +59,13 @@ const ROLE_CATALOG = Object.freeze({
     companionNote:
       "Pair with GLOperator or another read-bearing accounting role at the same or broader scope.",
   },
+  ShareholderCapitalOperator: {
+    category: "composable",
+    summary:
+      "Posts and reverses shareholder capital fulfillment without broader org master-data or treasury governance powers.",
+    capabilities: ["Equity funding", "Capital fulfillment", "Posting control"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+  },
   OUAccountant: {
     category: "composable",
     summary:

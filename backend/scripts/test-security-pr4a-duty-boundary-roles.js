@@ -103,6 +103,7 @@ async function main() {
     "MasterDataSteward",
     "GLOperator",
     "GLPostingAuthority",
+    "ShareholderCapitalOperator",
     "OUAccountant",
     "TreasuryOperator",
     "TreasuryApprover",
@@ -119,6 +120,7 @@ async function main() {
 
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.GLOperator, ["gl.operations"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.GLPostingAuthority, ["gl.posting"]);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.ShareholderCapitalOperator, ["org.capital_fulfillment"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalCloseReviewer, ["close.reviewer"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchOperator, ["gl.readonly"]);
 
@@ -143,6 +145,18 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "GLPostingAuthority", "gl.journal.post");
   assertRoleHas(permissionCodesByRole, "GLPostingAuthority", "gl.period.close");
   assertRoleLacks(permissionCodesByRole, "GLPostingAuthority", "gl.journal.create");
+
+  assertRoleHas(
+    permissionCodesByRole,
+    "ShareholderCapitalOperator",
+    "org.shareholder.capital_fulfillment.upsert"
+  );
+  assertRoleHas(permissionCodesByRole, "ShareholderCapitalOperator", "bank.accounts.read");
+  assertRoleHas(permissionCodesByRole, "ShareholderCapitalOperator", "cash.register.read");
+  assertRoleHas(permissionCodesByRole, "ShareholderCapitalOperator", "gl.account.read");
+  assertRoleLacks(permissionCodesByRole, "ShareholderCapitalOperator", "org.shareholder.upsert");
+  assertRoleLacks(permissionCodesByRole, "ShareholderCapitalOperator", "bank.accounts.write");
+  assertRoleLacks(permissionCodesByRole, "ShareholderCapitalOperator", "gl.journal.post");
 
   assertRoleHas(permissionCodesByRole, "OUAccountant", "gl.journal.create");
   assertRoleLacks(permissionCodesByRole, "OUAccountant", "gl.journal.post");

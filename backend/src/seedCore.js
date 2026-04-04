@@ -401,6 +401,10 @@ const GL_POSTING_AUTHORITY_PERMISSION_CODES = buildPermissionList({
   ],
 });
 
+const SHAREHOLDER_CAPITAL_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissionGroups: ["org.capital_fulfillment"],
+});
+
 const TREASURY_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["bank.operations"],
   permissions: [
@@ -546,6 +550,7 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   MasterDataSteward: Object.freeze(["gl.masterdata"]),
   GLOperator: Object.freeze(["gl.operations"]),
   GLPostingAuthority: Object.freeze(["gl.posting"]),
+  ShareholderCapitalOperator: Object.freeze(["org.capital_fulfillment"]),
   OUAccountant: Object.freeze(["gl.operations"]),
   TreasuryOperator: Object.freeze(["bank.operations"]),
   TreasuryApprover: Object.freeze(["bank.readonly", "bank.governance"]),
@@ -690,6 +695,14 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "GLPostingAuthority",
     name: "GL Posting Authority",
     permissions: GL_POSTING_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    // Shareholder capital fulfillment posts and reverses real accounting events,
+    // but it should not drag broader org-master-data or treasury-admin powers
+    // into the steady-state role model.
+    code: "ShareholderCapitalOperator",
+    name: "Shareholder Capital Operator",
+    permissions: SHAREHOLDER_CAPITAL_OPERATOR_PERMISSION_CODES,
   },
   {
     code: "OUAccountant",

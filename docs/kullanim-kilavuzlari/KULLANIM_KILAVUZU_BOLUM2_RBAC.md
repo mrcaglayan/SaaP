@@ -94,7 +94,7 @@ Islem:
 3. `Rolu Kaydet`
 
 Not:
-1. Seed ile gelen aktif roller vardir (`SecurityAdmin`, `SystemAdmin`, `GLOperator`, `BranchOperator`, `AuditorReadOnly`, vb.).
+1. Seed ile gelen aktif roller vardir (`SecurityAdmin`, `SystemAdmin`, `GLOperator`, `ShareholderCapitalOperator`, `BranchOperator`, `AuditorReadOnly`, vb.).
 2. Retired legacy roller (`TenantAdmin`, `GroupController`, `CountryController`, `EntityAccountant`) fresh tenant akisinda normal atama katalogunun parcasi degildir.
 3. Operasyonel kullanim icin yeni custom rol olusturmak genelde daha guvenlidir.
 
@@ -268,7 +268,7 @@ Bu, "yanlislikla herkes tam yetkili olmasin" diye uygulanir.
 
 1. Her tenantta az sayida `SecurityAdmin` tutun.
 2. `SystemAdmin` rolunu sadece onboarding, workflow governance veya operasyonel setup ihtiyaci olan kullanicilara verin.
-3. Gunluk kullanicilar icin composable roller (`GLOperator`, `TreasuryOperator`, `PayrollOperator`, `BranchOperator`) veya custom roller acin.
+3. Gunluk kullanicilar icin composable roller (`GLOperator`, `ShareholderCapitalOperator`, `TreasuryOperator`, `PayrollOperator`, `BranchOperator`) veya custom roller acin.
 4. `GLPostingAuthority` gibi companion yetkileri tek basina business persona gibi atamayin.
 5. Atamalari her zaman scope ile sinirlayin.
 6. Periyodik olarak RBAC denetim loglarini kontrol edin.

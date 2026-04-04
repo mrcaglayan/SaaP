@@ -53,6 +53,16 @@ export const PERMISSION_GROUPS = {
       "gl.period.close",
     ],
   },
+  "org.capital_fulfillment": {
+    permissions: [
+      "org.tree.read",
+      "org.fiscal_period.read",
+      "gl.account.read",
+      "bank.accounts.read",
+      "cash.register.read",
+      "org.shareholder.capital_fulfillment.upsert",
+    ],
+  },
   "bank.readonly": {
     permissions: [
       "bank.accounts.read",
