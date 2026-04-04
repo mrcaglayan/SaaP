@@ -3,6 +3,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { getTenantRoleIdsByCode } from "../src/services/systemRoles.service.js";
+import { createBootstrapAdmin } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CASH_PR10_TEST_PORT || 3115);
 const BASE_URL = process.env.CASH_PR10_TEST_BASE_URL || `http://127.0.0.1:${PORT}`;
@@ -124,6 +126,21 @@ async function login(email, password) {
   return sessionCookie;
 }
 
+async function assignTenantRoleByCode(tenantId, userId, roleCode) {
+  const roleIdsByCode = await getTenantRoleIdsByCode(tenantId, [roleCode]);
+  const roleId = toNumber(roleIdsByCode.get(roleCode));
+  assert(roleId > 0, `Role ${roleCode} not found for tenant ${tenantId}`);
+
+  await query(
+    `INSERT INTO user_role_scopes (
+        tenant_id, user_id, role_id, scope_type, scope_id, effect
+     )
+     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
+     ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
+    [tenantId, userId, roleId, tenantId]
+  );
+}
+
 async function createTenantAndUsers() {
   const stamp = Date.now();
   const tenantCode = `CASH10_${stamp}`;
@@ -132,6 +149,10 @@ async function createTenantAndUsers() {
   const accountantEmail = `cash_pr10_accountant_${stamp}@example.com`;
   const password = "CashPR10#12345";
   const passwordHash = await bcrypt.hash(password, 10);
+
+  await seedCore({
+    ensureDefaultTenantIfMissing: true,
+  });
 
   await query(
     `INSERT INTO tenants (code, name)
@@ -154,11 +175,13 @@ async function createTenantAndUsers() {
   const tenantId = toNumber(tenantResult.rows[0]?.id);
   assert(tenantId > 0, "Failed to resolve tenant");
 
-  await query(
-    `INSERT INTO users (tenant_id, email, password_hash, name, status)
-     VALUES (?, ?, ?, ?, 'ACTIVE')`,
-    [tenantId, adminEmail, passwordHash, "Cash PR10 Admin"]
-  );
+  const { userId: adminUserId } = await createBootstrapAdmin({
+    tenantId,
+    email: adminEmail,
+    password,
+    name: "Cash PR10 Admin",
+  });
+
   await query(
     `INSERT INTO users (tenant_id, email, password_hash, name, status)
      VALUES (?, ?, ?, ?, 'ACTIVE')`,
@@ -166,59 +189,17 @@ async function createTenantAndUsers() {
   );
 
   const usersResult = await query(
-    `SELECT id, email
+    `SELECT id
      FROM users
      WHERE tenant_id = ?
-       AND email IN (?, ?)`,
-    [tenantId, adminEmail, accountantEmail]
+       AND email = ?`,
+    [tenantId, accountantEmail]
   );
 
-  let adminUserId = 0;
-  let accountantUserId = 0;
-  for (const row of usersResult.rows || []) {
-    if (String(row.email || "").toLowerCase() === adminEmail.toLowerCase()) {
-      adminUserId = toNumber(row.id);
-    } else if (String(row.email || "").toLowerCase() === accountantEmail.toLowerCase()) {
-      accountantUserId = toNumber(row.id);
-    }
-  }
+  const accountantUserId = toNumber(usersResult.rows?.[0]?.id);
   assert(adminUserId > 0 && accountantUserId > 0, "Failed to resolve users");
 
-  const roleRows = await query(
-    `SELECT id, code
-     FROM roles
-     WHERE tenant_id = ?
-       AND code IN ('TenantAdmin', 'EntityAccountant')`,
-    [tenantId]
-  );
-  let tenantAdminRoleId = 0;
-  let entityAccountantRoleId = 0;
-  for (const row of roleRows.rows || []) {
-    if (row.code === "TenantAdmin") {
-      tenantAdminRoleId = toNumber(row.id);
-    } else if (row.code === "EntityAccountant") {
-      entityAccountantRoleId = toNumber(row.id);
-    }
-  }
-  assert(tenantAdminRoleId > 0, "TenantAdmin role not found");
-  assert(entityAccountantRoleId > 0, "EntityAccountant role not found");
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id, user_id, role_id, scope_type, scope_id, effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
-    [tenantId, adminUserId, tenantAdminRoleId, tenantId]
-  );
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id, user_id, role_id, scope_type, scope_id, effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
-    [tenantId, accountantUserId, entityAccountantRoleId, tenantId]
-  );
+  await assignTenantRoleByCode(tenantId, accountantUserId, "EntityAccountant");
 
   return {
     tenantId,
@@ -482,11 +463,11 @@ async function loadJournalLineTotals({
 }
 
 async function main() {
-  const identity = await createTenantAndUsers();
-  const server = startServerProcess();
-  let serverStopped = false;
+  let server = null;
 
   try {
+    const identity = await createTenantAndUsers();
+    server = startServerProcess();
     await waitForServer();
 
     const adminToken = await login(identity.admin.email, identity.admin.password);
@@ -783,11 +764,10 @@ async function main() {
       )
     );
   } finally {
-    if (!serverStopped) {
+    if (server) {
       server.kill("SIGINT");
-      serverStopped = true;
+      await sleep(400);
     }
-    await sleep(400);
     await closePool();
   }
 }
