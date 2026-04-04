@@ -26,8 +26,13 @@ const ROLE_CATALOG = Object.freeze({
   SystemAdmin: {
     category: "system",
     summary:
-      "Manages onboarding, jobs, retention, and broader operational controls.",
-    capabilities: ["Ops jobs", "Onboarding controls", "Retention operations"],
+      "Manages onboarding, workflow governance, jobs, retention, and broader operational controls.",
+    capabilities: [
+      "Ops jobs",
+      "Onboarding controls",
+      "Workflow governance",
+      "Retention operations",
+    ],
     recommendedScopes: ["TENANT"],
   },
   MasterDataSteward: {

@@ -187,6 +187,14 @@ async function main() {
     "SystemAdmin should include security.admin.system"
   );
   assert(
+    permissionCodesByRole.get(SYSTEM_ADMIN_ROLE_CODE)?.has("workflow.definition.write"),
+    "SystemAdmin should include workflow.definition.write"
+  );
+  assert(
+    permissionCodesByRole.get(SYSTEM_ADMIN_ROLE_CODE)?.has("workflow.assignment.write"),
+    "SystemAdmin should include workflow.assignment.write"
+  );
+  assert(
     !permissionCodesByRole.get(SYSTEM_ADMIN_ROLE_CODE)?.has("gl.journal.post"),
     "SystemAdmin should not include gl.journal.post"
   );

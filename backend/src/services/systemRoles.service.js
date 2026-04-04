@@ -18,6 +18,12 @@ const SECURITY_ADMIN_EXCLUDED_PERMISSION_CODES = new Set([
 
 const SYSTEM_ADMIN_ADDITIONAL_PERMISSION_CODES = new Set([
   "security.admin.system",
+  // Fresh-tenant bootstrap relies on SystemAdmin to finish readiness-oriented
+  // workflow setup without falling back to the retired TenantAdmin role.
+  "workflow.definition.read",
+  "workflow.definition.write",
+  "workflow.assignment.read",
+  "workflow.assignment.write",
 ]);
 
 const DEFAULT_BOOTSTRAP_ROLE_CODES = Object.freeze([

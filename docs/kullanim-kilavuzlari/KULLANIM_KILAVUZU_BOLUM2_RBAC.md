@@ -16,7 +16,7 @@ Odak: kullanici olusturma, rol atama, scope yonetimi, test ve dogrulama.
    - "Yeni tenant olusturma" yetkisi degildir.
 
 3. `SystemAdmin`:
-   - Tenant icindeki onboarding, jobs ve operational setup yonetim rolu olabilir.
+   - Tenant icindeki onboarding, workflow governance, jobs ve operational setup yonetim rolu olabilir.
    - Security yonetimi ile ayni sey degildir.
 
 4. `Provider Admin`:
@@ -196,7 +196,7 @@ Kontrol edin:
 
 `SecurityAdmin` gibi sistem rollerinde:
 1. Rol/atama/scope/security policy yonetimini `SecurityAdmin` tarafinda tutun.
-2. `SystemAdmin`, onboarding ve operasyonel setup icin kullanilabilir; varsayilan security god-mode rolu degildir.
+2. `SystemAdmin`, onboarding, workflow governance ve operasyonel setup icin kullanilabilir; varsayilan security god-mode rolu degildir.
 3. Sistem rolu olmayan custom ve composable rollerde normal atama akisiniz devam eder.
 
 Bu, "yanlislikla herkes tam yetkili olmasin" diye uygulanir.
@@ -267,7 +267,7 @@ Bu, "yanlislikla herkes tam yetkili olmasin" diye uygulanir.
 ## 9) Operasyonel Tavsiyeler
 
 1. Her tenantta az sayida `SecurityAdmin` tutun.
-2. `SystemAdmin` rolunu sadece operasyonel setup ihtiyaci olan kullanicilara verin.
+2. `SystemAdmin` rolunu sadece onboarding, workflow governance veya operasyonel setup ihtiyaci olan kullanicilara verin.
 3. Gunluk kullanicilar icin composable roller (`GLOperator`, `TreasuryOperator`, `PayrollOperator`, `BranchOperator`) veya custom roller acin.
 4. `GLPostingAuthority` gibi companion yetkileri tek basina business persona gibi atamayin.
 5. Atamalari her zaman scope ile sinirlayin.

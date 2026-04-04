@@ -122,6 +122,11 @@ async function main() {
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalCloseReviewer, ["close.reviewer"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchOperator, ["gl.readonly"]);
 
+  assertRoleHas(permissionCodesByRole, "SystemAdmin", "onboarding.company.setup");
+  assertRoleHas(permissionCodesByRole, "SystemAdmin", "workflow.definition.write");
+  assertRoleHas(permissionCodesByRole, "SystemAdmin", "workflow.assignment.write");
+  assertRoleLacks(permissionCodesByRole, "SystemAdmin", "gl.journal.post");
+
   assertRoleHas(permissionCodesByRole, "MasterDataSteward", "org.legal_entity.upsert");
   assertRoleHas(permissionCodesByRole, "MasterDataSteward", "gl.account_mapping.upsert");
   assertRoleHas(permissionCodesByRole, "MasterDataSteward", "fx.rate.bulk_upsert");
