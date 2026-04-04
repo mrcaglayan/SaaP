@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   bootstrapCompany,
+  getCompanyBootstrapHandoffOptions,
   previewCompanyBootstrapCurrentAccountEligibility,
 } from "../../api/onboarding.js";
 import { listCountries, listCurrencies } from "../../api/orgAdmin.js";
@@ -9,6 +10,10 @@ import { getPolicyPack, listPolicyPacks } from "../../api/policyPacks.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import {
+  getBootstrapHandoffPresetEntry,
+  getRoleCatalogEntry,
+} from "../security/roleCatalog.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 import {
   getCountryStarterAccountRows,
@@ -30,6 +35,11 @@ Object.freeze({
   titleTr: "Istirakler / Bagli Ortaklar",
 }),
 Object.freeze({
+  key: "handoff",
+  titleEn: "Responsibles",
+  titleTr: "Sorumlular",
+}),
+Object.freeze({
   key: "template",
   titleEn: "CoA Template",
   titleTr: "Hesap Plani Sablonu",
@@ -46,6 +56,11 @@ Object.freeze({
   titleTr: "Cari Ic Hesaplar",
 }),
 ]);
+const ENTITY_SETUP_PRESET = getBootstrapHandoffPresetEntry("EntitySetupManager");
+const COUNTRY_FINANCE_SETUP_PRESET = getBootstrapHandoffPresetEntry(
+  "CountryFinanceSetupManager"
+);
+const GL_POSTING_AUTHORITY_ENTRY = getRoleCatalogEntry("GLPostingAuthority");
 
 const BASELINE_DEFAULT_ACCOUNTS = Object.freeze([
 Object.freeze({
@@ -157,13 +172,13 @@ if (byCode.size > 0) {
 }
 return getCountryStarterAccounts(countryIso2);
 }
-function createBranchDraft() {
+function createBranchDraft(seed = {}) {
 return {
   id: createId("branch"),
-  code: "",
-  name: "",
-  unitType: "BRANCH",
-  hasSubledger: false,
+  code: String(seed.code || "").trim().toUpperCase(),
+  name: String(seed.name || "").trim(),
+  unitType: toUpper(seed.unitType) || "BRANCH",
+  hasSubledger: Boolean(seed.hasSubledger),
 };
 }
 function createCurrentAccountConfigDraft(seed = {}) {
@@ -195,6 +210,31 @@ return {
   ),
 };
 }
+function createHandoffAssignmentDraft(seed = {}) {
+return {
+  id: createId("handoff"),
+  selectionMode:
+    String(seed.selectionMode || seed.selection_mode || "INVITE")
+      .trim()
+      .toUpperCase() === "EXISTING_USER"
+      ? "EXISTING_USER"
+      : "INVITE",
+  userId: seed.userId ? String(seed.userId) : "",
+  name: String(seed.name || "").trim(),
+  email: String(seed.email || "").trim().toLowerCase(),
+  includeGlPostingAuthority: Boolean(
+    seed.includeGlPostingAuthority ?? seed.include_gl_posting_authority
+  ),
+};
+}
+function createCountryHandoffGroupDraft(countryIso2, seed = {}) {
+return {
+  countryIso2: toUpper(countryIso2).slice(0, 2),
+  assignments: Array.isArray(seed.assignments)
+    ? seed.assignments.map((row) => createHandoffAssignmentDraft(row))
+    : [],
+};
+}
 function getEntityCurrentAccountConfig(entity) {
 return createCurrentAccountConfigDraft(
   entity?.currentAccountConfig ?? entity?.current_account_config
@@ -209,20 +249,32 @@ function createEntityDraft(seed = {}) {
 const countryIso2 = toUpper(seed.countryIso2 || "US");
 return {
   id: createId("entity"),
-  code: "",
-  name: "",
-  taxId: "",
+  code: String(seed.code || "").trim().toUpperCase(),
+  name: String(seed.name || "").trim(),
+  taxId: String(seed.taxId || seed.tax_id || "").trim(),
   countryIso2,
-  functionalCurrencyCode: "USD",
-  isIntercompanyEnabled: true,
-  intercompanyPartnerRequired: false,
-  policyPackId: getDefaultPolicyPackIdForCountry(countryIso2),
-  coaCode: "",
-  coaName: "",
-  bookCode: "",
-  bookName: "",
-  defaultAccounts: getCountryStarterAccounts(countryIso2),
-  branches: [createBranchDraft()],
+  functionalCurrencyCode: toUpper(seed.functionalCurrencyCode || "USD"),
+  isIntercompanyEnabled:
+    seed.isIntercompanyEnabled === undefined
+      ? true
+      : Boolean(seed.isIntercompanyEnabled),
+  intercompanyPartnerRequired: Boolean(seed.intercompanyPartnerRequired),
+  policyPackId: toUpper(
+    seed.policyPackId || getDefaultPolicyPackIdForCountry(countryIso2)
+  ),
+  coaCode: String(seed.coaCode || "").trim().toUpperCase(),
+  coaName: String(seed.coaName || "").trim(),
+  bookCode: String(seed.bookCode || "").trim().toUpperCase(),
+  bookName: String(seed.bookName || "").trim(),
+  defaultAccounts: Array.isArray(seed.defaultAccounts)
+    ? seed.defaultAccounts.map((account) => createAccountDraft(account))
+    : getCountryStarterAccounts(countryIso2),
+  branches: Array.isArray(seed.branches)
+    ? seed.branches.map((branch) => createBranchDraft(branch))
+    : [createBranchDraft()],
+  handoffAssignments: Array.isArray(seed.handoffAssignments)
+    ? seed.handoffAssignments.map((row) => createHandoffAssignmentDraft(row))
+    : [],
   currentAccountConfig: createCurrentAccountConfigDraft(
     seed.currentAccountConfig ?? seed.current_account_config
   ),
@@ -263,7 +315,51 @@ return {
   },
   fiscalYear: now.getUTCFullYear(),
   legalEntities: [createEntityDraft()],
+  countryHandoffAssignments: [],
 };
+}
+function buildUniqueCountryIso2List(legalEntities = []) {
+return Array.from(
+  new Set(
+    (Array.isArray(legalEntities) ? legalEntities : [])
+      .map((entity) => toUpper(entity?.countryIso2).slice(0, 2))
+      .filter(Boolean)
+  )
+).sort((left, right) => left.localeCompare(right));
+}
+function syncCountryHandoffAssignments(countryHandoffAssignments = [], legalEntities = []) {
+const uniqueCountryIso2List = buildUniqueCountryIso2List(legalEntities);
+const existingByIso2 = new Map(
+  (Array.isArray(countryHandoffAssignments) ? countryHandoffAssignments : [])
+    .map((group) => {
+      const countryIso2 = toUpper(group?.countryIso2).slice(0, 2);
+      if (!countryIso2) {
+        return null;
+      }
+      return [countryIso2, group];
+    })
+    .filter(Boolean)
+);
+let changed = uniqueCountryIso2List.length !== countryHandoffAssignments.length;
+const nextAssignments = uniqueCountryIso2List.map((countryIso2, index) => {
+  const existingGroup = existingByIso2.get(countryIso2);
+  if (!existingGroup) {
+    changed = true;
+    return createCountryHandoffGroupDraft(countryIso2);
+  }
+  if (countryHandoffAssignments[index] !== existingGroup) {
+    changed = true;
+  }
+  if (toUpper(existingGroup.countryIso2).slice(0, 2) === countryIso2) {
+    return existingGroup;
+  }
+  changed = true;
+  return {
+    ...existingGroup,
+    countryIso2,
+  };
+});
+return changed ? nextAssignments : countryHandoffAssignments;
 }
 function sanitizeDefaultAccounts(accounts) {
 const rows = Array.isArray(accounts) ? accounts : [];
@@ -539,6 +635,166 @@ function compactGroupCoaPayload(groupCoa) {
 const starterPackId = toUpper(groupCoa?.starterPackId ?? groupCoa?.starter_pack_id);
 return starterPackId ? { starterPackId } : {};
 }
+function compactBootstrapHandoffAssignmentPayload({
+  assignment,
+  presetCode,
+  scopeType,
+  legalEntityCode = "",
+  countryIso2 = "",
+}) {
+  const selectionMode = String(assignment?.selectionMode || "INVITE")
+    .trim()
+    .toUpperCase();
+  const userId = Number(assignment?.userId || 0);
+  const email = String(assignment?.email || "")
+    .trim()
+    .toLowerCase();
+  const name = String(assignment?.name || "").trim();
+  if (
+    selectionMode !== "EXISTING_USER" &&
+    !email &&
+    !name &&
+    !assignment?.includeGlPostingAuthority
+  ) {
+    return null;
+  }
+  if (selectionMode === "EXISTING_USER" && (!Number.isInteger(userId) || userId <= 0)) {
+    return null;
+  }
+  if (selectionMode !== "EXISTING_USER" && (!email || !name)) {
+    return null;
+  }
+  return {
+    presetCode,
+    scopeType,
+    ...(scopeType === "LEGAL_ENTITY"
+      ? { legalEntityCode: String(legalEntityCode || "").trim() }
+      : { countryIso2: toUpper(countryIso2).slice(0, 2) }),
+    ...(selectionMode === "EXISTING_USER"
+      ? { userId }
+      : {
+          email,
+          name,
+        }),
+    includeGlPostingAuthority: assignment?.includeGlPostingAuthority === true,
+  };
+}
+function compactBootstrapHandoffPayload(form) {
+const rows = [];
+for (const entity of form.legalEntities || []) {
+  for (const assignment of entity.handoffAssignments || []) {
+    const payload = compactBootstrapHandoffAssignmentPayload({
+      assignment,
+      presetCode: ENTITY_SETUP_PRESET.code,
+      scopeType: ENTITY_SETUP_PRESET.scopeType,
+      legalEntityCode: entity.code,
+    });
+    if (payload) {
+      rows.push(payload);
+    }
+  }
+}
+for (const countryGroup of form.countryHandoffAssignments || []) {
+  for (const assignment of countryGroup.assignments || []) {
+    const payload = compactBootstrapHandoffAssignmentPayload({
+      assignment,
+      presetCode: COUNTRY_FINANCE_SETUP_PRESET.code,
+      scopeType: COUNTRY_FINANCE_SETUP_PRESET.scopeType,
+      countryIso2: countryGroup.countryIso2,
+    });
+    if (payload) {
+      rows.push(payload);
+    }
+  }
+}
+return rows;
+}
+function isBlankHandoffAssignment(assignment) {
+return (
+  !String(assignment?.userId || "").trim() &&
+  !String(assignment?.name || "").trim() &&
+  !String(assignment?.email || "").trim() &&
+  !assignment?.includeGlPostingAuthority
+);
+}
+function validateBootstrapHandoffRows(form, l) {
+for (let index = 0; index < form.legalEntities.length; index += 1) {
+  const entity = form.legalEntities[index];
+  const scopeLabel = entity.code.trim() || `Legal entity ${index + 1}`;
+  for (let rowIndex = 0; rowIndex < (entity.handoffAssignments || []).length; rowIndex += 1) {
+    const assignment = entity.handoffAssignments[rowIndex];
+    const selectionMode = String(assignment?.selectionMode || "INVITE")
+      .trim()
+      .toUpperCase();
+    if (isBlankHandoffAssignment(assignment)) {
+      continue;
+    }
+    if (selectionMode === "EXISTING_USER") {
+      if (!Number.isInteger(Number(assignment?.userId || 0)) || Number(assignment.userId) <= 0) {
+        return l(
+          `${scopeLabel}: choose an existing active user for entity handoff row ${rowIndex + 1}.`,
+          `${scopeLabel}: var olan aktif kullaniciyi secin (birim devir satiri ${rowIndex + 1}).`
+        );
+      }
+      continue;
+    }
+    const email = String(assignment?.email || "")
+      .trim()
+      .toLowerCase();
+    const name = String(assignment?.name || "").trim();
+    if (!name || !email) {
+      return l(
+        `${scopeLabel}: invite name and email are both required for entity handoff row ${rowIndex + 1}.`,
+        `${scopeLabel}: birim devir satiri ${rowIndex + 1} icin davet ad ve e-posta alanlari birlikte zorunludur.`
+      );
+    }
+    if (!email.includes("@") || !email.includes(".")) {
+      return l(
+        `${scopeLabel}: invite email is invalid for entity handoff row ${rowIndex + 1}.`,
+        `${scopeLabel}: birim devir satiri ${rowIndex + 1} icin davet e-postasi gecersiz.`
+      );
+    }
+  }
+}
+for (const countryGroup of form.countryHandoffAssignments || []) {
+  const scopeLabel = `Country ${countryGroup.countryIso2}`;
+  for (let rowIndex = 0; rowIndex < (countryGroup.assignments || []).length; rowIndex += 1) {
+    const assignment = countryGroup.assignments[rowIndex];
+    const selectionMode = String(assignment?.selectionMode || "INVITE")
+      .trim()
+      .toUpperCase();
+    if (isBlankHandoffAssignment(assignment)) {
+      continue;
+    }
+    if (selectionMode === "EXISTING_USER") {
+      if (!Number.isInteger(Number(assignment?.userId || 0)) || Number(assignment.userId) <= 0) {
+        return l(
+          `${scopeLabel}: choose an existing active user for country handoff row ${rowIndex + 1}.`,
+          `${scopeLabel}: ulke devir satiri ${rowIndex + 1} icin var olan aktif kullaniciyi secin.`
+        );
+      }
+      continue;
+    }
+    const email = String(assignment?.email || "")
+      .trim()
+      .toLowerCase();
+    const name = String(assignment?.name || "").trim();
+    if (!name || !email) {
+      return l(
+        `${scopeLabel}: invite name and email are both required for country handoff row ${rowIndex + 1}.`,
+        `${scopeLabel}: ulke devir satiri ${rowIndex + 1} icin davet ad ve e-posta alanlari birlikte zorunludur.`
+      );
+    }
+    if (!email.includes("@") || !email.includes(".")) {
+      return l(
+        `${scopeLabel}: invite email is invalid for country handoff row ${rowIndex + 1}.`,
+        `${scopeLabel}: ulke devir satiri ${rowIndex + 1} icin davet e-postasi gecersiz.`
+      );
+    }
+  }
+}
+return "";
+}
 function validateAccountTreeRows(defaultAccounts, prefix, l) {
 const rows = sanitizeDefaultAccounts(defaultAccounts);
 if (rows.length === 0) {
@@ -804,9 +1060,12 @@ const shareholderParentError = validateShareholderParentSetupRows(
 if (shareholderParentError) {
   return shareholderParentError;
 }
-return "";
+return validateBootstrapHandoffRows(form, l);
 }
 function validateWizardStep(form, stepKey, l, options = {}) {
+if (stepKey === "handoff") {
+  return validateBootstrapHandoffRows(form, l);
+}
 if (stepKey === "entity") {
   if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
     return l(
@@ -909,6 +1168,7 @@ const [form, setForm] = useState(createInitialForm());
 const [activeStepIndex, setActiveStepIndex] = useState(0);
 const [countries, setCountries] = useState([]);
 const [currencies, setCurrencies] = useState([]);
+const [handoffUsers, setHandoffUsers] = useState([]);
 const [policyPacks, setPolicyPacks] = useState([]);
 const [policyPackDetailsById, setPolicyPackDetailsById] = useState({});
 const [packBusyByEntityId, setPackBusyByEntityId] = useState({});
@@ -957,6 +1217,16 @@ const currencyOptions = useMemo(() => {
     String(left?.code || "").localeCompare(String(right?.code || ""))
   );
 }, [currencies]);
+const handoffUserOptions = useMemo(() => {
+  return [...handoffUsers].sort((left, right) => {
+    const leftName = String(left?.name || "").trim();
+    const rightName = String(right?.name || "").trim();
+    if (leftName !== rightName) {
+      return leftName.localeCompare(rightName);
+    }
+    return String(left?.email || "").localeCompare(String(right?.email || ""));
+  });
+}, [handoffUsers]);
 const countriesByIso2 = useMemo(() => {
   const map = new Map();
   for (const row of countryOptions) {
@@ -1040,6 +1310,17 @@ useEffect(() => {
       setPolicyPacks([]);
       warnings.push(
         err?.response?.data?.message || "Policy pack list could not be loaded"
+      );
+    }
+    try {
+      const response = await getCompanyBootstrapHandoffOptions();
+      if (!active) return;
+      setHandoffUsers(Array.isArray(response?.users) ? response.users : []);
+    } catch (err) {
+      if (!active) return;
+      setHandoffUsers([]);
+      warnings.push(
+        err?.response?.data?.message || "Bootstrap handoff user list could not be loaded"
       );
     }
     if (!active) return;
@@ -1162,6 +1443,20 @@ useEffect(() => {
   form.legalEntities,
   policyPackDetailsById,
 ]);
+useEffect(() => {
+  setForm((prev) => {
+    const nextCountryHandoffAssignments = syncCountryHandoffAssignments(
+      prev.countryHandoffAssignments,
+      prev.legalEntities
+    );
+    return nextCountryHandoffAssignments === prev.countryHandoffAssignments
+      ? prev
+      : {
+          ...prev,
+          countryHandoffAssignments: nextCountryHandoffAssignments,
+        };
+  });
+}, [form.legalEntities]);
 useEffect(() => {
   setForm((prev) => {
     let changed = false;
@@ -1302,6 +1597,150 @@ function setEntityCountry(entityId, rawIso2) {
         defaultAccounts: shouldRefreshStarterAccounts
           ? getCountryStarterAccounts(nextCountryIso2)
           : entity.defaultAccounts,
+      };
+    }),
+  }));
+}
+function updateHandoffAssignmentFieldValue(assignment, field, value) {
+  if (field === "selectionMode") {
+    const selectionMode =
+      String(value || "INVITE").trim().toUpperCase() === "EXISTING_USER"
+        ? "EXISTING_USER"
+        : "INVITE";
+    return selectionMode === "EXISTING_USER"
+      ? {
+          ...assignment,
+          selectionMode,
+          name: "",
+          email: "",
+        }
+      : {
+          ...assignment,
+          selectionMode,
+          userId: "",
+        };
+  }
+  if (field === "userId") {
+    return {
+      ...assignment,
+      userId: String(value || ""),
+      name: "",
+      email: "",
+    };
+  }
+  if (field === "email") {
+    return {
+      ...assignment,
+      email: String(value || "").trim().toLowerCase(),
+    };
+  }
+  if (field === "includeGlPostingAuthority") {
+    return {
+      ...assignment,
+      includeGlPostingAuthority: Boolean(value),
+    };
+  }
+  return {
+    ...assignment,
+    [field]: value,
+  };
+}
+function addEntityHandoffAssignment(entityId) {
+  setForm((prev) => ({
+    ...prev,
+    legalEntities: prev.legalEntities.map((entity) =>
+      entity.id === entityId
+        ? {
+            ...entity,
+            handoffAssignments: [
+              ...(entity.handoffAssignments || []),
+              createHandoffAssignmentDraft(),
+            ],
+          }
+        : entity
+    ),
+  }));
+}
+function setEntityHandoffAssignmentField(entityId, assignmentId, field, value) {
+  setForm((prev) => ({
+    ...prev,
+    legalEntities: prev.legalEntities.map((entity) => {
+      if (entity.id !== entityId) {
+        return entity;
+      }
+      return {
+        ...entity,
+        handoffAssignments: (entity.handoffAssignments || []).map((assignment) =>
+          assignment.id === assignmentId
+            ? updateHandoffAssignmentFieldValue(assignment, field, value)
+            : assignment
+        ),
+      };
+    }),
+  }));
+}
+function removeEntityHandoffAssignment(entityId, assignmentId) {
+  setForm((prev) => ({
+    ...prev,
+    legalEntities: prev.legalEntities.map((entity) => {
+      if (entity.id !== entityId) {
+        return entity;
+      }
+      return {
+        ...entity,
+        handoffAssignments: (entity.handoffAssignments || []).filter(
+          (assignment) => assignment.id !== assignmentId
+        ),
+      };
+    }),
+  }));
+}
+function addCountryHandoffAssignment(countryIso2) {
+  const normalizedCountryIso2 = toUpper(countryIso2).slice(0, 2);
+  setForm((prev) => ({
+    ...prev,
+    countryHandoffAssignments: (prev.countryHandoffAssignments || []).map((group) =>
+      toUpper(group.countryIso2).slice(0, 2) === normalizedCountryIso2
+        ? {
+            ...group,
+            assignments: [...(group.assignments || []), createHandoffAssignmentDraft()],
+          }
+        : group
+    ),
+  }));
+}
+function setCountryHandoffAssignmentField(countryIso2, assignmentId, field, value) {
+  const normalizedCountryIso2 = toUpper(countryIso2).slice(0, 2);
+  setForm((prev) => ({
+    ...prev,
+    countryHandoffAssignments: (prev.countryHandoffAssignments || []).map((group) => {
+      if (toUpper(group.countryIso2).slice(0, 2) !== normalizedCountryIso2) {
+        return group;
+      }
+      return {
+        ...group,
+        assignments: (group.assignments || []).map((assignment) =>
+          assignment.id === assignmentId
+            ? updateHandoffAssignmentFieldValue(assignment, field, value)
+            : assignment
+        ),
+      };
+    }),
+  }));
+}
+function removeCountryHandoffAssignment(countryIso2, assignmentId) {
+  const normalizedCountryIso2 = toUpper(countryIso2).slice(0, 2);
+  setForm((prev) => ({
+    ...prev,
+    countryHandoffAssignments: (prev.countryHandoffAssignments || []).map((group) => {
+      if (toUpper(group.countryIso2).slice(0, 2) !== normalizedCountryIso2) {
+        return group;
+      }
+      return {
+        ...group,
+        assignments: (group.assignments || []).filter(
+          (assignment) => assignment.id !== assignmentId
+        ),
       };
     }),
   }));
@@ -1633,8 +2072,7 @@ function loadSample() {
     },
     fiscalYear: new Date().getUTCFullYear(),
     legalEntities: [
-      {
-        id: createId("entity"),
+      createEntityDraft({
         code: "US01",
         name: "US Operations LLC",
         taxId: "",
@@ -1658,8 +2096,9 @@ function loadSample() {
             hasSubledger: true,
           },
         ],
-      },
+      }),
     ],
+    countryHandoffAssignments: [],
   });
   setActiveStepIndex(0);
   setResult(null);
@@ -1711,6 +2150,7 @@ async function handleSubmit(event) {
     setError(validationError);
     return;
   }
+  const handoffAssignments = compactBootstrapHandoffPayload(form);
   const payload = {
     groupCompany: {
       code: form.groupCompany.code.trim(),
@@ -1725,6 +2165,7 @@ async function handleSubmit(event) {
     },
     fiscalYear: Number(form.fiscalYear),
     legalEntities: form.legalEntities.map(compactEntityPayload),
+    ...(handoffAssignments.length > 0 ? { handoffAssignments } : {}),
   };
   setSubmitting(true);
   try {
@@ -1757,8 +2198,8 @@ return (
           </h1>
           <p className="mt-1 text-sm text-slate-600">
             {l(
-              "Company + Entities -> CoA Template -> Account Tree -> Branches -> Current Accounts",
-              "Sirket + Birimler -> Hesap Plani Sablonu -> Hesap Agaci -> Subeler -> Cari Ic Hesaplar"
+              "Company + Entities -> Responsibles -> CoA Template -> Account Tree -> Branches -> Current Accounts",
+              "Sirket + Birimler -> Sorumlular -> Hesap Plani Sablonu -> Hesap Agaci -> Subeler -> Cari Ic Hesaplar"
             )}
           </p>
         </div>
@@ -1781,7 +2222,7 @@ return (
       </div>
     </div>
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <ol className="grid gap-2 sm:grid-cols-6">
+      <ol className="grid gap-2 sm:grid-cols-7">
         {WIZARD_STEPS.map((step, index) => {
           const isActive = index === activeStepIndex;
           const isCompleted = index < activeStepIndex;
@@ -3211,6 +3652,439 @@ return (
           </div>
         </section>
       ) : null}
+      {activeStep.key === "handoff" ? (
+        <section className="space-y-4">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-slate-800">
+              {l("Bootstrap Handoff", "Kurulum Devri")}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {l(
+                "Central setup can hand legal entities and countries off to bounded local responsibles now. GLPostingAuthority stays optional and explicit per assignee.",
+                "Merkezi kurulum, tuzel kisilikleri ve ulkeleri simdi sinirli yerel sorumlulara devredebilir. GLPostingAuthority her atamada istege bagli ve acik secim olarak kalir."
+              )}
+            </p>
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      {ENTITY_SETUP_PRESET.code}
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {l(
+                        "Assigned at legal-entity scope for local activation work.",
+                        "Yerel aktivasyon calismasi icin legal-entity kapsaminda atanir."
+                      )}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white">
+                    {ENTITY_SETUP_PRESET.scopeType}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {ENTITY_SETUP_PRESET.roleCodes.map((roleCode) => {
+                    const roleEntry = getRoleCatalogEntry(roleCode);
+                    return (
+                      <span
+                        key={`entity-preset-${roleCode}`}
+                        title={roleEntry.summary}
+                        className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        {roleEntry.code}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      {COUNTRY_FINANCE_SETUP_PRESET.code}
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {l(
+                        "Assigned at country scope for cross-entity finance review responsibility.",
+                        "Ulke kapsaminda birden cok entity icin finansal gozden gecirme sorumlulugu olarak atanir."
+                      )}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white">
+                    {COUNTRY_FINANCE_SETUP_PRESET.scopeType}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {COUNTRY_FINANCE_SETUP_PRESET.roleCodes.map((roleCode) => {
+                    const roleEntry = getRoleCatalogEntry(roleCode);
+                    return (
+                      <span
+                        key={`country-preset-${roleCode}`}
+                        title={roleEntry.summary}
+                        className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        {roleEntry.code}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <span className="font-semibold">{GL_POSTING_AUTHORITY_ENTRY.code}</span>
+              {" - "}
+              {GL_POSTING_AUTHORITY_ENTRY.summary}
+            </div>
+          </section>
+          <section className="space-y-4">
+            {form.legalEntities.map((entity, entityIndex) => (
+              <article
+                key={`${entity.id}-handoff`}
+                className="rounded-2xl border border-slate-200 bg-white p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      {entity.code.trim() || l(`Legal Entity ${entityIndex + 1}`, `Istirak / Bagli Ortak ${entityIndex + 1}`)}
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {entity.name.trim() || l("Entity setup handoff", "Birim kurulum devri")}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addEntityHandoffAssignment(entity.id)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    {l("Add Entity Responsible", "Entity Sorumlusu Ekle")}
+                  </button>
+                </div>
+                {(entity.handoffAssignments || []).length === 0 ? (
+                  <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                    {l(
+                      "No entity responsible selected yet. Leave empty to complete assignment later, or add a bounded setup manager now.",
+                      "Henuz entity sorumlusu secilmedi. Daha sonra atamak icin bos birakabilir veya simdi sinirli bir kurulum sorumlusu ekleyebilirsiniz."
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    {(entity.handoffAssignments || []).map((assignment, rowIndex) => (
+                      <div
+                        key={assignment.id}
+                        className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                      >
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Entity handoff row", "Entity devir satiri")} {rowIndex + 1}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeEntityHandoffAssignment(entity.id, assignment.id)
+                            }
+                            className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                          >
+                            {l("Remove", "Kaldir")}
+                          </button>
+                        </div>
+                        <div className="grid gap-3 xl:grid-cols-5">
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold text-slate-600">
+                              {l("Assignment type", "Atama tipi")}
+                            </label>
+                            <select
+                              value={assignment.selectionMode}
+                              onChange={(event) =>
+                                setEntityHandoffAssignmentField(
+                                  entity.id,
+                                  assignment.id,
+                                  "selectionMode",
+                                  event.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                            >
+                              <option value="INVITE">{l("Invite user", "Kullanici davet et")}</option>
+                              <option value="EXISTING_USER">
+                                {l("Existing active user", "Mevcut aktif kullanici")}
+                              </option>
+                            </select>
+                          </div>
+                          {assignment.selectionMode === "EXISTING_USER" ? (
+                            <div className="xl:col-span-2">
+                              <label className="mb-1 block text-xs font-semibold text-slate-600">
+                                {l("Active tenant user", "Aktif kiraci kullanicisi")}
+                              </label>
+                              <select
+                                value={assignment.userId}
+                                onChange={(event) =>
+                                  setEntityHandoffAssignmentField(
+                                    entity.id,
+                                    assignment.id,
+                                    "userId",
+                                    event.target.value
+                                  )
+                                }
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                              >
+                                <option value="">
+                                  {l("Select existing user", "Mevcut kullaniciyi secin")}
+                                </option>
+                                {handoffUserOptions.map((user) => (
+                                  <option key={`entity-user-${user.id}`} value={String(user.id)}>
+                                    {user.name || user.email} - {user.email}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : (
+                            <>
+                              <div>
+                                <label className="mb-1 block text-xs font-semibold text-slate-600">
+                                  {l("Invite name", "Davet adi")}
+                                </label>
+                                <input
+                                  value={assignment.name}
+                                  onChange={(event) =>
+                                    setEntityHandoffAssignmentField(
+                                      entity.id,
+                                      assignment.id,
+                                      "name",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                  placeholder={l("Full name", "Ad soyad")}
+                                />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs font-semibold text-slate-600">
+                                  {l("Invite email", "Davet e-postasi")}
+                                </label>
+                                <input
+                                  value={assignment.email}
+                                  onChange={(event) =>
+                                    setEntityHandoffAssignmentField(
+                                      entity.id,
+                                      assignment.id,
+                                      "email",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                  placeholder="name@example.com"
+                                />
+                              </div>
+                            </>
+                          )}
+                          <label className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 xl:col-span-2">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(assignment.includeGlPostingAuthority)}
+                              onChange={(event) =>
+                                setEntityHandoffAssignmentField(
+                                  entity.id,
+                                  assignment.id,
+                                  "includeGlPostingAuthority",
+                                  event.target.checked
+                                )
+                              }
+                              className="h-4 w-4 rounded border-slate-300"
+                            />
+                            <span>
+                              {l(
+                                "Also grant GLPostingAuthority at this legal entity.",
+                                "Bu legal entity kapsaminda ek olarak GLPostingAuthority ver."
+                              )}
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+          </section>
+          <section className="space-y-4">
+            {(form.countryHandoffAssignments || []).map((countryGroup) => (
+              <article
+                key={`country-handoff-${countryGroup.countryIso2}`}
+                className="rounded-2xl border border-slate-200 bg-white p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      {countriesByIso2.get(countryGroup.countryIso2)?.name ||
+                        countryGroup.countryIso2}
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {l(
+                        "Country-scope finance review handoff across entities in this country.",
+                        "Bu ulkedeki entityler icin ulke kapsamli finans gozden gecirme devri."
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addCountryHandoffAssignment(countryGroup.countryIso2)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    {l("Add Country Responsible", "Ulke Sorumlusu Ekle")}
+                  </button>
+                </div>
+                {(countryGroup.assignments || []).length === 0 ? (
+                  <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                    {l(
+                      "Optional. Add a country finance reviewer only when cross-entity review should start immediately.",
+                      "Istege bagli. Ulke finans gozden gecirmesi hemen baslayacaksa ulke sorumlusu ekleyin."
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    {(countryGroup.assignments || []).map((assignment, rowIndex) => (
+                      <div
+                        key={assignment.id}
+                        className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                      >
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {l("Country handoff row", "Ulke devir satiri")} {rowIndex + 1}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeCountryHandoffAssignment(
+                                countryGroup.countryIso2,
+                                assignment.id
+                              )
+                            }
+                            className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                          >
+                            {l("Remove", "Kaldir")}
+                          </button>
+                        </div>
+                        <div className="grid gap-3 xl:grid-cols-5">
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold text-slate-600">
+                              {l("Assignment type", "Atama tipi")}
+                            </label>
+                            <select
+                              value={assignment.selectionMode}
+                              onChange={(event) =>
+                                setCountryHandoffAssignmentField(
+                                  countryGroup.countryIso2,
+                                  assignment.id,
+                                  "selectionMode",
+                                  event.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                            >
+                              <option value="INVITE">{l("Invite user", "Kullanici davet et")}</option>
+                              <option value="EXISTING_USER">
+                                {l("Existing active user", "Mevcut aktif kullanici")}
+                              </option>
+                            </select>
+                          </div>
+                          {assignment.selectionMode === "EXISTING_USER" ? (
+                            <div className="xl:col-span-2">
+                              <label className="mb-1 block text-xs font-semibold text-slate-600">
+                                {l("Active tenant user", "Aktif kiraci kullanicisi")}
+                              </label>
+                              <select
+                                value={assignment.userId}
+                                onChange={(event) =>
+                                  setCountryHandoffAssignmentField(
+                                    countryGroup.countryIso2,
+                                    assignment.id,
+                                    "userId",
+                                    event.target.value
+                                  )
+                                }
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                              >
+                                <option value="">
+                                  {l("Select existing user", "Mevcut kullaniciyi secin")}
+                                </option>
+                                {handoffUserOptions.map((user) => (
+                                  <option key={`country-user-${user.id}`} value={String(user.id)}>
+                                    {user.name || user.email} - {user.email}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : (
+                            <>
+                              <div>
+                                <label className="mb-1 block text-xs font-semibold text-slate-600">
+                                  {l("Invite name", "Davet adi")}
+                                </label>
+                                <input
+                                  value={assignment.name}
+                                  onChange={(event) =>
+                                    setCountryHandoffAssignmentField(
+                                      countryGroup.countryIso2,
+                                      assignment.id,
+                                      "name",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                  placeholder={l("Full name", "Ad soyad")}
+                                />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs font-semibold text-slate-600">
+                                  {l("Invite email", "Davet e-postasi")}
+                                </label>
+                                <input
+                                  value={assignment.email}
+                                  onChange={(event) =>
+                                    setCountryHandoffAssignmentField(
+                                      countryGroup.countryIso2,
+                                      assignment.id,
+                                      "email",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                  placeholder="name@example.com"
+                                />
+                              </div>
+                            </>
+                          )}
+                          <label className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 xl:col-span-2">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(assignment.includeGlPostingAuthority)}
+                              onChange={(event) =>
+                                setCountryHandoffAssignmentField(
+                                  countryGroup.countryIso2,
+                                  assignment.id,
+                                  "includeGlPostingAuthority",
+                                  event.target.checked
+                                )
+                              }
+                              className="h-4 w-4 rounded border-slate-300"
+                            />
+                            <span>
+                              {l(
+                                "Also grant GLPostingAuthority at this country scope.",
+                                "Bu ulke kapsaminda ek olarak GLPostingAuthority ver."
+                              )}
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+          </section>
+        </section>
+      ) : null}
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
@@ -3298,6 +4172,28 @@ return (
             {Number(result?.groupCoa?.starterAccountCount || 0)}
           </div>
         </div>
+        {Number(result?.handoff?.assignmentCount || 0) > 0 ? (
+          <div className="mt-3 grid gap-2 text-xs text-emerald-900 md:grid-cols-3">
+            <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+              <span className="font-semibold">
+                {l("Handoffs:", "Devirler:")}
+              </span>{" "}
+              {Number(result?.handoff?.assignmentCount || 0)}
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+              <span className="font-semibold">
+                {l("Invites:", "Davetler:")}
+              </span>{" "}
+              {Number(result?.handoff?.invitedCount || 0)}
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+              <span className="font-semibold">
+                {l("Existing users:", "Mevcut kullanicilar:")}
+              </span>{" "}
+              {Number(result?.handoff?.existingUserCount || 0)}
+            </div>
+          </div>
+        ) : null}
         <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-200 bg-white">
           <table className="min-w-full text-sm">
             <thead className="bg-emerald-100/70 text-left text-emerald-900">

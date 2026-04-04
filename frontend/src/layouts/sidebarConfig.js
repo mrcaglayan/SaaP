@@ -51,6 +51,20 @@ const OPS_RETENTION_PAGE_PERMISSIONS = [
 ];
 const COMPANY_SETTINGS_PAGE_PERMISSIONS = ["onboarding.company.setup"];
 const ORG_SETTINGS_PAGE_PERMISSIONS = ["org.tree.read", "org.fiscal_calendar.read"];
+const ENTITY_ACTIVATION_WORKSPACE_PAGE_PERMISSIONS = [
+  "org.tree.read",
+  "org.fiscal_calendar.read",
+  "org.fiscal_period.read",
+  "gl.book.read",
+  "gl.coa.read",
+  "gl.account.read",
+  "org.operating_unit.upsert",
+  "org.shareholder.upsert",
+  "org.shareholder.capital_fulfillment.upsert",
+  "bank.accounts.read",
+  "cash.register.read",
+  "ouclose.read",
+];
 const GL_SETUP_PAGE_PERMISSIONS = [
   "gl.book.read",
   "gl.coa.read",
@@ -748,6 +762,12 @@ export const sidebarItems = [
         label: "Organizasyon Yonetimi",
         to: "/app/ayarlar/organizasyon-yonetimi",
         requiredPermissions: ORG_SETTINGS_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Entity Aktivasyon Alani",
+        to: "/app/ayarlar/entity-aktivasyon-alani",
+        requiredPermissions: ENTITY_ACTIVATION_WORKSPACE_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

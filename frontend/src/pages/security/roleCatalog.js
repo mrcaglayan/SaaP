@@ -162,6 +162,37 @@ const ROLE_CATALOG = Object.freeze({
   },
 });
 
+export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
+  EntitySetupManager: Object.freeze({
+    code: "EntitySetupManager",
+    summary:
+      "Bootstrap preset for one legal-entity setup lead using bounded composable operator roles.",
+    scopeType: "LEGAL_ENTITY",
+    roleCodes: Object.freeze([
+      "MasterDataSteward",
+      "GLOperator",
+      "TreasuryOperator",
+      "PayrollOperator",
+      "LocalClosePreparer",
+      "ShareholderCapitalOperator",
+    ]),
+    optionalRoleCodes: Object.freeze(["GLPostingAuthority"]),
+  }),
+  CountryFinanceSetupManager: Object.freeze({
+    code: "CountryFinanceSetupManager",
+    summary:
+      "Bootstrap preset for one country-level finance reviewer using bounded composable review roles.",
+    scopeType: "COUNTRY",
+    roleCodes: Object.freeze([
+      "GLOperator",
+      "TreasuryApprover",
+      "PayrollApprover",
+      "LocalCloseReviewer",
+    ]),
+    optionalRoleCodes: Object.freeze(["GLPostingAuthority"]),
+  }),
+});
+
 const CATEGORY_ORDER = Object.freeze([
   "composable",
   "scoped",
@@ -173,6 +204,23 @@ const CATEGORY_ORDER = Object.freeze([
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+/**
+ * Returns the UX metadata for one bootstrap handoff preset.
+ */
+export function getBootstrapHandoffPresetEntry(presetCode) {
+  const normalizedPresetCode = normalizeText(presetCode);
+  const base = BOOTSTRAP_HANDOFF_PRESET_CATALOG[normalizedPresetCode] || null;
+  return {
+    code: normalizedPresetCode,
+    summary:
+      base?.summary ||
+      "Bootstrap preset. Review included composable roles before assigning it broadly.",
+    scopeType: base?.scopeType || "",
+    roleCodes: [...(base?.roleCodes || [])],
+    optionalRoleCodes: [...(base?.optionalRoleCodes || [])],
+  };
 }
 
 /**

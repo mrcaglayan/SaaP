@@ -36,7 +36,7 @@ import {
   provisionBankAccountControlParentChild,
 } from "../../api/bankAccounts.js";
 import { listCashRegisters, listCashSessions } from "../../api/cashAdmin.js";
-import { listAccounts } from "../../api/glAdmin.js";
+import { listAccounts, listBooks, listCoas } from "../../api/glAdmin.js";
 import { listPolicyPacks } from "../../api/policyPacks.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
@@ -509,9 +509,15 @@ function formatShareholderReadinessReason(reason, l) {
   }
 }
 
-export default function OrganizationManagementPage() {
+/**
+ * Maintains the organization-management surface and, when requested via
+ * `workspaceMode="activation"`, narrows the experience to one local
+ * legal-entity activation workspace instead of the full tenant structure UI.
+ */
+export default function OrganizationManagementPage({ workspaceMode = "full" }) {
   const { hasPermission } = useAuth();
-  const { refreshLookups } = useWorkingContext();
+  const { loadingBase, preferencesHydrated, refreshLookups, workingContext } =
+    useWorkingContext();
   const { language } = useI18n();
   const { getModuleRow, refreshLegalEntity } = useModuleReadiness();
   const isTr = language === "tr";
@@ -520,6 +526,8 @@ export default function OrganizationManagementPage() {
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadFiscalCalendars = hasPermission("org.fiscal_calendar.read");
   const canReadFiscalPeriods = hasPermission("org.fiscal_period.read");
+  const canReadBooks = hasPermission("gl.book.read");
+  const canReadCoas = hasPermission("gl.coa.read");
   const canReadAccounts = hasPermission("gl.account.read");
   const canUpsertGroupCompany = hasPermission("org.group_company.upsert");
   const canUpsertLegalEntity = hasPermission("org.legal_entity.upsert");
@@ -547,7 +555,12 @@ export default function OrganizationManagementPage() {
       !canUpsertFiscalCalendar &&
       !canGenerateFiscalPeriods
   );
-  const showTenantReadinessChecklist = !isScopedCapitalFulfillmentOperator;
+  const isActivationWorkspace = workspaceMode === "activation";
+  const isScopedActivationWorkspace = Boolean(
+    isActivationWorkspace && !canRunTenantSetup
+  );
+  const showTenantReadinessChecklist =
+    !isActivationWorkspace && !isScopedCapitalFulfillmentOperator;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -626,6 +639,8 @@ export default function OrganizationManagementPage() {
   const [groups, setGroups] = useState([]);
   const [countries, setCountries] = useState([]);
   const [currencies, setCurrencies] = useState([]);
+  const [books, setBooks] = useState([]);
+  const [coas, setCoas] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
@@ -640,6 +655,16 @@ export default function OrganizationManagementPage() {
   const [policyPacks, setPolicyPacks] = useState([]);
   const [calendars, setCalendars] = useState([]);
   const [periods, setPeriods] = useState([]);
+  const [activationBankAccounts, setActivationBankAccounts] = useState([]);
+  const [activationBankAccountsLoading, setActivationBankAccountsLoading] =
+    useState(false);
+  const [activationBankAccountsError, setActivationBankAccountsError] =
+    useState("");
+  const [activationCashRegisters, setActivationCashRegisters] = useState([]);
+  const [activationCashRegistersLoading, setActivationCashRegistersLoading] =
+    useState(false);
+  const [activationCashRegistersError, setActivationCashRegistersError] =
+    useState("");
   const [showAllPolicyPackOptions, setShowAllPolicyPackOptions] = useState(false);
 
   const [groupForm, setGroupForm] = useState({ code: "", name: "" });
@@ -698,6 +723,8 @@ export default function OrganizationManagementPage() {
           groupsRes,
           countriesRes,
           currenciesRes,
+          booksRes,
+          coasRes,
           accountsRes,
           policyPacksRes,
           entitiesRes,
@@ -711,6 +738,8 @@ export default function OrganizationManagementPage() {
             listGroupCompanies(),
             listCountries(),
             listCurrencies(),
+            canReadBooks ? listBooks() : Promise.resolve({ rows: [] }),
+            canReadCoas ? listCoas() : Promise.resolve({ rows: [] }),
             canReadAccounts
               ? listAccounts({ includeInactive: true })
               : Promise.resolve({ rows: [] }),
@@ -730,6 +759,8 @@ export default function OrganizationManagementPage() {
         const groupRows = groupsRes?.rows || [];
         const countryRows = countriesRes?.rows || [];
         const currencyRows = currenciesRes?.rows || [];
+        const bookRows = booksRes?.rows || [];
+        const coaRows = coasRes?.rows || [];
         const accountRows = accountsRes?.rows || [];
         const policyPackRows = policyPacksRes?.rows || [];
         const entityRows = entitiesRes?.rows || [];
@@ -743,6 +774,8 @@ export default function OrganizationManagementPage() {
         setGroups(groupRows);
         setCountries(countryRows);
         setCurrencies(currencyRows);
+        setBooks(bookRows);
+        setCoas(coaRows);
         setAccounts(accountRows);
         setPolicyPacks(policyPackRows);
         setLegalEntities(entityRows);
@@ -889,6 +922,8 @@ export default function OrganizationManagementPage() {
     canReadFiscalCalendars,
     canReadShareholders,
     canReadAccounts,
+    canReadBooks,
+    canReadCoas,
   ]);
 
   useEffect(() => {
@@ -961,6 +996,140 @@ export default function OrganizationManagementPage() {
     }
     return next;
   }, [legalEntities]);
+  const workingLegalEntityId = toNumber(workingContext?.legalEntityId);
+  const resolvedWorkingLegalEntity = useMemo(
+    () => legalEntityById.get(workingLegalEntityId) || null,
+    [legalEntityById, workingLegalEntityId]
+  );
+  const fallbackActivationLegalEntityId = useMemo(() => {
+    if (!isActivationWorkspace) {
+      return null;
+    }
+    if (!canRunTenantSetup && legalEntities.length === 1) {
+      return toNumber(legalEntities[0]?.id);
+    }
+    if (canRunTenantSetup) {
+      return toNumber(legalEntities[0]?.id);
+    }
+    return null;
+  }, [canRunTenantSetup, isActivationWorkspace, legalEntities]);
+  const activationFocusLegalEntityId = useMemo(() => {
+    if (!isActivationWorkspace) {
+      return null;
+    }
+    return (
+      workingLegalEntityId ||
+      toNumber(resolvedWorkingLegalEntity?.id) ||
+      fallbackActivationLegalEntityId
+    );
+  }, [
+    fallbackActivationLegalEntityId,
+    isActivationWorkspace,
+    resolvedWorkingLegalEntity?.id,
+    workingLegalEntityId,
+  ]);
+  const activationFocusLegalEntity = useMemo(
+    () => legalEntityById.get(activationFocusLegalEntityId) || null,
+    [activationFocusLegalEntityId, legalEntityById]
+  );
+  const activationFocusCountry = useMemo(
+    () => countryById.get(toNumber(activationFocusLegalEntity?.country_id)) || null,
+    [activationFocusLegalEntity?.country_id, countryById]
+  );
+  const showCentralStructureSections = !isActivationWorkspace;
+  const activationWorkingContextResolved =
+    Boolean(activationFocusLegalEntityId) ||
+    (preferencesHydrated && !loadingBase);
+  const activationScopeLabel = activationFocusLegalEntity
+    ? activationFocusCountry
+      ? `${activationFocusLegalEntity.code} - ${activationFocusLegalEntity.name} | ${activationFocusCountry.iso2} - ${activationFocusCountry.name}`
+      : `${activationFocusLegalEntity.code} - ${activationFocusLegalEntity.name}`
+    : l("No legal entity selected", "Legal entity secilmedi");
+  const workspaceLegalEntities = useMemo(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return legalEntities;
+    }
+    return legalEntities.filter(
+      (row) => toNumber(row?.id) === Number(activationFocusLegalEntityId)
+    );
+  }, [activationFocusLegalEntityId, isActivationWorkspace, legalEntities]);
+  const workspaceOperatingUnits = useMemo(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return operatingUnits;
+    }
+    return operatingUnits.filter(
+      (row) =>
+        toNumber(row?.legal_entity_id) === Number(activationFocusLegalEntityId)
+    );
+  }, [activationFocusLegalEntityId, isActivationWorkspace, operatingUnits]);
+  const workspaceOperatingUnitCurrentAccountConfigs = useMemo(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return operatingUnitCurrentAccountConfigs;
+    }
+    return operatingUnitCurrentAccountConfigs.filter(
+      (row) =>
+        toNumber(row?.legal_entity_id) === Number(activationFocusLegalEntityId)
+    );
+  }, [
+    activationFocusLegalEntityId,
+    isActivationWorkspace,
+    operatingUnitCurrentAccountConfigs,
+  ]);
+  const workspaceOperatingUnitPartnerCurrentAccounts = useMemo(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return operatingUnitPartnerCurrentAccounts;
+    }
+    return operatingUnitPartnerCurrentAccounts.filter(
+      (row) =>
+        toNumber(row?.legal_entity_id) === Number(activationFocusLegalEntityId)
+    );
+  }, [
+    activationFocusLegalEntityId,
+    isActivationWorkspace,
+    operatingUnitPartnerCurrentAccounts,
+  ]);
+  const workspaceShareholders = useMemo(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return shareholders;
+    }
+    return shareholders.filter(
+      (row) =>
+        toNumber(row?.legal_entity_id) === Number(activationFocusLegalEntityId)
+    );
+  }, [activationFocusLegalEntityId, isActivationWorkspace, shareholders]);
+  const workspaceBooks = useMemo(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return books;
+    }
+    return books.filter(
+      (row) => toNumber(row?.legal_entity_id) === Number(activationFocusLegalEntityId)
+    );
+  }, [activationFocusLegalEntityId, books, isActivationWorkspace]);
+  const workspaceCoas = useMemo(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return coas;
+    }
+    return coas.filter((row) => {
+      const legalEntityId = toNumber(row?.legal_entity_id);
+      return !legalEntityId || legalEntityId === Number(activationFocusLegalEntityId);
+    });
+  }, [activationFocusLegalEntityId, coas, isActivationWorkspace]);
+  const workspaceCalendarIdSet = useMemo(() => {
+    const next = new Set();
+    for (const row of workspaceBooks) {
+      const calendarId = toNumber(row?.calendar_id);
+      if (calendarId) {
+        next.add(calendarId);
+      }
+    }
+    return next;
+  }, [workspaceBooks]);
+  const workspaceCalendarOptions = useMemo(() => {
+    if (!isActivationWorkspace || workspaceCalendarIdSet.size === 0) {
+      return calendars;
+    }
+    return calendars.filter((row) => workspaceCalendarIdSet.has(toNumber(row?.id)));
+  }, [calendars, isActivationWorkspace, workspaceCalendarIdSet]);
   const operatingUnitCurrentAccountConfigSummaryByEntityId = useMemo(() => {
     const next = new Map();
     for (const row of operatingUnitCurrentAccountConfigs) {
@@ -1510,13 +1679,19 @@ export default function OrganizationManagementPage() {
 
   const visibleShareholders = useMemo(() => {
     if (!selectedShareholderLegalEntityId) {
-      return shareholders;
+      return isActivationWorkspace ? workspaceShareholders : shareholders;
     }
-    return shareholders.filter(
+    const sourceRows = isActivationWorkspace ? workspaceShareholders : shareholders;
+    return sourceRows.filter(
       (row) =>
         Number(row.legal_entity_id) === Number(selectedShareholderLegalEntityId)
     );
-  }, [shareholders, selectedShareholderLegalEntityId]);
+  }, [
+    isActivationWorkspace,
+    shareholders,
+    selectedShareholderLegalEntityId,
+    workspaceShareholders,
+  ]);
   const existingShareholderForForm = useMemo(() => {
     if (!selectedShareholderLegalEntityId) {
       return null;
@@ -1980,6 +2155,480 @@ export default function OrganizationManagementPage() {
       ? l("Direct OU-targeted", "Dogrudan OU hedefli")
       : l("Central-first / central-only", "Merkez once / sadece merkez");
   }, [capitalFulfillmentPreview?.operational_model, l, selectedCapitalFulfillmentOperatingUnit]);
+  useEffect(() => {
+    if (!isActivationWorkspace) {
+      setActivationBankAccounts([]);
+      setActivationBankAccountsError("");
+      setActivationCashRegisters([]);
+      setActivationCashRegistersError("");
+      return undefined;
+    }
+
+    if (!activationFocusLegalEntityId) {
+      setActivationBankAccounts([]);
+      setActivationBankAccountsError("");
+      setActivationCashRegisters([]);
+      setActivationCashRegistersError("");
+      return undefined;
+    }
+
+    let active = true;
+    if (canReadBanks) {
+      setActivationBankAccountsLoading(true);
+      setActivationBankAccountsError("");
+      listBankAccounts({ legalEntityId: activationFocusLegalEntityId })
+        .then((response) => {
+          if (!active) {
+            return;
+          }
+          setActivationBankAccounts(Array.isArray(response?.rows) ? response.rows : []);
+        })
+        .catch((err) => {
+          if (!active) {
+            return;
+          }
+          setActivationBankAccounts([]);
+          setActivationBankAccountsError(
+            err?.response?.data?.message ||
+              l(
+                "Failed to load entity bank accounts for activation workspace.",
+                "Aktivasyon alani icin entity banka hesaplari yuklenemedi."
+              )
+          );
+        })
+        .finally(() => {
+          if (active) {
+            setActivationBankAccountsLoading(false);
+          }
+        });
+    } else {
+      setActivationBankAccounts([]);
+      setActivationBankAccountsError(
+        l(
+          "Need bank.accounts.read to review bank setup here.",
+          "Burada banka kurulumunu incelemek icin bank.accounts.read gerekir."
+        )
+      );
+    }
+
+    if (canReadCashRegisters) {
+      setActivationCashRegistersLoading(true);
+      setActivationCashRegistersError("");
+      listCashRegisters({ legalEntityId: activationFocusLegalEntityId })
+        .then((response) => {
+          if (!active) {
+            return;
+          }
+          setActivationCashRegisters(Array.isArray(response?.rows) ? response.rows : []);
+        })
+        .catch((err) => {
+          if (!active) {
+            return;
+          }
+          setActivationCashRegisters([]);
+          setActivationCashRegistersError(
+            err?.response?.data?.message ||
+              l(
+                "Failed to load entity cash registers for activation workspace.",
+                "Aktivasyon alani icin entity kasa tanimlari yuklenemedi."
+              )
+          );
+        })
+        .finally(() => {
+          if (active) {
+            setActivationCashRegistersLoading(false);
+          }
+        });
+    } else {
+      setActivationCashRegisters([]);
+      setActivationCashRegistersError(
+        l(
+          "Need cash.register.read to review cash setup here.",
+          "Burada kasa kurulumunu incelemek icin cash.register.read gerekir."
+        )
+      );
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [
+    activationFocusLegalEntityId,
+    canReadBanks,
+    canReadCashRegisters,
+    isActivationWorkspace,
+    l,
+  ]);
+  useEffect(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return;
+    }
+
+    const legalEntityId = String(activationFocusLegalEntityId);
+    const legalEntityCurrency = String(
+      activationFocusLegalEntity?.functional_currency_code || "USD"
+    ).toUpperCase();
+    const existingCurrentAccountConfig =
+      workspaceOperatingUnitCurrentAccountConfigs.find(
+        (row) =>
+          toNumber(row?.legal_entity_id) === Number(activationFocusLegalEntityId)
+      ) || null;
+
+    setUnitForm((prev) =>
+      prev.legalEntityId === legalEntityId
+        ? prev
+        : {
+            ...DEFAULT_UNIT_FORM,
+            legalEntityId,
+          }
+    );
+    setOperatingUnitCurrentAccountConfigForm((prev) => {
+      if (
+        prev.legalEntityId === legalEntityId &&
+        existingCurrentAccountConfig &&
+        toNumber(prev?.dueFromParentAccountId) ===
+          toNumber(existingCurrentAccountConfig?.due_from_parent_account_id) &&
+        toNumber(prev?.dueToParentAccountId) ===
+          toNumber(existingCurrentAccountConfig?.due_to_parent_account_id)
+      ) {
+        return prev;
+      }
+      return buildOperatingUnitCurrentAccountConfigForm(
+        legalEntityId,
+        existingCurrentAccountConfig
+      );
+    });
+    setUnitPartnerCurrentForm((prev) =>
+      prev.legalEntityId === legalEntityId
+        ? prev
+        : {
+            ...DEFAULT_UNIT_PARTNER_CURRENT_FORM,
+            legalEntityId,
+          }
+    );
+    setShareholderForm((prev) =>
+      prev.legalEntityId === legalEntityId
+        ? prev
+        : {
+            ...prev,
+            legalEntityId,
+            currencyCode: legalEntityCurrency || prev.currencyCode || "USD",
+          }
+    );
+    setCapitalFulfillmentForm((prev) =>
+      prev.legalEntityId === legalEntityId
+        ? prev
+        : {
+            ...DEFAULT_CAPITAL_FULFILLMENT_FORM,
+            legalEntityId,
+            contributionDate: prev.contributionDate || todayIsoDate(),
+          }
+    );
+  }, [
+    activationFocusLegalEntity?.functional_currency_code,
+    activationFocusLegalEntityId,
+    isActivationWorkspace,
+    workspaceOperatingUnitCurrentAccountConfigs,
+  ]);
+  useEffect(() => {
+    if (!isActivationWorkspace) {
+      return;
+    }
+    if (workspaceCalendarOptions.length === 0) {
+      return;
+    }
+    const currentCalendarStillVisible = workspaceCalendarOptions.some(
+      (row) => toNumber(row?.id) === toNumber(periodForm.calendarId)
+    );
+    if (currentCalendarStillVisible) {
+      return;
+    }
+    setPeriodForm((prev) => ({
+      ...prev,
+      calendarId: String(workspaceCalendarOptions[0]?.id || ""),
+    }));
+  }, [isActivationWorkspace, periodForm.calendarId, workspaceCalendarOptions]);
+  const activationReadyBankAccounts = useMemo(
+    () =>
+      activationBankAccounts.filter(
+        (row) =>
+          row?.is_active === undefined ||
+          row?.is_active === null ||
+          row?.is_active === true ||
+          row?.is_active === 1 ||
+          row?.is_active === "1"
+      ),
+    [activationBankAccounts]
+  );
+  const activationReadyCashRegisters = useMemo(
+    () =>
+      activationCashRegisters.filter(
+        (row) => normalizeUpperText(row?.status || "ACTIVE") === "ACTIVE"
+      ),
+    [activationCashRegisters]
+  );
+  const activationOperatingUnitCurrentAccountReadiness = getModuleRow(
+    "operatingUnitCurrentAccounts",
+    activationFocusLegalEntityId
+  );
+  const activationShareholderReadiness = getModuleRow(
+    "shareholderCommitment",
+    activationFocusLegalEntityId
+  );
+  const activationBankControlParentReadiness = getModuleRow(
+    "bankControlParent",
+    activationFocusLegalEntityId
+  );
+  const activationLocalCloseReadiness = getModuleRow(
+    "closeConsolidationWorkflow",
+    activationFocusLegalEntityId
+  );
+  const activationChecklistItems = useMemo(() => {
+    if (!activationFocusLegalEntityId) {
+      return [];
+    }
+
+    return [
+      {
+        key: "books",
+        title: l("Books and ledgers", "Defterler ve ledger yapisi"),
+        ready: workspaceBooks.length > 0,
+        detail:
+          workspaceBooks.length > 0
+            ? l(
+                `${workspaceBooks.length} book(s) are linked to this legal entity.`,
+                `Bu legal entity'ye bagli ${workspaceBooks.length} defter var.`
+              )
+            : l(
+                "No book is linked to this legal entity yet. Finish local ledger activation in GL setup.",
+                "Bu legal entity'ye bagli bir defter henuz yok. GL ayarlarinda yerel defter aktivasyonunu tamamlayin."
+              ),
+        actionPath: "/app/ayarlar/hesap-plani-ayarlari",
+      },
+      {
+        key: "coas",
+        title: l("Chart of accounts usage", "Hesap plani kullanim/mapping"),
+        ready: workspaceCoas.length > 0,
+        detail:
+          workspaceCoas.length > 0
+            ? l(
+                `${workspaceCoas.length} chart-of-accounts row(s) are visible for this scope.`,
+                `Bu kapsam icin ${workspaceCoas.length} hesap plani satiri gorunur.`
+              )
+            : l(
+                "No chart-of-accounts row is visible for this legal entity yet.",
+                "Bu legal entity icin henuz gorunen bir hesap plani satiri yok."
+              ),
+        actionPath: "/app/ayarlar/hesap-plani-ayarlari",
+      },
+      {
+        key: "fiscal",
+        title: l("Fiscal configuration", "Mali konfigurasyon"),
+        ready: workspaceCalendarOptions.length > 0 && periods.length > 0,
+        detail:
+          workspaceCalendarOptions.length > 0 && periods.length > 0
+            ? l(
+                `${workspaceCalendarOptions.length} calendar option(s) and ${periods.length} fiscal period row(s) are available in this view.`,
+                `Bu gorunumde ${workspaceCalendarOptions.length} takvim secenegi ve ${periods.length} mali donem satiri var.`
+              )
+            : l(
+                "Calendar or fiscal-period setup is still incomplete for the current activation scope.",
+                "Mevcut aktivasyon kapsami icin takvim veya mali donem kurulumu halen eksik."
+              ),
+      },
+      {
+        key: "bank",
+        title: l("Bank setup", "Banka kurulumu"),
+        ready: canReadBanks && activationReadyBankAccounts.length > 0,
+        detail: activationBankAccountsLoading
+          ? l(
+              "Loading entity bank accounts for this activation scope...",
+              "Bu aktivasyon kapsami icin entity banka hesaplari yukleniyor..."
+            )
+          : activationBankAccountsError
+          ? activationBankAccountsError
+          : canReadBanks
+            ? activationReadyBankAccounts.length > 0
+              ? l(
+                  `${activationReadyBankAccounts.length} active bank account(s) are ready for this legal entity.`,
+                  `Bu legal entity icin ${activationReadyBankAccounts.length} aktif banka hesabi hazir.`
+                )
+              : l(
+                  "No active bank account is ready for this legal entity yet.",
+                  "Bu legal entity icin henuz hazir aktif banka hesabi yok."
+                )
+            : l(
+                "Bank readiness is hidden because bank.accounts.read is missing.",
+                "bank.accounts.read olmadigi icin banka hazirligi gosterilemiyor."
+              ),
+        actionPath: "/app/banka-tanimla",
+      },
+      {
+        key: "cash",
+        title: l("Cash and register setup", "Kasa ve register kurulumu"),
+        ready: canReadCashRegisters && activationReadyCashRegisters.length > 0,
+        detail: activationCashRegistersLoading
+          ? l(
+              "Loading entity cash registers for this activation scope...",
+              "Bu aktivasyon kapsami icin entity kasa register'lari yukleniyor..."
+            )
+          : activationCashRegistersError
+          ? activationCashRegistersError
+          : canReadCashRegisters
+            ? activationReadyCashRegisters.length > 0
+              ? l(
+                  `${activationReadyCashRegisters.length} active register(s) are ready for this legal entity.`,
+                  `Bu legal entity icin ${activationReadyCashRegisters.length} aktif register hazir.`
+                )
+              : l(
+                  "No active cash register is ready for this legal entity yet.",
+                  "Bu legal entity icin henuz hazir aktif kasa register'i yok."
+                )
+            : l(
+                "Cash readiness is hidden because cash.register.read is missing.",
+                "cash.register.read olmadigi icin kasa hazirligi gosterilemiyor."
+              ),
+        actionPath: "/app/kasa-tanimlari",
+      },
+      {
+        key: "branches",
+        title: l("Branches and operating units", "Subeler ve operasyon birimleri"),
+        ready: workspaceOperatingUnits.length > 0,
+        detail:
+          workspaceOperatingUnits.length > 0
+            ? l(
+                `${workspaceOperatingUnits.length} operating unit(s) are configured in this legal entity.`,
+                `Bu legal entity icinde ${workspaceOperatingUnits.length} operasyon birimi tanimli.`
+              )
+            : l(
+                "No operating unit is configured in this legal entity yet.",
+                "Bu legal entity icinde henuz operasyon birimi tanimli degil."
+              ),
+      },
+      {
+        key: "ouReadiness",
+        title: l(
+          "Self-balancing current-account readiness",
+          "Self-balancing cari hesap hazirligi"
+        ),
+        ready: Boolean(
+          activationOperatingUnitCurrentAccountReadiness?.ready ||
+            activationOperatingUnitCurrentAccountReadiness?.applicable === false
+        ),
+        detail: activationOperatingUnitCurrentAccountReadiness
+          ? formatOperatingUnitCurrentAccountBlocker(
+              {
+                ...activationOperatingUnitCurrentAccountReadiness,
+                legalEntityId: activationFocusLegalEntityId,
+                legalEntityCode: activationFocusLegalEntity?.code,
+                legalEntityName: activationFocusLegalEntity?.name,
+              },
+              l
+            )
+          : l(
+              "Current-account readiness has not been loaded for this legal entity yet.",
+              "Bu legal entity icin cari hesap hazirligi henuz yuklenmedi."
+            ),
+      },
+      {
+        key: "shareholders",
+        title: l("Shareholder and equity setup", "Ortak ve sermaye kurulumu"),
+        ready: Boolean(activationShareholderReadiness?.ready || workspaceShareholders.length > 0),
+        detail: activationShareholderReadiness?.ready
+          ? l(
+              "Shareholder commitment prerequisites are ready for this legal entity.",
+              "Bu legal entity icin ortak taahhut on kosullari hazir."
+            )
+          : activationShareholderReadiness?.blockerCode
+            ? l(
+                `Module blocker: ${activationShareholderReadiness.blockerCode}.`,
+                `Modul engeli: ${activationShareholderReadiness.blockerCode}.`
+              )
+            : workspaceShareholders.length > 0
+              ? l(
+                  `${workspaceShareholders.length} shareholder row(s) are already present in this legal entity.`,
+                  `Bu legal entity icinde zaten ${workspaceShareholders.length} ortak satiri var.`
+                )
+              : l(
+                  "No shareholder setup row is present for this legal entity yet.",
+                  "Bu legal entity icin henuz ortak kurulum satiri yok."
+                ),
+      },
+      {
+        key: "localClose",
+        title: l("Local readiness blockers", "Yerel hazirlik engelleri"),
+        ready: Boolean(
+          activationLocalCloseReadiness?.ready ||
+            activationLocalCloseReadiness?.applicable === false
+        ),
+        detail: activationLocalCloseReadiness?.ready
+          ? l(
+              "Local close workflow prerequisites are already ready for this entity.",
+              "Bu entity icin yerel kapanis workflow on kosullari zaten hazir."
+            )
+          : activationLocalCloseReadiness?.blockerCode
+            ? l(
+                `Local-close blocker: ${activationLocalCloseReadiness.blockerCode}.`,
+                `Yerel kapanis engeli: ${activationLocalCloseReadiness.blockerCode}.`
+              )
+            : l(
+                "Review local close prerequisites and other entity-level blockers from this workspace.",
+                "Bu alandan yerel kapanis on kosullarini ve diger entity seviyesi engelleri inceleyin."
+              ),
+        actionPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+      },
+      {
+        key: "bankControlParent",
+        title: l("Bank control-parent mapping", "Banka control-parent eslemesi"),
+        ready: Boolean(
+          activationBankControlParentReadiness?.ready ||
+            activationBankControlParentReadiness?.applicable === false
+        ),
+        detail: activationBankControlParentReadiness?.ready
+          ? l(
+              "Bank control-parent readiness is already satisfied for this entity.",
+              "Bu entity icin banka control-parent hazirligi zaten saglandi."
+            )
+          : activationBankControlParentReadiness?.blockerCode
+            ? l(
+                `Bank control-parent blocker: ${activationBankControlParentReadiness.blockerCode}.`,
+                `Banka control-parent engeli: ${activationBankControlParentReadiness.blockerCode}.`
+              )
+            : l(
+                "Review bank control-parent mapping if bank setup will be used here.",
+                "Burada banka kurulumu kullanilacaksa banka control-parent eslemesini inceleyin."
+              ),
+      },
+    ];
+  }, [
+    activationBankAccountsError,
+    activationBankAccountsLoading,
+    activationBankControlParentReadiness?.applicable,
+    activationBankControlParentReadiness?.blockerCode,
+    activationBankControlParentReadiness?.ready,
+    activationFocusLegalEntity?.code,
+    activationFocusLegalEntity?.name,
+    activationFocusLegalEntityId,
+    activationLocalCloseReadiness?.applicable,
+    activationLocalCloseReadiness?.blockerCode,
+    activationLocalCloseReadiness?.ready,
+    activationOperatingUnitCurrentAccountReadiness,
+    activationReadyBankAccounts.length,
+    activationReadyCashRegisters.length,
+    activationShareholderReadiness?.blockerCode,
+    activationShareholderReadiness?.ready,
+    activationCashRegistersError,
+    activationCashRegistersLoading,
+    canReadBanks,
+    canReadCashRegisters,
+    l,
+    periods.length,
+    workspaceBooks.length,
+    workspaceCalendarOptions.length,
+    workspaceCoas.length,
+    workspaceOperatingUnits.length,
+    workspaceShareholders.length,
+  ]);
   useEffect(() => {
     if (
       !capitalFulfillmentModalOpen ||
@@ -4675,13 +5324,20 @@ export default function OrganizationManagementPage() {
 
       <div>
         <h1 className="text-xl font-semibold text-slate-900">
-          {l("Organization Management", "Organizasyon Yonetimi")}
+          {isActivationWorkspace
+            ? l("Entity Activation Workspace", "Entity Aktivasyon Alani")
+            : l("Organization Management", "Organizasyon Yonetimi")}
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          {l(
-            "Maintain company structure, branches, and fiscal structure after onboarding.",
-            "Kurulumdan sonra sirket yapisini, subeleri ve mali yapilari yonetin."
-          )}
+          {isActivationWorkspace
+            ? l(
+                "Complete local legal-entity setup without tenant-wide onboarding noise. This workspace stays aligned to the current working legal entity context.",
+                "Tenant geneli onboarding gurultusune girmeden yerel legal entity kurulumunu tamamlayin. Bu alan mevcut calisma legal entity baglamina hizali kalir."
+              )
+            : l(
+                "Maintain company structure, branches, and fiscal structure after onboarding.",
+                "Kurulumdan sonra sirket yapisini, subeleri ve mali yapilari yonetin."
+              )}
         </p>
       </div>
 
@@ -4696,7 +5352,97 @@ export default function OrganizationManagementPage() {
         </div>
       )}
 
+      {isActivationWorkspace ? (
+        <section className="rounded-xl border border-sky-200 bg-sky-50/70 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-sky-950">
+                {l("Local activation checklist", "Yerel aktivasyon kontrol listesi")}
+              </div>
+              <p className="mt-1 text-sm text-sky-900">
+                {l(
+                  "Tenant-wide onboarding readiness is intentionally hidden here. Only legal-entity-level setup blockers should drive the work.",
+                  "Tenant geneli onboarding hazirligi burada bilincli olarak gizlenir. Isi yalnizca legal-entity seviyesi kurulum engelleri yonlendirmelidir."
+                )}
+              </p>
+            </div>
+            <span className="rounded-full border border-sky-300 bg-white px-2.5 py-1 text-xs font-semibold text-sky-900">
+              {activationScopeLabel}
+            </span>
+          </div>
+
+          {!activationFocusLegalEntityId && isScopedActivationWorkspace ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              {activationWorkingContextResolved
+                ? l(
+                    "Select a working legal entity first. This workspace stays bounded to your current legal-entity context.",
+                    "Once bir calisma legal entity'si secin. Bu alan mevcut legal-entity baglaminizla sinirli kalir."
+                  )
+                : l(
+                    "Resolving your working legal entity context...",
+                    "Calisma legal entity baglaminiz cozuluyor..."
+                  )}
+            </div>
+          ) : null}
+
+          {activationFocusLegalEntityId ? (
+            <>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {activationChecklistItems.map((item) => (
+                  <div
+                    key={item.key}
+                    className="rounded-xl border border-sky-200 bg-white px-3 py-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm font-semibold text-slate-900">
+                        {item.title}
+                      </div>
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                          item.ready
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {item.ready ? l("Ready", "Hazir") : l("Action", "Aksiyon")}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-600">
+                      {item.detail}
+                    </p>
+                    {item.actionPath ? (
+                      <Link
+                        to={item.actionPath}
+                        className="mt-3 inline-flex text-xs font-semibold text-sky-800 hover:text-sky-950"
+                      >
+                        {l("Open relevant surface", "Ilgili ekrani ac")}
+                      </Link>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                <Link
+                  to="/app/ayarlar/organizasyon-yonetimi"
+                  className="rounded-lg border border-sky-300 bg-white px-3 py-2 font-semibold text-sky-900"
+                >
+                  {l("Open full organization view", "Tam organizasyon gorunumunu ac")}
+                </Link>
+                <Link
+                  to="/app/ayarlar/hesap-plani-ayarlari"
+                  className="rounded-lg border border-sky-300 bg-white px-3 py-2 font-semibold text-sky-900"
+                >
+                  {l("Open GL setup", "GL ayarlarini ac")}
+                </Link>
+              </div>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
       <div className="grid gap-4 xl:grid-cols-2">
+        {showCentralStructureSections ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Group Companies", "Grup Sirketleri")}
@@ -4791,7 +5537,9 @@ export default function OrganizationManagementPage() {
             </table>
           </div>
         </section>
+        ) : null}
 
+        {showCentralStructureSections ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Legal Entities", "Istirakler / Bagli Ortaklar")}
@@ -5160,7 +5908,7 @@ export default function OrganizationManagementPage() {
                     </tr>
                   );
                 })}
-                {legalEntities.length === 0 && !loading && (
+                {workspaceLegalEntities.length === 0 && !loading && (
                   <tr>
                     <td colSpan={8} className="px-3 py-3 text-slate-500">
                       {l("No legal entities found.", "Istirak / bagli ortak bulunamadi.")}
@@ -5171,6 +5919,7 @@ export default function OrganizationManagementPage() {
             </table>
           </div>
         </section>
+        ) : null}
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
@@ -5199,7 +5948,7 @@ export default function OrganizationManagementPage() {
               required
             >
               <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
-              {legalEntities.map((row) => (
+              {workspaceLegalEntities.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
                 </option>
@@ -5396,7 +6145,7 @@ export default function OrganizationManagementPage() {
                 </tr>
               </thead>
               <tbody>
-                {(operatingUnits || []).map((row) => {
+                {workspaceOperatingUnits.map((row) => {
                   const legalEntity = legalEntityById.get(
                     toNumber(row.legal_entity_id)
                   );
@@ -5532,7 +6281,7 @@ export default function OrganizationManagementPage() {
                     </tr>
                   );
                 })}
-                {operatingUnits.length === 0 && !loading && (
+                {workspaceOperatingUnits.length === 0 && !loading && (
                   <tr>
                     <td colSpan={13} className="px-3 py-3 text-slate-500">
                       {l("No operating units found.", "Operasyon birimi bulunamadi.")}
@@ -5570,7 +6319,7 @@ export default function OrganizationManagementPage() {
               required
             >
               <option value="">{l("Select legal entity", "Legal entity secin")}</option>
-              {legalEntities.map((row) => (
+              {workspaceLegalEntities.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
                 </option>
@@ -5677,7 +6426,7 @@ export default function OrganizationManagementPage() {
                 </tr>
               </thead>
               <tbody>
-                {(operatingUnitCurrentAccountConfigs || []).map((row) => {
+                {workspaceOperatingUnitCurrentAccountConfigs.map((row) => {
                   const readinessRow = getModuleRow(
                     "operatingUnitCurrentAccounts",
                     toNumber(row?.legal_entity_id)
@@ -5855,7 +6604,7 @@ export default function OrganizationManagementPage() {
                     </tr>
                   );
                 })}
-                {operatingUnitCurrentAccountConfigs.length === 0 && !loading ? (
+                {workspaceOperatingUnitCurrentAccountConfigs.length === 0 && !loading ? (
                   <tr>
                     <td colSpan={8} className="px-3 py-3 text-slate-500">
                       {l(
@@ -5903,7 +6652,7 @@ export default function OrganizationManagementPage() {
               required
             >
               <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
-              {legalEntities.map((row) => (
+              {workspaceLegalEntities.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
                 </option>
@@ -6030,7 +6779,7 @@ export default function OrganizationManagementPage() {
                 </tr>
               </thead>
               <tbody>
-                {(operatingUnitPartnerCurrentAccounts || []).map((row) => {
+                {workspaceOperatingUnitPartnerCurrentAccounts.map((row) => {
                   const legalEntity = legalEntityById.get(toNumber(row.legal_entity_id));
                   const legalEntityLabel = legalEntity
                     ? `${legalEntity.code} - ${legalEntity.name}`
@@ -6077,7 +6826,7 @@ export default function OrganizationManagementPage() {
                     </tr>
                   );
                 })}
-                {operatingUnitPartnerCurrentAccounts.length === 0 && !loading ? (
+                {workspaceOperatingUnitPartnerCurrentAccounts.length === 0 && !loading ? (
                   <tr>
                     <td colSpan={7} className="px-3 py-3 text-slate-500">
                       {l(
@@ -6886,7 +7635,7 @@ export default function OrganizationManagementPage() {
               required
             >
               <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
-              {legalEntities.map((row) => (
+              {workspaceLegalEntities.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
                 </option>
@@ -7356,7 +8105,7 @@ export default function OrganizationManagementPage() {
               required
             >
               <option value="">{l("Select calendar", "Takvim secin")}</option>
-              {calendars.map((row) => (
+              {workspaceCalendarOptions.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
                 </option>
@@ -7493,7 +8242,7 @@ export default function OrganizationManagementPage() {
                   <option value="">
                     {l("Select legal entity", "Legal entity secin")}
                   </option>
-                  {legalEntities.map((row) => (
+                  {workspaceLegalEntities.map((row) => (
                     <option key={row.id} value={row.id}>
                       {row.code} - {row.name}
                     </option>

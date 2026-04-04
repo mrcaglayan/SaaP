@@ -152,6 +152,8 @@
     "test:followup:prf12-canonical-mapping": "node scripts/test-followup-prf12-canonical-mapping-foundation.js",
     "test:followup:prf12-cross-track-wiring": "node scripts/test-followup-prf12-cross-track-wiring.js",
     "test:followup:prf13-setup-wizard": "node scripts/test-followup-prf13-setup-wizard-regression.js",
+    "test:followup:prf13-bootstrap-handoff": "node scripts/test-followup-prf13-bootstrap-handoff.js",
+    "test:followup:pr7b-entity-activation-workspace": "node scripts/test-followup-pr7b-entity-activation-workspace.js",
     "test:followup:prf13-tax-engine": "node scripts/test-followup-prf13-tax-engine-regression.js",
     "test:followup:prf13-cross-track-idempotency": "node scripts/test-followup-prf13-cross-track-idempotency.js",
     "test:followup:prf13-backfill-scripts": "node scripts/test-followup-prf13-backfill-scripts.js",

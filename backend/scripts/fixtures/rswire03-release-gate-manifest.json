@@ -11,6 +11,11 @@
       "packageScriptName": "test:followup:prf13-setup-wizard"
     },
     {
+      "routePath": "/app/ayarlar/entity-aktivasyon-alani",
+      "smokeScriptPath": "backend/scripts/test-followup-pr7b-entity-activation-workspace.js",
+      "packageScriptName": "test:followup:pr7b-entity-activation-workspace"
+    },
+    {
       "routePath": "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
       "smokeScriptPath": "backend/scripts/test-period-close-process.js",
       "packageScriptName": "test:period-close"

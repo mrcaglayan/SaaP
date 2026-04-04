@@ -651,6 +651,11 @@ const implementedRoutes = [
     element: <OrganizationManagementPage />,
   },
   {
+    appPath: "/app/ayarlar/entity-aktivasyon-alani",
+    childPath: "ayarlar/entity-aktivasyon-alani",
+    element: <OrganizationManagementPage workspaceMode="activation" />,
+  },
+  {
     appPath: "/app/ayarlar/kur-yonetimi",
     childPath: "ayarlar/kur-yonetimi",
     element: <FxRatesPage />,

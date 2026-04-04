@@ -19,6 +19,7 @@ async function main() {
   for (const stepKey of [
     "country",
     "entity",
+    "handoff",
     "template",
     "accountTree",
     "branches",
@@ -33,8 +34,9 @@ async function main() {
   assert(
     onboardingPageSource.includes("activeStep.key === \"accountTree\"") &&
       onboardingPageSource.includes("activeStep.key === \"branches\"") &&
-      onboardingPageSource.includes("activeStep.key === \"currentAccounts\""),
-    "Setup wizard should render dedicated account-tree, branch, and current-account steps"
+      onboardingPageSource.includes("activeStep.key === \"currentAccounts\"") &&
+      onboardingPageSource.includes("activeStep.key === \"handoff\""),
+    "Setup wizard should render dedicated handoff, account-tree, branch, and current-account steps"
   );
 
   assert(
@@ -42,8 +44,10 @@ async function main() {
       onboardingPageSource.includes("parentCode") &&
       onboardingPageSource.includes("compactEntityPayload") &&
       onboardingPageSource.includes("groupCoa") &&
-      onboardingPageSource.includes("currentAccountConfig"),
-    "Setup wizard payload should include policyPackId, groupCoa, parentCode tree support, and currentAccountConfig"
+      onboardingPageSource.includes("currentAccountConfig") &&
+      onboardingPageSource.includes("handoffAssignments") &&
+      onboardingPageSource.includes("getCompanyBootstrapHandoffOptions"),
+    "Setup wizard payload should include policyPackId, groupCoa, parentCode tree support, currentAccountConfig, and bootstrap handoff payload support"
   );
 
   const onboardingRouteSource = await readFile(
@@ -53,9 +57,13 @@ async function main() {
 
   assert(
     onboardingRouteSource.includes('"/company-bootstrap"') &&
+      onboardingRouteSource.includes('"/company-bootstrap/handoff-options"') &&
       onboardingRouteSource.includes("normalizeEntityPolicyPackSelection") &&
-      onboardingRouteSource.includes("applyPolicyPackTx"),
-    "Onboarding backend should keep policy-pack bootstrap transaction integration"
+      onboardingRouteSource.includes("applyPolicyPackTx") &&
+      onboardingRouteSource.includes("normalizeCompanyBootstrapHandoffAssignments") &&
+      onboardingRouteSource.includes("createInviteForTenantUser") &&
+      onboardingRouteSource.includes("getTenantRoleIdsByCode"),
+    "Onboarding backend should keep policy-pack bootstrap transaction integration and bootstrap handoff processing"
   );
 
   assert(

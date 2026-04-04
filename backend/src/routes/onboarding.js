@@ -22,6 +22,9 @@ import {
 import { upsertJournalPurposeAccountTx } from "../services/org.write.queries.js";
 import { assertShareholderParentAccount } from "../services/org.shareholder.helpers.js";
 import { getTenantReadinessSnapshot } from "../services/tenant-readiness.service.js";
+import { getTenantRoleIdsByCode } from "../services/systemRoles.service.js";
+import { createInviteForTenantUser } from "../services/userInvites.service.js";
+import { logRbacAuditEvent } from "../audit/rbacAuditLogger.js";
 
 const router = express.Router();
 const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
@@ -33,6 +36,32 @@ const SHAREHOLDER_PURPOSE_CODES = Object.freeze([
   SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
 ]);
 const SHAREHOLDER_PURPOSE_CODE_SET = new Set(SHAREHOLDER_PURPOSE_CODES);
+const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
+  EntitySetupManager: Object.freeze({
+    code: "EntitySetupManager",
+    scopeType: "LEGAL_ENTITY",
+    roleCodes: Object.freeze([
+      "MasterDataSteward",
+      "GLOperator",
+      "TreasuryOperator",
+      "PayrollOperator",
+      "LocalClosePreparer",
+      "ShareholderCapitalOperator",
+    ]),
+    optionalRoleCodes: Object.freeze(["GLPostingAuthority"]),
+  }),
+  CountryFinanceSetupManager: Object.freeze({
+    code: "CountryFinanceSetupManager",
+    scopeType: "COUNTRY",
+    roleCodes: Object.freeze([
+      "GLOperator",
+      "TreasuryApprover",
+      "PayrollApprover",
+      "LocalCloseReviewer",
+    ]),
+    optionalRoleCodes: Object.freeze(["GLPostingAuthority"]),
+  }),
+});
 
 const DEFAULT_ACCOUNTS = [
   {
@@ -150,6 +179,22 @@ function normalizeCode(rawValue, fallback = "DEFAULT", maxLength = 50) {
 function normalizeName(rawValue, fallback = "Default Name", maxLength = 255) {
   const normalized = String(rawValue || "").trim();
   return (normalized || fallback).slice(0, maxLength);
+}
+
+function normalizeEmail(rawValue, fieldName = "email") {
+  const normalized = String(rawValue || "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    throw badRequest(`${fieldName} is required`);
+  }
+  if (normalized.length > 255) {
+    throw badRequest(`${fieldName} cannot exceed 255 characters`);
+  }
+  if (!normalized.includes("@") || !normalized.includes(".")) {
+    throw badRequest(`${fieldName} is invalid`);
+  }
+  return normalized;
 }
 
 function parseNonNegativeInt(value, fieldName, defaultValue = 0) {
@@ -1067,6 +1112,322 @@ async function bootstrapPaymentTermsForLegalEntities({
   };
 }
 
+function getBootstrapHandoffPresetDefinition(presetCode) {
+  const normalizedPresetCode = String(presetCode || "").trim();
+  const definition =
+    BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS[normalizedPresetCode] || null;
+  if (!definition) {
+    throw badRequest(`Unknown handoff presetCode: ${normalizedPresetCode || "<empty>"}`);
+  }
+  return definition;
+}
+
+function buildBootstrapHandoffRoleCodes(definition, includeGlPostingAuthority = false) {
+  const roleCodeSet = new Set(definition?.roleCodes || []);
+  if (includeGlPostingAuthority) {
+    for (const roleCode of definition?.optionalRoleCodes || []) {
+      roleCodeSet.add(roleCode);
+    }
+  }
+  return [...roleCodeSet];
+}
+
+function normalizeCompanyBootstrapHandoffAssignment(assignment, index) {
+  const pathPrefix = `handoffAssignments[${index}]`;
+  const safeAssignment =
+    assignment && typeof assignment === "object" ? assignment : {};
+  const presetCode = String(safeAssignment.presetCode || "").trim();
+  if (!presetCode) {
+    throw badRequest(`${pathPrefix}.presetCode is required`);
+  }
+
+  const presetDefinition = getBootstrapHandoffPresetDefinition(presetCode);
+  const scopeType = String(
+    safeAssignment.scopeType || presetDefinition.scopeType
+  )
+    .trim()
+    .toUpperCase();
+  if (scopeType !== presetDefinition.scopeType) {
+    throw badRequest(
+      `${pathPrefix}.scopeType must be ${presetDefinition.scopeType} for ${presetCode}`
+    );
+  }
+
+  const includeGlPostingAuthority = parseBooleanFlag(
+    safeAssignment.includeGlPostingAuthority,
+    false,
+    `${pathPrefix}.includeGlPostingAuthority`
+  );
+  const userId = parsePositiveInt(safeAssignment.userId);
+  const hasUserId = Boolean(userId);
+  const rawEmail = String(safeAssignment.email || "").trim();
+  const rawName = String(safeAssignment.name || "").trim();
+  if (hasUserId && (rawEmail || rawName)) {
+    throw badRequest(
+      `${pathPrefix} cannot mix userId with invite name/email fields`
+    );
+  }
+  if (!hasUserId && (!rawEmail || !rawName)) {
+    throw badRequest(
+      `${pathPrefix} requires either userId or invite name/email`
+    );
+  }
+
+  const normalizedAssignment = {
+    presetCode,
+    scopeType,
+    targetMode: hasUserId ? "EXISTING_USER" : "INVITE",
+    userId: hasUserId ? userId : null,
+    email: hasUserId ? null : normalizeEmail(rawEmail, `${pathPrefix}.email`),
+    name: hasUserId ? null : normalizeName(rawName, rawName),
+    includeGlPostingAuthority,
+    roleCodes: buildBootstrapHandoffRoleCodes(
+      presetDefinition,
+      includeGlPostingAuthority
+    ),
+  };
+
+  if (scopeType === "LEGAL_ENTITY") {
+    const legalEntityCode = normalizeCode(
+      safeAssignment.legalEntityCode,
+      "",
+      64
+    );
+    if (!legalEntityCode) {
+      throw badRequest(`${pathPrefix}.legalEntityCode is required`);
+    }
+    return {
+      ...normalizedAssignment,
+      legalEntityCode,
+      countryIso2: null,
+    };
+  }
+
+  const countryIso2 = normalizeCode(safeAssignment.countryIso2, "", 2);
+  if (!countryIso2) {
+    throw badRequest(`${pathPrefix}.countryIso2 is required`);
+  }
+  return {
+    ...normalizedAssignment,
+    legalEntityCode: null,
+    countryIso2,
+  };
+}
+
+function normalizeCompanyBootstrapHandoffAssignments(assignments) {
+  if (assignments === undefined || assignments === null) {
+    return [];
+  }
+  if (!Array.isArray(assignments)) {
+    throw badRequest("handoffAssignments must be an array when provided");
+  }
+  return assignments.map((assignment, index) =>
+    normalizeCompanyBootstrapHandoffAssignment(assignment, index)
+  );
+}
+
+async function getTenantUserById(tenantId, userId, runQuery = query) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedUserId = parsePositiveInt(userId);
+  if (!normalizedTenantId || !normalizedUserId) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT id, tenant_id, email, name, status
+     FROM users
+     WHERE id = ?
+       AND tenant_id = ?
+     LIMIT 1`,
+    [normalizedUserId, normalizedTenantId]
+  );
+  return result.rows?.[0] || null;
+}
+
+/**
+ * Applies bootstrap handoff presets inside the bootstrap transaction so fresh
+ * entity/country responsibles leave onboarding already scoped to their area.
+ */
+async function applyCompanyBootstrapHandoffAssignmentsTx({
+  tenantId,
+  actorUserId,
+  handoffAssignments,
+  legalEntities,
+  entitySummaries,
+  runQuery = query,
+}) {
+  const normalizedAssignments = Array.isArray(handoffAssignments)
+    ? handoffAssignments
+    : [];
+  if (normalizedAssignments.length === 0) {
+    return {
+      assignmentCount: 0,
+      invitedCount: 0,
+      existingUserCount: 0,
+      assignments: [],
+      auditEvents: [],
+    };
+  }
+
+  const legalEntityIdByCode = new Map(
+    (Array.isArray(entitySummaries) ? entitySummaries : [])
+      .map((entitySummary) => [
+        normalizeCode(entitySummary?.code, "", 64),
+        parsePositiveInt(entitySummary?.legalEntityId),
+      ])
+      .filter((entry) => entry[0] && entry[1])
+  );
+  const validCountryIso2Set = new Set(
+    (Array.isArray(legalEntities) ? legalEntities : [])
+      .map((legalEntity) => normalizeCode(legalEntity?.countryIso2, "", 2))
+      .filter(Boolean)
+  );
+  const roleCodes = Array.from(
+    new Set(normalizedAssignments.flatMap((assignment) => assignment.roleCodes || []))
+  );
+  const roleIdsByCode = await getTenantRoleIdsByCode(tenantId, roleCodes, runQuery);
+  for (const roleCode of roleCodes) {
+    if (!roleIdsByCode.has(roleCode)) {
+      throw new Error(
+        `Bootstrap handoff role is not configured for tenant ${tenantId}: ${roleCode}`
+      );
+    }
+  }
+
+  const countryScopeIdByIso2 = new Map();
+  const assignmentSummaries = [];
+  const auditEvents = [];
+  let invitedCount = 0;
+  let existingUserCount = 0;
+
+  for (const assignment of normalizedAssignments) {
+    let scopeId = null;
+    let scopeCode = "";
+    if (assignment.scopeType === "LEGAL_ENTITY") {
+      scopeCode = assignment.legalEntityCode;
+      scopeId = legalEntityIdByCode.get(scopeCode);
+      if (!scopeId) {
+        throw badRequest(
+          `handoff assignment references unknown legalEntityCode: ${scopeCode}`
+        );
+      }
+    } else {
+      scopeCode = assignment.countryIso2;
+      if (!validCountryIso2Set.has(scopeCode)) {
+        throw badRequest(
+          `handoff assignment references countryIso2 not present in bootstrap payload: ${scopeCode}`
+        );
+      }
+      if (!countryScopeIdByIso2.has(scopeCode)) {
+        // Country-scoped handoffs must stay within the countries created by
+        // the bootstrap payload, not arbitrary countries elsewhere in the catalog.
+        const countryId = await getCountryId(null, scopeCode, runQuery);
+        countryScopeIdByIso2.set(scopeCode, countryId);
+      }
+      scopeId = countryScopeIdByIso2.get(scopeCode);
+    }
+
+    let managedUser = null;
+    let invite = null;
+    if (assignment.targetMode === "EXISTING_USER") {
+      managedUser = await getTenantUserById(tenantId, assignment.userId, runQuery);
+      if (!managedUser) {
+        throw badRequest(`User not found for handoff userId=${assignment.userId}`);
+      }
+      if (String(managedUser.status || "").toUpperCase() !== "ACTIVE") {
+        throw badRequest(
+          `Existing handoff user must be ACTIVE: userId=${assignment.userId}`
+        );
+      }
+      existingUserCount += 1;
+    } else {
+      invite = await createInviteForTenantUser({
+        tenantId,
+        actorUserId,
+        email: assignment.email,
+        name: assignment.name,
+        runQuery,
+      });
+      managedUser = await getTenantUserById(tenantId, invite.userId, runQuery);
+      invitedCount += 1;
+      auditEvents.push({
+        tenantId,
+        targetUserId: invite.userId,
+        action: "user.invite.create",
+        resourceType: "user_invite",
+        resourceId: invite.id,
+        scopeType: "TENANT",
+        scopeId: tenantId,
+        payload: {
+          userId: invite.userId,
+          email: invite.email,
+          expiresAt: invite.expiresAt,
+          source: "company-bootstrap-handoff",
+        },
+      });
+    }
+
+    for (const roleCode of assignment.roleCodes) {
+      const roleId = roleIdsByCode.get(roleCode);
+      await runQuery(
+        `INSERT INTO user_role_scopes (
+            tenant_id,
+            user_id,
+            role_id,
+            scope_type,
+            scope_id,
+            effect,
+            effective_from,
+            effective_to
+         )
+         VALUES (?, ?, ?, ?, ?, 'ALLOW', NULL, NULL)
+         ON DUPLICATE KEY UPDATE
+           effect = VALUES(effect),
+           effective_from = VALUES(effective_from),
+           effective_to = VALUES(effective_to)`,
+        [tenantId, managedUser.id, roleId, assignment.scopeType, scopeId]
+      );
+    }
+
+    assignmentSummaries.push({
+      presetCode: assignment.presetCode,
+      scopeType: assignment.scopeType,
+      scopeId,
+      scopeCode,
+      targetMode: assignment.targetMode,
+      userId: parsePositiveInt(managedUser?.id),
+      email: String(invite?.email || managedUser?.email || "").trim().toLowerCase(),
+      name: String(invite?.name || managedUser?.name || "").trim(),
+      inviteId: parsePositiveInt(invite?.id) || null,
+      includeGlPostingAuthority: assignment.includeGlPostingAuthority,
+      roleCodes: assignment.roleCodes,
+    });
+    auditEvents.push({
+      tenantId,
+      targetUserId: parsePositiveInt(managedUser?.id),
+      action: "onboarding.company_bootstrap.handoff",
+      resourceType: "company_bootstrap_handoff",
+      scopeType: assignment.scopeType,
+      scopeId,
+      payload: {
+        presetCode: assignment.presetCode,
+        scopeCode,
+        targetMode: assignment.targetMode,
+        includeGlPostingAuthority: assignment.includeGlPostingAuthority,
+        roleCodes: assignment.roleCodes,
+      },
+    });
+  }
+
+  return {
+    assignmentCount: assignmentSummaries.length,
+    invitedCount,
+    existingUserCount,
+    assignments: assignmentSummaries,
+    auditEvents,
+  };
+}
+
 async function getCountryId(countryId, countryIso2, runQuery = query) {
   const normalizedCountryId = parsePositiveInt(countryId);
   if (normalizedCountryId) {
@@ -1754,6 +2115,33 @@ router.post(
   })
 );
 
+router.get(
+  "/company-bootstrap/handoff-options",
+  requirePermission("onboarding.company.setup"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const userResult = await query(
+      `SELECT id, email, name, status
+       FROM users
+       WHERE tenant_id = ?
+         AND status = 'ACTIVE'
+       ORDER BY name, email`,
+      [tenantId]
+    );
+
+    return res.json({
+      ok: true,
+      tenantId,
+      users: userResult.rows || [],
+      presets: Object.values(BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS),
+    });
+  })
+);
+
 router.post(
   "/company-bootstrap/current-account-eligibility-preview",
   requirePermission("onboarding.company.setup"),
@@ -1794,6 +2182,9 @@ router.post(
     const legalEntities = Array.isArray(req.body.legalEntities)
       ? req.body.legalEntities
       : [];
+    const handoffAssignments = normalizeCompanyBootstrapHandoffAssignments(
+      req.body?.handoffAssignments
+    );
     const actorUserId = parsePositiveInt(req.user?.userId);
     const selectedPolicyPackCount = legalEntities.reduce((count, entity) => {
       const { policyPackId } = normalizeEntityPolicyPackSelection(entity);
@@ -1808,6 +2199,9 @@ router.post(
     }
     if (selectedPolicyPackCount > 0 && !actorUserId) {
       throw badRequest("Authenticated user is required when policyPackId is provided");
+    }
+    if (handoffAssignments.length > 0 && !actorUserId) {
+      throw badRequest("Authenticated user is required when handoffAssignments are provided");
     }
 
     assertRequiredFields(groupCompany, ["code", "name"]);
@@ -2234,6 +2628,14 @@ router.post(
         termTemplates: DEFAULT_PAYMENT_TERM_TEMPLATES,
         runQuery: tx.query,
       });
+      const handoffSummary = await applyCompanyBootstrapHandoffAssignmentsTx({
+        tenantId,
+        actorUserId,
+        handoffAssignments,
+        legalEntities,
+        entitySummaries,
+        runQuery: tx.query,
+      });
 
       return {
         groupCompanyId,
@@ -2242,9 +2644,13 @@ router.post(
         entitySummaries,
         paymentTermBootstrap,
         currentAccountReadinessWarnings,
+        handoffSummary,
       };
     });
     await invalidateRbacCache(tenantId);
+    for (const auditEvent of bootstrapResult.handoffSummary?.auditEvents || []) {
+      await logRbacAuditEvent(req, auditEvent);
+    }
 
     return res.status(201).json({
       ok: true,
@@ -2264,6 +2670,16 @@ router.post(
         skippedCount: bootstrapResult.paymentTermBootstrap.skippedCount,
         perLegalEntity: bootstrapResult.paymentTermBootstrap.perLegalEntity,
       },
+      handoff: {
+        assignmentCount: Number(
+          bootstrapResult.handoffSummary?.assignmentCount || 0
+        ),
+        invitedCount: Number(bootstrapResult.handoffSummary?.invitedCount || 0),
+        existingUserCount: Number(
+          bootstrapResult.handoffSummary?.existingUserCount || 0
+        ),
+        assignments: bootstrapResult.handoffSummary?.assignments || [],
+      },
     });
   })
 );
@@ -2274,6 +2690,7 @@ export const __testOnboardingInternals = {
   normalizeGroupCoaSelection,
   buildPolicyPackBootstrapApplyPlan,
   normalizeCompanyBootstrapCurrentAccountConfig,
+  normalizeCompanyBootstrapHandoffAssignments,
   buildDraftOperatingUnitCurrentAccountEligibilityPreview,
 };
 

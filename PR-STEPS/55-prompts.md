@@ -88,6 +88,16 @@ Authoritative linear order:
 32. `UI-5D`
 33. `PR-5E`
 34. `UI-5E`
+35. `PR-6A`
+36. `PR-6B`
+37. `PR-6C`
+38. `PR-6D`
+39. `UI-6A`
+40. `PR-6E`
+41. `PR-7A`
+42. `PR-7B`
+43. `PR-7C`
+44. `PR-7D`
 
 ---
 
@@ -1258,6 +1268,194 @@ Acceptance target:
 
 ---
 
+The original Track 55 closure is complete. The prompts below are follow-on operating-model work built on top of the shipped RBAC redesign, not a reopening of the original closure phases.
+
+### Prompt - PR-7A Central Bootstrap Handoff And Setup Presets
+
+```text
+Implement PR-7A: Central Bootstrap Handoff And Setup Presets.
+
+Objective:
+Add a first-class handoff step to fresh-tenant bootstrap so central setup can assign bounded local setup responsibility per legal entity or country without reintroducing broad legacy controller roles.
+
+Primary files:
+- frontend/src/pages/settings/CompanyOnboardingPage.jsx
+- backend/src/routes/onboarding.js
+- backend/src/routes/security.js
+- frontend/src/api/rbacAdmin.js
+- frontend/src/pages/security/roleCatalog.js
+- backend/scripts/test-followup-prf13-setup-wizard-regression.js
+- any onboarding or RBAC smoke tests affected by the new handoff step
+
+Requirements:
+- Extend the onboarding/bootstrap flow with a dedicated handoff step after the central structure skeleton is defined.
+- Allow the bootstrap actor to invite or select responsible users per legal entity and, where needed, per country.
+- Implement setup presets as bounded bundles of existing composable roles, not as new broad permanent legacy-style roles:
+  - EntitySetupManager preset at LEGAL_ENTITY scope:
+    - MasterDataSteward
+    - GLOperator
+    - TreasuryOperator
+    - PayrollOperator
+    - LocalClosePreparer
+    - ShareholderCapitalOperator
+  - CountryFinanceSetupManager preset at COUNTRY scope:
+    - GLOperator
+    - TreasuryApprover
+    - PayrollApprover
+    - LocalCloseReviewer
+- Keep GLPostingAuthority optional and explicit. Do not auto-grant it.
+- Reuse existing invite and role-assignment primitives where possible, but package them into an explicit onboarding handoff workflow instead of expecting SecurityAdmin to do everything later by hand.
+- Preserve the Phase 6 role-retirement end-state. Do not re-add TenantAdmin, CountryController, EntityAccountant, or similar compatibility roles as the steady-state answer.
+- Add or update tests for:
+  - onboarding step presence and payload contract
+  - resulting invite/assignment behavior
+  - no silent over-grant of GLPostingAuthority
+
+Acceptance target:
+- Central bootstrap can create the tenant skeleton and hand each entity/country off to bounded local responsible users through the product.
+- The handoff uses composable role presets at the right scope and does not require tenant-wide security powers for local setup.
+```
+
+### Prompt - PR-7B Scoped Entity Activation Workspace
+
+```text
+Implement PR-7B: Scoped Entity Activation Workspace.
+
+Objective:
+Turn local legal-entity activation into a first-class scoped workspace so entity/country setup managers can complete local reality without wading through central-only onboarding noise.
+
+Primary files:
+- frontend/src/pages/settings/OrganizationManagementPage.jsx
+- frontend/src/readiness/RequireTenantReadiness.jsx
+- frontend/src/layouts/sidebarConfig.js
+- frontend/src/App.jsx
+- frontend/src/i18n/messages.js
+- backend/src/routes/org.js
+- backend/src/routes/onboarding.js
+- frontend/backend smoke tests covering organization management, route wiring, and readiness behavior
+
+Requirements:
+- Add a clearly scoped entity-activation workspace, either as:
+  - a dedicated new page, or
+  - a scoped mode inside Organization Management if that keeps the UX cleaner in this repo
+- Limit the workspace to the acting user's current legal entity/country context unless they also hold central bootstrap permissions.
+- Surface the real local activation checklist, reusing existing contracts where possible:
+  - books and local ledger prerequisites
+  - chart-of-accounts usage or mapping work
+  - fiscal configuration
+  - bank and cash setup
+  - branch / operating-unit setup
+  - local readiness blockers tied to that entity
+- Hide tenant-wide onboarding/setup checklist noise for scoped setup users who do not hold onboarding.company.setup.
+- Preserve central-admin functionality for users who still hold the broader bootstrap/admin permissions.
+- Reuse the existing readiness model and avoid creating a second incompatible readiness framework.
+- Add or update route/sidebar/i18n and smoke coverage for the new workspace behavior.
+
+Acceptance target:
+- A local setup manager can log in and see a bounded, entity-scoped activation workspace that reflects only their own operational reality.
+- Central admins still retain the broader cross-tenant or cross-entity management views they already need.
+```
+
+### Prompt - PR-7C Generalized Scoped Local User Administration
+
+```text
+Implement PR-7C: Generalized Scoped Local User Administration.
+
+Objective:
+Replace the narrow branch-operator-only seam with a generalized legal-entity-scoped user administration capability for bounded local roles.
+
+Primary files:
+- backend/src/routes/security.js
+- backend/src/seedCore.js
+- frontend/src/api/rbacAdmin.js
+- frontend/src/pages/security/BranchOperatorManagementPage.jsx
+- frontend/src/pages/security/UserAssignmentsPage.jsx
+- frontend/src/pages/security/roleCatalog.js
+- backend/scripts/test-security-branch-operator-management-smoke.js
+- any RBAC migration / permission / admin UX smokes affected by the new local-admin model
+
+Requirements:
+- Introduce an explicit bounded local-admin capability for entity-scoped user administration. If the current security.user_admin.entity permission is too narrow semantically, add a new bounded permission and keep compatibility only where needed during rollout.
+- Generalize the existing entity-branch-operator flow into an allow-listed local role administration surface.
+- Minimum allow-listed catalog:
+  - BranchOperator
+  - OUAccountant
+  - AuditorReadOnly at local scopes
+  - any other already-shipped bounded local operational roles that fit this model without over-granting
+- Prevent local managers from:
+  - assigning SecurityAdmin or SystemAdmin
+  - editing role definitions
+  - granting access outside their own entity/country
+  - managing tenant-wide data scopes
+- Preserve invite support, scope enforcement, audit logging, and role-retirement rules.
+- Prefer compatibility bridges over abrupt route deletion if existing branch-operator admin seams are already consumed by tests or live flows.
+- Add or update tests for:
+  - allow-listed assignment success
+  - blocked assignment of non-local or system roles
+  - entity-bound scope enforcement
+  - compatibility handling for the old branch-operator-only seam if it remains bridged
+
+Acceptance target:
+- A legal-entity-scoped manager can invite, assign, revoke, and review bounded local role assignments inside their own entity without becoming a tenant security admin.
+```
+
+### Prompt - PR-7D Temporary Operational Coverage Workflow
+
+```text
+Implement PR-7D: Temporary Operational Coverage Workflow.
+
+Objective:
+Productize absence coverage as a dedicated request/review/activate workflow that is separate from approval delegation and activates time-bounded local role authority through the existing temporal role-assignment model.
+
+Primary files:
+- backend/src/services/approval.engine.service.js
+- backend/src/services/approval.delegation.service.js
+- backend/src/routes/security.js
+- backend/src/routes/approvals.js
+- backend/src/services/authz.scope.service.js
+- frontend/src/pages/security/ApprovalDelegationsPage.jsx
+- frontend/src/api/rbacAdmin.js
+- frontend/src/api/approvalDelegations.js
+- any new local-admin or temporary-coverage page you add
+- tests covering approval flow, temporal assignments, and scoped runtime resolution
+
+Requirements:
+- Implement temporary operational coverage as a dedicated workflow with these states:
+  - requested
+  - approved
+  - active
+  - revoked
+  - expired
+- Use the unified approval engine for review/approval, not a parallel ad-hoc approval stack.
+- On approval, materialize the coverage into effective-dated role assignment(s) in user_role_scopes using effective_from and effective_to.
+- Keep this separate from approval delegation:
+  - approval delegation stays about acting on approval requests
+  - temporary operational coverage stays about temporary runtime role authority
+- Restrict coverage to an allow-listed set of local operational roles and to scopes the approving manager is allowed to govern.
+- Support:
+  - requester
+  - delegate/coverage user
+  - role being covered
+  - scope
+  - start date
+  - end date
+  - revoke before expiry
+  - auditability of who requested, approved, activated, and revoked
+- Reuse natural expiry from effective_to for correctness; do not require a cleanup job just to make expiry work.
+- Add or update tests for:
+  - request creation
+  - approval activation into user_role_scopes
+  - reject / revoke behavior
+  - expired coverage no longer granting runtime authority
+  - no accidental reuse of approval delegation logic for operational coverage
+
+Acceptance target:
+- A local operator can request temporary coverage, a scoped manager can approve it, the system activates it for a defined window, and the coverage expires without manual cleanup.
+- Approval delegation and operational coverage remain clearly separate concepts in code and UI.
+```
+
+---
+
 ## Suggested Implementation Order
 
 Use this order unless the live repo reveals a dependency mismatch that requires roadmap 55 to be updated first.
@@ -1319,3 +1517,9 @@ Use this order unless the live repo reveals a dependency mismatch that requires 
 ### Batch 9 - Optional Hardening
 - UI-6A
 - PR-6E
+
+### Batch 10 - Post-55 Scoped Setup Operating Model
+- PR-7A
+- PR-7C
+- PR-7B
+- PR-7D

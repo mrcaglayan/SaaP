@@ -8,6 +8,7 @@ async function main() {
       "test-followup-prf03-policy-pack-expansion.js",
       "test-followup-prf04-onboarding-policy-pack-bootstrap.js",
       "test-followup-prf13-setup-wizard-regression.js",
+      "test-followup-prf13-bootstrap-handoff.js",
       "test-followup-prf05-workflows-definitions-assignments-api.js",
       "test-followup-prf06-workflow-decisions-runtime.js",
       "test-followup-prf07-workflow-close-consolidation-gates.js",

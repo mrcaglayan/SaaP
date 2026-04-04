@@ -1598,7 +1598,7 @@ This roadmap is not backend-only. Frontend delivery should start in parallel wit
 
 ## Implementation Status (as of PR-6D Closure)
 
-All phases of the RBAC & Governance Redesign have been implemented. This section records what shipped and what operators need to know.
+All original phases of the RBAC & Governance Redesign have been implemented. This section records what shipped and what operators need to know.
 
 ### Phase Completion Summary
 
@@ -1731,3 +1731,143 @@ Supported environment variables:
 **Existing tenants**: Run the migration tool (`roleMigration.service.js`) to map old role assignments to composable roles. The tool generates a preview report before executing. Keep legacy roles until the operator confirms stability.
 
 **Schema migrations**: All governance schema changes are in the migration index (`migrations/index.js`). Key migrations: `m162` (temporal roles), `m163` (generic approval engine), `m165` (bank bridge), `m166` (workflow bridge), `m168` (role migration), `m171` (delegations).
+
+---
+
+## Post-55 Follow-On Track - Scoped Setup Operating Model
+
+This follow-on track does not reopen Phase 0 through Phase 6 governance closure. It productizes a cleaner tenant -> legal-entity/country -> branch operating model on top of the shipped RBAC, scope, approval, and delegation foundations.
+
+### Classification
+
+`Conflict / plan gap`
+- Fresh-tenant bootstrap is still centered on `SecurityAdmin` + `SystemAdmin` plus the company bootstrap wizard. The product does not yet provide a first-class handoff from central bootstrap to local legal-entity/country setup responsibility.
+- Scoped local user administration is still too narrow. The dedicated entity-scoped admin seam only manages `BranchOperator`, not the broader allow-listed local role set needed by the target operating model.
+- Approval delegation is implemented, and effective-dated role assignments are implemented, but temporary operational coverage is not yet a first-class request/review/activation workflow.
+
+`Deferred item already covered`
+- The central skeleton already exists in the onboarding flow (`/company-bootstrap`) and the company onboarding wizard.
+- Scoped readiness already allows operational users to work inside a ready legal entity without being blocked by tenant-wide onboarding noise.
+- OU/branch setup, current-account automation, and warehouse ownership foundations already exist and should be reused rather than redesigned.
+- Approval delegation and temporal role assignments already provide the technical base for the absence/delegation split described below.
+
+`Optional hardening`
+- Narrower branch personas such as cashier-only or warehouse-only roles can be introduced after the generalized local user-admin surface is stable.
+- Country-specific setup presets can remain follow-on work; the minimum clean model is tenant bootstrap plus legal-entity-scoped setup manager coverage.
+
+### Target Model
+
+The target operating model is:
+
+1. Central bootstrap creates the tenant skeleton, group structure, legal entities/countries, and shared accounting framework.
+2. Central bootstrap assigns local responsible users through bounded setup presets, not broad permanent legacy-style controller roles.
+3. Legal-entity/country setup managers complete local activation only inside their own scope.
+4. Legal-entity setup managers create and maintain branches/operating units under their entity, with inherited defaults and local readiness checks.
+5. Local managers invite and assign branch/local users only within an allow-listed local role catalog.
+6. Approval delegation and temporary operational coverage remain separate:
+   - approval delegation: scoped acting authority for reviews/approvals
+   - temporary operational coverage: time-bounded local role coverage with explicit approval and auto-expiry
+
+### Guardrails
+
+- Do not reintroduce `TenantAdmin`, `CountryController`, `EntityAccountant`, or any new broad compatibility role as the steady-state answer.
+- Prefer setup presets that assign existing composable roles at bounded scopes over inventing one new all-powerful "setup manager" role.
+- Do not give local managers `security.role_assignment.upsert`, `security.data_scope.upsert`, or other tenant-wide security administration powers.
+- Reuse the shipped unified approval engine for review/approval workflows instead of creating a parallel approval stack.
+- Reuse the shipped `user_role_scopes.effective_from` / `effective_to` model for temporary coverage activation windows.
+
+### PR-7A: Central Bootstrap Handoff And Setup Presets
+
+Add a first-class handoff step to the company bootstrap flow so the central bootstrap actor can assign bounded local setup responsibility without giving away tenant-wide governance powers.
+
+Requirements:
+- Extend the onboarding flow so central bootstrap can invite or assign one or more local responsible users per legal entity and, where justified, per country.
+- Implement setup presets, not broad new permanent roles:
+  - `EntitySetupManager` preset: assign a bounded combination of existing composable roles at `LEGAL_ENTITY` scope
+  - `CountryFinanceSetupManager` preset: assign bounded reviewer/approver roles at `COUNTRY` scope only where that operating model is justified
+- Keep `GLPostingAuthority` optional and explicit; do not silently over-grant it.
+- Reuse existing invite + role-assignment primitives where possible, but package them into an explicit bootstrap handoff workflow.
+- Update onboarding docs and tests so fresh-tenant setup no longer assumes central admins will finish every local task themselves.
+
+Acceptance target:
+- A central bootstrap user can finish the tenant skeleton and hand each entity/country off to a bounded local setup responsible through the product.
+- The handoff uses composable role bundles at the right scope instead of retired broad roles or tenant-wide security powers.
+
+### PR-7B: Scoped Entity Activation Workspace
+
+Turn local legal-entity activation into a first-class scoped workspace instead of requiring local users to work through central-oriented organization-management surfaces.
+
+Requirements:
+- Add a dedicated local activation workspace or a clearly scoped mode on the existing organization-management area.
+- Show only the current legal entity/country context for the acting local manager.
+- Surface the real local activation checklist:
+  - books / local ledger prerequisites
+  - chart-of-accounts usage or mapping steps
+  - fiscal configuration
+  - bank and cash setup
+  - branch / OU setup
+  - local readiness blockers tied to that entity
+- Reuse existing readiness primitives instead of introducing a second incompatible readiness model.
+- Keep tenant-wide onboarding checklist noise hidden from scoped setup operators unless they also hold the central bootstrap permission set.
+
+Acceptance target:
+- A local setup manager can log in and see a bounded, entity-scoped activation workspace that reflects only their own operational reality.
+
+### PR-7C: Generalized Scoped Local User Administration
+
+Replace the narrow branch-operator-only seam with a generalized local user administration capability for legal-entity managers.
+
+Requirements:
+- Introduce an explicit bounded local-admin permission model for entity-scoped user administration. If the existing `security.user_admin.entity` code is too narrow semantically, add a new bounded permission and keep compatibility only where needed.
+- Generalize the existing entity-branch-operator flow into an allow-listed local role catalog.
+- Minimum allow-listed catalog:
+  - `BranchOperator`
+  - `OUAccountant`
+  - `AuditorReadOnly` at local scopes
+  - any other bounded local operational roles already in the active catalog
+- Prevent local managers from:
+  - granting access outside their own entity/country
+  - assigning `SecurityAdmin` / `SystemAdmin`
+  - editing role definitions
+  - managing tenant-wide data scopes
+- Preserve audit logging, scope enforcement, and compatibility with the existing invite infrastructure.
+
+Acceptance target:
+- A legal-entity-scoped manager can invite, assign, revoke, and review bounded local role assignments inside their own entity without becoming a tenant security admin.
+
+### PR-7D: Temporary Operational Coverage Workflow
+
+Productize absence coverage as a dedicated flow that is separate from approval delegation and activates time-bounded local role assignments only after explicit review.
+
+Requirements:
+- Model temporary operational coverage as a request/review/activate/revoke workflow.
+- Use the unified approval engine for the review/approval lifecycle.
+- On approval, materialize the effective-dated role coverage into `user_role_scopes` using the existing temporal assignment fields.
+- Keep approval delegation (`approval.delegation.service.js`) separate from operational coverage:
+  - approval delegation remains about acting on approval requests
+  - operational coverage remains about temporary runtime role authority
+- Enforce:
+  - scope-bounded requests
+  - approved local role allow-list only
+  - start / end dates
+  - auto-expiry
+  - manager revocation
+  - auditability of who requested, approved, activated, and revoked the coverage
+
+Acceptance target:
+- A branch/local operator can request temporary coverage, a scoped manager can approve it, the system activates it for a defined window, and it expires without manual cleanup.
+
+### Suggested Follow-On Order
+
+Use this order after the original Phase 6 closure work is stable:
+
+1. `PR-7A` - create the central-to-local handoff model first
+2. `PR-7C` - make local managers actually able to administer local users
+3. `PR-7B` - give local managers a dedicated activation workspace
+4. `PR-7D` - finish the absence model using the now-stable local admin + temporal assignment seams
+
+This order is deliberate:
+- `PR-7A` establishes the right actors and scope handoff.
+- `PR-7C` makes the delegated operating model viable.
+- `PR-7B` refines the local operating UX once the responsible actor exists.
+- `PR-7D` then reuses the shipped approval engine plus temporal assignments instead of inventing another partial delegation system.
