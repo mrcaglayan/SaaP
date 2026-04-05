@@ -41,7 +41,9 @@ import { listPolicyPacks } from "../../api/policyPacks.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import LegalEntityActivationChecklist from "../../readiness/LegalEntityActivationChecklist.jsx";
 import { formatOperatingUnitCurrentAccountBlocker } from "../../readiness/ouCurrentAccountReadiness.js";
+import { useLegalEntityActivation } from "../../readiness/useLegalEntityActivation.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 import {
@@ -228,6 +230,131 @@ function formatOperatingUnitCreateProvisioningMessage(l, provisioning) {
     );
   }
   return "";
+}
+
+function getActivationCheck(activationRow, key) {
+  if (!activationRow || !Array.isArray(activationRow.checks)) {
+    return null;
+  }
+  const normalizedKey = String(key || "").trim();
+  if (!normalizedKey) {
+    return null;
+  }
+  return (
+    activationRow.checks.find(
+      (check) => String(check?.key || "").trim() === normalizedKey
+    ) || null
+  );
+}
+
+function formatBaseAccountingActivationDetail(check, l) {
+  const details = check?.details || {};
+  const bookCount = Number(details.bookCount || 0);
+  const usableCoaCount = Number(details.usableCoaCount || 0);
+  const openPeriodCount = Number(details.openPeriodCount || 0);
+  if (check?.ready) {
+    return l(
+      `${bookCount} book(s), ${usableCoaCount} usable chart-of-accounts path(s), and ${openPeriodCount} open non-adjustment period(s) are ready for this legal entity.`,
+      `Bu legal entity icin ${bookCount} defter, ${usableCoaCount} kullanilabilir hesap plani yolu ve ${openPeriodCount} acik duzeltme-disi donem hazir.`
+    );
+  }
+
+  const blockingReasons = Array.isArray(details.blockingReasons)
+    ? details.blockingReasons
+    : [];
+  if (blockingReasons.includes("MISSING_BOOK")) {
+    return l(
+      "No usable book is linked to this legal entity yet.",
+      "Bu legal entity'ye bagli kullanilabilir bir defter henuz yok."
+    );
+  }
+  if (blockingReasons.includes("MISSING_USABLE_COA")) {
+    return l(
+      "No usable chart-of-accounts path is available for this legal entity yet.",
+      "Bu legal entity icin kullanilabilir bir hesap plani yolu henuz yok."
+    );
+  }
+  if (blockingReasons.includes("MISSING_OPEN_BOOK_PERIOD")) {
+    return l(
+      "No open non-adjustment period exists on the linked usable book path yet.",
+      "Bagli kullanilabilir defter yolunda henuz acik duzeltme-disi donem yok."
+    );
+  }
+  return l(
+    "Base accounting structure still needs attention for this legal entity.",
+    "Temel muhasebe yapisi bu legal entity icin halen dikkat gerektiriyor."
+  );
+}
+
+function formatWorkflowActivationDetail(check, l) {
+  const details = check?.details || {};
+  if (check?.ready) {
+    return l(
+      "Workflow assignments for period close and consolidation are already ready for this entity.",
+      "Donem kapanisi ve konsolidasyon icin workflow atamalari bu entity'de zaten hazir."
+    );
+  }
+  if (Array.isArray(details.missingProcessTypes) && details.missingProcessTypes.length > 0) {
+    return l(
+      `Missing workflow assignments: ${details.missingProcessTypes.join(", ")}.`,
+      `Eksik workflow atamalari: ${details.missingProcessTypes.join(", ")}.`
+    );
+  }
+  if (Array.isArray(details.invalidDefinitions) && details.invalidDefinitions.length > 0) {
+    return l(
+      `${details.invalidDefinitions.length} workflow definition(s) need repair before activation can continue.`,
+      `Aktivasyon devam etmeden once ${details.invalidDefinitions.length} workflow tanimi onarilmali.`
+    );
+  }
+  if (
+    Array.isArray(details.invalidStepPermissions) &&
+    details.invalidStepPermissions.length > 0
+  ) {
+    return l(
+      `${details.invalidStepPermissions.length} workflow step permission issue(s) still block activation.`,
+      `${details.invalidStepPermissions.length} workflow adim yetki sorunu aktivasyonu halen engelliyor.`
+    );
+  }
+  return l(
+    "Workflow setup still needs attention for this legal entity.",
+    "Bu legal entity icin workflow kurulumu halen dikkat gerektiriyor."
+  );
+}
+
+function formatShareholderActivationDetail(check, l) {
+  const details = check?.details || {};
+  const shareholderCount = Number(details.shareholderCount || 0);
+  if (check?.ready) {
+    return l(
+      `${shareholderCount} shareholder master row(s) and the required parent mappings are ready for this legal entity.`,
+      `Bu legal entity icin ${shareholderCount} ortak master satiri ve gerekli parent eslemeleri hazir.`
+    );
+  }
+  if (!details.shareholderMasterPresent) {
+    return l(
+      "No shareholder master row exists for this legal entity yet.",
+      "Bu legal entity icin henuz ortak master satiri yok."
+    );
+  }
+  if (!details.shareholderCommitmentMappingReady) {
+    const missingPurposeCodes = Array.isArray(details.mappingMissingPurposeCodes)
+      ? details.mappingMissingPurposeCodes
+      : [];
+    if (missingPurposeCodes.length > 0) {
+      return l(
+        `Shareholder parent mappings are incomplete. Missing purpose codes: ${missingPurposeCodes.join(", ")}.`,
+        `Ortak parent eslemeleri eksik. Eksik amac kodlari: ${missingPurposeCodes.join(", ")}.`
+      );
+    }
+    return l(
+      "Shareholder parent mappings are still incomplete for this legal entity.",
+      "Bu legal entity icin ortak parent eslemeleri halen eksik."
+    );
+  }
+  return l(
+    "Shareholder activation still needs attention for this legal entity.",
+    "Bu legal entity icin ortak aktivasyonu halen dikkat gerektiriyor."
+  );
 }
 
 function buildOperatingUnitCurrentAccountConfigForm(legalEntityId, row = null) {
@@ -516,10 +643,23 @@ function formatShareholderReadinessReason(reason, l) {
  */
 export default function OrganizationManagementPage({ workspaceMode = "full" }) {
   const { hasPermission } = useAuth();
-  const { loadingBase, preferencesHydrated, refreshLookups, workingContext } =
+  const {
+    loadingBase,
+    preferencesHydrated,
+    refreshLookups,
+    setWorkingContext,
+    workingContext,
+  } =
     useWorkingContext();
   const { language } = useI18n();
   const { getModuleRow, refreshLegalEntity } = useModuleReadiness();
+  const {
+    loading: activationReadinessLoading,
+    error: activationReadinessError,
+    getActivationRows,
+    getActivationRow,
+    refreshLegalEntity: refreshActivationLegalEntity,
+  } = useLegalEntityActivation();
   const isTr = language === "tr";
   const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
   const canRunTenantSetup = hasPermission("onboarding.company.setup");
@@ -2348,6 +2488,24 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
       calendarId: String(workspaceCalendarOptions[0]?.id || ""),
     }));
   }, [isActivationWorkspace, periodForm.calendarId, workspaceCalendarOptions]);
+  useEffect(() => {
+    if (!isActivationWorkspace || !activationFocusLegalEntityId) {
+      return;
+    }
+    refreshActivationLegalEntity(activationFocusLegalEntityId);
+  }, [
+    activationFocusLegalEntityId,
+    isActivationWorkspace,
+    periods.length,
+    refreshActivationLegalEntity,
+    workspaceBooks.length,
+    workspaceCalendarOptions.length,
+    workspaceCoas.length,
+    workspaceOperatingUnitCurrentAccountConfigs.length,
+    workspaceOperatingUnitPartnerCurrentAccounts.length,
+    workspaceOperatingUnits.length,
+    workspaceShareholders.length,
+  ]);
   const activationReadyBankAccounts = useMemo(
     () =>
       activationBankAccounts.filter(
@@ -2367,12 +2525,26 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
       ),
     [activationCashRegisters]
   );
+  const activationVisibleRows = useMemo(() => getActivationRows(), [getActivationRows]);
+  const activationReadinessRow = getActivationRow(activationFocusLegalEntityId);
+  const activationBaseAccountingReadiness = getActivationCheck(
+    activationReadinessRow,
+    "baseAccountingStructure"
+  );
+  const activationWorkflowReadiness = getActivationCheck(
+    activationReadinessRow,
+    "workflowCloseConsolidation"
+  );
+  const activationOperatingUnitCurrentAccountCheck = getActivationCheck(
+    activationReadinessRow,
+    "operatingUnitCurrentAccounts"
+  );
+  const activationShareholderReadiness = getActivationCheck(
+    activationReadinessRow,
+    "shareholderActivation"
+  );
   const activationOperatingUnitCurrentAccountReadiness = getModuleRow(
     "operatingUnitCurrentAccounts",
-    activationFocusLegalEntityId
-  );
-  const activationShareholderReadiness = getModuleRow(
-    "shareholderCommitment",
     activationFocusLegalEntityId
   );
   const activationBankControlParentReadiness = getModuleRow(
@@ -2383,226 +2555,317 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
     "closeConsolidationWorkflow",
     activationFocusLegalEntityId
   );
-  const activationChecklistItems = useMemo(() => {
+  const handleFocusActivationLegalEntity = useCallback(
+    (legalEntityId) => {
+      const normalizedLegalEntityId = toNumber(legalEntityId);
+      if (!normalizedLegalEntityId) {
+        return;
+      }
+      setWorkingContext((previous) => ({
+        ...previous,
+        legalEntityId: String(normalizedLegalEntityId),
+        operatingUnitId: "",
+      }));
+    },
+    [setWorkingContext]
+  );
+  const activationFocusedEntityGroups = useMemo(() => {
     if (!activationFocusLegalEntityId) {
       return [];
     }
 
     return [
       {
-        key: "books",
-        title: l("Books and ledgers", "Defterler ve ledger yapisi"),
-        ready: workspaceBooks.length > 0,
-        detail:
-          workspaceBooks.length > 0
-            ? l(
-                `${workspaceBooks.length} book(s) are linked to this legal entity.`,
-                `Bu legal entity'ye bagli ${workspaceBooks.length} defter var.`
-              )
-            : l(
-                "No book is linked to this legal entity yet. Finish local ledger activation in GL setup.",
-                "Bu legal entity'ye bagli bir defter henuz yok. GL ayarlarinda yerel defter aktivasyonunu tamamlayin."
-              ),
-        actionPath: "/app/ayarlar/hesap-plani-ayarlari",
-      },
-      {
-        key: "coas",
-        title: l("Chart of accounts usage", "Hesap plani kullanim/mapping"),
-        ready: workspaceCoas.length > 0,
-        detail:
-          workspaceCoas.length > 0
-            ? l(
-                `${workspaceCoas.length} chart-of-accounts row(s) are visible for this scope.`,
-                `Bu kapsam icin ${workspaceCoas.length} hesap plani satiri gorunur.`
-              )
-            : l(
-                "No chart-of-accounts row is visible for this legal entity yet.",
-                "Bu legal entity icin henuz gorunen bir hesap plani satiri yok."
-              ),
-        actionPath: "/app/ayarlar/hesap-plani-ayarlari",
-      },
-      {
-        key: "fiscal",
-        title: l("Fiscal configuration", "Mali konfigurasyon"),
-        ready: workspaceCalendarOptions.length > 0 && periods.length > 0,
-        detail:
-          workspaceCalendarOptions.length > 0 && periods.length > 0
-            ? l(
-                `${workspaceCalendarOptions.length} calendar option(s) and ${periods.length} fiscal period row(s) are available in this view.`,
-                `Bu gorunumde ${workspaceCalendarOptions.length} takvim secenegi ve ${periods.length} mali donem satiri var.`
-              )
-            : l(
-                "Calendar or fiscal-period setup is still incomplete for the current activation scope.",
-                "Mevcut aktivasyon kapsami icin takvim veya mali donem kurulumu halen eksik."
-              ),
-      },
-      {
-        key: "bank",
-        title: l("Bank setup", "Banka kurulumu"),
-        ready: canReadBanks && activationReadyBankAccounts.length > 0,
-        detail: activationBankAccountsLoading
-          ? l(
-              "Loading entity bank accounts for this activation scope...",
-              "Bu aktivasyon kapsami icin entity banka hesaplari yukleniyor..."
-            )
-          : activationBankAccountsError
-          ? activationBankAccountsError
-          : canReadBanks
-            ? activationReadyBankAccounts.length > 0
-              ? l(
-                  `${activationReadyBankAccounts.length} active bank account(s) are ready for this legal entity.`,
-                  `Bu legal entity icin ${activationReadyBankAccounts.length} aktif banka hesabi hazir.`
-                )
-              : l(
-                  "No active bank account is ready for this legal entity yet.",
-                  "Bu legal entity icin henuz hazir aktif banka hesabi yok."
-                )
-            : l(
-                "Bank readiness is hidden because bank.accounts.read is missing.",
-                "bank.accounts.read olmadigi icin banka hazirligi gosterilemiyor."
-              ),
-        actionPath: "/app/banka-tanimla",
-      },
-      {
-        key: "cash",
-        title: l("Cash and register setup", "Kasa ve register kurulumu"),
-        ready: canReadCashRegisters && activationReadyCashRegisters.length > 0,
-        detail: activationCashRegistersLoading
-          ? l(
-              "Loading entity cash registers for this activation scope...",
-              "Bu aktivasyon kapsami icin entity kasa register'lari yukleniyor..."
-            )
-          : activationCashRegistersError
-          ? activationCashRegistersError
-          : canReadCashRegisters
-            ? activationReadyCashRegisters.length > 0
-              ? l(
-                  `${activationReadyCashRegisters.length} active register(s) are ready for this legal entity.`,
-                  `Bu legal entity icin ${activationReadyCashRegisters.length} aktif register hazir.`
-                )
-              : l(
-                  "No active cash register is ready for this legal entity yet.",
-                  "Bu legal entity icin henuz hazir aktif kasa register'i yok."
-                )
-            : l(
-                "Cash readiness is hidden because cash.register.read is missing.",
-                "cash.register.read olmadigi icin kasa hazirligi gosterilemiyor."
-              ),
-        actionPath: "/app/kasa-tanimlari",
-      },
-      {
-        key: "branches",
-        title: l("Branches and operating units", "Subeler ve operasyon birimleri"),
-        ready: workspaceOperatingUnits.length > 0,
-        detail:
-          workspaceOperatingUnits.length > 0
-            ? l(
-                `${workspaceOperatingUnits.length} operating unit(s) are configured in this legal entity.`,
-                `Bu legal entity icinde ${workspaceOperatingUnits.length} operasyon birimi tanimli.`
-              )
-            : l(
-                "No operating unit is configured in this legal entity yet.",
-                "Bu legal entity icinde henuz operasyon birimi tanimli degil."
-              ),
-      },
-      {
-        key: "ouReadiness",
-        title: l(
-          "Self-balancing current-account readiness",
-          "Self-balancing cari hesap hazirligi"
+        key: "baseAccounting",
+        title: l("Base accounting structure", "Temel muhasebe yapisi"),
+        description: l(
+          "Books, chart-of-accounts usage, and fiscal-period readiness for the current legal entity.",
+          "Mevcut legal entity icin defter, hesap plani kullanimi ve mali donem hazirligi."
         ),
-        ready: Boolean(
-          activationOperatingUnitCurrentAccountReadiness?.ready ||
-            activationOperatingUnitCurrentAccountReadiness?.applicable === false
+        items: [
+          {
+            key: "books",
+            title: l("Books and ledgers", "Defterler ve ledger yapisi"),
+            ready: workspaceBooks.length > 0,
+            detail:
+              workspaceBooks.length > 0
+                ? l(
+                    `${workspaceBooks.length} book(s) are linked to this legal entity.`,
+                    `Bu legal entity'ye bagli ${workspaceBooks.length} defter var.`
+                  )
+                : l(
+                    "No book is linked to this legal entity yet. Finish local ledger activation in GL setup.",
+                    "Bu legal entity'ye bagli bir defter henuz yok. GL ayarlarinda yerel defter aktivasyonunu tamamlayin."
+                  ),
+            actionPath: "/app/ayarlar/hesap-plani-ayarlari",
+          },
+          {
+            key: "coas",
+            title: l("Chart of accounts usage", "Hesap plani kullanim/mapping"),
+            ready: workspaceCoas.length > 0,
+            detail:
+              workspaceCoas.length > 0
+                ? l(
+                    `${workspaceCoas.length} chart-of-accounts row(s) are visible for this scope.`,
+                    `Bu kapsam icin ${workspaceCoas.length} hesap plani satiri gorunur.`
+                  )
+                : l(
+                    "No chart-of-accounts row is visible for this legal entity yet.",
+                    "Bu legal entity icin henuz gorunen bir hesap plani satiri yok."
+                  ),
+            actionPath: "/app/ayarlar/hesap-plani-ayarlari",
+          },
+          {
+            key: "fiscal",
+            title: l("Fiscal configuration", "Mali konfigurasyon"),
+            ready: workspaceCalendarOptions.length > 0 && periods.length > 0,
+            detail: activationBaseAccountingReadiness
+              ? formatBaseAccountingActivationDetail(activationBaseAccountingReadiness, l)
+              : workspaceCalendarOptions.length > 0 && periods.length > 0
+                ? l(
+                    `${workspaceCalendarOptions.length} calendar option(s) and ${periods.length} fiscal period row(s) are available in this view.`,
+                    `Bu gorunumde ${workspaceCalendarOptions.length} takvim secenegi ve ${periods.length} mali donem satiri var.`
+                  )
+                : l(
+                    "Calendar or fiscal-period setup is still incomplete for the current activation scope.",
+                    "Mevcut aktivasyon kapsami icin takvim veya mali donem kurulumu halen eksik."
+                  ),
+          },
+        ],
+      },
+      {
+        key: "localOperating",
+        title: l("Local operating setup", "Yerel operasyon kurulumu"),
+        description: l(
+          "Banking, cash, and operating-unit setup that keeps local operations usable.",
+          "Yerel operasyonlari kullanilabilir tutan banka, kasa ve operasyon birimi kurulumu."
         ),
-        detail: activationOperatingUnitCurrentAccountReadiness
-          ? formatOperatingUnitCurrentAccountBlocker(
-              {
-                ...activationOperatingUnitCurrentAccountReadiness,
-                legalEntityId: activationFocusLegalEntityId,
-                legalEntityCode: activationFocusLegalEntity?.code,
-                legalEntityName: activationFocusLegalEntity?.name,
-              },
-              l
-            )
-          : l(
-              "Current-account readiness has not been loaded for this legal entity yet.",
-              "Bu legal entity icin cari hesap hazirligi henuz yuklenmedi."
+        items: [
+          {
+            key: "bank",
+            title: l("Bank setup", "Banka kurulumu"),
+            ready: canReadBanks && activationReadyBankAccounts.length > 0,
+            detail: activationBankAccountsLoading
+              ? l(
+                  "Loading entity bank accounts for this activation scope...",
+                  "Bu aktivasyon kapsami icin entity banka hesaplari yukleniyor..."
+                )
+              : activationBankAccountsError
+              ? activationBankAccountsError
+              : canReadBanks
+                ? activationReadyBankAccounts.length > 0
+                  ? l(
+                      `${activationReadyBankAccounts.length} active bank account(s) are ready for this legal entity.`,
+                      `Bu legal entity icin ${activationReadyBankAccounts.length} aktif banka hesabi hazir.`
+                    )
+                  : l(
+                      "No active bank account is ready for this legal entity yet.",
+                      "Bu legal entity icin henuz hazir aktif banka hesabi yok."
+                    )
+                : l(
+                    "Bank readiness is hidden because bank.accounts.read is missing.",
+                    "bank.accounts.read olmadigi icin banka hazirligi gosterilemiyor."
+                  ),
+            actionPath: "/app/banka-tanimla",
+          },
+          {
+            key: "cash",
+            title: l("Cash and register setup", "Kasa ve register kurulumu"),
+            ready: canReadCashRegisters && activationReadyCashRegisters.length > 0,
+            detail: activationCashRegistersLoading
+              ? l(
+                  "Loading entity cash registers for this activation scope...",
+                  "Bu aktivasyon kapsami icin entity kasa register'lari yukleniyor..."
+                )
+              : activationCashRegistersError
+              ? activationCashRegistersError
+              : canReadCashRegisters
+                ? activationReadyCashRegisters.length > 0
+                  ? l(
+                      `${activationReadyCashRegisters.length} active register(s) are ready for this legal entity.`,
+                      `Bu legal entity icin ${activationReadyCashRegisters.length} aktif register hazir.`
+                    )
+                  : l(
+                      "No active cash register is ready for this legal entity yet.",
+                      "Bu legal entity icin henuz hazir aktif kasa register'i yok."
+                    )
+                : l(
+                    "Cash readiness is hidden because cash.register.read is missing.",
+                    "cash.register.read olmadigi icin kasa hazirligi gosterilemiyor."
+                  ),
+            actionPath: "/app/kasa-tanimlari",
+          },
+          {
+            key: "branches",
+            title: l("Branches and operating units", "Subeler ve operasyon birimleri"),
+            ready: workspaceOperatingUnits.length > 0,
+            detail:
+              workspaceOperatingUnits.length > 0
+                ? l(
+                    `${workspaceOperatingUnits.length} operating unit(s) are configured in this legal entity.`,
+                    `Bu legal entity icinde ${workspaceOperatingUnits.length} operasyon birimi tanimli.`
+                  )
+                : l(
+                    "No operating unit is configured in this legal entity yet.",
+                    "Bu legal entity icinde henuz operasyon birimi tanimli degil."
+                  ),
+          },
+        ],
+      },
+      {
+        key: "controlConfiguration",
+        title: l("Control configuration", "Kontrol konfigurasyonu"),
+        description: l(
+          "Self-balancing and control-parent mappings that prevent broken local postings.",
+          "Bozuk yerel postingleri engelleyen self-balancing ve control-parent eslemeleri."
+        ),
+        items: [
+          {
+            key: "ouReadiness",
+            title: l(
+              "Self-balancing current-account readiness",
+              "Self-balancing cari hesap hazirligi"
             ),
-      },
-      {
-        key: "shareholders",
-        title: l("Shareholder and equity setup", "Ortak ve sermaye kurulumu"),
-        ready: Boolean(activationShareholderReadiness?.ready || workspaceShareholders.length > 0),
-        detail: activationShareholderReadiness?.ready
-          ? l(
-              "Shareholder commitment prerequisites are ready for this legal entity.",
-              "Bu legal entity icin ortak taahhut on kosullari hazir."
-            )
-          : activationShareholderReadiness?.blockerCode
-            ? l(
-                `Module blocker: ${activationShareholderReadiness.blockerCode}.`,
-                `Modul engeli: ${activationShareholderReadiness.blockerCode}.`
-              )
-            : workspaceShareholders.length > 0
-              ? l(
-                  `${workspaceShareholders.length} shareholder row(s) are already present in this legal entity.`,
-                  `Bu legal entity icinde zaten ${workspaceShareholders.length} ortak satiri var.`
+            ready: activationOperatingUnitCurrentAccountCheck
+              ? Boolean(
+                  activationOperatingUnitCurrentAccountCheck.ready ||
+                    activationOperatingUnitCurrentAccountCheck.applicable === false
+                )
+              : Boolean(
+                  activationOperatingUnitCurrentAccountReadiness?.ready ||
+                    activationOperatingUnitCurrentAccountReadiness?.applicable === false
+                ),
+            detail: activationOperatingUnitCurrentAccountReadiness
+              ? formatOperatingUnitCurrentAccountBlocker(
+                  {
+                    ...activationOperatingUnitCurrentAccountReadiness,
+                    legalEntityId: activationFocusLegalEntityId,
+                    legalEntityCode: activationFocusLegalEntity?.code,
+                    legalEntityName: activationFocusLegalEntity?.name,
+                  },
+                  l
                 )
               : l(
-                  "No shareholder setup row is present for this legal entity yet.",
-                  "Bu legal entity icin henuz ortak kurulum satiri yok."
+                  "Current-account readiness has not been loaded for this legal entity yet.",
+                  "Bu legal entity icin cari hesap hazirligi henuz yuklenmedi."
                 ),
+          },
+          {
+            key: "bankControlParent",
+            title: l("Bank control-parent mapping", "Banka control-parent eslemesi"),
+            ready: Boolean(
+              activationBankControlParentReadiness?.ready ||
+                activationBankControlParentReadiness?.applicable === false
+            ),
+            detail: activationBankControlParentReadiness?.ready
+              ? l(
+                  "Bank control-parent readiness is already satisfied for this entity.",
+                  "Bu entity icin banka control-parent hazirligi zaten saglandi."
+                )
+              : activationBankControlParentReadiness?.blockerCode
+              ? l(
+                  `Bank control-parent blocker: ${activationBankControlParentReadiness.blockerCode}.`,
+                  `Banka control-parent engeli: ${activationBankControlParentReadiness.blockerCode}.`
+                )
+              : l(
+                  "Review bank control-parent mapping if bank setup will be used here.",
+                  "Burada banka kurulumu kullanilacaksa banka control-parent eslemesini inceleyin."
+                ),
+          },
+        ],
       },
       {
-        key: "localClose",
-        title: l("Local readiness blockers", "Yerel hazirlik engelleri"),
-        ready: Boolean(
-          activationLocalCloseReadiness?.ready ||
-            activationLocalCloseReadiness?.applicable === false
+        key: "shareholderEquity",
+        title: l("Shareholder and equity setup", "Ortak ve sermaye kurulumu"),
+        description: l(
+          "Shareholder master presence plus the parent-account mappings needed for equity workflows.",
+          "Ortak master varligi ile ozkaynak workflow'lari icin gereken parent hesap eslemeleri."
         ),
-        detail: activationLocalCloseReadiness?.ready
-          ? l(
-              "Local close workflow prerequisites are already ready for this entity.",
-              "Bu entity icin yerel kapanis workflow on kosullari zaten hazir."
-            )
-          : activationLocalCloseReadiness?.blockerCode
-            ? l(
-                `Local-close blocker: ${activationLocalCloseReadiness.blockerCode}.`,
-                `Yerel kapanis engeli: ${activationLocalCloseReadiness.blockerCode}.`
-              )
-            : l(
-                "Review local close prerequisites and other entity-level blockers from this workspace.",
-                "Bu alandan yerel kapanis on kosullarini ve diger entity seviyesi engelleri inceleyin."
-              ),
-        actionPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+        items: [
+          {
+            key: "shareholders",
+            title: l("Shareholder and equity setup", "Ortak ve sermaye kurulumu"),
+            ready: activationShareholderReadiness
+              ? Boolean(
+                  activationShareholderReadiness.ready ||
+                    activationShareholderReadiness.applicable === false
+                )
+              : false,
+            detail: activationShareholderReadiness
+              ? formatShareholderActivationDetail(activationShareholderReadiness, l)
+              : activationReadinessLoading
+              ? l(
+                  "Loading shareholder activation readiness for this legal entity...",
+                  "Bu legal entity icin ortak aktivasyon hazirligi yukleniyor..."
+                )
+              : l(
+                  "Shareholder activation readiness has not been loaded for this legal entity yet.",
+                  "Bu legal entity icin ortak aktivasyon hazirligi henuz yuklenmedi."
+                ),
+          },
+        ],
       },
       {
-        key: "bankControlParent",
-        title: l("Bank control-parent mapping", "Banka control-parent eslemesi"),
-        ready: Boolean(
-          activationBankControlParentReadiness?.ready ||
-            activationBankControlParentReadiness?.applicable === false
+        key: "workflowBlockers",
+        title: l("Local blockers and workflow", "Yerel engeller ve workflow"),
+        description: l(
+          "Workflow gates and local-close blockers that still prevent go-live for this entity.",
+          "Bu entity icin go-live'i halen engelleyen workflow kapilari ve yerel kapanis engelleri."
         ),
-        detail: activationBankControlParentReadiness?.ready
-          ? l(
-              "Bank control-parent readiness is already satisfied for this entity.",
-              "Bu entity icin banka control-parent hazirligi zaten saglandi."
-            )
-          : activationBankControlParentReadiness?.blockerCode
-            ? l(
-                `Bank control-parent blocker: ${activationBankControlParentReadiness.blockerCode}.`,
-                `Banka control-parent engeli: ${activationBankControlParentReadiness.blockerCode}.`
-              )
-            : l(
-                "Review bank control-parent mapping if bank setup will be used here.",
-                "Burada banka kurulumu kullanilacaksa banka control-parent eslemesini inceleyin."
-              ),
+        items: [
+          {
+            key: "workflow",
+            title: l(
+              "Workflow setup / close-consolidation readiness",
+              "Workflow kurulumu / kapanis-konsolidasyon hazirligi"
+            ),
+            ready: activationWorkflowReadiness
+              ? Boolean(
+                  activationWorkflowReadiness.ready ||
+                    activationWorkflowReadiness.applicable === false
+                )
+              : Boolean(
+                  activationLocalCloseReadiness?.ready ||
+                    activationLocalCloseReadiness?.applicable === false
+                ),
+            detail: activationWorkflowReadiness
+              ? formatWorkflowActivationDetail(activationWorkflowReadiness, l)
+              : l(
+                  "Workflow activation readiness has not been loaded for this legal entity yet.",
+                  "Bu legal entity icin workflow aktivasyon hazirligi henuz yuklenmedi."
+                ),
+            actionPath: "/app/ayarlar/workflow-kurulumu",
+          },
+          {
+            key: "localClose",
+            title: l("Local readiness blockers", "Yerel hazirlik engelleri"),
+            ready: Boolean(
+              activationLocalCloseReadiness?.ready ||
+                activationLocalCloseReadiness?.applicable === false
+            ),
+            detail: activationLocalCloseReadiness?.ready
+              ? l(
+                  "Local close workflow prerequisites are already ready for this entity.",
+                  "Bu entity icin yerel kapanis workflow on kosullari zaten hazir."
+                )
+              : activationLocalCloseReadiness?.blockerCode
+              ? l(
+                  `Local-close blocker: ${activationLocalCloseReadiness.blockerCode}.`,
+                  `Yerel kapanis engeli: ${activationLocalCloseReadiness.blockerCode}.`
+                )
+              : l(
+                  "Review local close prerequisites and other entity-level blockers from this workspace.",
+                  "Bu alandan yerel kapanis on kosullarini ve diger entity seviyesi engelleri inceleyin."
+                ),
+            actionPath: "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",
+          },
+        ],
       },
     ];
   }, [
     activationBankAccountsError,
     activationBankAccountsLoading,
+    activationBaseAccountingReadiness,
     activationBankControlParentReadiness?.applicable,
     activationBankControlParentReadiness?.blockerCode,
     activationBankControlParentReadiness?.ready,
@@ -2612,11 +2875,13 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
     activationLocalCloseReadiness?.applicable,
     activationLocalCloseReadiness?.blockerCode,
     activationLocalCloseReadiness?.ready,
+    activationReadinessLoading,
     activationOperatingUnitCurrentAccountReadiness,
+    activationOperatingUnitCurrentAccountCheck,
     activationReadyBankAccounts.length,
     activationReadyCashRegisters.length,
-    activationShareholderReadiness?.blockerCode,
-    activationShareholderReadiness?.ready,
+    activationShareholderReadiness,
+    activationWorkflowReadiness,
     activationCashRegistersError,
     activationCashRegistersLoading,
     canReadBanks,
@@ -2627,7 +2892,34 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
     workspaceCalendarOptions.length,
     workspaceCoas.length,
     workspaceOperatingUnits.length,
-    workspaceShareholders.length,
+  ]);
+  const activationVisibleEntityCards = useMemo(() => {
+    return activationVisibleRows.map((row) => {
+      const entityMeta =
+        legalEntityById.get(Number(row.legalEntityId)) || null;
+      const country = countryById.get(toNumber(entityMeta?.country_id)) || null;
+      const label = country
+        ? `${row.legalEntityCode} - ${row.legalEntityName} | ${country.iso2} - ${country.name}`
+        : `${row.legalEntityCode} - ${row.legalEntityName}`;
+      return {
+        legalEntityId: row.legalEntityId,
+        ready: Boolean(row.ready),
+        status: row.status,
+        summary: row.summary,
+        label,
+        isFocused: Number(row.legalEntityId) === Number(activationFocusLegalEntityId),
+        groups:
+          Number(row.legalEntityId) === Number(activationFocusLegalEntityId)
+            ? activationFocusedEntityGroups
+            : [],
+      };
+    });
+  }, [
+    activationFocusLegalEntityId,
+    activationFocusedEntityGroups,
+    activationVisibleRows,
+    countryById,
+    legalEntityById,
   ]);
   useEffect(() => {
     if (
@@ -3579,7 +3871,11 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
           "Operasyon birimi cari hesap konfigurasyonu kaydedildi."
         )
       );
-      await Promise.all([loadCoreData(), refreshLegalEntity(legalEntityId)]);
+      await Promise.all([
+        loadCoreData(),
+        refreshLegalEntity(legalEntityId),
+        refreshActivationLegalEntity(legalEntityId),
+      ]);
     } catch (err) {
       setError(
         err?.response?.data?.message ||
@@ -3638,7 +3934,11 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
           );
       const detailMessage = formatOperatingUnitCurrentAccountApplySummary(l, response);
       setMessage(detailMessage ? `${baseSuccessMessage} ${detailMessage}` : baseSuccessMessage);
-      await Promise.all([loadCoreData(), refreshLegalEntity(legalEntityId)]);
+      await Promise.all([
+        loadCoreData(),
+        refreshLegalEntity(legalEntityId),
+        refreshActivationLegalEntity(legalEntityId),
+      ]);
     } catch (err) {
       setError(
         err?.response?.data?.message ||
@@ -3952,7 +4252,11 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
           "Ortak parent hesap eslesmesi kaydedildi."
         )
       );
-      await Promise.all([loadCoreData(), refreshLegalEntity(legalEntityId)]);
+      await Promise.all([
+        loadCoreData(),
+        refreshLegalEntity(legalEntityId),
+        refreshActivationLegalEntity(legalEntityId),
+      ]);
     } catch (err) {
       setError(
         err?.response?.data?.message ||
@@ -5385,41 +5689,28 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
             </div>
           ) : null}
 
-          {activationFocusLegalEntityId ? (
+          {activationReadinessError ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              {activationReadinessError}
+            </div>
+          ) : null}
+
+          {activationReadinessLoading && activationVisibleEntityCards.length === 0 ? (
+            <div className="mt-3 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm text-sky-900">
+              {l(
+                "Loading legal-entity activation readiness...",
+                "Legal-entity aktivasyon hazirligi yukleniyor..."
+              )}
+            </div>
+          ) : null}
+
+          {activationVisibleEntityCards.length > 0 ? (
             <>
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {activationChecklistItems.map((item) => (
-                  <div
-                    key={item.key}
-                    className="rounded-xl border border-sky-200 bg-white px-3 py-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="text-sm font-semibold text-slate-900">
-                        {item.title}
-                      </div>
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                          item.ready
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-amber-100 text-amber-800"
-                        }`}
-                      >
-                        {item.ready ? l("Ready", "Hazir") : l("Action", "Aksiyon")}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-600">
-                      {item.detail}
-                    </p>
-                    {item.actionPath ? (
-                      <Link
-                        to={item.actionPath}
-                        className="mt-3 inline-flex text-xs font-semibold text-sky-800 hover:text-sky-950"
-                      >
-                        {l("Open relevant surface", "Ilgili ekrani ac")}
-                      </Link>
-                    ) : null}
-                  </div>
-                ))}
+              <div className="mt-4">
+                <LegalEntityActivationChecklist
+                  entities={activationVisibleEntityCards}
+                  onFocusLegalEntity={handleFocusActivationLegalEntity}
+                />
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2 text-xs">
@@ -5435,6 +5726,17 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
                 >
                   {l("Open GL setup", "GL ayarlarini ac")}
                 </Link>
+                <button
+                  type="button"
+                  onClick={() =>
+                    document
+                      .getElementById("shareholder-form-block")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                  }
+                  className="rounded-lg border border-sky-300 bg-white px-3 py-2 font-semibold text-sky-900"
+                >
+                  {l("Jump to shareholder setup", "Ortak kurulumuna git")}
+                </button>
               </div>
             </>
           ) : null}

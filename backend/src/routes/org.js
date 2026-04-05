@@ -6,6 +6,7 @@ import {
   getPermissionScope,
   getVisibilityScope,
   invalidateRbacCache,
+  requireAnyPermission,
   requirePermission,
 } from "../middleware/rbac.js";
 import {
@@ -113,6 +114,11 @@ const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
   "SHAREHOLDER_CAPITAL_CREDIT_PARENT";
 const SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE =
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT";
+const SCOPED_COUNTERPARTY_LOOKUP_PERMISSION_CODES = Object.freeze([
+  "org.tree.read",
+  "cari.card.request",
+  "cari.card.upsert",
+]);
 function toLocalYyyyMmDd(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
     date.getDate()
@@ -535,7 +541,7 @@ router.get(
 
 router.get(
   "/legal-entities",
-  requirePermission("org.tree.read"),
+  requireAnyPermission(SCOPED_COUNTERPARTY_LOOKUP_PERMISSION_CODES),
   asyncHandler(async (req, res) => {
     const tenantId = requireOrgTenantId(req);
     const filters = parseLegalEntityReadFilters(req.query);
@@ -555,7 +561,7 @@ router.get(
 
 router.get(
   "/operating-units",
-  requirePermission("org.tree.read"),
+  requireAnyPermission(SCOPED_COUNTERPARTY_LOOKUP_PERMISSION_CODES),
   asyncHandler(async (req, res) => {
     const tenantId = requireOrgTenantId(req);
     const filters = parseOperatingUnitReadFilters(req.query);

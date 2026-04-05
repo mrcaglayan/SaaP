@@ -1270,7 +1270,14 @@ Acceptance target:
 
 The original Track 55 closure is complete. The prompts below are follow-on operating-model work built on top of the shipped RBAC redesign, not a reopening of the original closure phases.
 
+Status note:
+- PR-7A, PR-7B, PR-7C, and PR-7D are implemented in the current repo.
+- Keep these prompts as historical implementation records and regression references, not as open follow-on backlog items.
+
 ### Prompt - PR-7A Central Bootstrap Handoff And Setup Presets
+
+Implemented status:
+- Shipped in the current repo. Use this prompt as historical scope, not as an unstarted backlog item.
 
 ```text
 Implement PR-7A: Central Bootstrap Handoff And Setup Presets.
@@ -1318,6 +1325,9 @@ Acceptance target:
 
 ### Prompt - PR-7B Scoped Entity Activation Workspace
 
+Implemented status:
+- Shipped in the current repo. Use this prompt as historical scope, not as an unstarted backlog item.
+
 ```text
 Implement PR-7B: Scoped Entity Activation Workspace.
 
@@ -1357,6 +1367,9 @@ Acceptance target:
 ```
 
 ### Prompt - PR-7C Generalized Scoped Local User Administration
+
+Implemented status:
+- Shipped in the current repo. Use this prompt as historical scope, not as an unstarted backlog item.
 
 ```text
 Implement PR-7C: Generalized Scoped Local User Administration.
@@ -1401,6 +1414,9 @@ Acceptance target:
 
 ### Prompt - PR-7D Temporary Operational Coverage Workflow
 
+Implemented status:
+- Shipped in the current repo. Use this prompt as historical scope, not as an unstarted backlog item.
+
 ```text
 Implement PR-7D: Temporary Operational Coverage Workflow.
 
@@ -1411,7 +1427,7 @@ Primary files:
 - backend/src/services/approval.engine.service.js
 - backend/src/services/approval.delegation.service.js
 - backend/src/routes/security.js
-- backend/src/routes/approvals.js
+- backend/src/routes/approvalPolicies.routes.js
 - backend/src/services/authz.scope.service.js
 - frontend/src/pages/security/ApprovalDelegationsPage.jsx
 - frontend/src/api/rbacAdmin.js
@@ -1456,9 +1472,9 @@ Acceptance target:
 
 ---
 
-## Suggested Implementation Order
+## Historical Implementation Order
 
-Use this order unless the live repo reveals a dependency mismatch that requires roadmap 55 to be updated first.
+This was the intended execution order for the follow-on track and is now preserved as historical sequence.
 
 ### Batch 1 - Phase 0 Consistency
 - PR-0A

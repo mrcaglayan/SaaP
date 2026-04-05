@@ -14,7 +14,7 @@ function toQueryString(params = {}) {
 
 export async function listApprovalDelegations(params = {}) {
   const response = await api.get(
-    `/api/v1/approvals/delegations${toQueryString(params)}`
+    `/api/v1/approvals/delegations${toQueryString(params)}`,
   );
   return response.data;
 }
@@ -24,28 +24,64 @@ export async function createApprovalDelegation(payload = {}) {
   return response.data;
 }
 
+export async function getOperationalCoverageWorkspace(params = {}) {
+  const response = await api.get(
+    `/api/v1/approvals/operational-coverages/workspace${toQueryString(params)}`,
+  );
+  return response.data;
+}
+
+export async function getOperationalCoverageById(coverageId) {
+  const response = await api.get(
+    `/api/v1/approvals/operational-coverages/${coverageId}`,
+  );
+  return response.data;
+}
+
+export async function createOperationalCoverage(payload = {}) {
+  const response = await api.post(
+    "/api/v1/approvals/operational-coverages",
+    payload,
+  );
+  return response.data;
+}
+
+export async function revokeOperationalCoverage(coverageId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/approvals/operational-coverages/${coverageId}/revoke`,
+    payload,
+  );
+  return response.data;
+}
+
 export async function revokeApprovalDelegation(delegationId, payload = {}) {
   const response = await api.post(
     `/api/v1/approvals/delegations/${delegationId}/revoke`,
-    payload
+    payload,
   );
   return response.data;
 }
 
 export async function getApprovalRequestDelegationPreview(requestId) {
   const response = await api.get(
-    `/api/v1/approvals/requests/${requestId}/delegation-preview`
+    `/api/v1/approvals/requests/${requestId}/delegation-preview`,
   );
   return response.data;
 }
 
 export async function approveApprovalRequest(requestId, payload = {}) {
-  const response = await api.post(`/api/v1/approvals/requests/${requestId}/approve`, payload);
+  const response = await api.post(
+    `/api/v1/approvals/requests/${requestId}/approve`,
+    payload,
+  );
   return response.data;
 }
 
 export async function rejectApprovalRequest(requestId, payload = {}) {
-  const response = await api.post(`/api/v1/approvals/requests/${requestId}/reject`, payload);
+  const response = await api.post(
+    `/api/v1/approvals/requests/${requestId}/reject`,
+    payload,
+  );
   return response.data;
 }
 

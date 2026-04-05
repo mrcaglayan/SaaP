@@ -353,12 +353,14 @@ export const DEFAULT_FILTERS = {
 
 export const DOCUMENT_FILTER_CONTEXT_MAPPINGS = [
   { stateKey: "legalEntityId" },
+  { stateKey: "operatingUnitId" },
   { stateKey: "dateFrom" },
   { stateKey: "dateTo" },
 ];
 
 export const DOCUMENT_CREATE_CONTEXT_MAPPINGS = [
   { stateKey: "legalEntityId" },
+  { stateKey: "operatingUnitId" },
   {
     stateKey: "documentDate",
     contextKey: "dateTo",
@@ -1704,6 +1706,13 @@ export function resolveDocumentSavedViewState(savedView, columnIds) {
   return { filters: nextFilters, tablePrefs };
 }
 
+/**
+ * Create the baseline AP/AR draft form state.
+ *
+ * Currency is intentionally blank until the selected legal entity can provide
+ * its functional/book currency. This avoids showing a misleading USD default
+ * before scope context finishes loading.
+ */
 export function createInitialDraftForm() {
   return {
     legalEntityId: "",
@@ -1718,7 +1727,7 @@ export function createInitialDraftForm() {
     dueDate: "",
     amountTxn: "",
     amountBase: "",
-    currencyCode: "USD",
+    currencyCode: "",
     fxRate: "",
     lines: [createDocumentLineDraft()],
   };

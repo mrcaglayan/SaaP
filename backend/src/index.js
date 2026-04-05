@@ -22,6 +22,7 @@ import onboardingPolicyPacksRoutes from "./routes/onboarding.policy-packs.routes
 import onboardingPolicyPacksResolveRoutes from "./routes/onboarding.policy-packs.resolve.routes.js";
 import onboardingPolicyPacksApplyRoutes from "./routes/onboarding.policy-packs.apply.routes.js";
 import onboardingModuleReadinessRoutes from "./routes/onboarding.module-readiness.routes.js";
+import onboardingActivationReadinessRoutes from "./routes/onboarding.activation-readiness.routes.js";
 import workflowsRoutes from "./routes/workflows.routes.js";
 import taxRoutes from "./routes/tax.routes.js";
 import rbacRoutes from "./routes/rbac.js";
@@ -249,6 +250,7 @@ app.use("/api/v1/onboarding", requireAuth, onboardingPolicyPacksRoutes);
 app.use("/api/v1/onboarding", requireAuth, onboardingPolicyPacksResolveRoutes);
 app.use("/api/v1/onboarding", requireAuth, onboardingPolicyPacksApplyRoutes);
 app.use("/api/v1/onboarding", requireAuth, onboardingModuleReadinessRoutes);
+app.use("/api/v1/onboarding", requireAuth, onboardingActivationReadinessRoutes);
 app.use("/api/v1/workflows", requireAuth, workflowsRoutes);
 app.use("/api/v1/tax", requireAuth, taxRoutes);
 app.use("/api/v1/rbac", requireAuth, rbacRoutes);

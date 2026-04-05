@@ -1,6 +1,9 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
-import { evaluateBankApprovalNeed, snapshotBankApprovalPolicy } from "./bank.governance.service.js";
+import {
+  evaluateBankApprovalNeed,
+  snapshotBankApprovalPolicy,
+} from "./bank.governance.service.js";
 import {
   approveBankApprovalRequest,
   ensureApprovalExecutionResolversRegistered,
@@ -27,11 +30,22 @@ import {
   recordDecision,
   submitRequest,
 } from "./approval.engine.service.js";
+import {
+  ensureOperationalCoverageExecutionResolverRegistered,
+  syncOperationalCoverageApprovalBridge,
+} from "./operationalCoverage.service.js";
+import { ensureCounterpartyApprovalResolverRegistered } from "./cari.counterparty-request.service.js";
 
 function normalizeModuleCode(moduleCode, fallback = "BANK") {
   return String(moduleCode || fallback)
     .trim()
     .toUpperCase();
+}
+
+function ensureUnifiedApprovalExecutionResolversRegistered() {
+  ensureApprovalExecutionResolversRegistered();
+  ensureOperationalCoverageExecutionResolverRegistered();
+  ensureCounterpartyApprovalResolverRegistered();
 }
 
 function getUnifiedRequestField(request, ...fieldNames) {
@@ -49,22 +63,26 @@ function getUnifiedRequestActionType(request) {
       request?.policySnapshot?.actionType ??
       request?.policySnapshot?.action_type ??
       request?.policy_snapshot_json?.action_type,
-    ""
+    "",
   );
 }
 
 function shouldForceExecuteApprovedRequest(request) {
   const moduleCode = normalizeModuleCode(
     getUnifiedRequestField(request, "moduleCode", "module_code"),
-    ""
+    "",
   );
   const targetType = normalizeModuleCode(
     getUnifiedRequestField(request, "targetType", "target_type"),
-    ""
+    "",
   );
   const actionType = getUnifiedRequestActionType(request);
 
-  if (moduleCode === "PAYMENTS" && targetType === "PAYMENT_BATCH" && actionType === "APPROVE") {
+  if (
+    moduleCode === "PAYMENTS" &&
+    targetType === "PAYMENT_BATCH" &&
+    actionType === "APPROVE"
+  ) {
     return true;
   }
   if (
@@ -93,7 +111,7 @@ function shouldForceExecuteApprovedRequest(request) {
 
 async function syncUnifiedApprovalBridge({ tenantId, request }) {
   const requestId = parsePositiveInt(
-    getUnifiedRequestField(request, "id", "requestId", "request_id")
+    getUnifiedRequestField(request, "id", "requestId", "request_id"),
   );
   if (!requestId) {
     return;
@@ -101,15 +119,18 @@ async function syncUnifiedApprovalBridge({ tenantId, request }) {
 
   const moduleCode = normalizeModuleCode(
     getUnifiedRequestField(request, "moduleCode", "module_code"),
-    ""
+    "",
   );
   const targetType = normalizeModuleCode(
     getUnifiedRequestField(request, "targetType", "target_type"),
-    ""
+    "",
   );
 
   if (moduleCode === "BANK") {
-    await syncLegacyBankApprovalRequestBridge({ tenantId, genericRequestId: requestId });
+    await syncLegacyBankApprovalRequestBridge({
+      tenantId,
+      genericRequestId: requestId,
+    });
     return;
   }
 
@@ -149,6 +170,14 @@ async function syncUnifiedApprovalBridge({ tenantId, request }) {
   ) {
     const mod = await import("./local.close-reopen.service.js");
     await mod.syncLocalClosePackReopenApprovalRequestBridge({
+      tenantId,
+      approvalRequestId: requestId,
+    });
+    return;
+  }
+
+  if (moduleCode === "SECURITY" && targetType === "OPERATIONAL_ROLE_COVERAGE") {
+    await syncOperationalCoverageApprovalBridge({
       tenantId,
       approvalRequestId: requestId,
     });
@@ -197,7 +226,9 @@ function mapGenericApprovalRequestRow(row) {
     operating_unit_id: parsePositiveInt(row.operating_unit_id),
     request_status: normalizeModuleCode(row.request_status, ""),
     current_step_no: Number(row.current_step_no || 1),
-    execution_status: normalizeModuleCode(row.execution_status || "NOT_EXECUTED"),
+    execution_status: normalizeModuleCode(
+      row.execution_status || "NOT_EXECUTED",
+    ),
     submitted_by_user_id: parsePositiveInt(row.submitted_by_user_id),
     submitted_at: row.submitted_at || null,
     approved_at: row.approved_at || null,
@@ -216,13 +247,18 @@ function mapGenericApprovalRequestRow(row) {
       row.approvals_granted !== undefined
         ? Number(row.approvals_granted || 0)
         : Array.isArray(row.decisions)
-          ? row.decisions.filter((decision) => normalizeModuleCode(decision.decision) === "APPROVE").length
+          ? row.decisions.filter(
+              (decision) =>
+                normalizeModuleCode(decision.decision) === "APPROVE",
+            ).length
           : 0,
     rejections_granted:
       row.rejections_granted !== undefined
         ? Number(row.rejections_granted || 0)
         : Array.isArray(row.decisions)
-          ? row.decisions.filter((decision) => normalizeModuleCode(decision.decision) === "REJECT").length
+          ? row.decisions.filter(
+              (decision) => normalizeModuleCode(decision.decision) === "REJECT",
+            ).length
           : 0,
   };
 }
@@ -242,7 +278,9 @@ function mapGenericApprovalDecisionRow(row) {
     acting_user_id: parsePositiveInt(row.acting_user_id),
     delegator_user_id: parsePositiveInt(row.delegator_user_id),
     delegation_id: parsePositiveInt(row.delegation_id),
-    reviewer_authority_user_id: parsePositiveInt(row.reviewer_authority_user_id),
+    reviewer_authority_user_id: parsePositiveInt(
+      row.reviewer_authority_user_id,
+    ),
     decided_at: row.decided_at || null,
   };
 }
@@ -257,7 +295,9 @@ function buildApprovalExecutionResolverKey(moduleCode, targetType, actionType) {
 
 function buildUnifiedSubmitSnapshot(requestInput, targetSnapshot) {
   const normalizedTargetSnapshot =
-    targetSnapshot && typeof targetSnapshot === "object" ? { ...targetSnapshot } : {};
+    targetSnapshot && typeof targetSnapshot === "object"
+      ? { ...targetSnapshot }
+      : {};
   return {
     ...normalizedTargetSnapshot,
     module_code: normalizeModuleCode(requestInput?.moduleCode),
@@ -279,12 +319,51 @@ function buildUnifiedSubmitSnapshot(requestInput, targetSnapshot) {
     execution_resolver_key: buildApprovalExecutionResolverKey(
       requestInput?.moduleCode,
       requestInput?.targetType,
-      requestInput?.actionType
+      requestInput?.actionType,
     ),
   };
 }
 
-async function getGenericApprovalRequestRowById({ tenantId, requestId, runQuery = query }) {
+function assertGenericRequestScopeAccess(
+  req,
+  genericRequest,
+  assertScopeAccess,
+  label = "requestId",
+) {
+  if (typeof assertScopeAccess !== "function") {
+    return;
+  }
+
+  const scopeType = normalizeModuleCode(
+    getUnifiedRequestField(genericRequest, "scope_type", "scopeType"),
+    "",
+  );
+  const scopeId = parsePositiveInt(
+    getUnifiedRequestField(genericRequest, "scope_id", "scopeId"),
+  );
+  if (scopeType === "OPERATING_UNIT" && scopeId) {
+    assertScopeAccess(req, "operating_unit", scopeId, label);
+    return;
+  }
+  if (scopeType === "LEGAL_ENTITY" && scopeId) {
+    assertScopeAccess(req, "legal_entity", scopeId, label);
+    return;
+  }
+  if (parsePositiveInt(genericRequest?.legal_entity_id)) {
+    assertScopeAccess(
+      req,
+      "legal_entity",
+      genericRequest.legal_entity_id,
+      label,
+    );
+  }
+}
+
+async function getGenericApprovalRequestRowById({
+  tenantId,
+  requestId,
+  runQuery = query,
+}) {
   const normalizedRequestId = parsePositiveInt(requestId);
   if (!normalizedRequestId) {
     return null;
@@ -295,12 +374,16 @@ async function getGenericApprovalRequestRowById({ tenantId, requestId, runQuery 
      WHERE tenant_id = ?
        AND id = ?
      LIMIT 1`,
-    [tenantId, normalizedRequestId]
+    [tenantId, normalizedRequestId],
   );
   return mapGenericApprovalRequestRow(res.rows?.[0] || null);
 }
 
-async function listGenericApprovalDecisions({ tenantId, requestId, runQuery = query }) {
+async function listGenericApprovalDecisions({
+  tenantId,
+  requestId,
+  runQuery = query,
+}) {
   const normalizedRequestId = parsePositiveInt(requestId);
   if (!normalizedRequestId) {
     return [];
@@ -311,17 +394,29 @@ async function listGenericApprovalDecisions({ tenantId, requestId, runQuery = qu
      WHERE tenant_id = ?
        AND request_id = ?
      ORDER BY step_no ASC, id ASC`,
-    [tenantId, normalizedRequestId]
+    [tenantId, normalizedRequestId],
   );
   return (res.rows || []).map(mapGenericApprovalDecisionRow);
 }
 
-async function hydrateGenericApprovalRequest({ tenantId, requestId, runQuery = query }) {
-  const row = await getGenericApprovalRequestRowById({ tenantId, requestId, runQuery });
+async function hydrateGenericApprovalRequest({
+  tenantId,
+  requestId,
+  runQuery = query,
+}) {
+  const row = await getGenericApprovalRequestRowById({
+    tenantId,
+    requestId,
+    runQuery,
+  });
   if (!row) {
     return null;
   }
-  const decisions = await listGenericApprovalDecisions({ tenantId, requestId, runQuery });
+  const decisions = await listGenericApprovalDecisions({
+    tenantId,
+    requestId,
+    runQuery,
+  });
   return mapGenericApprovalRequestRow({
     ...row,
     decisions,
@@ -337,7 +432,9 @@ async function listGenericApprovalRequestRows({
   const params = [tenantId];
   const where = ["r.tenant_id = ?"];
   if (typeof buildScopeFilter === "function") {
-    where.push(buildScopeFilter(req, "legal_entity", "r.legal_entity_id", params));
+    where.push(
+      buildScopeFilter(req, "legal_entity", "r.legal_entity_id", params),
+    );
   }
   if (filters.requestStatus) {
     where.push("r.request_status = ?");
@@ -352,7 +449,9 @@ async function listGenericApprovalRequestRows({
     params.push(normalizeModuleCode(filters.targetType, ""));
   }
   if (filters.actionType) {
-    where.push("JSON_UNQUOTE(JSON_EXTRACT(r.policy_snapshot_json, '$.action_type')) = ?");
+    where.push(
+      "JSON_UNQUOTE(JSON_EXTRACT(r.policy_snapshot_json, '$.action_type')) = ?",
+    );
     params.push(normalizeModuleCode(filters.actionType, ""));
   }
   if (filters.mineOnly) {
@@ -365,12 +464,16 @@ async function listGenericApprovalRequestRows({
     `SELECT COUNT(*) AS total
      FROM approval_requests r
      WHERE ${whereSql}`,
-    params
+    params,
   );
   const total = Number(countRes.rows?.[0]?.total || 0);
 
-  const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
-  const safeOffset = Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const safeLimit =
+    Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
+  const safeOffset =
+    Number.isInteger(filters.offset) && filters.offset >= 0
+      ? filters.offset
+      : 0;
   const listRes = await query(
     `SELECT
         r.*,
@@ -400,7 +503,7 @@ async function listGenericApprovalRequestRows({
        END,
        r.id DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    params
+    params,
   );
 
   return {
@@ -409,7 +512,7 @@ async function listGenericApprovalRequestRows({
         ...row,
         approvals_granted: Number(row.approve_count || 0),
         rejections_granted: Number(row.reject_count || 0),
-      })
+      }),
     ),
     total,
     limit: filters.limit,
@@ -455,13 +558,18 @@ export async function evaluateApprovalNeed({
     });
   }
 
-  return evaluateGenericApprovalNeed(normalizedModuleCode, targetType, actionType, {
-    tenantId,
-    legalEntityId,
-    thresholdAmount,
-    currencyCode,
-    effectiveOn: asOfDate,
-  });
+  return evaluateGenericApprovalNeed(
+    normalizedModuleCode,
+    targetType,
+    actionType,
+    {
+      tenantId,
+      legalEntityId,
+      thresholdAmount,
+      currencyCode,
+      effectiveOn: asOfDate,
+    },
+  );
 }
 
 /**
@@ -490,7 +598,7 @@ export async function submitApprovalRequest({
     });
   }
 
-  ensureApprovalExecutionResolversRegistered();
+  ensureUnifiedApprovalExecutionResolversRegistered();
   const targetType = normalizeModuleCode(requestInput?.targetType, "");
   const actionType = normalizeModuleCode(requestInput?.actionType, "");
   const targetId = parsePositiveInt(requestInput?.targetId);
@@ -500,12 +608,17 @@ export async function submitApprovalRequest({
 
   const governance =
     policyOverride ||
-    (await evaluateGenericApprovalNeed(normalizedModuleCode, targetType, actionType, {
-      tenantId,
-      legalEntityId: parsePositiveInt(requestInput?.legalEntityId) || null,
-      thresholdAmount: requestInput?.thresholdAmount ?? null,
-      currencyCode: requestInput?.currencyCode || null,
-    }));
+    (await evaluateGenericApprovalNeed(
+      normalizedModuleCode,
+      targetType,
+      actionType,
+      {
+        tenantId,
+        legalEntityId: parsePositiveInt(requestInput?.legalEntityId) || null,
+        thresholdAmount: requestInput?.thresholdAmount ?? null,
+        currencyCode: requestInput?.currencyCode || null,
+      },
+    ));
 
   if (!governance?.approvalRequired && !governance?.approval_required) {
     return { approval_required: false, approvalRequired: false, item: null };
@@ -519,7 +632,10 @@ export async function submitApprovalRequest({
     typeof snapshotBuilder === "function"
       ? (await snapshotBuilder()) || {}
       : requestInput?.targetSnapshot || requestInput?.target_snapshot || {};
-  const targetSnapshot = buildUnifiedSubmitSnapshot(requestInput, rawTargetSnapshot);
+  const targetSnapshot = buildUnifiedSubmitSnapshot(
+    requestInput,
+    rawTargetSnapshot,
+  );
   const submitRes = await submitRequest(
     parsePositiveInt(governance.policy.id),
     targetType,
@@ -530,9 +646,10 @@ export async function submitApprovalRequest({
       legalEntityId: parsePositiveInt(requestInput?.legalEntityId) || null,
       operatingUnitId: parsePositiveInt(requestInput?.operatingUnitId) || null,
       targetSnapshot,
-      actionPayload: requestInput?.actionPayload ?? requestInput?.action_payload ?? null,
+      actionPayload:
+        requestInput?.actionPayload ?? requestInput?.action_payload ?? null,
     },
-    { runQuery }
+    { runQuery },
   );
 
   return {
@@ -567,8 +684,16 @@ export async function submitApprovalRequestFromRoute({
     });
   }
 
-  if (parsePositiveInt(input?.legalEntityId) && typeof assertScopeAccess === "function") {
-    assertScopeAccess(req, "legal_entity", input.legalEntityId, "legalEntityId");
+  if (
+    parsePositiveInt(input?.legalEntityId) &&
+    typeof assertScopeAccess === "function"
+  ) {
+    assertScopeAccess(
+      req,
+      "legal_entity",
+      input.legalEntityId,
+      "legalEntityId",
+    );
   }
 
   const result = await submitApprovalRequest({
@@ -581,7 +706,9 @@ export async function submitApprovalRequestFromRoute({
   });
 
   if (!result.approval_required) {
-    throw badRequest("No active approval policy matched for the submitted request");
+    throw badRequest(
+      "No active approval policy matched for the submitted request",
+    );
   }
   return result;
 }
@@ -598,7 +725,10 @@ export {
  * Resolve one approval request id to its RBAC scope for generic approval routes.
  */
 export async function resolveApprovalRequestScope(requestId, tenantId) {
-  const genericRequest = await getGenericApprovalRequestRowById({ tenantId, requestId });
+  const genericRequest = await getGenericApprovalRequestRowById({
+    tenantId,
+    requestId,
+  });
   if (genericRequest) {
     return {
       scopeType: genericRequest.scope_type,
@@ -649,11 +779,17 @@ export async function getApprovalRequestById({
   requestId,
   assertScopeAccess,
 }) {
-  const genericRequest = await hydrateGenericApprovalRequest({ tenantId, requestId });
+  const genericRequest = await hydrateGenericApprovalRequest({
+    tenantId,
+    requestId,
+  });
   if (genericRequest) {
-    if (parsePositiveInt(genericRequest.legal_entity_id)) {
-      assertScopeAccess(req, "legal_entity", genericRequest.legal_entity_id, "requestId");
-    }
+    assertGenericRequestScopeAccess(
+      req,
+      genericRequest,
+      assertScopeAccess,
+      "requestId",
+    );
     return genericRequest;
   }
   return getBankApprovalRequestById({
@@ -684,7 +820,10 @@ export async function approveApprovalRequest({
   decisionComment = null,
   assertScopeAccess,
 }) {
-  const genericRequest = await getGenericApprovalRequestRowById({ tenantId, requestId });
+  const genericRequest = await getGenericApprovalRequestRowById({
+    tenantId,
+    requestId,
+  });
   if (!genericRequest) {
     return approveBankApprovalRequest({
       req,
@@ -696,21 +835,33 @@ export async function approveApprovalRequest({
     });
   }
 
-  ensureApprovalExecutionResolversRegistered();
-  if (parsePositiveInt(genericRequest.legal_entity_id)) {
-    assertScopeAccess(req, "legal_entity", genericRequest.legal_entity_id, "requestId");
-  }
-  let result = await recordDecision(requestId, userId, "APPROVE", decisionComment);
+  ensureUnifiedApprovalExecutionResolversRegistered();
+  assertGenericRequestScopeAccess(
+    req,
+    genericRequest,
+    assertScopeAccess,
+    "requestId",
+  );
+  let result = await recordDecision(
+    requestId,
+    userId,
+    "APPROVE",
+    decisionComment,
+  );
   let approvalItem = result.item || genericRequest;
 
   if (
     normalizeModuleCode(
       getUnifiedRequestField(approvalItem, "requestStatus", "request_status"),
-      ""
+      "",
     ) === "APPROVED" &&
     normalizeModuleCode(
-      getUnifiedRequestField(approvalItem, "executionStatus", "execution_status"),
-      "NOT_EXECUTED"
+      getUnifiedRequestField(
+        approvalItem,
+        "executionStatus",
+        "execution_status",
+      ),
+      "NOT_EXECUTED",
     ) !== "EXECUTED" &&
     shouldForceExecuteApprovedRequest(approvalItem)
   ) {
@@ -721,7 +872,8 @@ export async function approveApprovalRequest({
     result = {
       ...result,
       item: approvalItem,
-      execution_result: execution.execution_result || result.execution_result || null,
+      execution_result:
+        execution.execution_result || result.execution_result || null,
       idempotent: Boolean(result.idempotent && execution.idempotent),
     };
   }
@@ -741,7 +893,10 @@ export async function rejectApprovalRequest({
   decisionComment = null,
   assertScopeAccess,
 }) {
-  const genericRequest = await getGenericApprovalRequestRowById({ tenantId, requestId });
+  const genericRequest = await getGenericApprovalRequestRowById({
+    tenantId,
+    requestId,
+  });
   if (!genericRequest) {
     return rejectBankApprovalRequest({
       req,
@@ -753,12 +908,23 @@ export async function rejectApprovalRequest({
     });
   }
 
-  ensureApprovalExecutionResolversRegistered();
-  if (parsePositiveInt(genericRequest.legal_entity_id)) {
-    assertScopeAccess(req, "legal_entity", genericRequest.legal_entity_id, "requestId");
-  }
-  const result = await recordDecision(requestId, userId, "REJECT", decisionComment);
-  await syncUnifiedApprovalBridge({ tenantId, request: result.item || genericRequest });
+  ensureUnifiedApprovalExecutionResolversRegistered();
+  assertGenericRequestScopeAccess(
+    req,
+    genericRequest,
+    assertScopeAccess,
+    "requestId",
+  );
+  const result = await recordDecision(
+    requestId,
+    userId,
+    "REJECT",
+    decisionComment,
+  );
+  await syncUnifiedApprovalBridge({
+    tenantId,
+    request: result.item || genericRequest,
+  });
   return result;
 }
 
@@ -766,15 +932,21 @@ export async function rejectApprovalRequest({
  * Execute one final-approved approval request from the unified engine.
  */
 export async function executeApprovalRequest({ tenantId, requestId, userId }) {
-  const genericRequest = await getGenericApprovalRequestRowById({ tenantId, requestId });
+  const genericRequest = await getGenericApprovalRequestRowById({
+    tenantId,
+    requestId,
+  });
   if (!genericRequest) {
     return executeBankApprovalRequest({ tenantId, requestId, userId });
   }
-  ensureApprovalExecutionResolversRegistered();
+  ensureUnifiedApprovalExecutionResolversRegistered();
   const result = await executeUnifiedApprovalRequest(requestId, {
     executedByUserId: userId,
   });
-  await syncUnifiedApprovalBridge({ tenantId, request: result.item || genericRequest });
+  await syncUnifiedApprovalBridge({
+    tenantId,
+    request: result.item || genericRequest,
+  });
   return result;
 }
 

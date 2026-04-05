@@ -1,10 +1,10 @@
 import express from "express";
 import {
   assertScopeAccess,
-  buildScopeFilter,
+  requireAnyPermission,
   requirePermission,
 } from "../middleware/rbac.js";
-import { asyncHandler, parsePositiveInt } from "./_utils.js";
+import { asyncHandler } from "./_utils.js";
 import {
   parsePaymentTermCreateInput,
   parsePaymentTermIdParam,
@@ -15,30 +15,24 @@ import {
   createPaymentTerm,
   getPaymentTermByIdForTenant,
   listPaymentTerms,
-  resolvePaymentTermScope,
 } from "../services/cari.payment-term.service.js";
 
 const router = express.Router();
+const PAYMENT_TERM_READ_PERMISSION_CODES = Object.freeze([
+  "cari.card.read",
+  "cari.card.request",
+  "cari.card.upsert",
+]);
 
 router.get(
   "/",
-  requirePermission("cari.card.read", {
-    resolveScope: async (req) => {
-      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
-      return null;
-    },
-  }),
+  requireAnyPermission(PAYMENT_TERM_READ_PERMISSION_CODES),
   asyncHandler(async (req, res) => {
     const filters = parsePaymentTermReadFilters(req);
     const result = await listPaymentTerms({
       req,
       tenantId: filters.tenantId,
       filters,
-      buildScopeFilter,
-      assertScopeAccess,
     });
     return res.json({
       tenantId: filters.tenantId,
@@ -74,11 +68,7 @@ router.post(
 
 router.get(
   "/:paymentTermId",
-  requirePermission("cari.card.read", {
-    resolveScope: async (req, tenantId) => {
-      return resolvePaymentTermScope(req.params?.paymentTermId, tenantId);
-    },
-  }),
+  requireAnyPermission(PAYMENT_TERM_READ_PERMISSION_CODES),
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
     const paymentTermId = parsePaymentTermIdParam(req);
@@ -86,7 +76,6 @@ router.get(
       req,
       tenantId,
       paymentTermId,
-      assertScopeAccess,
     });
     return res.json({
       tenantId,

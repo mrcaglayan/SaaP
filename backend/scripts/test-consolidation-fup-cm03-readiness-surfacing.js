@@ -69,9 +69,8 @@ async function main() {
     "utf8"
   );
   assert(
-    tenantReadinessSource.includes('key: "consolidationCanonicalMappingV1"') &&
-      tenantReadinessSource.includes('key: "workflowCloseConsolidationV1"'),
-    "onboarding readiness contract keys must remain stable"
+    tenantReadinessSource.includes('key: "consolidationCanonicalMappingV1"'),
+    "tenant bootstrap readiness must retain the consolidation placeholder key"
   );
 
   console.log("FUP-CM03 operational readiness surfacing checks passed.");

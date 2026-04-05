@@ -158,6 +158,7 @@ import migration168RoleMigrationTool from "./m168_role_migration_tool.js";
 import migration169FieldVisibilityPolicies from "./m169_field_visibility_policies.js";
 import migration170ApprovalEscalationEngine from "./m170_approval_escalation_engine.js";
 import migration171ApprovalDelegations from "./m171_approval_delegations.js";
+import migration172OperationalRoleCoverages from "./m172_operational_role_coverages.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -320,6 +321,7 @@ const migrations = [
   migration169FieldVisibilityPolicies,
   migration170ApprovalEscalationEngine,
   migration171ApprovalDelegations,
+  migration172OperationalRoleCoverages,
 ];
 
 export default migrations;

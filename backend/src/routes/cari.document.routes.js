@@ -48,11 +48,10 @@ function resolveLegalEntityScopeFromQuery(req) {
   if (operatingUnitId) {
     return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
   }
-  const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-  if (!legalEntityId) {
-    return null;
-  }
-  return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+  // Keep list/read queries usable for OU-scoped actors who are filtering
+  // inside their parent legal entity. Row-level visibility in the service
+  // still prevents cross-scope reads.
+  return null;
 }
 
 function resolveLegalEntityScopeFromBody(req) {

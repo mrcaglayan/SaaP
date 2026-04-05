@@ -1,6 +1,7 @@
 import express from "express";
 import {
   assertScopeAccess,
+  requireAnyPermission,
   requirePermission,
 } from "../middleware/rbac.js";
 import { asyncHandler, parsePositiveInt } from "./_utils.js";
@@ -46,7 +47,7 @@ function resolveRequestOperatingUnitScope(req) {
 
 router.get(
   "/",
-  requirePermission("cari.card.request", {
+  requireAnyPermission(["cari.card.request", "cari.request.review"], {
     resolveScope: async (req) => {
       const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
       if (legalEntityId) {

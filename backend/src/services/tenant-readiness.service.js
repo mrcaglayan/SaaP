@@ -1,15 +1,8 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
-import {
-  getCloseConsolidationWorkflowReadiness,
-  getOperatingUnitCurrentAccountReadiness,
-} from "./module-readiness.service.js";
 
-const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
-  "SHAREHOLDER_CAPITAL_CREDIT_PARENT";
-const SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE =
-  "SHAREHOLDER_COMMITMENT_DEBIT_PARENT";
-
+// Tenant readiness is intentionally limited to bootstrap structure. Entity
+// activation blockers are evaluated in the per-legal-entity activation stage.
 export const READINESS_DEFINITIONS = Object.freeze([
   Object.freeze({ key: "groupCompanies", label: "Group companies", minimum: 1 }),
   Object.freeze({ key: "legalEntities", label: "Legal entities", minimum: 1 }),
@@ -19,28 +12,12 @@ export const READINESS_DEFINITIONS = Object.freeze([
   Object.freeze({ key: "openBookPeriods", label: "Open book periods", minimum: 1 }),
   Object.freeze({ key: "chartsOfAccounts", label: "Charts of accounts", minimum: 1 }),
   Object.freeze({ key: "accounts", label: "Accounts", minimum: 1 }),
-  Object.freeze({ key: "shareholders", label: "Shareholders", minimum: 1 }),
-  Object.freeze({
-    key: "shareholderCommitmentConfigs",
-    label: "Shareholder parent account mappings",
-    minimum: 1,
-  }),
   Object.freeze({ key: "subaccountsV1", label: "Subaccounts V1 placeholder", minimum: 0 }),
   Object.freeze({ key: "setupWizardV2", label: "Setup Wizard V2 placeholder", minimum: 0 }),
   Object.freeze({
     key: "consolidationCanonicalMappingV1",
     label: "Consolidation canonical mapping placeholder",
     minimum: 0,
-  }),
-  Object.freeze({
-    key: "operatingUnitCurrentAccounts",
-    label: "Operating-unit current-account readiness",
-    minimum: 0,
-  }),
-  Object.freeze({
-    key: "workflowCloseConsolidationV1",
-    label: "Workflow close/consolidation readiness",
-    minimum: 1,
   }),
   Object.freeze({
     key: "taxEngineV1",
@@ -55,25 +32,9 @@ async function scalarCount(sql, params = [], runQuery = query) {
   return Number.isFinite(count) ? count : 0;
 }
 
-function buildLegalEntityStatusDetails(rows = []) {
-  return rows.map((row) => ({
-    legalEntityId: parsePositiveInt(row?.legalEntityId),
-    legalEntityCode: String(row?.legalEntityCode || "").trim(),
-    legalEntityName: String(row?.legalEntityName || "").trim(),
-    blockerCode: String(row?.blockerCode || "").trim() || null,
-    setupPath: String(row?.setupPath || "").trim() || null,
-    effectiveActiveOperatingUnitCount:
-      parsePositiveInt(row?.effectiveActiveOperatingUnitCount) || 0,
-    missingCentralOperatingUnitCount: Array.isArray(row?.missingCentralOperatingUnits)
-      ? row.missingCentralOperatingUnits.length
-      : 0,
-    missingPartnerDirectionCount: parsePositiveInt(row?.missingPartnerDirectionCount) || 0,
-  }));
-}
-
 /**
- * Build a tenant readiness snapshot while ignoring inactive legal entities for
- * tenant-wide operational blockers.
+ * Build a tenant bootstrap readiness snapshot for the minimum shared tenant
+ * structure. Legal-entity activation blockers are intentionally excluded.
  */
 export async function getTenantReadinessSnapshot(
   tenantId,
@@ -93,10 +54,6 @@ export async function getTenantReadinessSnapshot(
     openBookPeriods,
     chartsOfAccounts,
     accounts,
-    shareholders,
-    shareholderCommitmentConfigs,
-    workflowModuleReadiness,
-    operatingUnitCurrentAccountReadiness,
   ] = await Promise.all([
     scalarCount(
       `SELECT COUNT(*) AS count
@@ -164,65 +121,7 @@ export async function getTenantReadinessSnapshot(
       [normalizedTenantId],
       runQuery
     ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM shareholders
-       WHERE tenant_id = ?`,
-      [normalizedTenantId],
-      runQuery
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM legal_entities le
-       WHERE le.tenant_id = ?
-         AND EXISTS (
-           SELECT 1
-           FROM journal_purpose_accounts cap
-           WHERE cap.tenant_id = le.tenant_id
-             AND cap.legal_entity_id = le.id
-             AND cap.purpose_code = ?
-         )
-         AND EXISTS (
-           SELECT 1
-           FROM journal_purpose_accounts deb
-           WHERE deb.tenant_id = le.tenant_id
-             AND deb.legal_entity_id = le.id
-             AND deb.purpose_code = ?
-         )`,
-      [
-        normalizedTenantId,
-        SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
-        SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
-      ],
-      runQuery
-    ),
-    getCloseConsolidationWorkflowReadiness(normalizedTenantId, null, {
-      runQuery,
-    }),
-    getOperatingUnitCurrentAccountReadiness(normalizedTenantId, null, {
-      runQuery,
-    }),
   ]);
-
-  const workflowRows = Array.isArray(workflowModuleReadiness?.byLegalEntity)
-    ? workflowModuleReadiness.byLegalEntity
-    : [];
-  const workflowReadyCount = workflowRows.filter((row) => Boolean(row?.ready)).length;
-  const workflowMinimum = workflowRows.length;
-  const workflowMissingLegalEntityIds = workflowRows
-    .filter((row) => !row?.ready)
-    .map((row) => parsePositiveInt(row?.legalEntityId))
-    .filter(Boolean);
-
-  const operatingUnitRows = Array.isArray(operatingUnitCurrentAccountReadiness?.byLegalEntity)
-    ? operatingUnitCurrentAccountReadiness.byLegalEntity
-    : [];
-  const operatingUnitReadyCount = operatingUnitRows.filter((row) => Boolean(row?.ready)).length;
-  const operatingUnitMinimum = operatingUnitRows.length;
-  const operatingUnitBlockingRows = operatingUnitRows.filter((row) => !row?.ready);
-  const operatingUnitApplicableEntityCount = operatingUnitRows.filter((row) =>
-    Boolean(row?.applicable)
-  ).length;
 
   const counts = {
     groupCompanies,
@@ -233,42 +132,9 @@ export async function getTenantReadinessSnapshot(
     openBookPeriods,
     chartsOfAccounts,
     accounts,
-    shareholders,
-    shareholderCommitmentConfigs,
-    operatingUnitCurrentAccounts: operatingUnitReadyCount,
-    workflowCloseConsolidationV1: workflowReadyCount,
   };
 
   const checks = READINESS_DEFINITIONS.map((definition) => {
-    if (definition.key === "workflowCloseConsolidationV1") {
-      return {
-        ...definition,
-        count: workflowReadyCount,
-        minimum: workflowMinimum,
-        ready: workflowReadyCount >= workflowMinimum,
-        details: {
-          readyEntityCount: workflowReadyCount,
-          totalEntityCount: workflowRows.length,
-          missingLegalEntityIds: workflowMissingLegalEntityIds,
-        },
-      };
-    }
-
-    if (definition.key === "operatingUnitCurrentAccounts") {
-      return {
-        ...definition,
-        count: operatingUnitReadyCount,
-        minimum: operatingUnitMinimum,
-        ready: operatingUnitReadyCount >= operatingUnitMinimum,
-        details: {
-          readyEntityCount: operatingUnitReadyCount,
-          totalEntityCount: operatingUnitRows.length,
-          applicableEntityCount: operatingUnitApplicableEntityCount,
-          blockingRows: buildLegalEntityStatusDetails(operatingUnitBlockingRows),
-        },
-      };
-    }
-
     const count = Number(counts[definition.key] || 0);
     return {
       ...definition,

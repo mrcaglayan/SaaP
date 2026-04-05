@@ -4423,7 +4423,7 @@
           "Onboarding"
         ],
         "operationId": "getTenantReadiness",
-        "summary": "Get tenant setup readiness snapshot",
+        "summary": "Get tenant bootstrap readiness snapshot",
         "parameters": [
           {
             "in": "query",
@@ -4438,7 +4438,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Tenant readiness snapshot",
+            "description": "Tenant bootstrap readiness snapshot",
             "content": {
               "application/json": {
                 "schema": {
@@ -4511,13 +4511,65 @@
         }
       }
     },
+    "/api/v1/onboarding/legal-entity-activation": {
+      "get": {
+        "tags": [
+          "Onboarding"
+        ],
+        "operationId": "getLegalEntityActivationReadiness",
+        "summary": "Get legal-entity activation readiness snapshot",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Optional legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Legal-entity activation readiness snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityActivationReadinessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/onboarding/readiness/bootstrap-baseline": {
       "post": {
         "tags": [
           "Onboarding"
         ],
         "operationId": "bootstrapTenantReadinessBaseline",
-        "summary": "Create missing baseline setup for tenant readiness",
+        "summary": "Create missing baseline setup for tenant bootstrap readiness",
         "requestBody": {
           "required": false,
           "content": {
@@ -4530,7 +4582,7 @@
         },
         "responses": {
           "201": {
-            "description": "Tenant readiness baseline bootstrap result",
+            "description": "Tenant bootstrap baseline result",
             "content": {
               "application/json": {
                 "schema": {
@@ -4735,6 +4787,170 @@
             "name": "delegationId",
             "required": true,
             "description": "delegationId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/operational-coverages": {
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "postApiV1ApprovalsOperationalCoverages",
+        "summary": "Auto-generated: POST /api/v1/approvals/operational-coverages",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/operational-coverages/workspace": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "getApiV1ApprovalsOperationalCoveragesWorkspace",
+        "summary": "Auto-generated: GET /api/v1/approvals/operational-coverages/workspace",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/operational-coverages/{coverageId}": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "getApiV1ApprovalsOperationalCoveragesCoverageid",
+        "summary": "Auto-generated: GET /api/v1/approvals/operational-coverages/{coverageId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "coverageId",
+            "required": true,
+            "description": "coverageId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/approvals/operational-coverages/{coverageId}/revoke": {
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "postApiV1ApprovalsOperationalCoveragesCoverageidRevoke",
+        "summary": "Auto-generated: POST /api/v1/approvals/operational-coverages/{coverageId}/revoke",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "coverageId",
+            "required": true,
+            "description": "coverageId identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -21871,6 +22087,36 @@
         }
       }
     },
+    "/api/v1/onboarding/company-bootstrap/handoff-options": {
+      "get": {
+        "tags": [
+          "Onboarding"
+        ],
+        "operationId": "getApiV1OnboardingCompanyBootstrapHandoffOptions",
+        "summary": "Auto-generated: GET /api/v1/onboarding/company-bootstrap/handoff-options",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/onboarding/policy-packs": {
       "get": {
         "tags": [
@@ -28446,6 +28692,118 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/security/local-user-admin": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "getApiV1SecurityLocalUserAdmin",
+        "summary": "Auto-generated: GET /api/v1/security/local-user-admin",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/security/local-user-admin/assignments": {
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1SecurityLocalUserAdminAssignments",
+        "summary": "Auto-generated: POST /api/v1/security/local-user-admin/assignments",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/local-user-admin/assignments/{assignmentId}": {
+      "delete": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "deleteApiV1SecurityLocalUserAdminAssignmentsAssignmentid",
+        "summary": "Auto-generated: DELETE /api/v1/security/local-user-admin/assignments/{assignmentId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignmentId",
+            "required": true,
+            "description": "assignmentId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
       }
     },
     "/api/v1/security/role-migrations": {
@@ -35823,18 +36181,8 @@
           },
           "details": {
             "nullable": true,
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/TenantReadinessWorkflowDetails"
-              },
-              {
-                "$ref": "#/components/schemas/TenantReadinessOperatingUnitCurrentAccountDetails"
-              },
-              {
-                "type": "object",
-                "additionalProperties": true
-              }
-            ]
+            "type": "object",
+            "additionalProperties": true
           }
         },
         "required": [
@@ -35844,105 +36192,6 @@
           "count",
           "ready",
           "details"
-        ]
-      },
-      "TenantReadinessWorkflowDetails": {
-        "type": "object",
-        "properties": {
-          "readyEntityCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "totalEntityCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "missingLegalEntityIds": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        },
-        "required": [
-          "readyEntityCount",
-          "totalEntityCount",
-          "missingLegalEntityIds"
-        ]
-      },
-      "TenantReadinessOperatingUnitCurrentAccountBlockingRow": {
-        "type": "object",
-        "properties": {
-          "legalEntityId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "legalEntityCode": {
-            "type": "string"
-          },
-          "legalEntityName": {
-            "type": "string"
-          },
-          "blockerCode": {
-            "type": "string",
-            "nullable": true
-          },
-          "setupPath": {
-            "type": "string",
-            "nullable": true
-          },
-          "effectiveActiveOperatingUnitCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "missingCentralOperatingUnitCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "missingPartnerDirectionCount": {
-            "type": "integer",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "legalEntityId",
-          "legalEntityCode",
-          "legalEntityName",
-          "blockerCode",
-          "setupPath",
-          "effectiveActiveOperatingUnitCount",
-          "missingCentralOperatingUnitCount",
-          "missingPartnerDirectionCount"
-        ]
-      },
-      "TenantReadinessOperatingUnitCurrentAccountDetails": {
-        "type": "object",
-        "properties": {
-          "readyEntityCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "totalEntityCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "applicableEntityCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "blockingRows": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TenantReadinessOperatingUnitCurrentAccountBlockingRow"
-            }
-          }
-        },
-        "required": [
-          "readyEntityCount",
-          "totalEntityCount",
-          "applicableEntityCount",
-          "blockingRows"
         ]
       },
       "TenantReadinessCounts": {
@@ -35979,22 +36228,6 @@
           "accounts": {
             "type": "integer",
             "minimum": 0
-          },
-          "shareholders": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "shareholderCommitmentConfigs": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "operatingUnitCurrentAccounts": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "workflowCloseConsolidationV1": {
-            "type": "integer",
-            "minimum": 0
           }
         },
         "required": [
@@ -36005,11 +36238,7 @@
           "books",
           "openBookPeriods",
           "chartsOfAccounts",
-          "accounts",
-          "shareholders",
-          "shareholderCommitmentConfigs",
-          "operatingUnitCurrentAccounts",
-          "workflowCloseConsolidationV1"
+          "accounts"
         ]
       },
       "TenantReadinessResponse": {
@@ -38619,6 +38848,137 @@
           "tenantId",
           "legalEntityId",
           "modules"
+        ]
+      },
+      "LegalEntityActivationReadinessCheck": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "applicable": {
+            "type": "boolean"
+          },
+          "blockerCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "details": {
+            "nullable": true,
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "ready",
+          "applicable",
+          "blockerCode",
+          "details"
+        ]
+      },
+      "LegalEntityActivationReadinessSummary": {
+        "type": "object",
+        "properties": {
+          "readyCheckCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalCheckCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "blockingCheckCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "readyCheckCount",
+          "totalCheckCount",
+          "blockingCheckCount"
+        ]
+      },
+      "LegalEntityActivationReadinessRow": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityCode": {
+            "type": "string"
+          },
+          "legalEntityName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "READY",
+              "IN_PROGRESS",
+              "NOT_STARTED"
+            ]
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/LegalEntityActivationReadinessSummary"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegalEntityActivationReadinessCheck"
+            }
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "legalEntityCode",
+          "legalEntityName",
+          "status",
+          "ready",
+          "summary",
+          "checks"
+        ]
+      },
+      "LegalEntityActivationReadinessResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "LEGAL_ENTITY_ACTIVATION"
+            ]
+          },
+          "byLegalEntity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegalEntityActivationReadinessRow"
+            }
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "tenantId",
+          "stage",
+          "byLegalEntity",
+          "generatedAt"
         ]
       },
       "FiscalCalendarInput": {

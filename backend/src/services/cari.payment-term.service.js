@@ -1,5 +1,7 @@
 import { query } from "../db.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { buildVisibilityScopeWhereClause } from "./authz.scope.service.js";
 
 function mapPaymentTermRow(row) {
   return {
@@ -17,18 +19,109 @@ function mapPaymentTermRow(row) {
   };
 }
 
+function forbiddenError(message) {
+  const err = new Error(message);
+  err.status = 403;
+  err.code = "FORBIDDEN";
+  return err;
+}
+
 async function assertLegalEntityBelongsToTenant(tenantId, legalEntityId, fieldLabel = "legalEntityId") {
   const result = await query(
-    `SELECT id
+    `SELECT
+       id,
+       country_id,
+       group_company_id
      FROM legal_entities
      WHERE tenant_id = ?
        AND id = ?
      LIMIT 1`,
     [tenantId, legalEntityId]
   );
-  if (!result.rows?.[0]) {
+  const row = result.rows?.[0] || null;
+  if (!row) {
     throw badRequest(`${fieldLabel} not found for tenant`);
   }
+  return row;
+}
+
+function buildPaymentTermVisibilityWhere(req, tenantId, params) {
+  const scopeContext = getVisibilityScope(req);
+  if (!scopeContext) {
+    return "1 = 0";
+  }
+  if (scopeContext.tenantWide) {
+    return "1 = 1";
+  }
+
+  const clauses = [];
+  const directScopeClause = buildVisibilityScopeWhereClause(scopeContext, params, {
+    GROUP: { idColumn: "le.group_company_id" },
+    COUNTRY: { idColumn: "le.country_id" },
+    LEGAL_ENTITY: { idColumn: "pt.legal_entity_id" },
+  });
+  if (directScopeClause !== "1 = 0") {
+    clauses.push(directScopeClause);
+  }
+
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
+  if (operatingUnitIds.length > 0) {
+    params.push(tenantId, ...operatingUnitIds);
+    clauses.push(
+      `pt.legal_entity_id IN (
+         SELECT DISTINCT ou.legal_entity_id
+         FROM operating_units ou
+         WHERE ou.tenant_id = ?
+           AND ou.id IN (${operatingUnitIds.map(() => "?").join(", ")})
+       )`
+    );
+  }
+
+  if (clauses.length === 0) {
+    return "1 = 0";
+  }
+  return `(${clauses.join(" OR ")})`;
+}
+
+async function assertVisibleLegalEntityForRead(req, tenantId, legalEntityId, label = "legalEntityId") {
+  const legalEntityRow = await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, label);
+  const scopeContext = getVisibilityScope(req);
+  if (!scopeContext) {
+    throw forbiddenError(`Access denied for ${label}`);
+  }
+  if (scopeContext.tenantWide) {
+    return legalEntityRow;
+  }
+  if (scopeContext.legalEntities.has(legalEntityId)) {
+    return legalEntityRow;
+  }
+  if (parsePositiveInt(legalEntityRow.country_id) && scopeContext.countries.has(parsePositiveInt(legalEntityRow.country_id))) {
+    return legalEntityRow;
+  }
+  if (
+    parsePositiveInt(legalEntityRow.group_company_id) &&
+    scopeContext.groups.has(parsePositiveInt(legalEntityRow.group_company_id))
+  ) {
+    return legalEntityRow;
+  }
+
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
+  if (operatingUnitIds.length > 0) {
+    const result = await query(
+      `SELECT 1
+       FROM operating_units
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND id IN (${operatingUnitIds.map(() => "?").join(", ")})
+       LIMIT 1`,
+      [tenantId, legalEntityId, ...operatingUnitIds]
+    );
+    if (result.rows?.[0]) {
+      return legalEntityRow;
+    }
+  }
+
+  throw forbiddenError(`Access denied for ${label}`);
 }
 
 export async function resolvePaymentTermScope(paymentTermId, tenantId) {
@@ -56,19 +149,21 @@ export async function resolvePaymentTermScope(paymentTermId, tenantId) {
   };
 }
 
+/**
+ * List payment terms visible to the current actor inside the scoped legal
+ * entity envelope they can read or request against.
+ */
 export async function listPaymentTerms({
   req,
   tenantId,
   filters,
-  buildScopeFilter,
-  assertScopeAccess,
 }) {
   const params = [tenantId];
-  const conditions = ["pt.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "pt.legal_entity_id", params));
+  const conditions = ["pt.tenant_id = ?", "le.tenant_id = pt.tenant_id", "le.id = pt.legal_entity_id"];
+  conditions.push(buildPaymentTermVisibilityWhere(req, tenantId, params));
 
   if (filters.legalEntityId) {
-    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+    await assertVisibleLegalEntityForRead(req, tenantId, filters.legalEntityId, "legalEntityId");
     conditions.push("pt.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }
@@ -87,6 +182,9 @@ export async function listPaymentTerms({
   const totalResult = await query(
     `SELECT COUNT(*) AS row_count
      FROM payment_terms pt
+     JOIN legal_entities le
+       ON le.id = pt.legal_entity_id
+      AND le.tenant_id = pt.tenant_id
      WHERE ${whereSql}`,
     params
   );
@@ -111,6 +209,9 @@ export async function listPaymentTerms({
         pt.created_at,
         pt.updated_at
      FROM payment_terms pt
+     JOIN legal_entities le
+       ON le.id = pt.legal_entity_id
+      AND le.tenant_id = pt.tenant_id
      WHERE ${whereSql}
      ORDER BY pt.code ASC, pt.id ASC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
@@ -125,28 +226,36 @@ export async function listPaymentTerms({
   };
 }
 
+/**
+ * Load one payment term after verifying the actor can see its parent legal
+ * entity through direct, country/group, or operating-unit scope.
+ */
 export async function getPaymentTermByIdForTenant({
   req,
   tenantId,
   paymentTermId,
-  assertScopeAccess,
 }) {
   const result = await query(
     `SELECT
-        id,
-        tenant_id,
-        legal_entity_id,
-        code,
-        name,
-        due_days,
-        grace_days,
-        is_end_of_month,
-        status,
-        created_at,
-        updated_at
-     FROM payment_terms
-     WHERE tenant_id = ?
-       AND id = ?
+        pt.id,
+        pt.tenant_id,
+        pt.legal_entity_id,
+        le.country_id,
+        le.group_company_id,
+        pt.code,
+        pt.name,
+        pt.due_days,
+        pt.grace_days,
+        pt.is_end_of_month,
+        pt.status,
+        pt.created_at,
+        pt.updated_at
+     FROM payment_terms pt
+     JOIN legal_entities le
+       ON le.id = pt.legal_entity_id
+      AND le.tenant_id = pt.tenant_id
+     WHERE pt.tenant_id = ?
+       AND pt.id = ?
      LIMIT 1`,
     [tenantId, paymentTermId]
   );
@@ -155,7 +264,7 @@ export async function getPaymentTermByIdForTenant({
     throw badRequest("Payment term not found");
   }
 
-  assertScopeAccess(req, "legal_entity", row.legal_entity_id, "paymentTermId");
+  await assertVisibleLegalEntityForRead(req, tenantId, parsePositiveInt(row.legal_entity_id), "paymentTermId");
   return mapPaymentTermRow(row);
 }
 

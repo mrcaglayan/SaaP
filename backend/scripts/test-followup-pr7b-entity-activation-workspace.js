@@ -23,6 +23,22 @@ async function main() {
     path.resolve(root, "frontend/src/i18n/messages.js"),
     "utf8"
   );
+  const activationApiSource = await readFile(
+    path.resolve(root, "frontend/src/api/legalEntityActivation.js"),
+    "utf8"
+  );
+  const activationProviderSource = await readFile(
+    path.resolve(root, "frontend/src/readiness/LegalEntityActivationProvider.jsx"),
+    "utf8"
+  );
+  const activationHookSource = await readFile(
+    path.resolve(root, "frontend/src/readiness/useLegalEntityActivation.js"),
+    "utf8"
+  );
+  const activationChecklistSource = await readFile(
+    path.resolve(root, "frontend/src/readiness/LegalEntityActivationChecklist.jsx"),
+    "utf8"
+  );
   const pageSource = await readFile(
     path.resolve(root, "frontend/src/pages/settings/OrganizationManagementPage.jsx"),
     "utf8"
@@ -30,8 +46,9 @@ async function main() {
 
   assert(
     appSource.includes('appPath: "/app/ayarlar/entity-aktivasyon-alani"') &&
-      appSource.includes('<OrganizationManagementPage workspaceMode="activation" />'),
-    "App route tree should expose the entity activation workspace route in activation mode"
+      appSource.includes('<OrganizationManagementPage workspaceMode="activation" />') &&
+      appSource.includes("LegalEntityActivationProvider"),
+    "App route tree should expose the entity activation workspace route in activation mode and wrap it in LegalEntityActivationProvider"
   );
 
   assert(
@@ -54,6 +71,25 @@ async function main() {
   );
 
   assert(
+    activationApiSource.includes("/api/v1/onboarding/legal-entity-activation"),
+    "legalEntityActivation API client should call the scoped activation-readiness route"
+  );
+
+  assert(
+    activationProviderSource.includes("getLegalEntityActivationReadiness") &&
+      activationProviderSource.includes('hasPermission("org.tree.read")') &&
+      activationProviderSource.includes("refreshLegalEntity"),
+    "LegalEntityActivationProvider should load scoped activation readiness with org.tree.read gating and per-entity refresh support"
+  );
+
+  assert(
+    activationHookSource.includes("useLegalEntityActivation must be used within") &&
+      activationChecklistSource.includes("Focus this entity") &&
+      activationChecklistSource.includes("Current focus"),
+    "Activation workspace support files should expose the new hook and focused-entity checklist UI"
+  );
+
+  assert(
     pageSource.includes('workspaceMode = "full"') &&
       pageSource.includes('isActivationWorkspace = workspaceMode === "activation"') &&
       pageSource.includes("showCentralStructureSections") &&
@@ -63,9 +99,12 @@ async function main() {
       ) &&
       pageSource.includes("workspaceLegalEntities") &&
       pageSource.includes("workspaceCalendarOptions") &&
-      pageSource.includes("activationChecklistItems") &&
+      pageSource.includes("useLegalEntityActivation") &&
+      pageSource.includes("LegalEntityActivationChecklist") &&
+      pageSource.includes("activationVisibleEntityCards") &&
+      pageSource.includes("activationFocusedEntityGroups") &&
       pageSource.includes("working legal entity context"),
-    "OrganizationManagementPage should implement a scoped activation mode that hides tenant-wide setup noise and surfaces a local activation checklist"
+    "OrganizationManagementPage should implement a scoped activation mode that hides tenant-wide setup noise and surfaces the activation-readiness-backed checklist"
   );
 
   console.log("PR-7B entity activation workspace static checks passed.");

@@ -1,7 +1,10 @@
 import { query } from "./db.js";
 import { assertValidPermissionRuleSet } from "./constants/permission-rules.js";
 import { runMigrations } from "./migrationRunner.js";
-import { PERMISSION_GROUP_CODES, PERMISSION_GROUPS } from "./constants/permission-groups.js";
+import {
+  PERMISSION_GROUP_CODES,
+  PERMISSION_GROUPS,
+} from "./constants/permission-groups.js";
 import { buildCompatibilitySystemRoleDefinitions } from "./services/systemRoles.service.js";
 import {
   loadActiveLegacyDisabledRoleCodeSet,
@@ -67,7 +70,10 @@ const PERMISSIONS = [
   ["org.operating_unit.upsert", "Create/update operating units/branches"],
   ["org.fiscal_calendar.upsert", "Create/update fiscal calendars"],
   ["org.fiscal_period.generate", "Generate fiscal periods"],
-  ["org.shareholder.upsert", "Create/update shareholder setup and commitment journals"],
+  [
+    "org.shareholder.upsert",
+    "Create/update shareholder setup and commitment journals",
+  ],
   [
     "org.shareholder.capital_fulfillment.upsert",
     "Create/preview/reverse shareholder capital fulfillment",
@@ -81,12 +87,41 @@ const PERMISSIONS = [
   ["security.data_scope.read", "Read user data scopes"],
   ["security.data_scope.upsert", "Create/update/delete user data scopes"],
   ["security.field_visibility.read", "Read field visibility policies"],
-  ["security.field_visibility.write", "Create/update field visibility policies"],
-  ["security.user_admin.entity", "Manage branch operator users within entity scope"],
+  [
+    "security.field_visibility.write",
+    "Create/update field visibility policies",
+  ],
+  [
+    "security.user_admin.local",
+    "Manage bounded local user administration within entity scope",
+  ],
+  [
+    "security.user_admin.entity",
+    "Manage legacy branch operator users within entity scope",
+  ],
+  [
+    "security.operational_coverage.read",
+    "Read temporary operational coverage requests",
+  ],
+  [
+    "security.operational_coverage.request",
+    "Request temporary operational coverage",
+  ],
+  [
+    "security.operational_coverage.review",
+    "Review temporary operational coverage requests",
+  ],
+  [
+    "security.operational_coverage.revoke",
+    "Revoke approved temporary operational coverage",
+  ],
   ["security.audit.read", "Read RBAC audit logs"],
   ["security.audit.report.generate", "Generate compliance audit reports"],
   ["security.audit.report.export", "Export compliance audit reports as CSV"],
-  ["security.admin.system", "Manage system administration and onboarding controls"],
+  [
+    "security.admin.system",
+    "Manage system administration and onboarding controls",
+  ],
   ["gl.book.read", "Read books"],
   ["gl.book.upsert", "Create/update books"],
   ["gl.coa.read", "Read chart of accounts"],
@@ -113,7 +148,10 @@ const PERMISSIONS = [
   ["ouclose.lock", "Lock approved local close packs"],
   ["ouclose.request_reopen", "Request local close-pack reopen"],
   ["ouclose.reopen", "Reopen local close packs"],
-  ["ouclose.override_post_lock", "Override approved or locked local close-pack controls"],
+  [
+    "ouclose.override_post_lock",
+    "Override approved or locked local close-pack controls",
+  ],
   ["ouclose.admin", "Administer local close-pack configuration and governance"],
   ["cash.register.read", "Read cash registers"],
   ["cash.register.upsert", "Create/update cash registers"],
@@ -127,128 +165,401 @@ const PERMISSIONS = [
   ["cash.override.post", "Post cash entries with cash-control override"],
   ["cash.variance.approve", "Approve cash session variances"],
   ["cash.report.read", "Read cash reports"],
-  ["cash.fx.revaluation.override", "Override cash FX revaluation close gate with explicit reason"],
+  [
+    "cash.fx.revaluation.override",
+    "Override cash FX revaluation close gate with explicit reason",
+  ],
   ["bank.accounts.read", "Read bank account master records and GL links"],
-  ["bank.accounts.write", "Create/update/activate/deactivate bank account master records"],
-  ["bank.connectors.read", "Read bank connector masters, account links, and sync run logs (B05)"],
-  ["bank.connectors.write", "Create/update bank connector masters and connector-account mappings (B05)"],
-  ["bank.connectors.sync", "Test bank connectors and pull statement feeds via B02 import pipeline (B05)"],
-  ["bank.statements.import", "Import bank statement files and create normalized bank statement lines"],
-  ["bank.statements.read", "Read bank statement imports and normalized statement line queue"],
-  ["bank.reconcile.read", "Read bank reconciliation queue, suggestions, and audit trail"],
-  ["bank.reconcile.write", "Create/reverse bank reconciliation matches and ignore actions"],
-  ["bank.reconcile.templates.read", "Read bank reconciliation auto-posting templates (B08-A)"],
-  ["bank.reconcile.templates.write", "Create/update bank reconciliation auto-posting templates (B08-A)"],
-  ["bank.reconcile.diffprofiles.read", "Read bank reconciliation difference profiles (B08-B)"],
-  ["bank.reconcile.diffprofiles.write", "Create/update bank reconciliation difference profiles (B08-B)"],
-  ["bank.reconcile.rules.read", "Read bank reconciliation automation rules (B07)"],
-  ["bank.reconcile.rules.write", "Create/update bank reconciliation automation rules (B07)"],
-  ["bank.reconcile.auto.run", "Run bank reconciliation automation preview/apply (B07)"],
-  ["bank.reconcile.exceptions.read", "Read bank reconciliation exception queue (B07)"],
-  ["bank.reconcile.exceptions.write", "Assign/resolve/ignore/retry bank reconciliation exceptions (B07)"],
-  ["payments.batch.read", "Read generic payment batches, lines, exports, and audit"],
+  [
+    "bank.accounts.write",
+    "Create/update/activate/deactivate bank account master records",
+  ],
+  [
+    "bank.connectors.read",
+    "Read bank connector masters, account links, and sync run logs (B05)",
+  ],
+  [
+    "bank.connectors.write",
+    "Create/update bank connector masters and connector-account mappings (B05)",
+  ],
+  [
+    "bank.connectors.sync",
+    "Test bank connectors and pull statement feeds via B02 import pipeline (B05)",
+  ],
+  [
+    "bank.statements.import",
+    "Import bank statement files and create normalized bank statement lines",
+  ],
+  [
+    "bank.statements.read",
+    "Read bank statement imports and normalized statement line queue",
+  ],
+  [
+    "bank.reconcile.read",
+    "Read bank reconciliation queue, suggestions, and audit trail",
+  ],
+  [
+    "bank.reconcile.write",
+    "Create/reverse bank reconciliation matches and ignore actions",
+  ],
+  [
+    "bank.reconcile.templates.read",
+    "Read bank reconciliation auto-posting templates (B08-A)",
+  ],
+  [
+    "bank.reconcile.templates.write",
+    "Create/update bank reconciliation auto-posting templates (B08-A)",
+  ],
+  [
+    "bank.reconcile.diffprofiles.read",
+    "Read bank reconciliation difference profiles (B08-B)",
+  ],
+  [
+    "bank.reconcile.diffprofiles.write",
+    "Create/update bank reconciliation difference profiles (B08-B)",
+  ],
+  [
+    "bank.reconcile.rules.read",
+    "Read bank reconciliation automation rules (B07)",
+  ],
+  [
+    "bank.reconcile.rules.write",
+    "Create/update bank reconciliation automation rules (B07)",
+  ],
+  [
+    "bank.reconcile.auto.run",
+    "Run bank reconciliation automation preview/apply (B07)",
+  ],
+  [
+    "bank.reconcile.exceptions.read",
+    "Read bank reconciliation exception queue (B07)",
+  ],
+  [
+    "bank.reconcile.exceptions.write",
+    "Assign/resolve/ignore/retry bank reconciliation exceptions (B07)",
+  ],
+  [
+    "payments.batch.read",
+    "Read generic payment batches, lines, exports, and audit",
+  ],
   ["payments.batch.create", "Create generic payment batches"],
   ["payments.batch.approve", "Approve generic payment batches (maker-checker)"],
-  ["payments.batch.export", "Export generic payment batches to payment files (v1 CSV)"],
+  [
+    "payments.batch.export",
+    "Export generic payment batches to payment files (v1 CSV)",
+  ],
   ["payments.batch.post", "Post generic payment batch settlement journals"],
   ["payments.batch.cancel", "Cancel non-posted generic payment batches"],
-  ["bank.payments.export.read", "Read bank-facing payment file export runs for generic payment batches"],
-  ["bank.payments.export.create", "Create bank-facing payment files (B06 wrapper export) for generic payment batches"],
-  ["bank.payments.ack.read", "Read imported bank acknowledgement files for generic payment batches"],
-  ["bank.payments.ack.import", "Import bank acknowledgement files and update payment execution status (B06)"],
-  ["bank.payments.returns.read", "Read bank payment return/rejection events (B08-B)"],
-  ["bank.payments.returns.write", "Create/ignore bank payment return/rejection events (B08-B)"],
-  ["bank.approvals.policies.read", "Read bank governance approval policies (B09)"],
-  ["bank.approvals.policies.create", "Create bank governance approval policies (B09)"],
-  ["bank.approvals.policies.update", "Update bank governance approval policies (B09)"],
-  ["bank.approvals.requests.read", "Read bank governance approval request queue and decisions (B09)"],
-  ["bank.approvals.requests.submit", "Submit manual bank approval requests (B09)"],
+  [
+    "bank.payments.export.read",
+    "Read bank-facing payment file export runs for generic payment batches",
+  ],
+  [
+    "bank.payments.export.create",
+    "Create bank-facing payment files (B06 wrapper export) for generic payment batches",
+  ],
+  [
+    "bank.payments.ack.read",
+    "Read imported bank acknowledgement files for generic payment batches",
+  ],
+  [
+    "bank.payments.ack.import",
+    "Import bank acknowledgement files and update payment execution status (B06)",
+  ],
+  [
+    "bank.payments.returns.read",
+    "Read bank payment return/rejection events (B08-B)",
+  ],
+  [
+    "bank.payments.returns.write",
+    "Create/ignore bank payment return/rejection events (B08-B)",
+  ],
+  [
+    "bank.approvals.policies.read",
+    "Read bank governance approval policies (B09)",
+  ],
+  [
+    "bank.approvals.policies.create",
+    "Create bank governance approval policies (B09)",
+  ],
+  [
+    "bank.approvals.policies.update",
+    "Update bank governance approval policies (B09)",
+  ],
+  [
+    "bank.approvals.requests.read",
+    "Read bank governance approval request queue and decisions (B09)",
+  ],
+  [
+    "bank.approvals.requests.submit",
+    "Submit manual bank approval requests (B09)",
+  ],
   ["bank.approvals.requests.approve", "Approve bank governance requests (B09)"],
   ["bank.approvals.requests.reject", "Reject bank governance requests (B09)"],
-  ["bank.approvals.requests.approve.payment", "Approve bank payment export/release requests (B09)"],
-  ["bank.approvals.requests.approve.reconConfig", "Approve bank reconciliation rule/template/profile changes (B09)"],
-  ["bank.approvals.requests.approve.reconOverride", "Approve bank reconciliation exception override requests (B09)"],
-  ["bank.approvals.requests.approve.manualReturn", "Approve bank manual return/rejection creation requests (B09)"],
-  ["approvals.policies.read", "Read unified approval policies across bank and payroll (H04)"],
-  ["approvals.policies.write", "Create/update unified approval policies across bank and payroll (H04)"],
-  ["approvals.requests.read", "Read unified approval requests and decisions across bank and payroll (H04)"],
-  ["approvals.requests.submit", "Submit unified approval requests manually (H04)"],
+  [
+    "bank.approvals.requests.approve.payment",
+    "Approve bank payment export/release requests (B09)",
+  ],
+  [
+    "bank.approvals.requests.approve.reconConfig",
+    "Approve bank reconciliation rule/template/profile changes (B09)",
+  ],
+  [
+    "bank.approvals.requests.approve.reconOverride",
+    "Approve bank reconciliation exception override requests (B09)",
+  ],
+  [
+    "bank.approvals.requests.approve.manualReturn",
+    "Approve bank manual return/rejection creation requests (B09)",
+  ],
+  [
+    "approvals.policies.read",
+    "Read unified approval policies across bank and payroll (H04)",
+  ],
+  [
+    "approvals.policies.write",
+    "Create/update unified approval policies across bank and payroll (H04)",
+  ],
+  [
+    "approvals.requests.read",
+    "Read unified approval requests and decisions across bank and payroll (H04)",
+  ],
+  [
+    "approvals.requests.submit",
+    "Submit unified approval requests manually (H04)",
+  ],
   ["approvals.requests.approve", "Approve unified approval requests (H04)"],
   ["approvals.requests.reject", "Reject unified approval requests (H04)"],
   ["workflow.definition.read", "Read workflow definitions"],
   ["workflow.definition.write", "Create/update workflow definitions"],
   ["workflow.assignment.read", "Read workflow assignments"],
   ["workflow.assignment.write", "Create/update workflow assignments"],
-  ["payroll.runs.read", "Read payroll runs, lines, and payroll import audit trail"],
-  ["payroll.runs.import", "Import payroll provider CSV into payroll subledger runs"],
-  ["payroll.provider.read", "Read payroll provider adapters, connections, employee refs, and import jobs"],
+  [
+    "payroll.runs.read",
+    "Read payroll runs, lines, and payroll import audit trail",
+  ],
+  [
+    "payroll.runs.import",
+    "Import payroll provider CSV into payroll subledger runs",
+  ],
+  [
+    "payroll.provider.read",
+    "Read payroll provider adapters, connections, employee refs, and import jobs",
+  ],
   ["payroll.provider.write", "Create/update payroll provider connections"],
-  ["payroll.provider.mapping.read", "Read payroll external employee to internal employee mappings"],
-  ["payroll.provider.mapping.write", "Create/update payroll external employee to internal employee mappings"],
-  ["payroll.provider.import.read", "Read payroll provider import preview/apply jobs and audit trail"],
-  ["payroll.provider.import.preview", "Preview payroll provider imports and store normalized canonical payloads"],
-  ["payroll.provider.import.apply", "Apply payroll provider import previews into payroll runs (maker-checker)"],
-  ["payroll.provider.import.retention.manage", "Mask/purge raw payload retention for payroll provider import jobs"],
-  ["bank.integration.retention.manage", "Mask/purge raw payload retention for bank integration feeds/webhooks/imports"],
-  ["security.sensitive_data.audit.read", "Read sensitive data lifecycle audit trail (encryption, masking, purging)"],
+  [
+    "payroll.provider.mapping.read",
+    "Read payroll external employee to internal employee mappings",
+  ],
+  [
+    "payroll.provider.mapping.write",
+    "Create/update payroll external employee to internal employee mappings",
+  ],
+  [
+    "payroll.provider.import.read",
+    "Read payroll provider import preview/apply jobs and audit trail",
+  ],
+  [
+    "payroll.provider.import.preview",
+    "Preview payroll provider imports and store normalized canonical payloads",
+  ],
+  [
+    "payroll.provider.import.apply",
+    "Apply payroll provider import previews into payroll runs (maker-checker)",
+  ],
+  [
+    "payroll.provider.import.retention.manage",
+    "Mask/purge raw payload retention for payroll provider import jobs",
+  ],
+  [
+    "bank.integration.retention.manage",
+    "Mask/purge raw payload retention for bank integration feeds/webhooks/imports",
+  ],
+  [
+    "security.sensitive_data.audit.read",
+    "Read sensitive data lifecycle audit trail (encryption, masking, purging)",
+  ],
   ["ops.jobs.read", "Read tenant-scoped background jobs and attempts"],
   ["ops.jobs.manage", "Cancel/requeue tenant-scoped background jobs"],
   ["ops.jobs.run", "Run one tenant-scoped background job manually (admin/ops)"],
   ["ops.dashboard.read", "Read operational dashboard KPI/SLA/health summaries"],
   ["ops.exceptions.read", "Read unified exception workbench queue and audit"],
   ["ops.exceptions.manage", "Claim/resolve/ignore/reopen unified exceptions"],
-  ["ops.retention.read", "Read data retention policies/runs and retention execution history (H07)"],
-  ["ops.retention.manage", "Create/update/execute data retention policies and runs (H07)"],
-  ["ops.export_snapshot.read", "Read closed-period immutable export snapshots and hashes (H07)"],
-  ["ops.export_snapshot.create", "Create immutable export snapshots for closed payroll periods (H07)"],
-  ["payroll.mappings.read", "Read effective-dated payroll component to GL mappings"],
+  [
+    "ops.retention.read",
+    "Read data retention policies/runs and retention execution history (H07)",
+  ],
+  [
+    "ops.retention.manage",
+    "Create/update/execute data retention policies and runs (H07)",
+  ],
+  [
+    "ops.export_snapshot.read",
+    "Read closed-period immutable export snapshots and hashes (H07)",
+  ],
+  [
+    "ops.export_snapshot.create",
+    "Create immutable export snapshots for closed payroll periods (H07)",
+  ],
+  [
+    "payroll.mappings.read",
+    "Read effective-dated payroll component to GL mappings",
+  ],
   ["payroll.mappings.write", "Create/update payroll component to GL mappings"],
-  ["payroll.runs.review", "Mark payroll runs as reviewed before accrual posting"],
-  ["payroll.runs.finalize", "Finalize payroll runs and post accrual journals to GL"],
-  ["payroll.liabilities.read", "Read payroll liabilities, run-level liability summaries, and audit"],
-  ["payroll.liabilities.build", "Build payroll liabilities from finalized payroll runs"],
+  [
+    "payroll.runs.review",
+    "Mark payroll runs as reviewed before accrual posting",
+  ],
+  [
+    "payroll.runs.finalize",
+    "Finalize payroll runs and post accrual journals to GL",
+  ],
+  [
+    "payroll.liabilities.read",
+    "Read payroll liabilities, run-level liability summaries, and audit",
+  ],
+  [
+    "payroll.liabilities.build",
+    "Build payroll liabilities from finalized payroll runs",
+  ],
   ["payroll.ownership.read", "Read payroll employee owner-context assignments"],
-  ["payroll.ownership.write", "Create/update/deactivate payroll employee owner-context assignments"],
-  ["payroll.payment.prepare", "Prepare generic payment batches from payroll liabilities"],
-  ["payroll.payment.sync.read", "Preview payroll liability settlement sync from payments and bank reconciliation"],
-  ["payroll.payment.sync.apply", "Apply payroll liability settlement sync from payments and bank reconciliation"],
-  ["payroll.settlement.override.read", "Read payroll manual settlement override requests and liability override history"],
-  ["payroll.settlement.override.request", "Create payroll manual settlement override requests (maker)"],
-  ["payroll.settlement.override.approve", "Approve/apply or reject payroll manual settlement override requests (checker)"],
+  [
+    "payroll.ownership.write",
+    "Create/update/deactivate payroll employee owner-context assignments",
+  ],
+  [
+    "payroll.payment.prepare",
+    "Prepare generic payment batches from payroll liabilities",
+  ],
+  [
+    "payroll.payment.sync.read",
+    "Preview payroll liability settlement sync from payments and bank reconciliation",
+  ],
+  [
+    "payroll.payment.sync.apply",
+    "Apply payroll liability settlement sync from payments and bank reconciliation",
+  ],
+  [
+    "payroll.settlement.override.read",
+    "Read payroll manual settlement override requests and liability override history",
+  ],
+  [
+    "payroll.settlement.override.request",
+    "Create payroll manual settlement override requests (maker)",
+  ],
+  [
+    "payroll.settlement.override.approve",
+    "Approve/apply or reject payroll manual settlement override requests (checker)",
+  ],
   ["payroll.beneficiary.read", "Read payroll beneficiary bank master accounts"],
-  ["payroll.beneficiary.write", "Create/update payroll beneficiary bank master accounts"],
-  ["payroll.beneficiary.set_primary", "Set primary payroll beneficiary bank account"],
-  ["payroll.beneficiary.snapshot.read", "Read payroll liability beneficiary bank snapshots"],
-  ["payroll.sensitive.read", "Override masking for payroll salary and payroll bank fields"],
-  ["payroll.close.read", "Read payroll close controls, checklist results, and close audit"],
-  ["payroll.close.prepare", "Prepare payroll close checklist and lock flags for a payroll period"],
-  ["payroll.close.request", "Request payroll period close after checklist passes (maker)"],
-  ["payroll.close.approve", "Approve and close payroll period after request (checker)"],
-  ["payroll.close.reopen", "Reopen closed payroll period close controls and release locks"],
-  ["payroll.corrections.read", "Read payroll correction links, reversal runs, and correction shell relationships"],
-  ["payroll.corrections.create", "Create payroll correction shells (OFF_CYCLE/RETRO)"],
-  ["payroll.corrections.reverse", "Reverse finalized payroll runs and create linked reversal runs"],
+  [
+    "payroll.beneficiary.write",
+    "Create/update payroll beneficiary bank master accounts",
+  ],
+  [
+    "payroll.beneficiary.set_primary",
+    "Set primary payroll beneficiary bank account",
+  ],
+  [
+    "payroll.beneficiary.snapshot.read",
+    "Read payroll liability beneficiary bank snapshots",
+  ],
+  [
+    "payroll.sensitive.read",
+    "Override masking for payroll salary and payroll bank fields",
+  ],
+  [
+    "payroll.close.read",
+    "Read payroll close controls, checklist results, and close audit",
+  ],
+  [
+    "payroll.close.prepare",
+    "Prepare payroll close checklist and lock flags for a payroll period",
+  ],
+  [
+    "payroll.close.request",
+    "Request payroll period close after checklist passes (maker)",
+  ],
+  [
+    "payroll.close.approve",
+    "Approve and close payroll period after request (checker)",
+  ],
+  [
+    "payroll.close.reopen",
+    "Reopen closed payroll period close controls and release locks",
+  ],
+  [
+    "payroll.corrections.read",
+    "Read payroll correction links, reversal runs, and correction shell relationships",
+  ],
+  [
+    "payroll.corrections.create",
+    "Create payroll correction shells (OFF_CYCLE/RETRO)",
+  ],
+  [
+    "payroll.corrections.reverse",
+    "Reverse finalized payroll runs and create linked reversal runs",
+  ],
   ["cari.card.read", "Read counterparty (cari) cards"],
   ["cari.card.request", "Submit/read counterparty (cari) master requests"],
   ["cari.request.review", "Approve/reject counterparty (cari) master requests"],
   ["cari.card.upsert", "Create/update counterparty (cari) cards"],
   ["item.card.read", "Read item cards"],
   ["item.card.upsert", "Create/update item cards"],
-  ["inventory.read", "Read inventory warehouses, stock links, movements, and cost layers"],
+  [
+    "inventory.read",
+    "Read inventory warehouses, stock links, movements, and cost layers",
+  ],
   ["inventory.upsert", "Create/update inventory warehouses and movements"],
-  ["fixed_assets.read", "Read fixed asset register, detail, lifecycle transactions, and evidence metadata"],
-  ["fixed_assets.upsert", "Create/update draft fixed assets and category-defaulted asset masters"],
-  ["fixed_assets.post", "Activate and post fixed-asset acquisition or capitalization entries"],
-  ["fixed_assets.depreciation.run", "Preview/create/post fixed-asset depreciation runs"],
-  ["fixed_assets.depreciation.reverse", "Reverse posted fixed-asset depreciation runs"],
-  ["fixed_assets.transfer", "Transfer fixed-asset ownership between operating units"],
+  [
+    "fixed_assets.read",
+    "Read fixed asset register, detail, lifecycle transactions, and evidence metadata",
+  ],
+  [
+    "fixed_assets.upsert",
+    "Create/update draft fixed assets and category-defaulted asset masters",
+  ],
+  [
+    "fixed_assets.post",
+    "Activate and post fixed-asset acquisition or capitalization entries",
+  ],
+  [
+    "fixed_assets.depreciation.run",
+    "Preview/create/post fixed-asset depreciation runs",
+  ],
+  [
+    "fixed_assets.depreciation.reverse",
+    "Reverse posted fixed-asset depreciation runs",
+  ],
+  [
+    "fixed_assets.transfer",
+    "Transfer fixed-asset ownership between operating units",
+  ],
   ["fixed_assets.dispose", "Dispose, write off, or sell fixed assets"],
-  ["fixed_assets.settings.read", "Read fixed-asset categories, depreciation profiles, and account defaults"],
-  ["fixed_assets.settings.upsert", "Create/update fixed-asset categories, depreciation profiles, and account defaults"],
-  ["fixed_assets.custodian.read", "Read fixed-asset interim custodian setup records"],
-  ["fixed_assets.custodian.write", "Create/update fixed-asset interim custodian setup records"],
-  ["fixed_assets.account_override", "Override fixed-asset account defaults during acquisition, capitalization, or disposal posting"],
-  ["fixed_assets.report.read", "Read fixed-asset register, rollforward, depreciation, and disposal reports"],
+  [
+    "fixed_assets.settings.read",
+    "Read fixed-asset categories, depreciation profiles, and account defaults",
+  ],
+  [
+    "fixed_assets.settings.upsert",
+    "Create/update fixed-asset categories, depreciation profiles, and account defaults",
+  ],
+  [
+    "fixed_assets.custodian.read",
+    "Read fixed-asset interim custodian setup records",
+  ],
+  [
+    "fixed_assets.custodian.write",
+    "Create/update fixed-asset interim custodian setup records",
+  ],
+  [
+    "fixed_assets.account_override",
+    "Override fixed-asset account defaults during acquisition, capitalization, or disposal posting",
+  ],
+  [
+    "fixed_assets.report.read",
+    "Read fixed-asset register, rollforward, depreciation, and disposal reports",
+  ],
   ["cari.doc.read", "Read Cari documents"],
   ["cari.doc.create", "Create Cari documents"],
   ["cari.doc.update", "Update draft Cari documents"],
@@ -286,8 +597,14 @@ const PERMISSIONS = [
   ["consolidation.group_member.upsert", "Create/update consolidation members"],
   ["consolidation.coa_mapping.read", "Read group CoA mappings"],
   ["consolidation.coa_mapping.upsert", "Create/update group CoA mappings"],
-  ["consolidation.elimination_placeholder.read", "Read elimination placeholders"],
-  ["consolidation.elimination_placeholder.upsert", "Create/update elimination placeholders"],
+  [
+    "consolidation.elimination_placeholder.read",
+    "Read elimination placeholders",
+  ],
+  [
+    "consolidation.elimination_placeholder.upsert",
+    "Create/update elimination placeholders",
+  ],
   ["consolidation.run.read", "Read consolidation runs"],
   ["consolidation.run.create", "Create consolidation runs"],
   ["consolidation.run.execute", "Execute consolidation runs"],
@@ -296,10 +613,19 @@ const PERMISSIONS = [
   ["consolidation.adjustment.create", "Create consolidation adjustments"],
   ["consolidation.adjustment.post", "Post consolidation adjustments"],
   ["consolidation.run.finalize", "Finalize consolidation runs"],
-  ["consolidation.report.trial_balance.read", "Read consolidation trial balance"],
+  [
+    "consolidation.report.trial_balance.read",
+    "Read consolidation trial balance",
+  ],
   ["consolidation.report.summary.read", "Read consolidation summary report"],
-  ["consolidation.report.balance_sheet.read", "Read consolidation balance sheet"],
-  ["consolidation.report.income_statement.read", "Read consolidation income statement"],
+  [
+    "consolidation.report.balance_sheet.read",
+    "Read consolidation balance sheet",
+  ],
+  [
+    "consolidation.report.income_statement.read",
+    "Read consolidation income statement",
+  ],
   ["onboarding.company.setup", "Run company onboarding bootstrap flow"],
 ];
 
@@ -308,11 +634,16 @@ const VALID_PERMISSION_CODES = new Set(PERMISSIONS.map(([code]) => code));
 
 function assertKnownPermissionCode(permissionCode) {
   if (!VALID_PERMISSION_CODES.has(permissionCode)) {
-    throw new Error(`Unknown permission code ${permissionCode} referenced by seeded role`);
+    throw new Error(
+      `Unknown permission code ${permissionCode} referenced by seeded role`,
+    );
   }
 }
 
-function expandPermissionGroupPermissionCodes(permissionGroupCode, visited = new Set()) {
+function expandPermissionGroupPermissionCodes(
+  permissionGroupCode,
+  visited = new Set(),
+) {
   const definition = PERMISSION_GROUPS[permissionGroupCode];
   if (!definition) {
     throw new Error(`Unknown permission group ${permissionGroupCode}`);
@@ -326,7 +657,7 @@ function expandPermissionGroupPermissionCodes(permissionGroupCode, visited = new
   const expandedPermissionCodes = [];
   for (const includedGroupCode of definition.includes || []) {
     expandedPermissionCodes.push(
-      ...expandPermissionGroupPermissionCodes(includedGroupCode, visited)
+      ...expandPermissionGroupPermissionCodes(includedGroupCode, visited),
     );
   }
   for (const permissionCode of definition.permissions || []) {
@@ -342,7 +673,9 @@ function buildPermissionList({ permissionGroups = [], permissions = [] }) {
   const seenPermissionCodes = new Set();
 
   for (const permissionGroupCode of permissionGroups) {
-    for (const permissionCode of expandPermissionGroupPermissionCodes(permissionGroupCode)) {
+    for (const permissionCode of expandPermissionGroupPermissionCodes(
+      permissionGroupCode,
+    )) {
       if (seenPermissionCodes.has(permissionCode)) {
         continue;
       }
@@ -369,10 +702,34 @@ const ROLE_SCOPE_CONTEXT_PERMISSION_CODES = Object.freeze([
   "org.fiscal_period.read",
 ]);
 
+const OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES = Object.freeze([
+  "security.operational_coverage.read",
+  "security.operational_coverage.request",
+]);
+
+const OPERATIONAL_COVERAGE_MANAGER_PERMISSION_CODES = Object.freeze([
+  ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
+  "security.operational_coverage.review",
+  "security.operational_coverage.revoke",
+  "approvals.requests.read",
+]);
+
+const LOCAL_USER_ADMIN_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "security.user_admin.local",
+    ...OPERATIONAL_COVERAGE_MANAGER_PERMISSION_CODES,
+  ],
+});
+
 const MASTER_DATA_STEWARD_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["gl.masterdata"],
   permissions: [
     ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
+    "cari.card.read",
+    // Counterparty master requests are governed master-data review, not a
+    // legacy controller-only workflow.
+    "cari.request.review",
     "org.group_company.upsert",
     "org.legal_entity.upsert",
     "org.operating_unit.upsert",
@@ -384,9 +741,35 @@ const MASTER_DATA_STEWARD_PERMISSION_CODES = buildPermissionList({
   ],
 });
 
+const COUNTERPARTY_CARD_EDITOR_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    // Live counterparty-card maintenance stays separate from request/review so
+    // tenants do not need to fall back to retired broad accountant roles just
+    // to set one vendor/customer account override.
+    "cari.card.read",
+    "cari.card.upsert",
+    "gl.account.read",
+  ],
+});
+
+const AP_DOCUMENT_POSTER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    // AP posting needs legal-entity context visibility, but it should not drag
+    // in broad GL posting or counterparty-master-data authority.
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "cari.doc.read",
+    "cari.doc.update",
+    "cari.doc.post",
+  ],
+});
+
 const GL_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["gl.operations"],
-  permissions: [...ROLE_SCOPE_CONTEXT_PERMISSION_CODES, "fx.rate.read"],
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
+    "fx.rate.read",
+  ],
 });
 
 const GL_POSTING_AUTHORITY_PERMISSION_CODES = buildPermissionList({
@@ -403,12 +786,14 @@ const GL_POSTING_AUTHORITY_PERMISSION_CODES = buildPermissionList({
 
 const SHAREHOLDER_CAPITAL_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["org.capital_fulfillment"],
+  permissions: OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
 });
 
 const TREASURY_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["bank.operations"],
   permissions: [
     ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
     "cash.register.read",
     "cash.register.upsert",
     "cash.session.open",
@@ -450,7 +835,10 @@ const TREASURY_APPROVER_PERMISSION_CODES = buildPermissionList({
 
 const PAYROLL_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["payroll.operations"],
-  permissions: ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
+  ],
 });
 
 const PAYROLL_APPROVER_PERMISSION_CODES = buildPermissionList({
@@ -460,7 +848,10 @@ const PAYROLL_APPROVER_PERMISSION_CODES = buildPermissionList({
 
 const LOCAL_CLOSE_PREPARER_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["close.operator"],
-  permissions: ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
+  ],
 });
 
 const LOCAL_CLOSE_REVIEWER_PERMISSION_CODES = buildPermissionList({
@@ -502,6 +893,7 @@ const GROUP_REPORTING_CONTROLLER_PERMISSION_CODES = buildPermissionList({
 const BRANCH_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["gl.readonly"],
   permissions: [
+    ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
     "org.tree.read",
     "org.fiscal_period.read",
     "cash.register.read",
@@ -538,16 +930,20 @@ const BRANCH_OPERATOR_PERMISSION_CODES = buildPermissionList({
 
 const AUDITOR_READ_ONLY_PERMISSION_CODES = buildPermissionList({
   permissions: [
-    ...PERMISSIONS.map(([permissionCode]) => permissionCode).filter((permissionCode) =>
-      permissionCode.endsWith(".read")
+    ...PERMISSIONS.map(([permissionCode]) => permissionCode).filter(
+      (permissionCode) => permissionCode.endsWith(".read"),
     ),
+    "security.operational_coverage.request",
     "security.audit.report.generate",
     "security.audit.report.export",
   ],
 });
 
 export const ROLE_CAPABILITY_GROUPS = Object.freeze({
+  LocalUserAdmin: Object.freeze([]),
   MasterDataSteward: Object.freeze(["gl.masterdata"]),
+  CounterpartyCardEditor: Object.freeze([]),
+  APDocumentPoster: Object.freeze([]),
   GLOperator: Object.freeze(["gl.operations"]),
   GLPostingAuthority: Object.freeze(["gl.posting"]),
   ShareholderCapitalOperator: Object.freeze(["org.capital_fulfillment"]),
@@ -615,11 +1011,13 @@ const TRANSITIONAL_ROLE_PERMISSION_REMOVALS = Object.freeze({
 });
 
 function validateRoleCapabilityGroups() {
-  for (const [roleCode, capabilityGroups] of Object.entries(ROLE_CAPABILITY_GROUPS)) {
+  for (const [roleCode, capabilityGroups] of Object.entries(
+    ROLE_CAPABILITY_GROUPS,
+  )) {
     for (const capabilityGroup of capabilityGroups) {
       if (!VALID_PERMISSION_GROUP_CODES.has(capabilityGroup)) {
         throw new Error(
-          `Unknown capability group ${capabilityGroup} referenced by role ${roleCode}`
+          `Unknown capability group ${capabilityGroup} referenced by role ${roleCode}`,
         );
       }
     }
@@ -633,13 +1031,17 @@ function attachRoleMetadata(roleDefinitions) {
     const removedPermissions =
       TRANSITIONAL_ROLE_PERMISSION_REMOVALS[roleDefinition.code] || null;
     const permissions = removedPermissions
-      ? roleDefinition.permissions.filter((permissionCode) => !removedPermissions.has(permissionCode))
+      ? roleDefinition.permissions.filter(
+          (permissionCode) => !removedPermissions.has(permissionCode),
+        )
       : [...roleDefinition.permissions];
 
     return {
       ...roleDefinition,
       permissions,
-      capabilityGroups: [...(ROLE_CAPABILITY_GROUPS[roleDefinition.code] || [])],
+      capabilityGroups: [
+        ...(ROLE_CAPABILITY_GROUPS[roleDefinition.code] || []),
+      ],
     };
   });
 }
@@ -675,16 +1077,34 @@ function validateSeedRoleDefinitions(roleDefinitions) {
 }
 
 const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
-  ...buildCompatibilitySystemRoleDefinitions(PERMISSIONS.map(([code]) => code), {
-    includeLegacyTenantAdmin: true,
-  }),
+  ...buildCompatibilitySystemRoleDefinitions(
+    PERMISSIONS.map(([code]) => code),
+    {
+      includeLegacyTenantAdmin: true,
+    },
+  ),
   // Phase 4A introduces the bounded target role catalog additively. Legacy broad
   // roles remain below only so existing brownfield tenants can still roll back
   // or complete PR-4C migration safely.
   {
+    code: "LocalUserAdmin",
+    name: "Local User Admin",
+    permissions: LOCAL_USER_ADMIN_PERMISSION_CODES,
+  },
+  {
     code: "MasterDataSteward",
     name: "Master Data Steward",
     permissions: MASTER_DATA_STEWARD_PERMISSION_CODES,
+  },
+  {
+    code: "CounterpartyCardEditor",
+    name: "Counterparty Card Editor",
+    permissions: COUNTERPARTY_CARD_EDITOR_PERMISSION_CODES,
+  },
+  {
+    code: "APDocumentPoster",
+    name: "AP Document Poster",
+    permissions: AP_DOCUMENT_POSTER_PERMISSION_CODES,
   },
   {
     code: "GLOperator",
@@ -1273,11 +1693,15 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
 ]);
 
 const ACTIVE_ROLE_DEFINITIONS = Object.freeze(
-  ALL_ROLE_DEFINITIONS.filter((roleDefinition) => !isRetiredLegacyRoleCode(roleDefinition.code))
+  ALL_ROLE_DEFINITIONS.filter(
+    (roleDefinition) => !isRetiredLegacyRoleCode(roleDefinition.code),
+  ),
 );
 
 const RETIRED_LEGACY_ROLE_DEFINITIONS = Object.freeze(
-  ALL_ROLE_DEFINITIONS.filter((roleDefinition) => isRetiredLegacyRoleCode(roleDefinition.code))
+  ALL_ROLE_DEFINITIONS.filter((roleDefinition) =>
+    isRetiredLegacyRoleCode(roleDefinition.code),
+  ),
 );
 
 const FIELD_VISIBILITY_ROLE_PERMISSION_ADDITIONS = Object.freeze({
@@ -1351,10 +1775,13 @@ for (const role of ALL_ROLE_DEFINITIONS) {
   if (additions.length === 0) {
     continue;
   }
-  role.permissions = Array.from(new Set([...(role.permissions || []), ...additions]));
+  role.permissions = Array.from(
+    new Set([...(role.permissions || []), ...additions]),
+  );
 }
 
-const ROLE_DEFINITION_WARNING_MESSAGES = validateSeedRoleDefinitions(ALL_ROLE_DEFINITIONS);
+const ROLE_DEFINITION_WARNING_MESSAGES =
+  validateSeedRoleDefinitions(ALL_ROLE_DEFINITIONS);
 
 async function upsertCurrencies() {
   for (const [code, name, minorUnits] of BASE_CURRENCIES) {
@@ -1364,7 +1791,7 @@ async function upsertCurrencies() {
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          minor_units = VALUES(minor_units)`,
-      [code, name, minorUnits]
+      [code, name, minorUnits],
     );
   }
 }
@@ -1378,7 +1805,7 @@ async function upsertCountries() {
          iso3 = VALUES(iso3),
          name = VALUES(name),
          default_currency_code = VALUES(default_currency_code)`,
-      [iso2, iso3, name, defaultCurrencyCode]
+      [iso2, iso3, name, defaultCurrencyCode],
     );
   }
 }
@@ -1390,7 +1817,7 @@ async function upsertPermissions() {
        VALUES (?, ?)
        ON DUPLICATE KEY UPDATE
          description = VALUES(description)`,
-      [code, description]
+      [code, description],
     );
   }
 }
@@ -1401,7 +1828,7 @@ async function ensureDefaultTenant(defaultTenantCode, defaultTenantName) {
      VALUES (?, ?)
      ON DUPLICATE KEY UPDATE
        name = VALUES(name)`,
-    [defaultTenantCode, defaultTenantName]
+    [defaultTenantCode, defaultTenantName],
   );
 }
 
@@ -1422,7 +1849,7 @@ async function getPermissionIdMap() {
 async function getRoleIdsByTenant(tenantId) {
   const { rows } = await query(
     "SELECT id, code FROM roles WHERE tenant_id = ?",
-    [tenantId]
+    [tenantId],
   );
   const map = new Map();
   for (const row of rows) {
@@ -1432,13 +1859,14 @@ async function getRoleIdsByTenant(tenantId) {
 }
 
 async function loadRetainedLegacyRoleCodeSetForTenant(tenantId) {
-  const activeLegacyDisabledRoleCodes = await loadActiveLegacyDisabledRoleCodeSet(tenantId);
+  const activeLegacyDisabledRoleCodes =
+    await loadActiveLegacyDisabledRoleCodeSet(tenantId);
   const existingRoleResult = await query(
     `SELECT code
      FROM roles
      WHERE tenant_id = ?
        AND code IN (${RETIRED_LEGACY_ROLE_CODES.map(() => "?").join(", ")})`,
-    [tenantId, ...RETIRED_LEGACY_ROLE_CODES]
+    [tenantId, ...RETIRED_LEGACY_ROLE_CODES],
   );
 
   return new Set([
@@ -1450,18 +1878,20 @@ async function loadRetainedLegacyRoleCodeSetForTenant(tenantId) {
 }
 
 async function getRoleDefinitionsForTenant(tenantId) {
-  const retainedLegacyRoleCodeSet = await loadRetainedLegacyRoleCodeSetForTenant(tenantId);
+  const retainedLegacyRoleCodeSet =
+    await loadRetainedLegacyRoleCodeSetForTenant(tenantId);
 
   return [
     ...ACTIVE_ROLE_DEFINITIONS,
     ...RETIRED_LEGACY_ROLE_DEFINITIONS.filter((roleDefinition) =>
-      retainedLegacyRoleCodeSet.has(roleDefinition.code)
+      retainedLegacyRoleCodeSet.has(roleDefinition.code),
     ),
   ];
 }
 
 async function upsertRolesForTenant(tenantId, roleDefinitions) {
-  const activeLegacyDisabledRoleCodes = await loadActiveLegacyDisabledRoleCodeSet(tenantId);
+  const activeLegacyDisabledRoleCodes =
+    await loadActiveLegacyDisabledRoleCodeSet(tenantId);
   for (const role of roleDefinitions) {
     await query(
       `INSERT INTO roles (tenant_id, code, name, is_system)
@@ -1469,7 +1899,12 @@ async function upsertRolesForTenant(tenantId, roleDefinitions) {
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          is_system = VALUES(is_system)`,
-      [tenantId, role.code, role.name, !activeLegacyDisabledRoleCodes.has(role.code)]
+      [
+        tenantId,
+        role.code,
+        role.name,
+        !activeLegacyDisabledRoleCodes.has(role.code),
+      ],
     );
   }
 }
@@ -1477,7 +1912,10 @@ async function upsertRolesForTenant(tenantId, roleDefinitions) {
 async function upsertFieldVisibilityPoliciesForTenant(tenantId) {
   for (const policy of DEFAULT_FIELD_VISIBILITY_POLICY_DEFINITIONS) {
     const scopeType = String(policy.appliesToScopeType || "").trim() || null;
-    const scopeId = scopeType === "TENANT" ? tenantId : parsePositiveInt(policy.appliesToScopeId);
+    const scopeId =
+      scopeType === "TENANT"
+        ? tenantId
+        : parsePositiveInt(policy.appliesToScopeId);
     await query(
       `INSERT INTO field_visibility_policies (
           tenant_id,
@@ -1506,12 +1944,16 @@ async function upsertFieldVisibilityPoliciesForTenant(tenantId) {
         scopeType,
         scopeId,
         policy.requiredPermissionCode || null,
-      ]
+      ],
     );
   }
 }
 
-async function assignRolePermissionsForTenant(tenantId, permissionIdByCode, roleDefinitions) {
+async function assignRolePermissionsForTenant(
+  tenantId,
+  permissionIdByCode,
+  roleDefinitions,
+) {
   const roleIdsByCode = await getRoleIdsByTenant(tenantId);
 
   for (const role of roleDefinitions) {
@@ -1523,13 +1965,15 @@ async function assignRolePermissionsForTenant(tenantId, permissionIdByCode, role
     for (const permissionCode of role.permissions) {
       const permissionId = permissionIdByCode.get(permissionCode);
       if (!permissionId) {
-        throw new Error(`Permission not found for role binding: ${permissionCode}`);
+        throw new Error(
+          `Permission not found for role binding: ${permissionCode}`,
+        );
       }
 
       await query(
         `INSERT IGNORE INTO role_permissions (role_id, permission_id)
          VALUES (?, ?)`,
-        [roleId, permissionId]
+        [roleId, permissionId],
       );
     }
 
@@ -1548,7 +1992,7 @@ async function assignRolePermissionsForTenant(tenantId, permissionIdByCode, role
       `DELETE FROM role_permissions
        WHERE role_id = ?
          AND permission_id NOT IN (${desiredPermissionIds.map(() => "?").join(", ")})`,
-      [roleId, ...desiredPermissionIds]
+      [roleId, ...desiredPermissionIds],
     );
   }
 }
@@ -1591,7 +2035,7 @@ export async function seedCore(options = {}) {
     await assignRolePermissionsForTenant(
       tenant.id,
       permissionIdByCode,
-      roleDefinitionsByTenantId.get(tenant.id) || ACTIVE_ROLE_DEFINITIONS
+      roleDefinitionsByTenantId.get(tenant.id) || ACTIVE_ROLE_DEFINITIONS,
     );
     await upsertFieldVisibilityPoliciesForTenant(tenant.id);
   }
@@ -1599,10 +2043,10 @@ export async function seedCore(options = {}) {
   const retainedLegacyRoleCountByTenant = Object.fromEntries(
     tenants.map((tenant) => [
       tenant.code || tenant.id,
-      (roleDefinitionsByTenantId.get(tenant.id) || []).filter((roleDefinition) =>
-        isRetiredLegacyRoleCode(roleDefinition.code)
+      (roleDefinitionsByTenantId.get(tenant.id) || []).filter(
+        (roleDefinition) => isRetiredLegacyRoleCode(roleDefinition.code),
       ).length,
-    ])
+    ]),
   );
 
   return {
@@ -1612,6 +2056,7 @@ export async function seedCore(options = {}) {
     permissionCount: PERMISSIONS.length,
     roleCountPerTenant: ACTIVE_ROLE_DEFINITIONS.length,
     retainedLegacyRoleCountByTenant,
-    fieldVisibilityPolicyCountPerTenant: DEFAULT_FIELD_VISIBILITY_POLICY_DEFINITIONS.length,
+    fieldVisibilityPolicyCountPerTenant:
+      DEFAULT_FIELD_VISIBILITY_POLICY_DEFINITIONS.length,
   };
 }

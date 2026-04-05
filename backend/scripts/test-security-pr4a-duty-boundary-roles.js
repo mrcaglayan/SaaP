@@ -100,7 +100,10 @@ async function main() {
   const roleCodes = [
     "SecurityAdmin",
     "SystemAdmin",
+    "LocalUserAdmin",
     "MasterDataSteward",
+    "CounterpartyCardEditor",
+    "APDocumentPoster",
     "GLOperator",
     "GLPostingAuthority",
     "ShareholderCapitalOperator",
@@ -120,6 +123,9 @@ async function main() {
 
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.GLOperator, ["gl.operations"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.GLPostingAuthority, ["gl.posting"]);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalUserAdmin, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.CounterpartyCardEditor, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.APDocumentPoster, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.ShareholderCapitalOperator, ["org.capital_fulfillment"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalCloseReviewer, ["close.reviewer"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchOperator, ["gl.readonly"]);
@@ -129,11 +135,36 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "SystemAdmin", "workflow.assignment.write");
   assertRoleLacks(permissionCodesByRole, "SystemAdmin", "gl.journal.post");
 
+  assertRoleHas(permissionCodesByRole, "LocalUserAdmin", "security.user_admin.local");
+  assertRoleLacks(permissionCodesByRole, "LocalUserAdmin", "security.role_assignment.upsert");
+  assertRoleLacks(permissionCodesByRole, "LocalUserAdmin", "security.role.upsert");
+
   assertRoleHas(permissionCodesByRole, "MasterDataSteward", "org.legal_entity.upsert");
   assertRoleHas(permissionCodesByRole, "MasterDataSteward", "gl.account_mapping.upsert");
   assertRoleHas(permissionCodesByRole, "MasterDataSteward", "fx.rate.bulk_upsert");
+  assertRoleHas(permissionCodesByRole, "MasterDataSteward", "cari.card.read");
+  assertRoleHas(permissionCodesByRole, "MasterDataSteward", "cari.request.review");
   assertRoleLacks(permissionCodesByRole, "MasterDataSteward", "gl.journal.create");
   assertRoleLacks(permissionCodesByRole, "MasterDataSteward", "gl.journal.post");
+  assertRoleLacks(permissionCodesByRole, "MasterDataSteward", "cari.card.request");
+
+  assertRoleHas(permissionCodesByRole, "CounterpartyCardEditor", "cari.card.read");
+  assertRoleHas(permissionCodesByRole, "CounterpartyCardEditor", "cari.card.upsert");
+  assertRoleHas(permissionCodesByRole, "CounterpartyCardEditor", "gl.account.read");
+  assertRoleLacks(permissionCodesByRole, "CounterpartyCardEditor", "cari.request.review");
+  assertRoleLacks(permissionCodesByRole, "CounterpartyCardEditor", "gl.account.upsert");
+  assertRoleLacks(permissionCodesByRole, "CounterpartyCardEditor", "gl.journal.create");
+  assertRoleLacks(permissionCodesByRole, "CounterpartyCardEditor", "gl.journal.post");
+
+  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "org.fiscal_period.read");
+  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "cari.doc.read");
+  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "cari.doc.update");
+  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "cari.doc.post");
+  assertRoleLacks(permissionCodesByRole, "APDocumentPoster", "cari.doc.create");
+  assertRoleLacks(permissionCodesByRole, "APDocumentPoster", "cari.doc.reverse");
+  assertRoleLacks(permissionCodesByRole, "APDocumentPoster", "cari.card.read");
+  assertRoleLacks(permissionCodesByRole, "APDocumentPoster", "gl.journal.post");
 
   assertRoleHas(permissionCodesByRole, "GLOperator", "gl.journal.create");
   assertRoleHas(permissionCodesByRole, "GLOperator", "gl.journal.update");
@@ -211,6 +242,7 @@ async function main() {
   assertRoleLacks(permissionCodesByRole, "BranchOperator", "gl.journal.post");
   assertRoleLacks(permissionCodesByRole, "BranchOperator", "ouclose.prepare");
   assertRoleLacks(permissionCodesByRole, "BranchOperator", "workflow.definition.read");
+  assertRoleLacks(permissionCodesByRole, "BranchOperator", "cari.request.review");
 
   const legacyRoleResult = await query(
     `SELECT code

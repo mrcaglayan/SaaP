@@ -92,6 +92,23 @@ export async function createSecurityInvite(payload) {
   return response.data;
 }
 
+export async function getLocalUserAdminData() {
+  const response = await api.get("/api/v1/security/local-user-admin");
+  return response.data;
+}
+
+export async function assignLocalUserRole(payload) {
+  const response = await api.post("/api/v1/security/local-user-admin/assignments", payload);
+  return response.data;
+}
+
+export async function deleteLocalUserRoleAssignment(assignmentId) {
+  const response = await api.delete(
+    `/api/v1/security/local-user-admin/assignments/${assignmentId}`
+  );
+  return response.data;
+}
+
 export async function getEntityBranchOperatorAdminData() {
   const response = await api.get("/api/v1/security/entity-branch-operators");
   return response.data;

@@ -5,6 +5,7 @@ import {
   assertScopeAccess,
   buildScopeFilter,
   invalidateRbacCache,
+  requireAnyPermission,
   requirePermission,
 } from "../middleware/rbac.js";
 import { logRbacAuditEvent } from "../audit/rbacAuditLogger.js";
@@ -28,6 +29,12 @@ import { createInviteForTenantUser } from "../services/userInvites.service.js";
 import { executeIdempotentRequest } from "../services/idempotency.service.js";
 import { canManageSecurity } from "../services/systemRoles.service.js";
 import { getUserRoleScopeEffectiveDateGuard } from "../services/authz.scope.service.js";
+import {
+  LOCAL_OPERATIONAL_ROLE_CODES as LOCAL_USER_ADMIN_ROLE_CODES,
+  getLocalOperationalRoleConfig as getLocalUserAdminRoleConfig,
+  normalizeLocalOperationalRoleCode as normalizeLocalUserAdminRoleCode,
+  normalizeLocalOperationalRoleScopeType as normalizeLocalUserAdminScopeType,
+} from "../services/localOperationalRoles.service.js";
 import {
   createRoleMigrationPreviewRun,
   executeRoleMigrationRun,
@@ -73,8 +80,13 @@ function parseBoolean(value) {
 }
 
 const VALID_USER_STATUSES = new Set(["ACTIVE", "DISABLED"]);
+const LOCAL_USER_ADMIN_PERMISSION = "security.user_admin.local";
 const ENTITY_USER_ADMIN_PERMISSION = "security.user_admin.entity";
 const BRANCH_OPERATOR_ROLE_CODE = "BranchOperator";
+const LOCAL_USER_ADMIN_COMPAT_PERMISSION_CODES = Object.freeze([
+  LOCAL_USER_ADMIN_PERMISSION,
+  ENTITY_USER_ADMIN_PERMISSION,
+]);
 
 function normalizeUserEmail(value) {
   const email = String(value || "")
@@ -146,7 +158,7 @@ function normalizeScopeType(value) {
   const scopeType = String(value || "").toUpperCase();
   if (!VALID_SCOPE_TYPES.has(scopeType)) {
     throw badRequest(
-      "scopeType must be one of TENANT, GROUP, COUNTRY, LEGAL_ENTITY, OPERATING_UNIT"
+      "scopeType must be one of TENANT, GROUP, COUNTRY, LEGAL_ENTITY, OPERATING_UNIT",
     );
   }
   return scopeType;
@@ -161,10 +173,12 @@ function normalizeEffect(value, fallback = "ALLOW") {
 }
 
 function normalizeFieldVisibilityScopeType(value, fallback = "GLOBAL") {
-  const scopeType = String(value || fallback).trim().toUpperCase();
+  const scopeType = String(value || fallback)
+    .trim()
+    .toUpperCase();
   if (!VALID_FIELD_VISIBILITY_SCOPE_TYPES.has(scopeType)) {
     throw badRequest(
-      "appliesToScopeType must be GLOBAL, TENANT, GROUP, COUNTRY, LEGAL_ENTITY, or OPERATING_UNIT"
+      "appliesToScopeType must be GLOBAL, TENANT, GROUP, COUNTRY, LEGAL_ENTITY, or OPERATING_UNIT",
     );
   }
   return scopeType;
@@ -173,7 +187,7 @@ function normalizeFieldVisibilityScopeType(value, fallback = "GLOBAL") {
 async function assertFieldVisibilityPolicyScopeBelongsToTenant(
   tenantId,
   scopeType,
-  scopeId
+  scopeId,
 ) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedScopeType = normalizeFieldVisibilityScopeType(scopeType);
@@ -186,7 +200,9 @@ async function assertFieldVisibilityPolicyScopeBelongsToTenant(
   if (normalizedScopeType === "TENANT") {
     const normalizedScopeId = parsePositiveInt(scopeId) || normalizedTenantId;
     if (normalizedScopeId !== normalizedTenantId) {
-      throw badRequest("Tenant-scoped field visibility policies must use the current tenant id");
+      throw badRequest(
+        "Tenant-scoped field visibility policies must use the current tenant id",
+      );
     }
     return {
       appliesToScopeType: "TENANT",
@@ -196,17 +212,28 @@ async function assertFieldVisibilityPolicyScopeBelongsToTenant(
 
   const normalizedScopeId = parsePositiveInt(scopeId);
   if (!normalizedScopeId) {
-    throw badRequest(`appliesToScopeId is required when appliesToScopeType = ${normalizedScopeType}`);
+    throw badRequest(
+      `appliesToScopeId is required when appliesToScopeType = ${normalizedScopeType}`,
+    );
   }
 
   if (normalizedScopeType === "GROUP") {
-    await assertGroupCompanyBelongsToTenant(normalizedScopeId, normalizedTenantId);
+    await assertGroupCompanyBelongsToTenant(
+      normalizedScopeId,
+      normalizedTenantId,
+    );
   } else if (normalizedScopeType === "COUNTRY") {
     await assertCountryExists(normalizedScopeId);
   } else if (normalizedScopeType === "LEGAL_ENTITY") {
-    await assertLegalEntityBelongsToTenant(normalizedScopeId, normalizedTenantId);
+    await assertLegalEntityBelongsToTenant(
+      normalizedScopeId,
+      normalizedTenantId,
+    );
   } else if (normalizedScopeType === "OPERATING_UNIT") {
-    await assertOperatingUnitBelongsToTenant(normalizedScopeId, normalizedTenantId);
+    await assertOperatingUnitBelongsToTenant(
+      normalizedScopeId,
+      normalizedTenantId,
+    );
   }
 
   return {
@@ -256,12 +283,12 @@ function resolveAssignmentEffectiveDates(body, existingAssignment = null) {
   const effectiveFromInput = parseOptionalDateField(
     body,
     "effectiveFrom",
-    "effective_from"
+    "effective_from",
   );
   const effectiveToInput = parseOptionalDateField(
     body,
     "effectiveTo",
-    "effective_to"
+    "effective_to",
   );
 
   const effectiveFrom = effectiveFromInput.provided
@@ -285,7 +312,7 @@ async function getRoleForTenant(roleId, tenantId) {
      WHERE id = ?
        AND tenant_id = ?
      LIMIT 1`,
-    [roleId, tenantId]
+    [roleId, tenantId],
   );
   return roleResult.rows[0] || null;
 }
@@ -297,13 +324,17 @@ async function getRoleByCodeForTenant(roleCode, tenantId, runQuery = query) {
      WHERE tenant_id = ?
        AND code = ?
      LIMIT 1`,
-    [tenantId, roleCode]
+    [tenantId, roleCode],
   );
   return roleResult.rows[0] || null;
 }
 
 async function getBranchOperatorRoleForTenant(tenantId, runQuery = query) {
-  const role = await getRoleByCodeForTenant(BRANCH_OPERATOR_ROLE_CODE, tenantId, runQuery);
+  const role = await getRoleByCodeForTenant(
+    BRANCH_OPERATOR_ROLE_CODE,
+    tenantId,
+    runQuery,
+  );
   if (!role) {
     throw new Error("BranchOperator role is not configured for this tenant");
   }
@@ -316,27 +347,48 @@ async function lookupUserByEmail(email, runQuery = query) {
      FROM users
      WHERE email = ?
      LIMIT 1`,
-    [email]
+    [email],
   );
   return result.rows[0] || null;
 }
 
-async function assertUserHasNoExplicitDataScopes(tenantId, userId, runQuery = query) {
+async function assertUserHasNoExplicitDataScopes(
+  tenantId,
+  userId,
+  runQuery = query,
+) {
   const result = await runQuery(
     `SELECT COUNT(*) AS scope_count
      FROM data_scopes
      WHERE tenant_id = ?
        AND user_id = ?`,
-    [tenantId, userId]
+    [tenantId, userId],
   );
   const scopeCount = Number(result.rows[0]?.scope_count || 0);
   if (scopeCount > 0) {
-    throw badRequest("User has explicit data scopes and must be managed by Security Admin");
+    throw badRequest(
+      "User has explicit data scopes and must be managed by Security Admin",
+    );
   }
 }
 
-async function assertSystemRoleManageAllowed(req, tenantId, role) {
+async function assertSystemRoleManageAllowed(
+  req,
+  tenantId,
+  role,
+  options = {},
+) {
   if (!Boolean(role?.is_system)) {
+    return;
+  }
+  const roleCode = String(role?.code || "").trim();
+  const allowedSystemRoleCodes = normalizeRoleCodeList(
+    options.allowedSystemRoleCodes,
+  );
+  if (allowedSystemRoleCodes.includes(roleCode)) {
+    // PR-7C intentionally allows a bounded local-admin seam to assign a
+    // narrow allow-list of shipped local operational roles without opening
+    // tenant-wide SecurityAdmin power over the broader system catalog.
     return;
   }
 
@@ -353,13 +405,13 @@ async function assertRoleAssignmentUpsertAllowed(tenantId, role) {
   }
   if (isRetiredLegacyRoleCode(role.code)) {
     throw badRequest(
-      `${role.code || "Role"} is retired and can only be restored through migration or rollback seams`
+      `${role.code || "Role"} is retired and can only be restored through migration or rollback seams`,
     );
   }
   const isLegacyDisabled = await isRoleLegacyDisabled(tenantId, role.id);
   if (isLegacyDisabled) {
     throw badRequest(
-      `${role.code || "Role"} is disabled by role migration and can only be restored through rollback`
+      `${role.code || "Role"} is disabled by role migration and can only be restored through rollback`,
     );
   }
 }
@@ -373,7 +425,7 @@ function assertRetiredLegacyRoleNotManaged(roleOrCode) {
     return;
   }
   throw badRequest(
-    `${roleCode || "Role"} is retired and is no longer manageable through the normal role admin surfaces`
+    `${roleCode || "Role"} is retired and is no longer manageable through the normal role admin surfaces`,
   );
 }
 
@@ -390,14 +442,18 @@ function normalizeRoleCodeList(values) {
     new Set(
       (Array.isArray(values) ? values : [])
         .map((value) => String(value || "").trim())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
 }
 
 function normalizePositiveIntList(values) {
   return Array.from(
-    new Set((Array.isArray(values) ? values : []).map(parsePositiveInt).filter(Boolean))
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map(parsePositiveInt)
+        .filter(Boolean),
+    ),
   );
 }
 
@@ -407,12 +463,12 @@ async function upsertPermissionAndGetId(permissionCode, runQuery = query) {
      VALUES (?, ?)
      ON DUPLICATE KEY UPDATE
        description = VALUES(description)`,
-    [permissionCode, permissionCode]
+    [permissionCode, permissionCode],
   );
 
   const permissionResult = await runQuery(
     `SELECT id FROM permissions WHERE code = ? LIMIT 1`,
-    [permissionCode]
+    [permissionCode],
   );
   const permissionId = permissionResult.rows[0]?.id;
   if (!permissionId) {
@@ -428,14 +484,14 @@ async function loadRolePermissionCodes(roleId, runQuery = query) {
      JOIN permissions p ON p.id = rp.permission_id
      WHERE rp.role_id = ?
      ORDER BY p.code`,
-    [roleId]
+    [roleId],
   );
   return Array.from(
     new Set(
       (result.rows || [])
         .map((row) => String(row.code || "").trim())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
 }
 
@@ -444,8 +500,8 @@ function normalizePermissionCodeList(permissionCodes) {
     new Set(
       (Array.isArray(permissionCodes) ? permissionCodes : [])
         .map((permissionCode) => String(permissionCode || "").trim())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
 }
 
@@ -493,11 +549,11 @@ async function buildCombinedRoleAssignmentWarnings({
        AND urs.scope_id = ?
        AND urs.effect = 'ALLOW'${excludeAssignmentSql}${effectiveGuard.sql}
      ORDER BY p.code`,
-    [...params, ...effectiveGuard.params]
+    [...params, ...effectiveGuard.params],
   );
 
   const permissionCodes = normalizePermissionCodeList(
-    (existingResult.rows || []).map((row) => row.code)
+    (existingResult.rows || []).map((row) => row.code),
   );
 
   const includeRolePermissionCodes = parsePositiveInt(includeRoleId)
@@ -554,11 +610,501 @@ async function assertScopeTargetExists(tenantId, scopeType, scopeId) {
   }
 
   if (normalizedScopeType === "OPERATING_UNIT") {
-    await assertOperatingUnitBelongsToTenant(tenantId, parsedScopeId, "scopeId");
+    await assertOperatingUnitBelongsToTenant(
+      tenantId,
+      parsedScopeId,
+      "scopeId",
+    );
     return;
   }
 
   throw badRequest("Unsupported scopeType");
+}
+
+async function getLocalUserAdminRoleRows(
+  tenantId,
+  runQuery = query,
+  roleCodes = LOCAL_USER_ADMIN_ROLE_CODES,
+) {
+  const normalizedRoleCodes = Array.from(
+    new Set(
+      (Array.isArray(roleCodes) ? roleCodes : [])
+        .map((roleCode) => String(roleCode || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (normalizedRoleCodes.length === 0) {
+    return [];
+  }
+
+  const result = await runQuery(
+    `SELECT id, code, name, is_system
+     FROM roles
+     WHERE tenant_id = ?
+       AND code IN (${normalizedRoleCodes.map(() => "?").join(", ")})
+     ORDER BY code`,
+    [tenantId, ...normalizedRoleCodes],
+  );
+  return result.rows || [];
+}
+
+async function listLocalUserAdminData({
+  req,
+  tenantId,
+  runQuery = query,
+  roleCodes = LOCAL_USER_ADMIN_ROLE_CODES,
+}) {
+  const roleRows = await getLocalUserAdminRoleRows(
+    tenantId,
+    runQuery,
+    roleCodes,
+  );
+  const roleIdList = roleRows
+    .map((row) => parsePositiveInt(row?.id))
+    .filter(Boolean);
+
+  const legalEntityParams = [tenantId];
+  const legalEntityConditions = ["le.tenant_id = ?"];
+  legalEntityConditions.push(
+    buildScopeFilter(req, "legal_entity", "le.id", legalEntityParams),
+  );
+  const legalEntityResult = await runQuery(
+    `SELECT
+       le.id,
+       le.code,
+       le.name,
+       le.status,
+       le.country_id,
+       c.iso2 AS country_iso2,
+       c.name AS country_name
+     FROM legal_entities le
+     LEFT JOIN countries c
+       ON c.id = le.country_id
+     WHERE ${legalEntityConditions.join(" AND ")}
+     ORDER BY le.code, le.id`,
+    legalEntityParams,
+  );
+
+  const operatingUnitParams = [tenantId];
+  const operatingUnitConditions = ["ou.tenant_id = ?"];
+  operatingUnitConditions.push(
+    buildScopeFilter(req, "operating_unit", "ou.id", operatingUnitParams),
+  );
+  const operatingUnitResult = await runQuery(
+    `SELECT
+       ou.id,
+       ou.code,
+       ou.name,
+       ou.status,
+       ou.unit_type,
+       ou.legal_entity_id,
+       le.code AS legal_entity_code,
+       le.name AS legal_entity_name
+     FROM operating_units ou
+     JOIN legal_entities le
+       ON le.id = ou.legal_entity_id
+      AND le.tenant_id = ou.tenant_id
+     WHERE ${operatingUnitConditions.join(" AND ")}
+     ORDER BY le.code, ou.code, ou.id`,
+    operatingUnitParams,
+  );
+
+  let assignmentRows = [];
+  if (roleIdList.length > 0) {
+    const assignmentParams = [tenantId, ...roleIdList];
+    const assignmentConditions = [
+      "urs.tenant_id = ?",
+      `urs.role_id IN (${roleIdList.map(() => "?").join(", ")})`,
+      "urs.effect = 'ALLOW'",
+      "(" +
+        [
+          `(urs.scope_type = 'LEGAL_ENTITY' AND ${buildScopeFilter(
+            req,
+            "legal_entity",
+            "urs.scope_id",
+            assignmentParams,
+          )})`,
+          `(urs.scope_type = 'OPERATING_UNIT' AND ${buildScopeFilter(
+            req,
+            "operating_unit",
+            "urs.scope_id",
+            assignmentParams,
+          )})`,
+        ].join(" OR ") +
+        ")",
+    ];
+    const assignmentResult = await runQuery(
+      `SELECT
+         urs.id,
+         urs.user_id,
+         u.email AS user_email,
+         u.name AS user_name,
+         u.status AS user_status,
+         urs.role_id,
+         r.code AS role_code,
+         r.name AS role_name,
+         urs.scope_type,
+         urs.scope_id,
+         urs.created_at,
+         le.id AS legal_entity_id,
+         le.code AS legal_entity_code,
+         le.name AS legal_entity_name,
+         le.status AS legal_entity_status,
+         ou.id AS operating_unit_id,
+         ou.code AS operating_unit_code,
+         ou.name AS operating_unit_name,
+         ou.status AS operating_unit_status
+       FROM user_role_scopes urs
+       JOIN users u
+         ON u.id = urs.user_id
+        AND u.tenant_id = urs.tenant_id
+       JOIN roles r
+         ON r.id = urs.role_id
+        AND r.tenant_id = urs.tenant_id
+       LEFT JOIN legal_entities le
+         ON urs.scope_type = 'LEGAL_ENTITY'
+        AND le.id = urs.scope_id
+        AND le.tenant_id = urs.tenant_id
+       LEFT JOIN operating_units ou
+         ON urs.scope_type = 'OPERATING_UNIT'
+        AND ou.id = urs.scope_id
+        AND ou.tenant_id = urs.tenant_id
+       WHERE ${assignmentConditions.join(" AND ")}
+       ORDER BY r.code, COALESCE(le.code, ''), COALESCE(ou.code, ''), u.name, u.email, urs.id`,
+      assignmentParams,
+    );
+    assignmentRows = assignmentResult.rows || [];
+  }
+
+  return {
+    tenantId,
+    roles: roleRows.map((row) => ({
+      id: parsePositiveInt(row?.id),
+      code: row.code,
+      name: row.name,
+      allowedScopeTypes: [
+        ...(getLocalUserAdminRoleConfig(row.code)?.scopeTypes || []),
+      ],
+    })),
+    legalEntities: legalEntityResult.rows || [],
+    operatingUnits: operatingUnitResult.rows || [],
+    assignments: assignmentRows,
+  };
+}
+
+async function createLocalUserAdminAssignment({
+  req,
+  tenantId,
+  email,
+  name,
+  roleCode,
+  scopeType,
+  scopeId,
+  auditActionPrefix = "local_user_admin",
+}) {
+  const normalizedRoleCode = normalizeLocalUserAdminRoleCode(roleCode);
+  const normalizedScopeType = normalizeLocalUserAdminScopeType(
+    normalizedRoleCode,
+    scopeType,
+  );
+  const normalizedScopeId = parsePositiveInt(scopeId);
+  if (!normalizedScopeId) {
+    throw badRequest("scopeId must be a positive integer");
+  }
+  await assertScopeTargetExists(
+    tenantId,
+    normalizedScopeType,
+    normalizedScopeId,
+  );
+  if (normalizedScopeType === "LEGAL_ENTITY") {
+    assertScopeAccess(req, "legal_entity", normalizedScopeId, "scopeId");
+  } else if (normalizedScopeType === "OPERATING_UNIT") {
+    assertScopeAccess(req, "operating_unit", normalizedScopeId, "scopeId");
+  }
+
+  const normalizedEmail = normalizeUserEmail(email);
+  const normalizedName = normalizeUserName(name);
+  const actorUserId = parsePositiveInt(req.user?.userId);
+
+  const operation = await withTransaction(async (tx) => {
+    const role = await getRoleByCodeForTenant(
+      normalizedRoleCode,
+      tenantId,
+      tx.query,
+    );
+    if (!role) {
+      throw badRequest(
+        `${normalizedRoleCode} role is not configured for this tenant`,
+      );
+    }
+    await assertSystemRoleManageAllowed(req, tenantId, role, {
+      allowedSystemRoleCodes: LOCAL_USER_ADMIN_ROLE_CODES,
+    });
+    await assertRoleAssignmentUpsertAllowed(tenantId, role);
+
+    const existingUser = await lookupUserByEmail(normalizedEmail, tx.query);
+    const existingUserId = parsePositiveInt(existingUser?.id);
+    if (
+      existingUserId &&
+      parsePositiveInt(existingUser?.tenant_id) !== tenantId
+    ) {
+      throw badRequest("email already exists");
+    }
+    if (existingUserId) {
+      await assertUserHasNoExplicitDataScopes(
+        tenantId,
+        existingUserId,
+        tx.query,
+      );
+    }
+
+    let invite = null;
+    let userId = existingUserId;
+    if (
+      !existingUserId ||
+      String(existingUser?.status || "").toUpperCase() !== "ACTIVE"
+    ) {
+      invite = await createInviteForTenantUser({
+        tenantId,
+        actorUserId,
+        email: normalizedEmail,
+        name: normalizedName,
+        runQuery: tx.query,
+      });
+      userId = parsePositiveInt(invite.userId);
+    }
+
+    const userResult = await tx.query(
+      `SELECT id, email, name, status
+       FROM users
+       WHERE id = ?
+         AND tenant_id = ?
+       LIMIT 1`,
+      [userId, tenantId],
+    );
+    const managedUser = userResult.rows[0] || null;
+    if (!managedUser) {
+      throw new Error(
+        "Unable to resolve tenant user after local user admin invite flow",
+      );
+    }
+
+    const existingAssignmentResult = await tx.query(
+      `SELECT id, effect
+       FROM user_role_scopes
+       WHERE tenant_id = ?
+         AND user_id = ?
+         AND role_id = ?
+         AND scope_type = ?
+         AND scope_id = ?
+       LIMIT 1`,
+      [
+        tenantId,
+        userId,
+        parsePositiveInt(role.id),
+        normalizedScopeType,
+        normalizedScopeId,
+      ],
+    );
+    const existingAssignment = existingAssignmentResult.rows[0] || null;
+    if (String(existingAssignment?.effect || "").toUpperCase() === "DENY") {
+      throw badRequest(
+        "Deny assignments for locally managed roles must be handled by Security Admin",
+      );
+    }
+
+    if (!existingAssignment) {
+      await tx.query(
+        `INSERT INTO user_role_scopes (
+            tenant_id,
+            user_id,
+            role_id,
+            scope_type,
+            scope_id,
+            effect
+         )
+         VALUES (?, ?, ?, ?, ?, 'ALLOW')`,
+        [
+          tenantId,
+          userId,
+          parsePositiveInt(role.id),
+          normalizedScopeType,
+          normalizedScopeId,
+        ],
+      );
+    }
+
+    const currentAssignmentResult = await tx.query(
+      `SELECT id
+       FROM user_role_scopes
+       WHERE tenant_id = ?
+         AND user_id = ?
+         AND role_id = ?
+         AND scope_type = ?
+         AND scope_id = ?
+       LIMIT 1`,
+      [
+        tenantId,
+        userId,
+        parsePositiveInt(role.id),
+        normalizedScopeType,
+        normalizedScopeId,
+      ],
+    );
+    const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
+      tenantId,
+      userId,
+      scopeType: normalizedScopeType,
+      scopeId: normalizedScopeId,
+      includeRoleId: parsePositiveInt(role.id),
+      effect: "ALLOW",
+      runQuery: tx.query,
+    });
+
+    return {
+      role,
+      managedUser,
+      invite,
+      assignmentCreated: !existingAssignment,
+      assignmentId:
+        parsePositiveInt(currentAssignmentResult.rows?.[0]?.id) ||
+        parsePositiveInt(existingAssignment?.id),
+      assignmentWarnings,
+      scopeType: normalizedScopeType,
+      scopeId: normalizedScopeId,
+    };
+  });
+
+  await invalidateRbacCache(tenantId);
+
+  if (operation.invite) {
+    await logRbacAuditEvent(req, {
+      tenantId,
+      targetUserId: parsePositiveInt(operation.managedUser.id),
+      action: `${auditActionPrefix}.invite`,
+      resourceType: "user_invite",
+      resourceId: parsePositiveInt(operation.invite.id),
+      scopeType: operation.scopeType,
+      scopeId: operation.scopeId,
+      payload: {
+        userId: parsePositiveInt(operation.managedUser.id),
+        email: operation.managedUser.email,
+        expiresAt: operation.invite.expiresAt,
+        roleCode: operation.role.code,
+      },
+    });
+  }
+
+  if (operation.assignmentCreated) {
+    await logRbacAuditEvent(req, {
+      tenantId,
+      targetUserId: parsePositiveInt(operation.managedUser.id),
+      action: `${auditActionPrefix}.assignment.create`,
+      resourceType: "user_role_scope",
+      resourceId: operation.assignmentId,
+      scopeType: operation.scopeType,
+      scopeId: operation.scopeId,
+      payload: {
+        userId: parsePositiveInt(operation.managedUser.id),
+        roleId: parsePositiveInt(operation.role.id),
+        roleCode: operation.role.code,
+        effect: "ALLOW",
+      },
+    });
+  }
+
+  return operation;
+}
+
+async function deleteLocalUserAdminAssignment({
+  req,
+  tenantId,
+  assignmentId,
+  auditActionPrefix = "local_user_admin",
+  expectedRoleCodes = LOCAL_USER_ADMIN_ROLE_CODES,
+}) {
+  const normalizedAssignmentId = parsePositiveInt(assignmentId);
+  if (!normalizedAssignmentId) {
+    throw badRequest("assignmentId must be a positive integer");
+  }
+
+  const normalizedRoleCodes = Array.from(
+    new Set(
+      (Array.isArray(expectedRoleCodes) ? expectedRoleCodes : [])
+        .map((roleCode) => String(roleCode || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (normalizedRoleCodes.length === 0) {
+    throw badRequest("expectedRoleCodes is required");
+  }
+
+  const assignmentResult = await query(
+    `SELECT
+       urs.id,
+       urs.user_id,
+       urs.scope_type,
+       urs.scope_id,
+       urs.effect,
+       r.id AS role_id,
+       r.code AS role_code,
+       u.email AS user_email,
+       u.name AS user_name
+     FROM user_role_scopes urs
+     JOIN roles r
+       ON r.id = urs.role_id
+      AND r.tenant_id = urs.tenant_id
+     JOIN users u
+       ON u.id = urs.user_id
+      AND u.tenant_id = urs.tenant_id
+     WHERE urs.id = ?
+       AND urs.tenant_id = ?
+     LIMIT 1`,
+    [normalizedAssignmentId, tenantId],
+  );
+  const assignment = assignmentResult.rows[0] || null;
+  if (
+    !assignment ||
+    !normalizedRoleCodes.includes(String(assignment.role_code || "").trim()) ||
+    String(assignment.effect || "").toUpperCase() !== "ALLOW"
+  ) {
+    throw badRequest("Local user admin assignment not found");
+  }
+
+  const normalizedScopeType = String(assignment.scope_type || "").toUpperCase();
+  const normalizedScopeId = parsePositiveInt(assignment.scope_id);
+  if (normalizedScopeType === "LEGAL_ENTITY") {
+    assertScopeAccess(req, "legal_entity", normalizedScopeId, "assignmentId");
+  } else if (normalizedScopeType === "OPERATING_UNIT") {
+    assertScopeAccess(req, "operating_unit", normalizedScopeId, "assignmentId");
+  } else {
+    throw badRequest("Local user admin assignment has unsupported scope type");
+  }
+
+  await query(
+    `DELETE FROM user_role_scopes
+     WHERE id = ?
+       AND tenant_id = ?`,
+    [normalizedAssignmentId, tenantId],
+  );
+  await invalidateRbacCache(tenantId);
+
+  await logRbacAuditEvent(req, {
+    tenantId,
+    targetUserId: parsePositiveInt(assignment.user_id),
+    action: `${auditActionPrefix}.assignment.delete`,
+    resourceType: "user_role_scope",
+    resourceId: normalizedAssignmentId,
+    scopeType: normalizedScopeType,
+    scopeId: normalizedScopeId,
+    payload: {
+      userId: parsePositiveInt(assignment.user_id),
+      roleId: parsePositiveInt(assignment.role_id),
+      roleCode: assignment.role_code,
+    },
+  });
+
+  return assignment;
 }
 
 router.get(
@@ -579,13 +1125,13 @@ router.get(
        FROM permissions
        ${whereClause}
        ORDER BY code`,
-      params
+      params,
     );
 
     return res.json({
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.get(
@@ -612,14 +1158,14 @@ router.get(
        WHERE ${conditions.join(" AND ")}
        ORDER BY name, email
        LIMIT 200`,
-      params
+      params,
     );
 
     return res.json({
       tenantId,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -642,7 +1188,7 @@ router.post(
        FROM users
        WHERE email = ?
        LIMIT 1`,
-      [email]
+      [email],
     );
     if (existingUserResult.rows[0]) {
       throw badRequest("email already exists");
@@ -661,7 +1207,7 @@ router.post(
            status
          )
          VALUES (?, ?, ?, ?, ?)`,
-        [tenantId, email, passwordHash, name, status]
+        [tenantId, email, passwordHash, name, status],
       );
       createdUserId = parsePositiveInt(result.rows.insertId);
     } catch (err) {
@@ -692,7 +1238,7 @@ router.post(
       id: createdUserId,
       tenantId,
     });
-  })
+  }),
 );
 
 router.post(
@@ -713,7 +1259,9 @@ router.post(
       requestFingerprintInput: {
         tenantId,
         actorUserId,
-        email: String(req.body.email || "").trim().toLowerCase(),
+        email: String(req.body.email || "")
+          .trim()
+          .toLowerCase(),
         name: String(req.body.name || "").trim(),
       },
       execute: async () => {
@@ -753,7 +1301,118 @@ router.post(
       ...result.payload,
       idempotentReplay: Boolean(result.idempotentReplay),
     });
-  })
+  }),
+);
+
+router.get(
+  "/local-user-admin",
+  requireAnyPermission(LOCAL_USER_ADMIN_COMPAT_PERMISSION_CODES),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const data = await listLocalUserAdminData({ req, tenantId });
+    return res.json(data);
+  }),
+);
+
+router.post(
+  "/local-user-admin/assignments",
+  requireAnyPermission(LOCAL_USER_ADMIN_COMPAT_PERMISSION_CODES, {
+    resolveScope: (req) => {
+      const scopeType = String(req.body?.scopeType || "")
+        .trim()
+        .toUpperCase();
+      const scopeId = parsePositiveInt(req.body?.scopeId);
+      if (!scopeType || !scopeId) {
+        return null;
+      }
+      return {
+        scopeType,
+        scopeId,
+      };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    assertRequiredFields(req.body, [
+      "email",
+      "name",
+      "roleCode",
+      "scopeType",
+      "scopeId",
+    ]);
+
+    const operation = await createLocalUserAdminAssignment({
+      req,
+      tenantId,
+      email: req.body.email,
+      name: req.body.name,
+      roleCode: req.body.roleCode,
+      scopeType: req.body.scopeType,
+      scopeId: req.body.scopeId,
+      auditActionPrefix: "local_user_admin",
+    });
+
+    return res
+      .status(operation.invite || operation.assignmentCreated ? 201 : 200)
+      .json({
+        ok: true,
+        assignmentCreated: operation.assignmentCreated,
+        assignmentId: operation.assignmentId,
+        assignmentWarnings: operation.assignmentWarnings,
+        scopeType: operation.scopeType,
+        scopeId: operation.scopeId,
+        role: {
+          id: parsePositiveInt(operation.role.id),
+          code: operation.role.code,
+          name: operation.role.name,
+        },
+        user: {
+          id: parsePositiveInt(operation.managedUser.id),
+          email: operation.managedUser.email,
+          name: operation.managedUser.name,
+          status: operation.managedUser.status,
+        },
+        invite: operation.invite
+          ? {
+              id: parsePositiveInt(operation.invite.id),
+              userId: parsePositiveInt(operation.invite.userId),
+              email: operation.invite.email,
+              name: operation.invite.name,
+              status: operation.invite.status,
+              expiresAt: operation.invite.expiresAt,
+              inviteUrl: operation.invite.inviteUrl,
+            }
+          : null,
+      });
+  }),
+);
+
+router.delete(
+  "/local-user-admin/assignments/:assignmentId",
+  requireAnyPermission(LOCAL_USER_ADMIN_COMPAT_PERMISSION_CODES),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    await deleteLocalUserAdminAssignment({
+      req,
+      tenantId,
+      assignmentId: req.params.assignmentId,
+      auditActionPrefix: "local_user_admin",
+    });
+
+    return res.json({ ok: true });
+  }),
 );
 
 router.get(
@@ -765,85 +1424,26 @@ router.get(
       throw badRequest("tenantId is required");
     }
 
-    const branchOperatorRole = await getBranchOperatorRoleForTenant(tenantId);
-
-    const operatingUnitParams = [tenantId];
-    const operatingUnitConditions = ["ou.tenant_id = ?"];
-    operatingUnitConditions.push(buildScopeFilter(req, "operating_unit", "ou.id", operatingUnitParams));
-
-    const operatingUnitResult = await query(
-      `SELECT
-         ou.id,
-         ou.code,
-         ou.name,
-         ou.status,
-         ou.unit_type,
-         ou.legal_entity_id,
-         le.code AS legal_entity_code,
-         le.name AS legal_entity_name,
-         le.status AS legal_entity_status
-       FROM operating_units ou
-       JOIN legal_entities le
-         ON le.id = ou.legal_entity_id
-        AND le.tenant_id = ou.tenant_id
-       WHERE ${operatingUnitConditions.join(" AND ")}
-       ORDER BY le.code, ou.code, ou.id`,
-      operatingUnitParams
-    );
-
-    const assignmentParams = [tenantId, parsePositiveInt(branchOperatorRole.id)];
-    const assignmentConditions = [
-      "urs.tenant_id = ?",
-      "urs.role_id = ?",
-      "urs.scope_type = 'OPERATING_UNIT'",
-      "urs.effect = 'ALLOW'",
-    ];
-    assignmentConditions.push(
-      buildScopeFilter(req, "operating_unit", "urs.scope_id", assignmentParams)
-    );
-
-    const assignmentResult = await query(
-      `SELECT
-         urs.id,
-         urs.user_id,
-         u.email AS user_email,
-         u.name AS user_name,
-         u.status AS user_status,
-         urs.scope_id AS operating_unit_id,
-         ou.code AS operating_unit_code,
-         ou.name AS operating_unit_name,
-         ou.status AS operating_unit_status,
-         le.id AS legal_entity_id,
-         le.code AS legal_entity_code,
-         le.name AS legal_entity_name,
-         le.status AS legal_entity_status,
-         urs.created_at
-       FROM user_role_scopes urs
-       JOIN users u
-         ON u.id = urs.user_id
-        AND u.tenant_id = urs.tenant_id
-       JOIN operating_units ou
-         ON ou.id = urs.scope_id
-        AND ou.tenant_id = urs.tenant_id
-       JOIN legal_entities le
-         ON le.id = ou.legal_entity_id
-        AND le.tenant_id = ou.tenant_id
-       WHERE ${assignmentConditions.join(" AND ")}
-       ORDER BY le.code, ou.code, u.name, u.email, urs.id`,
-      assignmentParams
-    );
+    const data = await listLocalUserAdminData({
+      req,
+      tenantId,
+      roleCodes: [BRANCH_OPERATOR_ROLE_CODE],
+    });
+    const branchOperatorRole = data.roles[0] || null;
 
     return res.json({
       tenantId,
-      role: {
-        id: parsePositiveInt(branchOperatorRole.id),
-        code: branchOperatorRole.code,
-        name: branchOperatorRole.name,
-      },
-      operatingUnits: operatingUnitResult.rows || [],
-      assignments: assignmentResult.rows || [],
+      role: branchOperatorRole
+        ? {
+            id: parsePositiveInt(branchOperatorRole.id),
+            code: branchOperatorRole.code,
+            name: branchOperatorRole.name,
+          }
+        : null,
+      operatingUnits: data.operatingUnits || [],
+      assignments: data.assignments || [],
     });
-  })
+  }),
 );
 
 router.post(
@@ -864,179 +1464,53 @@ router.post(
     }
 
     assertRequiredFields(req.body, ["email", "name", "operatingUnitId"]);
-    const email = normalizeUserEmail(req.body.email);
-    const name = normalizeUserName(req.body.name);
     const operatingUnitId = parsePositiveInt(req.body.operatingUnitId);
     if (!operatingUnitId) {
       throw badRequest("operatingUnitId must be a positive integer");
     }
 
-    await assertOperatingUnitBelongsToTenant(tenantId, operatingUnitId, "operatingUnitId");
-    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
-
-    const actorUserId = parsePositiveInt(req.user?.userId);
-    const operation = await withTransaction(async (tx) => {
-      const branchOperatorRole = await getBranchOperatorRoleForTenant(tenantId, tx.query);
-      const existingUser = await lookupUserByEmail(email, tx.query);
-      const existingUserId = parsePositiveInt(existingUser?.id);
-
-      if (existingUserId && parsePositiveInt(existingUser?.tenant_id) !== tenantId) {
-        throw badRequest("email already exists");
-      }
-
-      if (existingUserId) {
-        // Explicit data scopes override permission-derived scope, so those users
-        // stay on the full security-admin workflow instead of this delegated UI.
-        await assertUserHasNoExplicitDataScopes(tenantId, existingUserId, tx.query);
-      }
-
-      let invite = null;
-      let userId = existingUserId;
-      if (!existingUserId || String(existingUser?.status || "").toUpperCase() !== "ACTIVE") {
-        invite = await createInviteForTenantUser({
-          tenantId,
-          actorUserId,
-          email,
-          name,
-          runQuery: tx.query,
-        });
-        userId = parsePositiveInt(invite.userId);
-      }
-
-      const userResult = await tx.query(
-        `SELECT id, email, name, status
-         FROM users
-         WHERE id = ?
-           AND tenant_id = ?
-         LIMIT 1`,
-        [userId, tenantId]
-      );
-      const managedUser = userResult.rows[0] || null;
-      if (!managedUser) {
-        throw new Error("Unable to resolve tenant user after branch operator invite flow");
-      }
-
-      const existingAssignmentResult = await tx.query(
-        `SELECT id, effect
-         FROM user_role_scopes
-         WHERE tenant_id = ?
-           AND user_id = ?
-           AND role_id = ?
-           AND scope_type = 'OPERATING_UNIT'
-           AND scope_id = ?
-         LIMIT 1`,
-        [tenantId, userId, parsePositiveInt(branchOperatorRole.id), operatingUnitId]
-      );
-      const existingAssignment = existingAssignmentResult.rows[0] || null;
-      if (String(existingAssignment?.effect || "").toUpperCase() === "DENY") {
-        // A delegated entity admin must not silently remove a central deny row.
-        throw badRequest("Branch operator deny assignments must be managed by Security Admin");
-      }
-
-      if (!existingAssignment) {
-        await tx.query(
-          `INSERT INTO user_role_scopes (
-             tenant_id,
-             user_id,
-             role_id,
-             scope_type,
-             scope_id,
-             effect
-           )
-           VALUES (?, ?, ?, 'OPERATING_UNIT', ?, 'ALLOW')`,
-          [tenantId, userId, parsePositiveInt(branchOperatorRole.id), operatingUnitId]
-        );
-      }
-
-      const currentAssignmentResult = await tx.query(
-        `SELECT id
-         FROM user_role_scopes
-         WHERE tenant_id = ?
-           AND user_id = ?
-           AND role_id = ?
-           AND scope_type = 'OPERATING_UNIT'
-           AND scope_id = ?
-         LIMIT 1`,
-        [tenantId, userId, parsePositiveInt(branchOperatorRole.id), operatingUnitId]
-      );
-
-      return {
-        branchOperatorRole,
-        managedUser,
-        invite,
-        assignmentId:
-          parsePositiveInt(currentAssignmentResult.rows[0]?.id) ||
-          parsePositiveInt(existingAssignment?.id),
-        assignmentCreated: !existingAssignment,
-      };
+    const operation = await createLocalUserAdminAssignment({
+      req,
+      tenantId,
+      email: req.body.email,
+      name: req.body.name,
+      roleCode: BRANCH_OPERATOR_ROLE_CODE,
+      scopeType: "OPERATING_UNIT",
+      scopeId: operatingUnitId,
+      auditActionPrefix: "entity_user_admin.branch_operator",
     });
 
-    await invalidateRbacCache(tenantId);
-
-    if (operation.invite) {
-      await logRbacAuditEvent(req, {
-        tenantId,
-        targetUserId: parsePositiveInt(operation.managedUser.id),
-        action: "entity_user_admin.branch_operator.invite",
-        resourceType: "user_invite",
-        resourceId: parsePositiveInt(operation.invite.id),
-        scopeType: "OPERATING_UNIT",
-        scopeId: operatingUnitId,
-        payload: {
-          userId: parsePositiveInt(operation.managedUser.id),
+    return res
+      .status(operation.invite || operation.assignmentCreated ? 201 : 200)
+      .json({
+        ok: true,
+        assignmentCreated: operation.assignmentCreated,
+        assignmentId: operation.assignmentId,
+        assignmentWarnings: operation.assignmentWarnings,
+        role: {
+          id: parsePositiveInt(operation.role.id),
+          code: operation.role.code,
+          name: operation.role.name,
+        },
+        user: {
+          id: parsePositiveInt(operation.managedUser.id),
           email: operation.managedUser.email,
-          expiresAt: operation.invite.expiresAt,
-          roleCode: operation.branchOperatorRole.code,
+          name: operation.managedUser.name,
+          status: operation.managedUser.status,
         },
+        invite: operation.invite
+          ? {
+              id: parsePositiveInt(operation.invite.id),
+              userId: parsePositiveInt(operation.invite.userId),
+              email: operation.invite.email,
+              name: operation.invite.name,
+              status: operation.invite.status,
+              expiresAt: operation.invite.expiresAt,
+              inviteUrl: operation.invite.inviteUrl,
+            }
+          : null,
       });
-    }
-
-    if (operation.assignmentCreated) {
-      await logRbacAuditEvent(req, {
-        tenantId,
-        targetUserId: parsePositiveInt(operation.managedUser.id),
-        action: "entity_user_admin.branch_operator.assignment.create",
-        resourceType: "user_role_scope",
-        resourceId: operation.assignmentId,
-        scopeType: "OPERATING_UNIT",
-        scopeId: operatingUnitId,
-        payload: {
-          userId: parsePositiveInt(operation.managedUser.id),
-          roleId: parsePositiveInt(operation.branchOperatorRole.id),
-          roleCode: operation.branchOperatorRole.code,
-          effect: "ALLOW",
-        },
-      });
-    }
-
-    return res.status(operation.invite || operation.assignmentCreated ? 201 : 200).json({
-      ok: true,
-      assignmentCreated: operation.assignmentCreated,
-      assignmentId: operation.assignmentId,
-      role: {
-        id: parsePositiveInt(operation.branchOperatorRole.id),
-        code: operation.branchOperatorRole.code,
-        name: operation.branchOperatorRole.name,
-      },
-      user: {
-        id: parsePositiveInt(operation.managedUser.id),
-        email: operation.managedUser.email,
-        name: operation.managedUser.name,
-        status: operation.managedUser.status,
-      },
-      invite: operation.invite
-        ? {
-            id: parsePositiveInt(operation.invite.id),
-            userId: parsePositiveInt(operation.invite.userId),
-            email: operation.invite.email,
-            name: operation.invite.name,
-            status: operation.invite.status,
-            expiresAt: operation.invite.expiresAt,
-            inviteUrl: operation.invite.inviteUrl,
-          }
-        : null,
-    });
-  })
+  }),
 );
 
 router.delete(
@@ -1048,72 +1522,16 @@ router.delete(
       throw badRequest("tenantId is required");
     }
 
-    const assignmentId = parsePositiveInt(req.params.assignmentId);
-    if (!assignmentId) {
-      throw badRequest("assignmentId must be a positive integer");
-    }
-
-    const assignmentResult = await query(
-      `SELECT
-         urs.id,
-         urs.user_id,
-         urs.scope_type,
-         urs.scope_id,
-         urs.effect,
-         r.id AS role_id,
-         r.code AS role_code,
-         u.email AS user_email,
-         u.name AS user_name
-       FROM user_role_scopes urs
-       JOIN roles r
-         ON r.id = urs.role_id
-        AND r.tenant_id = urs.tenant_id
-       JOIN users u
-         ON u.id = urs.user_id
-        AND u.tenant_id = urs.tenant_id
-       WHERE urs.id = ?
-         AND urs.tenant_id = ?
-       LIMIT 1`,
-      [assignmentId, tenantId]
-    );
-    const assignment = assignmentResult.rows[0] || null;
-    if (
-      !assignment ||
-      String(assignment.role_code || "") !== BRANCH_OPERATOR_ROLE_CODE ||
-      String(assignment.scope_type || "").toUpperCase() !== "OPERATING_UNIT" ||
-      String(assignment.effect || "").toUpperCase() !== "ALLOW"
-    ) {
-      throw badRequest("Branch operator assignment not found");
-    }
-
-    const operatingUnitId = parsePositiveInt(assignment.scope_id);
-    assertScopeAccess(req, "operating_unit", operatingUnitId, "assignmentId");
-
-    await query(
-      `DELETE FROM user_role_scopes
-       WHERE id = ?
-         AND tenant_id = ?`,
-      [assignmentId, tenantId]
-    );
-    await invalidateRbacCache(tenantId);
-
-    await logRbacAuditEvent(req, {
+    await deleteLocalUserAdminAssignment({
+      req,
       tenantId,
-      targetUserId: parsePositiveInt(assignment.user_id),
-      action: "entity_user_admin.branch_operator.assignment.delete",
-      resourceType: "user_role_scope",
-      resourceId: assignmentId,
-      scopeType: "OPERATING_UNIT",
-      scopeId: operatingUnitId,
-      payload: {
-        userId: parsePositiveInt(assignment.user_id),
-        roleId: parsePositiveInt(assignment.role_id),
-        roleCode: assignment.role_code,
-      },
+      assignmentId: req.params.assignmentId,
+      auditActionPrefix: "entity_user_admin.branch_operator",
+      expectedRoleCodes: [BRANCH_OPERATOR_ROLE_CODE],
     });
 
     return res.json({ ok: true });
-  })
+  }),
 );
 
 router.get(
@@ -1126,14 +1544,15 @@ router.get(
     }
 
     const includeRetiredLegacy =
-      parseBoolean(req.query.includeRetiredLegacy) || parseBoolean(req.query.includeLegacy);
+      parseBoolean(req.query.includeRetiredLegacy) ||
+      parseBoolean(req.query.includeLegacy);
     const includePermissions = parseBoolean(req.query.includePermissions);
     const result = await query(
       `SELECT id, tenant_id, code, name, is_system, created_at
        FROM roles
        WHERE tenant_id = ?
        ORDER BY code`,
-      [tenantId]
+      [tenantId],
     );
 
     const rows = result.rows || [];
@@ -1142,9 +1561,12 @@ router.get(
       legacyDisabled: false,
       legacyRetired: isRetiredLegacyRoleCode(row.code),
     }));
-    const disabledRoleCodeSet = await loadActiveLegacyDisabledRoleCodeSet(tenantId);
+    const disabledRoleCodeSet =
+      await loadActiveLegacyDisabledRoleCodeSet(tenantId);
     for (const row of enrichedRows) {
-      row.legacyDisabled = disabledRoleCodeSet.has(String(row.code || "").trim());
+      row.legacyDisabled = disabledRoleCodeSet.has(
+        String(row.code || "").trim(),
+      );
     }
     const visibleRows = includeRetiredLegacy
       ? enrichedRows
@@ -1160,7 +1582,7 @@ router.get(
        JOIN permissions p ON p.id = rp.permission_id
        WHERE rp.role_id IN (${roleIds.map(() => "?").join(", ")})
        ORDER BY rp.role_id, p.code`,
-      roleIds
+      roleIds,
     );
 
     const codesByRoleId = new Map();
@@ -1180,7 +1602,7 @@ router.get(
       tenantId,
       rows: enriched,
     });
-  })
+  }),
 );
 
 router.post(
@@ -1204,7 +1626,7 @@ router.post(
        WHERE tenant_id = ?
          AND code = ?
        LIMIT 1`,
-      [tenantId, code]
+      [tenantId, code],
     );
     const existingRoleId = parsePositiveInt(existingRoleResult.rows[0]?.id);
 
@@ -1214,7 +1636,7 @@ router.post(
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          is_system = VALUES(is_system)`,
-      [tenantId, code, name, isSystem]
+      [tenantId, code, name, isSystem],
     );
 
     const roleId = result.rows.insertId || existingRoleId || null;
@@ -1235,7 +1657,7 @@ router.post(
     }
 
     return res.status(201).json({ ok: true, id: roleId });
-  })
+  }),
 );
 
 router.get(
@@ -1263,14 +1685,14 @@ router.get(
        JOIN permissions p ON p.id = rp.permission_id
        WHERE rp.role_id = ?
        ORDER BY p.code`,
-      [roleId]
+      [roleId],
     );
 
     return res.json({
       role,
       permissions: permissionResult.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -1306,18 +1728,24 @@ router.post(
       ...currentPermissionCodes,
       ...permissionCodes,
     ]);
-    const validation = validateRolePermissionSetOrThrow(role.code, nextPermissionCodes);
+    const validation = validateRolePermissionSetOrThrow(
+      role.code,
+      nextPermissionCodes,
+    );
 
     await withTransaction(async (tx) => {
       for (const permissionCode of permissionCodes) {
         // eslint-disable-next-line no-await-in-loop
-        const permissionId = await upsertPermissionAndGetId(permissionCode, tx.query);
+        const permissionId = await upsertPermissionAndGetId(
+          permissionCode,
+          tx.query,
+        );
 
         // eslint-disable-next-line no-await-in-loop
         await tx.query(
           `INSERT IGNORE INTO role_permissions (role_id, permission_id)
            VALUES (?, ?)`,
-          [roleId, permissionId]
+          [roleId, permissionId],
         );
       }
     });
@@ -1329,7 +1757,7 @@ router.post(
       assignedPermissionCount: permissionCodes.length,
       validationWarnings: validation.warnings,
     });
-  })
+  }),
 );
 
 router.put(
@@ -1360,9 +1788,14 @@ router.put(
     }
 
     const normalizedPermissionCodes = Array.from(
-      new Set(permissionCodesRaw.map((code) => String(code).trim()).filter(Boolean))
+      new Set(
+        permissionCodesRaw.map((code) => String(code).trim()).filter(Boolean),
+      ),
     );
-    const validation = validateRolePermissionSetOrThrow(role.code, normalizedPermissionCodes);
+    const validation = validateRolePermissionSetOrThrow(
+      role.code,
+      normalizedPermissionCodes,
+    );
 
     const beforeCodes = await withTransaction(async (tx) => {
       const beforeResult = await tx.query(
@@ -1371,18 +1804,23 @@ router.put(
          JOIN permissions p ON p.id = rp.permission_id
          WHERE rp.role_id = ?
          ORDER BY p.code`,
-        [roleId]
+        [roleId],
       );
       const beforeCodeRows = beforeResult.rows.map((row) => row.code);
 
-      await tx.query(`DELETE FROM role_permissions WHERE role_id = ?`, [roleId]);
+      await tx.query(`DELETE FROM role_permissions WHERE role_id = ?`, [
+        roleId,
+      ]);
 
       for (const permissionCode of normalizedPermissionCodes) {
-        const permissionId = await upsertPermissionAndGetId(permissionCode, tx.query);
+        const permissionId = await upsertPermissionAndGetId(
+          permissionCode,
+          tx.query,
+        );
         await tx.query(
           `INSERT IGNORE INTO role_permissions (role_id, permission_id)
            VALUES (?, ?)`,
-          [roleId, permissionId]
+          [roleId, permissionId],
         );
       }
 
@@ -1410,7 +1848,7 @@ router.put(
       permissionCount: normalizedPermissionCodes.length,
       validationWarnings: validation.warnings,
     });
-  })
+  }),
 );
 
 router.get(
@@ -1469,14 +1907,14 @@ router.get(
        JOIN roles r ON r.id = urs.role_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY urs.id DESC`,
-      params
+      params,
     );
 
     return res.json({
       tenantId,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -1531,11 +1969,14 @@ router.post(
          AND scope_type = ?
          AND scope_id = ?
        LIMIT 1`,
-      [tenantId, userId, roleId, scopeType, scopeId]
+      [tenantId, userId, roleId, scopeType, scopeId],
     );
     const existingAssignment = existingResult.rows[0] || null;
     const existingAssignmentId = parsePositiveInt(existingAssignment?.id);
-    const effectiveDates = resolveAssignmentEffectiveDates(req.body, existingAssignment);
+    const effectiveDates = resolveAssignmentEffectiveDates(
+      req.body,
+      existingAssignment,
+    );
     const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
       tenantId,
       userId,
@@ -1571,7 +2012,7 @@ router.post(
         effect,
         effectiveDates.effectiveFrom,
         effectiveDates.effectiveTo,
-      ]
+      ],
     );
     await invalidateRbacCache(tenantId);
 
@@ -1584,7 +2025,7 @@ router.post(
          AND scope_type = ?
          AND scope_id = ?
        LIMIT 1`,
-      [tenantId, userId, roleId, scopeType, scopeId]
+      [tenantId, userId, roleId, scopeType, scopeId],
     );
     const currentAssignmentId = parsePositiveInt(currentResult.rows[0]?.id);
 
@@ -1616,7 +2057,7 @@ router.post(
       effectiveTo: effectiveDates.effectiveTo,
       assignmentWarnings,
     });
-  })
+  }),
 );
 
 router.put(
@@ -1666,7 +2107,7 @@ router.put(
        WHERE id = ?
          AND tenant_id = ?
        LIMIT 1`,
-      [assignmentId, tenantId]
+      [assignmentId, tenantId],
     );
     const assignment = assignmentResult.rows[0];
     if (!assignment) {
@@ -1678,7 +2119,10 @@ router.put(
     }
     await assertSystemRoleManageAllowed(req, tenantId, role);
     await assertRoleAssignmentUpsertAllowed(tenantId, role);
-    const effectiveDates = resolveAssignmentEffectiveDates(req.body, assignment);
+    const effectiveDates = resolveAssignmentEffectiveDates(
+      req.body,
+      assignment,
+    );
     const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
       tenantId,
       userId: assignment.user_id,
@@ -1713,7 +2157,7 @@ router.put(
         effectiveDates.effectiveTo,
         assignmentId,
         tenantId,
-      ]
+      ],
     );
     await invalidateRbacCache(tenantId);
 
@@ -1756,7 +2200,7 @@ router.put(
       effectiveTo: effectiveDates.effectiveTo,
       assignmentWarnings,
     });
-  })
+  }),
 );
 
 router.delete(
@@ -1786,7 +2230,7 @@ router.delete(
        WHERE urs.id = ?
          AND urs.tenant_id = ?
        LIMIT 1`,
-      [assignmentId, tenantId]
+      [assignmentId, tenantId],
     );
     const assignment = assignmentResult.rows[0] || null;
     if (assignment) {
@@ -1797,12 +2241,12 @@ router.delete(
       `DELETE FROM user_role_scopes
        WHERE id = ?
          AND tenant_id = ?`,
-      [assignmentId, tenantId]
+      [assignmentId, tenantId],
     );
     await invalidateRbacCache(tenantId);
 
     return res.json({ ok: true });
-  })
+  }),
 );
 
 router.get(
@@ -1824,10 +2268,11 @@ router.get(
       roleMigrations: {
         ...roleMigrations,
         shouldShowInNavigation:
-          canManageSystemRoles && Boolean(roleMigrations.shouldShowInNavigation),
+          canManageSystemRoles &&
+          Boolean(roleMigrations.shouldShowInNavigation),
       },
     });
-  })
+  }),
 );
 
 router.get(
@@ -1852,7 +2297,7 @@ router.get(
       tenantId,
       rows,
     });
-  })
+  }),
 );
 
 router.get(
@@ -1885,7 +2330,7 @@ router.get(
     });
 
     return res.json(row);
-  })
+  }),
 );
 
 router.post(
@@ -1897,18 +2342,19 @@ router.post(
       throw badRequest("tenantId is required");
     }
 
-    const normalizedScope = await assertFieldVisibilityPolicyScopeBelongsToTenant(
-      tenantId,
-      req.body?.appliesToScopeType,
-      req.body?.appliesToScopeId
-    );
+    const normalizedScope =
+      await assertFieldVisibilityPolicyScopeBelongsToTenant(
+        tenantId,
+        req.body?.appliesToScopeType,
+        req.body?.appliesToScopeId,
+      );
     await assertFieldVisibilityPolicyPermission({
       actorUserId: parsePositiveInt(req.user?.userId),
       tenantId,
       permissionCode: "security.field_visibility.write",
       policyOrScope: resolveFieldVisibilityPolicyManagementScope(
         normalizedScope,
-        tenantId
+        tenantId,
       ),
     });
 
@@ -1937,7 +2383,7 @@ router.post(
     });
 
     return res.status(201).json(row);
-  })
+  }),
 );
 
 router.put(
@@ -1969,18 +2415,21 @@ router.put(
       policyOrScope: existingRow,
     });
 
-    const normalizedScope = await assertFieldVisibilityPolicyScopeBelongsToTenant(
-      tenantId,
-      req.body?.appliesToScopeType ?? existingRow.appliesToScopeType ?? "GLOBAL",
-      req.body?.appliesToScopeId ?? existingRow.appliesToScopeId
-    );
+    const normalizedScope =
+      await assertFieldVisibilityPolicyScopeBelongsToTenant(
+        tenantId,
+        req.body?.appliesToScopeType ??
+          existingRow.appliesToScopeType ??
+          "GLOBAL",
+        req.body?.appliesToScopeId ?? existingRow.appliesToScopeId,
+      );
     await assertFieldVisibilityPolicyPermission({
       actorUserId: parsePositiveInt(req.user?.userId),
       tenantId,
       permissionCode: "security.field_visibility.write",
       policyOrScope: resolveFieldVisibilityPolicyManagementScope(
         normalizedScope,
-        tenantId
+        tenantId,
       ),
     });
 
@@ -2009,7 +2458,7 @@ router.put(
     });
 
     return res.json(row);
-  })
+  }),
 );
 
 router.delete(
@@ -2064,7 +2513,7 @@ router.delete(
       ok: true,
       row,
     });
-  })
+  }),
 );
 
 router.get(
@@ -2083,7 +2532,7 @@ router.get(
       tenantId,
       rows: runs,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2117,7 +2566,7 @@ router.post(
     });
 
     return res.status(201).json(run);
-  })
+  }),
 );
 
 router.get(
@@ -2141,7 +2590,7 @@ router.get(
     }
 
     return res.json(run);
-  })
+  }),
 );
 
 router.post(
@@ -2180,7 +2629,7 @@ router.post(
     });
 
     return res.json(run);
-  })
+  }),
 );
 
 router.post(
@@ -2218,7 +2667,7 @@ router.post(
     });
 
     return res.json(run);
-  })
+  }),
 );
 
 router.get(
@@ -2269,14 +2718,14 @@ router.get(
        JOIN users u ON u.id = ds.user_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY ds.id DESC`,
-      params
+      params,
     );
 
     return res.json({
       tenantId,
       rows: result.rows,
     });
-  })
+  }),
 );
 
 router.post(
@@ -2317,12 +2766,12 @@ router.post(
        ON DUPLICATE KEY UPDATE
          effect = VALUES(effect),
          created_by_user_id = VALUES(created_by_user_id)`,
-      [tenantId, userId, scopeType, scopeId, effect, createdByUserId]
+      [tenantId, userId, scopeType, scopeId, effect, createdByUserId],
     );
     await invalidateRbacCache(tenantId);
 
     return res.status(201).json({ ok: true });
-  })
+  }),
 );
 
 router.put(
@@ -2376,14 +2825,14 @@ router.put(
          WHERE tenant_id = ?
            AND user_id = ?
          ORDER BY scope_type, scope_id`,
-        [tenantId, userId]
+        [tenantId, userId],
       );
 
       await tx.query(
         `DELETE FROM data_scopes
          WHERE tenant_id = ?
            AND user_id = ?`,
-        [tenantId, userId]
+        [tenantId, userId],
       );
 
       for (const scope of normalizedScopes) {
@@ -2400,7 +2849,7 @@ router.put(
             scope.scopeId,
             scope.effect,
             createdByUserId,
-          ]
+          ],
         );
       }
 
@@ -2428,7 +2877,7 @@ router.put(
       userId,
       scopeCount: normalizedScopes.length,
     });
-  })
+  }),
 );
 
 router.delete(
@@ -2449,12 +2898,12 @@ router.delete(
       `DELETE FROM data_scopes
        WHERE id = ?
          AND tenant_id = ?`,
-      [dataScopeId, tenantId]
+      [dataScopeId, tenantId],
     );
     await invalidateRbacCache(tenantId);
 
     return res.json({ ok: true });
-  })
+  }),
 );
 
 export default router;

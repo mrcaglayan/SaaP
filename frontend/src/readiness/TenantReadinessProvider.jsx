@@ -7,6 +7,10 @@ import { useAuth } from "../auth/useAuth.js";
 import { useWorkingContext } from "../context/useWorkingContext.js";
 import { TenantReadinessContext } from "./tenantReadinessContext.js";
 
+/**
+ * Loads the tenant bootstrap readiness snapshot and exposes the baseline
+ * bootstrap helper to setup-capable screens.
+ */
 export default function TenantReadinessProvider({ children }) {
   const { isAuthed } = useAuth();
   const { refreshLookups } = useWorkingContext();
@@ -34,7 +38,9 @@ export default function TenantReadinessProvider({ children }) {
     } catch (err) {
       setReadiness(null);
       setError(
-        err?.response?.data?.message || err?.message || "Failed to load readiness."
+        err?.response?.data?.message ||
+          err?.message ||
+          "Failed to load tenant bootstrap readiness."
       );
       return null;
     } finally {
@@ -60,7 +66,7 @@ export default function TenantReadinessProvider({ children }) {
         setBootstrapError(
           err?.response?.data?.message ||
             err?.message ||
-            "Failed to run baseline bootstrap."
+            "Failed to run baseline tenant bootstrap."
         );
         return null;
       } finally {

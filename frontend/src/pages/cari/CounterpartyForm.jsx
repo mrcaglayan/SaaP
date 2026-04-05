@@ -281,6 +281,10 @@ function withSelectedOperatingUnitFallbacks(options, selectedIds) {
   return normalized;
 }
 
+/**
+ * Render the shared counterparty create/edit form for both live cards and
+ * approval-routed request mode.
+ */
 export default function CounterpartyForm({
   title,
   description,
@@ -290,12 +294,18 @@ export default function CounterpartyForm({
   legalEntities = [],
   legalEntitiesLoading = false,
   legalEntitiesError = "",
+  lockLegalEntitySelection = false,
+  lockedLegalEntityLabel = "",
   operatingUnits = [],
   operatingUnitsLoading = false,
   operatingUnitsError = "",
   paymentTerms = [],
   paymentTermsLoading = false,
   paymentTermsError = "",
+  allowPaymentTermSelection = true,
+  paymentTermSelectionHint = "",
+  showControlAccountOverrides = true,
+  controlAccountOverridesHint = "",
   accountOptions = [],
   accountOptionsLoading = false,
   accountOptionsError = "",
@@ -371,6 +381,7 @@ export default function CounterpartyForm({
   const roleLabel = normalizeRoleLabel(form.isCustomer, form.isVendor);
   const legalEntityOptions = Array.isArray(legalEntities) ? legalEntities : [];
   const showLegalEntitySelect = legalEntityOptions.length > 0;
+  const selectedLegalEntityLabel = String(lockedLegalEntityLabel || "").trim();
   const selectedPrimaryOperatingUnitId = String(form.primaryOperatingUnitId || "");
   const selectedOperatingUnitIds = Array.from(
     new Set(
@@ -654,7 +665,14 @@ export default function CounterpartyForm({
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
             Legal Entity
           </label>
-          {showLegalEntitySelect ? (
+          {lockLegalEntitySelection && selectedLegalEntityLabel ? (
+            <div className="mt-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              <div className="font-medium text-slate-900">{selectedLegalEntityLabel}</div>
+              <div className="mt-1 text-xs text-slate-500">
+                Request mode is locked to the current working legal entity.
+              </div>
+            </div>
+          ) : showLegalEntitySelect ? (
             <select
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               value={form.legalEntityId}
@@ -668,16 +686,14 @@ export default function CounterpartyForm({
                 </option>
               ))}
             </select>
+          ) : form.legalEntityId ? (
+            <div className="mt-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              Legal entity #{form.legalEntityId}
+            </div>
           ) : (
-            <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              type="number"
-              min="1"
-              placeholder="Legal entity id"
-              value={form.legalEntityId}
-              onChange={(event) => updateField("legalEntityId", event.target.value)}
-              disabled={submitting}
-            />
+            <div className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Select a working legal entity first or ask for scoped legal-entity lookup access.
+            </div>
           )}
           {legalEntitiesLoading ? (
             <p className="mt-1 text-xs text-slate-500">Loading legal entities...</p>
@@ -913,47 +929,56 @@ export default function CounterpartyForm({
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
             Default Payment Term
           </label>
-          <Combobox
-            className="mt-1"
-            value={selectedPaymentTermId}
-            options={paymentTermLookupOptions}
-            loading={paymentTermsLoading}
-            disabled={submitting || !form.legalEntityId}
-            placeholder={
-              form.legalEntityId
-                ? "Search payment term code/name"
-                : "Select legal entity first"
-            }
-            noOptionsText={
-              form.legalEntityId
-                ? "No payment terms found."
-                : "Set legalEntityId to load payment terms."
-            }
-            onInputChange={(nextValue, meta) => {
-              if (typeof onPaymentTermLookupQueryChange === "function") {
-                onPaymentTermLookupQueryChange(nextValue, meta);
-              }
-            }}
-            onChange={(nextValue) =>
-              updateField("defaultPaymentTermId", nextValue ? String(nextValue) : "")
-            }
-          />
-          {canInlineCreatePaymentTerm ? (
-            <button
-              type="button"
-              className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
-              onClick={onInlineCreatePaymentTerm}
-              disabled={
-                inlineCreatePaymentTermSaving ||
-                submitting ||
-                typeof onInlineCreatePaymentTerm !== "function"
-              }
-            >
-              {inlineCreatePaymentTermSaving
-                ? "Creating payment term..."
-                : `Create "${inlineCreatePaymentTermLabel || "new payment term"}"`}
-            </button>
-          ) : null}
+          {allowPaymentTermSelection ? (
+            <>
+              <Combobox
+                className="mt-1"
+                value={selectedPaymentTermId}
+                options={paymentTermLookupOptions}
+                loading={paymentTermsLoading}
+                disabled={submitting || !form.legalEntityId}
+                placeholder={
+                  form.legalEntityId
+                    ? "Search payment term code/name"
+                    : "Select legal entity first"
+                }
+                noOptionsText={
+                  form.legalEntityId
+                    ? "No payment terms found."
+                    : "Set legalEntityId to load payment terms."
+                }
+                onInputChange={(nextValue, meta) => {
+                  if (typeof onPaymentTermLookupQueryChange === "function") {
+                    onPaymentTermLookupQueryChange(nextValue, meta);
+                  }
+                }}
+                onChange={(nextValue) =>
+                  updateField("defaultPaymentTermId", nextValue ? String(nextValue) : "")
+                }
+              />
+              {canInlineCreatePaymentTerm ? (
+                <button
+                  type="button"
+                  className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                  onClick={onInlineCreatePaymentTerm}
+                  disabled={
+                    inlineCreatePaymentTermSaving ||
+                    submitting ||
+                    typeof onInlineCreatePaymentTerm !== "function"
+                  }
+                >
+                  {inlineCreatePaymentTermSaving
+                    ? "Creating payment term..."
+                    : `Create "${inlineCreatePaymentTermLabel || "new payment term"}"`}
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <div className="mt-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              {paymentTermSelectionHint ||
+                "Payment term can be completed during review or after the live card is created."}
+            </div>
+          )}
           {!form.legalEntityId ? (
             <p className="mt-1 text-xs text-slate-500">
               Select legal entity first.
@@ -976,195 +1001,204 @@ export default function CounterpartyForm({
           <FieldError message={findFieldError(fieldErrors, "defaultPaymentTermId")} />
         </div>
 
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
-            AR Control Account Override
-          </label>
-          {canReadGlAccounts ? (
-            <>
-              <Combobox
-                className="mt-1"
-                value={selectedArAccountId}
-                options={arAccountLookupOptions}
-                loading={accountOptionsLoading}
-                placeholder={
-                  form.legalEntityId
-                    ? "Search AR account code/name"
-                    : "Select legal entity first"
-                }
-                noOptionsText={
-                  form.legalEntityId
-                    ? "No AR accounts found. Type to refine search."
-                    : "Set legalEntityId to load AR accounts."
-                }
-                onInputChange={(nextValue, meta) => {
-                  if (typeof onAccountLookupQueryChange === "function") {
-                    onAccountLookupQueryChange(nextValue, meta, "AR");
-                  }
-                }}
-                onChange={(nextValue) =>
-                  updateField("arAccountId", nextValue ? String(nextValue) : "")
-                }
-                disabled={submitting || !form.legalEntityId || !form.isCustomer}
-              />
-              {showInlineCreateArAccountPanel
-                ? renderInlineChildCreatePanel({
-                    codeCandidate: inlineCreateArCodeCandidate,
-                    searchText: inlineCreateArSearchText,
-                    parentAccountLookupOptions: inlineArParentAccountLookupOptions,
-                    parentAccountId: inlineCreateArParentAccountId,
-                    onParentAccountIdChange: onInlineCreateArParentAccountIdChange,
-                    childCode: inlineCreateArChildCode,
-                    onChildCodeChange: onInlineCreateArChildCodeChange,
-                    childName: inlineCreateArChildName,
-                    onChildNameChange: onInlineCreateArChildNameChange,
-                    onUseTypedCode: onInlineCreateArUseTypedCode,
-                    onUseNextCode: onInlineCreateArUseNextCode,
-                    suggestedNextCode: inlineCreateArSuggestedNextCode,
-                    hasSelectedParent: Boolean(toPositiveInt(inlineCreateArParentAccountId)),
-                    onCreateChild: onInlineCreateArAccount,
-                    creating: inlineCreateArAccountSaving,
-                    canUpsertAccounts: canUpsertGlAccounts,
-                    submitting,
-                    permissionHint: accountUpsertFallbackMessage,
-                  })
-                : null}
-              {!showInlineCreateArAccountPanel && canInlineCreateArAccount ? (
-                <button
-                  type="button"
-                  className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
-                  onClick={onInlineCreateArAccount}
-                  disabled={
-                    inlineCreateArAccountSaving ||
-                    submitting ||
-                    typeof onInlineCreateArAccount !== "function"
-                  }
-                >
-                  {inlineCreateArAccountSaving
-                    ? "Creating AR sub-account..."
-                    : `Create "${inlineCreateArAccountLabel || "new AR sub-account"}"`}
-                </button>
-              ) : null}
-              {!form.isCustomer ? (
-                <p className="mt-1 text-xs text-slate-500">
-                  Enable Customer role to set AR mapping.
+        {showControlAccountOverrides ? (
+          <>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                AR Control Account Override
+              </label>
+              {canReadGlAccounts ? (
+                <>
+                  <Combobox
+                    className="mt-1"
+                    value={selectedArAccountId}
+                    options={arAccountLookupOptions}
+                    loading={accountOptionsLoading}
+                    placeholder={
+                      form.legalEntityId
+                        ? "Search AR account code/name"
+                        : "Select legal entity first"
+                    }
+                    noOptionsText={
+                      form.legalEntityId
+                        ? "No AR accounts found. Type to refine search."
+                        : "Set legalEntityId to load AR accounts."
+                    }
+                    onInputChange={(nextValue, meta) => {
+                      if (typeof onAccountLookupQueryChange === "function") {
+                        onAccountLookupQueryChange(nextValue, meta, "AR");
+                      }
+                    }}
+                    onChange={(nextValue) =>
+                      updateField("arAccountId", nextValue ? String(nextValue) : "")
+                    }
+                    disabled={submitting || !form.legalEntityId || !form.isCustomer}
+                  />
+                  {showInlineCreateArAccountPanel
+                    ? renderInlineChildCreatePanel({
+                        codeCandidate: inlineCreateArCodeCandidate,
+                        searchText: inlineCreateArSearchText,
+                        parentAccountLookupOptions: inlineArParentAccountLookupOptions,
+                        parentAccountId: inlineCreateArParentAccountId,
+                        onParentAccountIdChange: onInlineCreateArParentAccountIdChange,
+                        childCode: inlineCreateArChildCode,
+                        onChildCodeChange: onInlineCreateArChildCodeChange,
+                        childName: inlineCreateArChildName,
+                        onChildNameChange: onInlineCreateArChildNameChange,
+                        onUseTypedCode: onInlineCreateArUseTypedCode,
+                        onUseNextCode: onInlineCreateArUseNextCode,
+                        suggestedNextCode: inlineCreateArSuggestedNextCode,
+                        hasSelectedParent: Boolean(toPositiveInt(inlineCreateArParentAccountId)),
+                        onCreateChild: onInlineCreateArAccount,
+                        creating: inlineCreateArAccountSaving,
+                        canUpsertAccounts: canUpsertGlAccounts,
+                        submitting,
+                        permissionHint: accountUpsertFallbackMessage,
+                      })
+                    : null}
+                  {!showInlineCreateArAccountPanel && canInlineCreateArAccount ? (
+                    <button
+                      type="button"
+                      className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                      onClick={onInlineCreateArAccount}
+                      disabled={
+                        inlineCreateArAccountSaving ||
+                        submitting ||
+                        typeof onInlineCreateArAccount !== "function"
+                      }
+                    >
+                      {inlineCreateArAccountSaving
+                        ? "Creating AR sub-account..."
+                        : `Create "${inlineCreateArAccountLabel || "new AR sub-account"}"`}
+                    </button>
+                  ) : null}
+                  {!form.isCustomer ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Enable Customer role to set AR mapping.
+                    </p>
+                  ) : null}
+                  {accountOptionsLoading ? (
+                    <p className="mt-1 text-xs text-slate-500">Loading account options...</p>
+                  ) : null}
+                  {accountOptionsError ? (
+                    <p className="mt-1 text-xs text-amber-700">{accountOptionsError}</p>
+                  ) : null}
+                  {inlineCreateArAccountError ? (
+                    <p className="mt-1 text-xs text-rose-700">{inlineCreateArAccountError}</p>
+                  ) : null}
+                  {inlineCreateArAccountMessage ? (
+                    <p className="mt-1 text-xs text-emerald-700">{inlineCreateArAccountMessage}</p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {accountReadFallbackMessage || "Missing permission: gl.account.read"}
                 </p>
-              ) : null}
-              {accountOptionsLoading ? (
-                <p className="mt-1 text-xs text-slate-500">Loading account options...</p>
-              ) : null}
-              {accountOptionsError ? (
-                <p className="mt-1 text-xs text-amber-700">{accountOptionsError}</p>
-              ) : null}
-              {inlineCreateArAccountError ? (
-                <p className="mt-1 text-xs text-rose-700">{inlineCreateArAccountError}</p>
-              ) : null}
-              {inlineCreateArAccountMessage ? (
-                <p className="mt-1 text-xs text-emerald-700">{inlineCreateArAccountMessage}</p>
-              ) : null}
-            </>
-          ) : (
-            <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              {accountReadFallbackMessage || "Missing permission: gl.account.read"}
-            </p>
-          )}
-          <FieldError message={findFieldError(fieldErrors, "arAccountId")} />
-        </div>
+              )}
+              <FieldError message={findFieldError(fieldErrors, "arAccountId")} />
+            </div>
 
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
-            AP Control Account Override
-          </label>
-          {canReadGlAccounts ? (
-            <>
-              <Combobox
-                className="mt-1"
-                value={selectedApAccountId}
-                options={apAccountLookupOptions}
-                loading={accountOptionsLoading}
-                placeholder={
-                  form.legalEntityId
-                    ? "Search AP account code/name"
-                    : "Select legal entity first"
-                }
-                noOptionsText={
-                  form.legalEntityId
-                    ? "No AP accounts found. Type to refine search."
-                    : "Set legalEntityId to load AP accounts."
-                }
-                onInputChange={(nextValue, meta) => {
-                  if (typeof onAccountLookupQueryChange === "function") {
-                    onAccountLookupQueryChange(nextValue, meta, "AP");
-                  }
-                }}
-                onChange={(nextValue) =>
-                  updateField("apAccountId", nextValue ? String(nextValue) : "")
-                }
-                disabled={submitting || !form.legalEntityId || !form.isVendor}
-              />
-              {showInlineCreateApAccountPanel
-                ? renderInlineChildCreatePanel({
-                    codeCandidate: inlineCreateApCodeCandidate,
-                    searchText: inlineCreateApSearchText,
-                    parentAccountLookupOptions: inlineApParentAccountLookupOptions,
-                    parentAccountId: inlineCreateApParentAccountId,
-                    onParentAccountIdChange: onInlineCreateApParentAccountIdChange,
-                    childCode: inlineCreateApChildCode,
-                    onChildCodeChange: onInlineCreateApChildCodeChange,
-                    childName: inlineCreateApChildName,
-                    onChildNameChange: onInlineCreateApChildNameChange,
-                    onUseTypedCode: onInlineCreateApUseTypedCode,
-                    onUseNextCode: onInlineCreateApUseNextCode,
-                    suggestedNextCode: inlineCreateApSuggestedNextCode,
-                    hasSelectedParent: Boolean(toPositiveInt(inlineCreateApParentAccountId)),
-                    onCreateChild: onInlineCreateApAccount,
-                    creating: inlineCreateApAccountSaving,
-                    canUpsertAccounts: canUpsertGlAccounts,
-                    submitting,
-                    permissionHint: accountUpsertFallbackMessage,
-                  })
-                : null}
-              {!showInlineCreateApAccountPanel && canInlineCreateApAccount ? (
-                <button
-                  type="button"
-                  className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
-                  onClick={onInlineCreateApAccount}
-                  disabled={
-                    inlineCreateApAccountSaving ||
-                    submitting ||
-                    typeof onInlineCreateApAccount !== "function"
-                  }
-                >
-                  {inlineCreateApAccountSaving
-                    ? "Creating AP sub-account..."
-                    : `Create "${inlineCreateApAccountLabel || "new AP sub-account"}"`}
-                </button>
-              ) : null}
-              {!form.isVendor ? (
-                <p className="mt-1 text-xs text-slate-500">
-                  Enable Vendor role to set AP mapping.
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                AP Control Account Override
+              </label>
+              {canReadGlAccounts ? (
+                <>
+                  <Combobox
+                    className="mt-1"
+                    value={selectedApAccountId}
+                    options={apAccountLookupOptions}
+                    loading={accountOptionsLoading}
+                    placeholder={
+                      form.legalEntityId
+                        ? "Search AP account code/name"
+                        : "Select legal entity first"
+                    }
+                    noOptionsText={
+                      form.legalEntityId
+                        ? "No AP accounts found. Type to refine search."
+                        : "Set legalEntityId to load AP accounts."
+                    }
+                    onInputChange={(nextValue, meta) => {
+                      if (typeof onAccountLookupQueryChange === "function") {
+                        onAccountLookupQueryChange(nextValue, meta, "AP");
+                      }
+                    }}
+                    onChange={(nextValue) =>
+                      updateField("apAccountId", nextValue ? String(nextValue) : "")
+                    }
+                    disabled={submitting || !form.legalEntityId || !form.isVendor}
+                  />
+                  {showInlineCreateApAccountPanel
+                    ? renderInlineChildCreatePanel({
+                        codeCandidate: inlineCreateApCodeCandidate,
+                        searchText: inlineCreateApSearchText,
+                        parentAccountLookupOptions: inlineApParentAccountLookupOptions,
+                        parentAccountId: inlineCreateApParentAccountId,
+                        onParentAccountIdChange: onInlineCreateApParentAccountIdChange,
+                        childCode: inlineCreateApChildCode,
+                        onChildCodeChange: onInlineCreateApChildCodeChange,
+                        childName: inlineCreateApChildName,
+                        onChildNameChange: onInlineCreateApChildNameChange,
+                        onUseTypedCode: onInlineCreateApUseTypedCode,
+                        onUseNextCode: onInlineCreateApUseNextCode,
+                        suggestedNextCode: inlineCreateApSuggestedNextCode,
+                        hasSelectedParent: Boolean(toPositiveInt(inlineCreateApParentAccountId)),
+                        onCreateChild: onInlineCreateApAccount,
+                        creating: inlineCreateApAccountSaving,
+                        canUpsertAccounts: canUpsertGlAccounts,
+                        submitting,
+                        permissionHint: accountUpsertFallbackMessage,
+                      })
+                    : null}
+                  {!showInlineCreateApAccountPanel && canInlineCreateApAccount ? (
+                    <button
+                      type="button"
+                      className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                      onClick={onInlineCreateApAccount}
+                      disabled={
+                        inlineCreateApAccountSaving ||
+                        submitting ||
+                        typeof onInlineCreateApAccount !== "function"
+                      }
+                    >
+                      {inlineCreateApAccountSaving
+                        ? "Creating AP sub-account..."
+                        : `Create "${inlineCreateApAccountLabel || "new AP sub-account"}"`}
+                    </button>
+                  ) : null}
+                  {!form.isVendor ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Enable Vendor role to set AP mapping.
+                    </p>
+                  ) : null}
+                  {accountOptionsLoading ? (
+                    <p className="mt-1 text-xs text-slate-500">Loading account options...</p>
+                  ) : null}
+                  {accountOptionsError ? (
+                    <p className="mt-1 text-xs text-amber-700">{accountOptionsError}</p>
+                  ) : null}
+                  {inlineCreateApAccountError ? (
+                    <p className="mt-1 text-xs text-rose-700">{inlineCreateApAccountError}</p>
+                  ) : null}
+                  {inlineCreateApAccountMessage ? (
+                    <p className="mt-1 text-xs text-emerald-700">{inlineCreateApAccountMessage}</p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {accountReadFallbackMessage || "Missing permission: gl.account.read"}
                 </p>
-              ) : null}
-              {accountOptionsLoading ? (
-                <p className="mt-1 text-xs text-slate-500">Loading account options...</p>
-              ) : null}
-              {accountOptionsError ? (
-                <p className="mt-1 text-xs text-amber-700">{accountOptionsError}</p>
-              ) : null}
-              {inlineCreateApAccountError ? (
-                <p className="mt-1 text-xs text-rose-700">{inlineCreateApAccountError}</p>
-              ) : null}
-              {inlineCreateApAccountMessage ? (
-                <p className="mt-1 text-xs text-emerald-700">{inlineCreateApAccountMessage}</p>
-              ) : null}
-            </>
-          ) : (
-            <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              {accountReadFallbackMessage || "Missing permission: gl.account.read"}
-            </p>
-          )}
-          <FieldError message={findFieldError(fieldErrors, "apAccountId")} />
-        </div>
+              )}
+              <FieldError message={findFieldError(fieldErrors, "apAccountId")} />
+            </div>
+          </>
+        ) : (
+          <div className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            {controlAccountOverridesHint ||
+              "Control-account overrides stay in live card maintenance so request users can focus on the commercial/vendor details."}
+          </div>
+        )}
 
         <div className="md:col-span-2">
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">

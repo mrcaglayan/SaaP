@@ -1,7 +1,6 @@
 import express from "express";
 import {
   assertScopeAccess,
-  buildScopeFilter,
   requirePermission,
 } from "../middleware/rbac.js";
 import { asyncHandler, parsePositiveInt } from "./_utils.js";
@@ -26,10 +25,6 @@ router.get(
   "/",
   requirePermission("cari.card.read", {
     resolveScope: async (req) => {
-      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
       const primaryOperatingUnitId = parsePositiveInt(req.query?.primaryOperatingUnitId);
       if (primaryOperatingUnitId) {
         return { scopeType: "OPERATING_UNIT", scopeId: primaryOperatingUnitId };
@@ -38,6 +33,9 @@ router.get(
       if (allowedOperatingUnitId) {
         return { scopeType: "OPERATING_UNIT", scopeId: allowedOperatingUnitId };
       }
+      // Do not turn a legalEntityId list filter into a stricter action-scope
+      // requirement. OU-scoped users may legitimately read counterparties
+      // inside their parent legal entity through row-level visibility.
       return null;
     },
   }),
@@ -47,7 +45,6 @@ router.get(
       req,
       tenantId: filters.tenantId,
       filters,
-      buildScopeFilter,
       assertScopeAccess,
     });
     return res.json({

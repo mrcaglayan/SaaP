@@ -32,6 +32,19 @@ const CARI_PERMISSION_CODES = [
 ];
 
 const CARI_ROLE_EXPECTATIONS = {
+  MasterDataSteward: [
+    "cari.card.read",
+    "cari.request.review",
+  ],
+  CounterpartyCardEditor: [
+    "cari.card.read",
+    "cari.card.upsert",
+  ],
+  APDocumentPoster: [
+    "cari.doc.read",
+    "cari.doc.update",
+    "cari.doc.post",
+  ],
   BranchOperator: [
     "cari.card.read",
     "cari.card.request",
@@ -469,6 +482,10 @@ async function assertCounterpartyRequestReviewGuards() {
   );
   const routeSource = await readFile(routeFilePath, "utf8");
 
+  assert(
+    routeSource.includes('requireAnyPermission(["cari.card.request", "cari.request.review"]'),
+    "Counterparty request list route should allow requesters and reviewers"
+  );
   assert(
     routeSource.includes('requirePermission("cari.request.review"'),
     "Counterparty request approve/reject routes should use cari.request.review"

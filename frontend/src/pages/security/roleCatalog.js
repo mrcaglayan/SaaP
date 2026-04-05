@@ -35,12 +35,37 @@ const ROLE_CATALOG = Object.freeze({
     ],
     recommendedScopes: ["TENANT"],
   },
+  LocalUserAdmin: {
+    category: "composable",
+    summary:
+      "Invites and manages allow-listed local operational roles without opening tenant-wide security administration.",
+    capabilities: ["Scoped invites", "Allow-listed local roles", "Local assignment review"],
+    recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
+  },
   MasterDataSteward: {
     category: "composable",
     summary:
-      "Owns organizational and accounting master data without taking posting authority.",
-    capabilities: ["Org structure", "GL master data", "Reference maintenance"],
+      "Owns organizational, accounting, and counterparty master data review without taking posting authority.",
+    capabilities: ["Org structure", "GL master data", "Counterparty request review"],
     recommendedScopes: ["GROUP", "COUNTRY", "LEGAL_ENTITY"],
+  },
+  CounterpartyCardEditor: {
+    category: "composable",
+    summary:
+      "Maintains live customer/vendor cards and exceptional AP/AR control-account overrides without broad review or posting authority.",
+    capabilities: [
+      "Live card maintenance",
+      "Counterparty account overrides",
+      "Counterparty payment-term editing",
+    ],
+    recommendedScopes: ["LEGAL_ENTITY"],
+  },
+  APDocumentPoster: {
+    category: "composable",
+    summary:
+      "Reviews and posts AP vendor-bill drafts at legal-entity scope without broader GL or counterparty master-data authority.",
+    capabilities: ["AP draft review", "AP document updates", "AP document posting"],
+    recommendedScopes: ["LEGAL_ENTITY"],
   },
   GLOperator: {
     category: "composable",
@@ -169,6 +194,7 @@ export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
       "Bootstrap preset for one legal-entity setup lead using bounded composable operator roles.",
     scopeType: "LEGAL_ENTITY",
     roleCodes: Object.freeze([
+      "LocalUserAdmin",
       "MasterDataSteward",
       "GLOperator",
       "TreasuryOperator",

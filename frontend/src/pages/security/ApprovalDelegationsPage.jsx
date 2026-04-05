@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   createApprovalDelegation,
   listApprovalDelegations,
@@ -18,7 +19,13 @@ import {
   formatDelegationWindow,
 } from "../../utils/delegationUi.js";
 
-const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
+const SCOPE_TYPES = [
+  "TENANT",
+  "GROUP",
+  "COUNTRY",
+  "LEGAL_ENTITY",
+  "OPERATING_UNIT",
+];
 const STATE_FILTERS = ["ALL", "ACTIVE", "UPCOMING", "REVOKED", "EXPIRED"];
 
 function applyStateFilter(rows, stateFilter) {
@@ -32,7 +39,7 @@ function applyStateFilter(rows, stateFilter) {
     (row) =>
       String(row?.state || "")
         .trim()
-        .toUpperCase() === normalized
+        .toUpperCase() === normalized,
   );
 }
 
@@ -72,7 +79,9 @@ export default function ApprovalDelegationsPage() {
 
   const tenantScopeId = Number(user?.tenant_id || 0);
   const selectedFilterScopeId =
-    filters.scopeType === "TENANT" ? tenantScopeId : Number(filters.scopeId || 0);
+    filters.scopeType === "TENANT"
+      ? tenantScopeId
+      : Number(filters.scopeId || 0);
   const selectedCreateScopeId =
     form.scopeType === "TENANT" ? tenantScopeId : Number(form.scopeId || 0);
   const readAccess = getPermissionAccess(
@@ -84,7 +93,7 @@ export default function ApprovalDelegationsPage() {
             scopeId: selectedFilterScopeId,
           },
         }
-      : undefined
+      : undefined,
   );
   const writeAccess = getPermissionAccess(
     "approvals.policies.write",
@@ -95,7 +104,7 @@ export default function ApprovalDelegationsPage() {
             scopeId: selectedCreateScopeId,
           },
         }
-      : undefined
+      : undefined,
   );
 
   const scopeOptions = useMemo(() => {
@@ -130,7 +139,14 @@ export default function ApprovalDelegationsPage() {
       }));
     }
     return [];
-  }, [countries, form.scopeType, groups, legalEntities, operatingUnits, tenantScopeId]);
+  }, [
+    countries,
+    form.scopeType,
+    groups,
+    legalEntities,
+    operatingUnits,
+    tenantScopeId,
+  ]);
 
   const filterScopeOptions = useMemo(() => {
     const scopeType = filters.scopeType;
@@ -164,11 +180,18 @@ export default function ApprovalDelegationsPage() {
       }));
     }
     return [];
-  }, [countries, filters.scopeType, groups, legalEntities, operatingUnits, tenantScopeId]);
+  }, [
+    countries,
+    filters.scopeType,
+    groups,
+    legalEntities,
+    operatingUnits,
+    tenantScopeId,
+  ]);
 
   const filteredRows = useMemo(
     () => applyStateFilter(rows, filters.state),
-    [filters.state, rows]
+    [filters.state, rows],
   );
 
   useEffect(() => {
@@ -192,41 +215,57 @@ export default function ApprovalDelegationsPage() {
       const delegationParams = {
         delegatorUserId: nextFilters.delegatorUserId || undefined,
         delegateUserId: nextFilters.delegateUserId || undefined,
-        moduleCode: String(nextFilters.moduleCode || "").trim().toUpperCase() || undefined,
+        moduleCode:
+          String(nextFilters.moduleCode || "")
+            .trim()
+            .toUpperCase() || undefined,
       };
       if (nextFilters.scopeType && nextFilters.scopeId) {
         delegationParams.scopeType = nextFilters.scopeType;
         delegationParams.scopeId = nextFilters.scopeId;
       }
 
-      const [usersRes, groupsRes, countriesRes, legalEntitiesRes, operatingUnitsRes, rowsRes] =
-        await Promise.all([
-          listUsers(),
-          listGroupCompanies(),
-          listCountries(),
-          listLegalEntities(),
-          listOperatingUnits(),
-          listApprovalDelegations(delegationParams),
-        ]);
+      const [
+        usersRes,
+        groupsRes,
+        countriesRes,
+        legalEntitiesRes,
+        operatingUnitsRes,
+        rowsRes,
+      ] = await Promise.all([
+        listUsers(),
+        listGroupCompanies(),
+        listCountries(),
+        listLegalEntities(),
+        listOperatingUnits(),
+        listApprovalDelegations(delegationParams),
+      ]);
 
       setUsers(Array.isArray(usersRes?.rows) ? usersRes.rows : []);
       setGroups(Array.isArray(groupsRes?.rows) ? groupsRes.rows : []);
       setCountries(Array.isArray(countriesRes?.rows) ? countriesRes.rows : []);
-      setLegalEntities(Array.isArray(legalEntitiesRes?.rows) ? legalEntitiesRes.rows : []);
-      setOperatingUnits(Array.isArray(operatingUnitsRes?.rows) ? operatingUnitsRes.rows : []);
+      setLegalEntities(
+        Array.isArray(legalEntitiesRes?.rows) ? legalEntitiesRes.rows : [],
+      );
+      setOperatingUnits(
+        Array.isArray(operatingUnitsRes?.rows) ? operatingUnitsRes.rows : [],
+      );
       setRows(Array.isArray(rowsRes?.rows) ? rowsRes.rows : []);
     } catch (err) {
       setRows([]);
       if (
         String(err?.response?.data?.message || "").includes(
-          "Scoped delegation list requests must include scopeType and scopeId"
+          "Scoped delegation list requests must include scopeType and scopeId",
         )
       ) {
         setError(
-          "Your delegation read access is scoped. Choose a scope filter, then refresh the list."
+          "Your delegation read access is scoped. Choose a scope filter, then refresh the list.",
         );
       } else {
-        setError(err?.response?.data?.message || "Approval delegations could not be loaded.");
+        setError(
+          err?.response?.data?.message ||
+            "Approval delegations could not be loaded.",
+        );
       }
     } finally {
       setLoading(false);
@@ -252,7 +291,10 @@ export default function ApprovalDelegationsPage() {
       await createApprovalDelegation({
         delegatorUserId: Number(form.delegatorUserId),
         delegateUserId: Number(form.delegateUserId),
-        moduleCode: String(form.moduleCode || "").trim().toUpperCase() || null,
+        moduleCode:
+          String(form.moduleCode || "")
+            .trim()
+            .toUpperCase() || null,
         scopeType: form.scopeType,
         scopeId:
           form.scopeType === "TENANT"
@@ -273,7 +315,10 @@ export default function ApprovalDelegationsPage() {
       }));
       await loadData(filters);
     } catch (err) {
-      setError(err?.response?.data?.message || "Approval delegation could not be created.");
+      setError(
+        err?.response?.data?.message ||
+          "Approval delegation could not be created.",
+      );
     } finally {
       setSaving(false);
     }
@@ -285,7 +330,7 @@ export default function ApprovalDelegationsPage() {
       return;
     }
     const confirmed = window.confirm(
-      `Revoke approval delegation #${delegationId}? The audit row will remain visible.`
+      `Revoke approval delegation #${delegationId}? The audit row will remain visible.`,
     );
     if (!confirmed) {
       return;
@@ -300,7 +345,10 @@ export default function ApprovalDelegationsPage() {
       setMessage(`Approval delegation #${delegationId} revoked.`);
       await loadData(filters);
     } catch (err) {
-      setError(err?.response?.data?.message || "Approval delegation could not be revoked.");
+      setError(
+        err?.response?.data?.message ||
+          "Approval delegation could not be revoked.",
+      );
     } finally {
       setSaving(false);
     }
@@ -309,11 +357,31 @@ export default function ApprovalDelegationsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">Approval Delegation Management</h1>
+        <h1 className="text-xl font-semibold text-slate-900">
+          Approval Delegation Management
+        </h1>
         <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Create, filter, and revoke scoped approval delegations. Delegated authority only applies
-          where the source reviewer actually holds approval rights at the request scope.
+          Create, filter, and revoke scoped approval delegations. Delegated
+          authority only applies where the source reviewer actually holds
+          approval rights at the request scope.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+        <div className="font-semibold">
+          Need Temporary Runtime Authority Instead?
+        </div>
+        <p className="mt-1">
+          Approval delegation only proxies review actions. Temporary operational
+          coverage is the separate workflow for time-bounded local role
+          authority.
+        </p>
+        <Link
+          to="/app/ayarlar/rbac/temporary-coverage"
+          className="mt-3 inline-flex rounded-lg border border-sky-300 bg-white px-3 py-2 font-medium text-sky-800 hover:bg-sky-100"
+        >
+          Open Temporary Operational Coverage
+        </Link>
       </div>
 
       {error ? (
@@ -332,7 +400,10 @@ export default function ApprovalDelegationsPage() {
           <select
             value={filters.delegatorUserId}
             onChange={(event) =>
-              setFilters((prev) => ({ ...prev, delegatorUserId: event.target.value }))
+              setFilters((prev) => ({
+                ...prev,
+                delegatorUserId: event.target.value,
+              }))
             }
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
@@ -346,7 +417,10 @@ export default function ApprovalDelegationsPage() {
           <select
             value={filters.delegateUserId}
             onChange={(event) =>
-              setFilters((prev) => ({ ...prev, delegateUserId: event.target.value }))
+              setFilters((prev) => ({
+                ...prev,
+                delegateUserId: event.target.value,
+              }))
             }
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
@@ -361,7 +435,10 @@ export default function ApprovalDelegationsPage() {
             type="text"
             value={filters.moduleCode}
             onChange={(event) =>
-              setFilters((prev) => ({ ...prev, moduleCode: event.target.value }))
+              setFilters((prev) => ({
+                ...prev,
+                moduleCode: event.target.value,
+              }))
             }
             placeholder="Module code"
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -372,7 +449,10 @@ export default function ApprovalDelegationsPage() {
               setFilters((prev) => ({
                 ...prev,
                 scopeType: event.target.value,
-                scopeId: event.target.value === "TENANT" ? String(tenantScopeId || "") : "",
+                scopeId:
+                  event.target.value === "TENANT"
+                    ? String(tenantScopeId || "")
+                    : "",
               }))
             }
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -389,7 +469,10 @@ export default function ApprovalDelegationsPage() {
               <select
                 value={filters.scopeId}
                 onChange={(event) =>
-                  setFilters((prev) => ({ ...prev, scopeId: event.target.value }))
+                  setFilters((prev) => ({
+                    ...prev,
+                    scopeId: event.target.value,
+                  }))
                 }
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               >
@@ -406,7 +489,10 @@ export default function ApprovalDelegationsPage() {
                 min={1}
                 value={filters.scopeId}
                 onChange={(event) =>
-                  setFilters((prev) => ({ ...prev, scopeId: event.target.value }))
+                  setFilters((prev) => ({
+                    ...prev,
+                    scopeId: event.target.value,
+                  }))
                 }
                 placeholder="Scope id"
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -441,26 +527,36 @@ export default function ApprovalDelegationsPage() {
             {loading ? "Refreshing..." : "Refresh list"}
           </button>
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            Read access: {readAccess.allowed ? "available" : "scope or capability missing"}
+            Read access:{" "}
+            {readAccess.allowed ? "available" : "scope or capability missing"}
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            Write access: {writeAccess.allowed ? "available" : "scope or capability missing"}
+            Write access:{" "}
+            {writeAccess.allowed ? "available" : "scope or capability missing"}
           </div>
         </div>
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
-        <form onSubmit={handleCreate} className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="text-base font-semibold text-slate-900">Create delegation</h2>
+        <form
+          onSubmit={handleCreate}
+          className="rounded-xl border border-slate-200 bg-white p-4"
+        >
+          <h2 className="text-base font-semibold text-slate-900">
+            Create delegation
+          </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Create a scoped approval-acting delegation. Approval actions will still be validated
-            against the real request scope at decision time.
+            Create a scoped approval-acting delegation. Approval actions will
+            still be validated against the real request scope at decision time.
           </p>
           <div className="mt-4 grid gap-3">
             <select
               value={form.delegatorUserId}
               onChange={(event) =>
-                setForm((prev) => ({ ...prev, delegatorUserId: event.target.value }))
+                setForm((prev) => ({
+                  ...prev,
+                  delegatorUserId: event.target.value,
+                }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
@@ -475,7 +571,10 @@ export default function ApprovalDelegationsPage() {
             <select
               value={form.delegateUserId}
               onChange={(event) =>
-                setForm((prev) => ({ ...prev, delegateUserId: event.target.value }))
+                setForm((prev) => ({
+                  ...prev,
+                  delegateUserId: event.target.value,
+                }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
@@ -502,7 +601,10 @@ export default function ApprovalDelegationsPage() {
                 setForm((prev) => ({
                   ...prev,
                   scopeType: event.target.value,
-                  scopeId: event.target.value === "TENANT" ? String(tenantScopeId || "") : "",
+                  scopeId:
+                    event.target.value === "TENANT"
+                      ? String(tenantScopeId || "")
+                      : "",
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -548,7 +650,10 @@ export default function ApprovalDelegationsPage() {
                 type="date"
                 value={form.effectiveFrom}
                 onChange={(event) =>
-                  setForm((prev) => ({ ...prev, effectiveFrom: event.target.value }))
+                  setForm((prev) => ({
+                    ...prev,
+                    effectiveFrom: event.target.value,
+                  }))
                 }
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
@@ -556,7 +661,10 @@ export default function ApprovalDelegationsPage() {
                 type="date"
                 value={form.effectiveTo}
                 onChange={(event) =>
-                  setForm((prev) => ({ ...prev, effectiveTo: event.target.value }))
+                  setForm((prev) => ({
+                    ...prev,
+                    effectiveTo: event.target.value,
+                  }))
                 }
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
@@ -582,11 +690,17 @@ export default function ApprovalDelegationsPage() {
 
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-700">Delegation rows</h2>
-            <span className="text-xs text-slate-500">{filteredRows.length} rows</span>
+            <h2 className="text-sm font-semibold text-slate-700">
+              Delegation rows
+            </h2>
+            <span className="text-xs text-slate-500">
+              {filteredRows.length} rows
+            </span>
           </div>
           {loading ? (
-            <p className="px-4 py-3 text-sm text-slate-500">Loading approval delegations...</p>
+            <p className="px-4 py-3 text-sm text-slate-500">
+              Loading approval delegations...
+            </p>
           ) : filteredRows.length === 0 ? (
             <p className="px-4 py-3 text-sm text-slate-500">
               No approval delegation matched the current filters.
@@ -607,37 +721,52 @@ export default function ApprovalDelegationsPage() {
                 </thead>
                 <tbody>
                   {filteredRows.map((row) => (
-                    <tr key={row.id} className="border-t border-slate-100 align-top">
+                    <tr
+                      key={row.id}
+                      className="border-t border-slate-100 align-top"
+                    >
                       <td className="px-4 py-3">
                         <DelegationStateBadge state={row.state} />
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-800">
-                          {row.delegatorUserName || `User #${row.delegatorUserId || "-"}`}
+                          {row.delegatorUserName ||
+                            `User #${row.delegatorUserId || "-"}`}
                         </div>
-                        <div className="text-xs text-slate-500">{row.delegatorUserEmail || "-"}</div>
+                        <div className="text-xs text-slate-500">
+                          {row.delegatorUserEmail || "-"}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-800">
-                          {row.delegateUserName || `User #${row.delegateUserId || "-"}`}
+                          {row.delegateUserName ||
+                            `User #${row.delegateUserId || "-"}`}
                         </div>
-                        <div className="text-xs text-slate-500">{row.delegateUserEmail || "-"}</div>
+                        <div className="text-xs text-slate-500">
+                          {row.delegateUserEmail || "-"}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-800">
                           {row.moduleCode || "All modules"}
                         </div>
                         {row.note ? (
-                          <div className="mt-1 text-xs text-slate-500">{row.note}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {row.note}
+                          </div>
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {formatDelegationScopeLabel(row)}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="text-slate-700">{formatDelegationWindow(row)}</div>
+                        <div className="text-slate-700">
+                          {formatDelegationWindow(row)}
+                        </div>
                         {row.revokedReason ? (
-                          <div className="mt-1 text-xs text-rose-700">{row.revokedReason}</div>
+                          <div className="mt-1 text-xs text-rose-700">
+                            {row.revokedReason}
+                          </div>
                         ) : null}
                       </td>
                       <td className="px-4 py-3">
@@ -651,7 +780,9 @@ export default function ApprovalDelegationsPage() {
                             Revoke
                           </button>
                         ) : (
-                          <span className="text-xs text-slate-400">No action</span>
+                          <span className="text-xs text-slate-400">
+                            No action
+                          </span>
                         )}
                       </td>
                     </tr>

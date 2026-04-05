@@ -41,6 +41,7 @@ const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
     code: "EntitySetupManager",
     scopeType: "LEGAL_ENTITY",
     roleCodes: Object.freeze([
+      "LocalUserAdmin",
       "MasterDataSteward",
       "GLOperator",
       "TreasuryOperator",
@@ -513,10 +514,9 @@ async function resolveBootstrapShareholderParentAccountIdsForCoa({
 }
 
 function applyShareholderOverrideToPolicyPackPlan(plan, shareholderParentConfig) {
-  if (!shareholderParentConfig?.manualOverride) {
-    return plan;
-  }
-
+  // PR-56 keeps shareholder parent mapping inside legal-entity activation.
+  // Bootstrap may save explicit overrides when present, but unresolved
+  // shareholder parent purposes must not abort baseline company bootstrap.
   return {
     ...plan,
     missingRequiredPurposeCodes: (plan?.missingRequiredPurposeCodes || []).filter(
@@ -630,7 +630,7 @@ function buildBootstrapCurrentAccountReadinessWarning({
         skippedExplicitly ? "skipped" : "not configured"
       } for legal entity ${String(
         legalEntityCode || ""
-      ).trim()} during company bootstrap. This legal entity has ${effectiveActiveOperatingUnitCount} active operating units in the submitted draft, so tenant readiness remains pending until saved parents are configured and applied.`,
+      ).trim()} during company bootstrap. This legal entity has ${effectiveActiveOperatingUnitCount} active operating units in the submitted draft, so legal-entity activation remains incomplete until saved parents are configured and applied.`,
     };
   }
 

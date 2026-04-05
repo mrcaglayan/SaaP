@@ -9921,7 +9921,7 @@ const spec = {
       get: {
         tags: ["Onboarding"],
         operationId: "getTenantReadiness",
-        summary: "Get tenant setup readiness snapshot",
+        summary: "Get tenant bootstrap readiness snapshot",
         parameters: [
           queryParamInt(
             "tenantId",
@@ -9931,7 +9931,7 @@ const spec = {
         ],
         responses: withStandardResponses(
           "200",
-          "Tenant readiness snapshot",
+          "Tenant bootstrap readiness snapshot",
           "#/components/schemas/TenantReadinessResponse"
         ),
       },
@@ -9960,18 +9960,42 @@ const spec = {
         ),
       },
     },
+    "/api/v1/onboarding/legal-entity-activation": {
+      get: {
+        tags: ["Onboarding"],
+        operationId: "getLegalEntityActivationReadiness",
+        summary: "Get legal-entity activation readiness snapshot",
+        parameters: [
+          queryParamInt(
+            "tenantId",
+            false,
+            "Tenant identifier; optional if available in JWT"
+          ),
+          queryParamInt(
+            "legalEntityId",
+            false,
+            "Optional legal entity filter"
+          ),
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Legal-entity activation readiness snapshot",
+          "#/components/schemas/LegalEntityActivationReadinessResponse"
+        ),
+      },
+    },
     "/api/v1/onboarding/readiness/bootstrap-baseline": {
       post: {
         tags: ["Onboarding"],
         operationId: "bootstrapTenantReadinessBaseline",
-        summary: "Create missing baseline setup for tenant readiness",
+        summary: "Create missing baseline setup for tenant bootstrap readiness",
         requestBody: bodyFromRef(
           "#/components/schemas/TenantReadinessBootstrapInput",
           false
         ),
         responses: withStandardResponses(
           "201",
-          "Tenant readiness baseline bootstrap result",
+          "Tenant bootstrap baseline result",
           "#/components/schemas/TenantReadinessBootstrapResponse"
         ),
       },
@@ -11871,74 +11895,11 @@ const spec = {
           ready: { type: "boolean" },
           details: {
             nullable: true,
-            oneOf: [
-              { $ref: "#/components/schemas/TenantReadinessWorkflowDetails" },
-              {
-                $ref: "#/components/schemas/TenantReadinessOperatingUnitCurrentAccountDetails",
-              },
-              {
-                type: "object",
-                additionalProperties: true,
-              },
-            ],
+            type: "object",
+            additionalProperties: true,
           },
         },
         required: ["key", "label", "minimum", "count", "ready", "details"],
-      },
-      TenantReadinessWorkflowDetails: {
-        type: "object",
-        properties: {
-          readyEntityCount: nonNegativeInt,
-          totalEntityCount: nonNegativeInt,
-          missingLegalEntityIds: {
-            type: "array",
-            items: intId,
-          },
-        },
-        required: ["readyEntityCount", "totalEntityCount", "missingLegalEntityIds"],
-      },
-      TenantReadinessOperatingUnitCurrentAccountBlockingRow: {
-        type: "object",
-        properties: {
-          legalEntityId: intId,
-          legalEntityCode: { type: "string" },
-          legalEntityName: { type: "string" },
-          blockerCode: { type: "string", nullable: true },
-          setupPath: { type: "string", nullable: true },
-          effectiveActiveOperatingUnitCount: nonNegativeInt,
-          missingCentralOperatingUnitCount: nonNegativeInt,
-          missingPartnerDirectionCount: nonNegativeInt,
-        },
-        required: [
-          "legalEntityId",
-          "legalEntityCode",
-          "legalEntityName",
-          "blockerCode",
-          "setupPath",
-          "effectiveActiveOperatingUnitCount",
-          "missingCentralOperatingUnitCount",
-          "missingPartnerDirectionCount",
-        ],
-      },
-      TenantReadinessOperatingUnitCurrentAccountDetails: {
-        type: "object",
-        properties: {
-          readyEntityCount: nonNegativeInt,
-          totalEntityCount: nonNegativeInt,
-          applicableEntityCount: nonNegativeInt,
-          blockingRows: {
-            type: "array",
-            items: {
-              $ref: "#/components/schemas/TenantReadinessOperatingUnitCurrentAccountBlockingRow",
-            },
-          },
-        },
-        required: [
-          "readyEntityCount",
-          "totalEntityCount",
-          "applicableEntityCount",
-          "blockingRows",
-        ],
       },
       TenantReadinessCounts: {
         type: "object",
@@ -11951,10 +11912,6 @@ const spec = {
           openBookPeriods: nonNegativeInt,
           chartsOfAccounts: nonNegativeInt,
           accounts: nonNegativeInt,
-          shareholders: nonNegativeInt,
-          shareholderCommitmentConfigs: nonNegativeInt,
-          operatingUnitCurrentAccounts: nonNegativeInt,
-          workflowCloseConsolidationV1: nonNegativeInt,
         },
         required: [
           "groupCompanies",
@@ -11965,10 +11922,6 @@ const spec = {
           "openBookPeriods",
           "chartsOfAccounts",
           "accounts",
-          "shareholders",
-          "shareholderCommitmentConfigs",
-          "operatingUnitCurrentAccounts",
-          "workflowCloseConsolidationV1",
         ],
       },
       TenantReadinessResponse: {
@@ -13268,6 +13221,74 @@ const spec = {
           },
         },
         required: ["tenantId", "legalEntityId", "modules"],
+      },
+      LegalEntityActivationReadinessCheck: {
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          label: { type: "string" },
+          ready: { type: "boolean" },
+          applicable: { type: "boolean" },
+          blockerCode: { type: "string", nullable: true },
+          details: {
+            nullable: true,
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+        required: ["key", "label", "ready", "applicable", "blockerCode", "details"],
+      },
+      LegalEntityActivationReadinessSummary: {
+        type: "object",
+        properties: {
+          readyCheckCount: nonNegativeInt,
+          totalCheckCount: nonNegativeInt,
+          blockingCheckCount: nonNegativeInt,
+        },
+        required: ["readyCheckCount", "totalCheckCount", "blockingCheckCount"],
+      },
+      LegalEntityActivationReadinessRow: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          legalEntityCode: { type: "string" },
+          legalEntityName: { type: "string" },
+          status: { type: "string", enum: ["READY", "IN_PROGRESS", "NOT_STARTED"] },
+          ready: { type: "boolean" },
+          summary: {
+            $ref: "#/components/schemas/LegalEntityActivationReadinessSummary",
+          },
+          checks: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/LegalEntityActivationReadinessCheck",
+            },
+          },
+        },
+        required: [
+          "legalEntityId",
+          "legalEntityCode",
+          "legalEntityName",
+          "status",
+          "ready",
+          "summary",
+          "checks",
+        ],
+      },
+      LegalEntityActivationReadinessResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          stage: { type: "string", enum: ["LEGAL_ENTITY_ACTIVATION"] },
+          byLegalEntity: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/LegalEntityActivationReadinessRow",
+            },
+          },
+          generatedAt: { type: "string", format: "date-time" },
+        },
+        required: ["tenantId", "stage", "byLegalEntity", "generatedAt"],
       },
       FiscalCalendarInput: {
         type: "object",

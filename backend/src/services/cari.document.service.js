@@ -1,10 +1,12 @@
 import { query, withTransaction } from "../db.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
 import {
   assertAccountBelongsToTenant,
   assertCurrencyExists,
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { buildVisibilityScopeWhereClause } from "./authz.scope.service.js";
 import {
   buildOffsetPaginationResult,
   resolveOffsetPagination,
@@ -6640,6 +6642,22 @@ export async function resolveCariDocumentScope(documentId, tenantId) {
   };
 }
 
+function buildCariDocumentVisibilityFilter(req, params) {
+  const scopeContext = getVisibilityScope(req);
+  if (!scopeContext) {
+    return "1 = 0";
+  }
+  if (scopeContext.tenantWide) {
+    return "1 = 1";
+  }
+
+  const clause = buildVisibilityScopeWhereClause(scopeContext, params, {
+    LEGAL_ENTITY: { idColumn: "d.legal_entity_id" },
+    OPERATING_UNIT: { idColumn: "d.operating_unit_id" },
+  });
+  return clause || "1 = 0";
+}
+
 export async function listCariDocuments({
   req,
   tenantId,
@@ -6649,14 +6667,11 @@ export async function listCariDocuments({
 }) {
   const params = [tenantId];
   const conditions = ["d.tenant_id = ?"];
-  if (filters.operatingUnitId) {
-    conditions.push(buildScopeFilter(req, "operating_unit", "d.operating_unit_id", params));
-  } else {
-    conditions.push(buildScopeFilter(req, "legal_entity", "d.legal_entity_id", params));
-  }
+  conditions.push(buildCariDocumentVisibilityFilter(req, params));
 
   if (filters.legalEntityId) {
-    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+    // Keep legal-entity list filters usable for OU-scoped actors. Row-level
+    // visibility still blocks cross-entity reads.
     conditions.push("d.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }

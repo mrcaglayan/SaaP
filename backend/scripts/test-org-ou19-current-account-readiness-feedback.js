@@ -151,18 +151,16 @@ async function main() {
     "utf8"
   );
   assert(
-    pageSource.includes("operatingUnitCurrentAccounts") &&
-      pageSource.includes("/app/ayarlar/organizasyon-yonetimi"),
-    "Tenant readiness checklist must link the OU current-account readiness key to Organization Management"
+    !pageSource.includes("operatingUnitCurrentAccounts"),
+    "Tenant bootstrap checklist must not surface OU current-account readiness as a tenant-wide blocker"
   );
   assert(
-    appLayoutSource.includes("operatingUnitCurrentAccounts") &&
-      appLayoutSource.includes("/app/ayarlar/organizasyon-yonetimi"),
-    "App layout readiness menu must route the OU current-account readiness key to Organization Management"
+    !appLayoutSource.includes("operatingUnitCurrentAccounts"),
+    "App layout bootstrap menu must not map OU current-account readiness as a tenant blocker"
   );
   assert(
-    messagesSource.includes("operatingUnitCurrentAccounts:"),
-    "Readiness i18n labels must include operatingUnitCurrentAccounts"
+    !messagesSource.includes("operatingUnitCurrentAccounts:"),
+    "Tenant bootstrap i18n labels must not include operatingUnitCurrentAccounts"
   );
 
   const stamp = Date.now();
@@ -230,10 +228,9 @@ async function main() {
       tenantReadiness,
       "operatingUnitCurrentAccounts"
     );
-    assert(tenantOuCheck && tenantOuCheck.ready === false, "Tenant readiness should block when multi-OU config is missing");
     assert(
-      tenantOuCheck?.details?.blockingRows?.[0]?.blockerCode === "MISSING_CONFIG",
-      "Tenant readiness should identify missing saved config"
+      tenantOuCheck === null,
+      "Tenant bootstrap readiness must not expose OU current-account blockers"
     );
 
     let moduleReadiness = await getModuleReadiness({
@@ -303,12 +300,8 @@ async function main() {
       "operatingUnitCurrentAccounts"
     );
     assert(
-      tenantOuCheck && tenantOuCheck.ready === false,
-      "Tenant readiness should block again when partner mappings drift"
-    );
-    assert(
-      tenantOuCheck?.details?.blockingRows?.[0]?.blockerCode === "MAPPING_DRIFT",
-      "Tenant readiness should report mapping drift"
+      tenantOuCheck === null,
+      "Tenant bootstrap readiness must stay clear when partner mappings drift"
     );
 
     moduleReadiness = await getModuleReadiness({
@@ -336,8 +329,8 @@ async function main() {
       "operatingUnitCurrentAccounts"
     );
     assert(
-      tenantOuCheck && tenantOuCheck.ready === true,
-      "Inactive branch should not keep OU current-account readiness blocked"
+      tenantOuCheck === null,
+      "Tenant bootstrap readiness must stay independent after inactive-branch changes"
     );
 
     moduleReadiness = await getModuleReadiness({
@@ -356,7 +349,7 @@ async function main() {
       "Effective active OU count should ignore inactive branches"
     );
 
-    console.log("PR-OU19 readiness and operator feedback regression passed.");
+    console.log("PR-OU19 bootstrap and module readiness regression passed.");
   } finally {
     if (!serverStopped) {
       server.kill("SIGTERM");

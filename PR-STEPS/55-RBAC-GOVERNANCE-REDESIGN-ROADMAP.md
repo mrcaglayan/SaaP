@@ -1740,11 +1740,6 @@ This follow-on track does not reopen Phase 0 through Phase 6 governance closure.
 
 ### Classification
 
-`Conflict / plan gap`
-- Fresh-tenant bootstrap is still centered on `SecurityAdmin` + `SystemAdmin` plus the company bootstrap wizard. The product does not yet provide a first-class handoff from central bootstrap to local legal-entity/country setup responsibility.
-- Scoped local user administration is still too narrow. The dedicated entity-scoped admin seam only manages `BranchOperator`, not the broader allow-listed local role set needed by the target operating model.
-- Approval delegation is implemented, and effective-dated role assignments are implemented, but temporary operational coverage is not yet a first-class request/review/activation workflow.
-
 `Deferred item already covered`
 - The central skeleton already exists in the onboarding flow (`/company-bootstrap`) and the company onboarding wizard.
 - Scoped readiness already allows operational users to work inside a ready legal entity without being blocked by tenant-wide onboarding noise.
@@ -1754,6 +1749,12 @@ This follow-on track does not reopen Phase 0 through Phase 6 governance closure.
 `Optional hardening`
 - Narrower branch personas such as cashier-only or warehouse-only roles can be introduced after the generalized local user-admin surface is stable.
 - Country-specific setup presets can remain follow-on work; the minimum clean model is tenant bootstrap plus legal-entity-scoped setup manager coverage.
+
+**Shipped follow-on status**:
+- PR-7A shipped the company bootstrap handoff with bounded `EntitySetupManager` / `CountryFinanceSetupManager` presets, invite-or-select assignees, and explicit `GLPostingAuthority` opt-in.
+- PR-7B shipped the scoped entity activation workspace as a bounded organization-management mode with tenant-wide onboarding noise suppressed for local operators.
+- PR-7C shipped the generalized local user administration seam with `LocalUserAdmin`, an allow-listed bounded local-role catalog, and a compatibility bridge for the legacy branch-operator endpoints.
+- PR-7D shipped the temporary operational coverage workflow on top of the unified approval engine and effective-dated `user_role_scopes` activation windows.
 
 ### Target Model
 
@@ -1780,6 +1781,11 @@ The target operating model is:
 
 Add a first-class handoff step to the company bootstrap flow so the central bootstrap actor can assign bounded local setup responsibility without giving away tenant-wide governance powers.
 
+**Shipped artifacts**:
+- Onboarding handoff API and preset definitions in `backend/src/routes/onboarding.js`
+- Company bootstrap handoff UI in `frontend/src/pages/settings/CompanyOnboardingPage.jsx`
+- Runtime smoke in `backend/scripts/test-followup-prf13-bootstrap-handoff.js`
+
 Requirements:
 - Extend the onboarding flow so central bootstrap can invite or assign one or more local responsible users per legal entity and, where justified, per country.
 - Implement setup presets, not broad new permanent roles:
@@ -1796,6 +1802,11 @@ Acceptance target:
 ### PR-7B: Scoped Entity Activation Workspace
 
 Turn local legal-entity activation into a first-class scoped workspace instead of requiring local users to work through central-oriented organization-management surfaces.
+
+**Shipped artifacts**:
+- Activation-mode route in `frontend/src/App.jsx`
+- Scoped workspace UI in `frontend/src/pages/settings/OrganizationManagementPage.jsx`
+- Readiness/sidebar/i18n wiring plus smoke in `backend/scripts/test-followup-pr7b-entity-activation-workspace.js`
 
 Requirements:
 - Add a dedicated local activation workspace or a clearly scoped mode on the existing organization-management area.
@@ -1816,6 +1827,12 @@ Acceptance target:
 ### PR-7C: Generalized Scoped Local User Administration
 
 Replace the narrow branch-operator-only seam with a generalized local user administration capability for legal-entity managers.
+
+**Shipped artifacts**:
+- `LocalUserAdmin` permission + role wiring in `backend/src/seedCore.js`
+- Generalized local-admin API plus compatibility bridge in `backend/src/routes/security.js`
+- Admin UI in `frontend/src/pages/security/BranchOperatorManagementPage.jsx`
+- Runtime smoke in `backend/scripts/test-security-branch-operator-management-smoke.js`
 
 Requirements:
 - Introduce an explicit bounded local-admin permission model for entity-scoped user administration. If the existing `security.user_admin.entity` code is too narrow semantically, add a new bounded permission and keep compatibility only where needed.
@@ -1839,6 +1856,12 @@ Acceptance target:
 
 Productize absence coverage as a dedicated flow that is separate from approval delegation and activates time-bounded local role assignments only after explicit review.
 
+**Shipped artifacts**:
+- Dedicated coverage service in `backend/src/services/operationalCoverage.service.js`
+- Unified approval routing in `backend/src/routes/approvalPolicies.routes.js`
+- Dedicated UI in `frontend/src/pages/security/TemporaryOperationalCoveragePage.jsx`
+- Runtime smoke in `backend/scripts/test-security-pr7d-temporary-operational-coverage.js`
+
 Requirements:
 - Model temporary operational coverage as a request/review/activate/revoke workflow.
 - Use the unified approval engine for the review/approval lifecycle.
@@ -1857,9 +1880,9 @@ Requirements:
 Acceptance target:
 - A branch/local operator can request temporary coverage, a scoped manager can approve it, the system activates it for a defined window, and it expires without manual cleanup.
 
-### Suggested Follow-On Order
+### Historical Follow-On Order
 
-Use this order after the original Phase 6 closure work is stable:
+This was the intended execution order for the follow-on track and is now recorded as historical sequence after implementation:
 
 1. `PR-7A` - create the central-to-local handoff model first
 2. `PR-7C` - make local managers actually able to administer local users

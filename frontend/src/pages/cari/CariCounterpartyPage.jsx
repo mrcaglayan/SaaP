@@ -30,6 +30,7 @@ import {
 import ApprovalExecutionStatusBadge from "../../components/approval/ApprovalExecutionStatusBadge.jsx";
 import ApprovalRequestDrawer from "../../components/approval/ApprovalRequestDrawer.jsx";
 import ApprovalRequestStatusBadge from "../../components/approval/ApprovalRequestStatusBadge.jsx";
+import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import CounterpartyForm from "./CounterpartyForm.jsx";
 import {
@@ -94,7 +95,10 @@ const SORT_DIRECTION_LABELS = {
   desc: "Descending",
 };
 
-const COUNTERPARTY_CREATE_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const COUNTERPARTY_CREATE_CONTEXT_MAPPINGS = [
+  { stateKey: "legalEntityId" },
+  { stateKey: "primaryOperatingUnitId", contextKey: "operatingUnitId" },
+];
 
 function roleBadgeClass(role) {
   const normalized = String(role || "").toUpperCase();
@@ -142,6 +146,19 @@ function formatMappedAccountLabel(code, name) {
 function formatOperatingUnitLabel(code, name, id) {
   const codeText = String(code || "").trim();
   const nameText = String(name || "").trim();
+  if (codeText && nameText) {
+    return `${codeText} - ${nameText}`;
+  }
+  if (codeText || nameText) {
+    return codeText || nameText;
+  }
+  const parsedId = toPositiveInt(id);
+  return parsedId ? `#${parsedId}` : "-";
+}
+
+function formatLegalEntityLabel(row, id) {
+  const codeText = String(row?.code || "").trim();
+  const nameText = String(row?.name || "").trim();
   if (codeText && nameText) {
     return `${codeText} - ${nameText}`;
   }
@@ -677,8 +694,16 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const canRead = hasPermission("cari.card.read");
   const canRequest = hasPermission("cari.card.request");
   const canUpsert = hasPermission("cari.card.upsert");
+  const isRequestCreateMode = isCreatePage && !canUpsert && canRequest;
   const canReviewRequests = hasPermission("cari.request.review");
   const canReadOrgTree = hasPermission("org.tree.read");
+  const canReadScopedOrgLookups = canReadOrgTree || canRequest || canUpsert;
+  const canReadPaymentTerms = canRead || canRequest || canUpsert;
+  const {
+    workingContext,
+    legalEntities: contextLegalEntities,
+    operatingUnits: contextOperatingUnits,
+  } = useWorkingContext();
   const accountPickerGates = useMemo(
     () => resolveCounterpartyAccountPickerGates(permissions),
     [permissions]
@@ -726,6 +751,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   useWorkingContextDefaults(setCreateForm, COUNTERPARTY_CREATE_CONTEXT_MAPPINGS, [
     createForm.legalEntityId,
+    createForm.primaryOperatingUnitId,
   ]);
 
   const [filters, setFilters] = useState(() =>
@@ -749,6 +775,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [requestActionDialog, setRequestActionDialog] = useState(null);
   const [delegationPreview, setDelegationPreview] = useState(null);
   const [delegationPreviewLoading, setDelegationPreviewLoading] = useState(false);
+  const dismissedApprovalRequestIdRef = useRef(null);
 
   const [editingId, setEditingId] = useState(null);
   const [editingForm, setEditingForm] = useState(() =>
@@ -790,19 +817,24 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   const legalEntityById = useMemo(() => {
     const map = new Map();
-    for (const row of legalEntities) {
+    for (const row of [...contextLegalEntities, ...legalEntities]) {
       map.set(String(row.id), row);
     }
     return map;
-  }, [legalEntities]);
+  }, [contextLegalEntities, legalEntities]);
 
   const operatingUnitById = useMemo(() => {
     const map = new Map();
-    for (const row of [...createOperatingUnits, ...filterOperatingUnits, ...editOperatingUnits]) {
+    for (const row of [
+      ...contextOperatingUnits,
+      ...createOperatingUnits,
+      ...filterOperatingUnits,
+      ...editOperatingUnits,
+    ]) {
       map.set(String(row.id), row);
     }
     return map;
-  }, [createOperatingUnits, filterOperatingUnits, editOperatingUnits]);
+  }, [contextOperatingUnits, createOperatingUnits, filterOperatingUnits, editOperatingUnits]);
 
   const activeRequestRow = useMemo(
     () => requestRows.find((row) => row.id === activeRequestId) || null,
@@ -819,6 +851,17 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   useEffect(() => {
     const requestedApprovalRequestId = searchParams.get("approvalRequestId");
+    const normalizedApprovalRequestId = toPositiveInt(requestedApprovalRequestId);
+    if (!normalizedApprovalRequestId) {
+      dismissedApprovalRequestIdRef.current = null;
+      return;
+    }
+    if (
+      dismissedApprovalRequestIdRef.current &&
+      dismissedApprovalRequestIdRef.current === normalizedApprovalRequestId
+    ) {
+      return;
+    }
     if (!requestedApprovalRequestId || requestLoading || requestRows.length === 0) {
       return;
     }
@@ -832,19 +875,6 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setRequestActionDialog(null);
     setActiveRequestId(match.id);
   }, [activeRequestId, requestLoading, requestRows, searchParams]);
-
-  useEffect(() => {
-    const activeApprovalRequestId = toPositiveInt(activeRequestRow?.approvalRequest?.id);
-    if (!activeApprovalRequestId) {
-      return;
-    }
-    if (searchParams.get("approvalRequestId") === String(activeApprovalRequestId)) {
-      return;
-    }
-    const nextSearchParams = new URLSearchParams(searchParams);
-    nextSearchParams.set("approvalRequestId", String(activeApprovalRequestId));
-    setSearchParams(nextSearchParams, { replace: true });
-  }, [activeRequestRow, searchParams, setSearchParams]);
 
   useEffect(() => {
     const approvalRequestId = toPositiveInt(activeRequestRow?.approvalRequest?.id);
@@ -950,11 +980,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   useEffect(() => {
     let cancelled = false;
     async function loadLegalEntityOptions() {
-      if (!canReadOrgTree) {
+      if (!canReadScopedOrgLookups) {
         setLegalEntities([]);
-        setLegalEntitiesError(
-          "Legal entity list permission missing. You can still type legalEntityId manually."
-        );
+        setLegalEntitiesError("Legal entity options are not available for this user.");
         return;
       }
 
@@ -985,7 +1013,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     return () => {
       cancelled = true;
     };
-  }, [canReadOrgTree]);
+  }, [canReadScopedOrgLookups]);
 
   useEffect(() => {
     if (!isCreatePage) {
@@ -1002,6 +1030,28 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       legalEntityId: String(legalEntities[0].id || ""),
     }));
   }, [createForm.legalEntityId, isCreatePage, legalEntities]);
+
+  useEffect(() => {
+    if (!isCreatePage) {
+      return;
+    }
+    const primaryOperatingUnitId = String(createForm.primaryOperatingUnitId || "").trim();
+    if (!primaryOperatingUnitId) {
+      return;
+    }
+    setCreateForm((prev) => {
+      const existingIds = Array.isArray(prev.operatingUnitIds)
+        ? prev.operatingUnitIds.map((value) => String(value || "").trim()).filter(Boolean)
+        : [];
+      if (existingIds.includes(primaryOperatingUnitId)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        operatingUnitIds: [primaryOperatingUnitId, ...existingIds],
+      };
+    });
+  }, [isCreatePage, createForm.primaryOperatingUnitId]);
 
   useEffect(() => {
     if (!isCreatePage) {
@@ -1277,12 +1327,17 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCreatePage, createForm.legalEntityId, createPaymentTermLookupQuery, canRead]);
+  }, [
+    isCreatePage,
+    createForm.legalEntityId,
+    createPaymentTermLookupQuery,
+    canReadPaymentTerms,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadCreateAccounts() {
-      if (!isCreatePage) {
+      if (!isCreatePage || isRequestCreateMode) {
         setCreateAccountOptions([]);
         setCreateAccountsError("");
         setCreateAccountsLoading(false);
@@ -1320,6 +1375,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isCreatePage,
+    isRequestCreateMode,
     createForm.legalEntityId,
     accountPickerGates.shouldFetchGlAccounts,
   ]);
@@ -1400,7 +1456,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCreatePage, createForm.legalEntityId, canReadOrgTree]);
+  }, [isCreatePage, createForm.legalEntityId, canReadScopedOrgLookups]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1438,7 +1494,12 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingId, editingForm.legalEntityId, editPaymentTermLookupQuery, canRead]);
+  }, [
+    editingId,
+    editingForm.legalEntityId,
+    editPaymentTermLookupQuery,
+    canReadPaymentTerms,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1561,7 +1622,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingId, editingForm.legalEntityId, canReadOrgTree]);
+  }, [editingId, editingForm.legalEntityId, canReadScopedOrgLookups]);
 
   useEffect(() => {
     const selectedLegalEntityId = String(filters.legalEntityId || "").trim();
@@ -1659,7 +1720,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.legalEntityId, canReadOrgTree]);
+  }, [filters.legalEntityId, canReadScopedOrgLookups]);
 
   async function loadCounterpartyRows(nextFilters = filters) {
     if (!canRead) {
@@ -1722,7 +1783,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setError,
   }) {
     const parsedLegalEntityId = toPositiveInt(legalEntityId);
-    if (!parsedLegalEntityId || !canRead) {
+    if (!parsedLegalEntityId || !canReadPaymentTerms) {
       setRows([]);
       setError("");
       setLoading(false);
@@ -1799,11 +1860,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       setLoading(false);
       return;
     }
-    if (!canReadOrgTree) {
+    if (!canReadScopedOrgLookups) {
       setRows([]);
-      setError(
-        "Operating unit list permission missing. Leave the counterparty shared or ask for org.tree.read."
-      );
+      setError("Operating unit options are not available for this user.");
       setLoading(false);
       return;
     }
@@ -1961,10 +2020,34 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     if (!requestId) {
       return;
     }
+    const requestRow = requestRows.find((row) => Number(row.id) === Number(requestId)) || null;
+    const approvalRequestId = toPositiveInt(requestRow?.approvalRequest?.id);
+    dismissedApprovalRequestIdRef.current = null;
     setRequestError("");
     setRequestActionDialog(null);
     setActiveRequestId(requestId);
+    if (approvalRequestId) {
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.set("approvalRequestId", String(approvalRequestId));
+      setSearchParams(nextSearchParams, { replace: true });
+    }
   }
+
+  const closeRequestDrawer = useCallback(() => {
+    const activeApprovalRequestId =
+      toPositiveInt(activeRequestRow?.approvalRequest?.id) ||
+      toPositiveInt(searchParams.get("approvalRequestId"));
+    dismissedApprovalRequestIdRef.current = activeApprovalRequestId;
+    setActiveRequestId(null);
+    setRequestActionDialog(null);
+    setDelegationPreview(null);
+    setDelegationPreviewLoading(false);
+    if (searchParams.get("approvalRequestId")) {
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.delete("approvalRequestId");
+      setSearchParams(nextSearchParams, { replace: true });
+    }
+  }, [activeRequestRow, searchParams, setSearchParams]);
 
   const openRequestAction = useCallback((actionType, requestId) => {
     if (!requestId) {
@@ -3055,7 +3138,19 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   ]);
 
   function renderCreatePage() {
-    const requestMode = !canUpsert && canRequest;
+    const requestMode = isRequestCreateMode;
+    const hasScopedWorkingLegalEntity =
+      requestMode && !canReadOrgTree && Boolean(workingContext.legalEntityId);
+    const createLegalEntityId = String(
+      createForm.legalEntityId || workingContext.legalEntityId || ""
+    ).trim();
+    const lockedCreateLegalEntityLabel = hasScopedWorkingLegalEntity
+      ? formatLegalEntityLabel(legalEntityById.get(createLegalEntityId), createLegalEntityId)
+      : "";
+    const createLegalEntitiesError =
+      !canReadOrgTree && requestMode && !createLegalEntityId
+        ? "Select the working legal entity from the company/period bar first."
+        : legalEntitiesError;
     const createTitle = requestMode
       ? config.roleDefault === "VENDOR"
         ? "Tedarikci Karti Talebi"
@@ -3073,7 +3168,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         setForm={setCreateForm}
         legalEntities={legalEntities}
         legalEntitiesLoading={legalEntitiesLoading}
-        legalEntitiesError={legalEntitiesError}
+        legalEntitiesError={createLegalEntitiesError}
+        lockLegalEntitySelection={hasScopedWorkingLegalEntity}
+        lockedLegalEntityLabel={lockedCreateLegalEntityLabel}
         operatingUnits={createOperatingUnits}
         operatingUnitsLoading={createOperatingUnitsLoading}
         operatingUnitsError={createOperatingUnitsError}
@@ -3091,7 +3188,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         accountOptionsLoading={createAccountsLoading}
         accountOptionsError={createAccountsError}
         onAccountLookupQueryChange={handleCreateAccountLookupInput}
-        canUpsertGlAccounts={accountPickerGates.canUpsertGlAccounts}
+        showControlAccountOverrides={!requestMode}
+        controlAccountOverridesHint="Control-account overrides belong to live card maintenance, not the request form."
+        canUpsertGlAccounts={requestMode ? false : accountPickerGates.canUpsertGlAccounts}
         accountUpsertFallbackMessage="Missing permission: gl.account.upsert"
         canInlineCreateArAccount={canInlineCreateArAccountInCreateForm}
         inlineCreateArAccountLabel={createInlineArAccountName}
@@ -3131,7 +3230,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         inlineCreateApSuggestedNextCode={createApSuggestedNextCode}
         onInlineCreateApUseTypedCode={() => setCreateInlineApChildCode(createApCodeCandidate)}
         onInlineCreateApUseNextCode={() => setCreateInlineApChildCode(createApSuggestedNextCode)}
-        canReadGlAccounts={accountPickerGates.showAccountPickers}
+        canReadGlAccounts={requestMode ? false : accountPickerGates.showAccountPickers}
         accountReadFallbackMessage={
           "Missing permission: gl.account.read. AR/AP account selectors are hidden."
         }
@@ -3226,16 +3325,13 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                   ))}
                 </select>
               ) : (
-                <input
+                <select
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  type="number"
-                  min="1"
-                  value={filters.legalEntityId}
-                  onChange={(event) =>
-                    setFilters((prev) => ({ ...prev, legalEntityId: event.target.value }))
-                  }
-                  placeholder="Legal entity id"
-                />
+                  value=""
+                  disabled
+                >
+                  <option value="">No in-scope legal entities</option>
+                </select>
               )}
             </div>
 
@@ -3243,40 +3339,24 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
                 Primary OU
               </label>
-              {canReadOrgTree ? (
-                <select
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  value={filters.primaryOperatingUnitId}
-                  onChange={(event) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      primaryOperatingUnitId: event.target.value,
-                    }))
-                  }
-                  disabled={!filters.legalEntityId}
-                >
-                  <option value="">Any</option>
-                  {filterOperatingUnits.map((row) => (
-                    <option key={`filter-primary-ou-${row.id}`} value={String(row.id)}>
-                      {row.code} - {row.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  type="number"
-                  min="1"
-                  value={filters.primaryOperatingUnitId}
-                  onChange={(event) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      primaryOperatingUnitId: event.target.value,
-                    }))
-                  }
-                  placeholder="Primary OU id"
-                />
-              )}
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={filters.primaryOperatingUnitId}
+                onChange={(event) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    primaryOperatingUnitId: event.target.value,
+                  }))
+                }
+                disabled={!filters.legalEntityId}
+              >
+                <option value="">Any</option>
+                {filterOperatingUnits.map((row) => (
+                  <option key={`filter-primary-ou-${row.id}`} value={String(row.id)}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </select>
               {filterOperatingUnitsError ? (
                 <p className="mt-1 text-xs text-amber-700">{filterOperatingUnitsError}</p>
               ) : null}
@@ -3286,40 +3366,24 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
                 Allowed OU
               </label>
-              {canReadOrgTree ? (
-                <select
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  value={filters.allowedOperatingUnitId}
-                  onChange={(event) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      allowedOperatingUnitId: event.target.value,
-                    }))
-                  }
-                  disabled={!filters.legalEntityId}
-                >
-                  <option value="">Any membership</option>
-                  {filterOperatingUnits.map((row) => (
-                    <option key={`filter-allowed-ou-${row.id}`} value={String(row.id)}>
-                      {row.code} - {row.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  type="number"
-                  min="1"
-                  value={filters.allowedOperatingUnitId}
-                  onChange={(event) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      allowedOperatingUnitId: event.target.value,
-                    }))
-                  }
-                  placeholder="Allowed OU id"
-                />
-              )}
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={filters.allowedOperatingUnitId}
+                onChange={(event) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    allowedOperatingUnitId: event.target.value,
+                  }))
+                }
+                disabled={!filters.legalEntityId}
+              >
+                <option value="">Any membership</option>
+                {filterOperatingUnits.map((row) => (
+                  <option key={`filter-allowed-ou-${row.id}`} value={String(row.id)}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </select>
               {filterOperatingUnitsLoading ? (
                 <p className="mt-1 text-xs text-slate-500">Loading operating units...</p>
               ) : null}
@@ -3710,7 +3774,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                           <div className="text-[11px] text-slate-500">
                             {row.approvalRequest?.currentStepNo != null
                               ? `Current step ${row.approvalRequest.currentStepNo}`
-                              : "Legacy review flow"}
+                              : "Approval tracking unavailable"}
                           </div>
                           {isEscalated ? (
                             <div className="text-[11px] font-semibold text-amber-800">
@@ -3759,17 +3823,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         {activeRequestRow ? (
           <ApprovalRequestDrawer
             open={Boolean(activeRequestRow)}
-            onClose={() => {
-              setActiveRequestId(null);
-              setRequestActionDialog(null);
-              setDelegationPreview(null);
-              setDelegationPreviewLoading(false);
-              if (searchParams.get("approvalRequestId")) {
-                const nextSearchParams = new URLSearchParams(searchParams);
-                nextSearchParams.delete("approvalRequestId");
-                setSearchParams(nextSearchParams, { replace: true });
-              }
-            }}
+            onClose={closeRequestDrawer}
             title="Counterparty Request Review"
             subtitle={`${activeRequestRow.code || "-"} - ${activeRequestRow.name || "-"}`}
             requestCode={activeRequestRow.approvalRequest?.requestCode || `Request #${activeRequestRow.id}`}

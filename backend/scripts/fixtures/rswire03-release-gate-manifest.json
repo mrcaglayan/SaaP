@@ -76,6 +76,11 @@
       "packageScriptName": "test:ux:delegation-ux"
     },
     {
+      "routePath": "/app/ayarlar/rbac/temporary-coverage",
+      "smokeScriptPath": "backend/scripts/test-security-pr7d-temporary-operational-coverage.js",
+      "packageScriptName": "test:ux:temporary-operational-coverage"
+    },
+    {
       "routePath": "/app/ayarlar/rbac/access-debugger",
       "smokeScriptPath": "backend/scripts/test-security-pr5b-access-debugger.js",
       "packageScriptName": "test:ux:access-debugger-smoke"

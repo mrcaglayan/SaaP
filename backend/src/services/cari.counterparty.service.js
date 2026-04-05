@@ -1,4 +1,6 @@
 import { query, withTransaction } from "../db.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
+import { buildVisibilityScopeWhereClause } from "./authz.scope.service.js";
 import {
   assertAccountBelongsToTenant,
   assertCountryExists,
@@ -239,6 +241,47 @@ function mapAddressRow(row) {
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
+}
+
+function buildCounterpartyVisibilityFilter(req, params) {
+  const scopeContext = getVisibilityScope(req);
+  if (!scopeContext) {
+    return "1 = 0";
+  }
+  if (scopeContext.tenantWide) {
+    return "1 = 1";
+  }
+
+  const clauses = [];
+  const directScopeClause = buildVisibilityScopeWhereClause(scopeContext, params, {
+    LEGAL_ENTITY: { idColumn: "c.legal_entity_id" },
+  });
+  if (directScopeClause !== "1 = 0") {
+    clauses.push(directScopeClause);
+  }
+
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
+  if (operatingUnitIds.length > 0) {
+    params.push(...operatingUnitIds, ...operatingUnitIds);
+    clauses.push(
+      `(
+        c.primary_operating_unit_id IN (${operatingUnitIds.map(() => "?").join(", ")})
+        OR EXISTS (
+          SELECT 1
+          FROM counterparty_operating_units cou
+          WHERE cou.tenant_id = c.tenant_id
+            AND cou.legal_entity_id = c.legal_entity_id
+            AND cou.counterparty_id = c.id
+            AND cou.operating_unit_id IN (${operatingUnitIds.map(() => "?").join(", ")})
+        )
+      )`
+    );
+  }
+
+  if (clauses.length === 0) {
+    return "1 = 0";
+  }
+  return `(${clauses.join(" OR ")})`;
 }
 
 async function getCounterpartyBaseRow({
@@ -1160,19 +1203,23 @@ function resolveCounterpartyListSortExpression(sortBy) {
   return "c.id";
 }
 
+/**
+ * List counterparties visible to the current actor, including branch-scoped
+ * users who only inherit visibility through operating-unit assignments.
+ */
 export async function listCounterpartyRows({
   req,
   tenantId,
   filters,
-  buildScopeFilter,
   assertScopeAccess,
 }) {
   const params = [tenantId];
   const conditions = ["c.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "c.legal_entity_id", params));
+  conditions.push(buildCounterpartyVisibilityFilter(req, params));
 
   if (filters.legalEntityId) {
-    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+    // Keep legal-entity list filters usable for OU-scoped operators. Row-level
+    // visibility still prevents cross-scope reads.
     conditions.push("c.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }

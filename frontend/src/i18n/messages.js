@@ -23,15 +23,46 @@ export const messages = {
       openSidebar: "Kenar cubugunu ac",
       userFallback: "Kullanici",
       madeWithLoveBy: "sevgiyle yapildi",
-      readinessChecking: "Hazirlik: kontrol",
-      readinessError: "Hazirlik: hata",
-      readinessReady: "Hazirlik: hazir",
-      readinessSetupRequired: "Hazirlik: kurulum gerekli",
-      readinessChecklist: "Hazirlik kontrol listesi",
-      readinessAllSet: "Gerekli kurulum adimlari tamamlandi.",
+      readinessChecking: "Temel kurulum: kontrol",
+      readinessError: "Temel kurulum: hata",
+      readinessReady: "Tenant bootstrap tamamlandi",
+      readinessSetupRequired: "Tenant bootstrap gerekli",
+      readinessChecklist: "Temel kurulum kontrol listesi",
+      readinessStages: "Hazirlik asamalari",
+      readinessAllSet: "Gerekli temel kurulum adimlari tamamlandi.",
       readinessMissingItems: "Eksik kalemler",
       readinessRefresh: "Yenile",
       readinessOpenSetup: "Kurulumu ac",
+      bootstrapCompleted: "Tenant bootstrap tamamlandi",
+      bootstrapCompletedActivationChecking:
+        "Tenant bootstrap tamamlandi • Aktivasyon ozeti kontrol ediliyor",
+      bootstrapCompletedActivationError:
+        "Tenant bootstrap tamamlandi • Aktivasyon ozeti hatali",
+      bootstrapCompletedActivationPendingSingular:
+        "Tenant bootstrap tamamlandi • 1 tuzel kisilik aktivasyon bekliyor",
+      bootstrapCompletedActivationPendingPlural:
+        "Tenant bootstrap tamamlandi • {{count}} tuzel kisilik aktivasyon bekliyor",
+      bootstrapCompletedActivationReady:
+        "Tenant bootstrap tamamlandi • Tum gorunur tuzel kisilikler hazir",
+      activationSectionTitle: "Tuzel kisilik aktivasyonu",
+      activationChecking: "Aktivasyon ozeti kontrol ediliyor.",
+      activationError: "Aktivasyon ozeti yuklenemedi.",
+      activationNoVisibleEntities: "Mevcut kapsamda gorunur tuzel kisilik yok.",
+      activationPendingSingular: "1 tuzel kisilik aktivasyon bekliyor",
+      activationPendingPlural: "{{count}} tuzel kisilik aktivasyon bekliyor",
+      activationPendingDescriptionSingular:
+        "1 gorunur tuzel kisilikte bloklayici aktivasyon gorevleri kaldi.",
+      activationPendingDescriptionPlural:
+        "{{count}} gorunur tuzel kisilikte bloklayici aktivasyon gorevleri kaldi.",
+      activationAllSet: "Tum gorunur tuzel kisilikler hazir.",
+      activationAllSetDescription:
+        "{{count}} gorunur tuzel kisilikte aktivasyon blokaji kalmadi.",
+      activationOpenWorkspace: "Aktivasyon alanini ac",
+      activationRowReady: "Hazir",
+      activationRowPending: "Bekliyor",
+      activationMoreRows: "+{{count}} daha",
+      currentEntityActivationReady: "Mevcut entity hazir",
+      currentEntityActivationPending: "Mevcut entity aktivasyon bekliyor",
     },
     login: {
       title: "Giris",
@@ -134,7 +165,8 @@ export const messages = {
     },
     providerBootstrap: {
       title: "Provider Tenant Yonetim Paneli",
-      subtitle: "Kontrol duzleminden tenant aboneliklerini olusturun ve yonetin.",
+      subtitle:
+        "Kontrol duzleminden tenant aboneliklerini olusturun ve yonetin.",
       signedInAs: "Giris yapan",
       providerAdminFallback: "Provider Yonetici",
       logout: "Cikis",
@@ -157,7 +189,8 @@ export const messages = {
       messages: {
         created: "Tenant ve ilk yonetici basariyla olusturuldu.",
         statusUpdated: "Tenant #{{id}} durumu {{status}} olarak guncellendi.",
-        taxEngineUpdated: "Tenant #{{id}} vergi motoru {{status}} olarak guncellendi.",
+        taxEngineUpdated:
+          "Tenant #{{id}} vergi motoru {{status}} olarak guncellendi.",
         currencyCreated: "Para birimi kaydi olusturuldu.",
         currencyUpdated: "Para birimi {{code}} guncellendi.",
         countryCreated: "Ulke kaydi olusturuldu.",
@@ -219,8 +252,7 @@ export const messages = {
       },
       currencies: {
         title: "Para Birimi Master Yonetimi",
-        subtitle:
-          "Ulke varsayilan para birimleri bu listeden secilir.",
+        subtitle: "Ulke varsayilan para birimleri bu listeden secilir.",
         loading: "Yukleniyor...",
         refresh: "Yenile",
         searchPlaceholder: "Kod veya ada gore ara",
@@ -383,9 +415,11 @@ export const messages = {
         "/app/satis-faturalari": "Satis Faturalari",
         "/app/cari-raporlari": "Cari Raporlari",
         "/app/cari-raporlari?direction=AP": "Tedarikci Raporlari",
-        "/app/cari-raporlari?direction=AP&report=balances": "Tedarikci Bakiyeleri",
+        "/app/cari-raporlari?direction=AP&report=balances":
+          "Tedarikci Bakiyeleri",
         "/app/cari-raporlari?direction=AR": "Musteri Raporlari",
-        "/app/cari-raporlari?direction=AR&report=balances": "Musteri Bakiyeleri",
+        "/app/cari-raporlari?direction=AR&report=balances":
+          "Musteri Bakiyeleri",
         "/app/tedarikci-raporlari": "Tedarikci Raporlari",
         "/app/musteri-raporlari": "Musteri Raporlari",
         "/app/cari-settlements": "Cari Mahsuplastirma / Tahsilat-Odeme",
@@ -417,16 +451,25 @@ export const messages = {
         "/app/demirbas-amortisman-islemleri": "Amortisman Islemleri",
         "/app/donem-sonu-islemler": "Donem Sonu Islemler",
         "/app/donem-sonu-islemler/aylik": "Aysonu İşlemler",
-        "/app/donem-sonu-islemler/aylik/degerleme-islemleri": "Değerleme İşlemleri",
-        "/app/donem-sonu-islemler/aylik/amortisman-islemleri": "Amortisman Islemleri",
-        "/app/donem-sonu-islemler/aylik/beyanname-islemleri": "Beyanname Islemleri",
-        "/app/donem-sonu-islemler/aylik/intercompany-mutabakat": "Intercompany Mutabakat",
+        "/app/donem-sonu-islemler/aylik/degerleme-islemleri":
+          "Değerleme İşlemleri",
+        "/app/donem-sonu-islemler/aylik/amortisman-islemleri":
+          "Amortisman Islemleri",
+        "/app/donem-sonu-islemler/aylik/beyanname-islemleri":
+          "Beyanname Islemleri",
+        "/app/donem-sonu-islemler/aylik/intercompany-mutabakat":
+          "Intercompany Mutabakat",
         "/app/donem-sonu-islemler/yillik": "Yılsonu İşlemler",
-        "/app/donem-sonu-islemler/yillik/envanter-islemleri": "Envanter Islemleri",
-        "/app/donem-sonu-islemler/yillik/kapanis-islemleri": "Kapanis Islemleri",
-        "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri": "Yerel Kapanis Paketleri",
-        "/app/donem-sonu-islemler/yillik/yansitma-islemleri": "Yansitma Islemleri",
-        "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari": "Konsolidasyon Raporlari",
+        "/app/donem-sonu-islemler/yillik/envanter-islemleri":
+          "Envanter Islemleri",
+        "/app/donem-sonu-islemler/yillik/kapanis-islemleri":
+          "Kapanis Islemleri",
+        "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri":
+          "Yerel Kapanis Paketleri",
+        "/app/donem-sonu-islemler/yillik/yansitma-islemleri":
+          "Yansitma Islemleri",
+        "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari":
+          "Konsolidasyon Raporlari",
         "/app/raporlar": "Raporlar",
         "/app/defter-i-kebir": "Defter-i Kebir",
         "/app/muavin": "Muavin",
@@ -439,7 +482,7 @@ export const messages = {
         "/app/ayarlar": "Ayarlar",
         "/app/ayarlar/kullanici-yonetimi": "Kullanici Yonetimi",
         "/app/ayarlar/delegasyonlarim": "Delegasyonlarim",
-        "/app/ayarlar/sube-operatorleri": "Sube Operatorleri",
+        "/app/ayarlar/sube-operatorleri": "Yerel Kullanici Yonetimi",
         "/app/ayarlar/rbac/roles-permissions": "Roller ve Yetkiler",
         "/app/ayarlar/rbac/user-assignments": "Kullanici Rol Atamalari",
         "/app/ayarlar/rbac/scope-assignments": "Scope Atamalari",
@@ -447,6 +490,7 @@ export const messages = {
           "Alan Gorunurluk Politikalari",
         "/app/ayarlar/rbac/role-migrations": "Rol Gecisleri",
         "/app/ayarlar/rbac/delegations": "Onay Delegasyonlari",
+        "/app/ayarlar/rbac/temporary-coverage": "Gecici Operasyonel Kapsama",
         "/app/ayarlar/rbac/access-debugger": "Erisim Hata Ayiklayici",
         "/app/ayarlar/rbac/compliance-reports": "Uyum Raporlari",
         "/app/ayarlar/rbac/audit-logs": "RBAC Denetim Loglari",
@@ -534,7 +578,8 @@ export const messages = {
         expandGuidanceNote:
           "Birimlerin kayit oncesi farkli sahip/lokasyon veya seri metadata ihtiyaci varsa 'Tekil varlik satirlarina genislet' kullanin. Muhasebe veya kategori farkliysa ayri CARI satirlarina bolun.",
         capitalizeFromAp: "CARI Belgesinden Kapitalize Et",
-        capitalizeDescription: "Kayitli bir CARI AP belgesindeki uygun kalem satirindan yeni demirbas olusturun.",
+        capitalizeDescription:
+          "Kayitli bir CARI AP belgesindeki uygun kalem satirindan yeni demirbas olusturun.",
         fallbackTitle: "Legacy Fallback",
         fallbackDescription:
           "Bu bolum, FIXED_ASSET satir tipi olmadan zaten kaydedilmis AP belgeleri icin fallback olarak kalir. Yeni alimlarda tercih edilen akis CARI formundaki FIXED_ASSET satiridir.",
@@ -584,7 +629,8 @@ export const messages = {
         legacySaleFallbackDescription:
           "Eski cok adimli satis staging akisi kaldirilmaz; yalnizca onceki staged/legacy vakalar icin fallback olarak kalir. Yeni satislarda tercih edilen akis CARI AR FIXED_ASSET belgesidir.",
         createLegacySaleFallbackDraft: "Legacy Satis Taslagi Olustur",
-        creatingLegacySaleFallbackDraft: "Legacy satis taslagi olusturuluyor...",
+        creatingLegacySaleFallbackDraft:
+          "Legacy satis taslagi olusturuluyor...",
         openLegacySaleFallbackDraft: "Legacy taslagi ac",
         legacySaleFallbackCreateSuccess:
           "Legacy satis fallback taslagi olusturuldu. Kalan duzenleme ve posting adimlarini taslak belge uzerinden tamamlayin.",
@@ -695,9 +741,12 @@ export const messages = {
         saving: "Kaydediliyor...",
         activateAsset: "Aktiflestir",
         activating: "Aktiflestiriliyor...",
-        lowValueNotice: "Bu demirbas, kategori kapitalizasyon esiginin altinda. Aktiflestirme sirasinda tamamen giderlestirilebilir.",
-        legacyNotice: "Eski sistem alanlarini yalnizca mevcut varliklar icin doldurun, yeni alimlar icin bos birakin.",
-        accountOverrideNotice: "Hesap gecersiz kilma alanlari yalnizca fixed_assets.account_override yetkisi olanlara gosterilir.",
+        lowValueNotice:
+          "Bu demirbas, kategori kapitalizasyon esiginin altinda. Aktiflestirme sirasinda tamamen giderlestirilebilir.",
+        legacyNotice:
+          "Eski sistem alanlarini yalnizca mevcut varliklar icin doldurun, yeni alimlar icin bos birakin.",
+        accountOverrideNotice:
+          "Hesap gecersiz kilma alanlari yalnizca fixed_assets.account_override yetkisi olanlara gosterilir.",
         validationRequired: "Bu alan zorunludur",
         validationPositiveNumber: "Sifirdan buyuk veya esit bir sayi giriniz",
         createSuccess: "Demirbas taslagi olusturuldu.",
@@ -757,7 +806,8 @@ export const messages = {
         usageExportFailed: "Kullanim CSV disa aktarma basarisiz",
         auditExportReady: "Denetim CSV indirildi: {{fileName}}",
         auditExportFailed: "Denetim CSV disa aktarma basarisiz",
-        exportUnavailable: "Disa aktarma sadece tarayici oturumlarinda kullanilabilir.",
+        exportUnavailable:
+          "Disa aktarma sadece tarayici oturumlarinda kullanilabilir.",
       },
     },
     exceptionsWorkbench: {
@@ -823,7 +873,8 @@ export const messages = {
         refreshFailed: "Yenileme basarisiz",
         actionApplied: "Aksiyon uygulandi: {{action}}.",
         actionFailed: "Aksiyon basarisiz: {{action}}",
-        bulkActionApplied: "Toplu aksiyon uygulandi: {{action}} ({{count}} kayit).",
+        bulkActionApplied:
+          "Toplu aksiyon uygulandi: {{action}} ({{count}} kayit).",
         bulkActionPartial:
           "Toplu aksiyon {{action}} kismi basariyla tamamlandi ({{succeeded}}/{{total}} basarili, {{failed}} hata).",
         bulkActionFailed: "Toplu aksiyon basarisiz: {{action}}.",
@@ -835,7 +886,8 @@ export const messages = {
     },
     retentionAdmin: {
       title: "Veri Saklama ve Export Snapshotlari",
-      subtitle: "PR-H07: policy bazli retention runlari ve immutable kapanmis donem snapshot hashleri.",
+      subtitle:
+        "PR-H07: policy bazli retention runlari ve immutable kapanmis donem snapshot hashleri.",
       sections: {
         policies: "Retention Policies",
         runs: "Retention Runlari",
@@ -906,7 +958,8 @@ export const messages = {
         snapshotsLoadFailed: "Export snapshot listesi yuklenemedi",
         policyCreated: "Retention policy olusturuldu.",
         policyCreateFailed: "Retention policy olusturulamadi",
-        policyStatusUpdated: "Policy {{code}} durumu {{status}} olarak guncellendi.",
+        policyStatusUpdated:
+          "Policy {{code}} durumu {{status}} olarak guncellendi.",
         policyStatusUpdateFailed: "Policy durumu guncellenemedi",
         runQueued: "Retention run job olarak kuyruga alindi (#{{id}}).",
         runCompleted: "Retention run tamamlandi (#{{id}}).",
@@ -961,7 +1014,8 @@ export const messages = {
       subtitle:
         "Konsolide bilanco/gelir tablosunu goruntuler ve taslak eliminasyon/duzeltmeleri post eder.",
       missingPermissionRun: "Eksik yetki: consolidation.run.read",
-      missingPermissionBs: "Eksik yetki: consolidation.report.balance_sheet.read",
+      missingPermissionBs:
+        "Eksik yetki: consolidation.report.balance_sheet.read",
       missingPermissionIs:
         "Eksik yetki: consolidation.report.income_statement.read",
       missingPermissionAdj: "Eksik yetki: consolidation.adjustment.post",
@@ -999,9 +1053,9 @@ export const messages = {
         openSetup: "Workflow yonetimini ac",
         loading: "Workflow kapi durumu yukleniyor...",
         loadFailed: "Workflow kapi durumu yuklenemedi.",
-        summary: "Durum: {{status}} | Mevcut adim: {{step}} | Tanim: {{definitionCode}}",
-        none:
-          "Bu run icin henuz workflow instance yok. Kapi aktifse finalize sirasinda olusturulur/kontrol edilir.",
+        summary:
+          "Durum: {{status}} | Mevcut adim: {{step}} | Tanim: {{definitionCode}}",
+        none: "Bu run icin henuz workflow instance yok. Kapi aktifse finalize sirasinda olusturulur/kontrol edilir.",
         missingPermission:
           "Eksik yetki: org.tree.read (workflow kapi detayini gormek icin gerekli).",
       },
@@ -1015,7 +1069,8 @@ export const messages = {
         account: "Hesap",
         type: "Tip",
         normalized: "Normalize",
-        bsEmpty: "Bilanco satiri yok. Bir run secip Bilanco Yukle butonuna basin.",
+        bsEmpty:
+          "Bilanco satiri yok. Bir run secip Bilanco Yukle butonuna basin.",
         isEmpty:
           "Gelir tablosu satiri yok. Bir run secip Gelir Tablosu Yukle butonuna basin.",
         adjustmentsTitle: "Duzeltme Is Listesi",
@@ -1083,32 +1138,43 @@ export const messages = {
       },
     },
     branchOperators: {
-      title: "Sube Operator Yonetimi",
+      title: "Yerel Kullanici Yonetimi",
       subtitle:
-        "Yonettiginiz entity ve bagli subelerde BranchOperator kullanicilarini davet edin ve atayin.",
-      loadFailed: "Sube operator verileri yuklenemedi.",
-      saveFailed: "Sube operator atamasi kaydedilemedi.",
-      deleteFailed: "Sube operator atamasi silinemedi.",
-      deleteConfirm: "Bu sube operator atamasini silmek istiyor musunuz?",
-      missingPermission: "Eksik yetki: security.user_admin.entity",
-      noOperatingUnits: "Yonetecek erisilebilir sube bulunamadi.",
+        "Yonettiginiz entity ve isletim birimlerinde allow-list kapsamindaki yerel rolleri davet edin, atayin ve kaldirin.",
+      loadFailed: "Yerel kullanici yonetimi verileri yuklenemedi.",
+      saveFailed: "Yerel rol atamasi kaydedilemedi.",
+      deleteFailed: "Yerel rol atamasi silinemedi.",
+      deleteConfirm: "Bu yerel rol atamasini silmek istiyor musunuz?",
+      missingPermission: "Yerel kullanici yonetimi icin gereken yetki yok.",
+      noOperatingUnits:
+        "Yonetecek erisilebilir entity veya isletim birimi bulunamadi.",
+      noRoles:
+        "Bu tenant icin allow-list kapsaminda atanabilir yerel rol bulunamadi.",
       form: {
-        title: "Sube Operatoru Davet Et",
+        title: "Yerel Kullanici Davet Et",
         subtitle:
-          "Yeni kullaniciyi davet edin veya mevcut tenant kullanicisini secili subeye operator olarak atayin.",
+          "Yeni kullaniciyi davet edin veya mevcut tenant kullanicisina secili scope icin yerel rol atayin.",
         name: "Ad Soyad",
         email: "E-posta",
-        selectBranch: "Sube secin",
-        submit: "Sube Operatoru Ata",
+        selectRole: "Rol secin",
+        roleRequired: "Rol secimi zorunludur.",
+        selectScopeType: "Scope turu secin",
+        scopeTypeLegalEntity: "Entity scope",
+        scopeTypeOperatingUnit: "Isletim birimi scope",
+        selectLegalEntity: "Entity secin",
+        legalEntityRequired: "Entity secimi zorunludur.",
+        selectOperatingUnit: "Isletim birimi secin",
+        submit: "Yerel Rol Ata",
         submitting: "Kaydediliyor...",
-        operatingUnitRequired: "Sube secimi zorunludur.",
-        branchCount: "Yonetilebilir sube: {{count}}",
+        operatingUnitRequired: "Isletim birimi secimi zorunludur.",
+        roleCount: "Yonetilebilir rol: {{count}}",
+        entityCount: "Erisilebilir entity: {{count}}",
       },
       messages: {
-        inviteCreated: "Davet ve sube operator atamasi hazir.",
-        assignmentCreated: "Sube operator atamasi kaydedildi.",
-        assignmentExists: "Kullanici secili sube icin zaten operator.",
-        assignmentRemoved: "Sube operator atamasi silindi.",
+        inviteCreated: "Davet ve yerel rol atamasi hazir.",
+        assignmentCreated: "Yerel rol atamasi kaydedildi.",
+        assignmentExists: "Kullanici secili scope icin zaten atanmis.",
+        assignmentRemoved: "Yerel rol atamasi silindi.",
         inviteLinkReady: "Davet baglantisi hazir:",
         copyInviteLink: "Davet Baglantisini Kopyala",
         inviteCopied: "Davet baglantisi kopyalandi.",
@@ -1118,16 +1184,16 @@ export const messages = {
         delete: "Sil",
       },
       list: {
-        title: "Mevcut Sube Operatorleri",
-        loading: "Sube operatorleri yukleniyor...",
-        empty: "Sube operator atamasi bulunamadi.",
+        title: "Mevcut Yerel Rol Atamalari",
+        loading: "Yerel rol atamalari yukleniyor...",
+        empty: "Yerel rol atamasi bulunamadi.",
         user: "Kullanici",
-        entity: "Entity",
-        branch: "Sube",
+        role: "Rol",
+        scope: "Scope",
         status: "Durum",
         action: "Islem",
         userStatus: "Kullanici:",
-        branchStatus: "Sube:",
+        scopeStatus: "Scope:",
       },
     },
     scopeAssignments: {
@@ -1166,11 +1232,13 @@ export const messages = {
     },
     rolesPermissions: {
       title: "Rol ve Yetki Yonetimi",
-      subtitle: "Rolleri olusturun ve rol bazinda acik yetki atamalarini yonetin.",
+      subtitle:
+        "Rolleri olusturun ve rol bazinda acik yetki atamalarini yonetin.",
       errors: {
         loadFailed: "Roller ve yetkiler yuklenemedi",
         missingUpsertPermission: "Eksik yetki: security.role.upsert",
-        missingAssignPermission: "Eksik yetki: security.role_permissions.assign",
+        missingAssignPermission:
+          "Eksik yetki: security.role_permissions.assign",
         saveRoleFailed: "Rol kaydedilemedi",
         replacePermissionsFailed: "Rol yetkileri degistirilemedi",
       },
@@ -1319,7 +1387,8 @@ export const messages = {
         allowed: "Erisim acik",
         denied: "Erisim engelli",
         selfCheck: "Bu sonuc kullanicinin kendi erisim zinciridir.",
-        adminCheck: "Bu sonuc yonetici tarafindan calistirilan kullanici erisim zinciridir.",
+        adminCheck:
+          "Bu sonuc yonetici tarafindan calistirilan kullanici erisim zinciridir.",
         permission: "Yetki",
         scope: "Istenen kapsam",
         targetUser: "Hedef kullanici",
@@ -1348,8 +1417,7 @@ export const messages = {
           "Kullanici veri scope gorunurlugunu gozden gecirin. Aksiyon kapsaminda yetki var, ancak satir gorunurlugu daha dar.",
         fieldVisibility:
           "Alan tam gorunur olmaliysa {{permission}} kapsamli override yetkisini degerlendirin.",
-        sod:
-          "Ayni kayitta ayristirma kuralini karsilamak icin farkli bir onaylayan veya operator kullanin.",
+        sod: "Ayni kayitta ayristirma kuralini karsilamak icin farkli bir onaylayan veya operator kullanin.",
         workflow:
           "Workflow onay adimini tamamlayin veya dogru onaylayani belirleyin.",
         businessState:
@@ -1471,7 +1539,8 @@ export const messages = {
         noOperatingUnits:
           "Secili legal entity icin operating unit kaydi bulunamadi. Once Organizasyon Yonetimi ekranindan sube/OU kaydi acin.",
         parentAccountLabel: "Parent kasa hesabi",
-        parentAccountPlaceholder: "Alt hesaplarin acilacagi parent hesabi secin",
+        parentAccountPlaceholder:
+          "Alt hesaplarin acilacagi parent hesabi secin",
         parentAccountHelp:
           "Quick setup, her para birimi icin bu parent altinda postable child hesap acar ve register'i o hesaba baglar.",
         currencyLabel: "Para birimleri",
@@ -1480,7 +1549,8 @@ export const messages = {
         blockerParentAccount: "parent hesap secin",
         blockerCurrency: "en az bir para birimi secin",
         blockedBy: "Buton pasif: {{reasons}}",
-        readyHint: "Hazir. Secilen para birimleri icin child hesaplar ve register kayitlari olusturulacak.",
+        readyHint:
+          "Hazir. Secilen para birimleri icin child hesaplar ve register kayitlari olusturulacak.",
       },
       table: {
         code: "Kod",
@@ -1551,7 +1621,8 @@ export const messages = {
       messages: {
         created: "Kasa kaydi olusturuldu.",
         updated: "Kasa kaydi guncellendi.",
-        statusUpdated: "Kasa kaydi {{code}} durumu {{status}} olarak guncellendi.",
+        statusUpdated:
+          "Kasa kaydi {{code}} durumu {{status}} olarak guncellendi.",
         accountExistsSelected: "{{code}} zaten mevcut. Mevcut hesap secildi.",
         childAccountCreatedAndSelected:
           "{{code}} alt hesabi olusturuldu (parent: {{parentCode}}) ve secildi.",
@@ -1574,8 +1645,7 @@ export const messages = {
         "Oturum kapatma islemi icin cash.session.close yetkisi gerekir.",
       approvalNotice:
         "Esik uzeri farki onaylamak icin cash.variance.approve yetkisi gerekir.",
-      forcedCloseNotice:
-        "FORCED_CLOSE secildiginde closeNote zorunludur.",
+      forcedCloseNotice: "FORCED_CLOSE secildiginde closeNote zorunludur.",
       sections: {
         open: "Oturum Ac",
         close: "Oturum Kapat",
@@ -1622,7 +1692,8 @@ export const messages = {
       },
       lifecycle: {
         snapshotTitle: "Yasam Dongusu Ozeti",
-        selectedSummary: "Secili oturum #{{id}} | Register: {{registerCode}} | Durum: {{status}}",
+        selectedSummary:
+          "Secili oturum #{{id}} | Register: {{registerCode}} | Durum: {{status}}",
         nextTransitions: "Siradaki izinli gecisler: {{actions}}",
         noTransitions: "Bu durumdan tanimli baska yasam dongusu gecisi yok.",
         noSelection: "Yasam dongusu detaylarini gormek icin bir oturum secin.",
@@ -1663,14 +1734,14 @@ export const messages = {
       errorsMapped: {
         registerNotFound: "Secilen register bulunamadi.",
         sessionAlreadyOpen: "Bu register icin zaten OPEN oturum bulunuyor.",
-        sessionModeNone: "Bu register icin session_mode=NONE oldugu icin oturum acilamaz.",
+        sessionModeNone:
+          "Bu register icin session_mode=NONE oldugu icin oturum acilamaz.",
         registerInactive: "Secilen register ACTIVE degil.",
         sessionNotFound: "Secilen oturum bulunamadi.",
         onlyOpenClose: "Yalnizca OPEN oturumlar kapatilabilir.",
         unpostedTransactionsExist:
           "DRAFT/SUBMITTED/APPROVED islemler varken oturum kapatilamaz.",
-        closeNoteThreshold:
-          "Fark esigi asildiginda closeNote zorunludur.",
+        closeNoteThreshold: "Fark esigi asildiginda closeNote zorunludur.",
         varianceApprovalRequired:
           "Fark esigi asildi; supervisor/finance onayi gereklidir.",
         varianceGainMissing:
@@ -1732,7 +1803,8 @@ export const messages = {
         cashSessionIdRequiredManualFallback:
           "Secili register icin OPEN cashSessionId girin (zorunlu)",
         cashSessionIdSelectRegisterFirst: "Once register secin",
-        cashSessionIdNotUsed: "Secili register session_mode=NONE; cashSessionId gerekmez",
+        cashSessionIdNotUsed:
+          "Secili register session_mode=NONE; cashSessionId gerekmez",
         cashSessionIdManualFallback:
           "Oturum listesi yoksa cashSessionId girin (opsiyonel)",
         amount: "Tutar",
@@ -1923,8 +1995,7 @@ export const messages = {
           "Bu sayfayi kullanmak icin cash.txn.read yetkisi gerekir.",
         missingCreatePermission:
           "Bu islem icin cash.txn.create yetkisi gerekir.",
-        missingPostPermission:
-          "Bu islem icin cash.txn.post yetkisi gerekir.",
+        missingPostPermission: "Bu islem icin cash.txn.post yetkisi gerekir.",
         missingCancelPermission:
           "Bu islem icin cash.txn.cancel yetkisi gerekir.",
         missingReversePermission:
@@ -1940,8 +2011,7 @@ export const messages = {
           "Acik belge secici icin cari.report.read yetkisi gerekir.",
         openDocumentsLoadNotAllowedForRow:
           "Secilen islem icin Cari acik belgeleri yuklenemiyor.",
-        openDocumentsLoadFailed:
-          "Cari apply icin acik belgeler yuklenemedi.",
+        openDocumentsLoadFailed: "Cari apply icin acik belgeler yuklenemedi.",
         registerRequired: "registerId zorunludur.",
         txnDatetimeRequired: "txnDatetime zorunludur.",
         bookDateRequired: "bookDate zorunludur.",
@@ -1949,7 +2019,8 @@ export const messages = {
         amountInvalid: "amount gecersiz.",
         currencyRequired: "currencyCode zorunludur.",
         invalidTxnType: "Gecersiz islem tipi.",
-        counterAccountRequired: "Bu islem tipi icin counterAccountId zorunludur.",
+        counterAccountRequired:
+          "Bu islem tipi icin counterAccountId zorunludur.",
         counterRegisterRequired:
           "Bu islem tipi icin counterCashRegisterId zorunludur.",
         counterRegisterSame:
@@ -1979,7 +2050,8 @@ export const messages = {
           "Secili register icin OPEN oturum yok; islem olusturulamadi.",
         postStatusInvalid:
           "Yalnizca DRAFT/SUBMITTED/APPROVED islemler post edilebilir.",
-        cancelStatusInvalid: "Yalnizca DRAFT/SUBMITTED islemler iptal edilebilir.",
+        cancelStatusInvalid:
+          "Yalnizca DRAFT/SUBMITTED islemler iptal edilebilir.",
         reverseStatusInvalid: "Yalnizca POSTED islemler ters kayit edilebilir.",
         reverseReversalNotAllowed:
           "Ters kayit satirlari tekrar ters kayit edilemez.",
@@ -1991,11 +2063,11 @@ export const messages = {
       errorsMapped: {
         registerNotFound: "Secilen register bulunamadi.",
         sessionNotFound: "Secilen oturum bulunamadi.",
-        sessionRegisterMismatch:
-          "Secilen oturum register ile eslesmiyor.",
+        sessionRegisterMismatch: "Secilen oturum register ile eslesmiyor.",
         sessionNotOpen: "Secilen oturum OPEN degil.",
         counterRegisterNotFound: "Karsi register bulunamadi.",
-        counterAccountInvalid: "Karsi hesap gecersiz veya tenant kapsaminda degil.",
+        counterAccountInvalid:
+          "Karsi hesap gecersiz veya tenant kapsaminda degil.",
         counterAccountInvalidBank:
           "Banka islemleri icin karsi hesap, secili legal entity icindeki aktif bir banka GL hesabi olmalidir.",
         postRequiresOpenSession: "Post islemi icin OPEN oturum gereklidir.",
@@ -2016,22 +2088,19 @@ export const messages = {
           "Transit transfer teslim almadan once IN_TRANSIT durumunda olmalidir.",
         transitTransferOutMustBePostedBeforeReceive:
           "Teslim almadan once transfer-out islemi POSTED olmalidir.",
-        transitAlreadyReceived:
-          "Transit transfer zaten teslim alinmis.",
+        transitAlreadyReceived: "Transit transfer zaten teslim alinmis.",
         transitReverseTransferInFirst:
           "Transfer-out ters kaydi oncesi once transfer-in ters kaydini alin.",
         ouSelfBalancingSetupInvalid:
           "Gerekli merkez-OU veya sube-cifti cari hesap kurulumlari hazir olmadigi icin farkli baglam transfer post islemi engellendi. Kaydedilen cari hesap konfigurasyonunu Transfer Out sirasinda Kasa Islemleri ekranindan ya da Organizasyon Yonetimi icinden calistirin.",
-        applyRequiresPostedTxn:
-          "Cari apply icin kasa islemi POSTED olmalidir.",
+        applyRequiresPostedTxn: "Cari apply icin kasa islemi POSTED olmalidir.",
         applyCounterpartyInvalid:
           "Cari apply icin kasa islemi muhatap bilgisi gecersiz.",
         applyTotalExceedsAvailable:
           "Uygulanan toplam kullanilabilir tutari asiyor.",
         applyOpenItemResidualExceeded:
           "Secilen uygulama tutari acik belge bakiyesini asiyor.",
-        applyNoOpenDocs:
-          "Secilen muhatap icin acik Cari belgesi bulunamadi.",
+        applyNoOpenDocs: "Secilen muhatap icin acik Cari belgesi bulunamadi.",
         applyAlreadyLinked:
           "Bu kasa islemi zaten baska bir Cari settlement ile bagli.",
       },
@@ -2046,7 +2115,8 @@ export const messages = {
           "Transit baslatildi. transferId={{transferId}}, transferOutTxnId={{transferOutTxnId}}",
         transitReceiveReplay:
           "Transit teslim alma tekrarlandi (replay). transferInTxnId={{transferInTxnId}}",
-        transitReceived: "Transit teslim alindi. transferInTxnId={{transferInTxnId}}",
+        transitReceived:
+          "Transit teslim alindi. transferInTxnId={{transferInTxnId}}",
         applyReplayReturned:
           "Apply istegi replay edildi; mevcut Cari baglantisi geri donduruldu.",
         applyCompletedSettlement:
@@ -2126,7 +2196,8 @@ export const messages = {
       errors: {
         missingCreatePermission: "Eksik yetki: cash.txn.create",
         registersRequired: "sourceRegisterId ve targetRegisterId zorunludur.",
-        registersMustDiffer: "sourceRegisterId ve targetRegisterId farkli olmali.",
+        registersMustDiffer:
+          "sourceRegisterId ve targetRegisterId farkli olmali.",
         amountsRequired:
           "sourceAmountTxn ve targetAmountTxn pozitif sayi olmalidir.",
         idempotencyRequired: "idempotencyKey zorunludur.",
@@ -2135,8 +2206,7 @@ export const messages = {
           "Komisyon tutari (islem) pozitif sayi olmali.",
         commissionAmountBaseInvalid:
           "Komisyon tutari (baz) pozitif sayi olmali.",
-        spreadReferenceRateInvalid:
-          "Spread referans kuru pozitif sayi olmali.",
+        spreadReferenceRateInvalid: "Spread referans kuru pozitif sayi olmali.",
         spreadAmountBaseInvalid: "Spread tutari (baz) pozitif sayi olmali.",
         spreadRateDeltaInvalid: "Spread kur farki sayisal olmali.",
         commissionAccountRequired:
@@ -2230,8 +2300,7 @@ export const messages = {
           "Bu sayfayi kullanmak icin cash.report.read yetkisi gerekir.",
         invalidVarianceThreshold:
           "Minimum mutlak fark degeri sifir veya pozitif bir sayi olmalidir.",
-        invalidDateRange:
-          "Baslangic tarihi bitis tarihinden buyuk olamaz.",
+        invalidDateRange: "Baslangic tarihi bitis tarihinden buyuk olamaz.",
         load: "Kasa istisna verileri yuklenemedi.",
       },
       warnings: {
@@ -2296,15 +2365,15 @@ export const messages = {
       },
     },
     readinessChecklist: {
-      title: "Kiraci Hazirlik Kontrol Listesi",
-      loading: "Hazirlik bilgisi yukleniyor...",
+      title: "Kiraci Temel Kurulum Kontrol Listesi",
+      loading: "Temel kurulum bilgisi yukleniyor...",
       retry: "Tekrar Dene",
       refresh: "Yenile",
       showDetails: "Detaylari Goster",
       hideDetails: "Detaylari Gizle",
       summary: "{{ready}} / {{total}} tamam",
       description:
-        "Operasyonel modulleri kullanmadan once sirket, organizasyon ve GL kurulumunu tamamlayin.",
+        "Legal entity aktivasyonuna gecmeden once kiraci iskeleti, organizasyon ve GL temel kurulumunu tamamlayin.",
       minimum: "{{count}} / minimum {{minimum}}",
       missing: "Eksikler:",
       setupStepsTitle: "Eksik adimlar icin yonlendirme",
@@ -2317,17 +2386,10 @@ export const messages = {
         openBookPeriods: "Acik defter donemleri",
         chartsOfAccounts: "Hesap planlari",
         accounts: "Hesaplar",
-        shareholders: "Ortaklar",
-        shareholderCommitmentConfigs:
-          "Ortaklik parent hesap eslesmeleri (sermaye/taahhut)",
         subaccountsV1: "Subaccounts V1 (uyari placeholder)",
         setupWizardV2: "Setup Wizard V2 (uyari placeholder)",
         consolidationCanonicalMappingV1:
           "Konsolidasyon kanonik esleme (uyari placeholder)",
-        operatingUnitCurrentAccounts:
-          "Operasyon birimi cari hesap hazirligi",
-        workflowCloseConsolidationV1:
-          "Kapanis/konsolidasyon workflow hazirligi",
         taxEngineV1: "Ulke vergi motoru kurulumu (opsiyonel)",
       },
       badges: {
@@ -2340,7 +2402,6 @@ export const messages = {
         company: "Sirket Kurulumu",
         org: "Organizasyon Kurulumu",
         gl: "GL Kurulumu",
-        workflow: "Workflow Yonetimi",
       },
       bootstrap: {
         title: "Tek tikla temel kurulum",
@@ -2351,8 +2412,8 @@ export const messages = {
       },
     },
     readinessGuard: {
-      checking: "Kiraci hazirligi kontrol ediliyor...",
-      failedTitle: "Kiraci hazirlik kontrolu basarisiz",
+      checking: "Kiraci temel kurulum durumu kontrol ediliyor...",
+      failedTitle: "Kiraci temel kurulum kontrolu basarisiz",
       retry: "Tekrar Dene",
     },
     chartOfAccountsCreate: {
@@ -2378,15 +2439,46 @@ export const messages = {
       openSidebar: "Open sidebar",
       userFallback: "User",
       madeWithLoveBy: "made with love by",
-      readinessChecking: "Readiness: Checking",
-      readinessError: "Readiness: Error",
-      readinessReady: "Readiness: Ready",
-      readinessSetupRequired: "Readiness: Setup Required",
-      readinessChecklist: "Readiness checklist",
-      readinessAllSet: "All required setup items are complete.",
+      readinessChecking: "Bootstrap: Checking",
+      readinessError: "Bootstrap: Error",
+      readinessReady: "Tenant bootstrap complete",
+      readinessSetupRequired: "Tenant bootstrap required",
+      readinessChecklist: "Bootstrap checklist",
+      readinessStages: "Readiness stages",
+      readinessAllSet: "All required bootstrap steps are complete.",
       readinessMissingItems: "Missing items",
       readinessRefresh: "Refresh",
       readinessOpenSetup: "Open setup",
+      bootstrapCompleted: "Tenant bootstrap complete",
+      bootstrapCompletedActivationChecking:
+        "Tenant bootstrap complete • Checking activation summary",
+      bootstrapCompletedActivationError:
+        "Tenant bootstrap complete • Activation summary unavailable",
+      bootstrapCompletedActivationPendingSingular:
+        "Tenant bootstrap complete • 1 legal entity needs activation",
+      bootstrapCompletedActivationPendingPlural:
+        "Tenant bootstrap complete • {{count}} legal entities need activation",
+      bootstrapCompletedActivationReady:
+        "Tenant bootstrap complete • All visible legal entities are ready",
+      activationSectionTitle: "Legal-entity activation",
+      activationChecking: "Checking activation summary.",
+      activationError: "Activation summary could not be loaded.",
+      activationNoVisibleEntities: "No legal entities are visible in the current scope.",
+      activationPendingSingular: "1 legal entity needs activation",
+      activationPendingPlural: "{{count}} legal entities need activation",
+      activationPendingDescriptionSingular:
+        "1 visible legal entity still has blocking activation tasks.",
+      activationPendingDescriptionPlural:
+        "{{count}} visible legal entities still have blocking activation tasks.",
+      activationAllSet: "All visible legal entities are ready.",
+      activationAllSetDescription:
+        "No activation blockers remain across {{count}} visible legal entities.",
+      activationOpenWorkspace: "Open activation workspace",
+      activationRowReady: "Ready",
+      activationRowPending: "Pending",
+      activationMoreRows: "+{{count}} more",
+      currentEntityActivationReady: "Current entity ready",
+      currentEntityActivationPending: "Current entity needs activation",
     },
     login: {
       title: "Login",
@@ -2489,7 +2581,8 @@ export const messages = {
     },
     providerBootstrap: {
       title: "Provider Tenant Admin Panel",
-      subtitle: "Create and manage tenant subscriptions from the control plane.",
+      subtitle:
+        "Create and manage tenant subscriptions from the control plane.",
       signedInAs: "Signed in as",
       providerAdminFallback: "Provider Admin",
       logout: "Log out",
@@ -2574,8 +2667,7 @@ export const messages = {
       },
       currencies: {
         title: "Currency Master Management",
-        subtitle:
-          "Country default currencies are selected from this list.",
+        subtitle: "Country default currencies are selected from this list.",
         loading: "Loading...",
         refresh: "Refresh",
         searchPlaceholder: "Search by code or name",
@@ -2772,16 +2864,25 @@ export const messages = {
         "/app/demirbas-amortisman-islemleri": "Depreciation Runs",
         "/app/donem-sonu-islemler": "Period End Operations",
         "/app/donem-sonu-islemler/aylik": "Month-End Operations",
-        "/app/donem-sonu-islemler/aylik/degerleme-islemleri": "Revaluation Transactions",
-        "/app/donem-sonu-islemler/aylik/amortisman-islemleri": "Depreciation Transactions",
-        "/app/donem-sonu-islemler/aylik/beyanname-islemleri": "Declaration Transactions",
-        "/app/donem-sonu-islemler/aylik/intercompany-mutabakat": "Intercompany Reconciliation",
+        "/app/donem-sonu-islemler/aylik/degerleme-islemleri":
+          "Revaluation Transactions",
+        "/app/donem-sonu-islemler/aylik/amortisman-islemleri":
+          "Depreciation Transactions",
+        "/app/donem-sonu-islemler/aylik/beyanname-islemleri":
+          "Declaration Transactions",
+        "/app/donem-sonu-islemler/aylik/intercompany-mutabakat":
+          "Intercompany Reconciliation",
         "/app/donem-sonu-islemler/yillik": "Year-End Operations",
-        "/app/donem-sonu-islemler/yillik/envanter-islemleri": "Inventory Transactions",
-        "/app/donem-sonu-islemler/yillik/kapanis-islemleri": "Closing Transactions",
-        "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri": "Local Close Packs",
-        "/app/donem-sonu-islemler/yillik/yansitma-islemleri": "Reflection Transactions",
-        "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari": "Consolidation Reports",
+        "/app/donem-sonu-islemler/yillik/envanter-islemleri":
+          "Inventory Transactions",
+        "/app/donem-sonu-islemler/yillik/kapanis-islemleri":
+          "Closing Transactions",
+        "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri":
+          "Local Close Packs",
+        "/app/donem-sonu-islemler/yillik/yansitma-islemleri":
+          "Reflection Transactions",
+        "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari":
+          "Consolidation Reports",
         "/app/raporlar": "Reports",
         "/app/defter-i-kebir": "General Ledger",
         "/app/muavin": "Subsidiary Ledger",
@@ -2794,7 +2895,7 @@ export const messages = {
         "/app/ayarlar": "Settings",
         "/app/ayarlar/kullanici-yonetimi": "User Management",
         "/app/ayarlar/delegasyonlarim": "My Delegations",
-        "/app/ayarlar/sube-operatorleri": "Branch Operators",
+        "/app/ayarlar/sube-operatorleri": "Local User Administration",
         "/app/ayarlar/rbac/roles-permissions": "Roles and Permissions",
         "/app/ayarlar/rbac/user-assignments": "User Role Assignments",
         "/app/ayarlar/rbac/scope-assignments": "Scope Assignments",
@@ -2802,12 +2903,13 @@ export const messages = {
           "Field Visibility Policies",
         "/app/ayarlar/rbac/role-migrations": "Role Migrations",
         "/app/ayarlar/rbac/delegations": "Approval Delegations",
+        "/app/ayarlar/rbac/temporary-coverage":
+          "Temporary Operational Coverage",
         "/app/ayarlar/rbac/access-debugger": "Access Debugger",
         "/app/ayarlar/rbac/compliance-reports": "Compliance Reports",
         "/app/ayarlar/rbac/audit-logs": "RBAC Audit Logs",
         "/app/ayarlar/rbac/raw-audit-logs": "Raw Audit Logs",
-        "/app/ayarlar/rbac/sensitive-data-audit":
-          "Sensitive Data Audit",
+        "/app/ayarlar/rbac/sensitive-data-audit": "Sensitive Data Audit",
         "/app/ayarlar/sirket-ayarlari": "Company Settings",
         "/app/ayarlar/organizasyon-yonetimi": "Organization Management",
         "/app/ayarlar/entity-aktivasyon-alani": "Entity Activation Workspace",
@@ -2875,13 +2977,15 @@ export const messages = {
         missingPost: "Missing permission: fixed_assets.post",
         missingDispose: "Missing permission: fixed_assets.dispose",
         missingTransfer: "Missing permission: fixed_assets.transfer",
-        missingDepreciationRun: "Missing permission: fixed_assets.depreciation.run",
+        missingDepreciationRun:
+          "Missing permission: fixed_assets.depreciation.run",
         missingReportRead: "Missing permission: fixed_assets.report.read",
         readOnlyNotice: "Read-only access — you do not have edit permissions.",
       },
       acquisitions: {
         title: "Fixed Asset Acquisitions",
-        description: "Filtered view of acquisition and capitalization transactions.",
+        description:
+          "Filtered view of acquisition and capitalization transactions.",
         noResults: "No acquisition or capitalization transactions found.",
         preferredFlowTitle: "Preferred Flow",
         preferredFlowNote:
@@ -2889,7 +2993,8 @@ export const messages = {
         expandGuidanceNote:
           "If units need different owner/location or serial metadata before posting, use 'Expand into individual asset lines'. If accounting or category differs, split them into separate CARI lines.",
         capitalizeFromAp: "Capitalize from AP Document",
-        capitalizeDescription: "Create a new fixed asset from an eligible line on a posted CARI AP document.",
+        capitalizeDescription:
+          "Create a new fixed asset from an eligible line on a posted CARI AP document.",
         fallbackTitle: "Legacy Fallback",
         fallbackDescription:
           "This section remains the fallback for AP bills that were already posted without a FIXED_ASSET line type. For new acquisitions, the preferred flow is the FIXED_ASSET line on the CARI form.",
@@ -2953,8 +3058,7 @@ export const messages = {
         legacySaleFallbackMissingAsset:
           "A valid asset is required to create a legacy sale fallback draft.",
         legacySaleFallbackCounterpartyRequired: "Counterparty ID is required.",
-        legacySaleFallbackDocumentDateRequired:
-          "Document date is required.",
+        legacySaleFallbackDocumentDateRequired: "Document date is required.",
         legacySaleFallbackAmountRequired:
           "Sale amount must be a positive number.",
         legacySaleFallbackCreateFailed:
@@ -3051,11 +3155,15 @@ export const messages = {
         saving: "Saving...",
         activateAsset: "Activate",
         activating: "Activating...",
-        lowValueNotice: "This asset is below the category capitalization threshold. It may be fully expensed on activation.",
-        legacyNotice: "Fill legacy fields only for existing assets being migrated, leave blank for new acquisitions.",
-        accountOverrideNotice: "Account override fields are only shown to users with fixed_assets.account_override permission.",
+        lowValueNotice:
+          "This asset is below the category capitalization threshold. It may be fully expensed on activation.",
+        legacyNotice:
+          "Fill legacy fields only for existing assets being migrated, leave blank for new acquisitions.",
+        accountOverrideNotice:
+          "Account override fields are only shown to users with fixed_assets.account_override permission.",
         validationRequired: "This field is required",
-        validationPositiveNumber: "Enter a number greater than or equal to zero",
+        validationPositiveNumber:
+          "Enter a number greater than or equal to zero",
         createSuccess: "Asset draft created.",
         activateSuccess: "Asset activation successful.",
         createFailed: "Failed to create asset.",
@@ -3179,7 +3287,8 @@ export const messages = {
         refreshFailed: "Refresh failed",
         actionApplied: "Action {{action}} applied.",
         actionFailed: "Action {{action}} failed",
-        bulkActionApplied: "Bulk action {{action}} applied to {{count}} exceptions.",
+        bulkActionApplied:
+          "Bulk action {{action}} applied to {{count}} exceptions.",
         bulkActionPartial:
           "Bulk action {{action}} finished with partial success ({{succeeded}}/{{total}} succeeded, {{failed}} failed).",
         bulkActionFailed: "Bulk action {{action}} failed.",
@@ -3191,7 +3300,8 @@ export const messages = {
     },
     retentionAdmin: {
       title: "Retention and Export Snapshots",
-      subtitle: "PR-H07: policy-driven retention runs and immutable closed-period snapshot hashes.",
+      subtitle:
+        "PR-H07: policy-driven retention runs and immutable closed-period snapshot hashes.",
       sections: {
         policies: "Retention Policies",
         runs: "Retention Runs",
@@ -3317,11 +3427,13 @@ export const messages = {
       subtitle:
         "View consolidated balance sheet/income statement and post draft eliminations or adjustments.",
       missingPermissionRun: "Missing permission: consolidation.run.read",
-      missingPermissionBs: "Missing permission: consolidation.report.balance_sheet.read",
+      missingPermissionBs:
+        "Missing permission: consolidation.report.balance_sheet.read",
       missingPermissionIs:
         "Missing permission: consolidation.report.income_statement.read",
       missingPermissionAdj: "Missing permission: consolidation.adjustment.post",
-      missingPermissionElim: "Missing permission: consolidation.elimination.post",
+      missingPermissionElim:
+        "Missing permission: consolidation.elimination.post",
       runRequired: "consolidation runId is required.",
       loadRunsFailed: "Failed to load consolidation runs.",
       loadBsFailed: "Failed to load balance sheet.",
@@ -3355,9 +3467,9 @@ export const messages = {
         openSetup: "Open workflow governance",
         loading: "Loading workflow gate status...",
         loadFailed: "Failed to load workflow gate status.",
-        summary: "Status: {{status}} | Current step: {{step}} | Definition: {{definitionCode}}",
-        none:
-          "No workflow instance exists for this run yet. Finalize will create/check it when gate is enabled.",
+        summary:
+          "Status: {{status}} | Current step: {{step}} | Definition: {{definitionCode}}",
+        none: "No workflow instance exists for this run yet. Finalize will create/check it when gate is enabled.",
         missingPermission:
           "Missing permission: org.tree.read (required to view workflow gate details).",
       },
@@ -3371,7 +3483,8 @@ export const messages = {
         account: "Account",
         type: "Type",
         normalized: "Normalized",
-        bsEmpty: "No balance-sheet rows loaded. Select a run and click Load Balance Sheet.",
+        bsEmpty:
+          "No balance-sheet rows loaded. Select a run and click Load Balance Sheet.",
         isEmpty:
           "No income-statement rows loaded. Select a run and click Load Income Statement.",
         adjustmentsTitle: "Adjustment Worklist",
@@ -3439,32 +3552,43 @@ export const messages = {
       },
     },
     branchOperators: {
-      title: "Branch Operator Management",
+      title: "Local User Administration",
       subtitle:
-        "Invite and assign BranchOperator users inside the legal entities and branches you manage.",
-      loadFailed: "Failed to load branch operator data.",
-      saveFailed: "Failed to save branch operator assignment.",
-      deleteFailed: "Failed to remove branch operator assignment.",
-      deleteConfirm: "Delete this branch operator assignment?",
-      missingPermission: "Missing permission: security.user_admin.entity",
-      noOperatingUnits: "No manageable branches were found.",
+        "Invite, assign, and revoke allow-listed local roles inside the legal entities and operating units you manage.",
+      loadFailed: "Failed to load local user administration data.",
+      saveFailed: "Failed to save local role assignment.",
+      deleteFailed: "Failed to remove local role assignment.",
+      deleteConfirm: "Delete this local role assignment?",
+      missingPermission: "Missing permission for local user administration.",
+      noOperatingUnits:
+        "No manageable legal entities or operating units were found.",
+      noRoles: "No allow-listed local roles are configured for this tenant.",
       form: {
-        title: "Invite Branch Operator",
+        title: "Invite Local User",
         subtitle:
-          "Invite a new user or assign an existing tenant user as BranchOperator for the selected branch.",
+          "Invite a new user or assign an existing tenant user to the selected local role and scope.",
         name: "Full Name",
         email: "Email",
-        selectBranch: "Select branch",
-        submit: "Assign Branch Operator",
+        selectRole: "Select role",
+        roleRequired: "Role selection is required.",
+        selectScopeType: "Select scope type",
+        scopeTypeLegalEntity: "Legal entity scope",
+        scopeTypeOperatingUnit: "Operating unit scope",
+        selectLegalEntity: "Select legal entity",
+        legalEntityRequired: "Legal entity selection is required.",
+        selectOperatingUnit: "Select operating unit",
+        submit: "Assign Local Role",
         submitting: "Saving...",
-        operatingUnitRequired: "Branch selection is required.",
-        branchCount: "Manageable branches: {{count}}",
+        operatingUnitRequired: "Operating unit selection is required.",
+        roleCount: "Manageable roles: {{count}}",
+        entityCount: "Visible legal entities: {{count}}",
       },
       messages: {
-        inviteCreated: "Invite and branch operator assignment are ready.",
-        assignmentCreated: "Branch operator assignment saved.",
-        assignmentExists: "This user is already the operator for the selected branch.",
-        assignmentRemoved: "Branch operator assignment removed.",
+        inviteCreated: "Invite and local role assignment are ready.",
+        assignmentCreated: "Local role assignment saved.",
+        assignmentExists:
+          "This user is already assigned for the selected scope.",
+        assignmentRemoved: "Local role assignment removed.",
         inviteLinkReady: "Invite link ready:",
         copyInviteLink: "Copy Invite Link",
         inviteCopied: "Invite link copied.",
@@ -3474,16 +3598,16 @@ export const messages = {
         delete: "Delete",
       },
       list: {
-        title: "Current Branch Operators",
-        loading: "Loading branch operators...",
-        empty: "No branch operator assignments found.",
+        title: "Current Local Role Assignments",
+        loading: "Loading local role assignments...",
+        empty: "No local role assignments found.",
         user: "User",
-        entity: "Entity",
-        branch: "Branch",
+        role: "Role",
+        scope: "Scope",
         status: "Status",
         action: "Action",
         userStatus: "User:",
-        branchStatus: "Branch:",
+        scopeStatus: "Scope:",
       },
     },
     scopeAssignments: {
@@ -3492,7 +3616,8 @@ export const messages = {
         "Replace user data scopes and replace existing assignment scopes.",
       loadLookupsFailed: "Failed to load scope lookups",
       loadUserScopeFailed: "Failed to load user scope data",
-      missingDataScopePermission: "Missing permission: security.data_scope.upsert",
+      missingDataScopePermission:
+        "Missing permission: security.data_scope.upsert",
       missingAssignmentPermission:
         "Missing permission: security.role_assignment.upsert",
       scopeRequired: "Scope ID is required.",
@@ -3522,11 +3647,13 @@ export const messages = {
     },
     rolesPermissions: {
       title: "Roles & Permissions Management",
-      subtitle: "Create roles and manage explicit permission assignments per role.",
+      subtitle:
+        "Create roles and manage explicit permission assignments per role.",
       errors: {
         loadFailed: "Failed to load roles and permissions",
         missingUpsertPermission: "Missing permission: security.role.upsert",
-        missingAssignPermission: "Missing permission: security.role_permissions.assign",
+        missingAssignPermission:
+          "Missing permission: security.role_permissions.assign",
         saveRoleFailed: "Failed to save role",
         replacePermissionsFailed: "Failed to replace permissions",
       },
@@ -3675,7 +3802,8 @@ export const messages = {
         allowed: "Access allowed",
         denied: "Access blocked",
         selfCheck: "This result reflects the user's own access chain.",
-        adminCheck: "This result was run by an admin against the target user's access chain.",
+        adminCheck:
+          "This result was run by an admin against the target user's access chain.",
         permission: "Permission",
         scope: "Requested scope",
         targetUser: "Target user",
@@ -3704,8 +3832,7 @@ export const messages = {
           "Review the user's data-scope visibility. The action scope exists, but row visibility is narrower.",
         fieldVisibility:
           "Grant the scoped override {{permission}} if this field should be fully visible.",
-        sod:
-          "Use a different reviewer or operator on this record to satisfy segregation-of-duties rules.",
+        sod: "Use a different reviewer or operator on this record to satisfy segregation-of-duties rules.",
         workflow:
           "Complete the required workflow approval step before retrying this action.",
         businessState:
@@ -3827,7 +3954,8 @@ export const messages = {
         noOperatingUnits:
           "No operating units exist for the selected legal entity. Create the branch / OU first in Organization Management.",
         parentAccountLabel: "Parent cash account",
-        parentAccountPlaceholder: "Select the parent account for new child accounts",
+        parentAccountPlaceholder:
+          "Select the parent account for new child accounts",
         parentAccountHelp:
           "Quick setup opens one postable child account per currency under this parent and links the register to that account.",
         currencyLabel: "Currencies",
@@ -3883,12 +4011,14 @@ export const messages = {
         operatingUnitRequiredForOwnership:
           "operatingUnitId is required when Ownership is Operating Unit.",
         invalidAmount: "An invalid numeric value exists in amount fields.",
-        parentAccountRequired: "Select a parent account to create a child account.",
+        parentAccountRequired:
+          "Select a parent account to create a child account.",
         childAccountCodeRequired: "Child account code is required.",
         childAccountNameRequired: "Child account name is required.",
         childAccountCodeParentConflict:
           "Child account code cannot be the same as the parent account code.",
-        childAccountParentCoaMissing: "coaId could not be resolved for selected parent.",
+        childAccountParentCoaMissing:
+          "coaId could not be resolved for selected parent.",
         createChildAccount: "Failed to create child account.",
         quickSetupRequiresAccountLookup:
           "Quick setup requires both gl.account.read and gl.account.upsert permissions.",
@@ -3908,7 +4038,8 @@ export const messages = {
         created: "Cash register created.",
         updated: "Cash register updated.",
         statusUpdated: "Cash register {{code}} status updated to {{status}}.",
-        accountExistsSelected: "{{code}} already exists. Existing account selected.",
+        accountExistsSelected:
+          "{{code}} already exists. Existing account selected.",
         childAccountCreatedAndSelected:
           "Child account {{code}} created under {{parentCode}} and selected.",
         quickSetupCompleted:
@@ -3951,8 +4082,10 @@ export const messages = {
       form: {
         openingAmountOptional: "Opening amount (optional, defaults to 0)",
         countedClosingAmount: "Counted closing amount",
-        closeNote: "Close note (required for FORCED_CLOSE / threshold variance)",
-        approveVariance: "Approve over-threshold variance (approveVariance=true)",
+        closeNote:
+          "Close note (required for FORCED_CLOSE / threshold variance)",
+        approveVariance:
+          "Approve over-threshold variance (approveVariance=true)",
       },
       placeholders: {
         register: "Select cash register",
@@ -3978,9 +4111,11 @@ export const messages = {
       },
       lifecycle: {
         snapshotTitle: "Lifecycle Snapshot",
-        selectedSummary: "Selected session #{{id}} | Register: {{registerCode}} | Status: {{status}}",
+        selectedSummary:
+          "Selected session #{{id}} | Register: {{registerCode}} | Status: {{status}}",
         nextTransitions: "Next allowed transitions: {{actions}}",
-        noTransitions: "No further lifecycle transitions are defined from this status.",
+        noTransitions:
+          "No further lifecycle transitions are defined from this status.",
         noSelection: "Select a session to inspect lifecycle details.",
         timelineTitle: "Session Lifecycle Timeline",
         timelineEmpty: "No lifecycle history available for this session yet.",
@@ -4013,8 +4148,7 @@ export const messages = {
         sessionRequired: "sessionId is required.",
         countedRequired: "countedClosingAmount is required.",
         closeNoteForced: "closeNote is required for FORCED_CLOSE.",
-        closeNoteApproval:
-          "closeNote is required when approveVariance=true.",
+        closeNoteApproval: "closeNote is required when approveVariance=true.",
       },
       errorsMapped: {
         registerNotFound: "Selected register was not found.",
@@ -4083,13 +4217,15 @@ export const messages = {
       },
       form: {
         registerId: "registerId",
-        registerIdManualFallback: "No register list available; enter register ID",
+        registerIdManualFallback:
+          "No register list available; enter register ID",
         sessionId: "sessionId",
         cashSessionIdOptional: "cashSessionId (optional)",
         cashSessionIdRequiredManualFallback:
           "Enter OPEN cashSessionId for selected register (required)",
         cashSessionIdSelectRegisterFirst: "Select register first",
-        cashSessionIdNotUsed: "Selected register has session_mode=NONE; cashSessionId is not needed",
+        cashSessionIdNotUsed:
+          "Selected register has session_mode=NONE; cashSessionId is not needed",
         cashSessionIdManualFallback:
           "If open session list is unavailable, enter cashSessionId (optional)",
         amount: "Amount",
@@ -4146,9 +4282,11 @@ export const messages = {
       lifecycle: {
         snapshotTitle: "Lifecycle Snapshot",
         nextTransitions: "Next allowed transitions: {{actions}}",
-        noTransitions: "No further lifecycle transitions are defined from this status.",
+        noTransitions:
+          "No further lifecycle transitions are defined from this status.",
         timelineTitle: "Transaction Lifecycle Timeline",
-        timelineEmpty: "No lifecycle history available for this transaction yet.",
+        timelineEmpty:
+          "No lifecycle history available for this transaction yet.",
         actionLabels: {
           submit: "Submit",
           approve: "Approve",
@@ -4194,7 +4332,8 @@ export const messages = {
         statusReversed: "Reversed",
         statusCancelled: "Cancelled",
         loadingCounterparties: "Loading counterparties...",
-        selectedCounterparty: "Selected counterparty: {{code}} - {{name}} ({{type}})",
+        selectedCounterparty:
+          "Selected counterparty: {{code}} - {{name}} ({{type}})",
         selectedCounterAccount: "Selected account: {{code}} - {{name}}",
         selectedBankCounterAccount:
           "Selected bank account: {{code}} - {{name}} (GL: {{glCode}})",
@@ -4297,8 +4436,7 @@ export const messages = {
           "Open document picker requires permission: cari.report.read",
         openDocumentsLoadNotAllowedForRow:
           "Selected transaction cannot load Cari open documents.",
-        openDocumentsLoadFailed:
-          "Failed to load open documents for apply.",
+        openDocumentsLoadFailed: "Failed to load open documents for apply.",
         registerRequired: "registerId is required.",
         txnDatetimeRequired: "txnDatetime is required.",
         bookDateRequired: "bookDate is required.",
@@ -4315,8 +4453,7 @@ export const messages = {
         registerInactive: "Selected register is not ACTIVE.",
         crossOuTransferInMustUseTransitReceive:
           "Transfer-in between different operating-unit contexts must be created from Transit Receive action.",
-        missingApplyCariPermission:
-          "Missing permission: cari.settlement.apply",
+        missingApplyCariPermission: "Missing permission: cari.settlement.apply",
         transitTransferLinkMissing:
           "Transit transfer link is missing on this row.",
         transitTransferIdRequired: "transitTransferId is required.",
@@ -4375,18 +4512,15 @@ export const messages = {
           "Transit transfer must be IN_TRANSIT before receive.",
         transitTransferOutMustBePostedBeforeReceive:
           "Transfer-out must be POSTED before receive.",
-        transitAlreadyReceived:
-          "Transit transfer is already received.",
+        transitAlreadyReceived: "Transit transfer is already received.",
         transitReverseTransferInFirst:
           "Reverse transfer-in first; transfer-out cannot be reversed after receive.",
         ouSelfBalancingSetupInvalid:
           "Cross-context transfer posting is blocked until the required central or branch-pair current-account mappings are ready. Run the saved current-account repair during Transfer Out in Kasa Islemleri or in Organization Management.",
-        applyRequiresPostedTxn:
-          "Cash transaction must be POSTED before apply.",
+        applyRequiresPostedTxn: "Cash transaction must be POSTED before apply.",
         applyCounterpartyInvalid:
           "Cash transaction counterparty is invalid for Cari apply.",
-        applyTotalExceedsAvailable:
-          "Applied total exceeds available amount.",
+        applyTotalExceedsAvailable: "Applied total exceeds available amount.",
         applyOpenItemResidualExceeded:
           "Selected apply amount exceeds open document residual.",
         applyNoOpenDocs:
@@ -4399,13 +4533,13 @@ export const messages = {
         posted: "Cash transaction posted.",
         cancelled: "Cash transaction cancelled.",
         reversed: "Reversal created. Reversal ID: {{reversalId}}.",
-        transitReplay:
-          "Transit transfer replayed. transferId={{transferId}}",
+        transitReplay: "Transit transfer replayed. transferId={{transferId}}",
         transitInitiated:
           "Transit initiated. transferId={{transferId}}, transferOutTxnId={{transferOutTxnId}}",
         transitReceiveReplay:
           "Transit receive replayed. transferInTxnId={{transferInTxnId}}",
-        transitReceived: "Transit received. transferInTxnId={{transferInTxnId}}",
+        transitReceived:
+          "Transit received. transferInTxnId={{transferInTxnId}}",
         applyReplayReturned:
           "Apply request replayed; existing Cari linkage returned.",
         applyCompletedSettlement:
@@ -4484,7 +4618,8 @@ export const messages = {
       },
       errors: {
         missingCreatePermission: "Missing permission: cash.txn.create",
-        registersRequired: "sourceRegisterId and targetRegisterId are required.",
+        registersRequired:
+          "sourceRegisterId and targetRegisterId are required.",
         registersMustDiffer:
           "sourceRegisterId and targetRegisterId must be different.",
         amountsRequired:
@@ -4577,7 +4712,8 @@ export const messages = {
       empty: {
         highVariance: "No high-variance sessions matched the current filters.",
         forcedClose: "No forced-close sessions matched the current filters.",
-        overrideUsage: "No override-usage transactions matched the current filters.",
+        overrideUsage:
+          "No override-usage transactions matched the current filters.",
         unposted: "No unposted transactions matched the current filters.",
         glCashControlEvents:
           "No direct GL cash-control events matched the current filters.",
@@ -4591,8 +4727,7 @@ export const messages = {
           "cash.report.read permission is required to use this page.",
         invalidVarianceThreshold:
           "Minimum absolute variance must be zero or a positive number.",
-        invalidDateRange:
-          "From date cannot be greater than to date.",
+        invalidDateRange: "From date cannot be greater than to date.",
         load: "Failed to load cash exception data.",
       },
       warnings: {
@@ -4607,7 +4742,8 @@ export const messages = {
     cariCounterparty: {
       accountPickerPermissionMissing:
         "AR/AP account pickers are hidden because gl.account.read permission is missing.",
-      accountPickerLoadError: "Failed to load account options for selected legal entity.",
+      accountPickerLoadError:
+        "Failed to load account options for selected legal entity.",
       arAccountLabel: "AR Control Account Override",
       apAccountLabel: "AP Control Account Override",
     },
@@ -4629,7 +4765,8 @@ export const messages = {
       title: "Cari Settlements",
       apply: "Apply settlement",
       reverse: "Reverse settlement",
-      replayInfo: "This request was already processed; existing result is shown.",
+      replayInfo:
+        "This request was already processed; existing result is shown.",
       directionRequired: "Direction is required for auto-allocation.",
       mixedDirectionWarning:
         "Open-item rows are mixed AR/AP. Select one direction before auto-allocation.",
@@ -4656,15 +4793,15 @@ export const messages = {
       },
     },
     readinessChecklist: {
-      title: "Tenant Readiness Checklist",
-      loading: "Loading readiness...",
+      title: "Tenant Bootstrap Checklist",
+      loading: "Loading bootstrap status...",
       retry: "Retry",
       refresh: "Refresh",
       showDetails: "Show details",
       hideDetails: "Hide details",
       summary: "{{ready}} / {{total}} complete",
       description:
-        "Complete company, organization, and GL setup before using operational modules.",
+        "Complete the tenant shell, organization, and GL foundation before moving on to legal-entity activation.",
       minimum: "{{count}} / minimum {{minimum}}",
       missing: "Missing:",
       setupStepsTitle: "Quick links for missing setup steps",
@@ -4677,16 +4814,10 @@ export const messages = {
         openBookPeriods: "Open book periods",
         chartsOfAccounts: "Charts of accounts",
         accounts: "Accounts",
-        shareholders: "Shareholders",
-        shareholderCommitmentConfigs: "Shareholder parent account mappings",
         subaccountsV1: "Subaccounts V1 (warning placeholder)",
         setupWizardV2: "Setup Wizard V2 (warning placeholder)",
         consolidationCanonicalMappingV1:
           "Consolidation canonical mapping (warning placeholder)",
-        operatingUnitCurrentAccounts:
-          "Operating-unit current-account readiness",
-        workflowCloseConsolidationV1:
-          "Close/consolidation workflow readiness",
         taxEngineV1: "Country tax engine setup (optional)",
       },
       badges: {
@@ -4699,7 +4830,6 @@ export const messages = {
         company: "Company Setup",
         org: "Org Setup",
         gl: "GL Setup",
-        workflow: "Workflow Governance",
       },
       bootstrap: {
         title: "One-click baseline bootstrap",
@@ -4710,8 +4840,8 @@ export const messages = {
       },
     },
     readinessGuard: {
-      checking: "Checking tenant readiness...",
-      failedTitle: "Tenant readiness check failed",
+      checking: "Checking tenant bootstrap readiness...",
+      failedTitle: "Tenant bootstrap check failed",
       retry: "Retry",
     },
     chartOfAccountsCreate: {

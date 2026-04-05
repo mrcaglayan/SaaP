@@ -210,3 +210,87 @@ export function requirePermission(permissionCode, options = {}) {
     }
   };
 }
+
+/**
+ * Require at least one permission code from the supplied list and attach the
+ * resolved RBAC bundle for whichever permission granted access.
+ */
+export function requireAnyPermission(permissionCodes, options = {}) {
+  const normalizedPermissionCodes = Array.from(
+    new Set(
+      (Array.isArray(permissionCodes) ? permissionCodes : [])
+        .map((permissionCode) => String(permissionCode || "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (normalizedPermissionCodes.length === 0) {
+    throw new Error("permissionCodes is required");
+  }
+
+  const resolveScope = options.resolveScope;
+
+  return async (req, res, next) => {
+    try {
+      const userId = parsePositiveInt(req.user?.userId);
+      if (!userId) {
+        throw badRequest("Authenticated user is required");
+      }
+
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) {
+        throw badRequest("tenantId is required");
+      }
+
+      let requestedScope = null;
+      if (typeof resolveScope === "function") {
+        const rawScope = await resolveScope(req, tenantId);
+        requestedScope = normalizeAuthzScope(rawScope, tenantId);
+      }
+
+      for (const permissionCode of normalizedPermissionCodes) {
+        // eslint-disable-next-line no-await-in-loop
+        const permissionBundle = await getPermissionBundleForRequest(
+          req,
+          userId,
+          tenantId,
+          permissionCode
+        );
+        if (
+          permissionBundle?.missingPermission ||
+          !permissionBundle?.permissionScopeContext
+        ) {
+          continue;
+        }
+
+        if (!isScopeAllowed(permissionBundle.permissionScopeContext, requestedScope)) {
+          continue;
+        }
+
+        const visibilityScope =
+          permissionBundle.visibilityScopeContext || permissionBundle.permissionScopeContext;
+        if (requestedScope && !isScopeAllowed(visibilityScope, requestedScope)) {
+          continue;
+        }
+        if (!requestedScope && !isScopeAllowed(visibilityScope, null)) {
+          continue;
+        }
+
+        req.rbac = {
+          permissionCode,
+          tenantId,
+          requestedScope,
+          source: permissionBundle.source || "permission_scopes",
+          permissionScopeContext: permissionBundle.permissionScopeContext,
+          visibilityScopeContext: permissionBundle.visibilityScopeContext,
+        };
+        return next();
+      }
+
+      throw forbidden(
+        `Missing any permission: ${normalizedPermissionCodes.join(", ")}`
+      );
+    } catch (err) {
+      return next(err);
+    }
+  };
+}

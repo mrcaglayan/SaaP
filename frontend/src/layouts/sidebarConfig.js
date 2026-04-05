@@ -12,6 +12,7 @@ const USER_ASSIGNMENTS_PAGE_PERMISSIONS = [
   "security.role_assignment.upsert",
 ];
 const BRANCH_OPERATOR_MANAGEMENT_PAGE_PERMISSIONS = [
+  "security.user_admin.local",
   "security.user_admin.entity",
 ];
 
@@ -20,12 +21,8 @@ const SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS = [
   "security.data_scope.upsert",
   "security.role_assignment.read",
 ];
-const ROLE_MIGRATIONS_PAGE_PERMISSIONS = [
-  "security.role.read",
-];
-const ACCESS_DEBUGGER_PAGE_PERMISSIONS = [
-  "security.role_assignment.read",
-];
+const ROLE_MIGRATIONS_PAGE_PERMISSIONS = ["security.role.read"];
+const ACCESS_DEBUGGER_PAGE_PERMISSIONS = ["security.role_assignment.read"];
 const COMPLIANCE_REPORTS_PAGE_PERMISSIONS = [
   "security.audit.report.generate",
   "security.audit.report.export",
@@ -37,6 +34,12 @@ const FIELD_VISIBILITY_POLICIES_PAGE_PERMISSIONS = [
 const APPROVAL_DELEGATIONS_PAGE_PERMISSIONS = [
   "approvals.policies.read",
   "approvals.policies.write",
+];
+const TEMPORARY_OPERATIONAL_COVERAGE_PAGE_PERMISSIONS = [
+  "security.operational_coverage.read",
+  "security.operational_coverage.request",
+  "security.operational_coverage.review",
+  "security.operational_coverage.revoke",
 ];
 
 const AUDIT_LOGS_PAGE_PERMISSIONS = ["security.audit.read"];
@@ -50,7 +53,10 @@ const OPS_RETENTION_PAGE_PERMISSIONS = [
   "ops.export_snapshot.read",
 ];
 const COMPANY_SETTINGS_PAGE_PERMISSIONS = ["onboarding.company.setup"];
-const ORG_SETTINGS_PAGE_PERMISSIONS = ["org.tree.read", "org.fiscal_calendar.read"];
+const ORG_SETTINGS_PAGE_PERMISSIONS = [
+  "org.tree.read",
+  "org.fiscal_calendar.read",
+];
 const ENTITY_ACTIVATION_WORKSPACE_PAGE_PERMISSIONS = [
   "org.tree.read",
   "org.fiscal_calendar.read",
@@ -508,7 +514,10 @@ export const sidebarItems = [
       {
         label: "Demirbas Ops Dashboard",
         to: "/app/demirbas-ops-dashboard",
-        requiredPermissions: ["fixed_assets.read", "fixed_assets.depreciation.run"],
+        requiredPermissions: [
+          "fixed_assets.read",
+          "fixed_assets.depreciation.run",
+        ],
         implemented: true,
       },
       {
@@ -656,7 +665,7 @@ export const sidebarItems = [
         implemented: true,
       },
       {
-        label: "Sube Operatorleri",
+        label: "Yerel Kullanici Yonetimi",
         to: "/app/ayarlar/sube-operatorleri",
         requiredPermissions: BRANCH_OPERATOR_MANAGEMENT_PAGE_PERMISSIONS,
         implemented: true,
@@ -696,6 +705,12 @@ export const sidebarItems = [
         label: "Onay Delegasyonlari",
         to: "/app/ayarlar/rbac/delegations",
         requiredPermissions: APPROVAL_DELEGATIONS_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Gecici Operasyonel Kapsama",
+        to: "/app/ayarlar/rbac/temporary-coverage",
+        requiredPermissions: TEMPORARY_OPERATIONAL_COVERAGE_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

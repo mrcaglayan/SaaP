@@ -4,10 +4,11 @@ import { useWorkingContext } from "../context/useWorkingContext.js";
 import { useI18n } from "../i18n/useI18n.js";
 import { useTenantReadiness } from "./useTenantReadiness.js";
 
+const ENTITY_ACTIVATION_ROUTE = "/app/ayarlar/entity-aktivasyon-alani";
 const SETUP_ALLOWLIST = new Set([
   "/app/ayarlar/sirket-ayarlari",
   "/app/ayarlar/organizasyon-yonetimi",
-  "/app/ayarlar/entity-aktivasyon-alani",
+  ENTITY_ACTIVATION_ROUTE,
   "/app/ayarlar/hesap-plani-olustur",
   "/app/ayarlar/hesap-plani-ayarlari",
   "/app/ayarlar/workflow-kurulumu",
@@ -35,9 +36,9 @@ function isSecurityAdminAllowedPath(pathname) {
 }
 
 /**
- * Applies tenant-wide readiness redirects only to setup-capable users. Scoped
- * operational users should continue working inside an already-ready legal
- * entity even if another entity is still being onboarded.
+ * Redirects only genuine tenant bootstrap gaps to setup pages while allowing
+ * scoped setup users to fall back to the entity activation workspace instead
+ * of tenant-wide bootstrap pages they cannot complete themselves.
  */
 export default function RequireTenantReadiness({ children }) {
   const location = useLocation();
@@ -86,10 +87,10 @@ export default function RequireTenantReadiness({ children }) {
   const isSetupPage =
     isTenantSetupAllowedPath(location.pathname) ||
     isSecurityAdminAllowedPath(location.pathname);
-  if (!canRunTenantSetup && hasWorkingLegalEntity) {
-    return children;
-  }
   if (!isSetupPage) {
+    if (!canRunTenantSetup && hasWorkingLegalEntity) {
+      return <Navigate to={ENTITY_ACTIVATION_ROUTE} replace />;
+    }
     return <Navigate to="/app/ayarlar/sirket-ayarlari" replace />;
   }
 

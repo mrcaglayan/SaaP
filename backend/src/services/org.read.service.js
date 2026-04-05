@@ -16,7 +16,47 @@ import {
   fetchTreeLegalEntityRows,
   fetchTreeOperatingUnitRows,
 } from "./org.read.queries.js";
+import { getVisibilityScope } from "../middleware/rbac.js";
 import { badRequest } from "../routes/_utils.js";
+import { buildVisibilityScopeWhereClause } from "./authz.scope.service.js";
+
+function buildLegalEntityVisibilityFilter(req, tenantId, params) {
+  const scopeContext = getVisibilityScope(req);
+  if (!scopeContext) {
+    return "1 = 0";
+  }
+  if (scopeContext.tenantWide) {
+    return "1 = 1";
+  }
+
+  const clauses = [];
+  const directScopeClause = buildVisibilityScopeWhereClause(scopeContext, params, {
+    GROUP: { idColumn: "group_company_id" },
+    COUNTRY: { idColumn: "country_id" },
+    LEGAL_ENTITY: { idColumn: "id" },
+  });
+  if (directScopeClause !== "1 = 0") {
+    clauses.push(directScopeClause);
+  }
+
+  const operatingUnitIds = Array.from(scopeContext.operatingUnits || []).filter(Boolean);
+  if (operatingUnitIds.length > 0) {
+    params.push(tenantId, ...operatingUnitIds);
+    clauses.push(
+      `id IN (
+        SELECT DISTINCT ou.legal_entity_id
+        FROM operating_units ou
+        WHERE ou.tenant_id = ?
+          AND ou.id IN (${operatingUnitIds.map(() => "?").join(", ")})
+      )`
+    );
+  }
+
+  if (clauses.length === 0) {
+    return "1 = 0";
+  }
+  return `(${clauses.join(" OR ")})`;
+}
 
 export async function listGroupCompanies({ req, tenantId, buildScopeFilter }) {
   const params = [];
@@ -41,17 +81,21 @@ export async function listCurrencies() {
   return fetchCurrencyRows();
 }
 
+/**
+ * List legal entities visible to the current actor, including entities that
+ * are reachable indirectly through group/country scope or scoped operating
+ * units.
+ */
 export async function listLegalEntities({
   req,
   tenantId,
   filters,
-  buildScopeFilter,
 }) {
   const { countryId, groupCompanyId, status } = filters;
 
   const params = [tenantId];
   const conditions = ["tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "id", params));
+  conditions.push(buildLegalEntityVisibilityFilter(req, tenantId, params));
 
   if (countryId) {
     conditions.push("country_id = ?");
@@ -72,6 +116,10 @@ export async function listLegalEntities({
   });
 }
 
+/**
+ * List operating units visible to the current actor, optionally narrowed by
+ * parent legal entity and/or explicit operating-unit id filters.
+ */
 export async function listOperatingUnits({
   req,
   tenantId,
@@ -81,15 +129,14 @@ export async function listOperatingUnits({
 }) {
   const { legalEntityId, operatingUnitId } = filters;
 
-  if (legalEntityId) {
-    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
-  }
   if (operatingUnitId) {
     assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
   }
 
   const params = [tenantId];
   const conditions = ["ou.tenant_id = ?"];
+  // Keep the legal-entity filter listable for OU-scoped request users. The
+  // row-level operating-unit visibility filter still prevents cross-scope reads.
   conditions.push(buildScopeFilter(req, "operating_unit", "ou.id", params));
 
   if (legalEntityId) {

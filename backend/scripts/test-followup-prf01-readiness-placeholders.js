@@ -23,7 +23,6 @@ async function main() {
     "subaccountsV1",
     "setupWizardV2",
     "consolidationCanonicalMappingV1",
-    "workflowCloseConsolidationV1",
     "taxEngineV1",
   ];
 

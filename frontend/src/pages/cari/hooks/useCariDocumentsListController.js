@@ -761,6 +761,7 @@ export default function useCariDocumentsListController({
       try {
         const response = await listCariCounterparties({
           legalEntityId,
+          allowedOperatingUnitId: toPositiveInt(filters.operatingUnitId) || undefined,
           role,
           sortBy: "NAME",
           sortDir: "ASC",
@@ -786,7 +787,7 @@ export default function useCariDocumentsListController({
     return () => {
       active = false;
     };
-  }, [canReadCards, filters.direction, filters.legalEntityId]);
+  }, [canReadCards, filters.direction, filters.legalEntityId, filters.operatingUnitId]);
 
   return {
     l,

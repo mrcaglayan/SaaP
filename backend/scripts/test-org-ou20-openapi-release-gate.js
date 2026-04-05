@@ -206,7 +206,6 @@ function assertOpenApi(spec) {
   const configRow = requireSchema(spec, "OperatingUnitCurrentAccountConfigRow");
   requireSchema(spec, "OperatingUnitCurrentAccountConfigApplyInput");
   requireSchema(spec, "OperatingUnitCurrentAccountApplyResponse");
-  requireSchema(spec, "TenantReadinessOperatingUnitCurrentAccountDetails");
   requireSchema(spec, "OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewResponse");
 
   assertSchemaProperty(
@@ -215,11 +214,14 @@ function assertOpenApi(spec) {
     "TenantReadinessCheck must expose details"
   );
   for (const propertyName of [
+    "groupCompanies",
+    "legalEntities",
+    "fiscalCalendars",
+    "fiscalPeriods",
+    "books",
     "openBookPeriods",
-    "shareholders",
-    "shareholderCommitmentConfigs",
-    "operatingUnitCurrentAccounts",
-    "workflowCloseConsolidationV1",
+    "chartsOfAccounts",
+    "accounts",
   ]) {
     assertSchemaProperty(
       tenantReadinessCounts,

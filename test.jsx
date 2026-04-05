@@ -1,1668 +1,2995 @@
 
-import { query } from "../db.js";
-import { SOD_RULES } from "../constants/sod-rules.js";
-import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
-  checkUserHasPermissionAtScope,
-  doesScopeIncludeScope,
-  getUserRoleScopeEffectiveDateGuard,
-  loadUserEntitlements,
-  normalizeAuthzScope,
-} from "./authz.scope.service.js";
-import { buildCsv } from "../utils/tabularExport.js";
-const REPORT_TYPES = new Set([
-  "ACCESS_MATRIX",
-  "SOD_ANALYSIS",
-  "APPROVAL_COVERAGE",
-  "DELEGATION_LOG",
-  "FULL",
+  getOperationalCoverageWorkspace,
+  listApprovalDelegations,
+  revokeApprovalDelegation,
+  revokeOperationalCoverage,
+} from "../../api/approvalDelegations.js";
+import {
+  createRoleAssignment,
+  createSecurityInvite,
+  deleteRoleAssignment,
+  listCountries,
+  listGroupCompanies,
+  listLegalEntities,
+  listOperatingUnits,
+  listRoleAssignments,
+  listRoles,
+  listUsers,
+} from "../../api/rbacAdmin.js";
+import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
+import { useAuth } from "../../auth/useAuth.js";
+import DelegationStateBadge from "../../components/security/DelegationStateBadge.jsx";
+import { useI18n } from "../../i18n/useI18n.js";
+import {
+  formatDelegationScopeLabel,
+  formatDelegationWindow,
+} from "../../utils/delegationUi.js";
+import SecurityWarningList from "./SecurityWarningList.jsx";
+import {
+  BOOTSTRAP_HANDOFF_PRESET_CATALOG,
+  buildScopeLabel,
+  getBootstrapHandoffPresetEntry,
+  getRoleCatalogEntry,
+  groupRolesForManagement,
+} from "./roleCatalog.js";
+const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
+const EFFECT_OPTIONS = ["ALLOW", "DENY"];
+const USER_STATUS_FILTERS = ["ALL", "ACTIVE", "INVITED", "DISABLED"];
+const ASSIGNMENT_STATUS_FILTERS = ["ALL", "ACTIVE", "UPCOMING", "EXPIRED", "CUSTOM"];
+const ACCESS_MATRIX_ACTIONS = [
+  { key: "view", label: "View" },
+  { key: "create", label: "Create" },
+  { key: "edit", label: "Edit" },
+  { key: "post", label: "Post" },
+  { key: "approve", label: "Approve" },
+  { key: "reverse", label: "Reverse" },
+  { key: "export", label: "Export" },
+  { key: "assign", label: "Assign" },
+];
+const ACCESS_MATRIX_GROUPS = Object.freeze([
+  Object.freeze({
+    key: "security",
+    title: "Organization & Security",
+    rows: Object.freeze([
+      Object.freeze({
+        key: "users-access",
+        module: "Users & access",
+        actions: Object.freeze({
+          view: Object.freeze(["LocalUserAdmin", "SecurityAdmin"]),
+          assign: Object.freeze(["LocalUserAdmin", "SecurityAdmin"]),
+        }),
+      }),
+      Object.freeze({
+        key: "delegation",
+        module: "Delegation & coverage",
+        actions: Object.freeze({
+          view: Object.freeze(["LocalUserAdmin", "SecurityAdmin"]),
+          assign: Object.freeze(["LocalUserAdmin", "SecurityAdmin"]),
+        }),
+      }),
+    ]),
+  }),
+  Object.freeze({
+    key: "organization",
+    title: "Organization Setup",
+    rows: Object.freeze([
+      Object.freeze({
+        key: "organization-master",
+        module: "Org structure & master data",
+        actions: Object.freeze({
+          view: Object.freeze(["MasterDataSteward"]),
+          create: Object.freeze(["MasterDataSteward"]),
+          edit: Object.freeze(["MasterDataSteward"]),
+          assign: Object.freeze(["MasterDataSteward"]),
+        }),
+      }),
+      Object.freeze({
+        key: "shareholder-equity",
+        module: "Shareholder & equity",
+        actions: Object.freeze({
+          view: Object.freeze(["ShareholderCapitalOperator"]),
+          create: Object.freeze(["ShareholderCapitalOperator"]),
+          edit: Object.freeze(["ShareholderCapitalOperator"]),
+          post: Object.freeze(["ShareholderCapitalOperator"]),
+          reverse: Object.freeze(["ShareholderCapitalOperator"]),
+        }),
+      }),
+    ]),
+  }),
+  Object.freeze({
+    key: "finance",
+    title: "Finance Core",
+    rows: Object.freeze([
+      Object.freeze({
+        key: "general-ledger",
+        module: "General Ledger",
+        actions: Object.freeze({
+          view: Object.freeze(["GLOperator"]),
+          create: Object.freeze(["GLOperator"]),
+          edit: Object.freeze(["GLOperator"]),
+          post: Object.freeze(["GLPostingAuthority"]),
+          reverse: Object.freeze(["GLPostingAuthority"]),
+          export: Object.freeze(["GLOperator"]),
+        }),
+      }),
+      Object.freeze({
+        key: "treasury",
+        module: "Cash & Bank",
+        actions: Object.freeze({
+          view: Object.freeze(["TreasuryOperator", "TreasuryApprover"]),
+          create: Object.freeze(["TreasuryOperator"]),
+          edit: Object.freeze(["TreasuryOperator"]),
+          approve: Object.freeze(["TreasuryApprover"]),
+          export: Object.freeze(["TreasuryApprover"]),
+        }),
+      }),
+      Object.freeze({
+        key: "payroll",
+        module: "Payroll",
+        actions: Object.freeze({
+          view: Object.freeze(["PayrollOperator", "PayrollApprover"]),
+          create: Object.freeze(["PayrollOperator"]),
+          edit: Object.freeze(["PayrollOperator"]),
+          approve: Object.freeze(["PayrollApprover"]),
+          export: Object.freeze(["PayrollApprover"]),
+        }),
+      }),
+    ]),
+  }),
+  Object.freeze({
+    key: "governance",
+    title: "Governance",
+    rows: Object.freeze([
+      Object.freeze({
+        key: "local-close",
+        module: "Local close",
+        actions: Object.freeze({
+          view: Object.freeze(["LocalClosePreparer", "LocalCloseReviewer"]),
+          create: Object.freeze(["LocalClosePreparer"]),
+          approve: Object.freeze(["LocalCloseReviewer"]),
+          reverse: Object.freeze(["LocalCloseReviewer"]),
+          export: Object.freeze(["LocalCloseReviewer"]),
+        }),
+      }),
+      Object.freeze({
+        key: "audit-reporting",
+        module: "Reporting & audit",
+        actions: Object.freeze({
+          view: Object.freeze([
+            "AuditorReadOnly",
+            "GLOperator",
+            "TreasuryApprover",
+            "PayrollApprover",
+            "LocalCloseReviewer",
+          ]),
+          export: Object.freeze([
+            "AuditorReadOnly",
+            "GLOperator",
+            "TreasuryApprover",
+            "PayrollApprover",
+            "LocalCloseReviewer",
+          ]),
+        }),
+      }),
+    ]),
+  }),
 ]);
-const REPORT_FORMATS = new Set(["JSON", "CSV"]);
-const APPROVAL_COVERAGE_ACTION_CATALOG = Object.freeze([
-  Object.freeze({
-    moduleCode: "PAYMENTS",
-    targetType: "PAYMENT_BATCH",
-    actionType: "APPROVE",
-    label: "Payment batch approval",
-    uncoveredNote: "Payment batches have no unified approval policy configured.",
-  }),
-  Object.freeze({
-    moduleCode: "PAYROLL",
-    targetType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
-    actionType: "APPLY",
-    label: "Payroll manual settlement override apply",
-    uncoveredNote: "Payroll manual settlement overrides have no approval policy configured.",
-  }),
-  Object.freeze({
-    moduleCode: "PAYROLL",
-    targetType: "PAYROLL_PERIOD_CLOSE",
-    actionType: "APPROVE_CLOSE",
-    label: "Payroll period close approval",
-    uncoveredNote: "Payroll period close approvals have no policy configured.",
-  }),
-  Object.freeze({
-    moduleCode: "PAYROLL",
-    targetType: "PAYROLL_PERIOD_CLOSE",
-    actionType: "REOPEN",
-    label: "Payroll period reopen approval",
-    uncoveredNote: "Payroll period reopen approvals have no policy configured.",
-  }),
-  Object.freeze({
-    moduleCode: "CARI",
-    targetType: "COUNTERPARTY_REQUEST",
-    actionType: "CREATE",
-    label: "Counterparty request review",
-    uncoveredNote: "Counterparty request creation/review has no approval policy configured.",
-  }),
-  Object.freeze({
-    moduleCode: "INVENTORY",
-    targetType: "INVENTORY_TRANSFER",
-    actionType: "APPROVE",
-    label: "Inventory transfer approval",
-    uncoveredNote: "Inventory transfers have no approval policy configured.",
-  }),
-  Object.freeze({
-    moduleCode: "LOCAL_CLOSE",
-    targetType: "LOCAL_CLOSE_PACK_REOPEN_REQUEST",
-    actionType: "REOPEN",
-    label: "Local close pack reopen approval",
-    uncoveredNote: "Local close pack reopen requests have no approval policy configured.",
-  }),
-]);
-const SOD_RULE_MITIGATION_ACTION_MAP = Object.freeze({
-  "payments.batch.create-approve.same-record": {
-    moduleCode: "PAYMENTS",
-    targetType: "PAYMENT_BATCH",
-    actionType: "APPROVE",
-  },
-  "payroll.override.request-approve.same-record": {
-    moduleCode: "PAYROLL",
-    targetType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
-    actionType: "APPLY",
-  },
-  "payroll.close.request-approve.same-record": {
-    moduleCode: "PAYROLL",
-    targetType: "PAYROLL_PERIOD_CLOSE",
-    actionType: "APPROVE_CLOSE",
-  },
-  "cari.request-review.same-record": {
-    moduleCode: "CARI",
-    targetType: "COUNTERPARTY_REQUEST",
-    actionType: "CREATE",
-  },
-  "inventory.transfer.initiate-approve.same-record": {
-    moduleCode: "INVENTORY",
-    targetType: "INVENTORY_TRANSFER",
-    actionType: "APPROVE",
-  },
-});
-function normalizeUpperText(value) {
-  return String(value || "").trim().toUpperCase();
+function normalizeText(value) {
+  return String(value || "").trim();
 }
-function parseDateOnly(value) {
+function getErrorMessage(error, fallback) {
+  return (
+    error?.response?.data?.message ||
+    error?.message ||
+    fallback
+  );
+}
+function formatDate(value) {
   if (!value) {
-    return null;
-  }
-  const dateOnlyMatch = String(value).match(/\d{4}-\d{2}-\d{2}/);
-  if (dateOnlyMatch) {
-    return dateOnlyMatch[0];
+    return "-";
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return null;
+    return String(value);
   }
-  return parsed.toISOString().slice(0, 10);
+  return parsed.toLocaleDateString();
 }
-function parseDateTime(value) {
+function formatDateTime(value) {
   if (!value) {
-    return null;
+    return "-";
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return null;
+    return String(value);
   }
-  return parsed.toISOString();
+  return parsed.toLocaleString();
 }
-function toEndOfDayIso(value) {
-  const dateOnly = parseDateOnly(value);
-  return dateOnly ? `${dateOnly} 23:59:59` : null;
+function getInitials(name) {
+  const parts = normalizeText(name).split(/\s+/).filter(Boolean).slice(0, 2);
+  if (parts.length === 0) {
+    return "U";
+  }
+  return parts.map((part) => part[0].toUpperCase()).join("");
 }
-function toNumberOrNull(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+function getToneClasses(tone) {
+  if (tone === "blue") {
+    return "border-sky-200 bg-sky-50 text-sky-800";
+  }
+  if (tone === "green") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+  if (tone === "amber") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+  if (tone === "rose") {
+    return "border-rose-200 bg-rose-50 text-rose-800";
+  }
+  if (tone === "violet") {
+    return "border-violet-200 bg-violet-50 text-violet-800";
+  }
+  return "border-slate-200 bg-slate-100 text-slate-700";
 }
-function toBoolean(value) {
-  return value === true || value === 1 || value === "1";
+function getUserStatusMeta(status) {
+  const normalized = normalizeText(status).toUpperCase();
+  if (normalized === "ACTIVE") {
+    return { label: "Active", tone: "green" };
+  }
+  if (normalized === "INVITED" || normalized === "PENDING") {
+    return { label: "Pending invite", tone: "amber" };
+  }
+  if (normalized === "DISABLED" || normalized === "SUSPENDED") {
+    return { label: "Disabled", tone: "slate" };
+  }
+  return { label: normalized || "Unknown", tone: "slate" };
 }
-function scopeRank(scopeType) {
-  if (scopeType === "OPERATING_UNIT") return 5;
-  if (scopeType === "LEGAL_ENTITY") return 4;
-  if (scopeType === "COUNTRY") return 3;
-  if (scopeType === "GROUP") return 2;
-  if (scopeType === "TENANT") return 1;
-  return 0;
+function getBundleStatusMeta(status) {
+  const normalized = normalizeText(status).toUpperCase();
+  if (normalized === "ACTIVE") {
+    return { label: "Active", tone: "green" };
+  }
+  if (normalized === "UPCOMING") {
+    return { label: "Scheduled", tone: "blue" };
+  }
+  if (normalized === "EXPIRED") {
+    return { label: "Expired", tone: "slate" };
+  }
+  return { label: "Custom", tone: "amber" };
 }
-function scopeKey(scopeType, scopeId) {
-  const normalizedScopeType = normalizeUpperText(scopeType);
-  const normalizedScopeId = parsePositiveInt(scopeId);
-  if (!normalizedScopeType || !normalizedScopeId) {
-    return null;
+function getCoverageReviewMeta(reviewStatus) {
+  const normalized = normalizeText(reviewStatus).toUpperCase();
+  if (normalized === "APPROVED") {
+    return { label: "Approved", tone: "green" };
   }
-  return `${normalizedScopeType}:${normalizedScopeId}`;
+  if (normalized === "PENDING_REVIEW" || normalized === "ESCALATED") {
+    return { label: "Pending review", tone: "amber" };
+  }
+  if (normalized === "REJECTED") {
+    return { label: "Rejected", tone: "rose" };
+  }
+  if (normalized === "RETURNED") {
+    return { label: "Returned", tone: "slate" };
+  }
+  return { label: normalized || "Not set", tone: "slate" };
 }
-function normalizeScopeOrNull(scope, tenantId) {
-  if (!scope) {
-    return null;
+function buildScopeOptions(scopeType, lookups, tenantScopeId) {
+  const normalizedScopeType = normalizeText(scopeType).toUpperCase();
+  if (normalizedScopeType === "TENANT") {
+    return tenantScopeId
+      ? [{ id: tenantScopeId, label: `Tenant #${tenantScopeId}` }]
+      : [];
   }
-  const scopeType = scope.scopeType ?? scope.scope_type;
-  const scopeId = scope.scopeId ?? scope.scope_id;
-  if (scopeType === undefined && scopeId === undefined) {
-    return null;
+  if (normalizedScopeType === "GROUP") {
+    return (lookups.groups || []).map((row) => ({
+      id: Number(row.id),
+      label: `${row.code} - ${row.name}`,
+    }));
   }
-  return normalizeAuthzScope({ scopeType, scopeId }, tenantId);
+  if (normalizedScopeType === "COUNTRY") {
+    return (lookups.countries || []).map((row) => ({
+      id: Number(row.id),
+      label: `${row.iso2} - ${row.name}`,
+    }));
+  }
+  if (normalizedScopeType === "LEGAL_ENTITY") {
+    return (lookups.legalEntities || []).map((row) => ({
+      id: Number(row.id),
+      label: `${row.code} - ${row.name}`,
+    }));
+  }
+  if (normalizedScopeType === "OPERATING_UNIT") {
+    return (lookups.operatingUnits || []).map((row) => ({
+      id: Number(row.id),
+      label: `${row.code} - ${row.name}`,
+    }));
+  }
+  return [];
 }
-function normalizeScopeFilter(input) {
-  const tenantId = parsePositiveInt(input?.tenantId ?? input?.tenant_id);
-  if (!tenantId) {
-    throw badRequest("tenantId is required");
+function buildTemplateRoleCodes(presetCode, includeOptionalRoles = false) {
+  const preset = getBootstrapHandoffPresetEntry(presetCode);
+  const requiredRoleCodes = Array.isArray(preset.roleCodes) ? [...preset.roleCodes] : [];
+  if (includeOptionalRoles) {
+    requiredRoleCodes.push(...(preset.optionalRoleCodes || []));
   }
-  const reportType = normalizeUpperText(input?.reportType ?? input?.report_type || "FULL");
-  if (!REPORT_TYPES.has(reportType)) {
-    throw badRequest(
-      "reportType must be ACCESS_MATRIX, SOD_ANALYSIS, APPROVAL_COVERAGE, DELEGATION_LOG, or FULL"
-    );
-  }
-  const format = normalizeUpperText(input?.format || "JSON");
-  if (!REPORT_FORMATS.has(format)) {
-    throw badRequest("format must be JSON or CSV");
-  }
-  const asOfDate = parseDateOnly(input?.asOfDate ?? input?.as_of_date);
-  if ((input?.asOfDate || input?.as_of_date) && !asOfDate) {
-    throw badRequest("asOfDate must be a valid YYYY-MM-DD date");
-  }
-  const scopeType = input?.scopeType ?? input?.scope_type;
-  const scopeId = input?.scopeId ?? input?.scope_id;
-  if ((scopeType && !scopeId) || (!scopeType && scopeId)) {
-    throw badRequest("scopeType and scopeId must be provided together");
-  }
-  return {
-    tenantId,
-    reportType,
-    format,
-    asOfDate: asOfDate || new Date().toISOString().slice(0, 10),
-    scopeFilter: normalizeScopeOrNull(
-      scopeType || scopeId ? { scopeType, scopeId } : null,
-      tenantId
-    ),
-  };
+  return Array.from(
+    new Set(requiredRoleCodes.map((roleCode) => normalizeText(roleCode)).filter(Boolean))
+  );
 }
-async function loadScopeReferences(tenantId, runQuery = query) {
-  const normalizedTenantId = parsePositiveInt(tenantId);
-  const [tenantResult, groupResult, countryResult, legalEntityResult, operatingUnitResult] =
-    await Promise.all([
-      runQuery(
-        `SELECT id, code, name
-         FROM tenants
-         WHERE id = ?
-         LIMIT 1`,
-        [normalizedTenantId]
-      ),
-      runQuery(
-        `SELECT id, code, name
-         FROM group_companies
-         WHERE tenant_id = ?`,
-        [normalizedTenantId]
-      ),
-      runQuery(
-        `SELECT id, iso2 AS code, name
-         FROM countries`,
-        []
-      ),
-      runQuery(
-        `SELECT id, code, name
-         FROM legal_entities
-         WHERE tenant_id = ?`,
-        [normalizedTenantId]
-      ),
-      runQuery(
-        `SELECT id, code, name
-         FROM operating_units
-         WHERE tenant_id = ?`,
-        [normalizedTenantId]
-      ),
-    ]);
-  function mapRows(rows = []) {
-    return new Map(
-      rows
-        .map((row) => [
-          parsePositiveInt(row?.id),
-          {
-            id: parsePositiveInt(row?.id),
-            code: String(row?.code || "").trim() || null,
-            name: String(row?.name || "").trim() || null,
-          },
-        ])
-        .filter(([id]) => id)
-    );
+function buildTemplatePermissionCodes(roleCodes, rolesByCode) {
+  const permissionCodes = new Set();
+  for (const roleCode of roleCodes) {
+    const role = rolesByCode.get(roleCode);
+    for (const permissionCode of role?.permissionCodes || []) {
+      permissionCodes.add(normalizeText(permissionCode));
+    }
   }
-  return {
-    TENANT: mapRows(tenantResult.rows || []),
-    GROUP: mapRows(groupResult.rows || []),
-    COUNTRY: mapRows(countryResult.rows || []),
-    LEGAL_ENTITY: mapRows(legalEntityResult.rows || []),
-    OPERATING_UNIT: mapRows(operatingUnitResult.rows || []),
-  };
+  return Array.from(permissionCodes).filter(Boolean).sort();
 }
-function resolveScopeName(scopeReferences, scopeType, scopeId) {
-  const normalizedScopeType = normalizeUpperText(scopeType);
-  const normalizedScopeId = parsePositiveInt(scopeId);
-  if (!normalizedScopeType || !normalizedScopeId) {
-    return null;
-  }
-  const byType = scopeReferences?.[normalizedScopeType];
-  const match = byType instanceof Map ? byType.get(normalizedScopeId) : null;
-  if (!match) {
-    return `${normalizedScopeType} ${normalizedScopeId}`;
-  }
-  return match.name || match.code || `${normalizedScopeType} ${normalizedScopeId}`;
+function buildTemplateMatrix(roleCodes) {
+  const roleCodeSet = new Set((Array.isArray(roleCodes) ? roleCodes : []).map(String));
+  return ACCESS_MATRIX_GROUPS.map((group) => ({
+    ...group,
+    rows: group.rows.map((row) => ({
+      ...row,
+      enabledActions: ACCESS_MATRIX_ACTIONS.reduce((acc, action) => {
+        const requiredRoleCodes = row.actions?.[action.key] || [];
+        acc[action.key] = requiredRoleCodes.some((roleCode) => roleCodeSet.has(roleCode));
+        return acc;
+      }, {}),
+    })),
+  }));
 }
-function formatScopeLabel(scopeReferences, scopeType, scopeId) {
-  const normalizedScopeType = normalizeUpperText(scopeType);
-  const normalizedScopeId = parsePositiveInt(scopeId);
-  if (!normalizedScopeType || !normalizedScopeId) {
-    return "";
-  }
-  return `${normalizedScopeType}:${normalizedScopeId} (${resolveScopeName(
-    scopeReferences,
-    normalizedScopeType,
-    normalizedScopeId
-  )})`;
+function collectVisibleModules(matrixGroups) {
+  return matrixGroups
+    .flatMap((group) =>
+      group.rows
+        .filter((row) => Object.values(row.enabledActions || {}).some(Boolean))
+        .map((row) => row.module)
+    )
+    .filter(Boolean);
 }
-function mapScopeWithName(scopeReferences, scopeType, scopeId) {
-  const normalizedScopeType = normalizeUpperText(scopeType);
-  const normalizedScopeId = parsePositiveInt(scopeId);
-  if (!normalizedScopeType || !normalizedScopeId) {
-    return null;
+function findPresetMatch(roleCodes) {
+  const normalizedRoleCodes = Array.from(
+    new Set((Array.isArray(roleCodes) ? roleCodes : []).map((roleCode) => normalizeText(roleCode)).filter(Boolean))
+  );
+  const roleCodeSet = new Set(normalizedRoleCodes);
+  let bestMatch = null;
+  for (const presetCode of Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG)) {
+    const preset = getBootstrapHandoffPresetEntry(presetCode);
+    const requiredRoleCodes = preset.roleCodes || [];
+    if (requiredRoleCodes.length === 0 || !requiredRoleCodes.every((roleCode) => roleCodeSet.has(roleCode))) {
+      continue;
+    }
+    const optionalRoleCodes = preset.optionalRoleCodes || [];
+    const allowedRoleCodes = new Set([...requiredRoleCodes, ...optionalRoleCodes]);
+    if (normalizedRoleCodes.some((roleCode) => !allowedRoleCodes.has(roleCode))) {
+      continue;
+    }
+    const matchedOptionalRoleCodes = optionalRoleCodes.filter((roleCode) => roleCodeSet.has(roleCode));
+    const score = requiredRoleCodes.length * 100 + matchedOptionalRoleCodes.length;
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = {
+        presetCode,
+        preset,
+        matchedOptionalRoleCodes,
+        score,
+      };
+    }
   }
-  return {
-    type: normalizedScopeType,
-    id: normalizedScopeId,
-    name: resolveScopeName(scopeReferences, normalizedScopeType, normalizedScopeId),
-  };
+  return bestMatch;
 }
-function withinDateWindow(startDate, endDate, asOfDate) {
-  if (startDate && asOfDate < startDate) {
-    return false;
+function resolveAssignmentLifecycle(rows) {
+  const now = Date.now();
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  if (normalizedRows.length === 0) {
+    return "CUSTOM";
   }
-  if (endDate && asOfDate > endDate) {
-    return false;
+  const active = normalizedRows.some((row) => {
+    const effectiveFrom = row.effective_from ? new Date(row.effective_from).getTime() : null;
+    const effectiveTo = row.effective_to ? new Date(row.effective_to).getTime() : null;
+    const afterStart = effectiveFrom === null || Number.isNaN(effectiveFrom) || effectiveFrom <= now;
+    const beforeEnd = effectiveTo === null || Number.isNaN(effectiveTo) || effectiveTo >= now;
+    return afterStart && beforeEnd;
+  });
+  if (active) {
+    return "ACTIVE";
   }
-  return true;
-}
-function resolveDelegationState(row, asOfDate) {
-  const revokedAtDate = parseDateOnly(row?.revoked_at ?? row?.revokedAt);
-  if ((revokedAtDate && revokedAtDate <= asOfDate) || row?.is_active === 0 || row?.isActive === false) {
-    return "REVOKED";
-  }
-  const effectiveFrom = parseDateOnly(row?.effective_from ?? row?.effectiveFrom);
-  const effectiveTo = parseDateOnly(row?.effective_to ?? row?.effectiveTo);
-  if (effectiveFrom && asOfDate < effectiveFrom) {
+  const upcoming = normalizedRows.every((row) => {
+    const effectiveFrom = row.effective_from ? new Date(row.effective_from).getTime() : null;
+    return effectiveFrom !== null && !Number.isNaN(effectiveFrom) && effectiveFrom > now;
+  });
+  if (upcoming) {
     return "UPCOMING";
   }
-  if (effectiveTo && asOfDate > effectiveTo) {
+  const expired = normalizedRows.every((row) => {
+    const effectiveTo = row.effective_to ? new Date(row.effective_to).getTime() : null;
+    return effectiveTo !== null && !Number.isNaN(effectiveTo) && effectiveTo < now;
+  });
+  if (expired) {
     return "EXPIRED";
   }
-  return "ACTIVE";
+  return "CUSTOM";
 }
-async function scopesIntersect(
-  tenantId,
-  leftScope,
-  rightScope,
-  runQuery = query,
-  cache = null
-) {
-  if (!rightScope) {
-    return true;
+function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) {
+  const grouped = new Map();
+  for (const assignment of Array.isArray(assignments) ? assignments : []) {
+    const key = [
+      Number(assignment.user_id || 0),
+      normalizeText(assignment.scope_type).toUpperCase(),
+      Number(assignment.scope_id || 0),
+      normalizeText(assignment.effect).toUpperCase() || "ALLOW",
+      normalizeText(assignment.effective_from),
+      normalizeText(assignment.effective_to),
+    ].join("|");
+    if (!grouped.has(key)) {
+      grouped.set(key, []);
+    }
+    grouped.get(key).push(assignment);
   }
-  const normalizedLeftScope = normalizeScopeOrNull(leftScope, tenantId);
-  const normalizedRightScope = normalizeScopeOrNull(rightScope, tenantId);
-  if (!normalizedLeftScope || !normalizedRightScope) {
-    return false;
-  }
-  const cacheKey = cache
-    ? `${scopeKey(normalizedLeftScope.scopeType, normalizedLeftScope.scopeId)}|${scopeKey(
-        normalizedRightScope.scopeType,
-        normalizedRightScope.scopeId
-      )}`
-    : null;
-  if (cacheKey && cache?.has(cacheKey)) {
-    return cache.get(cacheKey);
-  }
-  let intersects =
-    normalizedLeftScope.scopeType === normalizedRightScope.scopeType &&
-    normalizedLeftScope.scopeId === normalizedRightScope.scopeId;
-  if (!intersects) {
-    intersects = await doesScopeIncludeScope(
-      tenantId,
-      normalizedLeftScope,
-      normalizedRightScope,
-      runQuery
-    );
-  }
-  if (!intersects) {
-    intersects = await doesScopeIncludeScope(
-      tenantId,
-      normalizedRightScope,
-      normalizedLeftScope,
-      runQuery
-    );
-  }
-  if (cacheKey) {
-    cache.set(cacheKey, intersects);
-  }
-  return intersects;
+  return Array.from(grouped.entries())
+    .map(([key, rows]) => {
+      const first = rows[0] || {};
+      const userId = Number(first.user_id || 0);
+      const user = usersById.get(userId) || null;
+      const roleCodes = Array.from(
+        new Set(rows.map((row) => normalizeText(row.role_code)).filter(Boolean))
+      ).sort();
+      const presetMatch = findPresetMatch(roleCodes);
+      const status = resolveAssignmentLifecycle(rows);
+      return {
+        id: key,
+        assignmentIds: rows.map((row) => Number(row.id)).filter(Boolean),
+        userId,
+        userName: normalizeText(user?.name || first.user_name || `User #${userId}`),
+        userEmail: normalizeText(user?.email || first.user_email),
+        scopeType: normalizeText(first.scope_type).toUpperCase(),
+        scopeId: Number(first.scope_id || 0),
+        scopeLabel: buildScopeLabel(first.scope_type, first.scope_id, lookups, tenantScopeId),
+        effect: normalizeText(first.effect).toUpperCase() || "ALLOW",
+        effectiveFrom: first.effective_from || "",
+        effectiveTo: first.effective_to || "",
+        roleCodes,
+        status,
+        presetCode: presetMatch?.presetCode || "",
+        presetSummary: presetMatch?.preset?.summary || "",
+        optionalRoleCodes: presetMatch?.matchedOptionalRoleCodes || [],
+        isPresetBundle: Boolean(presetMatch),
+        rows,
+      };
+    })
+    .sort((left, right) => {
+      const leftActive = left.status === "ACTIVE" ? 0 : left.status === "UPCOMING" ? 1 : 2;
+      const rightActive = right.status === "ACTIVE" ? 0 : right.status === "UPCOMING" ? 1 : 2;
+      if (leftActive !== rightActive) {
+        return leftActive - rightActive;
+      }
+      return left.userName.localeCompare(right.userName);
+    });
 }
-async function resolveOverlapScope(
-  tenantId,
-  leftScope,
-  rightScope,
-  runQuery = query,
-  cache = null
-) {
-  const normalizedLeftScope = normalizeScopeOrNull(leftScope, tenantId);
-  const normalizedRightScope = normalizeScopeOrNull(rightScope, tenantId);
-  if (!normalizedLeftScope || !normalizedRightScope) {
+function buildUserDirectoryRows(users, bundles, approvalRows, coverageRows) {
+  const bundleMap = new Map();
+  for (const bundle of Array.isArray(bundles) ? bundles : []) {
+    const userId = Number(bundle.userId || 0);
+    if (!bundleMap.has(userId)) {
+      bundleMap.set(userId, []);
+    }
+    bundleMap.get(userId).push(bundle);
+  }
+  return (Array.isArray(users) ? users : []).map((user) => {
+    const userId = Number(user.id || 0);
+    const userBundles = bundleMap.get(userId) || [];
+    const roleCodes = Array.from(
+      new Set(userBundles.flatMap((bundle) => bundle.roleCodes))
+    );
+    const scopes = Array.from(
+      new Set(userBundles.map((bundle) => `${bundle.scopeType}:${bundle.scopeId}`))
+    );
+    const activeApprovalDelegations = (approvalRows || []).filter((row) => {
+      const state = normalizeText(row.state).toUpperCase();
+      return (
+        (Number(row.delegatorUserId || row.delegator_user_id || 0) === userId ||
+          Number(row.delegateUserId || row.delegate_user_id || 0) === userId) &&
+        (state === "ACTIVE" || state === "UPCOMING")
+      );
+    });
+    const activeCoverage = (coverageRows || []).filter((row) => {
+      const state = normalizeText(row.state).toUpperCase();
+      return (
+        (Number(row.requesterUserId || row.requester_user_id || 0) === userId ||
+          Number(row.delegateUserId || row.delegate_user_id || 0) === userId) &&
+        (state === "ACTIVE" || state === "APPROVED" || state === "REQUESTED")
+      );
+    });
+    return {
+      ...user,
+      assignmentCount: userBundles.length,
+      presetCount: userBundles.filter((bundle) => bundle.isPresetBundle).length,
+      scopeCount: scopes.length,
+      topRoleCodes: roleCodes.slice(0, 4),
+      topScopeLabels: userBundles.slice(0, 2).map((bundle) => bundle.scopeLabel),
+      activeDelegationCount: activeApprovalDelegations.length + activeCoverage.length,
+      currentPresetCodes: Array.from(
+        new Set(userBundles.map((bundle) => bundle.presetCode).filter(Boolean))
+      ),
+    };
+  });
+}
+function buildAssignmentSearchText(bundle) {
+  return [
+    bundle.userName,
+    bundle.userEmail,
+    bundle.presetCode,
+    bundle.scopeLabel,
+    bundle.scopeType,
+    bundle.roleCodes.join(" "),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+function buildUserSearchText(row) {
+  return [
+    row.name,
+    row.email,
+    row.status,
+    row.topRoleCodes.join(" "),
+    row.currentPresetCodes.join(" "),
+    row.topScopeLabels.join(" "),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+function WorkspaceStatCard({ title, value, subtitle, tone = "slate" }) {
+  const toneClasses =
+    tone === "blue"
+      ? "border-sky-200 bg-sky-50"
+      : tone === "green"
+        ? "border-emerald-200 bg-emerald-50"
+        : tone === "amber"
+          ? "border-amber-200 bg-amber-50"
+          : "border-slate-200 bg-white";
+  return (
+    <article className={`rounded-[24px] border px-5 py-4 shadow-sm ${toneClasses}`}>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {title}
+      </div>
+      <div className="mt-3 text-3xl font-semibold text-slate-950">{value}</div>
+      <div className="mt-2 text-sm leading-6 text-slate-600">{subtitle}</div>
+    </article>
+  );
+}
+function WorkspaceTabButton({ active, count, label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+        active
+          ? "border-sky-200 bg-sky-50 text-sky-800"
+          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+      }`}
+    >
+      <span>{label}</span>
+      <span className="rounded-full bg-white px-2 py-0.5 text-xs text-slate-500">{count}</span>
+    </button>
+  );
+}
+function StatusPill({ label, tone = "slate", className = "" }) {
+  return (
+    <span
+      className={[
+        "inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold",
+        getToneClasses(tone),
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {label}
+    </span>
+  );
+}
+function MatrixCell({ enabled }) {
+  return (
+    <span
+      className={`mx-auto inline-flex h-6 w-6 items-center justify-center rounded-md border text-[11px] font-bold ${
+        enabled
+          ? "border-slate-900 bg-slate-900 text-white"
+          : "border-slate-200 bg-white text-slate-300"
+      }`}
+    >
+      {enabled ? "x" : ""}
+    </span>
+  );
+}
+function AccessMatrix({ matrixGroups, l }) {
+  return (
+    <div className="space-y-4">
+      {matrixGroups.map((group) => (
+        <div key={group.key} className="overflow-hidden rounded-2xl border border-slate-200">
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900">
+            {group.title}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-white">
+                <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                  <th className="px-4 py-3">{l("Module", "Modul")}</th>
+                  {ACCESS_MATRIX_ACTIONS.map((action) => (
+                    <th key={`${group.key}-${action.key}`} className="px-2 py-3 text-center">
+                      {action.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {group.rows.map((row) => (
+                  <tr key={row.key}>
+                    <td className="px-4 py-3 text-sm font-medium text-slate-900">{row.module}</td>
+                    {ACCESS_MATRIX_ACTIONS.map((action) => (
+                      <td key={`${row.key}-${action.key}`} className="px-2 py-3 text-center">
+                        <MatrixCell enabled={Boolean(row.enabledActions?.[action.key])} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+function AssignmentBundleCard({
+  bundle,
+  expanded,
+  l,
+  onSelect,
+  onOpenUser,
+  onRevoke,
+  revoking,
+}) {
+  const statusMeta = getBundleStatusMeta(bundle.status);
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(bundle.id)}
+      className={`w-full rounded-[22px] border px-4 py-4 text-left transition ${
+        expanded
+          ? "border-sky-300 bg-sky-50 shadow-sm"
+          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-base font-semibold text-slate-950">
+              {bundle.presetCode || l("Custom assignment bundle", "Ozel atama paketi")}
+            </div>
+            <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
+            {bundle.effect !== "ALLOW" ? (
+              <StatusPill label={bundle.effect} tone="rose" />
+            ) : null}
+          </div>
+          <div className="mt-2 text-sm text-slate-700">
+            {bundle.userName} - {bundle.scopeLabel}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">
+            {l("Effective", "Yururluk")} {formatDate(bundle.effectiveFrom)} to{" "}
+            {formatDate(bundle.effectiveTo)}
+          </div>
+        </div>
+        <div className="text-right text-xs text-slate-500">
+          <div>{bundle.roleCodes.length} {l("underlying roles", "alttaki rol")}</div>
+          <div className="mt-1">{bundle.scopeType}</div>
+        </div>
+      </div>
++
+      {expanded ? (
+        <div className="mt-4 grid gap-4 border-t border-sky-200 pt-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <div>
+            {bundle.presetSummary ? (
+              <p className="text-sm leading-6 text-slate-600">{bundle.presetSummary}</p>
+            ) : (
+              <p className="text-sm leading-6 text-slate-600">
+                {l(
+                  "This bundle does not match a shipped preset exactly, so it is shown as a custom access package.",
+                  "Bu paket yayinlanan bir preset ile tam eslesmiyor; bu nedenle ozel erisim paketi olarak gosterilir."
+                )}
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {bundle.roleCodes.map((roleCode) => {
+                const roleEntry = getRoleCatalogEntry(roleCode);
+                return (
+                  <span
+                    key={`${bundle.id}-${roleCode}`}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${getToneClasses(
+                      roleEntry.category === "readonly"
+                        ? "slate"
+                        : roleEntry.category === "scoped"
+                          ? "green"
+                          : roleEntry.category === "system"
+                            ? "blue"
+                            : roleEntry.category === "legacy"
+                              ? "amber"
+                              : "violet"
+                    )}`}
+                  >
+                    {roleCode}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              {l("Actions", "Aksiyonlar")}
+            </div>
+            <div className="mt-3 space-y-2">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenUser(bundle.userId);
+                }}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700"
+              >
+                {l("Open user editor", "Kullanici editorunu ac")}
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRevoke(bundle);
+                }}
+                disabled={revoking}
+                className="w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {revoking ? l("Revoking...", "Geri aliniyor...") : l("Revoke bundle", "Paketi geri al")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </button>
+  );
+}
+function UserAccessModal({
+  open,
+  mode,
+  form,
+  onChange,
+  onClose,
+  onSubmit,
+  saving,
+  l,
+  permissionAccess,
+  currentUserRoleCodes,
+  currentUserBundles,
+  modalScopeOptions,
+  matrixGroups,
+  visibleModules,
+  missingRoleCodes,
+  inviteLink,
+}) {
+  if (!open) {
     return null;
   }
-  if (
-    normalizedLeftScope.scopeType === normalizedRightScope.scopeType &&
-    normalizedLeftScope.scopeId === normalizedRightScope.scopeId
-  ) {
-    return normalizedLeftScope;
-  }
-  if (
-    await scopesIntersect(
-      tenantId,
-      normalizedLeftScope,
-      normalizedRightScope,
-      runQuery,
-      cache
-    )
-  ) {
-    return scopeRank(normalizedLeftScope.scopeType) >= scopeRank(normalizedRightScope.scopeType)
-      ? normalizedLeftScope
-      : normalizedRightScope;
-  }
-  return null;
+  const isInvite = mode === "invite";
+  const isPresetSelected = Boolean(normalizeText(form.presetCode));
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/45 px-4 py-8">
+      <div className="w-full max-w-6xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              {l("User editor", "Kullanici editoru")}
+            </div>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-950">
+              {isInvite ? l("Invite user", "Kullanici davet et") : l("Edit user access", "Kullanici erisimini duzenle")}
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+              {l(
+                "Use a template-first editor for real user admin work: general info at the top, scoped assignment in the middle, and a permission matrix preview before save.",
+                "Gercek kullanici yonetimi icin template-oncelikli bir editor kullanin: ustte genel bilgi, ortada kapsamli atama ve kaydetmeden once izin matrisi onizlemesi."
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+          >
+            {l("Close", "Kapat")}
+          </button>
+        </div>
++
+        <form onSubmit={onSubmit}>
+          <div className="grid gap-0 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+            <div className="space-y-6 border-b border-slate-200 px-6 py-6 xl:border-b-0 xl:border-r">
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-950">{l("General Info", "Genel Bilgi")}</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {l(
+                      "Keep this section calm and factual: who the user is, how they sign in, and whether the current flow can still edit those fields.",
+                      "Bu bolumu sakin ve olgusal tutun: kullanicinin kim oldugu, nasil giris yaptigi ve mevcut akisin bu alanlari hala duzenleyip duzenleyemedigi."
+                    )}
+                  </p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Full name", "Ad soyad")}</label>
+                    <input
+                      type="text"
+                      value={form.name}
+                      onChange={(event) => onChange("name", event.target.value)}
+                      disabled={!isInvite}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Email", "E-posta")}</label>
+                    <input
+                      type="email"
+                      value={form.email}
+                      onChange={(event) => onChange("email", event.target.value)}
+                      disabled={!isInvite}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Status", "Durum")}</label>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                      {isInvite
+                        ? l("Pending invite", "Bekleyen davet")
+                        : getUserStatusMeta(form.status).label}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Directory mode", "Dizin modu")}</label>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                      {isInvite
+                        ? l("Invite and assign", "Davet et ve ata")
+                        : l("Review existing user and add access", "Mevcut kullaniciyi incele ve erisim ekle")}
+                    </div>
+                  </div>
+                </div>
+                {!isInvite ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
+                    {l(
+                      "This live surface can apply or review access, but it does not currently persist direct profile edits for existing users because the backend user-update seam is not part of this page's API.",
+                      "Bu canli yuzey erisimi uygulayabilir veya inceleyebilir; ancak mevcut kullanicilar icin dogrudan profil degisikliklerini kalici yapmaz, cunku backend user-update seam'i bu sayfanin API kapsaminda degildir."
+                    )}
+                  </div>
+                ) : null}
+              </section>
++
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-950">{l("Role & Access", "Rol ve Erisim")}</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {l(
+                      "Choose the business template first, then choose the scope once. The matrix below shows what that template opens in the ERP.",
+                      "Once is template'ini secin, sonra kapsami bir kez secin. Alttaki matris bu template'in ERP'de neleri actigini gosterir."
+                    )}
+                  </p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Role template", "Rol template'i")}</label>
+                    <select
+                      value={form.presetCode}
+                      onChange={(event) => onChange("presetCode", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                    >
+                      <option value="">{l("Invite without immediate assignment", "Anlik atama olmadan davet et")}</option>
+                      {Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG).map((presetCode) => (
+                        <option key={presetCode} value={presetCode}>
+                          {presetCode}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Scope", "Kapsam")}</label>
+                    <select
+                      value={form.scopeId}
+                      onChange={(event) => onChange("scopeId", event.target.value)}
+                      disabled={!isPresetSelected}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                    >
+                      {modalScopeOptions.length === 0 ? (
+                        <option value="">{l("No scope available", "Kapsam yok")}</option>
+                      ) : null}
+                      {modalScopeOptions.map((option) => (
+                        <option key={option.id} value={String(option.id)}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Effective from", "Baslangic tarihi")}</label>
+                    <input
+                      type="date"
+                      value={form.effectiveFrom}
+                      onChange={(event) => onChange("effectiveFrom", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Effective to", "Bitis tarihi")}</label>
+                    <input
+                      type="date"
+                      value={form.effectiveTo}
+                      onChange={(event) => onChange("effectiveTo", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                </div>
++
+                <label className="flex items-start gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.includePostingAuthority)}
+                    onChange={(event) => onChange("includePostingAuthority", event.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-violet-950">
+                      {l("Include GL posting authority", "GL posting authority dahil et")}
+                    </span>
+                    <span className="mt-1 block text-sm leading-6 text-violet-900">
+                      {l(
+                        "Keep elevated posting power visible as a deliberate add-on, not as a hidden side effect of the template.",
+                        "Yuksek posting yetkisini template'in gizli yan etkisi olarak degil, bilincli bir eklenti olarak gorunur tutun."
+                      )}
+                    </span>
+                  </span>
+                </label>
++
+                <PermissionAccessNotice
+                  access={permissionAccess}
+                  permissionCode="security.role_assignment.upsert"
+                />
++
+                {inviteLink ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-900">
+                    <div className="font-semibold">{l("Invite link ready", "Davet baglantisi hazir")}</div>
+                    <div className="mt-2 break-all">{inviteLink}</div>
+                  </div>
+                ) : null}
+              </section>
+            </div>
++
+            <div className="space-y-6 px-6 py-6">
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-950">{l("Permission matrix", "Izin matrisi")}</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {l(
+                      "Separate module visibility, business actions, and scope in one preview. Templates stay primary. Overrides stay rare.",
+                      "Modul gorunurlugunu, is aksiyonlarini ve kapsami tek bir onizlemede ayirin. Template'ler birincil kalsin. Override'lar nadir kalsin."
+                    )}
+                  </p>
+                </div>
+                {isPresetSelected ? (
+                  <AccessMatrix matrixGroups={matrixGroups} l={l} />
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                    {l(
+                      "Choose a template to preview module visibility and business actions.",
+                      "Modul gorunurlugunu ve is aksiyonlarini onizlemek icin bir template secin."
+                    )}
+                  </div>
+                )}
+              </section>
++
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-950">{l("Navigation preview", "Navigasyon onizlemesi")}</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {l(
+                      "Admins should understand immediately which modules the user will see once the template is applied.",
+                      "Yoneticiler template uygulandiginda kullanicinin hangi modulleri gorecegini hemen anlamalidir."
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {l("Visible modules", "Gorunen moduller")}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {visibleModules.length > 0 ? (
+                      visibleModules.map((moduleLabel) => (
+                        <span
+                          key={moduleLabel}
+                          className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800"
+                        >
+                          {moduleLabel}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sm text-slate-500">
+                        {l("No modules selected yet.", "Henuz modul secilmedi.")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </section>
++
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-950">{l("Current access snapshot", "Mevcut erisim ozeti")}</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {l(
+                      "Keep the current storage model honest: composable RBAC roles still exist underneath, but the editor shows them as grouped business access.",
+                      "Mevcut saklama modelini durust tutun: altta birlesik RBAC rolleri hala vardir, ancak editor bunlari gruplanmis is erisimi olarak gosterir."
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {l("Current bundles", "Mevcut paketler")}
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {currentUserBundles.length > 0 ? (
+                      currentUserBundles.map((bundle) => (
+                        <div
+                          key={`modal-bundle-${bundle.id}`}
+                          className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-slate-900">
+                              {bundle.presetCode || l("Custom bundle", "Ozel paket")}
+                            </div>
+                            <StatusPill
+                              label={getBundleStatusMeta(bundle.status).label}
+                              tone={getBundleStatusMeta(bundle.status).tone}
+                            />
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">{bundle.scopeLabel}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-slate-500">
+                        {l("No current business assignments.", "Mevcut is atamasi yok.")}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {l("Underlying role rows", "Alttaki rol satirlari")}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {currentUserRoleCodes.length > 0 ? (
+                      currentUserRoleCodes.map((roleCode) => (
+                        <span
+                          key={`modal-current-role-${roleCode}`}
+                          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
+                        >
+                          {roleCode}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sm text-slate-500">
+                        {l("No raw role rows yet.", "Henuz ham rol satiri yok.")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </section>
++
+              {missingRoleCodes.length > 0 ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-800">
+                  {l(
+                    "Preset roles missing from tenant catalog: {{roles}}",
+                    "Tenant katalogunda eksik preset rolleri: {{roles}}",
+                    { roles: missingRoleCodes.join(", ") }
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
++
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-4">
+            <div className="text-sm text-slate-500">
+              {l(
+                "Save applies the access decision. Existing profile editing remains outside this page's current API seam.",
+                "Kaydetme, erisim kararini uygular. Mevcut profil duzenleme bu sayfanin mevcut API seam'inin disindadir."
+              )}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
+              >
+                {l("Cancel", "Iptal")}
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving
+                  ? l("Saving...", "Kaydediliyor...")
+                  : isInvite
+                    ? l("Invite and apply access", "Davet et ve erisim uygula")
+                    : l("Apply access", "Erisim uygula")}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
-async function loadTenantUsers(tenantId, runQuery = query) {
-  const result = await runQuery(
-    `SELECT id, email, name, status, created_at
-     FROM users
-     WHERE tenant_id = ?
-     ORDER BY name ASC, email ASC, id ASC`,
-    [tenantId]
-  );
-  return (result.rows || []).map((row) => ({
-    id: parsePositiveInt(row?.id),
-    email: String(row?.email || "").trim() || null,
-    name: String(row?.name || "").trim() || null,
-    status: String(row?.status || "").trim() || null,
-    createdAt: parseDateTime(row?.created_at),
-  }));
-}
-async function loadRoleAssignmentsAsOf(tenantId, asOfDate, runQuery = query) {
-  const effectiveGuard = await getUserRoleScopeEffectiveDateGuard(runQuery, asOfDate);
-  const result = await runQuery(
-    `SELECT
-        urs.id,
-        urs.user_id,
-        urs.role_id,
-        urs.scope_type,
-        urs.scope_id,
-        urs.effect,
-        urs.effective_from,
-        urs.effective_to,
-        urs.created_at,
-        r.code AS role_code,
-        r.name AS role_name
-       FROM user_role_scopes urs
-       JOIN roles r
-         ON r.id = urs.role_id
-        AND r.tenant_id = urs.tenant_id
-      WHERE urs.tenant_id = ?${effectiveGuard.sql}
-      ORDER BY urs.user_id ASC, urs.id ASC`,
-    [tenantId, ...effectiveGuard.params]
-  );
-  return (result.rows || []).map((row) => ({
-    id: parsePositiveInt(row?.id),
-    userId: parsePositiveInt(row?.user_id),
-    roleId: parsePositiveInt(row?.role_id),
-    roleCode: String(row?.role_code || "").trim() || null,
-    roleName: String(row?.role_name || "").trim() || null,
-    scopeType: normalizeUpperText(row?.scope_type),
-    scopeId: parsePositiveInt(row?.scope_id),
-    effect: normalizeUpperText(row?.effect),
-    effectiveFrom: parseDateOnly(row?.effective_from),
-    effectiveTo: parseDateOnly(row?.effective_to),
-    createdAt: parseDateTime(row?.created_at),
-  }));
-}
-async function loadRolePermissions(roleIds, runQuery = query) {
-  const normalizedRoleIds = Array.from(
-    new Set((Array.isArray(roleIds) ? roleIds : []).map(parsePositiveInt).filter(Boolean))
-  );
-  if (normalizedRoleIds.length === 0) {
-    return new Map();
-  }
-  const result = await runQuery(
-    `SELECT rp.role_id, p.code
-     FROM role_permissions rp
-     JOIN permissions p ON p.id = rp.permission_id
-     WHERE rp.role_id IN (${normalizedRoleIds.map(() => "?").join(", ")})
-     ORDER BY rp.role_id ASC, p.code ASC`,
-    normalizedRoleIds
-  );
-  const permissionsByRoleId = new Map();
-  for (const row of result.rows || []) {
-    const roleId = parsePositiveInt(row?.role_id);
-    const permissionCode = String(row?.code || "").trim();
-    if (!roleId || !permissionCode) {
-      continue;
-    }
-    if (!permissionsByRoleId.has(roleId)) {
-      permissionsByRoleId.set(roleId, new Set());
-    }
-    permissionsByRoleId.get(roleId).add(permissionCode);
-  }
-  return permissionsByRoleId;
-}
-async function loadDataScopes(tenantId, runQuery = query) {
-  const result = await runQuery(
-    `SELECT id, user_id, scope_type, scope_id, effect, created_at
-     FROM data_scopes
-     WHERE tenant_id = ?
-     ORDER BY user_id ASC, id ASC`,
-    [tenantId]
-  );
-  return (result.rows || []).map((row) => ({
-    id: parsePositiveInt(row?.id),
-    userId: parsePositiveInt(row?.user_id),
-    scopeType: normalizeUpperText(row?.scope_type),
-    scopeId: parsePositiveInt(row?.scope_id),
-    effect: normalizeUpperText(row?.effect),
-    createdAt: parseDateTime(row?.created_at),
-  }));
-}
-async function loadDelegations(tenantId, asOfDate, runQuery = query) {
-  const asOfEnd = toEndOfDayIso(asOfDate);
-  const result = await runQuery(
-    `SELECT
-        d.*,
-        delegator.name AS delegator_user_name,
-        delegator.email AS delegator_user_email,
-        delegate_user.name AS delegate_user_name,
-        delegate_user.email AS delegate_user_email
-       FROM approval_delegations d
-       LEFT JOIN users delegator
-         ON delegator.tenant_id = d.tenant_id
-        AND delegator.id = d.delegator_user_id
-       LEFT JOIN users delegate_user
-         ON delegate_user.tenant_id = d.tenant_id
-        AND delegate_user.id = d.delegate_user_id
-      WHERE d.tenant_id = ?
-        AND d.created_at <= ?
-      ORDER BY d.id DESC`,
-    [tenantId, asOfEnd]
-  );
-  return (result.rows || []).map((row) => ({
-    id: parsePositiveInt(row?.id),
-    tenantId: parsePositiveInt(row?.tenant_id),
-    delegatorUserId: parsePositiveInt(row?.delegator_user_id),
-    delegatorUserName: String(row?.delegator_user_name || "").trim() || null,
-    delegatorUserEmail: String(row?.delegator_user_email || "").trim() || null,
-    delegateUserId: parsePositiveInt(row?.delegate_user_id),
-    delegateUserName: String(row?.delegate_user_name || "").trim() || null,
-    delegateUserEmail: String(row?.delegate_user_email || "").trim() || null,
-    moduleCode: normalizeUpperText(row?.module_code) || null,
-    scopeType: normalizeUpperText(row?.scope_type),
-    scopeId: parsePositiveInt(row?.scope_id),
-    effectiveFrom: parseDateOnly(row?.effective_from),
-    effectiveTo: parseDateOnly(row?.effective_to),
-    note: String(row?.note || "").trim() || null,
-    isActive: toBoolean(row?.is_active),
-    revokedAt: parseDateTime(row?.revoked_at),
-    revokedReason: String(row?.revoked_reason || "").trim() || null,
-    createdAt: parseDateTime(row?.created_at),
-    state: resolveDelegationState(row, asOfDate),
-  }));
-}
-async function loadDelegationDecisionDetails(
-  tenantId,
-  asOfDate,
-  delegationIds,
-  runQuery = query
-) {
-  const normalizedDelegationIds = Array.from(
-    new Set((Array.isArray(delegationIds) ? delegationIds : []).map(parsePositiveInt).filter(Boolean))
-  );
-  if (normalizedDelegationIds.length === 0) {
-    return [];
-  }
-  const asOfEnd = toEndOfDayIso(asOfDate);
-  const result = await runQuery(
-    `SELECT
-        d.delegation_id,
-        d.request_id,
-        d.decision,
-        d.decided_at,
-        r.request_code,
-        r.module_code,
-        r.target_type
-       FROM approval_decisions d
-       JOIN approval_requests r
-         ON r.tenant_id = d.tenant_id
-        AND r.id = d.request_id
-      WHERE d.tenant_id = ?
-        AND d.delegation_id IN (${normalizedDelegationIds.map(() => "?").join(", ")})
-        AND d.decided_at <= ?
-      ORDER BY d.delegation_id ASC, d.decided_at ASC, d.id ASC`,
-    [tenantId, ...normalizedDelegationIds, asOfEnd]
-  );
-  return (result.rows || []).map((row) => ({
-    delegationId: parsePositiveInt(row?.delegation_id),
-    requestId: parsePositiveInt(row?.request_id),
-    requestCode: String(row?.request_code || "").trim() || null,
-    action: normalizeUpperText(row?.decision),
-    moduleCode: normalizeUpperText(row?.module_code),
-    targetType: normalizeUpperText(row?.target_type),
-    decidedAt: parseDateTime(row?.decided_at),
-  }));
-}
-async function loadApprovalPoliciesAsOf(tenantId, asOfDate, runQuery = query) {
-  const policyResult = await runQuery(
-    `SELECT *
-     FROM approval_policies
-     WHERE tenant_id = ?
-       AND is_active = 1
-       AND (effective_from IS NULL OR effective_from <= ?)
-       AND (effective_to IS NULL OR effective_to >= ?)
-     ORDER BY module_code ASC, target_type ASC, action_type ASC, id ASC`,
-    [tenantId, asOfDate, asOfDate]
-  );
-  const policies = (policyResult.rows || []).map((row) => ({
-    id: parsePositiveInt(row?.id),
-    moduleCode: normalizeUpperText(row?.module_code),
-    policyCode: String(row?.policy_code || "").trim() || null,
-    policyName: String(row?.policy_name || "").trim() || null,
-    targetType: normalizeUpperText(row?.target_type),
-    actionType: normalizeUpperText(row?.action_type),
-    versionNo: Number(row?.version_no || 1),
-    scopeType: normalizeUpperText(row?.scope_type) || null,
-    scopeId: parsePositiveInt(row?.scope_id),
-    effectiveFrom: parseDateOnly(row?.effective_from),
-    effectiveTo: parseDateOnly(row?.effective_to),
-    minApprovals: Number(row?.min_approvals || 1),
-    makerCheckerRequired: toBoolean(row?.maker_checker_required),
-    autoExecuteOnFinalApproval: toBoolean(row?.auto_execute_on_final_approval),
-    minAmount: toNumberOrNull(row?.min_amount),
-    maxAmount: toNumberOrNull(row?.max_amount),
-    currencyCode: String(row?.currency_code || "").trim() || null,
-    approverPermissionCode: String(row?.approver_permission_code || "").trim() || null,
-  }));
-  const policyIds = policies.map((policy) => policy.id).filter(Boolean);
-  if (policyIds.length === 0) {
-    return [];
-  }
-  const [assignmentResult, stepResult] = await Promise.all([
-    runQuery(
-      `SELECT *
-       FROM approval_policy_assignments
-       WHERE tenant_id = ?
-         AND policy_id IN (${policyIds.map(() => "?").join(", ")})
-         AND is_active = 1
-         AND (effective_from IS NULL OR effective_from <= ?)
-         AND (effective_to IS NULL OR effective_to >= ?)
-       ORDER BY policy_id ASC, scope_type ASC, scope_id ASC, id ASC`,
-      [tenantId, ...policyIds, asOfDate, asOfDate]
-    ),
-    runQuery(
-      `SELECT policy_id, COUNT(*) AS step_count
-       FROM approval_policy_steps
-       WHERE tenant_id = ?
-         AND policy_id IN (${policyIds.map(() => "?").join(", ")})
-       GROUP BY policy_id`,
-      [tenantId, ...policyIds]
-    ),
-  ]);
-  const assignmentsByPolicyId = new Map();
-  for (const row of assignmentResult.rows || []) {
-    const policyId = parsePositiveInt(row?.policy_id);
-    if (!policyId) {
-      continue;
-    }
-    if (!assignmentsByPolicyId.has(policyId)) {
-      assignmentsByPolicyId.set(policyId, []);
-    }
-    assignmentsByPolicyId.get(policyId).push({
-      scopeType: normalizeUpperText(row?.scope_type),
-      scopeId: parsePositiveInt(row?.scope_id),
-      effectiveFrom: parseDateOnly(row?.effective_from),
-      effectiveTo: parseDateOnly(row?.effective_to),
-    });
-  }
-  const stepCountByPolicyId = new Map();
-  for (const row of stepResult.rows || []) {
-    const policyId = parsePositiveInt(row?.policy_id);
-    if (!policyId) {
-      continue;
-    }
-    stepCountByPolicyId.set(policyId, Number(row?.step_count || 0));
-  }
-  return policies.map((policy) => {
-    const assignments = assignmentsByPolicyId.get(policy.id) || [];
-    const applicabilityScopes =
-      assignments.length > 0
-        ? assignments.map((assignment) => ({
-            scopeType: assignment.scopeType,
-            scopeId: assignment.scopeId,
-          }))
-        : policy.scopeType && policy.scopeId
-          ? [{ scopeType: policy.scopeType, scopeId: policy.scopeId }]
-          : [{ scopeType: "TENANT", scopeId: tenantId }];
-    return {
-      ...policy,
-      assignments,
-      applicabilityScopes,
-      stepCount: Math.max(1, Number(stepCountByPolicyId.get(policy.id) || 0)),
-    };
+/**
++ * Live merged workspace for user directory, business assignments, and
++ * delegation operations. The backend still persists raw RBAC rows one at a
++ * time, but this page groups them into calmer business-first admin flows.
++ */
+export default function UserAssignmentsPage() {
+  const {
+    getPermissionAccess,
+    hasPermission,
+    user,
+    securityAdminUiState,
+    securityAdminUiStateLoaded,
+  } = useAuth();
+  const { l } = useI18n();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [actingRowId, setActingRowId] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [warningMessages, setWarningMessages] = useState([]);
+  const [delegationLoadError, setDelegationLoadError] = useState("");
+  const [activeTab, setActiveTab] = useState("users");
+  const [delegationTab, setDelegationTab] = useState("coverage");
+  const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [assignments, setAssignments] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [countries, setCountries] = useState([]);
+  const [legalEntities, setLegalEntities] = useState([]);
+  const [operatingUnits, setOperatingUnits] = useState([]);
+  const [approvalDelegations, setApprovalDelegations] = useState([]);
+  const [coverageRows, setCoverageRows] = useState([]);
+  const [lastInviteLink, setLastInviteLink] = useState("");
+  const [userFilters, setUserFilters] = useState({
+    search: "",
+    scopeType: "",
+    roleCode: "",
+    status: "ALL",
+    delegationState: "",
   });
-}
-async function loadActiveApprovalCoverage(tenantId, asOfDate, scopeFilter, runQuery = query) {
-  const policies = await loadApprovalPoliciesAsOf(tenantId, asOfDate, runQuery);
-  const scopeIntersectionCache = new Map();
-  const filteredPolicies = [];
-  for (const policy of policies) {
-    const relevantScopes = [];
-    for (const scope of policy.applicabilityScopes) {
+  const [assignmentFilters, setAssignmentFilters] = useState({
+    search: "",
+    presetCode: "",
+    status: "ALL",
+  });
+  const [selectedBundleId, setSelectedBundleId] = useState("");
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [userModalMode, setUserModalMode] = useState("invite");
+  const [userModalForm, setUserModalForm] = useState({
+    userId: "",
+    name: "",
+    email: "",
+    status: "",
+    presetCode: "",
+    scopeId: "",
+    effectiveFrom: "",
+    effectiveTo: "",
+    includePostingAuthority: true,
+  });
+  const [assignmentForm, setAssignmentForm] = useState({
+    userId: "",
+    presetCode: "EntitySetupManager",
+    scopeId: "",
+    effectiveFrom: "",
+    effectiveTo: "",
+    includePostingAuthority: true,
+  });
+  const [rawAssignmentForm, setRawAssignmentForm] = useState({
+    userId: "",
+    roleId: "",
+    scopeType: "TENANT",
+    scopeId: "",
+    effect: "ALLOW",
+    effectiveFrom: "",
+    effectiveTo: "",
+  });
+  const tenantScopeId = Number(user?.tenant_id || 0);
+  const canReadOrgTree = hasPermission("org.tree.read");
+  const roleAssignmentReadAccess = getPermissionAccess("security.role_assignment.read");
+  const showFreshTenantAdminNote =
+    securityAdminUiStateLoaded &&
+    Boolean(securityAdminUiState?.roleMigrations?.simplifiedFreshTenantView);
+  const lookups = useMemo(
+    () => ({
+      groups,
+      countries,
+      legalEntities,
+      operatingUnits,
+    }),
+    [countries, groups, legalEntities, operatingUnits]
+  );
+  const usersById = useMemo(
+    () => new Map(users.map((row) => [Number(row.id), row])),
+    [users]
+  );
+  const rolesByCode = useMemo(
+    () => new Map(roles.map((row) => [normalizeText(row.code), row])),
+    [roles]
+  );
+  const roleGroups = useMemo(() => groupRolesForManagement(roles), [roles]);
+  const assignmentBundles = useMemo(
+    () => buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId),
+    [assignments, lookups, tenantScopeId, usersById]
+  );
+  const userDirectoryRows = useMemo(
+    () => buildUserDirectoryRows(users, assignmentBundles, approvalDelegations, coverageRows),
+    [approvalDelegations, assignmentBundles, coverageRows, users]
+  );
+  const filteredUsers = useMemo(() => {
+    const searchText = normalizeText(userFilters.search).toLowerCase();
+    return userDirectoryRows.filter((row) => {
+      if (searchText && !buildUserSearchText(row).includes(searchText)) {
+        return false;
+      }
       if (
-        await scopesIntersect(
-          tenantId,
-          scope,
-          scopeFilter,
-          runQuery,
-          scopeIntersectionCache
+        userFilters.scopeType &&
+        !assignmentBundles.some(
+          (bundle) =>
+            Number(bundle.userId) === Number(row.id) &&
+            bundle.scopeType === userFilters.scopeType
         )
       ) {
-        relevantScopes.push(scope);
+        return false;
       }
-    }
-    if (relevantScopes.length === 0 && scopeFilter) {
-      continue;
-    }
-    filteredPolicies.push({
-      ...policy,
-      relevantScopes: relevantScopes.length > 0 ? relevantScopes : [...policy.applicabilityScopes],
-    });
-  }
-  const grouped = new Map();
-  for (const policy of filteredPolicies) {
-    const key = `${policy.moduleCode}|${policy.targetType}|${policy.actionType}`;
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        moduleCode: policy.moduleCode,
-        targetType: policy.targetType,
-        actionType: policy.actionType,
-        policyCount: 0,
-        policies: [],
-        relevantScopes: [],
-      });
-    }
-    const entry = grouped.get(key);
-    entry.policyCount += 1;
-    entry.policies.push(policy);
-    for (const scope of policy.relevantScopes) {
-      const token = scopeKey(scope.scopeType, scope.scopeId);
-      if (!token) {
-        continue;
+      if (
+        userFilters.roleCode &&
+        !row.topRoleCodes.includes(userFilters.roleCode) &&
+        !assignmentBundles.some(
+          (bundle) =>
+            Number(bundle.userId) === Number(row.id) &&
+            bundle.roleCodes.includes(userFilters.roleCode)
+        )
+      ) {
+        return false;
       }
-      if (!entry.relevantScopes.some((candidate) => scopeKey(candidate.scopeType, candidate.scopeId) === token)) {
-        entry.relevantScopes.push(scope);
-      }
-    }
-  }
-  return {
-    policies: filteredPolicies,
-    groups: Array.from(grouped.values()),
-  };
-}
-function groupEffectivePermissions(entitlements, scopeReferences) {
-  const grouped = new Map();
-  for (const entry of entitlements?.permissions || []) {
-    const permissionCode = String(entry?.code || "").trim();
-    const scopeType = normalizeUpperText(entry?.scopeType);
-    const scopeIds = Array.isArray(entry?.scopeIds) ? entry.scopeIds : [];
-    if (!permissionCode || !scopeType || scopeIds.length === 0) {
-      continue;
-    }
-    if (!grouped.has(permissionCode)) {
-      grouped.set(permissionCode, {
-        code: permissionCode,
-        visibilityNarrowed: Boolean(entry?.visibilityNarrowed),
-        scopes: [],
-      });
-    }
-    const permissionEntry = grouped.get(permissionCode);
-    for (const scopeId of scopeIds) {
-      const normalizedScopeId = parsePositiveInt(scopeId);
-      const token = scopeKey(scopeType, normalizedScopeId);
-      if (!token) {
-        continue;
-      }
-      if (permissionEntry.scopes.some((scope) => scopeKey(scope.type, scope.id) === token)) {
-        continue;
-      }
-      permissionEntry.scopes.push({
-        type: scopeType,
-        id: normalizedScopeId,
-        name: resolveScopeName(scopeReferences, scopeType, normalizedScopeId),
-      });
-    }
-  }
-  return Array.from(grouped.values()).sort((left, right) => left.code.localeCompare(right.code));
-}
-async function buildAccessMatrixReport(input, options = {}) {
-  const { tenantId, asOfDate, scopeFilter } = input;
-  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
-  const [users, assignments, dataScopes, entitlementsByUser, delegations, scopeReferences] =
-    await Promise.all([
-      loadTenantUsers(tenantId, runQuery),
-      loadRoleAssignmentsAsOf(tenantId, asOfDate, runQuery),
-      loadDataScopes(tenantId, runQuery),
-      Promise.resolve(null),
-      loadDelegations(tenantId, asOfDate, runQuery),
-      loadScopeReferences(tenantId, runQuery),
-    ]);
-  const entitlementsMap = new Map();
-  await Promise.all(
-    users.map(async (user) => {
-      const entitlements = await loadUserEntitlements({
-        tenantId,
-        userId: user.id,
-        runQuery,
-        asOfDate,
-      });
-      entitlementsMap.set(user.id, entitlements);
-    })
-  );
-  const assignmentsByUserId = new Map();
-  for (const assignment of assignments) {
-    if (!assignmentsByUserId.has(assignment.userId)) {
-      assignmentsByUserId.set(assignment.userId, []);
-    }
-    assignmentsByUserId.get(assignment.userId).push(assignment);
-  }
-  const dataScopesByUserId = new Map();
-  for (const dataScope of dataScopes) {
-    if (!dataScopesByUserId.has(dataScope.userId)) {
-      dataScopesByUserId.set(dataScope.userId, []);
-    }
-    dataScopesByUserId.get(dataScope.userId).push(dataScope);
-  }
-  const delegationsByUserId = new Map();
-  for (const delegation of delegations) {
-    if (delegation.state !== "ACTIVE") {
-      continue;
-    }
-    const outgoingEntry = {
-      relation: "OUTGOING",
-      id: delegation.id,
-      moduleCode: delegation.moduleCode,
-      scopeType: delegation.scopeType,
-      scopeId: delegation.scopeId,
-      scopeName: resolveScopeName(scopeReferences, delegation.scopeType, delegation.scopeId),
-      effectiveFrom: delegation.effectiveFrom,
-      effectiveTo: delegation.effectiveTo,
-      note: delegation.note,
-      counterpartyUserId: delegation.delegateUserId,
-      counterpartyName: delegation.delegateUserName,
-      counterpartyEmail: delegation.delegateUserEmail,
-    };
-    const incomingEntry = {
-      relation: "INCOMING",
-      id: delegation.id,
-      moduleCode: delegation.moduleCode,
-      scopeType: delegation.scopeType,
-      scopeId: delegation.scopeId,
-      scopeName: resolveScopeName(scopeReferences, delegation.scopeType, delegation.scopeId),
-      effectiveFrom: delegation.effectiveFrom,
-      effectiveTo: delegation.effectiveTo,
-      note: delegation.note,
-      counterpartyUserId: delegation.delegatorUserId,
-      counterpartyName: delegation.delegatorUserName,
-      counterpartyEmail: delegation.delegatorUserEmail,
-    };
-    if (!delegationsByUserId.has(delegation.delegatorUserId)) {
-      delegationsByUserId.set(delegation.delegatorUserId, []);
-    }
-    delegationsByUserId.get(delegation.delegatorUserId).push(outgoingEntry);
-    if (!delegationsByUserId.has(delegation.delegateUserId)) {
-      delegationsByUserId.set(delegation.delegateUserId, []);
-    }
-    delegationsByUserId.get(delegation.delegateUserId).push(incomingEntry);
-  }
-  const scopeIntersectionCache = new Map();
-  const matrix = [];
-  for (const user of users) {
-    const rawRoles = assignmentsByUserId.get(user.id) || [];
-    const roles = [];
-    for (const assignment of rawRoles) {
-      const relevant = await scopesIntersect(
-        tenantId,
-        {
-          scopeType: assignment.scopeType,
-          scopeId: assignment.scopeId,
-        },
-        scopeFilter,
-        runQuery,
-        scopeIntersectionCache
-      );
-      if (!relevant) {
-        continue;
-      }
-      roles.push({
-        assignmentId: assignment.id,
-        roleCode: assignment.roleCode,
-        roleName: assignment.roleName,
-        scopeType: assignment.scopeType,
-        scopeId: assignment.scopeId,
-        scopeName: resolveScopeName(scopeReferences, assignment.scopeType, assignment.scopeId),
-        effect: assignment.effect,
-        assignedAt: assignment.createdAt,
-        effectiveFrom: assignment.effectiveFrom,
-        effectiveTo: assignment.effectiveTo,
-      });
-    }
-    const entitlements = entitlementsMap.get(user.id) || null;
-    const effectivePermissions = [];
-    for (const permission of groupEffectivePermissions(entitlements, scopeReferences)) {
-      const scopes = [];
-      for (const scope of permission.scopes) {
-        const relevant = await scopesIntersect(
-          tenantId,
-          {
-            scopeType: scope.type,
-            scopeId: scope.id,
-          },
-          scopeFilter,
-          runQuery,
-          scopeIntersectionCache
-        );
-        if (relevant) {
-          scopes.push(scope);
+      if (userFilters.status !== "ALL") {
+        const normalizedStatus = normalizeText(row.status).toUpperCase();
+        if (userFilters.status === "INVITED") {
+          if (!(normalizedStatus === "INVITED" || normalizedStatus === "PENDING")) {
+            return false;
+          }
+        } else if (normalizedStatus !== userFilters.status) {
+          return false;
         }
       }
-      if (scopes.length === 0 && scopeFilter) {
-        continue;
+      if (userFilters.delegationState === "HAS_DELEGATION" && row.activeDelegationCount === 0) {
+        return false;
       }
-      effectivePermissions.push({
-        code: permission.code,
-        visibilityNarrowed: permission.visibilityNarrowed,
-        scopes: scopes.length > 0 ? scopes : permission.scopes,
-      });
-    }
-    const visibilityOverrides = entitlements?.visibilityOverrides || [];
-    const dataScopeEntries = [];
-    for (const visibilityOverride of visibilityOverrides) {
-      const relevant = await scopesIntersect(
-        tenantId,
-        {
-          scopeType: visibilityOverride.scopeType,
-          scopeId: visibilityOverride.scopeId,
-        },
-        scopeFilter,
-        runQuery,
-        scopeIntersectionCache
-      );
-      if (!relevant) {
-        continue;
+      if (userFilters.delegationState === "NO_DELEGATION" && row.activeDelegationCount > 0) {
+        return false;
       }
-      dataScopeEntries.push({
-        scopeType: visibilityOverride.scopeType,
-        scopeId: visibilityOverride.scopeId,
-        scopeName: resolveScopeName(
-          scopeReferences,
-          visibilityOverride.scopeType,
-          visibilityOverride.scopeId
-        ),
-        effect: visibilityOverride.effect,
-      });
-    }
-    const rawDelegations = delegationsByUserId.get(user.id) || [];
-    const activeDelegations = [];
-    for (const delegation of rawDelegations) {
-      const relevant = await scopesIntersect(
-        tenantId,
-        {
-          scopeType: delegation.scopeType,
-          scopeId: delegation.scopeId,
-        },
-        scopeFilter,
-        runQuery,
-        scopeIntersectionCache
-      );
-      if (relevant) {
-        activeDelegations.push(delegation);
-      }
-    }
-    if (
-      scopeFilter &&
-      roles.length === 0 &&
-      effectivePermissions.length === 0 &&
-      dataScopeEntries.length === 0 &&
-      activeDelegations.length === 0
-    ) {
-      continue;
-    }
-    matrix.push({
-      userId: user.id,
-      userName: user.name,
-      email: user.email,
-      status: user.status,
-      roles,
-      effectivePermissions,
-      dataScopes: dataScopeEntries,
-      activeDelegations,
-      scopeSummary: entitlements?.scopeSummary || null,
-      isVisibilityNarrowed: Boolean(entitlements?.isVisibilityNarrowed),
+      return true;
     });
-  }
-  return {
-    reportType: "ACCESS_MATRIX",
-    asOfDate,
-    matrix,
-    summary: {
-      totalUsers: matrix.length,
-      usersWithRoles: matrix.filter((row) => row.roles.length > 0).length,
-      usersWithEffectivePermissions: matrix.filter((row) => row.effectivePermissions.length > 0)
-        .length,
-      usersWithDataScopes: matrix.filter((row) => row.dataScopes.length > 0).length,
-      usersWithActiveDelegations: matrix.filter((row) => row.activeDelegations.length > 0).length,
-    },
-  };
-}
-async function buildSodAnalysisReport(input, options = {}) {
-  const { tenantId, asOfDate, scopeFilter } = input;
-  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
-  const [users, assignments, rolePermissions, scopeReferences, coverage] = await Promise.all([
-    loadTenantUsers(tenantId, runQuery),
-    loadRoleAssignmentsAsOf(tenantId, asOfDate, runQuery),
-    Promise.resolve(null),
-    loadScopeReferences(tenantId, runQuery),
-    loadActiveApprovalCoverage(tenantId, asOfDate, scopeFilter, runQuery),
-  ]);
-  const permissionsByRoleId = await loadRolePermissions(
-    assignments.map((assignment) => assignment.roleId),
-    runQuery
-  );
-  const usersById = new Map(users.map((user) => [user.id, user]));
-  const assignmentsByUserId = new Map();
-  for (const assignment of assignments) {
-    if (assignment.effect !== "ALLOW") {
-      continue;
-    }
-    const permissionCodes = permissionsByRoleId.get(assignment.roleId) || new Set();
-    if (!assignmentsByUserId.has(assignment.userId)) {
-      assignmentsByUserId.set(assignment.userId, []);
-    }
-    assignmentsByUserId.get(assignment.userId).push({
-      ...assignment,
-      permissionCodes,
-    });
-  }
-  const scopeIntersectionCache = new Map();
-  const permissionCheckCache = new Map();
-  async function hasPermissionAtScope(userId, permissionCode, scope) {
-    const cacheKey = `${userId}|${permissionCode}|${scopeKey(scope.scopeType, scope.scopeId)}`;
-    if (permissionCheckCache.has(cacheKey)) {
-      return permissionCheckCache.get(cacheKey);
-    }
-    const result = await checkUserHasPermissionAtScope(
-      userId,
-      tenantId,
-      permissionCode,
-      scope.scopeType,
-      scope.scopeId,
-      { runQuery, asOfDate }
-    );
-    permissionCheckCache.set(cacheKey, result);
-    return result;
-  }
-  const conflictsByKey = new Map();
-  for (const rule of SOD_RULES) {
-    for (const [userId, userAssignments] of assignmentsByUserId.entries()) {
-      const assignmentsA = userAssignments.filter((assignment) =>
-        assignment.permissionCodes.has(rule.action_a)
-      );
-      const assignmentsB = userAssignments.filter((assignment) =>
-        assignment.permissionCodes.has(rule.action_b)
-      );
-      if (assignmentsA.length === 0 || assignmentsB.length === 0) {
-        continue;
+  }, [assignmentBundles, userDirectoryRows, userFilters]);
+  const filteredBundles = useMemo(() => {
+    const searchText = normalizeText(assignmentFilters.search).toLowerCase();
+    return assignmentBundles.filter((bundle) => {
+      if (searchText && !buildAssignmentSearchText(bundle).includes(searchText)) {
+        return false;
       }
-      for (const assignmentA of assignmentsA) {
-        for (const assignmentB of assignmentsB) {
-          const overlapScope = await resolveOverlapScope(
-            tenantId,
-            {
-              scopeType: assignmentA.scopeType,
-              scopeId: assignmentA.scopeId,
-            },
-            {
-              scopeType: assignmentB.scopeType,
-              scopeId: assignmentB.scopeId,
-            },
-            runQuery,
-            scopeIntersectionCache
-          );
-          if (!overlapScope) {
-            continue;
+      if (assignmentFilters.presetCode) {
+        const normalizedPresetCode = assignmentFilters.presetCode;
+        if (normalizedPresetCode === "__custom__") {
+          if (bundle.isPresetBundle) {
+            return false;
           }
-          if (
-            !(await scopesIntersect(
-              tenantId,
-              overlapScope,
-              scopeFilter,
-              runQuery,
-              scopeIntersectionCache
-            ))
-          ) {
-            continue;
-          }
-          const [hasActionA, hasActionB] = await Promise.all([
-            hasPermissionAtScope(userId, rule.action_a, overlapScope),
-            hasPermissionAtScope(userId, rule.action_b, overlapScope),
-          ]);
-          if (!hasActionA || !hasActionB) {
-            continue;
-          }
-          const key = `${userId}|${rule.code}`;
-          if (!conflictsByKey.has(key)) {
-            const user = usersById.get(userId) || {};
-            conflictsByKey.set(key, {
-              userId,
-              userName: user.name || null,
-              email: user.email || null,
-              conflictRule: {
-                code: rule.code,
-                actionA: rule.action_a,
-                actionB: rule.action_b,
-                severity: rule.enforcement,
-                scope: rule.scope,
-                reason: rule.reason,
-              },
-              roleA: assignmentA.roleCode,
-              roleB: assignmentB.roleCode,
-              roleCodesA: new Set(),
-              roleCodesB: new Set(),
-              overlappingScopes: [],
-              mitigatingControls: [],
-            });
-          }
-          const conflict = conflictsByKey.get(key);
-          conflict.roleCodesA.add(assignmentA.roleCode);
-          conflict.roleCodesB.add(assignmentB.roleCode);
-          const overlapToken = scopeKey(overlapScope.scopeType, overlapScope.scopeId);
-          if (
-            overlapToken &&
-            !conflict.overlappingScopes.some(
-              (scope) => scopeKey(scope.type, scope.id) === overlapToken
-            )
-          ) {
-            conflict.overlappingScopes.push(
-              mapScopeWithName(scopeReferences, overlapScope.scopeType, overlapScope.scopeId)
-            );
-          }
+        } else if (bundle.presetCode !== normalizedPresetCode) {
+          return false;
         }
       }
-    }
-  }
-  for (const conflict of conflictsByKey.values()) {
-    const mitigationTarget = SOD_RULE_MITIGATION_ACTION_MAP[conflict.conflictRule.code];
-    if (!mitigationTarget) {
-      continue;
-    }
-    for (const scope of conflict.overlappingScopes) {
-      const relevantCoverage = coverage.groups.find(
-        (group) =>
-          group.moduleCode === mitigationTarget.moduleCode &&
-          group.targetType === mitigationTarget.targetType &&
-          group.actionType === mitigationTarget.actionType &&
-          group.relevantScopes.some(
-            (candidate) =>
-              candidate.scopeType === scope.type && candidate.scopeId === scope.id
-          )
-      );
-      if (!relevantCoverage) {
-        continue;
+      if (assignmentFilters.status !== "ALL" && bundle.status !== assignmentFilters.status) {
+        return false;
       }
-      const mitigationLabel = `Approval policy configured for ${mitigationTarget.moduleCode}/${mitigationTarget.targetType}/${mitigationTarget.actionType} at ${formatScopeLabel(
-        scopeReferences,
-        scope.type,
-        scope.id
-      )}`;
-      if (!conflict.mitigatingControls.includes(mitigationLabel)) {
-        conflict.mitigatingControls.push(mitigationLabel);
-      }
-    }
-  }
-  const conflicts = Array.from(conflictsByKey.values())
-    .map((conflict) => ({
-      ...conflict,
-      roleCodesA: Array.from(conflict.roleCodesA).filter(Boolean).sort(),
-      roleCodesB: Array.from(conflict.roleCodesB).filter(Boolean).sort(),
-      mitigatingControls: [...conflict.mitigatingControls],
-    }))
-    .sort((left, right) => {
-      if (left.userName && right.userName && left.userName !== right.userName) {
-        return left.userName.localeCompare(right.userName);
-      }
-      return left.userId - right.userId;
+      return true;
     });
-  return {
-    reportType: "SOD_ANALYSIS",
-    asOfDate,
-    conflicts,
-    summary: {
-      totalUsers: users.length,
-      usersWithConflicts: new Set(conflicts.map((conflict) => conflict.userId)).size,
-      blockLevelConflicts: conflicts.filter(
-        (conflict) => conflict.conflictRule.severity === "block"
-      ).length,
-      warnLevelConflicts: conflicts.filter(
-        (conflict) => conflict.conflictRule.severity === "warn"
-      ).length,
-      mitigatedConflicts: conflicts.filter((conflict) => conflict.mitigatingControls.length > 0)
-        .length,
-      unmitigatedConflicts: conflicts.filter(
-        (conflict) => conflict.mitigatingControls.length === 0
-      ).length,
-    },
-  };
-}
-async function buildApprovalCoverageReport(input, options = {}) {
-  const { tenantId, asOfDate, scopeFilter } = input;
-  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
-  const [coverage, scopeReferences] = await Promise.all([
-    loadActiveApprovalCoverage(tenantId, asOfDate, scopeFilter, runQuery),
-    loadScopeReferences(tenantId, runQuery),
-  ]);
-  const coveredActions = coverage.groups
-    .map((group) => ({
-      moduleCode: group.moduleCode,
-      targetType: group.targetType,
-      actionType: group.actionType,
-      policyCount: group.policyCount,
-      policies: group.policies.map((policy) => ({
-        id: policy.id,
-        policyCode: policy.policyCode,
-        policyName: policy.policyName,
-        versionNo: policy.versionNo,
-        minAmount: policy.minAmount,
-        maxAmount: policy.maxAmount,
-        currencyCode: policy.currencyCode,
-        requiredApprovals: policy.minApprovals,
-        makerCheckerRequired: policy.makerCheckerRequired,
-        autoExecuteOnFinalApproval: policy.autoExecuteOnFinalApproval,
-        steps: policy.stepCount,
-        approverPermissionCode: policy.approverPermissionCode,
-        applicabilityScopes: policy.relevantScopes.map((scope) =>
-          mapScopeWithName(scopeReferences, scope.scopeType, scope.scopeId)
-        ),
-      })),
-    }))
-    .sort((left, right) => {
-      if (left.moduleCode !== right.moduleCode) {
-        return left.moduleCode.localeCompare(right.moduleCode);
-      }
-      if (left.targetType !== right.targetType) {
-        return left.targetType.localeCompare(right.targetType);
-      }
-      return left.actionType.localeCompare(right.actionType);
-    });
-  const coveredActionKeys = new Set(
-    coveredActions.map(
-      (action) => `${action.moduleCode}|${action.targetType}|${action.actionType}`
-    )
+  }, [assignmentBundles, assignmentFilters]);
+  const selectedBundle =
+    filteredBundles.find((bundle) => bundle.id === selectedBundleId) ||
+    filteredBundles[0] ||
+    null;
+  const pendingInviteRows = useMemo(
+    () =>
+      users.filter((row) => {
+        const normalizedStatus = normalizeText(row.status).toUpperCase();
+        return normalizedStatus === "INVITED" || normalizedStatus === "PENDING";
+      }),
+    [users]
   );
-  const uncoveredActions = APPROVAL_COVERAGE_ACTION_CATALOG.filter((entry) => {
-    const key = `${entry.moduleCode}|${entry.targetType}|${entry.actionType}`;
-    return !coveredActionKeys.has(key);
-  }).map((entry) => ({
-    moduleCode: entry.moduleCode,
-    targetType: entry.targetType,
-    actionType: entry.actionType,
-    note: entry.uncoveredNote,
-  }));
-  return {
-    reportType: "APPROVAL_COVERAGE",
-    asOfDate,
-    coveredActions,
-    uncoveredActions,
-    summary: {
-      coveredActionCount: coveredActions.length,
-      uncoveredActionCount: uncoveredActions.length,
-      policyCount: coverage.policies.length,
-    },
-  };
-}
-async function buildDelegationLogReport(input, options = {}) {
-  const { tenantId, asOfDate, scopeFilter } = input;
-  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
-  const [delegations, scopeReferences] = await Promise.all([
-    loadDelegations(tenantId, asOfDate, runQuery),
-    loadScopeReferences(tenantId, runQuery),
-  ]);
-  const scopeIntersectionCache = new Map();
-  const filteredDelegations = [];
-  for (const delegation of delegations) {
-    const relevant = await scopesIntersect(
-      tenantId,
-      {
-        scopeType: delegation.scopeType,
-        scopeId: delegation.scopeId,
-      },
-      scopeFilter,
-      runQuery,
-      scopeIntersectionCache
-    );
-    if (!relevant) {
-      continue;
-    }
-    filteredDelegations.push(delegation);
-  }
-  const decisionDetails = await loadDelegationDecisionDetails(
-    tenantId,
-    asOfDate,
-    filteredDelegations.map((delegation) => delegation.id),
-    runQuery
+  const totalDelegationCount = useMemo(() => {
+    const approvalCount = approvalDelegations.filter((row) => {
+      const state = normalizeText(row.state).toUpperCase();
+      return state === "ACTIVE" || state === "UPCOMING";
+    }).length;
+    const coverageCount = coverageRows.filter((row) => {
+      const state = normalizeText(row.state).toUpperCase();
+      return state === "ACTIVE" || state === "APPROVED" || state === "REQUESTED";
+    }).length;
+    return approvalCount + coverageCount;
+  }, [approvalDelegations, coverageRows]);
+  const userModalPreset = useMemo(
+    () => getBootstrapHandoffPresetEntry(userModalForm.presetCode),
+    [userModalForm.presetCode]
   );
-  const detailsByDelegationId = new Map();
-  for (const detail of decisionDetails) {
-    if (!detailsByDelegationId.has(detail.delegationId)) {
-      detailsByDelegationId.set(detail.delegationId, []);
-    }
-    detailsByDelegationId.get(detail.delegationId).push(detail);
-  }
-  const delegationsReportRows = filteredDelegations.map((delegation) => {
-    const details = detailsByDelegationId.get(delegation.id) || [];
-    return {
-      id: delegation.id,
-      delegatorUserId: delegation.delegatorUserId,
-      delegatorName: delegation.delegatorUserName,
-      delegateUserId: delegation.delegateUserId,
-      delegateName: delegation.delegateUserName,
-      moduleCode: delegation.moduleCode,
-      scopeType: delegation.scopeType,
-      scopeId: delegation.scopeId,
-      scopeName: resolveScopeName(scopeReferences, delegation.scopeType, delegation.scopeId),
-      effectiveFrom: delegation.effectiveFrom,
-      effectiveTo: delegation.effectiveTo,
-      reason: delegation.note,
-      status: delegation.state,
-      revokedAt: delegation.revokedAt,
-      revokedReason: delegation.revokedReason,
-      decisionsActedOn: details.length,
-      decisionDetails: details,
-    };
-  });
-  return {
-    reportType: "DELEGATION_LOG",
-    asOfDate,
-    delegations: delegationsReportRows,
-    summary: {
-      totalDelegations: delegationsReportRows.length,
-      activeDelegations: delegationsReportRows.filter((row) => row.status === "ACTIVE").length,
-      revokedDelegations: delegationsReportRows.filter((row) => row.status === "REVOKED").length,
-      expiredDelegations: delegationsReportRows.filter((row) => row.status === "EXPIRED").length,
-      delegatedDecisionCount: delegationsReportRows.reduce(
-        (total, row) => total + row.decisionsActedOn,
-        0
+  const userModalScopeOptions = useMemo(
+    () => buildScopeOptions(userModalPreset.scopeType, lookups, tenantScopeId),
+    [lookups, tenantScopeId, userModalPreset.scopeType]
+  );
+  const userModalRoleCodes = useMemo(
+    () =>
+      buildTemplateRoleCodes(
+        userModalForm.presetCode,
+        Boolean(userModalForm.includePostingAuthority)
       ),
-    },
-  };
-}
-function flattenAccessMatrixCsvRows(report) {
-  const rows = [];
-  for (const entry of report.matrix || []) {
-    const roleSummary = (entry.roles || [])
-      .map((role) => `${role.roleCode}@${role.scopeType}:${role.scopeId}`)
-      .join("; ");
-    const dataScopeSummary = (entry.dataScopes || [])
-      .map((scope) => `${scope.scopeType}:${scope.scopeId}:${scope.effect}`)
-      .join("; ");
-    const delegationSummary = (entry.activeDelegations || [])
-      .map(
-        (delegation) =>
-          `${delegation.relation}:${delegation.counterpartyName || delegation.counterpartyUserId}@${delegation.scopeType}:${delegation.scopeId}`
+    [userModalForm.includePostingAuthority, userModalForm.presetCode]
+  );
+  const userModalMatrix = useMemo(
+    () => buildTemplateMatrix(userModalRoleCodes),
+    [userModalRoleCodes]
+  );
+  const userModalVisibleModules = useMemo(
+    () => collectVisibleModules(userModalMatrix),
+    [userModalMatrix]
+  );
+  const userModalMissingRoleCodes = useMemo(
+    () => userModalRoleCodes.filter((roleCode) => !rolesByCode.get(roleCode)),
+    [rolesByCode, userModalRoleCodes]
+  );
+  const selectedUserModalScopeId = Number(userModalForm.scopeId || 0);
+  const userModalAccess = getPermissionAccess(
+    "security.role_assignment.upsert",
+    selectedUserModalScopeId && userModalPreset.scopeType
+      ? {
+          scope: {
+            scopeType: userModalPreset.scopeType,
+            scopeId: selectedUserModalScopeId,
+          },
+        }
+      : undefined
+  );
+  const currentModalUserRoleCodes = useMemo(() => {
+    const userId = Number(userModalForm.userId || 0);
+    return Array.from(
+      new Set(
+        assignmentBundles
+          .filter((bundle) => Number(bundle.userId) === userId)
+          .flatMap((bundle) => bundle.roleCodes)
       )
-      .join("; ");
-    if ((entry.effectivePermissions || []).length === 0) {
-      rows.push({
-        tenantId: null,
-        asOfDate: report.asOfDate,
-        userId: entry.userId,
-        userName: entry.userName,
-        email: entry.email,
-        permissionCode: "",
-        permissionScopeType: "",
-        permissionScopeId: "",
-        permissionScopeName: "",
-        assignedRoles: roleSummary,
-        dataScopes: dataScopeSummary,
-        activeDelegations: delegationSummary,
-      });
-      continue;
+    );
+  }, [assignmentBundles, userModalForm.userId]);
+  const currentModalUserBundles = useMemo(() => {
+    const userId = Number(userModalForm.userId || 0);
+    return assignmentBundles.filter((bundle) => Number(bundle.userId) === userId);
+  }, [assignmentBundles, userModalForm.userId]);
+  const assignmentPreset = useMemo(
+    () => getBootstrapHandoffPresetEntry(assignmentForm.presetCode),
+    [assignmentForm.presetCode]
+  );
+  const assignmentScopeOptions = useMemo(
+    () => buildScopeOptions(assignmentPreset.scopeType, lookups, tenantScopeId),
+    [assignmentPreset.scopeType, lookups, tenantScopeId]
+  );
+  const assignmentRoleCodes = useMemo(
+    () =>
+      buildTemplateRoleCodes(
+        assignmentForm.presetCode,
+        Boolean(assignmentForm.includePostingAuthority)
+      ),
+    [assignmentForm.includePostingAuthority, assignmentForm.presetCode]
+  );
+  const assignmentRoleEntries = useMemo(
+    () => assignmentRoleCodes.map((roleCode) => getRoleCatalogEntry(roleCode)),
+    [assignmentRoleCodes]
+  );
+  const selectedAssignmentScopeId = Number(assignmentForm.scopeId || 0);
+  const assignmentWriteAccess = getPermissionAccess(
+    "security.role_assignment.upsert",
+    selectedAssignmentScopeId && assignmentPreset.scopeType
+      ? {
+          scope: {
+            scopeType: assignmentPreset.scopeType,
+            scopeId: selectedAssignmentScopeId,
+          },
+        }
+      : undefined
+  );
+  const rawScopeOptions = useMemo(
+    () => buildScopeOptions(rawAssignmentForm.scopeType, lookups, tenantScopeId),
+    [lookups, rawAssignmentForm.scopeType, tenantScopeId]
+  );
+  const selectedRawScopeId =
+    rawAssignmentForm.scopeType === "TENANT"
+      ? tenantScopeId
+      : Number(rawAssignmentForm.scopeId || 0);
+  const rawAssignmentWriteAccess = getPermissionAccess(
+    "security.role_assignment.upsert",
+    selectedRawScopeId
+      ? {
+          scope: {
+            scopeType: rawAssignmentForm.scopeType,
+            scopeId: selectedRawScopeId,
+          },
+        }
+      : undefined
+  );
+  useEffect(() => {
+    if (filteredBundles.length === 0) {
+      setSelectedBundleId("");
+      return;
     }
-    for (const permission of entry.effectivePermissions || []) {
-      for (const scope of permission.scopes || []) {
-        rows.push({
-          tenantId: null,
-          asOfDate: report.asOfDate,
-          userId: entry.userId,
-          userName: entry.userName,
-          email: entry.email,
-          permissionCode: permission.code,
-          permissionScopeType: scope.type,
-          permissionScopeId: scope.id,
-          permissionScopeName: scope.name,
-          assignedRoles: roleSummary,
-          dataScopes: dataScopeSummary,
-          activeDelegations: delegationSummary,
+    if (!filteredBundles.some((bundle) => bundle.id === selectedBundleId)) {
+      setSelectedBundleId(filteredBundles[0].id);
+    }
+  }, [filteredBundles, selectedBundleId]);
+  useEffect(() => {
+    if (!assignmentForm.userId && users.length > 0) {
+      setAssignmentForm((prev) => ({ ...prev, userId: String(users[0].id) }));
+    }
+  }, [assignmentForm.userId, users]);
+  useEffect(() => {
+    if (!rawAssignmentForm.userId && users.length > 0) {
+      setRawAssignmentForm((prev) => ({ ...prev, userId: String(users[0].id) }));
+    }
+  }, [rawAssignmentForm.userId, users]);
+  useEffect(() => {
+    setAssignmentForm((prev) => {
+      const currentScopeId = Number(prev.scopeId || 0);
+      if (
+        currentScopeId &&
+        assignmentScopeOptions.some((option) => Number(option.id) === currentScopeId)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        scopeId: String(assignmentScopeOptions[0]?.id || ""),
+      };
+    });
+  }, [assignmentScopeOptions]);
+  useEffect(() => {
+    setUserModalForm((prev) => {
+      if (!userModalOpen) {
+        return prev;
+      }
+      if (!prev.presetCode) {
+        return prev;
+      }
+      const currentScopeId = Number(prev.scopeId || 0);
+      if (
+        currentScopeId &&
+        userModalScopeOptions.some((option) => Number(option.id) === currentScopeId)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        scopeId: String(userModalScopeOptions[0]?.id || ""),
+      };
+    });
+  }, [userModalOpen, userModalScopeOptions]);
+  useEffect(() => {
+    setRawAssignmentForm((prev) => {
+      const currentScopeId = Number(prev.scopeId || 0);
+      if (prev.scopeType === "TENANT") {
+        return {
+          ...prev,
+          scopeId: String(tenantScopeId || ""),
+        };
+      }
+      if (
+        currentScopeId &&
+        rawScopeOptions.some((option) => Number(option.id) === currentScopeId)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        scopeId: String(rawScopeOptions[0]?.id || ""),
+      };
+    });
+  }, [rawScopeOptions, tenantScopeId]);
+  async function loadData() {
+    setLoading(true);
+    setError("");
+    try {
+      const [
+        usersResponse,
+        rolesResponse,
+        assignmentsResponse,
+        groupsResponse,
+        countriesResponse,
+        legalEntitiesResponse,
+        operatingUnitsResponse,
+      ] = await Promise.all([
+        listUsers(),
+        listRoles({ includePermissions: true }),
+        listRoleAssignments(),
+        canReadOrgTree ? listGroupCompanies() : Promise.resolve({ rows: [] }),
+        canReadOrgTree ? listCountries() : Promise.resolve({ rows: [] }),
+        canReadOrgTree ? listLegalEntities() : Promise.resolve({ rows: [] }),
+        canReadOrgTree ? listOperatingUnits() : Promise.resolve({ rows: [] }),
+      ]);
+      setUsers(Array.isArray(usersResponse?.rows) ? usersResponse.rows : []);
+      setRoles(Array.isArray(rolesResponse?.rows) ? rolesResponse.rows : []);
+      setAssignments(Array.isArray(assignmentsResponse?.rows) ? assignmentsResponse.rows : []);
+      setGroups(Array.isArray(groupsResponse?.rows) ? groupsResponse.rows : []);
+      setCountries(Array.isArray(countriesResponse?.rows) ? countriesResponse.rows : []);
+      setLegalEntities(Array.isArray(legalEntitiesResponse?.rows) ? legalEntitiesResponse.rows : []);
+      setOperatingUnits(Array.isArray(operatingUnitsResponse?.rows) ? operatingUnitsResponse.rows : []);
+      const [approvalResult, coverageResult] = await Promise.allSettled([
+        listApprovalDelegations(),
+        getOperationalCoverageWorkspace(),
+      ]);
+      const delegationErrors = [];
+      if (approvalResult.status === "fulfilled") {
+        setApprovalDelegations(Array.isArray(approvalResult.value?.rows) ? approvalResult.value.rows : []);
+      } else {
+        setApprovalDelegations([]);
+        delegationErrors.push(
+          getErrorMessage(
+            approvalResult.reason,
+            l(
+              "Approval delegation data is not available for this workspace.",
+              "Approval delegation verisi bu calisma alaninda kullanilamiyor."
+            )
+          )
+        );
+      }
+      if (coverageResult.status === "fulfilled") {
+        setCoverageRows(Array.isArray(coverageResult.value?.rows) ? coverageResult.value.rows : []);
+      } else {
+        setCoverageRows([]);
+        delegationErrors.push(
+          getErrorMessage(
+            coverageResult.reason,
+            l(
+              "Temporary coverage data is not available for this workspace.",
+              "Temporary coverage verisi bu calisma alaninda kullanilamiyor."
+            )
+          )
+        );
+      }
+      setDelegationLoadError(delegationErrors.join(" "));
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l(
+            "User, role, and assignment data could not be loaded.",
+            "Kullanici, rol ve atama verileri yuklenemedi."
+          )
+        )
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  function openInviteModal() {
+    setUserModalMode("invite");
+    setUserModalForm({
+      userId: "",
+      name: "",
+      email: "",
+      status: "INVITED",
+      presetCode: "",
+      scopeId: "",
+      effectiveFrom: "",
+      effectiveTo: "",
+      includePostingAuthority: true,
+    });
+    setUserModalOpen(true);
+  }
+  function openExistingUserModal(userRow) {
+    const userId = Number(userRow?.id || 0);
+    const firstBundle = assignmentBundles.find((bundle) => Number(bundle.userId) === userId) || null;
+    setUserModalMode("existing");
+    setUserModalForm({
+      userId: String(userId),
+      name: normalizeText(userRow?.name),
+      email: normalizeText(userRow?.email),
+      status: normalizeText(userRow?.status),
+      presetCode: firstBundle?.presetCode || "",
+      scopeId: firstBundle ? String(firstBundle.scopeId) : "",
+      effectiveFrom: firstBundle?.effectiveFrom || "",
+      effectiveTo: firstBundle?.effectiveTo || "",
+      includePostingAuthority: Boolean(firstBundle?.optionalRoleCodes?.includes("GLPostingAuthority")),
+    });
+    setUserModalOpen(true);
+  }
+  function updateUserModalField(field, value) {
+    setUserModalForm((prev) => ({ ...prev, [field]: value }));
+  }
+  function updateAssignmentField(field, value) {
+    setAssignmentForm((prev) => ({ ...prev, [field]: value }));
+  }
+  function updateRawAssignmentField(field, value) {
+    setRawAssignmentForm((prev) => ({ ...prev, [field]: value }));
+  }
+  async function copyInviteLink() {
+    if (!lastInviteLink) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(lastInviteLink);
+      setMessage(l("Invite link copied.", "Davet baglantisi kopyalandi."));
+    } catch {
+      setError(l("Invite link could not be copied.", "Davet baglantisi kopyalanamadi."));
+    }
+  }
+  async function applyPresetAssignments({
+    targetUserId,
+    presetCode,
+    scopeId,
+    includePostingAuthority,
+    effectiveFrom,
+    effectiveTo,
+  }) {
+    const roleCodes = buildTemplateRoleCodes(presetCode, includePostingAuthority);
+    const missingRoleCodes = roleCodes.filter((roleCode) => !rolesByCode.get(roleCode));
+    if (missingRoleCodes.length > 0) {
+      throw new Error(
+        l(
+          "Preset roles missing from tenant catalog: {{roles}}",
+          "Tenant katalogunda eksik preset rolleri: {{roles}}",
+          { roles: missingRoleCodes.join(", ") }
+        )
+      );
+    }
+    const preset = getBootstrapHandoffPresetEntry(presetCode);
+    const collectedWarnings = [];
+    // The backend persists one role assignment row at a time. This fan-out keeps
+    // the existing RBAC validation and audit logic intact while the UI presents
+    // one calm business assignment instead of many scattered raw rows.
+    for (const roleCode of roleCodes) {
+      const role = rolesByCode.get(roleCode);
+      const response = await createRoleAssignment({
+        userId: targetUserId,
+        roleId: Number(role.id),
+        scopeType: preset.scopeType,
+        scopeId: Number(scopeId),
+        effect: "ALLOW",
+        effectiveFrom: effectiveFrom || undefined,
+        effectiveTo: effectiveTo || undefined,
+      });
+      for (const warning of response?.assignmentWarnings || []) {
+        const text =
+          typeof warning === "string"
+            ? warning
+            : normalizeText(warning?.message || warning?.reason);
+        if (text) {
+          collectedWarnings.push(text);
+        }
+      }
+    }
+    return Array.from(new Set(collectedWarnings));
+  }
+  async function handleSaveUserModal(event) {
+    event.preventDefault();
+    const isInvite = userModalMode === "invite";
+    const hasPreset = Boolean(normalizeText(userModalForm.presetCode));
+    if (isInvite) {
+      if (!normalizeText(userModalForm.name) || !normalizeText(userModalForm.email)) {
+        setError(
+          l(
+            "Full name and email are required before sending an invite.",
+            "Davet gondermeden once ad soyad ve e-posta zorunludur."
+          )
+        );
+        return;
+      }
+    } else if (!normalizeText(userModalForm.userId)) {
+      setError(l("Select a user first.", "Once bir kullanici secin."));
+      return;
+    }
+    if (hasPreset) {
+      const numericScopeId = Number(userModalForm.scopeId || 0);
+      if (!numericScopeId) {
+        setError(l("Choose a scope for the selected template.", "Secilen template icin bir kapsam secin."));
+        return;
+      }
+      if (!userModalAccess.allowed) {
+        setError(l("You do not have permission to apply this access scope.", "Bu erisim kapsamını uygulama yetkiniz yok."));
+        return;
+      }
+    } else if (!isInvite) {
+      setError(
+        l(
+          "Choose a role template to add access for this user.",
+          "Bu kullaniciya erisim eklemek icin bir rol template'i secin."
+        )
+      );
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setWarningMessages([]);
+    let targetUserId = Number(userModalForm.userId || 0);
+    let inviteUrl = "";
+    try {
+      if (isInvite) {
+        const inviteResponse = await createSecurityInvite({
+          name: normalizeText(userModalForm.name),
+          email: normalizeText(userModalForm.email),
+        });
+        targetUserId = Number(inviteResponse?.invite?.userId || 0);
+        inviteUrl = normalizeText(inviteResponse?.invite?.inviteUrl);
+        setLastInviteLink(inviteUrl);
+      }
+      if (!targetUserId) {
+        throw new Error(
+          l(
+            "The target user could not be resolved for this save action.",
+            "Bu kaydetme aksiyonu icin hedef kullanici cozulemedi."
+          )
+        );
+      }
+      let warnings = [];
+      if (hasPreset) {
+        warnings = await applyPresetAssignments({
+          targetUserId,
+          presetCode: userModalForm.presetCode,
+          scopeId: Number(userModalForm.scopeId),
+          includePostingAuthority: Boolean(userModalForm.includePostingAuthority),
+          effectiveFrom: userModalForm.effectiveFrom,
+          effectiveTo: userModalForm.effectiveTo,
         });
       }
+      setWarningMessages(warnings);
+      setMessage(
+        isInvite
+          ? hasPreset
+            ? l("Invite created and access template applied.", "Davet olusturuldu ve erisim template'i uygulandi.")
+            : l("Invite created.", "Davet olusturuldu.")
+          : l("Access template applied.", "Erisim template'i uygulandi.")
+      );
+      setUserModalOpen(false);
+      await loadData();
+    } catch (requestError) {
+      if (inviteUrl) {
+        setLastInviteLink(inviteUrl);
+      }
+      setError(
+        getErrorMessage(
+          requestError,
+          l("The user workspace action could not be completed.", "Kullanici calisma alani aksiyonu tamamlanamadi.")
+        )
+      );
+    } finally {
+      setSaving(false);
     }
   }
-  return rows;
-}
-function flattenSodCsvRows(report, scopeReferences) {
-  return (report.conflicts || []).map((conflict) => ({
-    asOfDate: report.asOfDate,
-    userId: conflict.userId,
-    userName: conflict.userName,
-    email: conflict.email,
-    ruleCode: conflict.conflictRule.code,
-    actionA: conflict.conflictRule.actionA,
-    actionB: conflict.conflictRule.actionB,
-    severity: conflict.conflictRule.severity,
-    roleCodesA: (conflict.roleCodesA || []).join("; "),
-    roleCodesB: (conflict.roleCodesB || []).join("; "),
-    overlappingScopes: (conflict.overlappingScopes || [])
-      .map((scope) => formatScopeLabel(scopeReferences, scope.type, scope.id))
-      .join("; "),
-    mitigatingControls: (conflict.mitigatingControls || []).join("; "),
-  }));
-}
-function flattenApprovalCoverageCsvRows(report, scopeReferences) {
-  const rows = [];
-  for (const coveredAction of report.coveredActions || []) {
-    for (const policy of coveredAction.policies || []) {
-      rows.push({
-        asOfDate: report.asOfDate,
-        coverageStatus: "COVERED",
-        moduleCode: coveredAction.moduleCode,
-        targetType: coveredAction.targetType,
-        actionType: coveredAction.actionType,
-        policyId: policy.id,
-        policyCode: policy.policyCode,
-        requiredApprovals: policy.requiredApprovals,
-        steps: policy.steps,
-        makerCheckerRequired: policy.makerCheckerRequired ? "true" : "false",
-        applicabilityScopes: (policy.applicabilityScopes || [])
-          .map((scope) => formatScopeLabel(scopeReferences, scope.type, scope.id))
-          .join("; "),
-        note: "",
+  async function handleCreatePresetAssignment(event) {
+    event.preventDefault();
+    if (!normalizeText(assignmentForm.userId)) {
+      setError(l("Choose an assignee first.", "Once bir atanan kisi secin."));
+      return;
+    }
+    if (!normalizeText(assignmentForm.presetCode)) {
+      setError(l("Choose a business preset first.", "Once bir is preset'i secin."));
+      return;
+    }
+    if (!Number(assignmentForm.scopeId || 0)) {
+      setError(l("Choose a scope before saving.", "Kaydetmeden once bir kapsam secin."));
+      return;
+    }
+    if (!assignmentWriteAccess.allowed) {
+      setError(l("You do not have permission to save this assignment scope.", "Bu atama kapsamını kaydetme yetkiniz yok."));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setWarningMessages([]);
+    try {
+      const warnings = await applyPresetAssignments({
+        targetUserId: Number(assignmentForm.userId),
+        presetCode: assignmentForm.presetCode,
+        scopeId: Number(assignmentForm.scopeId),
+        includePostingAuthority: Boolean(assignmentForm.includePostingAuthority),
+        effectiveFrom: assignmentForm.effectiveFrom,
+        effectiveTo: assignmentForm.effectiveTo,
       });
+      setWarningMessages(warnings);
+      setMessage(l("Business assignment created.", "Is atamasi olusturuldu."));
+      await loadData();
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l("The business assignment could not be created.", "Is atamasi olusturulamadi.")
+        )
+      );
+    } finally {
+      setSaving(false);
     }
   }
-  for (const uncoveredAction of report.uncoveredActions || []) {
-    rows.push({
-      asOfDate: report.asOfDate,
-      coverageStatus: "UNCOVERED",
-      moduleCode: uncoveredAction.moduleCode,
-      targetType: uncoveredAction.targetType,
-      actionType: uncoveredAction.actionType,
-      policyId: "",
-      policyCode: "",
-      requiredApprovals: "",
-      steps: "",
-      makerCheckerRequired: "",
-      applicabilityScopes: "",
-      note: uncoveredAction.note,
-    });
-  }
-  return rows;
-}
-function flattenDelegationLogCsvRows(report, scopeReferences) {
-  const rows = [];
-  for (const delegation of report.delegations || []) {
-    const decisionDetails = Array.isArray(delegation.decisionDetails)
-      ? delegation.decisionDetails
-      : [];
-    if (decisionDetails.length === 0) {
-      rows.push({
-        asOfDate: report.asOfDate,
-        delegationId: delegation.id,
-        delegatorName: delegation.delegatorName,
-        delegateName: delegation.delegateName,
-        moduleCode: delegation.moduleCode,
-        scope: formatScopeLabel(scopeReferences, delegation.scopeType, delegation.scopeId),
-        effectiveFrom: delegation.effectiveFrom,
-        effectiveTo: delegation.effectiveTo,
-        status: delegation.status,
-        reason: delegation.reason,
-        requestId: "",
-        requestCode: "",
-        decisionAction: "",
-        decisionModule: "",
-        decidedAt: "",
+  async function handleCreateRawAssignment(event) {
+    event.preventDefault();
+    if (!normalizeText(rawAssignmentForm.userId) || !normalizeText(rawAssignmentForm.roleId)) {
+      setError(l("Choose both a user and a role for the raw assignment.", "Ham atama icin hem kullanici hem de rol secin."));
+      return;
+    }
+    if (!selectedRawScopeId) {
+      setError(l("Choose a valid raw-assignment scope.", "Gecerli bir ham atama kapsami secin."));
+      return;
+    }
+    if (!rawAssignmentWriteAccess.allowed) {
+      setError(l("You do not have permission to create this raw role row.", "Bu ham rol satirini olusturma yetkiniz yok."));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setWarningMessages([]);
+    try {
+      const response = await createRoleAssignment({
+        userId: Number(rawAssignmentForm.userId),
+        roleId: Number(rawAssignmentForm.roleId),
+        scopeType: rawAssignmentForm.scopeType,
+        scopeId: selectedRawScopeId,
+        effect: rawAssignmentForm.effect,
+        effectiveFrom: rawAssignmentForm.effectiveFrom || undefined,
+        effectiveTo: rawAssignmentForm.effectiveTo || undefined,
       });
-      continue;
-    }
-    for (const detail of decisionDetails) {
-      rows.push({
-        asOfDate: report.asOfDate,
-        delegationId: delegation.id,
-        delegatorName: delegation.delegatorName,
-        delegateName: delegation.delegateName,
-        moduleCode: delegation.moduleCode,
-        scope: formatScopeLabel(scopeReferences, delegation.scopeType, delegation.scopeId),
-        effectiveFrom: delegation.effectiveFrom,
-        effectiveTo: delegation.effectiveTo,
-        status: delegation.status,
-        reason: delegation.reason,
-        requestId: detail.requestId,
-        requestCode: detail.requestCode,
-        decisionAction: detail.action,
-        decisionModule: detail.moduleCode,
-        decidedAt: detail.decidedAt,
-      });
+      setWarningMessages(response?.assignmentWarnings || []);
+      setMessage(l("Raw role row created.", "Ham rol satiri olusturuldu."));
+      await loadData();
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l("The raw role row could not be created.", "Ham rol satiri olusturulamadi.")
+        )
+      );
+    } finally {
+      setSaving(false);
     }
   }
-  return rows;
-}
-function buildCsvPayload(report, scopeReferences, tenantId) {
-  if (report.reportType === "ACCESS_MATRIX") {
-    const rows = flattenAccessMatrixCsvRows(report);
-    const csv = buildCsv(
-      [
-        { header: "as_of_date", value: (row) => row.asOfDate },
-        { header: "user_id", value: (row) => row.userId },
-        { header: "user_name", value: (row) => row.userName },
-        { header: "email", value: (row) => row.email },
-        { header: "permission_code", value: (row) => row.permissionCode },
-        { header: "permission_scope_type", value: (row) => row.permissionScopeType },
-        { header: "permission_scope_id", value: (row) => row.permissionScopeId },
-        { header: "permission_scope_name", value: (row) => row.permissionScopeName },
-        { header: "assigned_roles", value: (row) => row.assignedRoles },
-        { header: "data_scopes", value: (row) => row.dataScopes },
-        { header: "active_delegations", value: (row) => row.activeDelegations },
-      ],
-      rows
+  async function handleRevokeBundle(bundle) {
+    if (!bundle) {
+      return;
+    }
+    const revokeAccess = getPermissionAccess(
+      "security.role_assignment.upsert",
+      bundle.scopeId
+        ? {
+            scope: {
+              scopeType: bundle.scopeType,
+              scopeId: bundle.scopeId,
+            },
+          }
+        : undefined
     );
-    return {
-      csv,
-      fileName: `rbac-access-matrix-${tenantId}-${report.asOfDate}.csv`,
-      rowCount: rows.length,
-    };
-  }
-  if (report.reportType === "SOD_ANALYSIS") {
-    const rows = flattenSodCsvRows(report, scopeReferences);
-    const csv = buildCsv(
-      [
-        { header: "as_of_date", value: (row) => row.asOfDate },
-        { header: "user_id", value: (row) => row.userId },
-        { header: "user_name", value: (row) => row.userName },
-        { header: "email", value: (row) => row.email },
-        { header: "rule_code", value: (row) => row.ruleCode },
-        { header: "action_a", value: (row) => row.actionA },
-        { header: "action_b", value: (row) => row.actionB },
-        { header: "severity", value: (row) => row.severity },
-        { header: "role_codes_a", value: (row) => row.roleCodesA },
-        { header: "role_codes_b", value: (row) => row.roleCodesB },
-        { header: "overlapping_scopes", value: (row) => row.overlappingScopes },
-        { header: "mitigating_controls", value: (row) => row.mitigatingControls },
-      ],
-      rows
+    if (!revokeAccess.allowed) {
+      setError(l("You do not have permission to revoke this assignment bundle.", "Bu atama paketini geri alma yetkiniz yok."));
+      return;
+    }
+    const confirmed = window.confirm(
+      l(
+        "Revoke the whole business assignment bundle for this user and scope?",
+        "Bu kullanici ve kapsam icin tum is atama paketini geri almak istiyor musunuz?"
+      )
     );
-    return {
-      csv,
-      fileName: `rbac-sod-analysis-${tenantId}-${report.asOfDate}.csv`,
-      rowCount: rows.length,
-    };
+    if (!confirmed) {
+      return;
+    }
+    setActingRowId(bundle.id);
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setWarningMessages([]);
+    try {
+      for (const assignmentId of bundle.assignmentIds) {
+        await deleteRoleAssignment(assignmentId);
+      }
+      setMessage(l("Business assignment revoked.", "Is atamasi geri alindi."));
+      await loadData();
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l("The business assignment bundle could not be revoked.", "Is atama paketi geri alinamadi.")
+        )
+      );
+    } finally {
+      setActingRowId("");
+      setSaving(false);
+    }
   }
-  if (report.reportType === "APPROVAL_COVERAGE") {
-    const rows = flattenApprovalCoverageCsvRows(report, scopeReferences);
-    const csv = buildCsv(
-      [
-        { header: "as_of_date", value: (row) => row.asOfDate },
-        { header: "coverage_status", value: (row) => row.coverageStatus },
-        { header: "module_code", value: (row) => row.moduleCode },
-        { header: "target_type", value: (row) => row.targetType },
-        { header: "action_type", value: (row) => row.actionType },
-        { header: "policy_id", value: (row) => row.policyId },
-        { header: "policy_code", value: (row) => row.policyCode },
-        { header: "required_approvals", value: (row) => row.requiredApprovals },
-        { header: "steps", value: (row) => row.steps },
-        { header: "maker_checker_required", value: (row) => row.makerCheckerRequired },
-        { header: "applicability_scopes", value: (row) => row.applicabilityScopes },
-        { header: "note", value: (row) => row.note },
-      ],
-      rows
+  async function handleRevokeApproval(row) {
+    const delegationId = Number(row?.id || 0);
+    if (!delegationId) {
+      return;
+    }
+    const confirmed = window.confirm(
+      l(
+        "Revoke this approval delegation?",
+        "Bu approval delegation kaydini geri almak istiyor musunuz?"
+      )
     );
-    return {
-      csv,
-      fileName: `rbac-approval-coverage-${tenantId}-${report.asOfDate}.csv`,
-      rowCount: rows.length,
-    };
+    if (!confirmed) {
+      return;
+    }
+    setActingRowId(`approval-${delegationId}`);
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await revokeApprovalDelegation(delegationId);
+      setMessage(l("Approval delegation revoked.", "Approval delegation geri alindi."));
+      await loadData();
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l("Approval delegation could not be revoked.", "Approval delegation geri alinamadi.")
+        )
+      );
+    } finally {
+      setActingRowId("");
+      setSaving(false);
+    }
   }
-  if (report.reportType === "DELEGATION_LOG") {
-    const rows = flattenDelegationLogCsvRows(report, scopeReferences);
-    const csv = buildCsv(
-      [
-        { header: "as_of_date", value: (row) => row.asOfDate },
-        { header: "delegation_id", value: (row) => row.delegationId },
-        { header: "delegator_name", value: (row) => row.delegatorName },
-        { header: "delegate_name", value: (row) => row.delegateName },
-        { header: "module_code", value: (row) => row.moduleCode },
-        { header: "scope", value: (row) => row.scope },
-        { header: "effective_from", value: (row) => row.effectiveFrom },
-        { header: "effective_to", value: (row) => row.effectiveTo },
-        { header: "status", value: (row) => row.status },
-        { header: "reason", value: (row) => row.reason },
-        { header: "request_id", value: (row) => row.requestId },
-        { header: "request_code", value: (row) => row.requestCode },
-        { header: "decision_action", value: (row) => row.decisionAction },
-        { header: "decision_module", value: (row) => row.decisionModule },
-        { header: "decided_at", value: (row) => row.decidedAt },
-      ],
-      rows
+  async function handleRevokeCoverage(row) {
+    const coverageId = Number(row?.id || 0);
+    if (!coverageId) {
+      return;
+    }
+    const confirmed = window.confirm(
+      l(
+        "Revoke this temporary coverage request?",
+        "Bu temporary coverage kaydini geri almak istiyor musunuz?"
+      )
     );
-    return {
-      csv,
-      fileName: `rbac-delegation-log-${tenantId}-${report.asOfDate}.csv`,
-      rowCount: rows.length,
-    };
+    if (!confirmed) {
+      return;
+    }
+    setActingRowId(`coverage-${coverageId}`);
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await revokeOperationalCoverage(coverageId);
+      setMessage(l("Temporary coverage revoked.", "Temporary coverage geri alindi."));
+      await loadData();
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l("Temporary coverage could not be revoked.", "Temporary coverage geri alinamadi.")
+        )
+      );
+    } finally {
+      setActingRowId("");
+      setSaving(false);
+    }
   }
-  throw badRequest("CSV export is only supported for individual report families");
-}/**
-+ * Build one point-in-time compliance audit report from the current RBAC,
-+ * approval, and delegation seams without duplicating entitlement logic.
-+ */
-export async function buildComplianceAuditReport(input, options = {}) {
-  const normalizedInput = normalizeScopeFilter(input);
-  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
-  const reportBuilders = {
-    ACCESS_MATRIX: buildAccessMatrixReport,
-    SOD_ANALYSIS: buildSodAnalysisReport,
-    APPROVAL_COVERAGE: buildApprovalCoverageReport,
-    DELEGATION_LOG: buildDelegationLogReport,
-  };
-  if (normalizedInput.reportType === "FULL") {
-    const [accessMatrix, sodAnalysis, approvalCoverage, delegationLog] = await Promise.all([
-      buildAccessMatrixReport(normalizedInput, { runQuery }),
-      buildSodAnalysisReport(normalizedInput, { runQuery }),
-      buildApprovalCoverageReport(normalizedInput, { runQuery }),
-      buildDelegationLogReport(normalizedInput, { runQuery }),
-    ]);
-    return {
-      tenantId: normalizedInput.tenantId,
-      reportType: "FULL",
-      asOfDate: normalizedInput.asOfDate,
-      generatedAt: new Date().toISOString(),
-      scopeFilter: normalizedInput.scopeFilter,
-      reports: {
-        accessMatrix,
-        sodAnalysis,
-        approvalCoverage,
-        delegationLog,
-      },
-    };
-  }
-  const report = await reportBuilders[normalizedInput.reportType](normalizedInput, {
-    runQuery,
-  });
-  return {
-    tenantId: normalizedInput.tenantId,
-    reportType: normalizedInput.reportType,
-    asOfDate: normalizedInput.asOfDate,
-    generatedAt: new Date().toISOString(),
-    scopeFilter: normalizedInput.scopeFilter,
-    report,
-  };
-}/**
-+ * Build one CSV export for an individual compliance audit report family.
-+ */
-export async function buildComplianceAuditReportCsv(input, options = {}) {
-  const normalizedInput = normalizeScopeFilter({
-    ...input,
-    format: "CSV",
-  });
-  if (normalizedInput.reportType === "FULL") {
-    throw badRequest("CSV export is only supported for a single reportType, not FULL");
-  }
-  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
-  const [wrappedReport, scopeReferences] = await Promise.all([
-    buildComplianceAuditReport(normalizedInput, { runQuery }),
-    loadScopeReferences(normalizedInput.tenantId, runQuery),
-  ]);
-  return buildCsvPayload(
-    wrappedReport.report,
-    scopeReferences,
-    normalizedInput.tenantId
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="max-w-4xl">
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
+            {l("User, Assignment & Delegation Management", "Kullanici, Atama ve Delegation Yonetimi")}
+          </h1>
+          <p className="mt-2 text-sm leading-7 text-slate-600">
+            {l(
+              "Merged admin workspace: keep the people directory, preset-based business assignments, and delegation operations in one calm shell instead of scattering them across unrelated settings screens.",
+              "Birlesik yonetim calisma alani: kisi dizinini, preset tabanli is atamalarini ve delegation operasyonlarini ilgisiz ayarlar ekranlarina dagitmak yerine tek bir sakin kabukta toplayin."
+            )}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            to="/app/ayarlar/rbac/delegations"
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
+          >
+            {l("Open approval delegations", "Approval delegation sayfasini ac")}
+          </Link>
+          <button
+            type="button"
+            onClick={openInviteModal}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
+          >
+            {l("Invite user", "Kullanici davet et")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("assignments")}
+            className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white"
+          >
+            {l("Assign setup owner", "Setup sahibi ata")}
+          </button>
+        </div>
+      </div>
++
+      <section className="grid gap-4 xl:grid-cols-4">
+        <WorkspaceStatCard
+          title={l("Total users", "Toplam kullanici")}
+          value={users.length}
+          subtitle={l("All active, invited, and disabled users inside this tenant.", "Bu tenant icindeki tum aktif, davetli ve devre disi kullanicilar.")}
+          tone="blue"
+        />
+        <WorkspaceStatCard
+          title={l("Business assignments", "Is atamalari")}
+          value={assignmentBundles.length}
+          subtitle={l("Grouped business-first bundles instead of one row per raw RBAC role.", "Ham RBAC rol basina bir satir yerine gruplanmis is-oncelikli paketler.")}
+          tone="green"
+        />
+        <WorkspaceStatCard
+          title={l("Pending invites", "Bekleyen davetler")}
+          value={pendingInviteRows.length}
+          subtitle={l("Invite flows that still need acceptance before the user becomes active.", "Kullanici aktif olmadan once hala kabul bekleyen davet akisleri.")}
+          tone="amber"
+        />
+        <WorkspaceStatCard
+          title={l("Delegation workflows", "Delegation akislari")}
+          value={totalDelegationCount}
+          subtitle={l("Approval delegation and temporary coverage items still in motion.", "Hareket halindeki approval delegation ve temporary coverage kayitlari.")}
+        />
+      </section>
++
+      {showFreshTenantAdminNote ? (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          {l(
+            "Fresh-tenant role admin mode is active. Keep template assignment primary and use raw role rows only for deliberate exceptions.",
+            "Fresh-tenant rol yonetimi modu aktif. Template atamasini birincil tutun; ham rol satirlarini yalnizca bilincli istisnalar icin kullanin."
+          )}
+        </div>
+      ) : null}
+      {!roleAssignmentReadAccess.allowed ? (
+        <PermissionAccessNotice
+          access={roleAssignmentReadAccess}
+          permissionCode="security.role_assignment.read"
+        />
+      ) : null}
+      {error ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      ) : null}
+      {message ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {message}
+        </div>
+      ) : null}
+      {lastInviteLink ? (
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-900">
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">{l("Latest invite link", "Son davet baglantisi")}</div>
+            <div className="mt-2 break-all">{lastInviteLink}</div>
+          </div>
+          <button
+            type="button"
+            onClick={copyInviteLink}
+            className="rounded-xl border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-900"
+          >
+            {l("Copy link", "Baglantiyi kopyala")}
+          </button>
+        </div>
+      ) : null}
+      <SecurityWarningList warnings={warningMessages} />
++
+      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap gap-3">
+          <WorkspaceTabButton
+            active={activeTab === "users"}
+            count={userDirectoryRows.length}
+            label={l("Users", "Kullanicilar")}
+            onClick={() => setActiveTab("users")}
+          />
+          <WorkspaceTabButton
+            active={activeTab === "assignments"}
+            count={assignmentBundles.length}
+            label={l("Business Assignments", "Is Atamalari")}
+            onClick={() => setActiveTab("assignments")}
+          />
+          <WorkspaceTabButton
+            active={activeTab === "delegations"}
+            count={totalDelegationCount}
+            label={l("Delegations", "Delegation")}
+            onClick={() => setActiveTab("delegations")}
+          />
+        </div>
+      </section>
++
+      {loading ? (
+        <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-12 text-sm text-slate-500 shadow-sm">
+          {l("Loading workspace...", "Calisma alani yukleniyor...")}
+        </div>
+      ) : null}
+      {!loading && activeTab === "users" ? (
+        <section className="space-y-5">
+          <div className="grid gap-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm xl:grid-cols-[1.3fr_repeat(4,minmax(0,0.8fr))]">
+            <input
+              type="text"
+              value={userFilters.search}
+              onChange={(event) =>
+                setUserFilters((prev) => ({ ...prev, search: event.target.value }))
+              }
+              placeholder={l(
+                "Search by name, email, entity, branch, or preset",
+                "Ad, e-posta, entity, sube veya presete gore ara"
+              )}
+              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+            />
+            <select
+              value={userFilters.scopeType}
+              onChange={(event) =>
+                setUserFilters((prev) => ({ ...prev, scopeType: event.target.value }))
+              }
+              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+            >
+              <option value="">{l("All scopes", "Tum kapsamlar")}</option>
+              {SCOPE_TYPES.map((scopeType) => (
+                <option key={`user-scope-${scopeType}`} value={scopeType}>
+                  {scopeType}
+                </option>
+              ))}
+            </select>
+            <select
+              value={userFilters.roleCode}
+              onChange={(event) =>
+                setUserFilters((prev) => ({ ...prev, roleCode: event.target.value }))
+              }
+              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+            >
+              <option value="">{l("All roles", "Tum roller")}</option>
+              {roles.map((role) => (
+                <option key={`user-role-filter-${role.id}`} value={role.code}>
+                  {role.code}
+                </option>
+              ))}
+            </select>
+            <select
+              value={userFilters.status}
+              onChange={(event) =>
+                setUserFilters((prev) => ({ ...prev, status: event.target.value }))
+              }
+              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+            >
+              {USER_STATUS_FILTERS.map((status) => (
+                <option key={`user-status-${status}`} value={status}>
+                  {status === "ALL"
+                    ? l("All statuses", "Tum durumlar")
+                    : status === "INVITED"
+                      ? l("Pending invite", "Bekleyen davet")
+                      : status}
+                </option>
+              ))}
+            </select>
+            <select
+              value={userFilters.delegationState}
+              onChange={(event) =>
+                setUserFilters((prev) => ({ ...prev, delegationState: event.target.value }))
+              }
+              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+            >
+              <option value="">{l("All delegation states", "Tum delegation durumlari")}</option>
+              <option value="HAS_DELEGATION">{l("Has delegation", "Delegation var")}</option>
+              <option value="NO_DELEGATION">{l("No delegation", "Delegation yok")}</option>
+            </select>
+          </div>
++
+          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">
+                  {l("People directory", "Kisi dizini")}
+                </h2>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                  {l(
+                    "Use this surface for full user admin work: invite, review scope coverage, inspect current access, and jump directly into assignment or delegation follow-up.",
+                    "Bu yuzeyi tam kullanici yonetimi icin kullanin: davet etme, kapsam kapsamasi inceleme, mevcut erisimi denetleme ve dogrudan atama veya delegation takibine gecme."
+                  )}
+                </p>
+              </div>
+              <StatusPill label={l("Directory view", "Dizin gorunumu")} />
+            </div>
++
+            {filteredUsers.length === 0 ? (
+              <div className="px-5 py-10 text-sm text-slate-500">
+                {l("No users match the current filters.", "Mevcut filtrelere uyan kullanici yok.")}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-white">
+                    <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                      <th className="px-5 py-3">{l("User", "Kullanici")}</th>
+                      <th className="px-5 py-3">{l("Role", "Rol")}</th>
+                      <th className="px-5 py-3">{l("Scope", "Kapsam")}</th>
+                      <th className="px-5 py-3">{l("Access", "Erisim")}</th>
+                      <th className="px-5 py-3">{l("Status", "Durum")}</th>
+                      <th className="px-5 py-3">{l("Delegation", "Delegation")}</th>
+                      <th className="px-5 py-3">{l("Last created", "Son olusum")}</th>
+                      <th className="px-5 py-3">{l("Actions", "Aksiyonlar")}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {filteredUsers.map((row) => {
+                      const statusMeta = getUserStatusMeta(row.status);
+                      return (
+                        <tr key={`user-row-${row.id}`}>
+                          <td className="px-5 py-4">
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sm font-bold text-sky-800">
+                                {getInitials(row.name)}
+                              </div>
+                              <div>
+                                <div className="font-semibold text-slate-950">{row.name}</div>
+                                <div className="mt-1 text-sm text-slate-500">{row.email}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4">
+                            <div className="space-y-2">
+                              {row.currentPresetCodes.length > 0 ? (
+                                row.currentPresetCodes.map((presetCode) => (
+                                  <StatusPill
+                                    key={`user-preset-${row.id}-${presetCode}`}
+                                    label={presetCode}
+                                    tone="blue"
+                                  />
+                                ))
+                              ) : row.topRoleCodes.length > 0 ? (
+                                row.topRoleCodes.map((roleCode) => (
+                                  <StatusPill
+                                    key={`user-role-${row.id}-${roleCode}`}
+                                    label={roleCode}
+                                  />
+                                ))
+                              ) : (
+                                <span className="text-sm text-slate-500">
+                                  {l("No assigned roles", "Atanmis rol yok")}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-5 py-4">
+                            <div className="space-y-1 text-sm text-slate-700">
+                              {row.topScopeLabels.length > 0 ? (
+                                row.topScopeLabels.map((scopeLabel) => (
+                                  <div key={`user-scope-${row.id}-${scopeLabel}`}>{scopeLabel}</div>
+                                ))
+                              ) : (
+                                <div className="text-slate-500">{l("No active scope", "Aktif kapsam yok")}</div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 text-sm text-slate-700">
+                            <div>{row.assignmentCount} {l("assignment bundles", "atama paketi")}</div>
+                            <div className="mt-1 text-slate-500">
+                              {row.scopeCount} {l("scopes covered", "kapsam")}
+                            </div>
+                          </td>
+                          <td className="px-5 py-4">
+                            <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
+                          </td>
+                          <td className="px-5 py-4 text-sm text-slate-700">
+                            {row.activeDelegationCount > 0 ? (
+                              <StatusPill
+                                label={l("{{count}} active", "{{count}} aktif", {
+                                  count: row.activeDelegationCount,
+                                })}
+                                tone="violet"
+                              />
+                            ) : (
+                              <span className="text-slate-500">{l("None", "Yok")}</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-4 text-sm text-slate-500">
+                            {formatDateTime(row.created_at)}
+                          </td>
+                          <td className="px-5 py-4">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openExistingUserModal(row)}
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                              >
+                                {l("Edit access", "Erisimi duzenle")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAssignmentForm((prev) => ({
+                                    ...prev,
+                                    userId: String(row.id),
+                                  }));
+                                  setActiveTab("assignments");
+                                }}
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                              >
+                                {l("Assignments", "Atamalar")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab("delegations")}
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                              >
+                                {l("Delegations", "Delegation")}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+      {!loading && activeTab === "assignments" ? (
+        <section className="space-y-5">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_400px]">
+            <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-950">
+                    {l("Business assignments", "Is atamalari")}
+                  </h2>
+                  <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                    {l(
+                      "Review one row per business responsibility, not one row per underlying RBAC role. Drill into the row only when you need the raw role detail.",
+                      "Alttaki her RBAC rol satiri yerine her is sorumlulugu icin tek satir inceleyin. Ham rol detayina sadece ihtiyaciniz oldugunda derine inin."
+                    )}
+                  </p>
+                </div>
+                <StatusPill label={l("Preset-based", "Preset tabanli")} tone="blue" />
+              </div>
++
+              <div className="grid gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 md:grid-cols-[minmax(0,1fr)_180px_180px]">
+                <input
+                  type="text"
+                  value={assignmentFilters.search}
+                  onChange={(event) =>
+                    setAssignmentFilters((prev) => ({ ...prev, search: event.target.value }))
+                  }
+                  placeholder={l("Search by assignee, preset, or scope", "Atanan kisi, preset veya kapsama gore ara")}
+                  className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                />
+                <select
+                  value={assignmentFilters.presetCode}
+                  onChange={(event) =>
+                    setAssignmentFilters((prev) => ({ ...prev, presetCode: event.target.value }))
+                  }
+                  className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                >
+                  <option value="">{l("All presets", "Tum presetler")}</option>
+                  {Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG).map((presetCode) => (
+                    <option key={`assignment-preset-${presetCode}`} value={presetCode}>
+                      {presetCode}
+                    </option>
+                  ))}
+                  <option value="__custom__">{l("Custom bundle", "Ozel paket")}</option>
+                </select>
+                <select
+                  value={assignmentFilters.status}
+                  onChange={(event) =>
+                    setAssignmentFilters((prev) => ({ ...prev, status: event.target.value }))
+                  }
+                  className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                >
+                  {ASSIGNMENT_STATUS_FILTERS.map((status) => (
+                    <option key={`assignment-status-${status}`} value={status}>
+                      {status === "ALL"
+                        ? l("All statuses", "Tum durumlar")
+                        : status === "UPCOMING"
+                          ? l("Scheduled", "Planlandi")
+                          : status === "CUSTOM"
+                            ? l("Custom", "Ozel")
+                            : status}
+                    </option>
+                  ))}
+                </select>
+              </div>
++
+              <div className="space-y-3 px-5 py-5">
+                {filteredBundles.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                    {l("No assignment bundles match the current filters.", "Mevcut filtrelere uyan atama paketi yok.")}
+                  </div>
+                ) : (
+                  filteredBundles.map((bundle) => (
+                    <AssignmentBundleCard
+                      key={bundle.id}
+                      bundle={bundle}
+                      expanded={selectedBundle?.id === bundle.id}
+                      l={l}
+                      onSelect={setSelectedBundleId}
+                      onOpenUser={(userId) => {
+                        const userRow = usersById.get(Number(userId));
+                        if (userRow) {
+                          openExistingUserModal(userRow);
+                        }
+                      }}
+                      onRevoke={handleRevokeBundle}
+                      revoking={saving && actingRowId === bundle.id}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
++
+            <aside className="xl:sticky xl:top-20 xl:self-start">
+              <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {l("Assignment drawer", "Atama cekmecesi")}
+                  </div>
+                  <h2 className="mt-2 text-xl font-semibold text-slate-950">
+                    {l("Assign setup owner", "Setup sahibi ata")}
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    {l(
+                      "Capture the business decision once: who owns which setup responsibility, at which scope, plus any explicit posting add-on.",
+                      "Is kararini bir kez yakalayin: hangi setup sorumlulugu kimde, hangi kapsamda ve acik bir posting eklentisi var mi."
+                    )}
+                  </p>
+                </div>
++
+                <form onSubmit={handleCreatePresetAssignment} className="space-y-5 px-5 py-5">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Preset", "Preset")}</label>
+                    <select
+                      value={assignmentForm.presetCode}
+                      onChange={(event) => updateAssignmentField("presetCode", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                    >
+                      {Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG).map((presetCode) => (
+                        <option key={`drawer-preset-${presetCode}`} value={presetCode}>
+                          {presetCode}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
++
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">{l("Assignee", "Atanan kisi")}</label>
+                    <select
+                      value={assignmentForm.userId}
+                      onChange={(event) => updateAssignmentField("userId", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                    >
+                      {users.map((row) => (
+                        <option key={`drawer-user-${row.id}`} value={String(row.id)}>
+                          {row.name} - {row.email}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
++
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">
+                      {l("Scope", "Kapsam")} ({assignmentPreset.scopeType})
+                    </label>
+                    <select
+                      value={assignmentForm.scopeId}
+                      onChange={(event) => updateAssignmentField("scopeId", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                    >
+                      {assignmentScopeOptions.map((option) => (
+                        <option key={`drawer-scope-${option.id}`} value={String(option.id)}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
++
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">{l("Effective from", "Baslangic tarihi")}</label>
+                      <input
+                        type="date"
+                        value={assignmentForm.effectiveFrom}
+                        onChange={(event) => updateAssignmentField("effectiveFrom", event.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">{l("Effective to", "Bitis tarihi")}</label>
+                      <input
+                        type="date"
+                        value={assignmentForm.effectiveTo}
+                        onChange={(event) => updateAssignmentField("effectiveTo", event.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                      />
+                    </div>
+                  </div>
++
+                  <label className="flex items-start gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(assignmentForm.includePostingAuthority)}
+                      onChange={(event) =>
+                        updateAssignmentField("includePostingAuthority", event.target.checked)
+                      }
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600"
+                    />
+                    <span>
+                      <span className="block text-sm font-semibold text-violet-950">
+                        {l("Include GL posting authority", "GL posting authority dahil et")}
+                      </span>
+                      <span className="mt-1 block text-sm leading-6 text-violet-900">
+                        {l(
+                          "Keep posting authority explicit instead of hiding it as an automatic side effect of the preset.",
+                          "Posting yetkisini preset'in otomatik bir yan etkisi olarak gizlemek yerine acik tutun."
+                        )}
+                      </span>
+                    </span>
+                  </label>
++
+                  <PermissionAccessNotice
+                    access={assignmentWriteAccess}
+                    permissionCode="security.role_assignment.upsert"
+                  />
++
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      {l("Review before save", "Kaydetmeden once incele")}
+                    </div>
+                    <div className="mt-3 space-y-3 text-sm text-slate-700">
+                      <div className="flex items-start justify-between gap-3">
+                        <span>{l("Preset", "Preset")}</span>
+                        <strong className="text-right text-slate-950">{assignmentForm.presetCode}</strong>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <span>{l("Assignee", "Atanan kisi")}</span>
+                        <strong className="text-right text-slate-950">
+                          {usersById.get(Number(assignmentForm.userId || 0))?.name || "-"}
+                        </strong>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <span>{l("Scope", "Kapsam")}</span>
+                        <strong className="text-right text-slate-950">
+                          {assignmentScopeOptions.find(
+                            (option) => Number(option.id) === Number(assignmentForm.scopeId || 0)
+                          )?.label || "-"}
+                        </strong>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <span>{l("Underlying role rows", "Alttaki rol satirlari")}</span>
+                        <strong className="text-right text-slate-950">{assignmentRoleCodes.length}</strong>
+                      </div>
+                    </div>
+                  </div>
++
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      {l("Included roles", "Dahil roller")}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {assignmentRoleEntries.map((entry) => (
+                        <span
+                          key={`drawer-role-${entry.code}`}
+                          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
+                        >
+                          {entry.code}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
++
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {saving
+                        ? l("Saving...", "Kaydediliyor...")
+                        : l("Create preset assignment", "Preset atamasi olustur")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAssignmentForm((prev) => ({
+                          ...prev,
+                          effectiveFrom: "",
+                          effectiveTo: "",
+                        }))
+                      }
+                      className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                    >
+                      {l("Clear dates", "Tarihleri temizle")}
+                    </button>
+                  </div>
+                </form>
++
+                <details className="border-t border-slate-200 px-5 py-5">
+                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+                    {l("Advanced raw role row", "Gelismis ham rol satiri")}
+                  </summary>
+                  <form onSubmit={handleCreateRawAssignment} className="mt-4 space-y-4">
+                    <p className="text-sm leading-6 text-slate-600">
+                      {l(
+                        "Use this only for deliberate exceptions. The business-first preset flow above should remain the normal admin path.",
+                        "Bunu yalnizca bilincli istisnalar icin kullanin. Yukaridaki is-oncelikli preset akisi normal yonetici yolu olarak kalmalidir."
+                      )}
+                    </p>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">{l("User", "Kullanici")}</label>
+                      <select
+                        value={rawAssignmentForm.userId}
+                        onChange={(event) => updateRawAssignmentField("userId", event.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                      >
+                        {users.map((row) => (
+                          <option key={`raw-user-${row.id}`} value={String(row.id)}>
+                            {row.name} - {row.email}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">{l("Role", "Rol")}</label>
+                      <select
+                        value={rawAssignmentForm.roleId}
+                        onChange={(event) => updateRawAssignmentField("roleId", event.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                      >
+                        <option value="">{l("Choose role", "Rol secin")}</option>
+                        {roleGroups.map((group) => (
+                          <optgroup key={`raw-role-group-${group.key}`} label={group.label}>
+                            {group.roles.map((role) => (
+                              <option key={`raw-role-${role.id}`} value={String(role.id)}>
+                                {role.code}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700">{l("Scope type", "Kapsam tipi")}</label>
+                        <select
+                          value={rawAssignmentForm.scopeType}
+                          onChange={(event) => updateRawAssignmentField("scopeType", event.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                        >
+                          {SCOPE_TYPES.map((scopeType) => (
+                            <option key={`raw-scope-type-${scopeType}`} value={scopeType}>
+                              {scopeType}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700">{l("Effect", "Etki")}</label>
+                        <select
+                          value={rawAssignmentForm.effect}
+                          onChange={(event) => updateRawAssignmentField("effect", event.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                        >
+                          {EFFECT_OPTIONS.map((effect) => (
+                            <option key={`raw-effect-${effect}`} value={effect}>
+                              {effect}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">{l("Scope", "Kapsam")}</label>
+                      <select
+                        value={rawAssignmentForm.scopeId}
+                        onChange={(event) => updateRawAssignmentField("scopeId", event.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                      >
+                        {rawScopeOptions.map((option) => (
+                          <option key={`raw-scope-${option.id}`} value={String(option.id)}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <PermissionAccessNotice
+                      access={rawAssignmentWriteAccess}
+                      permissionCode="security.role_assignment.upsert"
+                    />
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {saving
+                        ? l("Saving...", "Kaydediliyor...")
+                        : l("Create raw role row", "Ham rol satiri olustur")}
+                    </button>
+                  </form>
+                </details>
+              </div>
+            </aside>
+          </div>
++
+          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">
+                  {l("Pending invites", "Bekleyen davetler")}
+                </h2>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                  {l(
+                    "Invites stay separate from live assignments, but still point to the same user onboarding and setup-owner flows.",
+                    "Davetler canli atamalardan ayri kalir; ancak yine de ayni kullanici onboarding ve setup sahibi akislerine isaret eder."
+                  )}
+                </p>
+              </div>
+              <StatusPill
+                label={String(pendingInviteRows.length)}
+                tone={pendingInviteRows.length > 0 ? "amber" : "slate"}
+              />
+            </div>
++
+            <div className="space-y-3 px-5 py-5">
+              {pendingInviteRows.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                  {l("No pending invites.", "Bekleyen davet yok.")}
+                </div>
+              ) : (
+                pendingInviteRows.map((row) => (
+                  <div
+                    key={`pending-invite-${row.id}`}
+                    className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                  >
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{row.name}</div>
+                      <div className="mt-1 text-xs text-slate-500">{row.email}</div>
+                      <div className="mt-2 text-xs text-slate-600">
+                        {l("Created", "Olusturuldu")} {formatDateTime(row.created_at)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openExistingUserModal(row)}
+                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+                      >
+                        {l("Open user editor", "Kullanici editorunu ac")}
+                      </button>
+                      {lastInviteLink ? (
+                        <button
+                          type="button"
+                          onClick={copyInviteLink}
+                          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800"
+                        >
+                          {l("Copy latest link", "Son baglantiyi kopyala")}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {!loading && activeTab === "delegations" ? (
+        <section className="space-y-5">
+          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">
+                  {l("Delegations", "Delegation")}
+                </h2>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                  {l(
+                    "Keep approval delegation and temporary coverage visible as separate admin-controlled objects with dates, scope, and revocation actions.",
+                    "Approval delegation ve temporary coverage kayitlarini tarih, kapsam ve geri alma aksiyonlariyla ayrik yonetici nesneleri olarak gorunur tutun."
+                  )}
+                </p>
+              </div>
+              <StatusPill label={l("Coverage + approval", "Coverage + approval")} tone="violet" />
+            </div>
++
+            <div className="flex flex-wrap gap-3 px-5 pt-5">
+              <WorkspaceTabButton
+                active={delegationTab === "coverage"}
+                count={coverageRows.length}
+                label={l("Temporary coverage", "Temporary coverage")}
+                onClick={() => setDelegationTab("coverage")}
+              />
+              <WorkspaceTabButton
+                active={delegationTab === "approval"}
+                count={approvalDelegations.length}
+                label={l("Approval delegation", "Approval delegation")}
+                onClick={() => setDelegationTab("approval")}
+              />
+            </div>
++
+            {delegationLoadError ? (
+              <div className="px-5 pt-5 text-sm text-amber-700">{delegationLoadError}</div>
+            ) : null}
+            <div className="space-y-3 px-5 py-5">
+              {delegationTab === "coverage" ? (
+                coverageRows.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                    {l("No temporary coverage items.", "Temporary coverage kaydi yok.")}
+                  </div>
+                ) : (
+                  coverageRows.map((row) => {
+                    const reviewMeta = getCoverageReviewMeta(row.reviewStatus);
+                    const revokeAccess = getPermissionAccess(
+                      "approvals.policies.write",
+                      row?.scopeType && Number(row?.scopeId || 0)
+                        ? {
+                            scope: {
+                              scopeType: row.scopeType,
+                              scopeId: Number(row.scopeId),
+                            },
+                          }
+                        : undefined
+                    );
+                    return (
+                      <div
+                        key={`coverage-row-${row.id}`}
+                        className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                      >
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-slate-950">
+                              {row.roleCode || row.role_code || l("Coverage request", "Coverage talebi")}
+                            </div>
+                            <StatusPill label={reviewMeta.label} tone={reviewMeta.tone} />
+                            <StatusPill
+                              label={normalizeText(row.state) || l("Unknown", "Bilinmiyor")}
+                              tone={
+                                normalizeText(row.state).toUpperCase() === "ACTIVE"
+                                  ? "green"
+                                  : normalizeText(row.state).toUpperCase() === "REQUESTED"
+                                    ? "amber"
+                                    : normalizeText(row.state).toUpperCase() === "APPROVED"
+                                      ? "blue"
+                                      : "slate"
+                              }
+                            />
+                          </div>
+                          <div className="text-sm text-slate-700">
+                            {normalizeText(row.delegateUserName || row.delegateUserEmail || row.delegateEmail) ||
+                              l("Pending delegate resolution", "Bekleyen delege cozumleme")}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {l("Requester", "Talep eden")}{" "}
+                            {normalizeText(row.requesterUserName || row.requesterUserEmail) || "-"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {formatDate(row.startDate)} to {formatDate(row.endDate)} -{" "}
+                            {row.scopeType === "OPERATING_UNIT"
+                              ? `${row.legalEntityCode || "LE"} / ${row.operatingUnitCode || "OU"}`
+                              : row.legalEntityCode || `LEGAL_ENTITY #${row.scopeId || "?"}`}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Link
+                            to="/app/ayarlar/rbac/temporary-coverage"
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+                          >
+                            {l("Open workspace", "Calisma alanini ac")}
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => handleRevokeCoverage(row)}
+                            disabled={saving || !revokeAccess.allowed}
+                            className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {actingRowId === `coverage-${row.id}`
+                              ? l("Revoking...", "Geri aliniyor...")
+                              : l("Revoke", "Geri al")}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )
+              ) : approvalDelegations.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                  {l("No approval delegations.", "Approval delegation kaydi yok.")}
+                </div>
+              ) : (
+                approvalDelegations.map((row) => {
+                  const revokeAccess = getPermissionAccess(
+                    "approvals.policies.write",
+                    row?.scopeType && Number(row?.scopeId || 0)
+                      ? {
+                          scope: {
+                            scopeType: row.scopeType,
+                            scopeId: Number(row.scopeId),
+                          },
+                        }
+                      : undefined
+                  );
+                  return (
+                    <div
+                      key={`approval-row-${row.id}`}
+                      className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-sm font-semibold text-slate-950">
+                            {normalizeText(row.moduleCode) || l("Approval delegation", "Approval delegation")}
+                          </div>
+                          <DelegationStateBadge state={row.state} />
+                        </div>
+                        <div className="text-sm text-slate-700">
+                          {normalizeText(row.delegatorUserName || row.delegatorUserEmail) || "-"} {"->"}{" "}
+                          {normalizeText(row.delegateUserName || row.delegateUserEmail) || "-"}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {formatDelegationScopeLabel(row)} - {formatDelegationWindow(row)}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Link
+                          to="/app/ayarlar/rbac/delegations"
+                          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+                        >
+                          {l("Open page", "Sayfayi ac")}
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => handleRevokeApproval(row)}
+                          disabled={saving || !revokeAccess.allowed}
+                          className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {actingRowId === `approval-${row.id}`
+                            ? l("Revoking...", "Geri aliniyor...")
+                            : l("Revoke", "Geri al")}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+      <UserAccessModal
+        open={userModalOpen}
+        mode={userModalMode}
+        form={userModalForm}
+        onChange={updateUserModalField}
+        onClose={() => setUserModalOpen(false)}
+        onSubmit={handleSaveUserModal}
+        saving={saving}
+        l={l}
+        permissionAccess={userModalAccess}
+        currentUserRoleCodes={currentModalUserRoleCodes}
+        currentUserBundles={currentModalUserBundles}
+        modalScopeOptions={userModalScopeOptions}
+        matrixGroups={userModalMatrix}
+        visibleModules={userModalVisibleModules}
+        missingRoleCodes={userModalMissingRoleCodes}
+        inviteLink={lastInviteLink}
+      />
+    </div>
   );
 }
-export default {
-  buildComplianceAuditReport,
-  buildComplianceAuditReportCsv,
-};

@@ -201,6 +201,7 @@ async function main() {
     assertIncludesAll(
       entityRoleCodes,
       [
+        "LocalUserAdmin",
         "MasterDataSteward",
         "GLOperator",
         "TreasuryOperator",

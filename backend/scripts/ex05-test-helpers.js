@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
 import { query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
@@ -64,9 +66,14 @@ export async function apiRequest({
   return { status: response.status, json, cookie };
 }
 
+/**
+ * Starts the backend API server from the backend workspace root so repo-root
+ * and backend-root test invocations share the same launch behavior.
+ */
 export function startServerProcess({ port, env = {} }) {
+  const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const child = spawn(process.execPath, ["src/index.js"], {
-    cwd: process.cwd(),
+    cwd: backendRoot,
     env: {
       ...process.env,
       PORT: String(port),

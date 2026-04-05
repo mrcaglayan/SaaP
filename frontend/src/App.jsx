@@ -25,6 +25,7 @@ import TaxSetupPage from "./pages/settings/TaxSetupPage.jsx";
 import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
 import FieldVisibilityPoliciesPage from "./pages/security/FieldVisibilityPoliciesPage.jsx";
 import ApprovalDelegationsPage from "./pages/security/ApprovalDelegationsPage.jsx";
+import TemporaryOperationalCoveragePage from "./pages/security/TemporaryOperationalCoveragePage.jsx";
 import UserAssignmentsPage from "./pages/security/UserAssignmentsPage";
 import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
 import BranchOperatorManagementPage from "./pages/security/BranchOperatorManagementPage.jsx";
@@ -91,6 +92,7 @@ import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
 import ModuleReadinessProvider from "./readiness/ModuleReadinessProvider.jsx";
+import LegalEntityActivationProvider from "./readiness/LegalEntityActivationProvider.jsx";
 import RequireProviderAuth from "./provider/RequireProviderAuth.jsx";
 
 const ConsolidationReportsPage = lazy(
@@ -706,6 +708,11 @@ const implementedRoutes = [
     element: <ApprovalDelegationsPage />,
   },
   {
+    appPath: "/app/ayarlar/rbac/temporary-coverage",
+    childPath: "ayarlar/rbac/temporary-coverage",
+    element: <TemporaryOperationalCoveragePage />,
+  },
+  {
     appPath: "/app/ayarlar/rbac/access-debugger",
     childPath: "ayarlar/rbac/access-debugger",
     element: <AccessDebuggerPage />,
@@ -910,9 +917,11 @@ export default function App() {
           <RequireAuth>
             <TenantReadinessProvider>
               <ModuleReadinessProvider>
-                <RequireTenantReadiness>
-                  <AppLayout />
-                </RequireTenantReadiness>
+                <LegalEntityActivationProvider>
+                  <RequireTenantReadiness>
+                    <AppLayout />
+                  </RequireTenantReadiness>
+                </LegalEntityActivationProvider>
               </ModuleReadinessProvider>
             </TenantReadinessProvider>
           </RequireAuth>

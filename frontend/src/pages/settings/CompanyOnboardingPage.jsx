@@ -574,17 +574,8 @@ const hasCapital = Boolean(shareholderParentConfig.capitalCreditParentAccountCod
 const hasCommitment = Boolean(
   shareholderParentConfig.commitmentDebitParentAccountCode
 );
-if (
-  !shareholderParentConfig.manualOverride &&
-  !hasCapital &&
-  !hasCommitment
-) {
-  return null;
-}
 if (!hasCapital && !hasCommitment) {
-  return {
-    manualOverride: Boolean(shareholderParentConfig.manualOverride),
-  };
+  return null;
 }
 return {
   manualOverride: true,
@@ -903,11 +894,10 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
       `${prefix}: hem Due From hem Due To ust hesabini secin ya da bu adimi acikca simdilik atlayin.`
     );
   }
-  if (isRecommended && (!hasDueFrom || !hasDueTo)) {
-    return l(
-      `${prefix}: current-account setup is recommended because the backend preview found multiple active branches. Choose both parents or mark skip for now.`,
-      `${prefix}: arka uc onizlemesi birden fazla aktif sube buldugu icin cari ic hesap kurulumu onerilir. Iki ust hesabi secin veya simdilik atla secenegini isaretleyin.`
-    );
+  // Multi-branch current-account setup is still recommended, but it now
+  // belongs to legal-entity activation rather than blocking tenant bootstrap.
+  if (isRecommended && !hasDueFrom && !hasDueTo) {
+    continue;
   }
 }
 return "";
@@ -935,10 +925,10 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
   const hasCommitment = Boolean(
     shareholderSetup.config.commitmentDebitParentAccountCode
   );
-  const mustProvideManualOverride =
-    shareholderSetup.unresolved || shareholderSetup.config.manualOverride;
+  const hasExplicitOverrideInput =
+    shareholderSetup.config.manualOverride || hasCapital || hasCommitment;
 
-  if (!mustProvideManualOverride) {
+  if (!hasExplicitOverrideInput) {
     continue;
   }
 
@@ -3274,14 +3264,14 @@ return (
             </h2>
             <p className="mt-2">
               {l(
-                "Choose one Due From parent and one Due To parent per legal entity. SaaP will create or reuse the branch-specific child accounts and mappings automatically during bootstrap.",
-                "Her tuzel kisilik icin bir Due From ve bir Due To ust hesabi secin. SaaP kurulum sirasinda subeye ozel alt hesaplari ve eslesmeleri otomatik olarak olusturur veya yeniden kullanir."
+                "Save Due From / Due To parents now if you already know them. SaaP will create or reuse the branch-specific child accounts and mappings automatically during bootstrap, but you can also finish this later during legal-entity activation.",
+                "Due From / Due To ust hesaplarini biliyorsaniz simdi kaydedin. SaaP kurulum sirasinda subeye ozel alt hesaplari ve eslesmeleri otomatik olarak olusturur veya yeniden kullanir; ancak bunu daha sonra tuzel kisilik aktivasyonu sirasinda da tamamlayabilirsiniz."
               )}
             </p>
             <p className="mt-2 text-xs text-cyan-900/80">
               {l(
-                "Pick matching ASSET/DEBIT and LIABILITY/CREDIT parent candidates from the account tree. If SaaP provisions child current accounts under a selected account, it will flip that parent to non-postable automatically.",
-                "Hesap agacindan uygun ASSET/DEBIT ve LIABILITY/CREDIT parent adaylarini secin. SaaP secilen hesabin altina cari alt hesaplar acarsa bu parent hesabi otomatik olarak post edilemeyen duruma cevirir."
+                "Pick matching ASSET/DEBIT and LIABILITY/CREDIT parent candidates from the account tree when available. Recommendation badges below help you decide, but they no longer block tenant bootstrap by themselves.",
+                "Mevcutsa hesap agacindan uygun ASSET/DEBIT ve LIABILITY/CREDIT parent adaylarini secin. Asagidaki oneriler karar vermenize yardim eder; ancak bunlar artik tenant bootstrap'i tek basina engellemez."
               )}
             </p>
           </div>
@@ -3351,7 +3341,7 @@ return (
                       }`}
                     >
                       {currentAccountSetupRecommended
-                        ? l("Recommended for readiness", "Hazirlik icin onerilir")
+                        ? l("Recommended for activation", "Aktivasyon icin onerilir")
                         : l("Optional for now", "Simdilik opsiyonel")}
                     </div>
                   </div>
@@ -3447,8 +3437,8 @@ return (
                     </label>
                     <p className="text-xs text-slate-500">
                       {l(
-                        "You can repair or apply the saved config later from Organization Management.",
-                        "Kayitli konfigurasyonu daha sonra Organization Management ekranindan uygulayabilir veya onarabilirsiniz."
+                        "You can finish, repair, or apply this later from the Entity Activation workspace in Organization Management.",
+                        "Bunu daha sonra Organization Management icindeki Entity Activation alanindan tamamlayabilir, onarabilir veya uygulayabilirsiniz."
                       )}
                     </p>
                   </div>
@@ -3517,8 +3507,8 @@ return (
                       {shareholderSetup.unresolved ? (
                         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                           {l(
-                            "Policy-pack defaults could not be resolved from the current account tree. Pick both shareholder parent accounts here so bootstrap can save them.",
-                            "Policy pack varsayilanlari mevcut hesap agacindan cozumlenemedi. Kurulumun bunlari kaydedebilmesi icin iki ortak parent hesabini burada secin."
+                            "Policy-pack defaults could not be resolved from the current account tree. You can map both shareholder parent accounts here now, or finish this later in the Entity Activation workspace.",
+                            "Policy pack varsayilanlari mevcut hesap agacindan cozumlenemedi. Iki ortak parent hesabini simdi burada esleyebilir veya bunu daha sonra Entity Activation alaninda tamamlayabilirsiniz."
                           )}
                         </div>
                       ) : null}

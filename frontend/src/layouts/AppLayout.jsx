@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/useAuth.js";
+import { useWorkingContext } from "../context/useWorkingContext.js";
 import LanguageSwitcher from "../i18n/LanguageSwitcher.jsx";
 import { useI18n } from "../i18n/useI18n.js";
-import { OU_CURRENT_ACCOUNT_SETUP_PATH } from "../readiness/ouCurrentAccountReadiness.js";
+import { useLegalEntityActivation } from "../readiness/useLegalEntityActivation.js";
 import { useTenantReadiness } from "../readiness/useTenantReadiness.js";
 import { toastError, toastSuccess } from "../toast/toastBus.js";
 import SidebarSection from "./SidebarSection.jsx";
@@ -15,6 +16,7 @@ const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role_permissions.assign",
 ];
 const TENANT_SETUP_ROUTE = "/app/ayarlar/sirket-ayarlari";
+const ENTITY_ACTIVATION_ROUTE = "/app/ayarlar/entity-aktivasyon-alani";
 const TENANT_SETUP_ROUTE_BY_CHECK_KEY = {
   groupCompanies: "/app/ayarlar/organizasyon-yonetimi",
   legalEntities: "/app/ayarlar/organizasyon-yonetimi",
@@ -24,10 +26,6 @@ const TENANT_SETUP_ROUTE_BY_CHECK_KEY = {
   openBookPeriods: "/app/ayarlar/organizasyon-yonetimi",
   chartsOfAccounts: "/app/ayarlar/hesap-plani-ayarlari",
   accounts: "/app/ayarlar/hesap-plani-ayarlari",
-  shareholders: "/app/ayarlar/organizasyon-yonetimi",
-  shareholderCommitmentConfigs: "/app/ayarlar/organizasyon-yonetimi",
-  operatingUnitCurrentAccounts: OU_CURRENT_ACCOUNT_SETUP_PATH,
-  workflowCloseConsolidationV1: "/app/ayarlar/workflow-kurulumu",
   taxEngineV1: "/app/ayarlar/vergi-kurulumu",
 };
 const TENANT_SETUP_ROUTES = [
@@ -48,32 +46,170 @@ const TENANT_SETUP_ROUTES = [
 const MOJIBAKE_PATTERN =
   /(?:\u00C3.|\u00C2.|\u00C4.|\u00C5.|\u00F0\u009F|\u00E2[\u0080-\u00BF]|\u00EF\u00B8[\u0080-\u00BF])/u;
 
-function resolveReadinessChip(loading, error, ready, t) {
+function resolveReadinessChip({
+  bootstrapLoading,
+  bootstrapError,
+  bootstrapReady,
+  activationLoading,
+  activationError,
+  activationSummaryVisible,
+  incompleteEntityCount,
+  t,
+}) {
+  if (bootstrapLoading) {
+    return {
+      label: t("layout.readinessChecking", "Bootstrap: Checking"),
+      classes: "border-slate-300 bg-slate-100 text-slate-700",
+    };
+  }
+
+  if (bootstrapError) {
+    return {
+      label: t("layout.readinessError", "Bootstrap: Error"),
+      classes: "border-amber-300 bg-amber-100 text-amber-900",
+    };
+  }
+
+  if (!bootstrapReady) {
+    return {
+      label: t("layout.readinessSetupRequired", "Bootstrap: Setup Required"),
+      classes: "border-rose-300 bg-rose-100 text-rose-900 hover:bg-rose-200",
+    };
+  }
+
+  return {
+    label: activationLoading && activationSummaryVisible
+      ? t(
+          "layout.bootstrapCompletedActivationChecking",
+          "Tenant bootstrap complete • Checking activation summary"
+        )
+      : activationError && activationSummaryVisible
+        ? t(
+            "layout.bootstrapCompletedActivationError",
+            "Tenant bootstrap complete • Activation summary unavailable"
+          )
+        : incompleteEntityCount > 0
+          ? incompleteEntityCount === 1
+            ? t(
+                "layout.bootstrapCompletedActivationPendingSingular",
+                "Tenant bootstrap complete • 1 legal entity needs activation"
+              )
+            : t(
+                "layout.bootstrapCompletedActivationPendingPlural",
+                "Tenant bootstrap complete • {{count}} legal entities need activation",
+                { count: incompleteEntityCount }
+              )
+          : activationSummaryVisible
+            ? t(
+                "layout.bootstrapCompletedActivationReady",
+                "Tenant bootstrap complete • All visible legal entities are ready"
+              )
+            : t("layout.bootstrapCompleted", "Tenant bootstrap complete"),
+    classes:
+      activationError && activationSummaryVisible
+        ? "border-amber-300 bg-amber-100 text-amber-900"
+        : incompleteEntityCount > 0
+          ? "border-amber-300 bg-amber-100 text-amber-900"
+          : "border-emerald-300 bg-emerald-100 text-emerald-900",
+  };
+}
+
+function resolveActivationSummary({
+  loading,
+  error,
+  visibleEntityCount,
+  incompleteEntityCount,
+  t,
+}) {
   if (loading) {
     return {
-      label: t("layout.readinessChecking", "Readiness: Checking"),
-      classes: "border-slate-300 bg-slate-100 text-slate-700",
+      tone: "slate",
+      summary: t("layout.activationChecking", "Checking activation summary."),
+      description: "",
     };
   }
 
   if (error) {
     return {
-      label: t("layout.readinessError", "Readiness: Error"),
-      classes: "border-amber-300 bg-amber-100 text-amber-900",
+      tone: "amber",
+      summary: t(
+        "layout.activationError",
+        "Activation summary could not be loaded."
+      ),
+      description: error,
     };
   }
 
-  if (ready) {
+  if (visibleEntityCount === 0) {
     return {
-      label: t("layout.readinessReady", "Readiness: Ready"),
-      classes: "border-emerald-300 bg-emerald-100 text-emerald-900",
+      tone: "slate",
+      summary: t(
+        "layout.activationNoVisibleEntities",
+        "No legal entities are visible in the current scope."
+      ),
+      description: "",
+    };
+  }
+
+  if (incompleteEntityCount > 0) {
+    return {
+      tone: "amber",
+      summary:
+        incompleteEntityCount === 1
+          ? t(
+              "layout.activationPendingSingular",
+              "1 legal entity needs activation"
+            )
+          : t(
+              "layout.activationPendingPlural",
+              "{{count}} legal entities need activation",
+              { count: incompleteEntityCount }
+            ),
+      description:
+        incompleteEntityCount === 1
+          ? t(
+              "layout.activationPendingDescriptionSingular",
+              "1 visible legal entity still has blocking activation tasks."
+            )
+          : t(
+              "layout.activationPendingDescriptionPlural",
+              "{{count}} visible legal entities still have blocking activation tasks.",
+              { count: incompleteEntityCount }
+            ),
     };
   }
 
   return {
-    label: t("layout.readinessSetupRequired", "Readiness: Setup Required"),
-    classes: "border-rose-300 bg-rose-100 text-rose-900 hover:bg-rose-200",
+    tone: "emerald",
+    summary: t(
+      "layout.activationAllSet",
+      "All visible legal entities are ready."
+    ),
+    description: t(
+      "layout.activationAllSetDescription",
+      "No activation blockers remain across {{count}} visible legal entities.",
+      { count: visibleEntityCount }
+    ),
   };
+}
+
+function getStageBadgeClasses(tone) {
+  if (tone === "amber") {
+    return "border-amber-300 bg-amber-100 text-amber-900";
+  }
+  if (tone === "emerald") {
+    return "border-emerald-300 bg-emerald-100 text-emerald-900";
+  }
+  return "border-slate-300 bg-slate-100 text-slate-700";
+}
+
+function getActivationEntityLabel(row) {
+  const code = repairMojibake(String(row?.legalEntityCode || "").trim());
+  const name = repairMojibake(String(row?.legalEntityName || "").trim());
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || "Legal entity";
 }
 
 function getReadinessCheckLabel(t, check) {
@@ -572,6 +708,11 @@ function annotateSidebarItemsWithAccess(
   return visible;
 }
 
+/**
+ * Renders the main authenticated shell, including staged tenant bootstrap and
+ * legal-entity activation status summaries plus links into the relevant
+ * workspace for the current blocker type.
+ */
 export default function AppLayout() {
   const {
     user,
@@ -582,6 +723,7 @@ export default function AppLayout() {
     securityAdminUiState,
     securityAdminUiStateLoaded,
   } = useAuth();
+  const { workingContext } = useWorkingContext();
   const { t } = useI18n();
   const {
     loading: readinessLoading,
@@ -590,6 +732,14 @@ export default function AppLayout() {
     missingChecks,
     refresh: refreshReadiness,
   } = useTenantReadiness();
+  const {
+    loading: activationLoading,
+    error: activationError,
+    incompleteEntityCount,
+    refresh: refreshActivation,
+    getActivationRows,
+    getActivationRow,
+  } = useLegalEntityActivation();
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
@@ -603,6 +753,56 @@ export default function AppLayout() {
     MODULE_PREVIEW_ADMIN_PERMISSIONS
   );
   const readinessMenuOpen = readinessMenuPathname === location.pathname;
+  const activationRows = getActivationRows();
+  const visibleActivationEntityCount = activationRows.length;
+  const incompleteActivationRows = useMemo(
+    () => activationRows.filter((row) => !row.ready),
+    [activationRows]
+  );
+  const activationSummaryVisible =
+    activationLoading ||
+    Boolean(activationError) ||
+    visibleActivationEntityCount > 0;
+  const activationSummary = useMemo(
+    () =>
+      resolveActivationSummary({
+        loading: activationLoading,
+        error: activationError,
+        visibleEntityCount: visibleActivationEntityCount,
+        incompleteEntityCount,
+        t,
+      }),
+    [
+      activationError,
+      activationLoading,
+      incompleteEntityCount,
+      t,
+      visibleActivationEntityCount,
+    ]
+  );
+  const currentWorkingActivationRow = workingContext?.legalEntityId
+    ? getActivationRow(workingContext.legalEntityId)
+    : null;
+  const currentWorkingActivationStatus = useMemo(() => {
+    if (!currentWorkingActivationRow) {
+      return null;
+    }
+    return currentWorkingActivationRow.ready
+      ? {
+          label: t(
+            "layout.currentEntityActivationReady",
+            "Current entity ready"
+          ),
+          classes: "bg-emerald-500",
+        }
+      : {
+          label: t(
+            "layout.currentEntityActivationPending",
+            "Current entity needs activation"
+          ),
+          classes: "bg-amber-500",
+        };
+  }, [currentWorkingActivationRow, t]);
 
   function getItemDisplayText(item, type) {
     const fallback = type === "title" ? item?.title : item?.label;
@@ -636,10 +836,28 @@ export default function AppLayout() {
   );
   const readinessChip = useMemo(
     () =>
-      resolveReadinessChip(readinessLoading, readinessError, tenantReady, t),
-    [readinessLoading, readinessError, tenantReady, t]
+      resolveReadinessChip({
+        bootstrapLoading: readinessLoading,
+        bootstrapError: readinessError,
+        bootstrapReady: tenantReady,
+        activationLoading,
+        activationError,
+        activationSummaryVisible,
+        incompleteEntityCount,
+        t,
+      }),
+    [
+      activationError,
+      activationLoading,
+      activationSummaryVisible,
+      incompleteEntityCount,
+      readinessError,
+      readinessLoading,
+      t,
+      tenantReady,
+    ]
   );
-  const showReadinessChip = readinessLoading || Boolean(readinessError) || !tenantReady;
+  const showReadinessChip = true;
 
   const closeMobileSidebar = () => setMobileOpen(false);
   const closeReadinessMenu = () => setReadinessMenuPathname(null);
@@ -701,18 +919,6 @@ export default function AppLayout() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [readinessMenuOpen]);
-
-  useEffect(() => {
-    if (showReadinessChip) return undefined;
-
-    const timerId = window.setTimeout(() => {
-      setReadinessMenuPathname(null);
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timerId);
-    };
-  }, [showReadinessChip]);
 
   function renderSectionChildren(items, depth = 0) {
     if (!Array.isArray(items)) return null;
@@ -858,7 +1064,7 @@ export default function AppLayout() {
                 className={`inline-flex w-full items-center justify-between rounded-full border px-2.5 py-1.5 text-[11px] font-semibold tracking-wide transition-colors ${readinessChip.classes}`}
                 aria-haspopup="menu"
                 aria-expanded={readinessMenuOpen}
-                aria-label={t("layout.readinessChecklist", "Readiness checklist")}
+                aria-label={t("layout.readinessStages", "Readiness stages")}
               >
                 <span>{readinessChip.label}</span>
                 <svg
@@ -883,31 +1089,38 @@ export default function AppLayout() {
                   role="menu"
                 >
                   <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                    {t("layout.readinessChecklist", "Readiness checklist")}
+                    {t("layout.readinessStages", "Readiness stages")}
                   </p>
 
                   {readinessLoading && (
                     <p className="mt-2 text-sm text-slate-600">
-                      {t("layout.readinessChecking", "Readiness: Checking")}
+                      {t("layout.readinessChecking", "Bootstrap: Checking")}
                     </p>
                   )}
 
                   {!readinessLoading && readinessError && (
                     <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
                       <p className="text-xs font-medium text-amber-900">
-                        {t("layout.readinessError", "Readiness: Error")}
+                        {t("layout.readinessError", "Bootstrap: Error")}
                       </p>
                       <p className="mt-1 text-xs text-amber-800">{readinessError}</p>
                     </div>
                   )}
 
                   {!readinessLoading && !readinessError && tenantReady && (
-                    <p className="mt-2 text-sm text-emerald-700">
-                      {t(
-                        "layout.readinessAllSet",
-                        "All required setup items are complete."
-                      )}
-                    </p>
+                    <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-emerald-900">
+                          {t("layout.bootstrapCompleted", "Tenant bootstrap complete")}
+                        </p>
+                        <span className="rounded-full border border-emerald-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                          {t(
+                            "layout.readinessAllSet",
+                            "All required bootstrap steps are complete."
+                          )}
+                        </span>
+                      </div>
+                    </div>
                   )}
 
                   {!readinessLoading && !readinessError && !tenantReady && (
@@ -956,17 +1169,80 @@ export default function AppLayout() {
                     </div>
                   )}
 
+                  {!readinessLoading && !readinessError && tenantReady && (
+                    <div className="mt-3 border-t border-slate-200 pt-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-slate-700">
+                          {t(
+                            "layout.activationSectionTitle",
+                            "Legal-entity activation"
+                          )}
+                        </p>
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getStageBadgeClasses(
+                            activationSummary.tone
+                          )}`}
+                        >
+                          {activationSummary.summary}
+                        </span>
+                      </div>
+
+                      {activationSummary.description ? (
+                        <p className="mt-2 text-xs text-slate-600">
+                          {activationSummary.description}
+                        </p>
+                      ) : null}
+
+                      {incompleteActivationRows.length > 0 ? (
+                        <div className="mt-2">
+                          <ul className="space-y-1">
+                            {incompleteActivationRows.slice(0, 4).map((row) => (
+                              <li
+                                key={row.legalEntityId}
+                                className="flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5"
+                              >
+                                <Link
+                                  to={ENTITY_ACTIVATION_ROUTE}
+                                  className="truncate pr-2 text-xs text-amber-900 underline decoration-amber-300 underline-offset-2"
+                                  onClick={closeReadinessMenu}
+                                >
+                                  {getActivationEntityLabel(row)}
+                                </Link>
+                                <span className="shrink-0 text-[11px] font-semibold text-amber-800">
+                                  {t(
+                                    "layout.activationRowPending",
+                                    "Pending"
+                                  )}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                          {incompleteActivationRows.length > 4 ? (
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              {t(
+                                "layout.activationMoreRows",
+                                "+{{count}} more",
+                                { count: incompleteActivationRows.length - 4 }
+                              )}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+
                   <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-200 pt-2">
                     <button
                       type="button"
                       onClick={() => {
                         refreshReadiness();
+                        refreshActivation();
                       }}
                       className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
                     >
                       {t("layout.readinessRefresh", "Refresh")}
                     </button>
-                    {!tenantReady && (
+                    {!tenantReady ? (
                       <Link
                         to={TENANT_SETUP_ROUTE}
                         className="text-xs font-semibold text-cyan-700 hover:text-cyan-800"
@@ -974,7 +1250,18 @@ export default function AppLayout() {
                       >
                         {t("layout.readinessOpenSetup", "Open setup")}
                       </Link>
-                    )}
+                    ) : activationSummaryVisible ? (
+                      <Link
+                        to={ENTITY_ACTIVATION_ROUTE}
+                        className="text-xs font-semibold text-cyan-700 hover:text-cyan-800"
+                        onClick={closeReadinessMenu}
+                      >
+                        {t(
+                          "layout.activationOpenWorkspace",
+                          "Open activation workspace"
+                        )}
+                      </Link>
+                    ) : null}
                   </div>
                 </div>
               )}
@@ -1120,6 +1407,17 @@ export default function AppLayout() {
               <p className="mt-0.5 truncate whitespace-nowrap text-sm font-semibold text-[#143c62]">
                 {user?.name || t("layout.loggedInUser")}
               </p>
+              {currentWorkingActivationStatus ? (
+                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <span
+                    className={`inline-flex h-2 w-2 rounded-full ${currentWorkingActivationStatus.classes}`}
+                    aria-hidden="true"
+                  />
+                  <span className="truncate whitespace-nowrap">
+                    {currentWorkingActivationStatus.label}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
             <button

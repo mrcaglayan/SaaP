@@ -95,6 +95,7 @@ import {
   normalizeLookupQuery,
   prependOrReplaceCounterpartyOption,
 } from "../counterpartyInlineCreate.js";
+
 function buildSmartResetDraftForm(previousForm) {
   const baseline = createInitialDraftForm();
   return {
@@ -263,6 +264,13 @@ function patchDraftFormLineChargeTargetAmount(
     })
   );
 }
+/**
+ * Manage the create-draft workbench state for CARI AP/AR documents, including
+ * scope-aware lookups that respect the current working legal entity and OU.
+ */
+/**
+ * Manage the create-draft workbench state for CARI AP/AR documents.
+ */
 export default function useCariDocumentCreateController({
   fixedDirection = "",
   fixedAssetCategoryRefreshToken = 0,
@@ -367,6 +375,7 @@ export default function useCariDocumentCreateController({
   const fixedAssetCategoryOptionsRef = useRef([]);
   const fixedAssetCategoriesByIdRef = useRef(new Map());
   const fixedAssetOperatingUnitOptionsRef = useRef([]);
+  const lastAutoAppliedCreateCurrencyCodeRef = useRef("");
   useEffect(() => {
     createFormRef.current = createForm;
   }, [createForm]);
@@ -706,6 +715,34 @@ export default function useCariDocumentCreateController({
   const createLegalEntityLookupLoading = Boolean(
     workingContextBaseLoading && legalEntityLookupOptions.length === 0
   );
+  useEffect(() => {
+    const suggestedCurrencyCode = normalizeCurrencyCode(createFunctionalCurrencyCode);
+    if (!suggestedCurrencyCode) {
+      return;
+    }
+    setCreateForm((previousForm) => {
+      const currentCurrencyCode = normalizeCurrencyCode(previousForm.currencyCode);
+      const lastAutoCurrencyCode = normalizeCurrencyCode(
+        lastAutoAppliedCreateCurrencyCodeRef.current
+      );
+      const shouldApplySuggestedCurrency =
+        !createCurrencyTouched &&
+        (!currentCurrencyCode ||
+          currentCurrencyCode === "USD" ||
+          currentCurrencyCode === lastAutoCurrencyCode);
+      if (!shouldApplySuggestedCurrency) {
+        return previousForm;
+      }
+      lastAutoAppliedCreateCurrencyCodeRef.current = suggestedCurrencyCode;
+      if (currentCurrencyCode === suggestedCurrencyCode) {
+        return previousForm;
+      }
+      return {
+        ...previousForm,
+        currencyCode: suggestedCurrencyCode,
+      };
+    });
+  }, [createCurrencyTouched, createFunctionalCurrencyCode]);
   const selectedDraftTemplate = useMemo(
     () =>
       draftTemplates.find(
@@ -1500,7 +1537,15 @@ export default function useCariDocumentCreateController({
           return;
         }
         setCreateValidationVisible(false);
-        const payload = buildDocumentMutationPayload(createForm, createDocumentMutationOptions);
+        const payload = buildDocumentMutationPayload(
+          {
+            ...createForm,
+            operatingUnitId:
+              normalizeText(createForm.operatingUnitId)
+              || normalizeText(effectiveCreateOperatingUnitId),
+          },
+          createDocumentMutationOptions
+        );
         const response = await createCariDocument(payload);
         setCreateMessage(
           l(
@@ -1532,6 +1577,7 @@ export default function useCariDocumentCreateController({
       createForm,
       createValidationResult.errors.length,
       createWarehouseValidation.blockingMessages,
+      effectiveCreateOperatingUnitId,
       l,
       onDraftCreated,
       resetCreateDraftFormWithSmartDefaults,
@@ -1816,6 +1862,7 @@ export default function useCariDocumentCreateController({
       try {
         const response = await listCariCounterparties({
           legalEntityId,
+          allowedOperatingUnitId: toPositiveInt(effectiveCreateOperatingUnitId) || undefined,
           role,
           status: "ACTIVE",
           sortBy: "NAME",
@@ -1836,7 +1883,12 @@ export default function useCariDocumentCreateController({
     return () => {
       active = false;
     };
-  }, [canReadCards, createForm.direction, createForm.legalEntityId]);
+  }, [
+    canReadCards,
+    createForm.direction,
+    createForm.legalEntityId,
+    effectiveCreateOperatingUnitId,
+  ]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
     setCreateCashRegistersError("");
