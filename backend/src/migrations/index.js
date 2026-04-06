@@ -159,6 +159,7 @@ import migration169FieldVisibilityPolicies from "./m169_field_visibility_policie
 import migration170ApprovalEscalationEngine from "./m170_approval_escalation_engine.js";
 import migration171ApprovalDelegations from "./m171_approval_delegations.js";
 import migration172OperationalRoleCoverages from "./m172_operational_role_coverages.js";
+import migration173WorkflowCountryScopeFoundation from "./m173_workflow_country_scope_foundation.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -322,6 +323,7 @@ const migrations = [
   migration170ApprovalEscalationEngine,
   migration171ApprovalDelegations,
   migration172OperationalRoleCoverages,
+  migration173WorkflowCountryScopeFoundation,
 ];
 
 export default migrations;

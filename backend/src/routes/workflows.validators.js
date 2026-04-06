@@ -20,7 +20,7 @@ const PROCESS_TYPES = [
   "CONSOLIDATION_RUN",
   LOCAL_CLOSE_PACK_WORKFLOW_PROCESS_TYPE,
 ];
-const STAGE_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "GROUP"];
+const STAGE_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"];
 const ASSIGNMENT_STATUS = ["ACTIVE", "INACTIVE"];
 const INSTANCE_STATUS = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"];
 const TARGET_TYPES = [
@@ -89,6 +89,21 @@ function parseOptionalIsActiveFlag(query = {}) {
     return null;
   }
   return parseBooleanFlag(query.isActive ?? query.is_active, true);
+}
+
+function countAssignmentScopeTargets(input = {}) {
+  return [
+    input.groupCompanyId,
+    input.countryId,
+    input.legalEntityId,
+    input.operatingUnitId,
+  ].filter((value) => value !== undefined && value !== null && value !== "").length;
+}
+
+function assertSingleAssignmentScopeTarget(input, label) {
+  if (countAssignmentScopeTargets(input) > 1) {
+    throw badRequest(`${label} must set at most one of groupCompanyId, countryId, legalEntityId, or operatingUnitId`);
+  }
 }
 
 export function parseWorkflowDefinitionIdParam(req) {
@@ -268,6 +283,9 @@ export function parseWorkflowDefinitionStepsReplaceInput(req) {
   };
 }
 
+/**
+ * Parse one workflow-assignment list request, including optional country scope filters.
+ */
 export function parseWorkflowAssignmentsListInput(req) {
   const tenantId = requireTenantId(req);
   const pagination = parsePagination(req.query, {
@@ -292,6 +310,10 @@ export function parseWorkflowAssignmentsListInput(req) {
     groupCompanyId: optionalPositiveInt(
       req.query?.groupCompanyId ?? req.query?.group_company_id,
       "groupCompanyId"
+    ),
+    countryId: optionalPositiveInt(
+      req.query?.countryId ?? req.query?.country_id,
+      "countryId"
     ),
     legalEntityId: optionalPositiveInt(
       req.query?.legalEntityId ?? req.query?.legal_entity_id,
@@ -342,6 +364,9 @@ export function parseWorkflowInstancesListInput(req) {
   };
 }
 
+/**
+ * Parse one workflow-assignment create request and enforce the one-row-one-scope input rule.
+ */
 export function parseWorkflowAssignmentCreateInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
@@ -360,7 +385,7 @@ export function parseWorkflowAssignmentCreateInput(req) {
     throw badRequest("effectiveTo cannot be earlier than effectiveFrom");
   }
 
-  return {
+  const input = {
     tenantId,
     userId,
     processType: normalizeEnum(
@@ -375,6 +400,10 @@ export function parseWorkflowAssignmentCreateInput(req) {
     groupCompanyId: optionalPositiveInt(
       body.groupCompanyId ?? body.group_company_id,
       "groupCompanyId"
+    ),
+    countryId: optionalPositiveInt(
+      body.countryId ?? body.country_id,
+      "countryId"
     ),
     legalEntityId: optionalPositiveInt(
       body.legalEntityId ?? body.legal_entity_id,
@@ -392,8 +421,13 @@ export function parseWorkflowAssignmentCreateInput(req) {
       ASSIGNMENT_STATUS
     ),
   };
+  assertSingleAssignmentScopeTarget(input, "Workflow assignment");
+  return input;
 }
 
+/**
+ * Parse one workflow-assignment patch request and reject ambiguous scope-target combinations.
+ */
 export function parseWorkflowAssignmentUpdateInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
@@ -411,6 +445,12 @@ export function parseWorkflowAssignmentUpdateInput(req) {
     "groupCompanyId",
     "group_company_id",
     "groupCompanyId"
+  );
+  const countryField = parseNullablePositiveIntField(
+    body,
+    "countryId",
+    "country_id",
+    "countryId"
   );
   const legalEntityField = parseNullablePositiveIntField(
     body,
@@ -463,6 +503,9 @@ export function parseWorkflowAssignmentUpdateInput(req) {
   if (groupCompanyField.provided) {
     patch.groupCompanyId = groupCompanyField.value;
   }
+  if (countryField.provided) {
+    patch.countryId = countryField.value;
+  }
   if (legalEntityField.provided) {
     patch.legalEntityId = legalEntityField.value;
   }
@@ -489,6 +532,7 @@ export function parseWorkflowAssignmentUpdateInput(req) {
   ) {
     throw badRequest("effectiveTo cannot be earlier than effectiveFrom");
   }
+  assertSingleAssignmentScopeTarget(patch, "Workflow assignment patch");
 
   return patch;
 }

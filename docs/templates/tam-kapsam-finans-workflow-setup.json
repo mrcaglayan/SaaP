@@ -7,6 +7,7 @@
     "notes": [
       "Create definitions first, then replace assignment workflowDefinitionId placeholders with the returned IDs.",
       "TENANT fallback is the safest first pass for readiness across both legal entities.",
+      "COUNTRY assignments override group and tenant fallback when legal entities in that country do not have a stricter legal-entity or operating-unit assignment.",
       "Do not start with OPERATING_UNIT-only assignments for PERIOD_CLOSE and CONSOLIDATION_RUN.",
       "Maker-checker stays enabled because allowSelfApprove is false in all steps."
     ]
@@ -85,6 +86,15 @@
         "processType": "CONSOLIDATION_RUN",
         "workflowDefinitionId": "$MONO_FIN_CONSOLIDATION_RUN_V1_ID",
         "groupCompanyId": "$GRP_GLOBAL_ID",
+        "effectiveFrom": "2026-01-01",
+        "status": "ACTIVE"
+      }
+    ],
+    "countryScopedOptional": [
+      {
+        "processType": "PERIOD_CLOSE",
+        "workflowDefinitionId": "$MONO_FIN_PERIOD_CLOSE_V1_ID",
+        "countryId": "$COUNTRY_TR_ID",
         "effectiveFrom": "2026-01-01",
         "status": "ACTIVE"
       }

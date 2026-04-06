@@ -1,6 +1,7 @@
 # Country-Scoped Workflow Assignments and AP Document Approval Roadmap
 
 ## Status
+
 - Planned
 - Repo-checked against current project snapshot
 - Locked decision: `COUNTRY` is a real cross-entity business scope and must become a first-class workflow assignment scope
@@ -44,6 +45,7 @@ This roadmap covers two linked architecture changes:
 ## Current Repo Seams Confirmed
 
 ### Workflow governance
+
 - `backend/src/migrations/m082_close_consolidation_workflow_approvals.js`
 - `backend/src/migrations/m156_local_close_packs.js`
 - `backend/src/migrations/m166_workflow_generic_bridge.js`
@@ -57,6 +59,7 @@ This roadmap covers two linked architecture changes:
 - `docs/templates/tam-kapsam-finans-workflow-setup.json`
 
 ### CARI / AP lifecycle
+
 - `backend/src/migrations/m017_cari_schema_foundation.js`
 - `backend/src/routes/cari.document.routes.js`
 - `backend/src/routes/cari.document.validators.js`
@@ -69,6 +72,7 @@ This roadmap covers two linked architecture changes:
 - `frontend/src/pages/cari/hooks/useCariDocumentPostReverseController.js`
 
 ### Roles / onboarding / visibility context
+
 - `backend/src/seedCore.js`
 - `backend/src/services/roleMigration.service.js`
 - `backend/src/routes/onboarding.js`
@@ -77,6 +81,7 @@ This roadmap covers two linked architecture changes:
 - `frontend/src/api/orgAdmin.js`
 
 ### Existing smoke / release-gate seams to extend
+
 - `backend/scripts/test-workflows-pr3e-unified-migration.js`
 - `backend/scripts/test-cari-pr05-draft-documents-and-payment-term-lookup.js`
 - `backend/scripts/test-cari-pr06-posting-engine-and-gl-integration.js`
@@ -86,6 +91,7 @@ This roadmap covers two linked architecture changes:
 ## Current-State Findings
 
 ### Conflict / plan gap
+
 - `COUNTRY` already exists in RBAC / scope-assignment surfaces, but workflow-governance resolution still does not support it.
 - Workflow assignments currently support tenant fallback plus `GROUP`, `LEGAL_ENTITY`, and `OPERATING_UNIT`, but not `COUNTRY`.
 - Workflow step definitions currently allow `OPERATING_UNIT`, `LEGAL_ENTITY`, and `GROUP`, but not `COUNTRY`.
@@ -102,10 +108,12 @@ This roadmap covers two linked architecture changes:
 - Some linked-flow guards still assume CARI documents are only `DRAFT` or `POSTED`, so governed AP status expansion needs an intentional guard review.
 
 ### Deferred item already covered
+
 - Close / consolidation workflow governance is already mature enough to reuse as the implementation pattern.
 - Local close already demonstrates the right "return for correction" business-object pattern; AP should reuse that pattern instead of inventing a different rejection vocabulary.
 
 ### Optional hardening
+
 - Extend activation-readiness and onboarding checks later so entity / country setup warns when required AP workflow assignments are missing.
 - Add richer AP status-history / audit projections later if the first pass only stores transition timestamps and relies on audit logs for detail.
 
@@ -114,16 +122,19 @@ This roadmap covers two linked architecture changes:
 ## Locked Design Choices
 
 ### Workflow scope precedence
+
 Use this precedence for assignment resolution:
 
 `OPERATING_UNIT > LEGAL_ENTITY > COUNTRY > GROUP > TENANT`
 
 Reason:
+
 - country is more specific than group
 - country is less specific than one legal entity
 - this preserves existing specific-to-broad fallback behavior
 
 ### Precedence vs process design
+
 - The precedence above is the engine fallback order, not a first-pass tenant-by-tenant configuration surface.
 - Actual business variation comes from:
   - which AP permissions are assigned to branch / entity / country roles
@@ -133,6 +144,7 @@ Reason:
 - In other words: `COUNTRY` exists in the engine, but a given AP rollout can choose whether to use it or not.
 
 ### AP document status model
+
 Recommended first-class CARI/AP business statuses:
 
 - `DRAFT`
@@ -146,11 +158,13 @@ Recommended first-class CARI/AP business statuses:
 - `REVERSED`
 
 ### Status rollout scope
+
 - `SUBMITTED`, `RETURNED`, and `APPROVED` are introduced on the shared `cari_documents.status` enum
 - but business use is AP-only in V1
 - AR and other non-governed CARI flows continue to behave as direct `DRAFT -> POSTED` unless later expanded deliberately
 
 ### Governed AP applicability rule
+
 - V1 governed lifecycle is controlled by a **per-doc-class `is_workflow_governed` boolean flag** on the AP doc-class / doc-type metadata row.
 - Hard constraints (enforced at the flag-authoring layer):
   - a doc class with `direction = 'AP'` may have `is_workflow_governed` true or false
@@ -166,6 +180,7 @@ Recommended first-class CARI/AP business statuses:
 - PR-2 introduces the column and the shared helper; PR-3 consumes the same helper for workflow-instance and gate decisions. No drift possible.
 
 ### AP transition model
+
 Recommended business transitions:
 
 - `submit`: `DRAFT` or `RETURNED` -> `SUBMITTED`
@@ -177,11 +192,13 @@ Recommended business transitions:
 - `reverse`: `POSTED` -> `REVERSED`
 
 ### Reject vs return
+
 - Use `RETURNED` on the AP document business object
 - Keep `REJECTED` as a workflow-engine decision / request outcome if needed internally
 - Do not add `REJECTED` to the AP document enum in the first pass unless there is a real terminal business case that forbids resubmission of the same document
 
 ### Recommended workflow enums
+
 Recommended new workflow-governance identifiers:
 
 - `processType`: `AP_DOCUMENT_POSTING`
@@ -191,16 +208,19 @@ First rollout should gate AP documents only.
 If CARI later needs separate AR governance, add that as a later process type rather than overloading the first AP rollout.
 
 ### Country step resolution mode
+
 - Add explicit workflow / generic-approval support for `TARGET_COUNTRY`
 - Do not fake country approval through group or legal-entity scope
 
 ### Role split target
+
 - `BranchOperator`: create / update / cancel draft AP documents only
 - `EntityAPController` or equivalent: read / update / submit at legal-entity scope (returning a submitted document is a workflow decision on the assigned step — this role gets workflow-step assignment on the LE step where applicable, not a CARI return permission)
 - `CountryAPApprover`: read at country scope + workflow-step assignment on the country approval step (approve / return are workflow decisions, not CARI permissions)
 - `CountryAPPoster`: read / post / reverse at country scope
 
 Rollout note:
+
 - for pilot speed, `CountryAPApprover` and `CountryAPPoster` may be assigned to the same user set at first
 - permissions must still stay split so separation of duties can be tightened later without another schema redesign
 - default `BranchOperator` does not include submit
@@ -218,6 +238,7 @@ Default tenant template for the business flow discussed so far:
 4. after approval, country-level poster posts the document
 
 Why this pilot shape first:
+
 - it matches the user-stated operational flow most closely
 - it keeps workflow complexity lower than a two-step AP review on day one
 - it still preserves the legal-entity vs country separation in role design
@@ -237,21 +258,25 @@ That stricter template becomes possible once AP/CARI is fully integrated into wo
 These examples are intended to be explicitly supported by the target design after PR-1 through PR-4 land.
 
 ### Variant A - Branch drafts, country final-posts
+
 Business shape:
 
 1. `BranchOperator` creates the AP draft
 2. country-level AP authority performs the final approve / post path
 
 Recommended implementation shape:
+
 - default `BranchOperator`: `create`, `update`
 - optional tenant-specific override: add `submit` only for tenants that intentionally want direct branch-to-country handoff
 - AP workflow definition: one `COUNTRY` review step, or a direct operational submit into country review
 - country role: workflow-step assignment for approve/return + `cari.doc.post` for posting
 
 Use case:
+
 - entities where local branch users prepare the draft, but country finance owns the full final accounting decision
 
 ### Variant B - Entity accountant drafts, country final-posts
+
 Business shape:
 
 1. no branch draft owner is involved
@@ -259,14 +284,17 @@ Business shape:
 3. country-level AP authority performs the final approve / post path
 
 Recommended implementation shape:
+
 - legal-entity AP controller: `create`, `update`, `submit`
 - AP workflow definition: one `COUNTRY` review step
 - country role: workflow-step assignment for approve/return + `cari.doc.post` for posting
 
 Use case:
+
 - countries or entities that do not use the branch-drafter operating model
 
 ### Variant C - Branch drafts, entity accountant submits, country final-posts
+
 Business shape:
 
 1. `BranchOperator` creates the AP draft
@@ -274,11 +302,13 @@ Business shape:
 3. country-level AP authority performs the final approve / post path
 
 Recommended implementation shape:
+
 - `BranchOperator`: `create`, `update`
 - legal-entity AP controller: `read`, `update`, `submit` (return authority comes from workflow-step assignment, not a CARI permission)
 - country role: `post` (approve/return authority comes from workflow-step assignment on the country step)
 
 This can be modeled in two valid ways:
+
 - operational handoff model:
   - branch creates draft
   - entity accountant reviews and submits
@@ -289,9 +319,11 @@ This can be modeled in two valid ways:
   - posting happens only after the final country approval
 
 Use case:
+
 - entities where legal-entity accounting control must remain visible before country-level final governance
 
 ### Mixed rollout is allowed
+
 The target design should allow these variants to coexist:
 
 - one country can have a default AP workflow definition assigned at `COUNTRY` scope
@@ -299,11 +331,13 @@ The target design should allow these variants to coexist:
 - one operating unit can override both with an `OPERATING_UNIT` assignment if needed
 
 Example:
+
 - Country A default: `Entity accountant -> Country final post`
 - Legal Entity X override: `Branch -> Entity -> Country`
 - Legal Entity Y in the same country: `Entity only -> Country`
 
 ### Important implementation note
+
 - The system should support these flow variants through workflow definitions, assignments, and role design.
 - The steady-state design should not depend on the legacy `CountryController` role code itself.
 - Legacy labels may appear during migration, but the replacement should be explicit country-scoped AP roles.
@@ -313,10 +347,13 @@ Example:
 # PR-1 - Add COUNTRY to Workflow Governance Foundation
 
 ## Goal
+
 Make `COUNTRY` a first-class workflow assignment scope and workflow decision scope without breaking existing period-close, local-close, consolidation, or the generic-approval bridge.
 
 ## Files
+
 ### Backend
+
 - new additive workflow migration after the current latest workflow migrations
 - `backend/src/routes/workflows.validators.js`
 - `backend/src/services/workflows.service.js`
@@ -327,15 +364,18 @@ Make `COUNTRY` a first-class workflow assignment scope and workflow decision sco
 - generated `backend/openapi.yaml`
 
 ### Frontend
+
 - `frontend/src/pages/settings/WorkflowSetupPage.jsx`
 - `frontend/src/api/orgAdmin.js` using existing `listCountries()` only
 - `frontend/src/api/workflows.js`
 - `frontend/src/i18n/messages.js`
 
 ### Docs
+
 - `docs/templates/tam-kapsam-finans-workflow-setup.json`
 
 ## Backend changes
+
 - Make `legal_entities.country_id` NOT NULL: migration must detect rows with null `country_id`, fail loudly if any are found in staging/prod seed data, and require the owning tenant to set a country on every legal entity before the migration runs. No silent fallback country is set. Activation-readiness surface must refuse to enable AP-workflow features until every LE has a country.
 - Add `COUNTRY` to workflow step `stage_scope_type`.
 - Add `country_id` to `workflow_assignments`.
@@ -354,18 +394,21 @@ Make `COUNTRY` a first-class workflow assignment scope and workflow decision sco
 - Update OpenAPI and any workflow release-gate coverage in the same PR, not later at rollout time.
 
 ## Frontend changes
+
 - Add `COUNTRY` to assignment scope selection in workflow setup UI.
 - Load country options with existing `listCountries()`.
 - Update assignment forms, tables, and filters so country-scoped workflow assignments are visible and editable.
 - Update step JSON examples and any helper copy to show `COUNTRY` as a valid stage scope type.
 
 ## Acceptance
+
 - A workflow assignment can be created at country scope from the UI and API.
 - Workflow steps can use `COUNTRY` as `stageScopeType`.
 - Assignment resolution uses `OPERATING_UNIT > LEGAL_ENTITY > COUNTRY > GROUP > TENANT`.
 - Existing period close, local close, and consolidation flows continue to resolve correctly when no country-scoped assignment exists.
 
 ## Smoke checks
+
 - create one tenant fallback assignment and confirm it still applies
 - create one country-scoped assignment and confirm it overrides group / tenant fallback for entities in that country
 - create one legal-entity-scoped assignment and confirm it overrides the country assignment for that entity only
@@ -379,10 +422,13 @@ Make `COUNTRY` a first-class workflow assignment scope and workflow decision sco
 # PR-2 - Add Real AP Review States to CARI Documents
 
 ## Goal
+
 Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `RETURNED`, `APPROVED`), add the submit domain action, harden reporting/query logic, and prepare the schema and guards that PR-3 will wire to workflow decisioning. PR-2 does NOT deliver user-facing approve or return flows — those arrive in PR-3.
 
 ## Files
+
 ### Backend
+
 - new additive migration after `backend/src/migrations/m017_cari_schema_foundation.js`
 - `backend/src/routes/cari.document.routes.js`
 - `backend/src/routes/cari.document.validators.js`
@@ -392,6 +438,7 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 - generated `backend/openapi.yaml`
 
 ### Frontend
+
 - `frontend/src/lifecycle/lifecycleRules.js`
 - `frontend/src/api/cariDocuments.js`
 - `frontend/src/pages/cari/cariDocumentsUtils.js`
@@ -400,6 +447,7 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 - `frontend/src/pages/cari/CariDocumentsPage.jsx`
 
 ## Backend changes
+
 - Add `SUBMITTED`, `RETURNED`, and `APPROVED` to the CARI document status enum.
 - Add a first-class `return_reason` (text) column on `cari_documents`, required on every transition into `RETURNED` — whether triggered by a workflow-engine return/reject decision, an escalation auto-reject, or any optional AP workbench thin proxy that delegates to workflow decisioning. Null `return_reason` is disallowed whenever `status = 'RETURNED'`. PR-2 adds the column and the constraint; PR-3 wires the actual transitions that populate it.
 - Add `returned_at` timestamp column on `cari_documents`, populated alongside `return_reason`.
@@ -425,6 +473,7 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 - Update OpenAPI and CARI smoke / release-gate coverage in the same PR.
 
 ## Frontend changes
+
 - Add AP statuses to CARI lifecycle metadata so badges and labels render correctly for `SUBMITTED`, `RETURNED`, and `APPROVED`.
 - Submit button visibility (once feature flag is ON — dark in PR-2, enabled in PR-3): show submit only when the doc class is governed (`isDocClassWorkflowGoverned`) **and** a workflow assignment resolves for the document's scope. With compat ON and no assignment: hide submit (user stays on legacy direct-post). With compat OFF and no assignment: hide submit (posting is also blocked — the user sees "no workflow assignment configured" if they attempt to post). Do not show approve or return actions (those are workflow decisions arriving with PR-3).
 - Show `RETURNED` documents with correction-oriented copy and `return_reason` display.
@@ -432,6 +481,7 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 - Keep AR and non-governed document paths behavior-preserving.
 
 ## Acceptance
+
 - PR-2 proves submit structurally at service/mock level and behind the dark feature flag; the first true end-to-end governed submit path is accepted in PR-3.
 - A non-governed AP doc class cannot be submitted (submit action is hidden and rejected server-side).
 - AR documents are unaffected.
@@ -441,6 +491,7 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 - `return_reason` and `returned_at` are surfaced on the document GET response.
 
 ## Smoke checks
+
 - with feature flag OFF (production default): confirm submit action is hidden and server rejects submit attempts
 - **PR-2 submit tests run at service/mock level only** (AP process type and assignment resolution do not exist until PR-3). Tests mock assignment resolution to validate: governed doc + assignment resolves = submit succeeds; governed doc + no assignment = submit blocked; non-governed doc = submit blocked; AR doc = submit blocked.
 - first true end-to-end submit test (real AP assignment resolution, real workflow-instance creation) is reserved for PR-3 smoke checks
@@ -455,10 +506,13 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 # PR-3 - Integrate AP Documents with Workflow Governance
 
 ## Goal
+
 Make AP document approval use the workflow-governance engine so flow selection can vary by tenant, group, country, legal entity, or operating unit.
 
 ## Files
+
 ### Backend
+
 - new additive workflow migration for new process / target enums
 - `backend/src/routes/workflows.validators.js`
 - `backend/src/services/workflows.service.js`
@@ -471,11 +525,13 @@ Make AP document approval use the workflow-governance engine so flow selection c
 - generated `backend/openapi.yaml`
 
 ### Frontend
+
 - `frontend/src/pages/settings/WorkflowSetupPage.jsx`
 - `frontend/src/api/workflows.js`
 - `frontend/src/pages/cari/*` approval-action surfaces that need workflow-gate messaging
 
 ## Backend changes
+
 - **Light up PR-2's dark submit path.** PR-2 shipped the submit route, guards, and frontend visibility behind `FEATURE_AP_DOCUMENT_WORKFLOW_V1 = OFF`. PR-3 makes it safe to enable: once workflow-instance creation is wired to submit, the flag can be turned ON per tenant without risk of orphan `SUBMITTED` documents. PR-3 may enable the flag in test/dev seeds or an explicitly named pilot seed, but must NOT broadly activate it for all tenants. **PR-6 owns the per-tenant rollout decision** — it decides when each tenant gets the flag turned ON.
 - Add the new workflow `processType` and `targetType` for AP documents.
 - Extend workflow assignment and definition validation to accept the AP process type.
@@ -492,22 +548,25 @@ Make AP document approval use the workflow-governance engine so flow selection c
   - if the doc class has `is_workflow_governed = false`: direct-post path, no workflow gate (this path is not affected by compat_mode).
   - if the doc class is governed AND a workflow assignment resolves: require approved workflow gate.
   - if the doc class is governed AND no workflow assignment resolves: if tenant `ap_workflow_compat_mode = ON`, allow legacy direct-post with an explicit audit-log marker (`compat_mode_legacy_post`); if `ap_workflow_compat_mode = OFF`, block the post with a "no workflow assignment configured" error.
-- Compat-mode behavior is purely a *fallback when assignment resolution is empty*; it never bypasses an active assignment that returned a pending/blocked gate.
+- Compat-mode behavior is purely a _fallback when assignment resolution is empty_; it never bypasses an active assignment that returned a pending/blocked gate.
 - Extend the CARI document GET response to surface workflow-gate state directly on the document payload (gate: `none` | `pending` | `returned` | `approved` | `blocked`, plus the latest decision reason / comment if present). Frontend must not evaluate gate state from lifecycle metadata alone.
 - Update OpenAPI (including the new gate fields on the document response schema) and workflow/AP release-gate coverage in the same PR.
 
 ## Frontend changes
+
 - Let workflow setup UI create AP workflow definitions and assignments.
 - Show AP workflow-gate status in the CARI workbench so users know whether posting is blocked, pending review, returned, or approved.
 - Prefer reusing generic workflow decision surfaces for actual reviewer approval actions unless the AP workbench needs a thin convenience wrapper.
 
 ## Acceptance
+
 - AP workflow definitions and assignments can be created from the workflow setup screen.
 - Country-scoped AP workflow assignment can govern multiple legal entities in the same country.
 - AP post is blocked until the workflow gate resolves to approved.
 - AP documents with no active AP workflow assignment keep legacy behavior only if rollout compatibility mode is intentionally enabled.
 
 ## Smoke checks
+
 - full happy path: governed AP draft -> submit -> workflow approve -> post (first end-to-end governed flow)
 - full return path: submit -> workflow approve -> workflow return -> edit -> resubmit -> workflow approve -> post
 - tenant with country assignment: one country workflow governs two entities in the same country
@@ -525,10 +584,13 @@ Make AP document approval use the workflow-governance engine so flow selection c
 # PR-4 - Split AP Permissions and Roles Cleanly
 
 ## Goal
+
 Replace the current compressed AP posting role with explicit AP submit / review / approve / post authorities.
 
 ## Files
+
 ### Backend
+
 - `backend/src/seedCore.js`
 - `backend/src/services/roleMigration.service.js`
 - `backend/src/routes/onboarding.js`
@@ -536,9 +598,11 @@ Replace the current compressed AP posting role with explicit AP submit / review 
 - generated `backend/openapi.yaml`
 
 ### Frontend
+
 - `frontend/src/pages/security/roleCatalog.js`
 
 ## Backend changes
+
 - Add new CARI-side permission codes:
   - `cari.doc.submit`
   - `cari.doc.cancel` (if not already separated from `cari.doc.update`)
@@ -550,14 +614,17 @@ Replace the current compressed AP posting role with explicit AP submit / review 
 - If onboarding/security API contracts change, update OpenAPI in the same PR rather than deferring to rollout.
 
 ## Frontend changes
+
 - Update role catalog labels and descriptions so legal-entity AP review and country-level AP final governance are clearly distinct.
 
 ## Acceptance
+
 - `BranchOperator` no longer needs AP posting authority.
 - Legal-entity AP reviewers can submit without automatically receiving country-level final posting power; their return / review authority comes from workflow-step assignment on the LE step (where such a step exists) rather than a CARI permission.
 - Country-level AP approvers / posters can govern final AP posting across more than one legal entity in the same country.
 
 ## Smoke checks
+
 - branch user can still create draft but cannot post
 - entity AP controller can review and submit but cannot final-post at country scope
 - country AP approver can approve without needing reverse unless poster authority is also assigned
@@ -568,10 +635,13 @@ Replace the current compressed AP posting role with explicit AP submit / review 
 # PR-5 - Finish AP Workbench and Workflow UI
 
 ## Goal
+
 Make the CARI workbench, visibility layer, and workflow setup UI understandable for the new country-scoped AP review model.
 
 ## Files
+
 ### Frontend
+
 - `frontend/src/pages/settings/WorkflowSetupPage.jsx`
 - `frontend/src/lifecycle/lifecycleRules.js`
 - `frontend/src/pages/cari/CariDocumentsPage.jsx`
@@ -581,9 +651,11 @@ Make the CARI workbench, visibility layer, and workflow setup UI understandable 
 - `frontend/src/i18n/messages.js`
 
 ### Backend
+
 - `backend/src/services/cari.document.service.js`
 
 ## Frontend changes
+
 - Add AP workflow setup defaults and helper text for country-scoped assignment.
 - Show AP document lifecycle states and workflow block reasons in one place.
 - Show `RETURNED` with correction-oriented copy, not terminal rejection copy.
@@ -591,15 +663,18 @@ Make the CARI workbench, visibility layer, and workflow setup UI understandable 
 - Keep UI responsive even when workflow gate is pending or missing.
 
 ## Backend changes
+
 - Extend CARI list visibility / filtering so country-scoped AP users can list and read AP documents across multiple legal entities in the same country.
 
 ## Acceptance
+
 - country-scoped AP actors can actually find the AP documents they govern
 - users can understand why a document is blocked from posting
 - returned AP documents clearly tell the user to correct and resubmit
 - workflow setup page can create AP definitions and country assignments without manual JSON-only work
 
 ## Smoke checks
+
 - open approved AP document and confirm only post is available
 - open submitted AP document as branch user and confirm only read visibility remains
 - open returned AP document as entity controller and confirm edit / resubmit path is visible
@@ -610,18 +685,23 @@ Make the CARI workbench, visibility layer, and workflow setup UI understandable 
 # PR-6 - Rollout, Migration, and UAT
 
 ## Goal
+
 Roll out the new country-scoped AP approval model safely without breaking existing tenants.
 
 ## Files
+
 ### Backend
+
 - feature-flag seed or rollout config files as needed
 - migration / backfill helpers if existing draft data needs normalization
 - targeted workflow / AP lifecycle smoke or release-gate scripts as needed
 
 ### Docs
+
 - add rollout tracker or UAT checklist after implementation starts
 
 ## Rollout rules
+
 - Two-flag rollout model (locked):
   - `FEATURE_AP_DOCUMENT_WORKFLOW_V1` (per tenant): enables the governed AP lifecycle for a tenant. When OFF, tenant stays on legacy direct-post across all AP classes; `is_workflow_governed` metadata is inert for that tenant.
   - `ap_workflow_compat_mode` (per tenant): only meaningful while `FEATURE_AP_DOCUMENT_WORKFLOW_V1 = ON`. Controls fallback behavior when a governed AP doc class has no matching workflow assignment. ON = legacy direct-post fallback permitted; OFF = posting blocked until an assignment exists.
@@ -637,6 +717,7 @@ Roll out the new country-scoped AP approval model safely without breaking existi
 - Do not defer contract/docs updates to rollout; OpenAPI and route-level release gates belong in the API-touching PRs above.
 
 ## UAT focus
+
 - same-country multi-entity AP posting governance
 - entity override over country assignment
 - return and resubmit behavior
@@ -645,6 +726,7 @@ Roll out the new country-scoped AP approval model safely without breaking existi
 - coexistence with already-mature close / consolidation workflow governance
 
 ## Exit criteria
+
 - country-scoped AP workflow assignment works across multiple legal entities
 - legal-entity AP controller and country AP poster responsibilities are separated
 - AP posting can be governed by workflow assignment rather than legacy role bundles
@@ -669,3 +751,5 @@ Do not start PR-2 before PR-4 is merged, because PR-2 introduces new submit/post
 Do not ship PR-4 role provisioning to production tenants until PR-5 has merged, because country-scoped AP actors need the PR-5 CARI visibility extension to actually see the documents they must approve.
 
 Do not treat PR-2 as "just add enum values". It must also harden CARI accounting / reporting visibility assumptions before governed AP statuses are allowed into production.
+
+# PR-7 - Prepare a manual ( kullanım klavuzu ) about how to configure the workflow with business logic and case explanations for end users not for technical users ( developers - coder etc. )

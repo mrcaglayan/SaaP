@@ -140,6 +140,7 @@ async function loadLocalClosePackHeader({
     `SELECT
        lcp.*,
        le.group_company_id,
+       le.country_id,
        wi.status AS workflow_instance_status,
        wi.workflow_definition_id AS workflow_definition_id
      FROM local_close_packs lcp
@@ -645,6 +646,7 @@ async function findActiveWorkflowAssignmentForPack({
   const tenantId = parsePositiveInt(packRow?.tenant_id);
   const operatingUnitId = parsePositiveInt(packRow?.operating_unit_id) || -1;
   const legalEntityId = parsePositiveInt(packRow?.legal_entity_id) || -1;
+  const countryId = parsePositiveInt(packRow?.country_id) || -1;
   const groupCompanyId = parsePositiveInt(packRow?.group_company_id) || -1;
   const effectiveDate = new Date().toISOString().slice(0, 10);
 
@@ -666,12 +668,20 @@ async function findActiveWorkflowAssignmentForPack({
          OR (
            wa.operating_unit_id IS NULL
            AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NOT NULL
+           AND wa.country_id = ?
+         )
+         OR (
+           wa.operating_unit_id IS NULL
+           AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NULL
            AND wa.group_company_id IS NOT NULL
            AND wa.group_company_id = ?
          )
          OR (
            wa.operating_unit_id IS NULL
            AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NULL
            AND wa.group_company_id IS NULL
          )
        )
@@ -685,9 +695,15 @@ async function findActiveWorkflowAssignmentForPack({
          WHEN
            wa.operating_unit_id IS NULL
            AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NOT NULL
+           AND wa.country_id = ? THEN 3
+         WHEN
+           wa.operating_unit_id IS NULL
+           AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NULL
            AND wa.group_company_id IS NOT NULL
-           AND wa.group_company_id = ? THEN 3
-         ELSE 4
+           AND wa.group_company_id = ? THEN 4
+         ELSE 5
        END,
        wa.effective_from DESC,
        wa.id DESC
@@ -699,9 +715,11 @@ async function findActiveWorkflowAssignmentForPack({
       effectiveDate,
       operatingUnitId,
       legalEntityId,
+      countryId,
       groupCompanyId,
       operatingUnitId,
       legalEntityId,
+      countryId,
       groupCompanyId,
     ]
   );
@@ -897,6 +915,7 @@ async function prepareWorkflowInstanceForSubmission({
     requestedByUserId: userId,
     fallbackScope: {
       groupCompanyId: parsePositiveInt(packRow.group_company_id),
+      countryId: parsePositiveInt(packRow.country_id),
       legalEntityId: parsePositiveInt(packRow.legal_entity_id),
       operatingUnitId: parsePositiveInt(packRow.operating_unit_id),
     },

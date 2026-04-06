@@ -618,6 +618,22 @@ function resolveDecisionScopeForStep(requestRow, step) {
       };
     }
   }
+  if (step.scopeResolutionMode === "TARGET_COUNTRY") {
+    const scopeId =
+      parsePositiveInt(
+        requestRow.targetSnapshot?.country_id ??
+          requestRow.targetSnapshot?.countryId ??
+          requestRow.actionPayload?.country_id ??
+          requestRow.actionPayload?.countryId
+      ) ||
+      (requestScope.scopeType === "COUNTRY" ? requestScope.scopeId : null);
+    if (scopeId) {
+      return {
+        scopeType: "COUNTRY",
+        scopeId,
+      };
+    }
+  }
   if (
     step.scopeResolutionMode === "TARGET_LEGAL_ENTITY" &&
     parsePositiveInt(requestRow.legalEntityId)

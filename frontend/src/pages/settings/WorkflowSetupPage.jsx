@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  listCountries,
   listGroupCompanies,
   listLegalEntities,
   listOperatingUnits,
@@ -20,7 +21,7 @@ import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.j
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 
 const PROCESS_TYPES = ["PERIOD_CLOSE", "CONSOLIDATION_RUN", "LOCAL_CLOSE_PACK"];
-const ASSIGNMENT_SCOPE_TYPES = ["TENANT", "GROUP", "LEGAL_ENTITY", "OPERATING_UNIT"];
+const ASSIGNMENT_SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -112,6 +113,7 @@ export default function WorkflowSetupPage() {
 
   const [definitions, setDefinitions] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [countries, setCountries] = useState([]);
   const [groupCompanies, setGroupCompanies] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
@@ -132,6 +134,7 @@ export default function WorkflowSetupPage() {
     workflowDefinitionId: "",
     scopeType: "TENANT",
     groupCompanyId: "",
+    countryId: "",
     legalEntityId: "",
     operatingUnitId: "",
     effectiveFrom: todayIsoDate(),
@@ -142,6 +145,8 @@ export default function WorkflowSetupPage() {
       ? tenantScopeId
       : assignmentForm.scopeType === "GROUP"
         ? toPositiveInt(assignmentForm.groupCompanyId)
+        : assignmentForm.scopeType === "COUNTRY"
+          ? toPositiveInt(assignmentForm.countryId)
         : assignmentForm.scopeType === "LEGAL_ENTITY"
           ? toPositiveInt(assignmentForm.legalEntityId)
           : assignmentForm.scopeType === "OPERATING_UNIT"
@@ -188,6 +193,7 @@ export default function WorkflowSetupPage() {
     if (!canReadWorkflow && !canReadOrgTree) {
       setDefinitions([]);
       setAssignments([]);
+      setCountries([]);
       setGroupCompanies([]);
       setLegalEntities([]);
       setOperatingUnits([]);
@@ -197,10 +203,11 @@ export default function WorkflowSetupPage() {
     setLoading(true);
     setError("");
     try {
-      const [definitionsRes, assignmentsRes, groupsRes, entitiesRes, unitsRes] =
+      const [definitionsRes, assignmentsRes, countriesRes, groupsRes, entitiesRes, unitsRes] =
         await Promise.all([
           canReadDefinitions ? listWorkflowDefinitions({ limit: 200 }) : Promise.resolve(null),
           canReadAssignments ? listWorkflowAssignments({ limit: 300 }) : Promise.resolve(null),
+          canReadOrgTree ? listCountries() : Promise.resolve(null),
           canReadOrgTree ? listGroupCompanies() : Promise.resolve(null),
           canReadOrgTree ? listLegalEntities() : Promise.resolve(null),
           canReadOrgTree ? listOperatingUnits() : Promise.resolve(null),
@@ -209,6 +216,7 @@ export default function WorkflowSetupPage() {
       const nextDefinitions = Array.isArray(definitionsRes?.rows) ? definitionsRes.rows : [];
       setDefinitions(nextDefinitions);
       setAssignments(Array.isArray(assignmentsRes?.rows) ? assignmentsRes.rows : []);
+      setCountries(Array.isArray(countriesRes?.rows) ? countriesRes.rows : []);
       setGroupCompanies(Array.isArray(groupsRes?.rows) ? groupsRes.rows : []);
       setLegalEntities(Array.isArray(entitiesRes?.rows) ? entitiesRes.rows : []);
       setOperatingUnits(Array.isArray(unitsRes?.rows) ? unitsRes.rows : []);
@@ -398,6 +406,9 @@ export default function WorkflowSetupPage() {
     if (assignmentForm.scopeType === "GROUP") {
       payload.groupCompanyId = toPositiveInt(assignmentForm.groupCompanyId) || undefined;
     }
+    if (assignmentForm.scopeType === "COUNTRY") {
+      payload.countryId = toPositiveInt(assignmentForm.countryId) || undefined;
+    }
     if (assignmentForm.scopeType === "LEGAL_ENTITY") {
       payload.legalEntityId = toPositiveInt(assignmentForm.legalEntityId) || undefined;
     }
@@ -504,8 +515,8 @@ export default function WorkflowSetupPage() {
       {!canReadOrgTree ? (
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           {l(
-            "org.tree.read is required to load group, legal entity, and operating unit scope selectors.",
-            "Grup, legal entity ve operating unit kapsam secicilerini yuklemek icin org.tree.read gerekir."
+            "org.tree.read is required to load country, group, legal entity, and operating unit scope selectors.",
+            "Country, grup, legal entity ve operating unit kapsam secicilerini yuklemek icin org.tree.read gerekir."
           )}
         </div>
       ) : null}
@@ -556,6 +567,12 @@ export default function WorkflowSetupPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Steps (JSON)", "Adimlar (JSON)")}</h2>
           <p className="mb-2 text-xs text-slate-500">{selectedDefinition ? `${selectedDefinition.code} (${selectedDefinition.processType})` : l("Select a definition to edit steps.", "Adim duzenlemek icin tanim secin.")}</p>
+          <p className="mb-2 text-xs text-slate-500">
+            {l(
+              "Valid stageScopeType values: OPERATING_UNIT, LEGAL_ENTITY, COUNTRY, GROUP.",
+              "Gecerli stageScopeType degerleri: OPERATING_UNIT, LEGAL_ENTITY, COUNTRY, GROUP."
+            )}
+          </p>
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
             <div className="font-semibold">
               {l("Escalation support", "Escalation destegi")}
@@ -610,6 +627,12 @@ export default function WorkflowSetupPage() {
               {groupCompanies.map((row) => <option key={row.id} value={row.id}>{row.code} - {row.name}</option>)}
             </select>
           ) : null}
+          {assignmentForm.scopeType === "COUNTRY" ? (
+            <select value={assignmentForm.countryId} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, countryId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
+              <option value="">{l("Select country", "Ulke secin")}</option>
+              {countries.map((row) => <option key={row.id} value={row.id}>{row.iso2} - {row.name}</option>)}
+            </select>
+          ) : null}
           {assignmentForm.scopeType === "LEGAL_ENTITY" ? (
             <select value={assignmentForm.legalEntityId} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
               <option value="">{l("Select legal entity", "Legal entity secin")}</option>
@@ -629,7 +652,7 @@ export default function WorkflowSetupPage() {
 
         <div className="mt-3 max-h-72 overflow-auto rounded border border-slate-200">
           <table className="min-w-full text-xs">
-            <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-2">ID</th><th className="px-2 py-2">{l("Process", "Surec")}</th><th className="px-2 py-2">{l("Definition", "Tanim")}</th><th className="px-2 py-2">{l("Status", "Durum")}</th><th className="px-2 py-2">{l("Action", "Islem")}</th></tr></thead>
+            <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-2">ID</th><th className="px-2 py-2">{l("Process", "Surec")}</th><th className="px-2 py-2">{l("Scope", "Kapsam")}</th><th className="px-2 py-2">{l("Definition", "Tanim")}</th><th className="px-2 py-2">{l("Status", "Durum")}</th><th className="px-2 py-2">{l("Action", "Islem")}</th></tr></thead>
             <tbody>
               {assignments.map((row) => {
                 const assignmentId = toPositiveInt(row?.id);
@@ -639,11 +662,23 @@ export default function WorkflowSetupPage() {
                     ? { scopeType: "OPERATING_UNIT", scopeId: row.operatingUnitId }
                     : row.legalEntityId
                       ? { scopeType: "LEGAL_ENTITY", scopeId: row.legalEntityId }
+                      : row.countryId
+                        ? { scopeType: "COUNTRY", scopeId: row.countryId }
                       : row.groupCompanyId
                         ? { scopeType: "GROUP", scopeId: row.groupCompanyId }
                         : tenantScopeId
                           ? { scopeType: "TENANT", scopeId: tenantScopeId }
                           : null;
+                const rowScopeLabel =
+                  row.operatingUnitId
+                    ? `OPERATING_UNIT: ${row.operatingUnitCode || row.operatingUnitName || row.operatingUnitId}`
+                    : row.legalEntityId
+                      ? `LEGAL_ENTITY: ${row.legalEntityCode || row.legalEntityName || row.legalEntityId}`
+                      : row.countryId
+                        ? `COUNTRY: ${row.countryIso2 || row.countryName || row.countryId}`
+                        : row.groupCompanyId
+                          ? `GROUP: ${row.groupCompanyCode || row.groupCompanyName || row.groupCompanyId}`
+                          : "TENANT";
                 const rowWriteAccess = getPermissionAccess(
                   "workflow.assignment.write",
                   rowScope ? { scope: rowScope } : undefined
@@ -652,6 +687,7 @@ export default function WorkflowSetupPage() {
                   <tr key={row.id} className="border-t border-slate-100">
                     <td className="px-2 py-2">#{row.id}</td>
                     <td className="px-2 py-2">{row.processType}</td>
+                    <td className="px-2 py-2">{rowScopeLabel}</td>
                     <td className="px-2 py-2">{row.workflowDefinitionCode} - {row.workflowDefinitionName}</td>
                     <td className="px-2 py-2">{row.status}</td>
                     <td className="px-2 py-2">
@@ -660,7 +696,7 @@ export default function WorkflowSetupPage() {
                   </tr>
                 );
               })}
-              {assignments.length === 0 && !loading ? (<tr><td colSpan={5} className="px-2 py-3 text-slate-500">{l("No assignments.", "Atama yok.")}</td></tr>) : null}
+              {assignments.length === 0 && !loading ? (<tr><td colSpan={6} className="px-2 py-3 text-slate-500">{l("No assignments.", "Atama yok.")}</td></tr>) : null}
             </tbody>
           </table>
         </div>

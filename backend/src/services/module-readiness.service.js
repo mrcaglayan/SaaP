@@ -106,6 +106,9 @@ function inferWorkflowAssignmentScopeType(row) {
   if (parsePositiveInt(row?.legal_entity_id)) {
     return "LEGAL_ENTITY";
   }
+  if (parsePositiveInt(row?.country_id)) {
+    return "COUNTRY";
+  }
   if (parsePositiveInt(row?.group_company_id)) {
     return "GROUP";
   }
@@ -223,10 +226,12 @@ function evaluateWorkflowDefinitionReadiness({
 function resolveWorkflowAssignmentPrecedence({
   assignmentRow,
   legalEntityId,
+  countryId,
   groupCompanyId,
 }) {
   const assignmentOperatingUnitEntityId = parsePositiveInt(assignmentRow?.ou_legal_entity_id);
   const assignmentLegalEntityId = parsePositiveInt(assignmentRow?.legal_entity_id);
+  const assignmentCountryId = parsePositiveInt(assignmentRow?.country_id);
   const assignmentGroupCompanyId = parsePositiveInt(assignmentRow?.group_company_id);
 
   if (assignmentOperatingUnitEntityId && assignmentOperatingUnitEntityId === legalEntityId) {
@@ -236,14 +241,26 @@ function resolveWorkflowAssignmentPrecedence({
     return 2;
   }
   if (
+    assignmentCountryId &&
+    parsePositiveInt(countryId) &&
+    assignmentCountryId === parsePositiveInt(countryId)
+  ) {
+    return 3;
+  }
+  if (
     assignmentGroupCompanyId &&
     parsePositiveInt(groupCompanyId) &&
     assignmentGroupCompanyId === parsePositiveInt(groupCompanyId)
   ) {
-    return 3;
-  }
-  if (!assignmentOperatingUnitEntityId && !assignmentLegalEntityId && !assignmentGroupCompanyId) {
     return 4;
+  }
+  if (
+    !assignmentOperatingUnitEntityId &&
+    !assignmentLegalEntityId &&
+    !assignmentCountryId &&
+    !assignmentGroupCompanyId
+  ) {
+    return 5;
   }
   return null;
 }
@@ -252,6 +269,7 @@ function pickWorkflowAssignmentForProcess({
   assignmentRows,
   processType,
   legalEntityId,
+  countryId,
   groupCompanyId,
 }) {
   const matchingRows = [];
@@ -262,6 +280,7 @@ function pickWorkflowAssignmentForProcess({
     const precedence = resolveWorkflowAssignmentPrecedence({
       assignmentRow: row,
       legalEntityId,
+      countryId,
       groupCompanyId,
     });
     if (!precedence) {
@@ -294,9 +313,11 @@ async function loadWorkflowReadinessAssignments({
        wd.is_active AS definition_is_active,
        wd.code AS workflow_definition_code,
        wd.name AS workflow_definition_name,
+       le.country_id AS legal_entity_country_id,
        ou.legal_entity_id AS ou_legal_entity_id
      FROM workflow_assignments wa
      JOIN workflow_definitions wd ON wd.id = wa.workflow_definition_id
+     LEFT JOIN legal_entities le ON le.id = wa.legal_entity_id
      LEFT JOIN operating_units ou ON ou.id = wa.operating_unit_id
      WHERE wa.tenant_id = ?
        AND wa.status = 'ACTIVE'
@@ -374,7 +395,7 @@ async function loadLegalEntitiesWithGroupCompany({
   }
   const placeholders = normalizedIds.map(() => "?").join(", ");
   const result = await runQuery(
-    `SELECT id, group_company_id
+    `SELECT id, group_company_id, country_id
      FROM legal_entities
      WHERE tenant_id = ?
        AND id IN (${placeholders})`,
@@ -389,6 +410,7 @@ async function loadLegalEntitiesWithGroupCompany({
     map.set(legalEntityId, {
       legalEntityId,
       groupCompanyId: parsePositiveInt(row.group_company_id) || null,
+      countryId: parsePositiveInt(row.country_id) || null,
     });
   }
   return map;
@@ -489,6 +511,7 @@ export async function getCloseConsolidationWorkflowReadiness(
     const legalEntityScope = legalEntityScopeMap.get(entityId) || {
       legalEntityId: entityId,
       groupCompanyId: null,
+      countryId: null,
     };
 
     const resolvedAssignments = [];
@@ -501,6 +524,7 @@ export async function getCloseConsolidationWorkflowReadiness(
         assignmentRows,
         processType,
         legalEntityId: legalEntityScope.legalEntityId,
+        countryId: legalEntityScope.countryId,
         groupCompanyId: legalEntityScope.groupCompanyId,
       });
 
@@ -523,6 +547,7 @@ export async function getCloseConsolidationWorkflowReadiness(
         scopeId:
           parsePositiveInt(assignmentRow.operating_unit_id) ||
           parsePositiveInt(assignmentRow.legal_entity_id) ||
+          parsePositiveInt(assignmentRow.country_id) ||
           parsePositiveInt(assignmentRow.group_company_id) ||
           null,
       });

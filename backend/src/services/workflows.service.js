@@ -1,6 +1,7 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
+  assertCountryExists,
   assertGroupCompanyBelongsToTenant,
   assertLegalEntityBelongsToTenant,
   assertOperatingUnitBelongsToTenant,
@@ -22,6 +23,10 @@ const WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL = `COALESCE(
       period_close_book.legal_entity_id,
       local_close_pack.legal_entity_id
     ) AS target_legal_entity_id,
+      COALESCE(
+        period_close_entity.country_id,
+        local_close_entity.country_id
+      ) AS target_country_id,
       COALESCE(
         period_close_entity.group_company_id,
         local_close_entity.group_company_id,
@@ -150,6 +155,9 @@ function mapStageScopeTypeToUnifiedScopeResolutionMode(stageScopeType) {
   if (normalized === "LEGAL_ENTITY") {
     return "TARGET_LEGAL_ENTITY";
   }
+  if (normalized === "COUNTRY") {
+    return "TARGET_COUNTRY";
+  }
   if (normalized === "GROUP") {
     return "TARGET_GROUP";
   }
@@ -163,6 +171,9 @@ function mapUnifiedScopeResolutionModeToStageScopeType(scopeResolutionMode) {
   }
   if (normalized === "TARGET_LEGAL_ENTITY") {
     return "LEGAL_ENTITY";
+  }
+  if (normalized === "TARGET_COUNTRY") {
+    return "COUNTRY";
   }
   if (normalized === "TARGET_GROUP") {
     return "GROUP";
@@ -187,6 +198,13 @@ function mapWorkflowAssignmentRowToUnifiedScope(row) {
     return {
       scopeType: "LEGAL_ENTITY",
       scopeId: legalEntityId,
+    };
+  }
+  const countryId = parsePositiveInt(row?.country_id ?? row?.countryId);
+  if (countryId) {
+    return {
+      scopeType: "COUNTRY",
+      scopeId: countryId,
     };
   }
   const groupCompanyId = parsePositiveInt(
@@ -218,6 +236,11 @@ function resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope = {}) {
         parsePositiveInt(instanceRow?.targetLegalEntityId) ||
         parsePositiveInt(fallbackScope?.legalEntityId) ||
         null,
+      countryId:
+        parsePositiveInt(instanceRow?.target_country_id) ||
+        parsePositiveInt(instanceRow?.targetCountryId) ||
+        parsePositiveInt(fallbackScope?.countryId) ||
+        null,
       operatingUnitId,
       groupCompanyId:
         parsePositiveInt(instanceRow?.target_group_company_id) ||
@@ -236,6 +259,30 @@ function resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope = {}) {
       scopeType: "LEGAL_ENTITY",
       scopeId: legalEntityId,
       legalEntityId,
+      countryId:
+        parsePositiveInt(instanceRow?.target_country_id) ||
+        parsePositiveInt(instanceRow?.targetCountryId) ||
+        parsePositiveInt(fallbackScope?.countryId) ||
+        null,
+      operatingUnitId: null,
+      groupCompanyId:
+        parsePositiveInt(instanceRow?.target_group_company_id) ||
+        parsePositiveInt(instanceRow?.targetGroupCompanyId) ||
+        parsePositiveInt(fallbackScope?.groupCompanyId) ||
+        null,
+    };
+  }
+
+  const countryId =
+    parsePositiveInt(instanceRow?.target_country_id) ||
+    parsePositiveInt(instanceRow?.targetCountryId) ||
+    parsePositiveInt(fallbackScope?.countryId);
+  if (countryId) {
+    return {
+      scopeType: "COUNTRY",
+      scopeId: countryId,
+      legalEntityId: null,
+      countryId,
       operatingUnitId: null,
       groupCompanyId:
         parsePositiveInt(instanceRow?.target_group_company_id) ||
@@ -254,6 +301,7 @@ function resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope = {}) {
       scopeType: "GROUP",
       scopeId: groupCompanyId,
       legalEntityId: null,
+      countryId: null,
       operatingUnitId: null,
       groupCompanyId,
     };
@@ -265,6 +313,7 @@ function resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope = {}) {
       parsePositiveInt(instanceRow?.tenant_id) ||
       parsePositiveInt(instanceRow?.tenantId),
     legalEntityId: null,
+    countryId: null,
     operatingUnitId: null,
     groupCompanyId: null,
   };
@@ -279,6 +328,11 @@ function buildWorkflowUnifiedTargetSnapshot(instanceRow, fallbackScope = {}) {
     workflow_definition_id: parsePositiveInt(
       instanceRow?.workflow_definition_id ?? instanceRow?.workflowDefinitionId
     ),
+    country_id:
+      parsePositiveInt(instanceRow?.target_country_id) ||
+      parsePositiveInt(instanceRow?.targetCountryId) ||
+      parsePositiveInt(fallbackScope?.countryId) ||
+      null,
     group_company_id:
       parsePositiveInt(instanceRow?.target_group_company_id) ||
       parsePositiveInt(instanceRow?.targetGroupCompanyId) ||
@@ -447,6 +501,9 @@ function mapWorkflowAssignmentRow(row) {
     groupCompanyId: parsePositiveInt(row.group_company_id),
     groupCompanyCode: row.group_company_code || null,
     groupCompanyName: row.group_company_name || null,
+    countryId: parsePositiveInt(row.country_id),
+    countryIso2: row.country_iso2 || null,
+    countryName: row.country_name || null,
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     legalEntityCode: row.legal_entity_code || null,
     legalEntityName: row.legal_entity_name || null,
@@ -486,6 +543,7 @@ function mapWorkflowInstanceRow(row) {
     resolutionNote: row.resolution_note || null,
     idempotencyKey: row.idempotency_key || null,
     targetGroupCompanyId: parsePositiveInt(row.target_group_company_id),
+    targetCountryId: parsePositiveInt(row.target_country_id),
     targetLegalEntityId: parsePositiveInt(row.target_legal_entity_id),
     targetOperatingUnitId: parsePositiveInt(row.target_operating_unit_id),
     createdAt: row.created_at || null,
@@ -518,6 +576,7 @@ function assertTenantWideScope(req, label = "tenant fallback scope") {
 function assertAssignmentScopeAccess(req, row, assertScopeAccess) {
   const operatingUnitId = parsePositiveInt(row?.operating_unit_id ?? row?.operatingUnitId);
   const legalEntityId = parsePositiveInt(row?.legal_entity_id ?? row?.legalEntityId);
+  const countryId = parsePositiveInt(row?.country_id ?? row?.countryId);
   const groupCompanyId = parsePositiveInt(row?.group_company_id ?? row?.groupCompanyId);
 
   if (operatingUnitId) {
@@ -526,6 +585,10 @@ function assertAssignmentScopeAccess(req, row, assertScopeAccess) {
   }
   if (legalEntityId) {
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    return;
+  }
+  if (countryId) {
+    assertScopeAccess(req, "country", countryId, "countryId");
     return;
   }
   if (groupCompanyId) {
@@ -554,6 +617,9 @@ function assertWorkflowInstanceScopeAccess(req, row, assertScopeAccess) {
   const legalEntityId = parsePositiveInt(
     row?.target_legal_entity_id ?? row?.targetLegalEntityId
   );
+  const countryId = parsePositiveInt(
+    row?.target_country_id ?? row?.targetCountryId
+  );
   const groupCompanyId = parsePositiveInt(
     row?.target_group_company_id ?? row?.targetGroupCompanyId
   );
@@ -564,6 +630,10 @@ function assertWorkflowInstanceScopeAccess(req, row, assertScopeAccess) {
   }
   if (legalEntityId) {
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    return;
+  }
+  if (countryId) {
+    assertScopeAccess(req, "country", countryId, "countryId");
     return;
   }
   if (groupCompanyId) {
@@ -583,6 +653,122 @@ function canReadWorkflowInstanceRow(req, row, assertScopeAccess) {
     }
     throw err;
   }
+}
+
+async function hydrateWorkflowResolutionScope({
+  tenantId,
+  scope = {},
+  runQuery = query,
+}) {
+  const resolved = {
+    operatingUnitId: parsePositiveInt(scope?.operatingUnitId) || null,
+    legalEntityId: parsePositiveInt(scope?.legalEntityId) || null,
+    countryId: parsePositiveInt(scope?.countryId) || null,
+    groupCompanyId: parsePositiveInt(scope?.groupCompanyId) || null,
+  };
+
+  if (resolved.operatingUnitId) {
+    const result = await runQuery(
+      `SELECT
+         ou.id,
+         ou.legal_entity_id,
+         le.group_company_id,
+         le.country_id
+       FROM operating_units ou
+       JOIN legal_entities le
+         ON le.tenant_id = ou.tenant_id
+        AND le.id = ou.legal_entity_id
+      WHERE ou.tenant_id = ?
+        AND ou.id = ?
+      LIMIT 1`,
+      [tenantId, resolved.operatingUnitId]
+    );
+    const row = result.rows?.[0] || null;
+    if (!row) {
+      throw badRequest("scope.operatingUnitId not found for tenant");
+    }
+    if (
+      resolved.legalEntityId &&
+      resolved.legalEntityId !== parsePositiveInt(row.legal_entity_id)
+    ) {
+      throw badRequest("scope.legalEntityId must match scope.operatingUnitId");
+    }
+    if (
+      resolved.countryId &&
+      resolved.countryId !== parsePositiveInt(row.country_id)
+    ) {
+      throw badRequest("scope.countryId must match scope.operatingUnitId hierarchy");
+    }
+    if (
+      resolved.groupCompanyId &&
+      resolved.groupCompanyId !== parsePositiveInt(row.group_company_id)
+    ) {
+      throw badRequest("scope.groupCompanyId must match scope.operatingUnitId hierarchy");
+    }
+    resolved.legalEntityId = parsePositiveInt(row.legal_entity_id) || null;
+    resolved.countryId = parsePositiveInt(row.country_id) || null;
+    resolved.groupCompanyId = parsePositiveInt(row.group_company_id) || null;
+    return resolved;
+  }
+
+  if (resolved.legalEntityId) {
+    const result = await runQuery(
+      `SELECT id, group_company_id, country_id
+         FROM legal_entities
+        WHERE tenant_id = ?
+          AND id = ?
+        LIMIT 1`,
+      [tenantId, resolved.legalEntityId]
+    );
+    const row = result.rows?.[0] || null;
+    if (!row) {
+      throw badRequest("scope.legalEntityId not found for tenant");
+    }
+    if (
+      resolved.countryId &&
+      resolved.countryId !== parsePositiveInt(row.country_id)
+    ) {
+      throw badRequest("scope.countryId must match scope.legalEntityId hierarchy");
+    }
+    if (
+      resolved.groupCompanyId &&
+      resolved.groupCompanyId !== parsePositiveInt(row.group_company_id)
+    ) {
+      throw badRequest("scope.groupCompanyId must match scope.legalEntityId hierarchy");
+    }
+    resolved.countryId = parsePositiveInt(row.country_id) || null;
+    resolved.groupCompanyId = parsePositiveInt(row.group_company_id) || null;
+    return resolved;
+  }
+
+  if (resolved.countryId) {
+    const result = await runQuery(
+      `SELECT id
+         FROM countries
+        WHERE id = ?
+        LIMIT 1`,
+      [resolved.countryId]
+    );
+    if (!result.rows?.[0]?.id) {
+      throw badRequest("scope.countryId not found");
+    }
+  }
+
+  if (resolved.groupCompanyId) {
+    const result = await runQuery(
+      `SELECT id
+         FROM group_companies
+        WHERE tenant_id = ?
+          AND id = ?
+        LIMIT 1`,
+      [tenantId, resolved.groupCompanyId]
+    );
+    if (!result.rows?.[0]?.id) {
+      throw badRequest("scope.groupCompanyId not found for tenant");
+    }
+  }
+
+  return resolved;
 }
 
 async function isWorkflowGateFeatureEnabled(tenantId, runQuery = query) {
@@ -612,9 +798,15 @@ async function findActiveWorkflowAssignmentForScope({
   runQuery = query,
 }) {
   const effectiveDate = toDateOnly(effectiveOn) || new Date().toISOString().slice(0, 10);
-  const operatingUnitId = parsePositiveInt(scope?.operatingUnitId) || -1;
-  const legalEntityId = parsePositiveInt(scope?.legalEntityId) || -1;
-  const groupCompanyId = parsePositiveInt(scope?.groupCompanyId) || -1;
+  const resolvedScope = await hydrateWorkflowResolutionScope({
+    tenantId,
+    scope,
+    runQuery,
+  });
+  const operatingUnitId = parsePositiveInt(resolvedScope?.operatingUnitId) || -1;
+  const legalEntityId = parsePositiveInt(resolvedScope?.legalEntityId) || -1;
+  const countryId = parsePositiveInt(resolvedScope?.countryId) || -1;
+  const groupCompanyId = parsePositiveInt(resolvedScope?.groupCompanyId) || -1;
 
   const result = await runQuery(
     `SELECT wa.*
@@ -634,12 +826,20 @@ async function findActiveWorkflowAssignmentForScope({
          OR (
            wa.operating_unit_id IS NULL
            AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NOT NULL
+           AND wa.country_id = ?
+         )
+         OR (
+           wa.operating_unit_id IS NULL
+           AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NULL
            AND wa.group_company_id IS NOT NULL
            AND wa.group_company_id = ?
          )
          OR (
            wa.operating_unit_id IS NULL
            AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NULL
            AND wa.group_company_id IS NULL
          )
        )
@@ -653,9 +853,15 @@ async function findActiveWorkflowAssignmentForScope({
          WHEN
            wa.operating_unit_id IS NULL
            AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NOT NULL
+           AND wa.country_id = ? THEN 3
+         WHEN
+           wa.operating_unit_id IS NULL
+           AND wa.legal_entity_id IS NULL
+           AND wa.country_id IS NULL
            AND wa.group_company_id IS NOT NULL
-           AND wa.group_company_id = ? THEN 3
-         ELSE 4
+           AND wa.group_company_id = ? THEN 4
+         ELSE 5
        END,
        wa.effective_from DESC,
        wa.id DESC
@@ -667,9 +873,11 @@ async function findActiveWorkflowAssignmentForScope({
       effectiveDate,
       operatingUnitId,
       legalEntityId,
+      countryId,
       groupCompanyId,
       operatingUnitId,
       legalEntityId,
+      countryId,
       groupCompanyId,
     ]
   );
@@ -740,6 +948,7 @@ function makeWorkflowGateResult({
           workflowDefinitionId: parsePositiveInt(assignmentRow.workflow_definition_id),
           processType: toUpper(assignmentRow.process_type),
           groupCompanyId: parsePositiveInt(assignmentRow.group_company_id),
+          countryId: parsePositiveInt(assignmentRow.country_id),
           legalEntityId: parsePositiveInt(assignmentRow.legal_entity_id),
           operatingUnitId: parsePositiveInt(assignmentRow.operating_unit_id),
           effectiveFrom: toDateOnly(assignmentRow.effective_from),
@@ -787,6 +996,8 @@ async function getWorkflowAssignmentRowById({
        wd.name AS workflow_definition_name,
        gc.code AS group_company_code,
        gc.name AS group_company_name,
+       c.iso2 AS country_iso2,
+       c.name AS country_name,
        le.code AS legal_entity_code,
        le.name AS legal_entity_name,
        ou.code AS operating_unit_code,
@@ -795,6 +1006,7 @@ async function getWorkflowAssignmentRowById({
      FROM workflow_assignments wa
      JOIN workflow_definitions wd ON wd.id = wa.workflow_definition_id
      LEFT JOIN group_companies gc ON gc.id = wa.group_company_id
+     LEFT JOIN countries c ON c.id = wa.country_id
      LEFT JOIN legal_entities le ON le.id = wa.legal_entity_id
      LEFT JOIN operating_units ou ON ou.id = wa.operating_unit_id
      LEFT JOIN users u ON u.id = wa.created_by_user_id
@@ -992,6 +1204,14 @@ function resolveUnifiedWorkflowDecisionAccessFromRequestRow(requestRow) {
       parsePositiveInt(targetSnapshot?.group_company_id) ||
       parsePositiveInt(targetSnapshot?.groupCompanyId) ||
       (toUpper(requestRow?.scope_type) === "GROUP"
+        ? parsePositiveInt(requestRow?.scope_id)
+        : null);
+  } else if (scopeResolutionMode === "TARGET_COUNTRY") {
+    scopeType = "COUNTRY";
+    scopeId =
+      parsePositiveInt(targetSnapshot?.country_id) ||
+      parsePositiveInt(targetSnapshot?.countryId) ||
+      (toUpper(requestRow?.scope_type) === "COUNTRY"
         ? parsePositiveInt(requestRow?.scope_id)
         : null);
   } else if (scopeResolutionMode === "TARGET_LEGAL_ENTITY") {
@@ -1640,66 +1860,58 @@ async function assertWorkflowDefinitionExists(tenantId, definitionId, runQuery =
 async function resolveAssignmentScopeReferences({
   tenantId,
   groupCompanyId,
+  countryId,
   legalEntityId,
   operatingUnitId,
 }) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedGroupCompanyId = parsePositiveInt(groupCompanyId) || null;
+  const normalizedCountryId = parsePositiveInt(countryId) || null;
   const normalizedLegalEntityId = parsePositiveInt(legalEntityId) || null;
   const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId) || null;
 
-  let groupCompanyRow = null;
-  let legalEntityRow = null;
-  let operatingUnitRow = null;
+  const scopeTargetCount = [
+    normalizedGroupCompanyId,
+    normalizedCountryId,
+    normalizedLegalEntityId,
+    normalizedOperatingUnitId,
+  ].filter(Boolean).length;
+  if (scopeTargetCount > 1) {
+    throw badRequest(
+      "Workflow assignments must set at most one of groupCompanyId, countryId, legalEntityId, or operatingUnitId"
+    );
+  }
 
   if (normalizedGroupCompanyId) {
-    groupCompanyRow = await assertGroupCompanyBelongsToTenant(
+    await assertGroupCompanyBelongsToTenant(
       normalizedTenantId,
       normalizedGroupCompanyId,
       "groupCompanyId"
     );
   }
+  if (normalizedCountryId) {
+    await assertCountryExists(normalizedCountryId, "countryId");
+  }
   if (normalizedLegalEntityId) {
-    legalEntityRow = await assertLegalEntityBelongsToTenant(
+    await assertLegalEntityBelongsToTenant(
       normalizedTenantId,
       normalizedLegalEntityId,
       "legalEntityId"
     );
   }
   if (normalizedOperatingUnitId) {
-    operatingUnitRow = await assertOperatingUnitBelongsToTenant(
+    await assertOperatingUnitBelongsToTenant(
       normalizedTenantId,
       normalizedOperatingUnitId,
       "operatingUnitId"
     );
-
-    const operatingUnitLegalEntityId = parsePositiveInt(operatingUnitRow.legal_entity_id);
-    if (
-      legalEntityRow &&
-      parsePositiveInt(legalEntityRow.id) !== operatingUnitLegalEntityId
-    ) {
-      throw badRequest("operatingUnitId must belong to selected legalEntityId");
-    }
-    if (!legalEntityRow) {
-      legalEntityRow = await assertLegalEntityBelongsToTenant(
-        normalizedTenantId,
-        operatingUnitLegalEntityId,
-        "operatingUnit legalEntity"
-      );
-    }
-  }
-
-  if (groupCompanyRow && legalEntityRow) {
-    const groupCompanyFromLegalEntity = parsePositiveInt(legalEntityRow.group_company_id);
-    if (groupCompanyFromLegalEntity !== parsePositiveInt(groupCompanyRow.id)) {
-      throw badRequest("legalEntityId must belong to selected groupCompanyId");
-    }
   }
 }
 
 function assertAssignmentWriteScope(req, input, assertScopeAccess) {
   const operatingUnitId = parsePositiveInt(input?.operatingUnitId);
   const legalEntityId = parsePositiveInt(input?.legalEntityId);
+  const countryId = parsePositiveInt(input?.countryId);
   const groupCompanyId = parsePositiveInt(input?.groupCompanyId);
 
   if (operatingUnitId) {
@@ -1708,15 +1920,21 @@ function assertAssignmentWriteScope(req, input, assertScopeAccess) {
   if (legalEntityId) {
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
   }
+  if (countryId) {
+    assertScopeAccess(req, "country", countryId, "countryId");
+  }
   if (groupCompanyId) {
     assertScopeAccess(req, "group", groupCompanyId, "groupCompanyId");
   }
 
-  if (!operatingUnitId && !legalEntityId && !groupCompanyId) {
+  if (!operatingUnitId && !legalEntityId && !countryId && !groupCompanyId) {
     assertTenantWideScope(req);
   }
 }
 
+/**
+ * Resolve the effective RBAC scope for one workflow assignment row.
+ */
 export async function resolveWorkflowAssignmentScope(assignmentId, tenantId) {
   const normalizedAssignmentId = parsePositiveInt(assignmentId);
   const normalizedTenantId = parsePositiveInt(tenantId);
@@ -1740,14 +1958,21 @@ export async function resolveWorkflowAssignmentScope(assignmentId, tenantId) {
   if (legalEntityId) {
     return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
   }
+  const countryId = parsePositiveInt(row.country_id);
+  if (countryId) {
+    return { scopeType: "COUNTRY", scopeId: countryId };
+  }
   const groupCompanyId = parsePositiveInt(row.group_company_id);
   if (groupCompanyId) {
     return { scopeType: "GROUP", scopeId: groupCompanyId };
   }
 
-  return null;
+  return { scopeType: "TENANT", scopeId: normalizedTenantId };
 }
 
+/**
+ * Resolve the effective RBAC scope for one workflow instance, including country fallback.
+ */
 export async function resolveWorkflowInstanceScope(instanceId, tenantId) {
   const normalizedInstanceId = parsePositiveInt(instanceId);
   const normalizedTenantId = parsePositiveInt(tenantId);
@@ -1771,12 +1996,16 @@ export async function resolveWorkflowInstanceScope(instanceId, tenantId) {
   if (legalEntityId) {
     return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
   }
+  const countryId = parsePositiveInt(row.target_country_id);
+  if (countryId) {
+    return { scopeType: "COUNTRY", scopeId: countryId };
+  }
   const groupCompanyId = parsePositiveInt(row.target_group_company_id);
   if (groupCompanyId) {
     return { scopeType: "GROUP", scopeId: groupCompanyId };
   }
 
-  return null;
+  return { scopeType: "TENANT", scopeId: normalizedTenantId };
 }
 
 /**
@@ -2675,6 +2904,10 @@ export async function listWorkflowAssignments({
     where.push("wa.group_company_id = ?");
     params.push(parsePositiveInt(filters.groupCompanyId));
   }
+  if (filters?.countryId) {
+    where.push("wa.country_id = ?");
+    params.push(parsePositiveInt(filters.countryId));
+  }
   if (filters?.legalEntityId) {
     where.push("wa.legal_entity_id = ?");
     params.push(parsePositiveInt(filters.legalEntityId));
@@ -2690,10 +2923,12 @@ export async function listWorkflowAssignments({
   }
   if (filters?.q) {
     where.push(
-      `(wd.code LIKE ? OR wd.name LIKE ? OR gc.code LIKE ? OR gc.name LIKE ? OR le.code LIKE ? OR le.name LIKE ? OR ou.code LIKE ? OR ou.name LIKE ?)`
+      `(wd.code LIKE ? OR wd.name LIKE ? OR gc.code LIKE ? OR gc.name LIKE ? OR c.iso2 LIKE ? OR c.name LIKE ? OR le.code LIKE ? OR le.name LIKE ? OR ou.code LIKE ? OR ou.name LIKE ?)`
     );
     const wildcard = `%${filters.q}%`;
     params.push(
+      wildcard,
+      wildcard,
       wildcard,
       wildcard,
       wildcard,
@@ -2712,6 +2947,8 @@ export async function listWorkflowAssignments({
        wd.name AS workflow_definition_name,
        gc.code AS group_company_code,
        gc.name AS group_company_name,
+       c.iso2 AS country_iso2,
+       c.name AS country_name,
        le.code AS legal_entity_code,
        le.name AS legal_entity_name,
        ou.code AS operating_unit_code,
@@ -2720,6 +2957,7 @@ export async function listWorkflowAssignments({
      FROM workflow_assignments wa
      JOIN workflow_definitions wd ON wd.id = wa.workflow_definition_id
      LEFT JOIN group_companies gc ON gc.id = wa.group_company_id
+     LEFT JOIN countries c ON c.id = wa.country_id
      LEFT JOIN legal_entities le ON le.id = wa.legal_entity_id
      LEFT JOIN operating_units ou ON ou.id = wa.operating_unit_id
      LEFT JOIN users u ON u.id = wa.created_by_user_id
@@ -2777,6 +3015,7 @@ export async function createWorkflowAssignment({
   await resolveAssignmentScopeReferences({
     tenantId,
     groupCompanyId: input.groupCompanyId,
+    countryId: input.countryId,
     legalEntityId: input.legalEntityId,
     operatingUnitId: input.operatingUnitId,
   });
@@ -2787,18 +3026,20 @@ export async function createWorkflowAssignment({
        process_type,
        workflow_definition_id,
        group_company_id,
+       country_id,
        legal_entity_id,
        operating_unit_id,
        effective_from,
        effective_to,
        status,
        created_by_user_id
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       tenantId,
       toUpper(input.processType),
       parsePositiveInt(input.workflowDefinitionId),
       parsePositiveInt(input.groupCompanyId) || null,
+      parsePositiveInt(input.countryId) || null,
       parsePositiveInt(input.legalEntityId) || null,
       parsePositiveInt(input.operatingUnitId) || null,
       input.effectiveFrom,
@@ -2863,6 +3104,10 @@ export async function updateWorkflowAssignment({
       input.groupCompanyId !== undefined
         ? parsePositiveInt(input.groupCompanyId) || null
         : parsePositiveInt(existing.group_company_id) || null,
+    countryId:
+      input.countryId !== undefined
+        ? parsePositiveInt(input.countryId) || null
+        : parsePositiveInt(existing.country_id) || null,
     legalEntityId:
       input.legalEntityId !== undefined
         ? parsePositiveInt(input.legalEntityId) || null
@@ -2891,6 +3136,7 @@ export async function updateWorkflowAssignment({
   await resolveAssignmentScopeReferences({
     tenantId,
     groupCompanyId: next.groupCompanyId,
+    countryId: next.countryId,
     legalEntityId: next.legalEntityId,
     operatingUnitId: next.operatingUnitId,
   });
@@ -2909,6 +3155,7 @@ export async function updateWorkflowAssignment({
      SET process_type = ?,
          workflow_definition_id = ?,
          group_company_id = ?,
+         country_id = ?,
          legal_entity_id = ?,
          operating_unit_id = ?,
          effective_from = ?,
@@ -2920,6 +3167,7 @@ export async function updateWorkflowAssignment({
       next.processType,
       next.workflowDefinitionId,
       next.groupCompanyId,
+      next.countryId,
       next.legalEntityId,
       next.operatingUnitId,
       next.effectiveFrom,

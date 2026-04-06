@@ -56,6 +56,9 @@ function resolveScopeFromInput(rawValue) {
     legalEntityId: parsePositiveInt(
       rawValue?.legalEntityId ?? rawValue?.legal_entity_id
     ),
+    countryId: parsePositiveInt(
+      rawValue?.countryId ?? rawValue?.country_id
+    ),
     groupCompanyId: parsePositiveInt(
       rawValue?.groupCompanyId ?? rawValue?.group_company_id
     ),
