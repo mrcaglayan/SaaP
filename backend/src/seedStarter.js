@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "timers/promises";
 import { query } from "./db.js";
 import { runMigrations } from "./migrationRunner.js";
 import { seedCore } from "./seedCore.js";
+import { ensureDefaultApWorkflowDefinition } from "./services/ap.document.workflow.rollout.service.js";
 import { assignCompatibilityBootstrapRolesToUser } from "./services/systemRoles.service.js";
 
 const REQUIRED_REQUEST_IDS = Array.from({ length: 84 }, (_, index) => index + 1);
@@ -482,6 +483,12 @@ async function ensureTenantAndAdmin(tenantPayload) {
   }
 
   await assignCompatibilityBootstrapRolesToUser(tenantId, userId);
+  // Starter tenants should get the AP country-scope template up front so
+  // setup teams are not forced to hand-build the first governed AP definition.
+  await ensureDefaultApWorkflowDefinition({
+    tenantId,
+    userId,
+  });
 
   return {
     tenantId,

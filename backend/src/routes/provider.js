@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query, withTransaction } from "../db.js";
 import { invalidateRbacCache } from "../middleware/rbac.js";
+import { ensureDefaultApWorkflowDefinition } from "../services/ap.document.workflow.rollout.service.js";
 import { normalizeFeatureCode } from "../services/features.catalog.js";
 import {
   assignCompatibilityBootstrapRolesToUser,
@@ -439,6 +440,13 @@ async function createTenantWithAdmin(tx, input) {
   await assignCompatibilityBootstrapRolesToUser(tenantId, userId, {
     runQuery: (sql, params) => tx.query(sql, params),
     roleIdsByCode,
+  });
+  // Seed the default AP country-scope definition for new tenants without
+  // enabling workflow rollout or creating assignments automatically.
+  await ensureDefaultApWorkflowDefinition({
+    tenantId,
+    userId,
+    runQuery: (sql, params) => tx.query(sql, params),
   });
 
   await upsertTenantFeature(tx, {

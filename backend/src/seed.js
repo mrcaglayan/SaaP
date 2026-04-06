@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import { closePool, query } from "./db.js";
 import { seedCore } from "./seedCore.js";
+import { ensureDefaultApWorkflowDefinition } from "./services/ap.document.workflow.rollout.service.js";
 import { assignCompatibilityBootstrapRolesToUser } from "./services/systemRoles.service.js";
 
 const email = "test@example.com";
@@ -47,6 +48,12 @@ const run = async () => {
   }
 
   const roleIdsByCode = await assignCompatibilityBootstrapRolesToUser(tenantId, userId);
+  // Fresh-tenant bootstrap should include the default AP workflow definition,
+  // but rollout flags stay OFF until PR-6 pilot tooling enables them.
+  await ensureDefaultApWorkflowDefinition({
+    tenantId,
+    userId,
+  });
 
   console.log("Seeded:", {
     email,
