@@ -732,6 +732,13 @@ const MASTER_DATA_STEWARD_PERMISSION_CODES = buildPermissionList({
     // Counterparty master requests are governed master-data review, not a
     // legacy controller-only workflow.
     "cari.request.review",
+    // Generic approval engine access — required to view and act on approval
+    // requests (e.g. counterparty master-data requests) routed through the
+    // unified H04 approval engine.
+    "approvals.requests.read",
+    "approvals.requests.approve",
+    "approvals.requests.reject",
+    "approvals.policies.read",
     "org.group_company.upsert",
     "org.legal_entity.upsert",
     "org.operating_unit.upsert",

@@ -24,6 +24,15 @@ const SYSTEM_ADMIN_ADDITIONAL_PERMISSION_CODES = new Set([
   "workflow.definition.write",
   "workflow.assignment.read",
   "workflow.assignment.write",
+  // Unified approval policy and delegation management — SystemAdmin owns
+  // tenant-wide approval configuration that was previously only on legacy
+  // controller roles (GroupController, CountryController, EntityAccountant).
+  "approvals.policies.read",
+  "approvals.policies.write",
+  "approvals.requests.read",
+  "approvals.requests.submit",
+  "approvals.requests.approve",
+  "approvals.requests.reject",
 ]);
 
 const DEFAULT_BOOTSTRAP_ROLE_CODES = Object.freeze([

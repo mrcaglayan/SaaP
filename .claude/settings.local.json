@@ -15,7 +15,8 @@
       "Bash(ls -la /c/Users/Maarif/Desktop/my-app/backend/src/migrations/m14*.js)",
       "Bash(ls -la /c/Users/Maarif/Desktop/my-app/backend/src/migrations/m141* m142* m143*)",
       "Bash(node scripts/preflight-journal-source-link-primary.js)",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(node -e ':*)"
     ]
   }
 }
