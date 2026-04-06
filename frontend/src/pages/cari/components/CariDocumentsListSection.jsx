@@ -249,7 +249,7 @@ export default function CariDocumentsListSection({
         ),
       },
     ],
-    [handleSelectRow, operatingUnitsById]
+    [handleSelectRow, l, operatingUnitsById]
   );
   const documentVisibleColumns = useMemo(() => {
     const visibleIds = new Set(
