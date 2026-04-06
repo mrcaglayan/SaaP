@@ -12,6 +12,11 @@ import {
   listEligibleChargeTargetLines,
   requiresDueDate,
 } from "./cariDocumentsUtils.js";
+import {
+  canCariDocumentBeCancelled as canCariDocumentBeCancelledByStatus,
+  canCariDocumentBeSubmitted as canCariDocumentBeSubmittedByStatus,
+  isDocClassWorkflowGoverned as isDocClassWorkflowGovernedByMetadata,
+} from "../../../../shared/cariDocumentWorkflowGovernance.js";
 
 export const FIXED_ASSET_SETTINGS_PATH = "/app/ayarlar/demirbas-ayarlari";
 export const DOCUMENT_LINE_EXPANSION_LIMIT = 500;
@@ -1862,8 +1867,36 @@ export function isDraft(row) {
   return String(row?.status || "").toUpperCase() === "DRAFT";
 }
 
+export function isSubmitted(row) {
+  return String(row?.status || "").toUpperCase() === "SUBMITTED";
+}
+
+export function isReturned(row) {
+  return String(row?.status || "").toUpperCase() === "RETURNED";
+}
+
+export function isApproved(row) {
+  return String(row?.status || "").toUpperCase() === "APPROVED";
+}
+
 export function isPosted(row) {
   return String(row?.status || "").toUpperCase() === "POSTED";
+}
+
+export function isDocClassWorkflowGoverned(row) {
+  return isDocClassWorkflowGovernedByMetadata({
+    direction: row?.direction,
+    documentType: row?.documentType ?? row?.document_type,
+    isWorkflowGoverned: row?.isWorkflowGoverned ?? row?.is_workflow_governed,
+  });
+}
+
+export function canSubmitDocument(row) {
+  return canCariDocumentBeSubmittedByStatus(row);
+}
+
+export function canCancelDocument(row) {
+  return canCariDocumentBeCancelledByStatus(row);
 }
 
 export function isImmediateCashSettled(row) {
@@ -2172,6 +2205,8 @@ export function buildDocumentLifecycleEvents(row, translate = (en) => en) {
   const updatedAt = row?.updatedAt || row?.updated_at || null;
   const postedAt = row?.postedAt || row?.posted_at || null;
   const reversedAt = row?.reversedAt || row?.reversed_at || null;
+  const returnedAt = row?.returnedAt || row?.returned_at || null;
+  const returnReason = normalizeText(row?.returnReason || row?.return_reason);
 
   const events = [];
   if (createdAt) {
@@ -2179,6 +2214,41 @@ export function buildDocumentLifecycleEvents(row, translate = (en) => en) {
       statusCode: "DRAFT",
       at: createdAt,
       note: translate("Draft created.", "Taslak olusturuldu."),
+    });
+  }
+  if (status === "SUBMITTED") {
+    events.push({
+      statusCode: "SUBMITTED",
+      at: updatedAt || createdAt,
+      note: translate(
+        "Submitted for approval (timestamp inferred from updatedAt).",
+        "Onaya gonderildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+      ),
+    });
+  }
+  if (status === "APPROVED") {
+    events.push({
+      statusCode: "APPROVED",
+      at: updatedAt || createdAt,
+      note: translate(
+        "Approved for posting (timestamp inferred from updatedAt).",
+        "Kayit icin onaylandi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+      ),
+    });
+  }
+  if (status === "RETURNED") {
+    events.push({
+      statusCode: "RETURNED",
+      at: returnedAt || updatedAt || createdAt,
+      note: returnReason
+        ? translate(
+            `Returned for correction: ${returnReason}`,
+            `Duzeltme icin iade edildi: ${returnReason}`
+          )
+        : translate(
+            "Returned for correction.",
+            "Duzeltme icin iade edildi."
+          ),
     });
   }
   if (postedAt) {

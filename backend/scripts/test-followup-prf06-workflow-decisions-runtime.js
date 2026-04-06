@@ -37,6 +37,10 @@ async function main() {
     "Missing rejectWorkflowInstance service"
   );
   assert(
+    typeof service.returnWorkflowInstance === "function",
+    "Missing returnWorkflowInstance service"
+  );
+  assert(
     typeof service.listWorkflowInstances === "function",
     "Missing listWorkflowInstances service"
   );
@@ -81,6 +85,24 @@ async function main() {
     decisionInput.decisionNote === "Approve after branch-level control check",
     "decisionNote parse failed"
   );
+  let missingCommentError = null;
+  try {
+    validators.parseWorkflowInstanceDecisionInput(
+      {
+        user: { tenantId: 17, userId: 25 },
+        params: { instanceId: "77" },
+        body: {},
+      },
+      { requireComment: true }
+    );
+  } catch (error) {
+    missingCommentError = error;
+  }
+  assert(
+    missingCommentError &&
+      String(missingCommentError.message || "").includes("decisionNote is required"),
+    "return/reject decision validation should require a decision note"
+  );
 
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const routeSource = await readFile(
@@ -91,13 +113,19 @@ async function main() {
     routeSource.includes('"/instances"') &&
       routeSource.includes('"/instances/:instanceId"') &&
       routeSource.includes('"/instances/:instanceId/approve"') &&
-      routeSource.includes('"/instances/:instanceId/reject"'),
+      routeSource.includes('"/instances/:instanceId/reject"') &&
+      routeSource.includes('"/instances/:instanceId/return"'),
     "workflow routes are missing expected instances/decision endpoints"
   );
   assert(
     routeSource.includes("resolveWorkflowDecisionPermissionAccess") &&
       routeSource.includes("requirePermission(access.requiredPermissionCode"),
     "workflow decision route should enforce dynamic required_permission_code"
+  );
+  assert(
+    routeSource.includes('decisionCode = "APPROVE"') &&
+      routeSource.includes("returnWorkflowInstance"),
+    "workflow routes should route return decisions through the shared permission resolver"
   );
 
   const serviceSource = await readFile(
@@ -109,7 +137,9 @@ async function main() {
       serviceSource.includes("resolveUnifiedWorkflowDecisionAccessFromRequestRow") &&
       serviceSource.includes("recordDecision(") &&
       serviceSource.includes("current_step_no") &&
-      serviceSource.includes("required_permission_code"),
+      serviceSource.includes("required_permission_code") &&
+      serviceSource.includes('decision: "RETURN"') &&
+      serviceSource.includes("SUPERSEDED"),
     "workflow decision runtime rules are missing unified bridge/step permission checks"
   );
 

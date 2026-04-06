@@ -1,5 +1,8 @@
 import { query } from "../db.js";
 import { parsePositiveInt } from "../routes/_utils.js";
+import {
+  CARI_ACCOUNTING_VISIBLE_DOCUMENT_STATUSES,
+} from "../../../shared/cariDocumentWorkflowGovernance.js";
 
 const AMOUNT_SCALE = 6;
 const AMOUNT_EPSILON = 0.000001;
@@ -269,6 +272,17 @@ function appendRoleCondition({
     conditions.push(`${vendorFlagColumn} = ?`);
     params.push(1, 1);
   }
+}
+
+function appendAccountingVisibleDocumentStatusCondition({
+  conditions,
+  params,
+  column,
+}) {
+  conditions.push(
+    `${column} IN (${CARI_ACCOUNTING_VISIBLE_DOCUMENT_STATUSES.map(() => "?").join(", ")})`
+  );
+  params.push(...CARI_ACCOUNTING_VISIBLE_DOCUMENT_STATUSES);
 }
 
 function appendCommonEntityFilters({
@@ -658,8 +672,11 @@ async function loadOpenItemAsOfRows({
 
   conditions.push("d.document_date <= ?");
   params.push(filters.asOfDate);
-  conditions.push("d.status <> 'DRAFT'");
-  conditions.push("d.status <> 'CANCELLED'");
+  appendAccountingVisibleDocumentStatusCondition({
+    conditions,
+    params,
+    column: "d.status",
+  });
   conditions.push("(reversal_doc.id IS NULL OR reversal_doc.document_date > ?)");
   params.push(filters.asOfDate);
 
@@ -906,9 +923,12 @@ async function loadStatementDocumentRows({
   const conditions = [
     "d.tenant_id = ?",
     "d.document_date <= ?",
-    "d.status <> 'DRAFT'",
-    "d.status <> 'CANCELLED'",
   ];
+  appendAccountingVisibleDocumentStatusCondition({
+    conditions,
+    params,
+    column: "d.status",
+  });
 
   appendCommonEntityFilters({
     req,

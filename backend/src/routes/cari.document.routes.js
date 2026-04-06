@@ -13,6 +13,7 @@ import {
   parseDocumentCreateInput,
   parseDocumentPostInput,
   parseDocumentReverseInput,
+  parseDocumentSubmitInput,
   parseDocumentIdParam,
   parseDocumentReadFilters,
   parseDocumentWarehouseLookupFilters,
@@ -29,6 +30,7 @@ import {
   postCariDocumentById,
   reverseCariPostedDocumentById,
   resolveCariDocumentScope,
+  submitCariDocumentById,
   updateCariDraftDocumentById,
 } from "../services/cari.document.service.js";
 import {
@@ -226,6 +228,27 @@ router.post(
   asyncHandler(async (req, res) => {
     const payload = parseDraftCancelInput(req);
     const row = await cancelCariDraftDocumentById({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: payload.tenantId,
+      row,
+    });
+  })
+);
+
+router.post(
+  "/:documentId/submit",
+  requirePermission("cari.doc.submit", {
+    resolveScope: async (req, tenantId) => {
+      return resolveCariDocumentScope(req.params?.documentId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseDocumentSubmitInput(req);
+    const row = await submitCariDocumentById({
       req,
       payload,
       assertScopeAccess,

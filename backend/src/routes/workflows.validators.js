@@ -14,19 +14,25 @@ import {
   LOCAL_CLOSE_PACK_WORKFLOW_PROCESS_TYPE,
   LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
 } from "../services/local.close-packs.shared.js";
+import {
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+  CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+} from "../../../shared/cariDocumentWorkflowGovernance.js";
 
 const PROCESS_TYPES = [
   "PERIOD_CLOSE",
   "CONSOLIDATION_RUN",
   LOCAL_CLOSE_PACK_WORKFLOW_PROCESS_TYPE,
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
 ];
 const STAGE_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"];
 const ASSIGNMENT_STATUS = ["ACTIVE", "INACTIVE"];
-const INSTANCE_STATUS = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"];
+const INSTANCE_STATUS = ["PENDING", "APPROVED", "REJECTED", "CANCELLED", "SUPERSEDED"];
 const TARGET_TYPES = [
   "PERIOD_CLOSE_RUN",
   "CONSOLIDATION_RUN",
   LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
+  CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
 ];
 
 function hasOwn(obj, key) {
@@ -216,6 +222,9 @@ export function parseWorkflowDefinitionUpdateInput(req) {
   return patch;
 }
 
+/**
+ * Parses one full workflow-definition step replacement payload.
+ */
 export function parseWorkflowDefinitionStepsReplaceInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
@@ -247,8 +256,7 @@ export function parseWorkflowDefinitionStepsReplaceInput(req) {
       requiredPermissionCode: normalizeText(
         step.requiredPermissionCode ?? step.required_permission_code,
         `steps[${index}].requiredPermissionCode`,
-        120,
-        { required: true }
+        120
       ),
       minApproverCount:
         step.minApproverCount === undefined &&
@@ -537,21 +545,30 @@ export function parseWorkflowAssignmentUpdateInput(req) {
   return patch;
 }
 
-export function parseWorkflowInstanceDecisionInput(req) {
+/**
+ * Parses one workflow instance decision payload, optionally requiring a
+ * non-empty reviewer comment for return/reject flows.
+ */
+export function parseWorkflowInstanceDecisionInput(req, { requireComment = false } = {}) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
   const instanceId = parseWorkflowInstanceIdParam(req);
   const body = req.body || {};
+  const decisionNote = normalizeText(
+    body.decisionNote ?? body.decision_note,
+    "decisionNote",
+    500
+  );
+
+  if (requireComment && !decisionNote) {
+    throw badRequest("decisionNote is required for RETURN or REJECT");
+  }
 
   return {
     tenantId,
     userId,
     instanceId,
-    decisionNote: normalizeText(
-      body.decisionNote ?? body.decision_note,
-      "decisionNote",
-      500
-    ),
+    decisionNote,
   };
 }
 

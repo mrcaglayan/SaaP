@@ -95,3 +95,11 @@ export async function rejectWorkflowInstance(instanceId, payload = {}) {
   return response.data;
 }
 
+export async function returnWorkflowInstance(instanceId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/workflows/instances/${instanceId}/return`,
+    payload
+  );
+  return response.data;
+}
+

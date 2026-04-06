@@ -27,6 +27,7 @@ import {
   normalizeCurrencyCode,
   getFixedAssetCategorySetupIssue,
   formatFixedAssetCategorySetupRequirementList,
+  canCancelDocument,
   createInitialQuickCreateFixedAssetForm,
   DOCUMENT_DRAFT_TEMPLATE_MODULE_CODE,
   FIXED_ASSET_AR_ELIGIBLE_STATUSES,
@@ -36,7 +37,6 @@ import {
   clearFixedAssetSaleCreatePrefill,
   buildRowsById,
   normalizeApiError,
-  isDraft,
   resolveRouteFixedDirection,
   getDocumentPageTitle,
 } from "./cariDocumentsPageHelpers.js";
@@ -65,6 +65,41 @@ export default function CariDocumentsPage({ direction = "" }) {
         return l("direction must be AR or AP.", "direction AR veya AP olmali.");
       case "documentType is invalid.":
         return l("documentType is invalid.", "documentType gecersiz.");
+      case "Only governed AP documents can be submitted":
+        return l(
+          "Only governed AP documents can be submitted.",
+          "Yalnizca yonetime tabi AP belgeleri gonderilebilir."
+        );
+      case "AP document workflow submit is disabled for this tenant":
+        return l(
+          "AP document workflow submit is disabled for this tenant.",
+          "AP belge workflow gonderimi bu tenant icin kapali."
+        );
+      case "No workflow assignment configured for governed AP document":
+        return l(
+          "No workflow assignment is configured for this governed AP document.",
+          "Bu yonetime tabi AP belgesi icin workflow atamasi yapilandirilmamis."
+        );
+      case "Submit document for workflow approval before posting":
+        return l(
+          "Submit the document into workflow review before posting.",
+          "Kayit oncesi belgeyi workflow incelemesine gonderin."
+        );
+      case "Workflow approval is still pending for this document":
+        return l(
+          "Workflow approval is still pending for this document.",
+          "Bu belge icin workflow onayi halen beklemede."
+        );
+      case "Workflow approval is required before posting":
+        return l(
+          "Workflow approval is required before posting.",
+          "Kayit oncesi workflow onayi gerekir."
+        );
+      case "Only APPROVED documents can be posted when workflow approval is required":
+        return l(
+          "Only APPROVED documents can be posted when workflow approval is required.",
+          "Workflow onayi gerekiyorsa yalnizca APPROVED belgeler kayda alinabilir."
+        );
       case "documentDate is required.":
         return l("documentDate is required.", "documentDate zorunludur.");
       case "settlementMode must be ACCRUAL or IMMEDIATE_CASH":
@@ -636,6 +671,18 @@ export default function CariDocumentsPage({ direction = "" }) {
     },
     [requestDetailRefresh, requestListRefresh]
   );
+  const handleDocumentSubmitted = useCallback(
+    ({ responseRow = null, refreshList = false, refreshDetail = false } = {}) => {
+      detailBridgeApiRef.current?.applyMutationResultRow(responseRow || null);
+      if (refreshList) {
+        requestListRefresh();
+      }
+      if (refreshDetail) {
+        requestDetailRefresh();
+      }
+    },
+    [requestDetailRefresh, requestListRefresh]
+  );
   const handleDocumentReversed = useCallback(
     ({
       originalRow = null,
@@ -670,7 +717,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   );
   const selectedSnapshot = selectedResolvedDetail || selectedRow;
   const canCancelSelected = Boolean(
-    selectedSnapshot && isDraft(selectedSnapshot) && canCancel
+    selectedSnapshot && canCancelDocument(selectedSnapshot) && canCancel
   );
   const canCopySelectedToDraft = Boolean(selectedSnapshot && canCreate);
 
@@ -1128,8 +1175,8 @@ export default function CariDocumentsPage({ direction = "" }) {
     if (!selectedDocumentId || !canCancelSelected) {
       setCancelError(
         l(
-          "Only DRAFT documents can be cancelled with cari.doc.cancel permission.",
-          "Yalnizca DRAFT belgeler `cari.doc.cancel` yetkisiyle iptal edilebilir."
+          "Only DRAFT or RETURNED documents can be cancelled with cari.doc.cancel permission.",
+          "Yalnizca DRAFT veya RETURNED belgeler `cari.doc.cancel` yetkisiyle iptal edilebilir."
         )
       );
       return;
@@ -1143,7 +1190,7 @@ export default function CariDocumentsPage({ direction = "" }) {
       requestDetailRefresh();
     } catch (error) {
       setCancelError(
-        normalizeApiError(error, l("Failed to cancel draft document.", "Belge taslagi iptal edilemedi."))
+        normalizeApiError(error, l("Failed to cancel document.", "Belge iptal edilemedi."))
       );
     } finally {
       setCancelSaving(false);
@@ -1260,6 +1307,7 @@ export default function CariDocumentsPage({ direction = "" }) {
         onDetailStateChange={handleDetailStateChange}
         registerDetailBridgeApi={registerDetailBridgeApi}
         onDocumentUpdated={handleEditDocumentUpdated}
+        onDocumentSubmitted={handleDocumentSubmitted}
         onDocumentPosted={handleDocumentPosted}
         onDocumentReversed={handleDocumentReversed}
         onCancelDraft={handleCancelDraft}

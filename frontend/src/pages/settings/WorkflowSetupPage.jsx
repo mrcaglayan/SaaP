@@ -19,8 +19,16 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
+import {
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+} from "../../../../shared/cariDocumentWorkflowGovernance.js";
 
-const PROCESS_TYPES = ["PERIOD_CLOSE", "CONSOLIDATION_RUN", "LOCAL_CLOSE_PACK"];
+const PROCESS_TYPES = [
+  "PERIOD_CLOSE",
+  "CONSOLIDATION_RUN",
+  "LOCAL_CLOSE_PACK",
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+];
 const ASSIGNMENT_SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 
 function toPositiveInt(value) {
@@ -43,6 +51,17 @@ function buildDefaultSteps(processType) {
         stepNo: 1,
         stageScopeType: "LEGAL_ENTITY",
         requiredPermissionCode: "ouclose.approve",
+        minApproverCount: 1,
+        allowSelfApprove: false,
+      },
+    ];
+  }
+  if (normalized === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    return [
+      {
+        stepNo: 1,
+        stageScopeType: "COUNTRY",
+        requiredPermissionCode: null,
         minApproverCount: 1,
         allowSelfApprove: false,
       },
@@ -269,7 +288,7 @@ export default function WorkflowSetupPage() {
             ? rows.map((row) => ({
                 stepNo: Number(row?.stepNo || 0) || 1,
                 stageScopeType: String(row?.stageScopeType || "LEGAL_ENTITY"),
-                requiredPermissionCode: String(row?.requiredPermissionCode || ""),
+                requiredPermissionCode: row?.requiredPermissionCode ?? null,
                 minApproverCount: Number(row?.minApproverCount || 1) || 1,
                 allowSelfApprove: Boolean(row?.allowSelfApprove),
               }))
@@ -474,8 +493,8 @@ export default function WorkflowSetupPage() {
         </h1>
         <p className="mt-1 text-sm text-slate-600">
           {l(
-            "Manage workflow definitions, review-step permissions, and scope assignments for period close, local close packs, and consolidation.",
-            "Donem kapanisi, yerel kapanis paketleri ve konsolidasyon icin workflow tanimlarini, inceleme adimi yetkilerini ve kapsam atamalarini yonetin."
+            "Manage workflow definitions, review-step permissions, and scope assignments for period close, local close packs, consolidation, and governed AP posting.",
+            "Donem kapanisi, yerel kapanis paketleri, konsolidasyon ve yonetime tabi AP kaydi icin workflow tanimlarini, inceleme adimi yetkilerini ve kapsam atamalarini yonetin."
           )}
         </p>
       </div>
@@ -573,6 +592,14 @@ export default function WorkflowSetupPage() {
               "Gecerli stageScopeType degerleri: OPERATING_UNIT, LEGAL_ENTITY, COUNTRY, GROUP."
             )}
           </p>
+          {selectedDefinition?.processType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE ? (
+            <p className="mb-2 text-xs text-slate-500">
+              {l(
+                "AP_DOCUMENT_POSTING steps must keep requiredPermissionCode as null so reviewer authority comes from workflow assignment scope only.",
+                "AP_DOCUMENT_POSTING adimlarinda requiredPermissionCode null kalmalidir; inceleyen yetkisi yalnizca workflow atama kapsamindan gelir."
+              )}
+            </p>
+          ) : null}
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
             <div className="font-semibold">
               {l("Escalation support", "Escalation destegi")}

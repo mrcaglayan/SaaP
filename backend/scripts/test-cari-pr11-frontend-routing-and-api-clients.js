@@ -88,6 +88,10 @@ async function main() {
   assert(apiCommon.includes("toCariQueryString"), "cariCommon query helper missing");
   assert(apiCommon.includes("response"), "cariCommon should keep axios-compatible response shape");
   assert(apiDocs.includes("/api/v1/cari/documents"), "docs api path missing");
+  assert(
+    apiDocs.includes("submitCariDocument") && apiDocs.includes("/submit"),
+    "docs api should expose the governed submit client"
+  );
   assert(apiSettle.includes("/api/v1/cari/settlements/apply"), "settlement api path missing");
   assert(apiAudit.includes("/api/v1/cari/audit"), "audit api path missing");
   assert(hasCariCommonImport(apiCounterparty), "cariCounterparty should use cariCommon");

@@ -11,6 +11,10 @@ const NOTIFICATION_STATUS_UNREAD = "UNREAD";
 const NOTIFICATION_TYPE_APPROVAL_REQUEST_ESCALATED = "APPROVAL_REQUEST_ESCALATED";
 const APPROVAL_REQUEST_SOURCE_REF_TYPE = "APPROVAL_REQUEST";
 
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
 function toUpper(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -118,11 +122,27 @@ function addHours(baseDate, hours) {
 }
 
 function resolveEffectiveEscalationStep(snapshotStep, liveStep) {
+  const snapshotPermissionExplicit =
+    hasOwn(snapshotStep, "requiredPermissionCode") ||
+    hasOwn(snapshotStep, "required_permission_code");
+  const livePermissionExplicit =
+    hasOwn(liveStep, "requiredPermissionCode") ||
+    hasOwn(liveStep, "required_permission_code");
   return {
     stepNo: Number(snapshotStep?.stepNo ?? liveStep?.stepNo ?? 1),
-    requiredPermissionCode:
-      String(snapshotStep?.requiredPermissionCode || liveStep?.requiredPermissionCode || "").trim() ||
-      "approvals.requests.approve",
+    requiredPermissionCode: snapshotPermissionExplicit
+      ? String(
+          snapshotStep?.requiredPermissionCode ??
+            snapshotStep?.required_permission_code ??
+            ""
+        ).trim()
+      : livePermissionExplicit
+        ? String(
+            liveStep?.requiredPermissionCode ??
+              liveStep?.required_permission_code ??
+              ""
+          ).trim()
+        : "approvals.requests.approve",
     scopeResolutionMode:
       toUpper(snapshotStep?.scopeResolutionMode || liveStep?.scopeResolutionMode || "REQUEST_SCOPE"),
     customScopeResolverKey:
@@ -290,6 +310,9 @@ async function buildEscalationRecipientUserIds({
   targetScope,
   runQuery = query,
 }) {
+  if (!String(step?.requiredPermissionCode || "").trim()) {
+    return [];
+  }
   const candidateUserIds = await findUsersWithPermissionAtScope(
     requestRow.tenantId,
     step.requiredPermissionCode,

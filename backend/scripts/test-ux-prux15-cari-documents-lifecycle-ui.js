@@ -26,12 +26,36 @@ async function main() {
     postedMeta?.code === "POSTED",
     "cariDocument lifecycle should resolve POSTED status metadata"
   );
+  const submittedMeta = getLifecycleStatusMeta("cariDocument", "SUBMITTED");
+  assert(
+    submittedMeta?.code === "SUBMITTED",
+    "cariDocument lifecycle should resolve SUBMITTED status metadata"
+  );
+  const returnedMeta = getLifecycleStatusMeta("cariDocument", "RETURNED");
+  assert(
+    returnedMeta?.code === "RETURNED",
+    "cariDocument lifecycle should resolve RETURNED status metadata"
+  );
+  const approvedMeta = getLifecycleStatusMeta("cariDocument", "APPROVED");
+  assert(
+    approvedMeta?.code === "APPROVED",
+    "cariDocument lifecycle should resolve APPROVED status metadata"
+  );
 
   const draftActions = getLifecycleAllowedActions("cariDocument", "DRAFT");
   const draftActionSet = new Set((draftActions || []).map((row) => row.action));
   assert(
-    draftActionSet.has("post") && draftActionSet.has("cancel"),
-    "cariDocument DRAFT should expose post/cancel lifecycle transitions"
+    draftActionSet.has("submit") &&
+      draftActionSet.has("post") &&
+      draftActionSet.has("cancel"),
+    "cariDocument DRAFT should expose submit/post/cancel lifecycle transitions"
+  );
+
+  const returnedActions = getLifecycleAllowedActions("cariDocument", "RETURNED");
+  const returnedActionSet = new Set((returnedActions || []).map((row) => row.action));
+  assert(
+    returnedActionSet.has("submit") && returnedActionSet.has("cancel"),
+    "cariDocument RETURNED should expose submit/cancel lifecycle transitions"
   );
 
   const timeline = buildLifecycleTimelineSteps("cariDocument", "POSTED", [
@@ -45,8 +69,9 @@ async function main() {
   );
 
   assert(
-    documentsSource.includes('import StatusTimeline from "../../components/StatusTimeline.jsx";'),
-    "CariDocumentsPage should import StatusTimeline component"
+    documentsSource.includes("import StatusTimeline from") &&
+      documentsSource.includes("StatusTimeline"),
+    "CARI documents feature should import and render StatusTimeline"
   );
   assert(
     documentsSource.includes("buildLifecycleTimelineSteps") &&
@@ -62,6 +87,17 @@ async function main() {
     documentsSource.includes("Lifecycle Snapshot") &&
       documentsSource.includes("Document Lifecycle Timeline"),
     "CariDocumentsPage should render lifecycle snapshot and timeline sections"
+  );
+  assert(
+    documentsSource.includes("Returned for correction") &&
+      documentsSource.includes("returnReason") &&
+      documentsSource.includes("returnedAt"),
+    "CARI documents detail should surface returned-for-correction messaging and reason fields"
+  );
+  assert(
+    documentsSource.includes("FEATURE_AP_DOCUMENT_WORKFLOW_V1") &&
+      documentsSource.includes("canSubmitSelected"),
+    "CARI documents submit UI should stay gated by the workflow feature flag"
   );
 
   console.log(

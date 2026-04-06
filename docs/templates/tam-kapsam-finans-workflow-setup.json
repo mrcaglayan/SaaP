@@ -9,7 +9,8 @@
       "TENANT fallback is the safest first pass for readiness across both legal entities.",
       "COUNTRY assignments override group and tenant fallback when legal entities in that country do not have a stricter legal-entity or operating-unit assignment.",
       "Do not start with OPERATING_UNIT-only assignments for PERIOD_CLOSE and CONSOLIDATION_RUN.",
-      "Maker-checker stays enabled because allowSelfApprove is false in all steps."
+      "Maker-checker stays enabled because allowSelfApprove is false in all steps.",
+      "For AP_DOCUMENT_POSTING, keep requiredPermissionCode null on each step so reviewer authority comes from workflow assignment scope."
     ]
   },
   "definitions": [
@@ -24,6 +25,13 @@
       "code": "MONO_FIN_CONSOLIDATION_RUN_V1",
       "name": "Tam Kapsam Finans Consolidation Approval",
       "processType": "CONSOLIDATION_RUN",
+      "isActive": true,
+      "versionNo": 1
+    },
+    {
+      "code": "MONO_FIN_AP_DOCUMENT_POSTING_V1",
+      "name": "Tam Kapsam Finans AP Document Approval",
+      "processType": "AP_DOCUMENT_POSTING",
       "isActive": true,
       "versionNo": 1
     }
@@ -54,6 +62,17 @@
           "stageScopeType": "GROUP",
           "requiredPermissionCode": "consolidation.run.finalize",
           "minApproverCount": 2,
+          "allowSelfApprove": false
+        }
+      ]
+    },
+    "MONO_FIN_AP_DOCUMENT_POSTING_V1": {
+      "steps": [
+        {
+          "stepNo": 1,
+          "stageScopeType": "COUNTRY",
+          "requiredPermissionCode": null,
+          "minApproverCount": 1,
           "allowSelfApprove": false
         }
       ]
@@ -97,6 +116,13 @@
         "countryId": "$COUNTRY_TR_ID",
         "effectiveFrom": "2026-01-01",
         "status": "ACTIVE"
+      },
+      {
+        "processType": "AP_DOCUMENT_POSTING",
+        "workflowDefinitionId": "$MONO_FIN_AP_DOCUMENT_POSTING_V1_ID",
+        "countryId": "$COUNTRY_TR_ID",
+        "effectiveFrom": "2026-01-01",
+        "status": "ACTIVE"
       }
     ]
   },
@@ -137,6 +163,22 @@
         "stageScopeType": "GROUP",
         "requiredPermissionCode": "consolidation.run.finalize",
         "minApproverCount": 2,
+        "allowSelfApprove": false
+      }
+    ],
+    "apDocumentDefinitionForm": {
+      "code": "MONO_FIN_AP_DOCUMENT_POSTING_V1",
+      "name": "Tam Kapsam Finans AP Document Approval",
+      "processType": "AP_DOCUMENT_POSTING",
+      "isActive": true,
+      "versionNo": 1
+    },
+    "apDocumentStepsJson": [
+      {
+        "stepNo": 1,
+        "stageScopeType": "COUNTRY",
+        "requiredPermissionCode": null,
+        "minApproverCount": 1,
         "allowSelfApprove": false
       }
     ]

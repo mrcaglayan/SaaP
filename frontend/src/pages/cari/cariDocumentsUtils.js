@@ -1,5 +1,8 @@
 export const DOCUMENT_STATUSES = [
   "DRAFT",
+  "SUBMITTED",
+  "RETURNED",
+  "APPROVED",
   "POSTED",
   "PARTIALLY_SETTLED",
   "SETTLED",

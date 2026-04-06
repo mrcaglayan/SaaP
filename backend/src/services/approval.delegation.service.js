@@ -695,7 +695,7 @@ export async function resolveApprovalDelegation({
     throw badRequest("actingUserId is required");
   }
   if (!normalizedPermissionCode) {
-    throw badRequest("permissionCode is required");
+    return null;
   }
   const normalizedRequestScope = normalizeApprovalPolicyAssignmentScope(requestScope);
   const effectiveOn = parseDateOnly(asOfDate) || new Date().toISOString().slice(0, 10);

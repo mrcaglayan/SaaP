@@ -25,6 +25,7 @@ import {
   listWorkflowDefinitionSteps,
   listWorkflowInstances,
   rejectWorkflowInstance,
+  returnWorkflowInstance,
   replaceWorkflowDefinitionSteps,
   resolveWorkflowAssignmentScope,
   resolveWorkflowDecisionPermissionAccess,
@@ -68,11 +69,24 @@ function resolveScopeFromInput(rawValue) {
     : null;
 }
 
-async function enforceDecisionPermission(req, res, tenantId, instanceId) {
+async function enforceDecisionPermission(
+  req,
+  res,
+  tenantId,
+  instanceId,
+  decisionCode = "APPROVE"
+) {
   const access = await resolveWorkflowDecisionPermissionAccess({
     tenantId,
     instanceId,
+    decisionCode,
   });
+
+  if (!String(access.requiredPermissionCode || "").trim()) {
+    // AP document workflow steps intentionally use a blank step permission so
+    // the decision route relies on scope access and unified engine state.
+    return access;
+  }
 
   const middleware = requirePermission(access.requiredPermissionCode, {
     resolveScope: async () => access.scope,
@@ -310,7 +324,8 @@ router.post("/instances/:instanceId/approve", async (req, res, next) => {
       req,
       res,
       input.tenantId,
-      input.instanceId
+      input.instanceId,
+      "APPROVE"
     );
     const result = await approveWorkflowInstance({
       req,
@@ -340,12 +355,15 @@ router.post("/instances/:instanceId/approve", async (req, res, next) => {
 
 router.post("/instances/:instanceId/reject", async (req, res, next) => {
   try {
-    const input = parseWorkflowInstanceDecisionInput(req);
+    const input = parseWorkflowInstanceDecisionInput(req, {
+      requireComment: true,
+    });
     const permissionAccess = await enforceDecisionPermission(
       req,
       res,
       input.tenantId,
-      input.instanceId
+      input.instanceId,
+      "REJECT"
     );
     const result = await rejectWorkflowInstance({
       req,
@@ -364,6 +382,44 @@ router.post("/instances/:instanceId/reject", async (req, res, next) => {
         stageScopeType: result.stageScopeType,
         requiredPermissionCode:
           result.requiredPermissionCode || permissionAccess.requiredPermissionCode,
+        advanced: result.advanced,
+        resolved: result.resolved,
+      },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.post("/instances/:instanceId/return", async (req, res, next) => {
+  try {
+    const input = parseWorkflowInstanceDecisionInput(req, {
+      requireComment: true,
+    });
+    const permissionAccess = await enforceDecisionPermission(
+      req,
+      res,
+      input.tenantId,
+      input.instanceId,
+      "RETURN"
+    );
+    const result = await returnWorkflowInstance({
+      req,
+      input,
+      assertScopeAccess,
+    });
+    return res.json({
+      ok: true,
+      tenantId: input.tenantId,
+      row: result.row,
+      decisions: result.decisions,
+      stepDecision: {
+        decision: result.decision,
+        stepNo: result.currentStepNo,
+        minApproverCount: result.minApproverCount,
+        stageScopeType: result.stageScopeType,
+        requiredPermissionCode:
+          result.requiredPermissionCode || permissionAccess.requiredPermissionCode || null,
         advanced: result.advanced,
         resolved: result.resolved,
       },

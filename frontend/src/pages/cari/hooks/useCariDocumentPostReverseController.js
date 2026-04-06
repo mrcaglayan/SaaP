@@ -3,6 +3,7 @@ import {
   listCariDocumentWarehouseOptions,
   postCariDocument,
   reverseCariDocument,
+  submitCariDocument,
 } from "../../../api/cariDocuments.js";
 import { getCariCounterpartyStatementReport } from "../../../api/cariReports.js";
 import { listAccounts } from "../../../api/glAdmin.js";
@@ -14,11 +15,13 @@ import {
   analyzeDocumentWarehouseBindings,
   buildInitialPostForm,
   buildRowsById,
+  canSubmitDocument,
   canReverseDocument,
   createPostingLineDraft,
   documentUsesStoredLineTaxes,
   extractFixedAssetImprovementGuidanceFromError,
   extractTransferRequiredGuidanceFromError,
+  isDocClassWorkflowGoverned,
   isDraft,
   mapPostableAccountRows,
   normalizeApiError,
@@ -32,6 +35,9 @@ import {
   toPositiveDecimal,
   toPositiveInt,
 } from "../cariDocumentsPageHelpers.js";
+import {
+  FEATURE_AP_DOCUMENT_WORKFLOW_V1,
+} from "../../../../../shared/cariDocumentWorkflowGovernance.js";
 
 function addPostFormPostingLine(setPostForm) {
   setPostForm((previous) => {
@@ -84,10 +90,15 @@ function removePostFormPostingLine(setPostForm, rowId) {
   });
 }
 
+/**
+ * Hosts the selected-document submit/post/reverse action state so the detail
+ * shell can keep workflow and legacy posting affordances in one place.
+ */
 export default function useCariDocumentPostReverseController({
   selectedSnapshot = null,
   selectedDetailForPosting = null,
   fixedDirection = "",
+  onDocumentSubmitted,
   onDocumentPosted,
   onDocumentReversed,
   requestCreatePrefill,
@@ -95,16 +106,18 @@ export default function useCariDocumentPostReverseController({
   onSummaryStateChange,
   l = (en) => en,
 }) {
-  const { hasPermission } = useAuth();
+  const { hasFeature, hasPermission } = useAuth();
   const { getModuleRow } = useModuleReadiness();
 
   const canCreate = hasPermission("cari.doc.create");
   const canRead = hasPermission("cari.doc.read");
+  const canSubmit = hasPermission("cari.doc.submit");
   const canPost = hasPermission("cari.doc.post");
   const canReverse = hasPermission("cari.doc.reverse");
   const canFxOverride = hasPermission("cari.fx.override");
   const canReadReports = hasPermission("cari.report.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
+  const workflowFeatureEnabled = hasFeature(FEATURE_AP_DOCUMENT_WORKFLOW_V1);
 
   const [postForm, setPostForm] = useState(() => buildInitialPostForm());
   const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
@@ -113,6 +126,9 @@ export default function useCariDocumentPostReverseController({
   const [postWarehouseRows, setPostWarehouseRows] = useState([]);
   const [postWarehousesLoading, setPostWarehousesLoading] = useState(false);
   const [postWarehousesError, setPostWarehousesError] = useState("");
+  const [submitSaving, setSubmitSaving] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [submitMessage, setSubmitMessage] = useState("");
   const [postSaving, setPostSaving] = useState(false);
   const [postError, setPostError] = useState("");
   const [postTransferGuidance, setPostTransferGuidance] = useState(null);
@@ -153,8 +169,40 @@ export default function useCariDocumentPostReverseController({
   const cariPostingNotReady = Boolean(
     selectedCariPostingReadiness && !selectedCariPostingReadiness.ready
   );
+  const selectedDocumentWorkflowGoverned = useMemo(
+    () => isDocClassWorkflowGoverned(selectedSnapshot),
+    [selectedSnapshot]
+  );
+  const selectedWorkflowGate = useMemo(
+    () => selectedDetailForPosting?.workflowGate || selectedSnapshot?.workflowGate || null,
+    [selectedDetailForPosting, selectedSnapshot]
+  );
+  const selectedWorkflowGateState = normalizeText(
+    selectedWorkflowGate?.state
+  ).toUpperCase();
+  const canSubmitSelected = Boolean(
+    selectedSnapshot &&
+      selectedDocumentDirection === "AP" &&
+      selectedDocumentWorkflowGoverned &&
+      canSubmitDocument(selectedSnapshot) &&
+      canSubmit &&
+      workflowFeatureEnabled &&
+      Boolean(selectedWorkflowGate?.assignmentResolved)
+  );
   const canPostSelected = Boolean(
-    selectedSnapshot && isDraft(selectedSnapshot) && canPost && !cariPostingNotReady
+    selectedSnapshot &&
+      canPost &&
+      !cariPostingNotReady &&
+      (
+        !workflowFeatureEnabled ||
+        selectedDocumentDirection !== "AP" ||
+        !selectedDocumentWorkflowGoverned
+          ? isDraft(selectedSnapshot)
+          : selectedWorkflowGate?.assignmentResolved
+            ? selectedWorkflowGateState === "APPROVED" &&
+              String(selectedSnapshot?.status || "").trim().toUpperCase() === "APPROVED"
+            : Boolean(selectedWorkflowGate?.compatModeLegacyPost) && isDraft(selectedSnapshot)
+      )
   );
   const canReverseSelected = Boolean(
     selectedSnapshot && canReverseDocument(selectedSnapshot) && canReverse
@@ -546,6 +594,8 @@ export default function useCariDocumentPostReverseController({
       }
       return nextInitial;
     });
+    setSubmitError("");
+    setSubmitMessage("");
     setPostError("");
     setPostMessage("");
     setPostTransferGuidance(null);
@@ -587,6 +637,66 @@ export default function useCariDocumentPostReverseController({
     removePostFormPostingLine(setPostForm, rowId);
   }, []);
 
+  const handleSubmitDocument = useCallback(async () => {
+    if (!workflowFeatureEnabled) {
+      setSubmitError(
+        l(
+          "AP document workflow submit is disabled for this tenant.",
+          "AP belge workflow gonderimi bu tenant icin kapali."
+        )
+      );
+      return;
+    }
+    if (!selectedDocumentId || !canSubmitSelected) {
+      setSubmitError(
+        l(
+          "Only governed AP documents in DRAFT or RETURNED can be submitted with cari.doc.submit permission.",
+          "Yalnizca yonetime tabi AP belgeleri DRAFT veya RETURNED durumunda `cari.doc.submit` yetkisiyle gonderilebilir."
+        )
+      );
+      return;
+    }
+
+    setSubmitSaving(true);
+    setSubmitError("");
+    setSubmitMessage("");
+    try {
+      const response = await submitCariDocument(selectedDocumentId);
+      const responseRow = response?.row || null;
+      setSubmitMessage(
+        l(
+          `Document submitted for approval. status=${responseRow?.status || "SUBMITTED"}`,
+          `Belge onay icin gonderildi. durum=${responseRow?.status || "SUBMITTED"}`
+        )
+      );
+      onDocumentSubmitted?.({
+        responseRow,
+        refreshList: true,
+        refreshDetail: true,
+      });
+    } catch (error) {
+      setSubmitError(
+        normalizeTranslatedApiError(
+          error,
+          translateDocumentMutationError,
+          l(
+            "Failed to submit document for approval.",
+            "Belge onay icin gonderilemedi."
+          )
+        )
+      );
+    } finally {
+      setSubmitSaving(false);
+    }
+  }, [
+    canSubmitSelected,
+    l,
+    onDocumentSubmitted,
+    selectedDocumentId,
+    translateDocumentMutationError,
+    workflowFeatureEnabled,
+  ]);
+
   const handlePostDraft = useCallback(async () => {
     setPostTransferGuidance(null);
     setPostFixedAssetImprovementGuidance(null);
@@ -600,10 +710,20 @@ export default function useCariDocumentPostReverseController({
       return;
     }
     if (!selectedDocumentId || !canPostSelected) {
+      const workflowGateMessage = normalizeText(selectedWorkflowGate?.message);
+      if (
+        workflowFeatureEnabled &&
+        selectedDocumentDirection === "AP" &&
+        selectedDocumentWorkflowGoverned &&
+        workflowGateMessage
+      ) {
+        setPostError(workflowGateMessage);
+        return;
+      }
       setPostError(
         l(
-          "Only DRAFT documents can be posted with cari.doc.post permission.",
-          "Yalnizca DRAFT belgeler `cari.doc.post` yetkisiyle kayda alinabilir."
+          "The selected document is not postable from its current lifecycle state with cari.doc.post permission.",
+          "Secili belge mevcut yasam dongusu durumundan `cari.doc.post` yetkisiyle kayda alinamaz."
         )
       );
       return;
@@ -614,6 +734,22 @@ export default function useCariDocumentPostReverseController({
           "Authoritative document detail is still loading. Wait a moment and try posting again.",
           "Yetkili belge detayi halen yukleniyor. Biraz bekleyip tekrar kayda alin."
         )
+      );
+      return;
+    }
+    if (
+      workflowFeatureEnabled &&
+      selectedDocumentDirection === "AP" &&
+      selectedDocumentWorkflowGoverned &&
+      selectedWorkflowGate?.assignmentResolved &&
+      selectedWorkflowGateState !== "APPROVED"
+    ) {
+      setPostError(
+        normalizeText(selectedWorkflowGate?.message) ||
+          l(
+            "Workflow approval is required before posting.",
+            "Kayit oncesi workflow onayi gerekir."
+          )
       );
       return;
     }
@@ -781,10 +917,15 @@ export default function useCariDocumentPostReverseController({
     selectedDetailForPosting,
     selectedDocumentAmountBase,
     selectedDocumentAmountTxn,
+    selectedDocumentDirection,
     selectedDocumentId,
+    selectedDocumentWorkflowGoverned,
     selectedDocumentUsesStoredTaxesForPosting,
     selectedPostingWarehouseValidation.blockingMessages,
+    selectedWorkflowGate,
+    selectedWorkflowGateState,
     translateDocumentMutationError,
+    workflowFeatureEnabled,
   ]);
 
   const handleReversePosted = useCallback(async () => {
@@ -937,12 +1078,14 @@ export default function useCariDocumentPostReverseController({
   return {
     canCreate,
     canFxOverride,
+    canSubmitSelected,
     canPostSelected,
     canReadGlAccounts,
     canReverseSelected,
     cariPostingNotReady,
     filteredPostOffsetAccountOptions,
     handleAddPostFormPostingLine,
+    handleSubmitDocument,
     handlePostDraft,
     handleRemovePostFormPostingLine,
     handleReverseAndCopyPosted,
@@ -958,6 +1101,9 @@ export default function useCariDocumentPostReverseController({
     postSaving,
     postTransferGuidance,
     postingLinesReadyForSubmit,
+    submitError,
+    submitMessage,
+    submitSaving,
     reverseError,
     reverseForm,
     reverseInventoryBlockSummary,
@@ -970,6 +1116,8 @@ export default function useCariDocumentPostReverseController({
     selectedDocumentDirection,
     selectedDocumentId,
     selectedDocumentLegalEntityId,
+    selectedWorkflowGate,
+    selectedWorkflowGateState,
     selectedDocumentPostingRulesReady,
     selectedDocumentUsesStoredTaxesForPosting,
     selectedOffsetAccountType,

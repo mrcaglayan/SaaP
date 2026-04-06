@@ -129,6 +129,10 @@ export async function cancelCariDocument(documentId) {
   return run(() => api.post(`/api/v1/cari/documents/${documentId}/cancel`, {}));
 }
 
+export async function submitCariDocument(documentId, payload = {}) {
+  return run(() => api.post(`/api/v1/cari/documents/${documentId}/submit`, payload));
+}
+
 export async function postCariDocument(documentId, payload = {}) {
   return run(() => api.post(`/api/v1/cari/documents/${documentId}/post`, payload));
 }

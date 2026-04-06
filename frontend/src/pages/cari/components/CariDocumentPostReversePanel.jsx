@@ -14,6 +14,7 @@ export default function CariDocumentPostReversePanel({
   selectedSnapshot = null,
   selectedDetailForPosting = null,
   fixedDirection = "",
+  onDocumentSubmitted,
   onDocumentPosted,
   onDocumentReversed,
   requestCreatePrefill,
@@ -25,6 +26,7 @@ export default function CariDocumentPostReversePanel({
     selectedSnapshot,
     selectedDetailForPosting,
     fixedDirection,
+    onDocumentSubmitted,
     onDocumentPosted,
     onDocumentReversed,
     requestCreatePrefill,
@@ -35,12 +37,14 @@ export default function CariDocumentPostReversePanel({
   const {
     canCreate,
     canFxOverride,
+    canSubmitSelected,
     canPostSelected,
     canReadGlAccounts,
     canReverseSelected,
     cariPostingNotReady,
     filteredPostOffsetAccountOptions,
     handleAddPostFormPostingLine,
+    handleSubmitDocument,
     handlePostDraft,
     handleRemovePostFormPostingLine,
     handleReverseAndCopyPosted,
@@ -56,6 +60,9 @@ export default function CariDocumentPostReversePanel({
     postSaving,
     postTransferGuidance,
     postingLinesReadyForSubmit,
+    submitError,
+    submitMessage,
+    submitSaving,
     reverseError,
     reverseForm,
     reverseInventoryBlockSummary,
@@ -68,6 +75,8 @@ export default function CariDocumentPostReversePanel({
     selectedDocumentDirection,
     selectedDocumentId,
     selectedDocumentLegalEntityId,
+    selectedWorkflowGate,
+    selectedWorkflowGateState,
     selectedDocumentPostingRulesReady,
     selectedDocumentUsesStoredTaxesForPosting,
     selectedOffsetAccountType,
@@ -77,8 +86,66 @@ export default function CariDocumentPostReversePanel({
   return (
     <div className="rounded-lg border border-slate-200 p-4">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-        {l("Post / Reverse", "Kaydet / Ters Kayit")}
+        {l("Submit / Post / Reverse", "Gonder / Kaydet / Ters Kayit")}
       </h3>
+      {selectedDocumentDirection === "AP" && selectedWorkflowGate ? (
+        <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-900">
+          <p className="font-semibold">
+            {l("Workflow gate", "Workflow kapisi")}: {selectedWorkflowGateState || "NONE"}
+          </p>
+          <p className="mt-1 text-xs text-slate-700">
+            {selectedWorkflowGate?.message ||
+              l(
+                "No workflow gate message is currently available.",
+                "Su anda workflow kapisi mesaji yok."
+              )}
+          </p>
+          {selectedWorkflowGate?.latestDecisionComment ? (
+            <p className="mt-2 text-xs text-slate-700">
+              {l("Latest decision note", "Son karar notu")}:{" "}
+              {selectedWorkflowGate.latestDecisionComment}
+            </p>
+          ) : null}
+          {selectedWorkflowGate?.workflowInstanceId ? (
+            <p className="mt-2 text-xs text-slate-700">
+              workflowInstanceId=#{selectedWorkflowGate.workflowInstanceId}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {canSubmitSelected || submitError || submitMessage ? (
+        <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-3 text-sm text-cyan-950">
+          <p className="font-semibold">
+            {l("Submit for approval", "Onaya gonder")}
+          </p>
+          <p className="mt-1 text-xs text-cyan-900">
+            {l(
+              "Governed AP documents move to SUBMITTED before workflow approval and posting.",
+              "Yonetime tabi AP belgeleri workflow onayi ve kayit oncesinde SUBMITTED durumuna gecer."
+            )}
+          </p>
+          <button
+            type="button"
+            className="mt-3 rounded-md bg-cyan-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            onClick={handleSubmitDocument}
+            disabled={!canSubmitSelected || submitSaving}
+          >
+            {submitSaving
+              ? l("Submitting...", "Gonderiliyor...")
+              : l("Submit Document", "Belgeyi Gonder")}
+          </button>
+          {submitError ? (
+            <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {submitError}
+            </div>
+          ) : null}
+          {submitMessage ? (
+            <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              {submitMessage}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {cariPostingNotReady ? (
         <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <p className="font-semibold">

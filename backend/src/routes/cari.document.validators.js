@@ -23,6 +23,9 @@ const DOCUMENT_TYPE_VALUES = [
 ];
 const DOCUMENT_STATUS_VALUES = [
   "DRAFT",
+  "SUBMITTED",
+  "RETURNED",
+  "APPROVED",
   "POSTED",
   "REVERSED",
   "CANCELLED",
@@ -1125,6 +1128,20 @@ export function parseDocumentUpdateInput(req) {
 }
 
 export function parseDraftCancelInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const documentId = parseDocumentIdParam(req);
+  return {
+    tenantId,
+    userId,
+    documentId,
+  };
+}
+
+/**
+ * Parses the AP submit mutation for a governed CARI document.
+ */
+export function parseDocumentSubmitInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
   const documentId = parseDocumentIdParam(req);

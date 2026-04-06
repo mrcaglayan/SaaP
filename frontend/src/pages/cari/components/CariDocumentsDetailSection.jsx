@@ -34,6 +34,7 @@ export default function CariDocumentsDetailSection({
   fixedDirection = "",
   fixedAssetCategoryRefreshToken = 0,
   onDocumentUpdated,
+  onDocumentSubmitted,
   onDocumentPosted,
   onDocumentReversed,
   onCancelDraft,
@@ -223,6 +224,7 @@ export default function CariDocumentsDetailSection({
       selectedSnapshot={selectedSnapshot}
       selectedDetailForPosting={selectedDetailForPosting}
       fixedDirection={fixedDirection}
+      onDocumentSubmitted={onDocumentSubmitted}
       onDocumentPosted={onDocumentPosted}
       onDocumentReversed={onDocumentReversed}
       requestCreatePrefill={requestCreatePrefill}

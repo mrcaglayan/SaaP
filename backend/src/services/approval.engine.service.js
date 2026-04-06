@@ -15,6 +15,10 @@ import { assertSoD } from "./sod.service.js";
 
 const executionResolvers = new Map();
 
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
 function toUpper(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -386,6 +390,28 @@ function normalizeDecision(decision) {
   return normalized;
 }
 
+function resolveExplicitStepPermissionCode(rawStep = {}) {
+  if (hasOwn(rawStep, "required_permission_code")) {
+    return String(rawStep.required_permission_code ?? "").trim();
+  }
+  if (hasOwn(rawStep, "requiredPermissionCode")) {
+    return String(rawStep.requiredPermissionCode ?? "").trim();
+  }
+  return null;
+}
+
+function requiresDecisionComment(decision) {
+  return ["REJECT", "RETURN"].includes(toUpper(decision));
+}
+
+function normalizeDecisionComment(decision, comment) {
+  const normalizedComment = String(comment || "").trim() || null;
+  if (requiresDecisionComment(decision) && !normalizedComment) {
+    throw badRequest("decisionNote is required for RETURN or REJECT");
+  }
+  return normalizedComment;
+}
+
 function normalizeEvaluationContext(context = {}) {
   const tenantId = parsePositiveInt(context.tenantId ?? context.tenant_id);
   if (!tenantId) throw badRequest("context.tenantId is required");
@@ -520,30 +546,35 @@ function getPolicySnapshotSteps(policySnapshot) {
     ];
   }
   return rawSteps
-    .map((step) => ({
-      stepNo: Number(step.step_no || step.stepNo || 1),
-      requiredPermissionCode:
-        String(step.required_permission_code || step.requiredPermissionCode || "").trim() ||
-        "approvals.requests.approve",
-      scopeResolutionMode: toUpper(
-        step.scope_resolution_mode ?? step.scopeResolutionMode ?? "REQUEST_SCOPE"
-      ),
-      customScopeResolverKey:
-        step.custom_scope_resolver_key ?? step.customScopeResolverKey ?? null,
-      minApprovals: Math.max(1, Number(step.min_approvals ?? step.minApprovals ?? 1)),
-      allowSelfApprove: Boolean(step.allow_self_approve ?? step.allowSelfApprove),
-      escalationAfterHours: parsePositiveInt(
-        step.escalation_after_hours ?? step.escalationAfterHours
-      ),
-      escalationTargetScopeMode: step.escalation_target_scope_mode
-        ? toUpper(step.escalation_target_scope_mode)
-        : step.escalationTargetScopeMode
-          ? toUpper(step.escalationTargetScopeMode)
-          : null,
-      escalationMaxCount: parsePositiveInt(
-        step.escalation_max_count ?? step.escalationMaxCount
-      ),
-    }))
+    .map((step) => {
+      const explicitPermissionCode = resolveExplicitStepPermissionCode(step);
+      return {
+        stepNo: Number(step.step_no || step.stepNo || 1),
+        requiredPermissionCode:
+          explicitPermissionCode !== null
+            ? explicitPermissionCode
+            : String(policySnapshot?.approver_permission_code || "").trim() ||
+              "approvals.requests.approve",
+        scopeResolutionMode: toUpper(
+          step.scope_resolution_mode ?? step.scopeResolutionMode ?? "REQUEST_SCOPE"
+        ),
+        customScopeResolverKey:
+          step.custom_scope_resolver_key ?? step.customScopeResolverKey ?? null,
+        minApprovals: Math.max(1, Number(step.min_approvals ?? step.minApprovals ?? 1)),
+        allowSelfApprove: Boolean(step.allow_self_approve ?? step.allowSelfApprove),
+        escalationAfterHours: parsePositiveInt(
+          step.escalation_after_hours ?? step.escalationAfterHours
+        ),
+        escalationTargetScopeMode: step.escalation_target_scope_mode
+          ? toUpper(step.escalation_target_scope_mode)
+          : step.escalationTargetScopeMode
+            ? toUpper(step.escalationTargetScopeMode)
+            : null,
+        escalationMaxCount: parsePositiveInt(
+          step.escalation_max_count ?? step.escalationMaxCount
+        ),
+      };
+    })
     .sort((left, right) => left.stepNo - right.stepNo);
 }
 
@@ -1194,6 +1225,7 @@ export async function submitRequest(
 export async function recordDecision(requestId, userId, decision, comment = null) {
   const normalizedUserId = parsePositiveInt(userId);
   const normalizedDecision = normalizeDecision(decision);
+  const normalizedComment = normalizeDecisionComment(normalizedDecision, comment);
   if (!normalizedUserId) {
     throw badRequest("userId is required");
   }
@@ -1219,28 +1251,35 @@ export async function recordDecision(requestId, userId, decision, comment = null
     // may narrow that to explicit policy/target scopes, but they do not invent
     // a separate caller-controlled scope for the review action.
     const decisionScope = resolveDecisionScopeForStep(requestRow, currentStep);
-    const hasDirectPermission = await checkUserHasPermissionAtScope(
-      normalizedUserId,
-      requestRow.tenantId,
-      currentStep.requiredPermissionCode,
-      decisionScope.scopeType,
-      decisionScope.scopeId,
-      { runQuery: tx.query }
-    );
+    const requiredPermissionCode = String(
+      currentStep.requiredPermissionCode || ""
+    ).trim();
+    // Some bridged workflow families intentionally leave the step permission
+    // blank so review authority is scope-driven rather than permission-driven.
+    const hasDirectPermission = requiredPermissionCode
+      ? await checkUserHasPermissionAtScope(
+          normalizedUserId,
+          requestRow.tenantId,
+          requiredPermissionCode,
+          decisionScope.scopeType,
+          decisionScope.scopeId,
+          { runQuery: tx.query }
+        )
+      : true;
     const delegation =
-      hasDirectPermission
+      !requiredPermissionCode || hasDirectPermission
         ? null
         : await resolveApprovalDelegation({
             tenantId: requestRow.tenantId,
             actingUserId: normalizedUserId,
             moduleCode: requestRow.moduleCode,
-            permissionCode: currentStep.requiredPermissionCode,
+            permissionCode: requiredPermissionCode,
             requestScope: decisionScope,
             runQuery: tx.query,
           });
 
     if (!hasDirectPermission && !delegation) {
-      throw forbidden(`Missing permission: ${currentStep.requiredPermissionCode}`);
+      throw forbidden(`Missing permission: ${requiredPermissionCode}`);
     }
 
     const delegatorUserId = parsePositiveInt(delegation?.delegatorUserId);
@@ -1338,7 +1377,7 @@ export async function recordDecision(requestId, userId, decision, comment = null
           delegatorUserId || null,
           parsePositiveInt(delegation?.id) || null,
           reviewerAuthorityUserId,
-          comment || null,
+          normalizedComment,
         ]
       );
     } catch (err) {
@@ -1636,12 +1675,14 @@ export async function getRequestDiagnostics(requestId) {
         scopeId: requestRow.scopeId,
       };
   const availableApproverUserIds = currentStep
-    ? await findUsersWithPermissionAtScope(
-        requestRow.tenantId,
-        currentStep.requiredPermissionCode,
-        currentDecisionScope.scopeType,
-        currentDecisionScope.scopeId
-      )
+    ? String(currentStep.requiredPermissionCode || "").trim()
+      ? await findUsersWithPermissionAtScope(
+          requestRow.tenantId,
+          currentStep.requiredPermissionCode,
+          currentDecisionScope.scopeType,
+          currentDecisionScope.scopeId
+        )
+      : []
     : [];
 
   return {
@@ -1687,21 +1728,26 @@ export async function getApprovalRequestDelegationPreview(requestId, userId) {
 
   const decisionScope = resolveDecisionScopeForStep(requestRow, currentStep);
   const isDecisionable = ["PENDING_REVIEW", "ESCALATED"].includes(requestRow.requestStatus);
-  const hasDirectPermission = await checkUserHasPermissionAtScope(
-    normalizedUserId,
-    requestRow.tenantId,
-    currentStep.requiredPermissionCode,
-    decisionScope.scopeType,
-    decisionScope.scopeId
-  );
+  const requiredPermissionCode = String(
+    currentStep.requiredPermissionCode || ""
+  ).trim();
+  const hasDirectPermission = requiredPermissionCode
+    ? await checkUserHasPermissionAtScope(
+        normalizedUserId,
+        requestRow.tenantId,
+        requiredPermissionCode,
+        decisionScope.scopeType,
+        decisionScope.scopeId
+      )
+    : true;
 
   let delegation = null;
-  if (!hasDirectPermission && isDecisionable) {
+  if (requiredPermissionCode && !hasDirectPermission && isDecisionable) {
     delegation = await resolveApprovalDelegation({
       tenantId: requestRow.tenantId,
       actingUserId: normalizedUserId,
       moduleCode: requestRow.moduleCode,
-      permissionCode: currentStep.requiredPermissionCode,
+      permissionCode: requiredPermissionCode,
       requestScope: decisionScope,
     });
   }
@@ -1719,7 +1765,7 @@ export async function getApprovalRequestDelegationPreview(requestId, userId) {
     currentStepNo: currentStep.stepNo,
     isDecisionable,
     authorityMode,
-    permissionCode: currentStep.requiredPermissionCode,
+    permissionCode: requiredPermissionCode || null,
     decisionScope,
     actingUserId: normalizedUserId,
     reviewerAuthorityUserId:

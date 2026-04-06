@@ -39,6 +39,27 @@ const LIFECYCLE_DEFINITIONS = {
         descriptionTr: "Belge duzenlenebilir.",
       },
       {
+        code: "SUBMITTED",
+        label: "Submitted",
+        labelTr: "Gonderildi",
+        description: "Governed AP review is in progress.",
+        descriptionTr: "Yonetime tabi AP incelemesi suruyor.",
+      },
+      {
+        code: "RETURNED",
+        label: "Returned",
+        labelTr: "Duzeltmeye Iade",
+        description: "Document was returned for correction.",
+        descriptionTr: "Belge duzeltme icin iade edildi.",
+      },
+      {
+        code: "APPROVED",
+        label: "Approved",
+        labelTr: "Onaylandi",
+        description: "Document is approved and ready for posting.",
+        descriptionTr: "Belge onaylandi ve kayda hazir.",
+      },
+      {
         code: "POSTED",
         label: "Posted",
         labelTr: "Kaydedildi",
@@ -75,7 +96,30 @@ const LIFECYCLE_DEFINITIONS = {
       },
     ],
     transitions: {
-      post: { from: ["DRAFT"], to: "POSTED", label: "Post", labelTr: "Kaydet" },
+      submit: {
+        from: ["DRAFT", "RETURNED"],
+        to: "SUBMITTED",
+        label: "Submit",
+        labelTr: "Gonder",
+      },
+      return: {
+        from: ["SUBMITTED", "APPROVED"],
+        to: "RETURNED",
+        label: "Return",
+        labelTr: "Iade Et",
+      },
+      approve: {
+        from: ["SUBMITTED"],
+        to: "APPROVED",
+        label: "Approve",
+        labelTr: "Onayla",
+      },
+      post: {
+        from: ["DRAFT", "APPROVED"],
+        to: "POSTED",
+        label: "Post",
+        labelTr: "Kaydet",
+      },
       settlePartial: {
         from: ["POSTED", "PARTIALLY_SETTLED"],
         to: "PARTIALLY_SETTLED",
@@ -89,10 +133,10 @@ const LIFECYCLE_DEFINITIONS = {
         labelTr: "Mahsuplastir (Tam)",
       },
       cancel: {
-        from: ["DRAFT"],
+        from: ["DRAFT", "RETURNED"],
         to: "CANCELLED",
-        label: "Cancel Draft",
-        labelTr: "Taslagi Iptal Et",
+        label: "Cancel",
+        labelTr: "Iptal Et",
       },
       reverse: { from: ["POSTED"], to: "REVERSED", label: "Reverse", labelTr: "Tersle" },
     },

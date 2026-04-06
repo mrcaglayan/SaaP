@@ -46,8 +46,31 @@ import {
   FIXED_ASSET_TRANSACTION,
   STOCK_LANDED_COST_VOUCHER,
 } from "../utils/source-ref-types.js";
+import {
+  getCariDocumentClassWorkflowMetadata,
+  getCariDocumentWorkflowFeatureState,
+} from "./cari.document.workflow-governance.service.js";
+import {
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+  CARI_DOCUMENT_WORKFLOW_GATE_STATES,
+  CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+  canCariDocumentBeCancelled,
+  canCariDocumentBeReturned,
+  canCariDocumentBeSubmitted,
+  isDocClassWorkflowGoverned,
+} from "../../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  cancelUnifiedWorkflowInstanceBridge,
+  ensureUnifiedWorkflowInstanceBridge,
+  findActiveWorkflowAssignmentForScope,
+  getWorkflowInstanceByTarget,
+  listWorkflowInstanceDecisionRows,
+} from "./workflows.service.js";
 
 const DRAFT_STATUS = "DRAFT";
+const SUBMITTED_STATUS = "SUBMITTED";
+const RETURNED_STATUS = "RETURNED";
+const APPROVED_STATUS = "APPROVED";
 const CANCELLED_STATUS = "CANCELLED";
 const POSTED_STATUS = "POSTED";
 const REVERSED_STATUS = "REVERSED";
@@ -784,10 +807,15 @@ function buildDocumentImmediateCashIdempotencyKey(documentId, suffix) {
   return `CARI_DOC_${normalizedDocumentId}_${normalizedSuffix}`.slice(0, 100);
 }
 
-function mapDocumentRow(row, { lines } = {}) {
+function mapDocumentRow(row, { lines, workflowGate = undefined } = {}) {
   const documentDate = toDateOnlyString(row.document_date, "documentDate");
   const dueDate = toDateOnlyString(row.due_date, "dueDate");
   const dueDateSnapshot = toDateOnlyString(row.due_date_snapshot, "dueDateSnapshot");
+  const workflowGoverned = isDocClassWorkflowGoverned({
+    direction: row.direction,
+    documentType: row.document_type,
+    is_workflow_governed: row.is_workflow_governed,
+  });
   const mapped = {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -834,6 +862,9 @@ function mapDocumentRow(row, { lines } = {}) {
     ),
     postedJournalEntryId: parsePositiveInt(row.posted_journal_entry_id),
     reversalOfDocumentId: parsePositiveInt(row.reversal_of_document_id),
+    returnReason: row.return_reason || null,
+    returnedAt: row.returned_at || null,
+    isWorkflowGoverned: workflowGoverned,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
     rowVersion: Number(row.row_version || 1),
@@ -841,11 +872,42 @@ function mapDocumentRow(row, { lines } = {}) {
     reversedAt: row.reversed_at || null,
     draftSequenceAssigned: row.sequence_namespace === DRAFT_SEQUENCE_NAMESPACE,
   };
+  if (workflowGate !== undefined) {
+    mapped.workflowGate = workflowGate;
+  }
   if (lines !== undefined) {
     mapped.lines = Array.isArray(lines) ? lines : [];
     mapped.lineCount = mapped.lines.length;
   }
   return mapped;
+}
+
+function assertCariDocumentCanBeSubmitted(row) {
+  if (!canCariDocumentBeSubmitted(row)) {
+    throw badRequest("Only DRAFT or RETURNED documents can be submitted");
+  }
+}
+
+function assertCariDocumentCanBeReturned(row) {
+  if (!canCariDocumentBeReturned(row)) {
+    throw badRequest("Only SUBMITTED or APPROVED documents can transition to RETURNED");
+  }
+}
+
+// PR-2 expands cancel semantics so AP correction drafts can be abandoned after
+// a workflow return without reopening edit-only draft rules elsewhere.
+function assertCariDocumentCanBeCancelled(row) {
+  if (!canCariDocumentBeCancelled(row)) {
+    throw badRequest("Only DRAFT or RETURNED documents can be cancelled");
+  }
+}
+
+function isGovernedApDocumentRow(row) {
+  return normalizeUpperText(row?.direction) === "AP" && isDocClassWorkflowGoverned({
+    direction: row?.direction,
+    documentType: row?.document_type ?? row?.documentType,
+    is_workflow_governed: row?.is_workflow_governed ?? row?.isWorkflowGoverned,
+  });
 }
 
 function optimisticLockConflictError(message = "Document was modified by another request.") {
@@ -865,6 +927,85 @@ function conflictError(message, code, details = null) {
     err.details = details;
   }
   return err;
+}
+
+async function evaluateCariDocumentPostingWorkflowGate({
+  tenantId,
+  documentRow,
+  runQuery = query,
+}) {
+  const workflowFeatureState = await getCariDocumentWorkflowFeatureState({
+    tenantId,
+    runQuery,
+  });
+  const workflowGoverned = isGovernedApDocumentRow(documentRow);
+  const workflowGate = await buildCariDocumentWorkflowGateSummary({
+    tenantId,
+    documentRow,
+    workflowFeatureState,
+    runQuery,
+  });
+
+  if (
+    normalizeUpperText(documentRow?.direction) !== "AP" ||
+    !workflowGoverned ||
+    !workflowFeatureState.featureEnabled
+  ) {
+    return {
+      workflowFeatureState,
+      workflowGoverned,
+      workflowGate,
+      compatModeLegacyPost: false,
+      requiredDocumentStatus: DRAFT_STATUS,
+    };
+  }
+
+  if (!workflowGate.assignmentResolved) {
+    if (workflowFeatureState.compatModeEnabled) {
+      return {
+        workflowFeatureState,
+        workflowGoverned,
+        workflowGate,
+        compatModeLegacyPost: true,
+        requiredDocumentStatus: DRAFT_STATUS,
+      };
+    }
+    throw conflictError(
+      "No workflow assignment configured for governed AP document",
+      "NO_WORKFLOW_ASSIGNMENT_CONFIGURED",
+      {
+        workflowGate,
+      }
+    );
+  }
+
+  if (
+    normalizeUpperText(documentRow?.status) !== APPROVED_STATUS ||
+    String(workflowGate?.state || "").toLowerCase() !== "approved"
+  ) {
+    const gateState = String(workflowGate?.state || "").toLowerCase();
+    const errorCode =
+      gateState === "pending"
+        ? "APPROVAL_REQUIRED"
+        : gateState === "returned"
+          ? "APPROVAL_INSTANCE_REJECTED"
+          : "APPROVAL_REQUIRED";
+    throw conflictError(
+      String(workflowGate?.message || "Workflow approval is required before posting"),
+      errorCode,
+      {
+        workflowGate,
+      }
+    );
+  }
+
+  return {
+    workflowFeatureState,
+    workflowGoverned,
+    workflowGate,
+    compatModeLegacyPost: false,
+    requiredDocumentStatus: APPROVED_STATUS,
+  };
 }
 
 async function validateDocumentOperatingUnit({
@@ -1874,11 +2015,16 @@ async function fetchDocumentRow({
   const result = await runQuery(
     `SELECT
         d.*,
+        dcm.is_workflow_governed,
         ou.code AS operating_unit_code,
         ou.name AS operating_unit_name,
         pt.code AS payment_term_code,
         pt.name AS payment_term_name
      FROM cari_documents d
+     LEFT JOIN cari_document_class_metadata dcm
+       ON dcm.tenant_id = d.tenant_id
+      AND dcm.direction = d.direction
+      AND dcm.document_type = d.document_type
      LEFT JOIN operating_units ou
        ON ou.id = d.operating_unit_id
      LEFT JOIN payment_terms pt
@@ -6608,6 +6754,375 @@ async function insertAuditLog({
   );
 }
 
+function isWorkflowAssignmentResolved(assignmentResolution) {
+  if (assignmentResolution === true) {
+    return true;
+  }
+  if (!assignmentResolution || typeof assignmentResolution !== "object") {
+    return false;
+  }
+  if (assignmentResolution.resolved === true) {
+    return true;
+  }
+  return Boolean(
+    parsePositiveInt(assignmentResolution.assignmentId) ||
+      parsePositiveInt(assignmentResolution.assignment_id) ||
+      parsePositiveInt(assignmentResolution.id)
+  );
+}
+
+async function loadCariDocumentWorkflowHierarchy({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!normalizedTenantId || !normalizedLegalEntityId) {
+    return {
+      countryId: null,
+      groupCompanyId: null,
+    };
+  }
+
+  const result = await runQuery(
+    `SELECT country_id, group_company_id
+       FROM legal_entities
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [normalizedTenantId, normalizedLegalEntityId]
+  );
+  return {
+    countryId: parsePositiveInt(result.rows?.[0]?.country_id) || null,
+    groupCompanyId: parsePositiveInt(result.rows?.[0]?.group_company_id) || null,
+  };
+}
+
+async function buildCariDocumentWorkflowScope({
+  tenantId,
+  documentRow,
+  runQuery = query,
+}) {
+  const legalEntityId = parsePositiveInt(
+    documentRow?.legal_entity_id ?? documentRow?.legalEntityId
+  );
+  const hierarchy = await loadCariDocumentWorkflowHierarchy({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+
+  return {
+    operatingUnitId:
+      parsePositiveInt(documentRow?.operating_unit_id ?? documentRow?.operatingUnitId) ||
+      null,
+    legalEntityId,
+    countryId: hierarchy.countryId,
+    groupCompanyId: hierarchy.groupCompanyId,
+  };
+}
+
+/**
+ * Resolve the effective AP workflow assignment for one governed CARI document.
+ */
+async function resolveCariDocumentWorkflowAssignment({
+  tenantId,
+  documentRow,
+  effectiveOn = null,
+  runQuery = query,
+}) {
+  const scope = await buildCariDocumentWorkflowScope({
+    tenantId,
+    documentRow,
+    runQuery,
+  });
+  const assignmentRow = await findActiveWorkflowAssignmentForScope({
+    tenantId,
+    processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+    effectiveOn:
+      effectiveOn ||
+      documentRow?.document_date ||
+      documentRow?.documentDate ||
+      new Date().toISOString().slice(0, 10),
+    scope,
+    runQuery,
+  });
+  return {
+    assignmentRow,
+    scope,
+  };
+}
+
+async function loadLatestCariDocumentWorkflowInstance({
+  tenantId,
+  documentId,
+  runQuery = query,
+}) {
+  return getWorkflowInstanceByTarget({
+    tenantId,
+    processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+    targetType: CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+    targetId: documentId,
+    runQuery,
+  });
+}
+
+function normalizeCariWorkflowGateState(state) {
+  const normalized = String(state || "")
+    .trim()
+    .toUpperCase();
+  return CARI_DOCUMENT_WORKFLOW_GATE_STATES.includes(normalized)
+    ? normalized.toLowerCase()
+    : "none";
+}
+
+async function buildCariDocumentWorkflowGateSummary({
+  tenantId,
+  documentRow,
+  workflowFeatureState = null,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedDocumentId = parsePositiveInt(documentRow?.id);
+  if (!normalizedTenantId || !normalizedDocumentId || !documentRow) {
+    return {
+      state: "none",
+      featureEnabled: false,
+      workflowGoverned: false,
+      compatModeEnabled: false,
+      compatModeLegacyPost: false,
+      assignmentResolved: false,
+      message: "",
+      latestDecisionComment: null,
+      workflowInstanceId: null,
+      workflowInstanceStatus: null,
+      workflowDefinitionId: null,
+      workflowAssignmentId: null,
+    };
+  }
+
+  const resolvedFeatureState =
+    workflowFeatureState ||
+    (await getCariDocumentWorkflowFeatureState({
+      tenantId: normalizedTenantId,
+      runQuery,
+    }));
+  const workflowGoverned = isGovernedApDocumentRow(documentRow);
+  if (!workflowGoverned || !resolvedFeatureState.featureEnabled) {
+    return {
+      state: "none",
+      featureEnabled: Boolean(resolvedFeatureState.featureEnabled),
+      workflowGoverned,
+      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
+      compatModeLegacyPost: false,
+      assignmentResolved: false,
+      message: "",
+      latestDecisionComment: null,
+      workflowInstanceId: null,
+      workflowInstanceStatus: null,
+      workflowDefinitionId: null,
+      workflowAssignmentId: null,
+    };
+  }
+
+  const { assignmentRow } = await resolveCariDocumentWorkflowAssignment({
+    tenantId: normalizedTenantId,
+    documentRow,
+    runQuery,
+  });
+  const assignmentResolved = Boolean(assignmentRow);
+  const latestInstance = await loadLatestCariDocumentWorkflowInstance({
+    tenantId: normalizedTenantId,
+    documentId: normalizedDocumentId,
+    runQuery,
+  });
+  const workflowInstanceId = parsePositiveInt(latestInstance?.id) || null;
+  const latestDecisions = workflowInstanceId
+    ? await listWorkflowInstanceDecisionRows({
+        tenantId: normalizedTenantId,
+        instanceId: workflowInstanceId,
+        runQuery,
+      })
+    : [];
+  const latestDecisionComment =
+    latestDecisions[latestDecisions.length - 1]?.decisionNote ||
+    documentRow?.return_reason ||
+    null;
+  const documentStatus = normalizeUpperText(documentRow?.status);
+  const workflowInstanceStatus = normalizeUpperText(latestInstance?.status);
+
+  if (!assignmentResolved) {
+    return {
+      state: normalizeCariWorkflowGateState(
+        resolvedFeatureState.compatModeEnabled ? "NONE" : "BLOCKED"
+      ),
+      featureEnabled: true,
+      workflowGoverned: true,
+      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
+      compatModeLegacyPost: Boolean(resolvedFeatureState.compatModeEnabled),
+      assignmentResolved: false,
+      message: resolvedFeatureState.compatModeEnabled
+        ? ""
+        : "No workflow assignment configured for governed AP document",
+      latestDecisionComment,
+      workflowInstanceId,
+      workflowInstanceStatus: workflowInstanceStatus || null,
+      workflowDefinitionId: parsePositiveInt(latestInstance?.workflow_definition_id) || null,
+      workflowAssignmentId: null,
+    };
+  }
+
+  if (documentStatus === RETURNED_STATUS) {
+    return {
+      state: "returned",
+      featureEnabled: true,
+      workflowGoverned: true,
+      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
+      compatModeLegacyPost: false,
+      assignmentResolved: true,
+      message: documentRow?.return_reason
+        ? `Returned for correction: ${documentRow.return_reason}`
+        : "Returned for correction",
+      latestDecisionComment: documentRow?.return_reason || latestDecisionComment,
+      workflowInstanceId,
+      workflowInstanceStatus: workflowInstanceStatus || null,
+      workflowDefinitionId:
+        parsePositiveInt(
+          latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
+        ) || null,
+      workflowAssignmentId:
+        parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null,
+    };
+  }
+
+  if (documentStatus === APPROVED_STATUS || workflowInstanceStatus === APPROVED_STATUS) {
+    return {
+      state: "approved",
+      featureEnabled: true,
+      workflowGoverned: true,
+      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
+      compatModeLegacyPost: false,
+      assignmentResolved: true,
+      message: "Workflow approval is complete",
+      latestDecisionComment,
+      workflowInstanceId,
+      workflowInstanceStatus: workflowInstanceStatus || null,
+      workflowDefinitionId:
+        parsePositiveInt(
+          latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
+        ) || null,
+      workflowAssignmentId:
+        parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null,
+    };
+  }
+
+  if (documentStatus === SUBMITTED_STATUS || workflowInstanceStatus === "PENDING") {
+    return {
+      state: "pending",
+      featureEnabled: true,
+      workflowGoverned: true,
+      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
+      compatModeLegacyPost: false,
+      assignmentResolved: true,
+      message: "Workflow approval is still pending for this document",
+      latestDecisionComment,
+      workflowInstanceId,
+      workflowInstanceStatus: workflowInstanceStatus || "PENDING",
+      workflowDefinitionId:
+        parsePositiveInt(
+          latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
+        ) || null,
+      workflowAssignmentId:
+        parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null,
+    };
+  }
+
+  return {
+    state: "blocked",
+    featureEnabled: true,
+    workflowGoverned: true,
+    compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
+    compatModeLegacyPost: false,
+    assignmentResolved: true,
+    message: "Submit document for workflow approval before posting",
+    latestDecisionComment,
+    workflowInstanceId,
+    workflowInstanceStatus: workflowInstanceStatus || null,
+    workflowDefinitionId:
+      parsePositiveInt(
+        latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
+      ) || null,
+    workflowAssignmentId:
+      parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null,
+  };
+}
+
+async function mapDocumentRowWithWorkflowGate(row, { lines, tenantId, runQuery = query } = {}) {
+  const normalizedTenantId =
+    parsePositiveInt(tenantId) || parsePositiveInt(row?.tenant_id ?? row?.tenantId);
+  const workflowGate =
+    normalizedTenantId && row
+      ? await buildCariDocumentWorkflowGateSummary({
+          tenantId: normalizedTenantId,
+          documentRow: row,
+          runQuery,
+        })
+      : undefined;
+  return mapDocumentRow(row, { lines, workflowGate });
+}
+
+async function resolveCariDocumentSubmitWorkflowContext({
+  tenantId,
+  documentRow,
+  resolveWorkflowAssignment = null,
+  runQuery = query,
+}) {
+  const workflowFeatureState = await getCariDocumentWorkflowFeatureState({
+    tenantId,
+    runQuery,
+  });
+  const docClass = await getCariDocumentClassWorkflowMetadata({
+    tenantId,
+    direction: documentRow?.direction,
+    documentType: documentRow?.document_type ?? documentRow?.documentType,
+    runQuery,
+  });
+  const workflowGoverned = Boolean(docClass?.isWorkflowGoverned);
+  const assignmentResolver =
+    typeof resolveWorkflowAssignment === "function"
+      ? resolveWorkflowAssignment
+      : async ({ tenantId: scopedTenantId }) => {
+          const resolved = await resolveCariDocumentWorkflowAssignment({
+            tenantId: scopedTenantId,
+            documentRow,
+            runQuery,
+          });
+          return resolved.assignmentRow;
+        };
+  const assignmentResolution =
+    workflowFeatureState.featureEnabled &&
+    workflowGoverned &&
+    assignmentResolver
+      ? await assignmentResolver({
+          tenantId,
+          documentId: parsePositiveInt(documentRow?.id),
+          direction: documentRow?.direction,
+          documentType: documentRow?.document_type ?? documentRow?.documentType,
+          legalEntityId: parsePositiveInt(documentRow?.legal_entity_id),
+          operatingUnitId: parsePositiveInt(documentRow?.operating_unit_id),
+        })
+      : null;
+
+  return {
+    workflowFeatureState,
+    docClass,
+    workflowGoverned,
+    assignmentResolution,
+    assignmentResolved: isWorkflowAssignmentResolved(assignmentResolution),
+  };
+}
+
 export async function resolveCariDocumentScope(documentId, tenantId) {
   const parsedDocumentId = parsePositiveInt(documentId);
   const parsedTenantId = parsePositiveInt(tenantId);
@@ -6730,11 +7245,16 @@ export async function listCariDocuments({
   const rowsResult = await query(
     `SELECT
         d.*,
+        dcm.is_workflow_governed,
         ou.code AS operating_unit_code,
         ou.name AS operating_unit_name,
         pt.code AS payment_term_code,
         pt.name AS payment_term_name
      FROM cari_documents d
+     LEFT JOIN cari_document_class_metadata dcm
+       ON dcm.tenant_id = d.tenant_id
+      AND dcm.direction = d.direction
+      AND dcm.document_type = d.document_type
      LEFT JOIN operating_units ou
        ON ou.id = d.operating_unit_id
      LEFT JOIN payment_terms pt
@@ -6747,8 +7267,18 @@ export async function listCariDocuments({
     params
   );
 
+  const mappedRows = await Promise.all(
+    (rowsResult.rows || []).map((row) =>
+      // Selection UIs need workflow gate metadata on list rows so submit/post
+      // affordances stay accurate before the detail fetch completes.
+      mapDocumentRowWithWorkflowGate(row, {
+        tenantId,
+      })
+    )
+  );
+
   return buildOffsetPaginationResult({
-    rows: (rowsResult.rows || []).map(mapDocumentRow),
+    rows: mappedRows,
     total,
     limit: pagination.limit,
     offset: pagination.offset,
@@ -6807,7 +7337,11 @@ export async function getCariDocumentByIdForTenant({
       buildDocumentChargeAllocationState(lines)
     );
   }
-  return mapDocumentRow(row, { lines });
+  return mapDocumentRowWithWorkflowGate(row, {
+    lines,
+    tenantId,
+    runQuery,
+  });
 }
 
 export async function listCariDocumentOpenItemsByIdForTenant({
@@ -7438,6 +7972,184 @@ export async function updateCariDraftDocumentById({
   return updated;
 }
 
+/**
+ * Submits a governed AP document into the review lifecycle. PR-2 keeps the
+ * route dark behind the tenant feature flag while still enforcing the full
+ * status, doc-class, and assignment prerequisites at service level.
+ */
+export async function submitCariDocumentById({
+  req,
+  payload,
+  assertScopeAccess,
+  options = {},
+}) {
+  const tenantId = payload.tenantId;
+  const documentId = payload.documentId;
+
+  const existing = await fetchDocumentRow({
+    tenantId,
+    documentId,
+  });
+  if (!existing) {
+    throw badRequest("Document not found");
+  }
+
+  assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
+
+  return withTransaction(async (tx) => {
+    const lockedDocument = await fetchDocumentRowForUpdate({
+      tenantId,
+      documentId,
+      runQuery: tx.query,
+    });
+    if (!lockedDocument) {
+      throw badRequest("Document not found");
+    }
+
+    const legalEntityId = parsePositiveInt(lockedDocument.legal_entity_id);
+    assertDocumentScopeAccess(req, assertScopeAccess, lockedDocument, "documentId");
+    assertCariDocumentCanBeSubmitted(lockedDocument);
+
+    if (normalizeUpperText(lockedDocument.direction) !== "AP") {
+      throw badRequest("Only governed AP documents can be submitted");
+    }
+
+    const workflowContext = await resolveCariDocumentSubmitWorkflowContext({
+      tenantId,
+      documentRow: lockedDocument,
+      resolveWorkflowAssignment: options?.resolveWorkflowAssignment,
+      runQuery: tx.query,
+    });
+    if (!workflowContext.workflowGoverned) {
+      throw badRequest("Only governed AP documents can be submitted");
+    }
+    if (!workflowContext.workflowFeatureState.featureEnabled) {
+      throw conflictError(
+        "AP document workflow submit is disabled for this tenant",
+        "AP_WORKFLOW_FEATURE_DISABLED"
+      );
+    }
+    if (!workflowContext.assignmentResolved) {
+      throw conflictError(
+        "No workflow assignment configured for governed AP document",
+        "NO_WORKFLOW_ASSIGNMENT_CONFIGURED",
+        {
+          compatModeEnabled: workflowContext.workflowFeatureState.compatModeEnabled,
+          direction: lockedDocument.direction,
+          documentType: lockedDocument.document_type,
+        }
+      );
+    }
+
+    const workflowDefinitionId =
+      parsePositiveInt(
+        workflowContext.assignmentResolution?.workflow_definition_id ??
+          workflowContext.assignmentResolution?.workflowDefinitionId
+      ) || null;
+    if (!workflowDefinitionId) {
+      throw conflictError(
+        "Workflow assignment is missing workflowDefinitionId",
+        "WORKFLOW_ASSIGNMENT_INVALID"
+      );
+    }
+
+    const workflowScope = await buildCariDocumentWorkflowScope({
+      tenantId,
+      documentRow: lockedDocument,
+      runQuery: tx.query,
+    });
+    const instanceInsert = await tx.query(
+      `INSERT INTO workflow_instances (
+         tenant_id,
+         process_type,
+         target_type,
+         target_id,
+         workflow_definition_id,
+         status,
+         current_step_no,
+         requested_by_user_id
+       ) VALUES (?, ?, ?, ?, ?, 'PENDING', 1, ?)`,
+      [
+        tenantId,
+        AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+        CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+        documentId,
+        workflowDefinitionId,
+        payload.userId,
+      ]
+    );
+    const workflowInstanceId = parsePositiveInt(instanceInsert.rows?.insertId);
+    if (!workflowInstanceId) {
+      throw new Error("Workflow instance create failed");
+    }
+
+    await ensureUnifiedWorkflowInstanceBridge({
+      tenantId,
+      instanceId: workflowInstanceId,
+      requestedByUserId: payload.userId,
+      fallbackScope: workflowScope,
+      resetToPending: true,
+      runQuery: tx.query,
+    });
+
+    await tx.query(
+      `UPDATE cari_documents
+          SET status = ?,
+              return_reason = NULL,
+              returned_at = NULL,
+              row_version = row_version + 1
+        WHERE tenant_id = ?
+          AND id = ?`,
+      [SUBMITTED_STATUS, tenantId, documentId]
+    );
+
+    const row = await fetchDocumentRow({
+      tenantId,
+      documentId,
+      runQuery: tx.query,
+    });
+    if (!row) {
+      throw new Error("Document submit readback failed");
+    }
+
+    await insertAuditLog({
+      req,
+      runQuery: tx.query,
+      tenantId,
+      userId: payload.userId,
+      action: "cari.document.submit",
+      legalEntityId,
+      documentId,
+      payload: {
+        beforeStatus: lockedDocument.status,
+        afterStatus: row.status,
+        workflowGoverned: workflowContext.workflowGoverned,
+        compatModeEnabled: workflowContext.workflowFeatureState.compatModeEnabled,
+        assignmentResolved: workflowContext.assignmentResolved,
+        workflowInstanceId,
+        workflowDefinitionId,
+        assignmentId:
+          parsePositiveInt(workflowContext.assignmentResolution?.assignmentId) ||
+          parsePositiveInt(workflowContext.assignmentResolution?.assignment_id) ||
+          parsePositiveInt(workflowContext.assignmentResolution?.id) ||
+          null,
+      },
+    });
+
+    const lines = await loadDocumentLinesForDocument({
+      tenantId,
+      legalEntityId,
+      documentId,
+      runQuery: tx.query,
+    });
+    return mapDocumentRowWithWorkflowGate(row, {
+      lines,
+      tenantId,
+      runQuery: tx.query,
+    });
+  });
+}
+
 export async function cancelCariDraftDocumentById({
   req,
   payload,
@@ -7455,16 +8167,43 @@ export async function cancelCariDraftDocumentById({
 
   const legalEntityId = parsePositiveInt(existing.legal_entity_id);
   assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
-  if (existing.status !== DRAFT_STATUS) {
-    throw badRequest("Only DRAFT documents can be cancelled");
-  }
+  assertCariDocumentCanBeCancelled(existing);
 
   const updated = await withTransaction(async (tx) => {
+    let cancelledWorkflowInstanceId = null;
+    if (normalizeUpperText(existing.status) === RETURNED_STATUS) {
+      const latestWorkflowInstance = await loadLatestCariDocumentWorkflowInstance({
+        tenantId,
+        documentId,
+        runQuery: tx.query,
+      });
+      if (normalizeUpperText(latestWorkflowInstance?.status) === "PENDING") {
+        cancelledWorkflowInstanceId = parsePositiveInt(latestWorkflowInstance?.id) || null;
+        await tx.query(
+          `UPDATE workflow_instances
+              SET status = 'CANCELLED',
+                  resolved_at = CURRENT_TIMESTAMP,
+                  resolution_note = ?,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE tenant_id = ?
+              AND id = ?`,
+          ["cancelled_by_document_owner", tenantId, cancelledWorkflowInstanceId]
+        );
+        await cancelUnifiedWorkflowInstanceBridge({
+          tenantId,
+          instanceId: cancelledWorkflowInstanceId,
+          resolutionNote: "cancelled_by_document_owner",
+          runQuery: tx.query,
+        });
+      }
+    }
+
     await tx.query(
       `UPDATE cari_documents
        SET status = ?,
            open_amount_txn = 0.000000,
-           open_amount_base = 0.000000
+           open_amount_base = 0.000000,
+           row_version = row_version + 1
        WHERE tenant_id = ?
          AND id = ?`,
       [CANCELLED_STATUS, tenantId, documentId]
@@ -7484,16 +8223,20 @@ export async function cancelCariDraftDocumentById({
       runQuery: tx.query,
       tenantId,
       userId: payload.userId,
-      action: "cari.document.draft.cancel",
+      action: "cari.document.cancel",
       legalEntityId,
       documentId,
       payload: {
         beforeStatus: existing.status,
         afterStatus: row.status,
+        cancelledWorkflowInstanceId,
       },
     });
 
-    return mapDocumentRow(row);
+    return mapDocumentRowWithWorkflowGate(row, {
+      tenantId,
+      runQuery: tx.query,
+    });
   });
 
   return updated;
@@ -7526,9 +8269,6 @@ async function postCariDocumentByIdTx(
 
   const legalEntityId = parsePositiveInt(existing.legal_entity_id);
   assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
-  if (normalizeUpperText(existing.status) !== DRAFT_STATUS) {
-    throw badRequest("Only DRAFT documents can be posted");
-  }
 
   const lockedDocument = await fetchDocumentRowForUpdate({
     tenantId,
@@ -7541,8 +8281,20 @@ async function postCariDocumentByIdTx(
 
   const lockedLegalEntityId = parsePositiveInt(lockedDocument.legal_entity_id);
   const documentOperatingUnitId = parsePositiveInt(lockedDocument.operating_unit_id) || null;
-  if (normalizeUpperText(lockedDocument.status) !== DRAFT_STATUS) {
-    throw badRequest("Only DRAFT documents can be posted");
+  const postingWorkflowContext = await evaluateCariDocumentPostingWorkflowGate({
+    tenantId,
+    documentRow: lockedDocument,
+    runQuery: tx.query,
+  });
+  if (
+    normalizeUpperText(lockedDocument.status) !==
+    normalizeUpperText(postingWorkflowContext.requiredDocumentStatus)
+  ) {
+    throw badRequest(
+      postingWorkflowContext.requiredDocumentStatus === APPROVED_STATUS
+        ? "Only APPROVED documents can be posted when workflow approval is required"
+        : "Only DRAFT documents can be posted"
+    );
   }
 
   await assertLegalEntityBelongsToTenant(
@@ -8309,6 +9061,11 @@ async function postCariDocumentByIdTx(
         settlementMode,
         autoSettlementBatchId,
         autoSettlementCashTransactionId,
+        compatModeLegacyPost: Boolean(postingWorkflowContext.compatModeLegacyPost),
+        workflowPostMode: postingWorkflowContext.compatModeLegacyPost
+          ? "compat_mode_legacy_post"
+          : "standard",
+        workflowGate: postingWorkflowContext.workflowGate,
       },
     });
 
@@ -8342,7 +9099,11 @@ async function postCariDocumentByIdTx(
     });
 
     return {
-      row: mapDocumentRow(row, { lines }),
+      row: await mapDocumentRowWithWorkflowGate(row, {
+        lines,
+        tenantId,
+        runQuery: tx.query,
+      }),
       journal: {
         journalEntryId: journalResult.journalEntryId,
         bookId: journalContext.bookId,

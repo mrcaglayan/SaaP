@@ -136,6 +136,27 @@ export default function CariDocumentDetailContent({
           <dt className="font-semibold text-slate-600">fxRateSnapshot</dt>
           <dd>{selectedSnapshot.fxRateSnapshot || "-"}</dd>
         </dl>
+        {String(selectedSnapshot.status || "").trim().toUpperCase() === "RETURNED" ? (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+            <p className="font-semibold">
+              {l("Returned for correction", "Duzeltme icin iade edildi")}
+            </p>
+            <p className="mt-1 text-xs text-amber-900">
+              {l(
+                "Update the bill, then resubmit it once the correction is complete.",
+                "Belgeyi duzeltin, duzeltme tamamlaninca yeniden gonderin."
+              )}
+            </p>
+            <p className="mt-2">
+              {normalizeText(selectedSnapshot.returnReason || selectedSnapshot.return_reason) ||
+                l("No return reason recorded.", "Iade nedeni kayitli degil.")}
+            </p>
+            <p className="mt-2 text-xs text-amber-900">
+              {l("Returned at", "Iade zamani")}:{" "}
+              {selectedSnapshot.returnedAt || selectedSnapshot.returned_at || "-"}
+            </p>
+          </div>
+        ) : null}
         <div className="mt-4 rounded-md border border-slate-200 bg-white px-3 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
             {l("Commercial lines", "Ticari satirlar")}

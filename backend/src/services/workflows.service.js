@@ -13,6 +13,14 @@ import {
   recordDecision,
   submitRequest,
 } from "./approval.engine.service.js";
+import {
+  supersedeApprovedCariDocumentWorkflowInstanceTx,
+  syncCariDocumentFromWorkflowRequestTx,
+} from "./cari.document.workflow.runtime.service.js";
+import {
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+  CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+} from "../../../shared/cariDocumentWorkflowGovernance.js";
 
 const FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1 =
   "FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1";
@@ -21,18 +29,24 @@ const WORKFLOW_UNIFIED_ACTION_TYPE = "APPROVE_WORKFLOW";
 
 const WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL = `COALESCE(
       period_close_book.legal_entity_id,
-      local_close_pack.legal_entity_id
+      local_close_pack.legal_entity_id,
+      workflow_cari_doc.legal_entity_id
     ) AS target_legal_entity_id,
       COALESCE(
         period_close_entity.country_id,
-        local_close_entity.country_id
+        local_close_entity.country_id,
+        workflow_cari_entity.country_id
       ) AS target_country_id,
       COALESCE(
         period_close_entity.group_company_id,
         local_close_entity.group_company_id,
-        consolidation_group.group_company_id
+        consolidation_group.group_company_id,
+        workflow_cari_entity.group_company_id
       ) AS target_group_company_id,
-      local_close_pack.operating_unit_id AS target_operating_unit_id`;
+      COALESCE(
+        local_close_pack.operating_unit_id,
+        workflow_cari_doc.operating_unit_id
+      ) AS target_operating_unit_id`;
 
 const WORKFLOW_INSTANCE_TARGET_SCOPE_JOIN_SQL = `LEFT JOIN period_close_runs pcr
       ON pcr.id = wi.target_id
@@ -52,7 +66,13 @@ const WORKFLOW_INSTANCE_TARGET_SCOPE_JOIN_SQL = `LEFT JOIN period_close_runs pcr
      AND wi.target_type = '${LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE}'
      AND local_close_pack.tenant_id = wi.tenant_id
     LEFT JOIN legal_entities local_close_entity
-      ON local_close_entity.id = local_close_pack.legal_entity_id`;
+      ON local_close_entity.id = local_close_pack.legal_entity_id
+    LEFT JOIN cari_documents workflow_cari_doc
+      ON workflow_cari_doc.id = wi.target_id
+     AND wi.target_type = '${CARI_DOCUMENT_WORKFLOW_TARGET_TYPE}'
+     AND workflow_cari_doc.tenant_id = wi.tenant_id
+    LEFT JOIN legal_entities workflow_cari_entity
+      ON workflow_cari_entity.id = workflow_cari_doc.legal_entity_id`;
 
 function toUpper(value) {
   return String(value || "")
@@ -144,7 +164,44 @@ function mapWorkflowProcessToUnifiedTargetType(processType) {
   if (normalized === "LOCAL_CLOSE_PACK") {
     return LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE;
   }
+  if (normalized === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    return CARI_DOCUMENT_WORKFLOW_TARGET_TYPE;
+  }
   return normalized;
+}
+
+function isApDocumentWorkflowProcessType(processType) {
+  return toUpper(processType) === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
+}
+
+function isApDocumentWorkflowInstanceRow(row) {
+  return (
+    isApDocumentWorkflowProcessType(row?.process_type ?? row?.processType) &&
+    toUpper(row?.target_type ?? row?.targetType) === CARI_DOCUMENT_WORKFLOW_TARGET_TYPE
+  );
+}
+
+function normalizeWorkflowStepPermissionCode(value) {
+  const normalized = String(value || "").trim();
+  return normalized || null;
+}
+
+function assertWorkflowStepPermissionCompatibility(processType, step, index) {
+  const normalizedProcessType = toUpper(processType);
+  const permissionCode = normalizeWorkflowStepPermissionCode(
+    step?.requiredPermissionCode ?? step?.required_permission_code ?? null
+  );
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    if (permissionCode) {
+      throw badRequest(
+        `steps[${index}].requiredPermissionCode must be null for AP_DOCUMENT_POSTING`
+      );
+    }
+    return;
+  }
+  if (!permissionCode) {
+    throw badRequest(`steps[${index}].requiredPermissionCode is required`);
+  }
 }
 
 function mapStageScopeTypeToUnifiedScopeResolutionMode(stageScopeType) {
@@ -366,9 +423,9 @@ function buildWorkflowUnifiedRequestCode(tenantId, instanceId) {
 function buildWorkflowUnifiedPolicySnapshot(definitionRow, stepRows) {
   const normalizedSteps = (Array.isArray(stepRows) ? stepRows : []).map((step) => ({
     step_no: Number(step.step_no || step.stepNo || 1),
-    required_permission_code: String(
-      step.required_permission_code ?? step.requiredPermissionCode ?? ""
-    ).trim(),
+    required_permission_code: normalizeWorkflowStepPermissionCode(
+      step.required_permission_code ?? step.requiredPermissionCode ?? null
+    ),
     scope_resolution_mode: mapStageScopeTypeToUnifiedScopeResolutionMode(
       step.stage_scope_type ?? step.stageScopeType
     ),
@@ -429,7 +486,7 @@ function mapWorkflowInstanceStatusToUnifiedRequestStatus(status) {
   if (normalized === "REJECTED") {
     return "REJECTED";
   }
-  if (normalized === "CANCELLED") {
+  if (["CANCELLED", "SUPERSEDED"].includes(normalized)) {
     return "WITHDRAWN";
   }
   return "PENDING_REVIEW";
@@ -440,10 +497,10 @@ function mapUnifiedRequestStatusToWorkflowStatus(requestStatus) {
   if (normalized === "APPROVED") {
     return "APPROVED";
   }
-  if (normalized === "REJECTED") {
+  if (["REJECTED", "RETURNED"].includes(normalized)) {
     return "REJECTED";
   }
-  if (["WITHDRAWN", "RETURNED"].includes(normalized)) {
+  if (normalized === "WITHDRAWN") {
     return "CANCELLED";
   }
   return "PENDING";
@@ -479,7 +536,9 @@ function mapWorkflowDefinitionStepRow(row) {
     workflowDefinitionId: parsePositiveInt(row.workflow_definition_id),
     stepNo: Number(row.step_no || 0),
     stageScopeType: toUpper(row.stage_scope_type),
-    requiredPermissionCode: String(row.required_permission_code || ""),
+    requiredPermissionCode: normalizeWorkflowStepPermissionCode(
+      row.required_permission_code
+    ),
     minApproverCount: Number(row.min_approver_count || 0),
     allowSelfApprove: toDbBoolean(row.allow_self_approve),
     escalationAfterHours: parsePositiveInt(row.escalation_after_hours),
@@ -790,7 +849,10 @@ async function isWorkflowGateFeatureEnabled(tenantId, runQuery = query) {
   }
 }
 
-async function findActiveWorkflowAssignmentForScope({
+/**
+ * Resolve the most specific ACTIVE workflow assignment for one scoped target.
+ */
+export async function findActiveWorkflowAssignmentForScope({
   tenantId,
   processType,
   effectiveOn,
@@ -884,7 +946,10 @@ async function findActiveWorkflowAssignmentForScope({
   return result.rows?.[0] || null;
 }
 
-async function getWorkflowInstanceByTarget({
+/**
+ * Load the latest workflow instance for one target tuple.
+ */
+export async function getWorkflowInstanceByTarget({
   tenantId,
   processType,
   targetType,
@@ -893,12 +958,13 @@ async function getWorkflowInstanceByTarget({
 }) {
   const result = await runQuery(
     `SELECT *
-     FROM workflow_instances
-     WHERE tenant_id = ?
-       AND process_type = ?
-       AND target_type = ?
-       AND target_id = ?
-     LIMIT 1`,
+       FROM workflow_instances
+      WHERE tenant_id = ?
+        AND process_type = ?
+        AND target_type = ?
+        AND target_id = ?
+      ORDER BY id DESC
+      LIMIT 1`,
     [tenantId, toUpper(processType), toUpper(targetType), targetId]
   );
   return result.rows?.[0] || null;
@@ -1048,7 +1114,10 @@ async function getWorkflowInstanceRowById({
   return result.rows?.[0] || null;
 }
 
-async function listWorkflowInstanceDecisionRows({
+/**
+ * List the persisted legacy decision rows for one workflow instance.
+ */
+export async function listWorkflowInstanceDecisionRows({
   tenantId,
   instanceId,
   runQuery = query,
@@ -1172,12 +1241,19 @@ async function listUnifiedWorkflowDecisionRows({
   return result.rows || [];
 }
 
-function resolveUnifiedWorkflowDecisionAccessFromRequestRow(requestRow) {
+function resolveUnifiedWorkflowDecisionAccessFromRequestRow(
+  requestRow,
+  { stepNoOverride = null } = {}
+) {
   const policySnapshot = parseJson(requestRow?.policy_snapshot_json, {});
   const targetSnapshot = parseJson(requestRow?.target_snapshot_json, {});
   const steps = Array.isArray(policySnapshot?.steps) ? policySnapshot.steps : [];
+  const resolvedStepNo = Math.max(
+    1,
+    Number(stepNoOverride || requestRow?.current_step_no || 1)
+  );
   const currentStep = steps.find(
-    (step) => Number(step.step_no || step.stepNo || 1) === Number(requestRow?.current_step_no || 1)
+    (step) => Number(step.step_no || step.stepNo || 1) === resolvedStepNo
   );
   if (!currentStep) {
     throw conflict(
@@ -1240,9 +1316,9 @@ function resolveUnifiedWorkflowDecisionAccessFromRequestRow(requestRow) {
     stageScopeType: mapUnifiedScopeResolutionModeToStageScopeType(
       currentStep.scope_resolution_mode ?? currentStep.scopeResolutionMode
     ),
-    requiredPermissionCode: String(
-      currentStep.required_permission_code ?? currentStep.requiredPermissionCode ?? ""
-    ).trim(),
+    requiredPermissionCode: normalizeWorkflowStepPermissionCode(
+      currentStep.required_permission_code ?? currentStep.requiredPermissionCode ?? null
+    ),
     minApproverCount: Math.max(
       1,
       Number(currentStep.min_approvals ?? currentStep.minApprovals ?? 1)
@@ -1281,11 +1357,11 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
     definitionRow.process_type ?? definitionRow.processType
   );
   const firstStepPermissionCode =
-    String(
+    normalizeWorkflowStepPermissionCode(
       stepRows[0]?.required_permission_code ??
         stepRows[0]?.requiredPermissionCode ??
-        ""
-    ).trim() || "approvals.requests.approve";
+        null
+    ) || "approvals.requests.approve";
 
   const insertResult = await runQuery(
     `INSERT INTO approval_policies (
@@ -1379,7 +1455,7 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
         normalizedTenantId,
         genericPolicyId,
         Number(stepRow.step_no || 1),
-        String(stepRow.required_permission_code || "").trim(),
+        normalizeWorkflowStepPermissionCode(stepRow.required_permission_code),
         mapStageScopeTypeToUnifiedScopeResolutionMode(stepRow.stage_scope_type),
         Math.max(1, Number(stepRow.min_approver_count || 1)),
         toDbBoolean(stepRow.allow_self_approve) ? 1 : 0,
@@ -1621,9 +1697,11 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
     requestId: genericRequestId,
     runQuery,
   });
-  const legacyStatus = mapUnifiedRequestStatusToWorkflowStatus(
+  const nextLegacyStatus = mapUnifiedRequestStatusToWorkflowStatus(
     requestRow.request_status
   );
+  const legacyStatus =
+    toUpper(legacyRow?.status) === "SUPERSEDED" ? "SUPERSEDED" : nextLegacyStatus;
   const latestDecision = decisionRows[decisionRows.length - 1] || null;
   const resolvedAt =
     requestRow.approved_at ||
@@ -1670,10 +1748,6 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
     [parsePositiveInt(legacyRow.id)]
   );
   for (const decisionRow of decisionRows) {
-    const legacyDecisionCode =
-      toUpper(decisionRow.decision) === "RETURN"
-        ? "REJECT"
-        : toUpper(decisionRow.decision);
     // eslint-disable-next-line no-await-in-loop
     await runQuery(
       `INSERT INTO workflow_instance_decisions (
@@ -1687,13 +1761,29 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
       [
         parsePositiveInt(legacyRow.id),
         Number(decisionRow.step_no || 1),
-        legacyDecisionCode,
+        toUpper(decisionRow.decision),
         parsePositiveInt(decisionRow.decided_by_user_id),
         decisionRow.comment || null,
         decisionRow.decided_at || null,
       ]
     );
   }
+
+  await syncCariDocumentFromWorkflowRequestTx({
+    tenantId,
+    requestRow,
+    legacyInstanceRow: {
+      ...legacyRow,
+      ...requestRow,
+      process_type: legacyRow.process_type,
+      target_type: legacyRow.target_type,
+      target_id: legacyRow.target_id,
+      status: legacyStatus,
+      resolution_note: resolutionNote,
+    },
+    decisionRows,
+    runQuery,
+  });
 
   return {
     row: await getWorkflowInstanceRowById({
@@ -2349,10 +2439,12 @@ function assertInstanceIsDecisionable(row) {
 export async function resolveWorkflowDecisionPermissionAccess({
   tenantId,
   instanceId,
+  decisionCode = "APPROVE",
   runQuery = query,
 }) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedInstanceId = parsePositiveInt(instanceId);
+  const normalizedDecisionCode = toUpper(decisionCode || "APPROVE");
   if (!normalizedTenantId) {
     throw badRequest("tenantId is required");
   }
@@ -2389,15 +2481,29 @@ export async function resolveWorkflowDecisionPermissionAccess({
     runQuery,
   });
   const effectiveInstanceRow = synced?.row || bridgedRow || instanceRow;
-  assertInstanceIsDecisionable(effectiveInstanceRow);
   const requestRow = await getUnifiedWorkflowRequestRowById({
     tenantId: normalizedTenantId,
     requestId: parsePositiveInt(effectiveInstanceRow.generic_request_id),
     runQuery,
   });
-  const unifiedAccess = resolveUnifiedWorkflowDecisionAccessFromRequestRow(
-    requestRow
-  );
+  const instanceStatus = toUpper(effectiveInstanceRow?.status);
+  const isApprovedApReturn =
+    normalizedDecisionCode === "RETURN" &&
+    instanceStatus === "APPROVED" &&
+    isApDocumentWorkflowInstanceRow(effectiveInstanceRow);
+  if (!isApprovedApReturn) {
+    assertInstanceIsDecisionable(effectiveInstanceRow);
+  }
+  const policySnapshot = parseJson(requestRow?.policy_snapshot_json, {});
+  const policySteps = Array.isArray(policySnapshot?.steps) ? policySnapshot.steps : [];
+  const finalStepNo =
+    policySteps.reduce(
+      (highest, step) => Math.max(highest, Number(step?.step_no || step?.stepNo || 1)),
+      1
+    ) || 1;
+  const unifiedAccess = resolveUnifiedWorkflowDecisionAccessFromRequestRow(requestRow, {
+    stepNoOverride: isApprovedApReturn ? finalStepNo : null,
+  });
 
   return {
     requiredPermissionCode: unifiedAccess.requiredPermissionCode,
@@ -2408,6 +2514,7 @@ export async function resolveWorkflowDecisionPermissionAccess({
     stepNo: unifiedAccess.stepNo,
     stageScopeType: unifiedAccess.stageScopeType,
     minApproverCount: unifiedAccess.minApproverCount,
+    instanceStatus,
   };
 }
 
@@ -2433,8 +2540,8 @@ async function createWorkflowDecision({
   if (!userId) {
     throw badRequest("userId is required");
   }
-  if (!["APPROVE", "REJECT"].includes(decisionCode)) {
-    throw badRequest("decision must be APPROVE or REJECT");
+  if (!["APPROVE", "REJECT", "RETURN"].includes(decisionCode)) {
+    throw badRequest("decision must be APPROVE, REJECT, or RETURN");
   }
   let bridgedInstance = await getWorkflowInstanceRowById({
     tenantId,
@@ -2460,6 +2567,65 @@ async function createWorkflowDecision({
     );
   }
   assertWorkflowInstanceScopeAccess(req, bridgedInstance, assertScopeAccess);
+
+  const bridgedInstanceStatus = toUpper(bridgedInstance?.status);
+  if (
+    decisionCode === "RETURN" &&
+    bridgedInstanceStatus === "APPROVED" &&
+    isApDocumentWorkflowInstanceRow(bridgedInstance)
+  ) {
+    const permissionAccess = await resolveWorkflowDecisionPermissionAccess({
+      tenantId,
+      instanceId,
+      decisionCode,
+      runQuery,
+    });
+    const superseded = await withTransaction(async (tx) => {
+      const lockedInstance = await getWorkflowInstanceRowById({
+        tenantId,
+        instanceId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (!lockedInstance) {
+        throw notFound("Workflow instance not found");
+      }
+      if (toUpper(lockedInstance.status) !== "APPROVED") {
+        throw conflict(
+          `Workflow instance status ${toUpper(lockedInstance.status) || "UNKNOWN"} cannot be returned from approved state`,
+          "APPROVAL_STEP_ALREADY_DECIDED"
+        );
+      }
+      await supersedeApprovedCariDocumentWorkflowInstanceTx({
+        tenantId,
+        instanceRow: lockedInstance,
+        decisionNote,
+        runQuery: tx.query,
+      });
+      return getWorkflowInstanceRowById({
+        tenantId,
+        instanceId,
+        runQuery: tx.query,
+      });
+    });
+    const decisions = await listWorkflowInstanceDecisionRows({
+      tenantId,
+      instanceId,
+      runQuery,
+    });
+    return {
+      row: mapWorkflowInstanceRow(superseded),
+      decisions,
+      currentStepNo: permissionAccess.stepNo,
+      minApproverCount: permissionAccess.minApproverCount,
+      stageScopeType: permissionAccess.stageScopeType,
+      requiredPermissionCode: permissionAccess.requiredPermissionCode,
+      advanced: false,
+      resolved: true,
+      decision: decisionCode,
+      executionResult: null,
+    };
+  }
 
   const unifiedRequestRow = await getUnifiedWorkflowRequestRowById({
     tenantId,
@@ -2487,9 +2653,11 @@ async function createWorkflowDecision({
   const advanced =
     decisionCode === "APPROVE" &&
     syncedStatus === "PENDING" &&
-    Number(syncedRow?.current_step_no ?? syncedRow?.currentStepNo ?? 0) >
+      Number(syncedRow?.current_step_no ?? syncedRow?.currentStepNo ?? 0) >
       unifiedAccess.stepNo;
-  const resolved = ["APPROVED", "REJECTED", "CANCELLED"].includes(syncedStatus);
+  const resolved = ["APPROVED", "REJECTED", "CANCELLED", "SUPERSEDED"].includes(
+    syncedStatus
+  );
 
   return {
     row: mapWorkflowInstanceRow(syncedRow),
@@ -2533,6 +2701,23 @@ export async function rejectWorkflowInstance({
     req,
     input,
     decision: "REJECT",
+    assertScopeAccess,
+  });
+}
+
+/**
+ * Record one return decision against the current workflow step, or supersede
+ * one already-approved AP workflow instance back into correction.
+ */
+export async function returnWorkflowInstance({
+  req,
+  input,
+  assertScopeAccess,
+}) {
+  return createWorkflowDecision({
+    req,
+    input,
+    decision: "RETURN",
     assertScopeAccess,
   });
 }
@@ -2824,7 +3009,11 @@ export async function replaceWorkflowDefinitionSteps({ input }) {
   }
 
   return withTransaction(async (tx) => {
-    await assertWorkflowDefinitionExists(tenantId, definitionId, tx.query);
+    const definitionRow = await assertWorkflowDefinitionExists(
+      tenantId,
+      definitionId,
+      tx.query
+    );
 
     await tx.query(
       `DELETE FROM workflow_definition_steps
@@ -2832,7 +3021,13 @@ export async function replaceWorkflowDefinitionSteps({ input }) {
       [definitionId]
     );
 
-    for (const step of steps) {
+    for (let index = 0; index < steps.length; index += 1) {
+      const step = steps[index];
+      assertWorkflowStepPermissionCompatibility(
+        definitionRow.process_type ?? definitionRow.processType,
+        step,
+        index
+      );
       // eslint-disable-next-line no-await-in-loop
       await tx.query(
         `INSERT INTO workflow_definition_steps (
@@ -2849,7 +3044,7 @@ export async function replaceWorkflowDefinitionSteps({ input }) {
           definitionId,
           Number(step.stepNo),
           toUpper(step.stageScopeType),
-          String(step.requiredPermissionCode || "").trim(),
+          normalizeWorkflowStepPermissionCode(step.requiredPermissionCode),
           Number(step.minApproverCount || 1),
           step.allowSelfApprove ? 1 : 0,
           step.escalationAfterHours || null,
@@ -3202,6 +3397,9 @@ export async function updateWorkflowAssignment({
 }
 
 export default {
+  findActiveWorkflowAssignmentForScope,
+  getWorkflowInstanceByTarget,
+  listWorkflowInstanceDecisionRows,
   resolveWorkflowAssignmentScope,
   resolveWorkflowInstanceScope,
   evaluateWorkflowApprovalGate,
@@ -3219,4 +3417,5 @@ export default {
   resolveWorkflowDecisionPermissionAccess,
   approveWorkflowInstance,
   rejectWorkflowInstance,
+  returnWorkflowInstance,
 };

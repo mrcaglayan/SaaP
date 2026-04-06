@@ -160,6 +160,9 @@ import migration170ApprovalEscalationEngine from "./m170_approval_escalation_eng
 import migration171ApprovalDelegations from "./m171_approval_delegations.js";
 import migration172OperationalRoleCoverages from "./m172_operational_role_coverages.js";
 import migration173WorkflowCountryScopeFoundation from "./m173_workflow_country_scope_foundation.js";
+import migration174CariApWorkflowReviewStates from "./m174_cari_ap_workflow_review_states.js";
+import migration175CariApWorkflowReviewStateCompatGuards from "./m175_cari_ap_workflow_review_state_compat_guards.js";
+import migration176ApDocumentWorkflowIntegrationFoundation from "./m176_ap_document_workflow_integration_foundation.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -324,6 +327,9 @@ const migrations = [
   migration171ApprovalDelegations,
   migration172OperationalRoleCoverages,
   migration173WorkflowCountryScopeFoundation,
+  migration174CariApWorkflowReviewStates,
+  migration175CariApWorkflowReviewStateCompatGuards,
+  migration176ApDocumentWorkflowIntegrationFoundation,
 ];
 
 export default migrations;
