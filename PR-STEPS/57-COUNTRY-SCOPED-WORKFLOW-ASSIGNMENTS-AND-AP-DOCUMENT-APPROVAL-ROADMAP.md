@@ -441,10 +441,9 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 - `return_reason` and `returned_at` are surfaced on the document GET response.
 
 ## Smoke checks
-- with feature flag forced ON in test: create governed AP draft -> submit successfully
 - with feature flag OFF (production default): confirm submit action is hidden and server rejects submit attempts
-- with feature flag forced ON: confirm non-governed AP draft cannot be submitted (action hidden + server rejection)
-- with feature flag forced ON: confirm governed AP draft without a resolvable workflow assignment cannot be submitted (compat ON: action hidden; compat OFF: server error "no workflow assignment configured")
+- **PR-2 submit tests run at service/mock level only** (AP process type and assignment resolution do not exist until PR-3). Tests mock assignment resolution to validate: governed doc + assignment resolves = submit succeeds; governed doc + no assignment = submit blocked; non-governed doc = submit blocked; AR doc = submit blocked.
+- first true end-to-end submit test (real AP assignment resolution, real workflow-instance creation) is reserved for PR-3 smoke checks
 - confirm AR document cannot be submitted regardless of feature flag
 - confirm cancel is allowed in `DRAFT` and `RETURNED` only (test RETURNED by direct DB seed since workflow return is not yet wired)
 - confirm reverse remains available only after posting
@@ -477,7 +476,7 @@ Make AP document approval use the workflow-governance engine so flow selection c
 - `frontend/src/pages/cari/*` approval-action surfaces that need workflow-gate messaging
 
 ## Backend changes
-- **Light up PR-2's dark submit path.** PR-2 shipped the submit route, guards, and frontend visibility behind `FEATURE_AP_DOCUMENT_WORKFLOW_V1 = OFF`. PR-3 makes it safe to enable: once workflow-instance creation is wired to submit, the flag can be turned ON per tenant without risk of orphan `SUBMITTED` documents. PR-3 must include the flag-enablement migration or seed change so the submit + workflow-instance path activates together.
+- **Light up PR-2's dark submit path.** PR-2 shipped the submit route, guards, and frontend visibility behind `FEATURE_AP_DOCUMENT_WORKFLOW_V1 = OFF`. PR-3 makes it safe to enable: once workflow-instance creation is wired to submit, the flag can be turned ON per tenant without risk of orphan `SUBMITTED` documents. PR-3 may enable the flag in test/dev seeds or an explicitly named pilot seed, but must NOT broadly activate it for all tenants. **PR-6 owns the per-tenant rollout decision** — it decides when each tenant gets the flag turned ON.
 - Add the new workflow `processType` and `targetType` for AP documents.
 - Extend workflow assignment and definition validation to accept the AP process type.
 - Extend workflow setup template docs with AP examples.
