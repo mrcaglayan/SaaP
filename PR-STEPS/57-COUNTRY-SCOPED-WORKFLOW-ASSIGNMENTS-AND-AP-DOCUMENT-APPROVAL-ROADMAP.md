@@ -14,6 +14,7 @@
 - Locked decision: AP workflow steps carry **no extra step-level permission code** — assignment to the step is sufficient to act on it. The existing workflow engine's optional step-permission-code field is left null for AP steps. This preserves single-source authz from step assignment and avoids recreating a dual-gate. If finer-grained step restriction is needed later, step-level permissions can be added without a schema change.
 - Locked decision: `legal_entities.country_id` becomes NOT NULL (backfilled in PR-1 migration); country-scoped assignment resolution requires every LE to have a country
 - Locked decision: **submit requires a resolvable workflow assignment** — a governed AP doc cannot enter `SUBMITTED` without one. Compat mode is a fallback for posting, not a license to create orphan submitted documents. If no assignment resolves, submit is hidden (compat ON) or blocked with error (compat OFF).
+- Locked decision: **PR-2 ships submit as feature-flag dark / disabled for all tenants** until PR-3 merges and wires workflow-instance creation. PR-2 merges structurally complete (route, service, guards, tests), but the submit action is gated behind `FEATURE_AP_DOCUMENT_WORKFLOW_V1` which stays OFF until PR-3 lands. This avoids `SUBMITTED` documents existing in production without a workflow instance behind them.
 - Locked decision: governed-AP applicability is driven by a **per-doc-class `is_workflow_governed` flag** on the AP doc-class/type metadata. Supplier invoices always governed, petty cash adjustments always direct-post, etc. Both backend and frontend read the same flag via a shared helper; no duplicated allow-lists.
 - Locked decision: compat-mode scope follows **two-flag Option B** — `FEATURE_AP_DOCUMENT_WORKFLOW_V1` (per tenant: "governed lifecycle available") + `ap_workflow_compat_mode` (per tenant: if ON, an in-scope governed AP doc whose workflow assignment resolution returns empty may still legacy-post; if OFF, absence of assignment blocks posting). Doc classes with `is_workflow_governed = false` are never affected by compat_mode — they always direct-post.
 - Locked decision: workflow-instance lifecycle on return / resubmit / cancel:
@@ -408,7 +409,7 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
   - with `ap_workflow_compat_mode = ON`: submit is hidden/blocked — the user stays on the legacy direct-post path. Compat mode is a fallback for **posting**, not a reason to let documents enter orphan `SUBMITTED` state with no workflow instance.
   - with `ap_workflow_compat_mode = OFF`: submit is blocked with "no workflow assignment configured" error.
   - Non-governed doc classes never show submit regardless of assignment or compat-mode.
-- Note: the submit route must call into the workflow assignment resolution logic (which PR-1 provides for scope resolution and PR-3 extends with the AP process type). At PR-2 time, if the AP process type does not yet exist in the workflow engine, submit should pre-validate that an AP workflow assignment would resolve before allowing the transition — or PR-2 and PR-3 must be coordinated so assignment resolution for AP is available when submit ships.
+- **Submit is feature-flag dark in PR-2.** The submit route, service logic, and guards ship structurally complete and are tested in smoke checks with the flag forced ON, but `FEATURE_AP_DOCUMENT_WORKFLOW_V1` stays OFF for all tenants until PR-3 merges and wires workflow-instance creation. This eliminates the risk of `SUBMITTED` documents existing in production without a workflow instance. PR-3 enables the flag as part of its rollout.
 - Do NOT add approve or return routes in PR-2. AP approval and return are workflow decisions that land in PR-3. PR-2 only adds the schema, the status guards, and the submit path.
 - Add an `is_workflow_governed` boolean column on the AP doc-class / doc-type metadata table, defaulting to false. Migration must reject any AR-direction doc class from being set to true. Seed the recommended V1 values (supplier invoice / credit note / AP accrual = true; petty cash and AR classes = false); final tenant-specific values are set at rollout time.
 - Add a shared helper `isDocClassWorkflowGoverned(docClass)` (or equivalent) in a module imported by both the CARI service and the governed-AP applicability checks; PR-3 will import the same helper. Do not duplicate the predicate.
@@ -425,7 +426,7 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 
 ## Frontend changes
 - Add AP statuses to CARI lifecycle metadata so badges and labels render correctly for `SUBMITTED`, `RETURNED`, and `APPROVED`.
-- Show submit action for governed AP doc classes (using `isDocClassWorkflowGoverned`); do not show approve or return actions yet (those arrive with PR-3's workflow integration).
+- Submit button visibility (once feature flag is ON — dark in PR-2, enabled in PR-3): show submit only when the doc class is governed (`isDocClassWorkflowGoverned`) **and** a workflow assignment resolves for the document's scope. With compat ON and no assignment: hide submit (user stays on legacy direct-post). With compat OFF and no assignment: hide submit (posting is also blocked — the user sees "no workflow assignment configured" if they attempt to post). Do not show approve or return actions (those are workflow decisions arriving with PR-3).
 - Show `RETURNED` documents with correction-oriented copy and `return_reason` display.
 - Remove any assumptions that AP documents jump directly from `DRAFT` to `POSTED`.
 - Keep AR and non-governed document paths behavior-preserving.
@@ -440,10 +441,11 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 - `return_reason` and `returned_at` are surfaced on the document GET response.
 
 ## Smoke checks
-- create governed AP draft -> submit successfully
-- confirm non-governed AP draft cannot be submitted (action hidden + server rejection)
-- confirm governed AP draft without a resolvable workflow assignment cannot be submitted (compat ON: action hidden; compat OFF: server error "no workflow assignment configured")
-- confirm AR document cannot be submitted
+- with feature flag forced ON in test: create governed AP draft -> submit successfully
+- with feature flag OFF (production default): confirm submit action is hidden and server rejects submit attempts
+- with feature flag forced ON: confirm non-governed AP draft cannot be submitted (action hidden + server rejection)
+- with feature flag forced ON: confirm governed AP draft without a resolvable workflow assignment cannot be submitted (compat ON: action hidden; compat OFF: server error "no workflow assignment configured")
+- confirm AR document cannot be submitted regardless of feature flag
 - confirm cancel is allowed in `DRAFT` and `RETURNED` only (test RETURNED by direct DB seed since workflow return is not yet wired)
 - confirm reverse remains available only after posting
 - confirm open-item / statement / aging queries do not surface pre-post governed AP statuses as posted accounting rows
@@ -475,6 +477,7 @@ Make AP document approval use the workflow-governance engine so flow selection c
 - `frontend/src/pages/cari/*` approval-action surfaces that need workflow-gate messaging
 
 ## Backend changes
+- **Light up PR-2's dark submit path.** PR-2 shipped the submit route, guards, and frontend visibility behind `FEATURE_AP_DOCUMENT_WORKFLOW_V1 = OFF`. PR-3 makes it safe to enable: once workflow-instance creation is wired to submit, the flag can be turned ON per tenant without risk of orphan `SUBMITTED` documents. PR-3 must include the flag-enablement migration or seed change so the submit + workflow-instance path activates together.
 - Add the new workflow `processType` and `targetType` for AP documents.
 - Extend workflow assignment and definition validation to accept the AP process type.
 - Extend workflow setup template docs with AP examples.
