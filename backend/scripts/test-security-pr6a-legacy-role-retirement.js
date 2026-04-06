@@ -78,6 +78,7 @@ async function main() {
     "GroupController",
     "CountryController",
     "EntityAccountant",
+    "APDocumentPoster",
   ]) {
     assert(
       !freshRoleCodes.has(retiredRoleCode),

@@ -103,7 +103,9 @@ async function main() {
     "LocalUserAdmin",
     "MasterDataSteward",
     "CounterpartyCardEditor",
-    "APDocumentPoster",
+    "EntityAPController",
+    "CountryAPApprover",
+    "CountryAPPoster",
     "GLOperator",
     "GLPostingAuthority",
     "ShareholderCapitalOperator",
@@ -125,6 +127,9 @@ async function main() {
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.GLPostingAuthority, ["gl.posting"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalUserAdmin, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.CounterpartyCardEditor, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityAPController, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.CountryAPApprover, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.CountryAPPoster, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.APDocumentPoster, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.ShareholderCapitalOperator, ["org.capital_fulfillment"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalCloseReviewer, ["close.reviewer"]);
@@ -156,15 +161,33 @@ async function main() {
   assertRoleLacks(permissionCodesByRole, "CounterpartyCardEditor", "gl.journal.create");
   assertRoleLacks(permissionCodesByRole, "CounterpartyCardEditor", "gl.journal.post");
 
-  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "org.tree.read");
-  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "org.fiscal_period.read");
-  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "cari.doc.read");
-  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "cari.doc.update");
-  assertRoleHas(permissionCodesByRole, "APDocumentPoster", "cari.doc.post");
-  assertRoleLacks(permissionCodesByRole, "APDocumentPoster", "cari.doc.create");
-  assertRoleLacks(permissionCodesByRole, "APDocumentPoster", "cari.doc.reverse");
-  assertRoleLacks(permissionCodesByRole, "APDocumentPoster", "cari.card.read");
-  assertRoleLacks(permissionCodesByRole, "APDocumentPoster", "gl.journal.post");
+  assertRoleHas(permissionCodesByRole, "EntityAPController", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "EntityAPController", "org.fiscal_period.read");
+  assertRoleHas(permissionCodesByRole, "EntityAPController", "cari.doc.read");
+  assertRoleHas(permissionCodesByRole, "EntityAPController", "cari.doc.update");
+  assertRoleHas(permissionCodesByRole, "EntityAPController", "cari.doc.submit");
+  assertRoleLacks(permissionCodesByRole, "EntityAPController", "cari.doc.create");
+  assertRoleLacks(permissionCodesByRole, "EntityAPController", "cari.doc.post");
+  assertRoleLacks(permissionCodesByRole, "EntityAPController", "cari.doc.reverse");
+  assertRoleLacks(permissionCodesByRole, "EntityAPController", "cari.card.read");
+  assertRoleLacks(permissionCodesByRole, "EntityAPController", "gl.journal.post");
+
+  assertRoleHas(permissionCodesByRole, "CountryAPApprover", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "CountryAPApprover", "org.fiscal_period.read");
+  assertRoleHas(permissionCodesByRole, "CountryAPApprover", "cari.doc.read");
+  assertRoleLacks(permissionCodesByRole, "CountryAPApprover", "cari.doc.submit");
+  assertRoleLacks(permissionCodesByRole, "CountryAPApprover", "cari.doc.post");
+  assertRoleLacks(permissionCodesByRole, "CountryAPApprover", "cari.doc.reverse");
+
+  assertRoleHas(permissionCodesByRole, "CountryAPPoster", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "CountryAPPoster", "org.fiscal_period.read");
+  assertRoleHas(permissionCodesByRole, "CountryAPPoster", "cari.doc.read");
+  assertRoleHas(permissionCodesByRole, "CountryAPPoster", "cari.doc.post");
+  assertRoleHas(permissionCodesByRole, "CountryAPPoster", "cari.doc.reverse");
+  assertRoleLacks(permissionCodesByRole, "CountryAPPoster", "cari.doc.submit");
+  assertRoleLacks(permissionCodesByRole, "CountryAPPoster", "cari.doc.update");
+  assertRoleLacks(permissionCodesByRole, "CountryAPPoster", "cari.card.read");
+  assertRoleLacks(permissionCodesByRole, "CountryAPPoster", "gl.journal.post");
 
   assertRoleHas(permissionCodesByRole, "GLOperator", "gl.journal.create");
   assertRoleHas(permissionCodesByRole, "GLOperator", "gl.journal.update");
@@ -248,7 +271,7 @@ async function main() {
     `SELECT code
      FROM roles
      WHERE tenant_id = ?
-       AND code IN ('TenantAdmin', 'GroupController', 'CountryController', 'EntityAccountant')`,
+       AND code IN ('TenantAdmin', 'GroupController', 'CountryController', 'EntityAccountant', 'APDocumentPoster')`,
     [tenantId]
   );
   assert.equal(

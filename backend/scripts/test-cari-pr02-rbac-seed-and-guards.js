@@ -40,10 +40,18 @@ const CARI_ROLE_EXPECTATIONS = {
     "cari.card.read",
     "cari.card.upsert",
   ],
-  APDocumentPoster: [
+  EntityAPController: [
     "cari.doc.read",
     "cari.doc.update",
+    "cari.doc.submit",
+  ],
+  CountryAPApprover: [
+    "cari.doc.read",
+  ],
+  CountryAPPoster: [
+    "cari.doc.read",
     "cari.doc.post",
+    "cari.doc.reverse",
   ],
   BranchOperator: [
     "cari.card.read",
@@ -311,6 +319,19 @@ async function assertRolePermissionMappings(tenantId) {
       );
     }
   }
+
+  const retiredRoleResult = await query(
+    `SELECT code
+     FROM roles
+     WHERE tenant_id = ?
+       AND code = 'APDocumentPoster'
+     LIMIT 1`,
+    [tenantId]
+  );
+  assert(
+    (retiredRoleResult.rows || []).length === 0,
+    "Fresh tenant should not seed retired APDocumentPoster role"
+  );
 }
 
 async function createUsersAndAssignments({ tenantId, stamp }) {
