@@ -401,10 +401,9 @@ Expand the AP/CARI document lifecycle so the document can be submitted, returned
 - Add `SUBMITTED`, `RETURNED`, and `APPROVED` to the CARI document status enum.
 - Add a first-class `return_reason` (text) column on `cari_documents`, populated on every transition into `RETURNED`. Required on the domain return path. When a workflow-engine REJECTED decision is translated to `RETURNED`, the workflow decision comment is copied into `return_reason` (reject without a comment is itself rejected at the workflow-decision validator level). Null `return_reason` is disallowed whenever `status = 'RETURNED'`.
 - Surface `return_reason` and `returned_at` on the document GET response so the workbench can show correction context directly.
-- Add route and service actions for AP submit and return paths.
-- Decide whether AP final approval is represented by:
-  - a thin domain route that delegates to workflow decisioning, or
-  - only the generic workflow decision surface
+- Add a domain route and service action for AP **submit** (CARI business action, gated by `cari.doc.submit`).
+- AP **final approval** is exposed only through the generic workflow decision surface. No CARI-side approval route exists.
+- AP **return** is a workflow decision. If UX needs a "Return" button inside the AP workbench, it must be a thin proxy to workflow decisioning with zero separate CARI auth logic — no CARI-side return route with its own permission check.
 - Add an `is_workflow_governed` boolean column on the AP doc-class / doc-type metadata table, defaulting to false. Migration must reject any AR-direction doc class from being set to true. Seed the recommended V1 values (supplier invoice / credit note / AP accrual = true; petty cash and AR classes = false); final tenant-specific values are set at rollout time.
 - Add a shared helper `isDocClassWorkflowGoverned(docClass)` (or equivalent) in a module imported by both the CARI service and the governed-AP applicability checks; PR-3 will import the same helper. Do not duplicate the predicate.
 - Use the helper as the single governed-AP applicability rule everywhere: it gates submit / return / approve behavior on the shared `cari_documents.status` enum so AR and non-governed AP classes never reach SUBMITTED/RETURNED/APPROVED.
