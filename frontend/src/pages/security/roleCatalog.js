@@ -218,6 +218,7 @@ export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
     roleCodes: Object.freeze([
       "LocalUserAdmin",
       "MasterDataSteward",
+      "CounterpartyCardEditor",
       "EntityAPController",
       "GLOperator",
       "TreasuryOperator",

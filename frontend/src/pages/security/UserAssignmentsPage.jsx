@@ -40,14 +40,14 @@ const EFFECT_OPTIONS = ["ALLOW", "DENY"];
 const USER_STATUS_FILTERS = ["ALL", "ACTIVE", "INVITED", "DISABLED"];
 const ASSIGNMENT_STATUS_FILTERS = ["ALL", "ACTIVE", "UPCOMING", "EXPIRED", "CUSTOM"];
 const ACCESS_MATRIX_ACTIONS = [
-  { key: "view", label: "View" },
-  { key: "create", label: "Create" },
-  { key: "edit", label: "Edit" },
-  { key: "post", label: "Post" },
-  { key: "approve", label: "Approve" },
-  { key: "reverse", label: "Reverse" },
-  { key: "export", label: "Export" },
-  { key: "assign", label: "Assign" },
+  { key: "view", label: "View", shortLabel: "V" },
+  { key: "create", label: "Create", shortLabel: "C" },
+  { key: "edit", label: "Edit", shortLabel: "E" },
+  { key: "post", label: "Post", shortLabel: "P" },
+  { key: "approve", label: "Approve", shortLabel: "Ap" },
+  { key: "reverse", label: "Reverse", shortLabel: "Rv" },
+  { key: "export", label: "Export", shortLabel: "Ex" },
+  { key: "assign", label: "Assign", shortLabel: "As" },
 ];
 const ACCESS_MATRIX_GROUPS = Object.freeze([
   Object.freeze({
@@ -583,7 +583,7 @@ function StatusPill({ label, tone = "slate", className = "" }) {
 function MatrixCell({ enabled }) {
   return (
     <span
-      className={`mx-auto inline-flex h-6 w-6 items-center justify-center rounded-md border text-[11px] font-bold ${
+      className={`mx-auto inline-flex h-5 w-5 items-center justify-center rounded-md border text-[10px] font-bold ${
         enabled
           ? "border-slate-900 bg-slate-900 text-white"
           : "border-slate-200 bg-white text-slate-300"
@@ -595,20 +595,31 @@ function MatrixCell({ enabled }) {
 }
 function AccessMatrix({ matrixGroups, l }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {matrixGroups.map((group) => (
-        <div key={group.key} className="overflow-hidden rounded-2xl border border-slate-200">
-          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900">
+        <div key={group.key} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700">
             {group.title}
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200">
+            <table className="min-w-[34rem] table-fixed divide-y divide-slate-200">
+              <colgroup>
+                <col className="w-[11rem]" />
+                {ACCESS_MATRIX_ACTIONS.map((action) => (
+                  <col key={`${group.key}-${action.key}-col`} className="w-10" />
+                ))}
+              </colgroup>
               <thead className="bg-white">
-                <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                  <th className="px-4 py-3">{l("Module", "Modul")}</th>
+                <tr className="text-left text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                  <th className="px-3 py-2.5">{l("Module", "Modul")}</th>
                   {ACCESS_MATRIX_ACTIONS.map((action) => (
-                    <th key={`${group.key}-${action.key}`} className="px-2 py-3 text-center">
-                      {action.label}
+                    <th
+                      key={`${group.key}-${action.key}`}
+                      title={action.label}
+                      className="px-1 py-2.5 text-center"
+                    >
+                      <span aria-hidden="true">{action.shortLabel || action.label}</span>
+                      <span className="sr-only">{action.label}</span>
                     </th>
                   ))}
                 </tr>
@@ -616,9 +627,13 @@ function AccessMatrix({ matrixGroups, l }) {
               <tbody className="divide-y divide-slate-100 bg-white">
                 {group.rows.map((row) => (
                   <tr key={row.key}>
-                    <td className="px-4 py-3 text-sm font-medium text-slate-900">{row.module}</td>
+                    <td className="px-3 py-2.5 text-xs font-medium text-slate-900">
+                      <div className="truncate" title={row.module}>
+                        {row.module}
+                      </div>
+                    </td>
                     {ACCESS_MATRIX_ACTIONS.map((action) => (
-                      <td key={`${row.key}-${action.key}`} className="px-2 py-3 text-center">
+                      <td key={`${row.key}-${action.key}`} className="px-1 py-2 text-center">
                         <MatrixCell enabled={Boolean(row.enabledActions?.[action.key])} />
                       </td>
                     ))}
@@ -769,36 +784,46 @@ function UserAccessModal({
   }
   const isInvite = mode === "invite";
   const isPresetSelected = Boolean(normalizeText(form.presetCode));
+  const sectionClassName =
+    "space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4";
+  const fieldClassName =
+    "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm shadow-slate-950/5 focus:border-slate-400 focus:outline-none disabled:bg-slate-100 disabled:text-slate-500";
+  const readOnlyFieldClassName =
+    "rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700";
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/45 px-4 py-8">
-      <div className="w-full max-w-6xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
-        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              {l("User editor", "Kullanici editoru")}
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/45 px-4 py-4 backdrop-blur-sm sm:px-6 sm:py-6">
+      <div className="flex min-h-full items-start justify-center">
+        <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl sm:max-h-[calc(100vh-3rem)]">
+          <div className="shrink-0 flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                {l("User editor", "Kullanici editoru")}
+              </div>
+              <h2 className="mt-2 text-2xl font-semibold text-slate-950">
+                {isInvite
+                  ? l("Invite user", "Kullanici davet et")
+                  : l("Edit user access", "Kullanici erisimini duzenle")}
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                {l(
+                  "Use a template-first editor for real user admin work: general info at the top, scoped assignment in the middle, and a permission matrix preview before save.",
+                  "Gercek kullanici yonetimi icin template-oncelikli bir editor kullanin: ustte genel bilgi, ortada kapsamli atama ve kaydetmeden once izin matrisi onizlemesi."
+                )}
+              </p>
             </div>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-950">
-              {isInvite ? l("Invite user", "Kullanici davet et") : l("Edit user access", "Kullanici erisimini duzenle")}
-            </h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              {l(
-                "Use a template-first editor for real user admin work: general info at the top, scoped assignment in the middle, and a permission matrix preview before save.",
-                "Gercek kullanici yonetimi icin template-oncelikli bir editor kullanin: ustte genel bilgi, ortada kapsamli atama ve kaydetmeden once izin matrisi onizlemesi."
-              )}
-            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+            >
+              {l("Close", "Kapat")}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-          >
-            {l("Close", "Kapat")}
-          </button>
-        </div>
-        <form onSubmit={onSubmit}>
-          <div className="grid gap-0 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-            <div className="space-y-6 border-b border-slate-200 px-6 py-6 xl:border-b-0 xl:border-r">
-              <section className="space-y-4">
+          <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="grid gap-0 xl:min-h-full xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+                <div className="space-y-5 border-b border-slate-200 px-5 py-5 xl:border-b-0 xl:border-r xl:px-6 xl:py-6">
+              <section className={sectionClassName}>
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">{l("General Info", "Genel Bilgi")}</h3>
                   <p className="mt-1 text-sm text-slate-600">
@@ -816,7 +841,7 @@ function UserAccessModal({
                       value={form.name}
                       onChange={(event) => onChange("name", event.target.value)}
                       disabled={!isInvite}
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                      className={fieldClassName}
                     />
                   </div>
                   <div className="space-y-2">
@@ -826,12 +851,12 @@ function UserAccessModal({
                       value={form.email}
                       onChange={(event) => onChange("email", event.target.value)}
                       disabled={!isInvite}
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                      className={fieldClassName}
                     />
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-700">{l("Status", "Durum")}</label>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                    <div className={readOnlyFieldClassName}>
                       {isInvite
                         ? l("Pending invite", "Bekleyen davet")
                         : getUserStatusMeta(form.status).label}
@@ -839,7 +864,7 @@ function UserAccessModal({
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-700">{l("Directory mode", "Dizin modu")}</label>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                    <div className={readOnlyFieldClassName}>
                       {isInvite
                         ? l("Invite and assign", "Davet et ve ata")
                         : l("Review existing user and add access", "Mevcut kullaniciyi incele ve erisim ekle")}
@@ -855,7 +880,7 @@ function UserAccessModal({
                   </div>
                 ) : null}
               </section>
-              <section className="space-y-4">
+              <section className={sectionClassName}>
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">{l("Role & Access", "Rol ve Erisim")}</h3>
                   <p className="mt-1 text-sm text-slate-600">
@@ -871,7 +896,7 @@ function UserAccessModal({
                     <select
                       value={form.presetCode}
                       onChange={(event) => onChange("presetCode", event.target.value)}
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                      className={fieldClassName}
                     >
                       <option value="">{l("Invite without immediate assignment", "Anlik atama olmadan davet et")}</option>
                       {Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG).map((presetCode) => (
@@ -887,7 +912,7 @@ function UserAccessModal({
                       value={form.scopeId}
                       onChange={(event) => onChange("scopeId", event.target.value)}
                       disabled={!isPresetSelected}
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                      className={fieldClassName}
                     >
                       {modalScopeOptions.length === 0 ? (
                         <option value="">{l("No scope available", "Kapsam yok")}</option>
@@ -905,7 +930,7 @@ function UserAccessModal({
                       type="date"
                       value={form.effectiveFrom}
                       onChange={(event) => onChange("effectiveFrom", event.target.value)}
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                      className={fieldClassName}
                     />
                   </div>
                   <div className="space-y-2">
@@ -914,7 +939,7 @@ function UserAccessModal({
                       type="date"
                       value={form.effectiveTo}
                       onChange={(event) => onChange("effectiveTo", event.target.value)}
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                      className={fieldClassName}
                     />
                   </div>
                 </div>
@@ -949,8 +974,8 @@ function UserAccessModal({
                 ) : null}
               </section>
             </div>
-            <div className="space-y-6 px-6 py-6">
-              <section className="space-y-4">
+            <div className="space-y-5 bg-slate-50/40 px-5 py-5 xl:px-6 xl:py-6">
+              <section className={sectionClassName}>
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">{l("Permission matrix", "Izin matrisi")}</h3>
                   <p className="mt-1 text-sm text-slate-600">
@@ -971,7 +996,7 @@ function UserAccessModal({
                   </div>
                 )}
               </section>
-              <section className="space-y-4">
+              <section className={sectionClassName}>
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">{l("Navigation preview", "Navigasyon onizlemesi")}</h3>
                   <p className="mt-1 text-sm text-slate-600">
@@ -1003,7 +1028,7 @@ function UserAccessModal({
                   </div>
                 </div>
               </section>
-              <section className="space-y-4">
+              <section className={sectionClassName}>
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">{l("Current access snapshot", "Mevcut erisim ozeti")}</h3>
                   <p className="mt-1 text-sm text-slate-600">
@@ -1074,6 +1099,7 @@ function UserAccessModal({
               ) : null}
             </div>
           </div>
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-4">
             <div className="text-sm text-slate-500">
               {l(
@@ -1103,6 +1129,7 @@ function UserAccessModal({
             </div>
           </div>
         </form>
+      </div>
       </div>
     </div>
   );

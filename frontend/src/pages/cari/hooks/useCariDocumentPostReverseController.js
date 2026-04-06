@@ -35,9 +35,6 @@ import {
   toPositiveDecimal,
   toPositiveInt,
 } from "../cariDocumentsPageHelpers.js";
-import {
-  FEATURE_AP_DOCUMENT_WORKFLOW_V1,
-} from "../../../../../shared/cariDocumentWorkflowGovernance.js";
 
 function addPostFormPostingLine(setPostForm) {
   setPostForm((previous) => {
@@ -106,7 +103,7 @@ export default function useCariDocumentPostReverseController({
   onSummaryStateChange,
   l = (en) => en,
 }) {
-  const { hasFeature, hasPermission } = useAuth();
+  const { hasPermission } = useAuth();
   const { getModuleRow } = useModuleReadiness();
 
   const canCreate = hasPermission("cari.doc.create");
@@ -117,7 +114,6 @@ export default function useCariDocumentPostReverseController({
   const canFxOverride = hasPermission("cari.fx.override");
   const canReadReports = hasPermission("cari.report.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
-  const workflowFeatureEnabled = hasFeature(FEATURE_AP_DOCUMENT_WORKFLOW_V1);
 
   const [postForm, setPostForm] = useState(() => buildInitialPostForm());
   const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
@@ -188,7 +184,6 @@ export default function useCariDocumentPostReverseController({
       selectedDocumentWorkflowGoverned &&
       canSubmitDocument(selectedSnapshot) &&
       canSubmit &&
-      workflowFeatureEnabled &&
       Boolean(selectedWorkflowGate?.assignmentResolved)
   );
   const canPostSelected = Boolean(
@@ -196,14 +191,12 @@ export default function useCariDocumentPostReverseController({
       canPost &&
       !cariPostingNotReady &&
       (
-        !workflowFeatureEnabled ||
         selectedDocumentDirection !== "AP" ||
-        !selectedDocumentWorkflowGoverned
+        !selectedDocumentWorkflowGoverned ||
+        !selectedWorkflowGate?.assignmentResolved
           ? isDraft(selectedSnapshot)
-          : selectedWorkflowGate?.assignmentResolved
-            ? selectedWorkflowGateState === "APPROVED" &&
-              String(selectedSnapshot?.status || "").trim().toUpperCase() === "APPROVED"
-            : Boolean(selectedWorkflowGate?.compatModeLegacyPost) && isDraft(selectedSnapshot)
+          : selectedWorkflowGateState === "APPROVED" &&
+            String(selectedSnapshot?.status || "").trim().toUpperCase() === "APPROVED"
       )
   );
   const canReverseSelected = Boolean(
@@ -640,15 +633,6 @@ export default function useCariDocumentPostReverseController({
   }, []);
 
   const handleSubmitDocument = useCallback(async () => {
-    if (!workflowFeatureEnabled) {
-      setSubmitError(
-        l(
-          "AP document workflow submit is disabled for this tenant.",
-          "AP belge workflow gonderimi bu tenant icin kapali."
-        )
-      );
-      return;
-    }
     if (!selectedDocumentId || !canSubmitSelected) {
       setSubmitError(
         l(
@@ -702,7 +686,6 @@ export default function useCariDocumentPostReverseController({
     selectedDocumentId,
     selectedDocumentReturned,
     translateDocumentMutationError,
-    workflowFeatureEnabled,
   ]);
 
   const handlePostDraft = useCallback(async () => {
@@ -720,7 +703,6 @@ export default function useCariDocumentPostReverseController({
     if (!selectedDocumentId || !canPostSelected) {
       const workflowGateMessage = normalizeText(selectedWorkflowGate?.message);
       if (
-        workflowFeatureEnabled &&
         selectedDocumentDirection === "AP" &&
         selectedDocumentWorkflowGoverned &&
         workflowGateMessage
@@ -746,7 +728,6 @@ export default function useCariDocumentPostReverseController({
       return;
     }
     if (
-      workflowFeatureEnabled &&
       selectedDocumentDirection === "AP" &&
       selectedDocumentWorkflowGoverned &&
       selectedWorkflowGate?.assignmentResolved &&
@@ -933,7 +914,6 @@ export default function useCariDocumentPostReverseController({
     selectedWorkflowGate,
     selectedWorkflowGateState,
     translateDocumentMutationError,
-    workflowFeatureEnabled,
   ]);
 
   const handleReversePosted = useCallback(async () => {

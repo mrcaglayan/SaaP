@@ -43,6 +43,7 @@ const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
     roleCodes: Object.freeze([
       "LocalUserAdmin",
       "MasterDataSteward",
+      "CounterpartyCardEditor",
       "EntityAPController",
       "GLOperator",
       "TreasuryOperator",

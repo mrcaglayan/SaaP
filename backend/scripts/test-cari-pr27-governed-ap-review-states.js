@@ -14,7 +14,6 @@ import {
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
-  FEATURE_AP_DOCUMENT_WORKFLOW_V1,
 } from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function assert(condition, message) {
@@ -354,22 +353,6 @@ async function createOrgFixtures({ tenantId, stamp }) {
   };
 }
 
-async function setTenantFeature({ tenantId, userId, featureCode, enabled }) {
-  await query(
-    `INSERT INTO tenant_features (
-        tenant_id,
-        feature_code,
-        is_enabled,
-        updated_by_user_id
-     )
-     VALUES (?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       is_enabled = VALUES(is_enabled),
-       updated_by_user_id = VALUES(updated_by_user_id)`,
-    [tenantId, featureCode, enabled ? 1 : 0, userId]
-  );
-}
-
 async function createGovernedApWorkflowAssignment({
   tenantId,
   userId,
@@ -683,7 +666,7 @@ async function main() {
     suffix: "base",
   });
 
-  const featureOffDraft = await createDraftDocument({
+  const noAssignmentDraft = await createDraftDocument({
     req,
     tenantId,
     userId,
@@ -697,60 +680,6 @@ async function main() {
     currencyCode: fixtures.currencyCode,
     amountTxn: 250,
   });
-  const featureOffError = await expectThrows(
-    () =>
-      submitCariDocumentById({
-        req,
-        payload: {
-          tenantId,
-          userId,
-          documentId: featureOffDraft.id,
-        },
-        assertScopeAccess: allowAllScopes,
-      }),
-    "AP document workflow submit is disabled for this tenant",
-    409
-  );
-  assert(
-    String(featureOffError.code || "") === "AP_WORKFLOW_FEATURE_DISABLED",
-    "Feature-off submit should use AP_WORKFLOW_FEATURE_DISABLED code"
-  );
-  const featureOffReadback = await getCariDocumentByIdForTenant({
-    req,
-    tenantId,
-    documentId: featureOffDraft.id,
-    assertScopeAccess: allowAllScopes,
-  });
-  assert(
-    featureOffReadback.status === "DRAFT",
-    "Feature-off submit attempt must keep document in DRAFT"
-  );
-  assert(
-    featureOffReadback.isWorkflowGoverned === true,
-    "AP invoice should resolve as workflow-governed from shared defaults"
-  );
-
-  await setTenantFeature({
-    tenantId,
-    userId,
-    featureCode: FEATURE_AP_DOCUMENT_WORKFLOW_V1,
-    enabled: true,
-  });
-
-  const governedNoAssignmentDraft = await createDraftDocument({
-    req,
-    tenantId,
-    userId,
-    legalEntityId: fixtures.legalEntityId,
-    counterpartyId: fixtures.vendorId,
-    paymentTermId: fixtures.paymentTermId,
-    direction: "AP",
-    documentType: "INVOICE",
-    documentDate: "2026-02-11",
-    dueDate: "2026-03-13",
-    currencyCode: fixtures.currencyCode,
-    amountTxn: 260,
-  });
   const noAssignmentError = await expectThrows(
     () =>
       submitCariDocumentById({
@@ -758,7 +687,7 @@ async function main() {
         payload: {
           tenantId,
           userId,
-          documentId: governedNoAssignmentDraft.id,
+          documentId: noAssignmentDraft.id,
         },
         assertScopeAccess: allowAllScopes,
       }),
@@ -766,8 +695,27 @@ async function main() {
     409
   );
   assert(
-    noAssignmentError.details?.compatModeEnabled === true,
-    "Feature-on submit without compat override row should default compatModeEnabled=true"
+    String(noAssignmentError.code || "") === "NO_WORKFLOW_ASSIGNMENT_CONFIGURED",
+    "Governed AP submit without a resolved assignment should use NO_WORKFLOW_ASSIGNMENT_CONFIGURED"
+  );
+  const noAssignmentReadback = await getCariDocumentByIdForTenant({
+    req,
+    tenantId,
+    documentId: noAssignmentDraft.id,
+    assertScopeAccess: allowAllScopes,
+  });
+  assert(
+    noAssignmentReadback.status === "DRAFT",
+    "Governed AP submit attempt without assignment must keep document in DRAFT"
+  );
+  assert(
+    noAssignmentReadback.isWorkflowGoverned === true,
+    "AP invoice should resolve as workflow-governed from shared defaults"
+  );
+  assert(
+    noAssignmentReadback.workflowGate?.state === "none" &&
+      noAssignmentReadback.workflowGate?.assignmentResolved === false,
+    "Governed AP readback without assignment should expose a none-state workflow gate without assignment resolution"
   );
 
   const governedApWorkflow = await createGovernedApWorkflowAssignment({
@@ -1217,8 +1165,7 @@ async function main() {
       {
         tenantId,
         checkedSubmitDocumentIds: [
-          featureOffDraft.id,
-          governedNoAssignmentDraft.id,
+          noAssignmentDraft.id,
           governedSubmitDraft.id,
           nonGovernedApDraft.id,
           arDraft.id,

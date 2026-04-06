@@ -656,10 +656,6 @@ export const sidebarItems = [
     matchPrefix: "/app/ayarlar",
     items: [
       {
-        label: "Kullanici Yonetimi",
-        to: "/app/ayarlar/kullanici-yonetimi",
-      },
-      {
         label: "Delegasyonlarim",
         to: "/app/ayarlar/delegasyonlarim",
         implemented: true,

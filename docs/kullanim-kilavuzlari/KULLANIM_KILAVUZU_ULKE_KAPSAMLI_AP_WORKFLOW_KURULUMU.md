@@ -195,9 +195,9 @@ Asagidaki kararlar netlesmis olmali:
 5. Hangi kullanicilar `EntityAPController`, `CountryAPApprover`, `CountryAPPoster` olacak?
 
 Fresh kurulum notu:
-1. Varsayilan AP workflow template'i gelebilir.
-2. Ancak sistem sizin yerinize assignment olusturmaz.
-3. Assignment varligi bilerek acik ve net tanimlanmalidir.
+1. AP workflow definition'i fresh tenant'a otomatik seed edilmez.
+2. Definition ve assignment bilerek acik ve net sekilde kurulmalidir.
+3. Sistem sizin yerinize assignment olusturmaz.
 
 ---
 
@@ -302,24 +302,22 @@ Kritik ayrim:
 1. `CountryAPApprover` belgeyi approve edebilir ama tek basina post etmek zorunda degildir.
 2. `CountryAPPoster` post eder ama approve yetkisi workflow step atamasindan gelmiyorsa review yapamaz.
 
-### 9.6 Rollout Modunu Dogru Sirada Acin
+### 9.6 Assignment Rollout'unu Dogru Sirada Yurutun
 
-Operasyonel olarak iki switch mantigi vardir:
-1. `FEATURE_AP_DOCUMENT_WORKFLOW_V1`
-2. `ap_workflow_compat_mode`
+Operasyonel olarak tenant-level switch yoktur. Governance iki seyle belirlenir:
+1. `is_workflow_governed`: hangi AP belge sinifinin workflow'a girebilecegi
+2. Workflow assignment: hangi scope'ta governance'in aktif oldugu
 
 Teknik detaya girmeden operasyon yorumu:
-1. Ilk acilista AP workflow ozelligi aktif edilir.
-2. Pilot surecte compat mode acik kalir.
-3. Bu sayede assignment olmayan governed alanlarda eski direct-post fallback korunur.
-4. Tanimlar tamamlanip kapsama alinan alanlar netlestiginde compat mode kapatilip strict moda gecilir.
+1. Governed belge sinifi + assignment varsa belge submit -> review -> approve/post yoluna girer.
+2. Governed belge sinifi + assignment yoksa o scope direct-post yolunda kalir.
+3. Rollout assignment ekleyerek scope bazinda genisletilir.
 
 Tavsiye edilen siralama:
-1. Ozelligi ac
-2. Compat mode acik kalsin
-3. Pilot ulke/legal entity assignment'lerini ekle
-4. UAT yap
-5. Tum governed kapsamlar assignment ile kaplaninca compat mode'u kapat
+1. Pilot ulke veya legal entity assignment'ini ekle
+2. UAT yap
+3. Gerekirse `LEGAL_ENTITY` override'larini ekle
+4. Kalan governed scope'lara rollout'u yeni assignment ekleyerek genislet
 
 ### 9.7 Cari Belgeler Ekraninda Sonucu Kontrol Edin
 
@@ -429,9 +427,9 @@ Durum:
 2. Ama belge kapsami icin assignment yoktur.
 
 Operasyonel sonuc:
-1. Pilotta compat mode aciksa kullanici direct-post fallback gorebilir.
-2. Strict modda posting bloke olur.
-3. Cozum, rol degistirmek degil dogru assignment'i eklemektir.
+1. Belge workflow submit yoluna girmez.
+2. Kullanici direct-post path gorebilir.
+3. Governed akis o scope'ta isteniyorsa cozum rol degistirmek degil dogru assignment'i eklemektir.
 
 ---
 
@@ -476,8 +474,8 @@ Neden:
 2. Hata: `BranchOperator` rolune submit'i varsayilan vermek
 - Dogrusu: Submit sadece bilincli tenant karari ile verilir.
 
-3. Hata: Country assignment olmadan strict moda gecmek
-- Dogrusu: Tum governed kapsamlar assignment ile kaplandiktan sonra strict moda gecin.
+3. Hata: Governed yapmak istediginiz scope icin assignment tanimlamayi ertelemek
+- Dogrusu: Assignment governance rollout'unun anahtari oldugu icin hangi scope workflow ile yonetilecekse assignment'i oraya ekleyin.
 
 4. Hata: Country rolunu verip legal entity duzeltme sorumlulugunu unutmak
 - Dogrusu: `EntityAPController` ve country rolleri birlikte tasarlanmalidir.
@@ -500,16 +498,17 @@ Neden:
 6. `EntityAPController` rol atamalari tamam.
 7. `CountryAPApprover` rol atamalari tamam.
 8. `CountryAPPoster` rol atamalari tamam.
-9. Pilotta compat mode acik.
-10. `RETURNED` belge duzeltme ve yeniden submit akisi test edildi.
-11. `APPROVED` belgenin yalniz postere acildigi kontrol edildi.
-12. Ayni ulkedeki birden fazla legal entity belgesi country kullanicisi tarafindan gorulebildi.
+9. Pilot kapsam assignment ile aktif edildi.
+10. Assignment olmayan governed scope'larin bilincli olarak direct-postta kaldigi teyit edildi.
+11. `RETURNED` belge duzeltme ve yeniden submit akisi test edildi.
+12. `APPROVED` belgenin yalniz postere acildigi kontrol edildi.
+13. Ayni ulkedeki birden fazla legal entity belgesi country kullanicisi tarafindan gorulebildi.
 
 ---
 
 ## 15) Hangi Durumda Sistem Islemi Bloklar?
 
-1. Workflow gerekli oldugu halde active assignment yoksa
+1. Governed AP belge workflow submit yoluna sokulmaya calisiliyor ama active assignment yoksa
 2. Workflow gate henuz `APPROVED` degilse
 3. Belge `RETURNED` durumda ama duzeltme yapilmadan tekrar gonderilmeye calisiliyorsa
 4. Final post yetkisi olmayan kullanici `POSTED` asamasina gecmeye calisiyorsa

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closePool, query } from "../src/db.js";
@@ -7,7 +7,6 @@ import {
   ensureDefaultApWorkflowDefinition,
   evaluateApWorkflowLegalEntityCoverage,
   getApWorkflowRolloutState,
-  setApWorkflowRolloutPhase,
   DEFAULT_AP_WORKFLOW_DEFINITION_CODE,
 } from "../src/services/ap.document.workflow.rollout.service.js";
 
@@ -22,27 +21,13 @@ function toPositiveInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
-async function expectThrows(work, { includes, status } = {}) {
+async function pathExists(targetPath) {
   try {
-    await work();
-  } catch (error) {
-    if (includes) {
-      assert(
-        String(error?.message || "").includes(includes),
-        `Expected error message to include "${includes}" but got "${String(
-          error?.message || ""
-        )}"`
-      );
-    }
-    if (status !== undefined) {
-      assert(
-        Number(error?.status || 0) === Number(status),
-        `Expected status ${status} but got ${String(error?.status || "")}`
-      );
-    }
-    return error;
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
   }
-  throw new Error("Expected failure but the operation succeeded");
 }
 
 async function createTenant({ code, name }) {
@@ -332,42 +317,16 @@ async function main() {
     effectiveOn,
   });
   assert(
-    initialState.featureEnabled === false &&
-      initialState.compatModeEnabled === false &&
+    initialState.defaultDefinition.definitionId === seededDefinition.definitionId &&
+      !Object.hasOwn(initialState, "featureEnabled") &&
+      !Object.hasOwn(initialState, "compatModeEnabled") &&
+      initialState.coverage.coveredCount === 0 &&
       initialState.coverage.uncoveredCount === 3,
-    "Fresh tenant rollout state should start disabled with all legal entities uncovered"
-  );
-
-  const pilotState = await setApWorkflowRolloutPhase({
-    tenantId,
-    updatedByUserId: userId,
-    phase: "PILOT",
-    effectiveOn,
-    note: "pilot wave",
-  });
-  assert(
-    pilotState.after.featureEnabled === true &&
-      pilotState.after.compatModeEnabled === true &&
-      (await countAssignments(tenantId, "AP_DOCUMENT_POSTING")) === 0,
-    "Pilot phase should enable AP workflow + compat without auto-creating assignments"
+    "Fresh tenant coverage state should expose the seeded definition and show all legal entities uncovered without tenant feature flags"
   );
   assert(
     (await countAssignments(tenantId, "PERIOD_CLOSE")) === 1,
-    "AP rollout phases must not disturb existing PERIOD_CLOSE assignments"
-  );
-
-  await expectThrows(
-    () =>
-      setApWorkflowRolloutPhase({
-        tenantId,
-        updatedByUserId: userId,
-        phase: "STRICT",
-        effectiveOn,
-      }),
-    {
-      includes: "Cannot disable AP workflow compat mode",
-      status: 409,
-    }
+    "AP setup helpers must not disturb existing PERIOD_CLOSE assignments"
   );
 
   await query(
@@ -416,37 +375,20 @@ async function main() {
       coverageByCode[deEntity.code]?.resolvedScopeType === "LEGAL_ENTITY",
     "Coverage evaluation should respect country fallback and legal-entity override"
   );
-
-  const strictState = await setApWorkflowRolloutPhase({
+  const configuredState = await getApWorkflowRolloutState({
     tenantId,
-    updatedByUserId: userId,
-    phase: "STRICT",
     effectiveOn,
-    note: "strict enforcement",
   });
   assert(
-    strictState.after.featureEnabled === true &&
-      strictState.after.compatModeEnabled === false &&
-      strictState.after.coverage.uncoveredCount === 0,
-    "Strict phase should disable compat only after full legal-entity coverage exists"
-  );
-
-  const rollbackState = await setApWorkflowRolloutPhase({
-    tenantId,
-    updatedByUserId: userId,
-    phase: "ROLLBACK",
-    effectiveOn,
-    note: "rollback",
-  });
-  assert(
-    rollbackState.after.featureEnabled === false &&
-      rollbackState.after.compatModeEnabled === true &&
+    configuredState.coverage.coveredCount === 3 &&
+      configuredState.coverage.uncoveredCount === 0 &&
+      configuredState.defaultDefinition.definitionId === seededDefinition.definitionId &&
       (await countAssignments(tenantId, "AP_DOCUMENT_POSTING")) === 2,
-    "Rollback should disable governed AP workflow without deleting explicit AP assignments"
+    "Coverage state should reflect the explicit AP assignments without any phase toggles"
   );
   assert(
     (await countAssignments(tenantId, "PERIOD_CLOSE")) === 1,
-    "Rollback should not disturb non-AP workflow governance"
+    "Explicit AP assignment rollout should not disturb non-AP workflow governance"
   );
 
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -459,14 +401,14 @@ async function main() {
     path.resolve(root, "backend/src/seedStarter.js"),
     "utf8"
   );
-  const rolloutScriptSource = await readFile(
-    path.resolve(root, "backend/scripts/ap-document-workflow-rollout-pr6.js"),
+  const rolloutServiceSource = await readFile(
+    path.resolve(root, "backend/src/services/ap.document.workflow.rollout.service.js"),
     "utf8"
   );
-  const trackerSource = await readFile(
+  const roadmapSource = await readFile(
     path.resolve(
       root,
-      "PR-STEPS/57-COUNTRY-SCOPED-AP-WORKFLOW-ROLLOUT-UAT.md"
+      "PR-STEPS/57-COUNTRY-SCOPED-WORKFLOW-ASSIGNMENTS-AND-AP-DOCUMENT-APPROVAL-ROADMAP.md"
     ),
     "utf8"
   );
@@ -474,41 +416,45 @@ async function main() {
     path.resolve(root, "backend/package.json"),
     "utf8"
   );
+  const rolloutCliPath = path.resolve(root, "backend/scripts/ap-document-workflow-rollout-pr6.js");
 
   assert(
-    providerSource.includes("ensureDefaultApWorkflowDefinition") &&
-      seedSource.includes("ensureDefaultApWorkflowDefinition") &&
-      starterSource.includes("ensureDefaultApWorkflowDefinition"),
-    "Fresh-tenant bootstrap seams should seed the default AP workflow definition"
+    !providerSource.includes("ensureDefaultApWorkflowDefinition") &&
+      !seedSource.includes("ensureDefaultApWorkflowDefinition") &&
+      !starterSource.includes("ensureDefaultApWorkflowDefinition"),
+    "Fresh-tenant bootstrap seams should not auto-seed the AP workflow definition"
   );
   assert(
-    rolloutScriptSource.includes("PILOT") &&
-      rolloutScriptSource.includes("STRICT") &&
-      rolloutScriptSource.includes("ROLLBACK") &&
-      rolloutScriptSource.includes("Dry-run only"),
-    "PR-6 rollout CLI should expose pilot/strict/rollback phases and dry-run guidance"
+    rolloutServiceSource.includes("ensureDefaultApWorkflowDefinition") &&
+      rolloutServiceSource.includes("evaluateApWorkflowLegalEntityCoverage") &&
+      !rolloutServiceSource.includes("setApWorkflowRolloutPhase") &&
+      !rolloutServiceSource.includes("AP_WORKFLOW_ROLLOUT_PHASES"),
+    "AP workflow setup service should keep definition/coverage helpers and drop phase-based rollout APIs"
   );
-  const requiredTrackerTokens = [
-    "Pilot rollout + rollback runbook",
-    "Pilot wave plan",
-    "Rollback path",
-    "go/no-go criteria",
-    "evidence",
-    "Rollout Checklist (Operational)",
+  assert(
+    !(await pathExists(rolloutCliPath)),
+    "Legacy AP rollout CLI should be removed in the pure ERP model"
+  );
+  const requiredRoadmapTokens = [
+    "pure ERP governance model",
+    "assignment presence IS the rollout switch",
+    "default-definition seeding and coverage helpers",
+    "remove the phase-based rollout CLI script",
+    "remove both flag constants from the shared module and features catalog",
   ];
-  for (const token of requiredTrackerTokens) {
+  for (const token of requiredRoadmapTokens) {
     assert(
-      trackerSource.toLowerCase().includes(token.toLowerCase()),
-      `PR-6 rollout tracker is missing token: ${token}`
+      roadmapSource.toLowerCase().includes(token.toLowerCase()),
+      `PR-6 roadmap is missing token: ${token}`
     );
   }
   assert(
-    packageSource.includes("\"rollout:ap-workflow:pr6\"") &&
+    !packageSource.includes("\"rollout:ap-workflow:pr6\"") &&
       packageSource.includes("\"test:followup:pr6-rollout\""),
-    "backend/package.json should expose the PR-6 rollout CLI and smoke alias"
+    "backend/package.json should drop the deleted rollout CLI while keeping the PR-6 smoke alias"
   );
 
-  console.log("CARI PR-29 AP workflow rollout + UAT smoke passed.");
+  console.log("CARI PR-29 AP workflow setup + coverage smoke passed.");
 }
 
 main()

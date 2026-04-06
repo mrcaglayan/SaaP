@@ -55,7 +55,6 @@
     "reconcile:cash-fx:lots-vs-gl": "node scripts/cash-fx-reconcile-lots-vs-gl.js",
     "reconcile:cari:mcs01": "node scripts/reconcile-cari-settlement-dual-currency.js",
     "rollout:cash-fx:exf05": "node scripts/cash-fx-rollout-exf05.js",
-    "rollout:ap-workflow:pr6": "node scripts/ap-document-workflow-rollout-pr6.js",
     "test:cari:ex04": "node scripts/test-cari-ex04-settlement-foreign-cash-usage.js && node scripts/test-cari-ex04-settlement-fx-persistence.js",
     "test:cari:ap-fx-vendor-example": "node scripts/test-cari-ap-fx-vendor-afn-example.js",
     "test:cari:ex04-frontend": "node scripts/test-cari-ex04-frontend-settlement-currency-flow.js",

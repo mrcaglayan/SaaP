@@ -1,21 +1,9 @@
-function normalizeFeatureCode(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase();
-}
-
 function normalizeUpperText(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
 }
 
-export const FEATURE_AP_DOCUMENT_WORKFLOW_V1 = normalizeFeatureCode(
-  "feature_ap_document_workflow_v1"
-);
-export const AP_WORKFLOW_COMPAT_MODE = normalizeFeatureCode(
-  "ap_workflow_compat_mode"
-);
 export const AP_DOCUMENT_WORKFLOW_PROCESS_TYPE = "AP_DOCUMENT_POSTING";
 export const CARI_DOCUMENT_WORKFLOW_TARGET_TYPE = "CARI_DOCUMENT";
 export const CARI_DOCUMENT_WORKFLOW_GATE_STATES = Object.freeze([

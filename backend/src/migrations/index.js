@@ -163,6 +163,7 @@ import migration173WorkflowCountryScopeFoundation from "./m173_workflow_country_
 import migration174CariApWorkflowReviewStates from "./m174_cari_ap_workflow_review_states.js";
 import migration175CariApWorkflowReviewStateCompatGuards from "./m175_cari_ap_workflow_review_state_compat_guards.js";
 import migration176ApDocumentWorkflowIntegrationFoundation from "./m176_ap_document_workflow_integration_foundation.js";
+import migration177CariReviewStateLegacyCheckCleanup from "./m177_cari_review_state_legacy_check_cleanup.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -330,6 +331,7 @@ const migrations = [
   migration174CariApWorkflowReviewStates,
   migration175CariApWorkflowReviewStateCompatGuards,
   migration176ApDocumentWorkflowIntegrationFoundation,
+  migration177CariReviewStateLegacyCheckCleanup,
 ];
 
 export default migrations;

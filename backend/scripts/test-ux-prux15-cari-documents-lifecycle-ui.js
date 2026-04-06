@@ -106,9 +106,10 @@ async function main() {
     "CARI documents workbench should surface workflow gate, correction copy, and legal-entity context"
   );
   assert(
-    documentsSource.includes("FEATURE_AP_DOCUMENT_WORKFLOW_V1") &&
-      documentsSource.includes("canSubmitSelected"),
-    "CARI documents submit UI should stay gated by the workflow feature flag"
+    !documentsSource.includes("FEATURE_AP_DOCUMENT_WORKFLOW_V1") &&
+      documentsSource.includes("canSubmitSelected") &&
+      documentsSource.includes("assignmentResolved"),
+    "CARI documents submit UI should use assignment-resolved workflow gating without tenant feature flags"
   );
   assert(
     workflowSetupSource.includes("Use the visual builder for normal workflow setup") &&

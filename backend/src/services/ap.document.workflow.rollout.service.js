@@ -2,20 +2,12 @@ import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
-  AP_WORKFLOW_COMPAT_MODE,
-  FEATURE_AP_DOCUMENT_WORKFLOW_V1,
 } from "../../../shared/cariDocumentWorkflowGovernance.js";
-import { normalizeFeatureCode } from "./features.catalog.js";
 import { ensureUnifiedWorkflowPolicyForDefinition } from "./workflows.service.js";
 
 export const DEFAULT_AP_WORKFLOW_DEFINITION_CODE = "WF_STD_AP_COUNTRY_POSTING_V1";
 export const DEFAULT_AP_WORKFLOW_DEFINITION_NAME =
   "Standard AP Country Approval Gate";
-export const AP_WORKFLOW_ROLLOUT_PHASES = Object.freeze([
-  "PILOT",
-  "STRICT",
-  "ROLLBACK",
-]);
 
 const DEFAULT_AP_WORKFLOW_STEPS = Object.freeze([
   Object.freeze({
@@ -28,12 +20,6 @@ const DEFAULT_AP_WORKFLOW_STEPS = Object.freeze([
   }),
 ]);
 
-function toUpper(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase();
-}
-
 function normalizeDateOnly(value) {
   const normalized = String(value || "").trim();
   if (!normalized) {
@@ -45,44 +31,6 @@ function normalizeDateOnly(value) {
   throw badRequest("effectiveOn must use YYYY-MM-DD format");
 }
 
-function normalizeRolloutPhase(value) {
-  const normalized = toUpper(value);
-  if (!AP_WORKFLOW_ROLLOUT_PHASES.includes(normalized)) {
-    throw badRequest(
-      `phase must be one of: ${AP_WORKFLOW_ROLLOUT_PHASES.join(", ")}`
-    );
-  }
-  return normalized;
-}
-
-function conflictError(message, details = null) {
-  const err = new Error(message);
-  err.status = 409;
-  if (details !== null && details !== undefined) {
-    err.details = details;
-  }
-  return err;
-}
-
-function mapFeatureRows(rows = []) {
-  const featureMap = {
-    [FEATURE_AP_DOCUMENT_WORKFLOW_V1]: false,
-    [AP_WORKFLOW_COMPAT_MODE]: false,
-  };
-  for (const row of rows) {
-    const featureCode = normalizeFeatureCode(row?.feature_code);
-    if (!Object.prototype.hasOwnProperty.call(featureMap, featureCode)) {
-      continue;
-    }
-    featureMap[featureCode] = Number(row?.is_enabled) === 1;
-  }
-  return {
-    featureEnabled: Boolean(featureMap[FEATURE_AP_DOCUMENT_WORKFLOW_V1]),
-    compatModeEnabled: Boolean(featureMap[AP_WORKFLOW_COMPAT_MODE]),
-    featureMap,
-  };
-}
-
 function mapDefinitionRow(row) {
   return row
     ? {
@@ -90,7 +38,7 @@ function mapDefinitionRow(row) {
         definitionId: parsePositiveInt(row.id),
         code: String(row.code || "").trim(),
         name: String(row.name || "").trim(),
-        processType: toUpper(row.process_type),
+        processType: String(row.process_type || "").trim().toUpperCase(),
         isActive: Number(row.is_active) === 1 || row.is_active === true,
         versionNo: Number(row.version_no || 1) || 1,
         createdByUserId: parsePositiveInt(row.created_by_user_id),
@@ -123,31 +71,11 @@ function mapAssignmentScopeType(row) {
   return "TENANT";
 }
 
-function serializeRolloutConfig({
-  phase,
-  effectiveOn,
-  note,
-  defaultDefinitionId,
-}) {
-  return JSON.stringify({
-    rollout: "ap_document_workflow_v1",
-    phase,
-    effectiveOn,
-    note: String(note || "").trim() || null,
-    defaultDefinitionId: parsePositiveInt(defaultDefinitionId),
-    defaultDefinitionCode: DEFAULT_AP_WORKFLOW_DEFINITION_CODE,
-  });
-}
-
-async function loadApFeatureRows({ tenantId, runQuery = query }) {
-  const result = await runQuery(
-    `SELECT feature_code, is_enabled
-     FROM tenant_features
-     WHERE tenant_id = ?
-       AND feature_code IN (?, ?)`,
-    [tenantId, FEATURE_AP_DOCUMENT_WORKFLOW_V1, AP_WORKFLOW_COMPAT_MODE]
-  );
-  return result.rows || [];
+async function runWithManagedTransaction(runQuery, work) {
+  if (runQuery === query) {
+    return withTransaction(async (tx) => work(tx.query));
+  }
+  return work(runQuery);
 }
 
 async function loadDefaultDefinitionRow({
@@ -173,47 +101,9 @@ async function loadDefaultDefinitionRow({
   return result.rows?.[0] || null;
 }
 
-async function upsertTenantFeatureTx(runQuery, {
-  tenantId,
-  featureCode,
-  isEnabled,
-  updatedByUserId,
-  configJson,
-}) {
-  await runQuery(
-    `INSERT INTO tenant_features (
-        tenant_id,
-        feature_code,
-        is_enabled,
-        config_json,
-        updated_by_user_id
-     )
-     VALUES (?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       is_enabled = VALUES(is_enabled),
-       config_json = VALUES(config_json),
-       updated_by_user_id = VALUES(updated_by_user_id),
-       updated_at = CURRENT_TIMESTAMP`,
-    [
-      tenantId,
-      normalizeFeatureCode(featureCode),
-      isEnabled ? 1 : 0,
-      configJson,
-      updatedByUserId,
-    ]
-  );
-}
-
-async function runWithManagedTransaction(runQuery, work) {
-  if (runQuery === query) {
-    return withTransaction(async (tx) => work(tx.query));
-  }
-  return work(runQuery);
-}
-
 /**
  * Upserts the default country-scoped AP workflow definition for one tenant
- * without creating assignments or enabling rollout flags.
+ * without creating assignments.
  */
 export async function ensureDefaultApWorkflowDefinition({
   tenantId,
@@ -275,7 +165,7 @@ export async function ensureDefaultApWorkflowDefinition({
     );
     for (const step of DEFAULT_AP_WORKFLOW_STEPS) {
       // Country-scoped AP reviewer authority comes from step assignment only.
-      // PR-3 locked requiredPermissionCode to null for AP steps.
+      // requiredPermissionCode is null for AP steps.
       // eslint-disable-next-line no-await-in-loop
       await txQuery(
         `INSERT INTO workflow_definition_steps (
@@ -465,9 +355,8 @@ export async function evaluateApWorkflowLegalEntityCoverage({
 }
 
 /**
- * Returns AP workflow rollout state for one tenant: the two feature flags, the
- * seeded default country template, and legal-entity coverage across explicit
- * AP workflow assignments.
+ * Returns AP workflow rollout state for one tenant: the seeded default country
+ * template and legal-entity coverage across explicit AP workflow assignments.
  */
 export async function getApWorkflowRolloutState({
   tenantId,
@@ -479,8 +368,7 @@ export async function getApWorkflowRolloutState({
     throw badRequest("tenantId is required");
   }
   const asOfDate = normalizeDateOnly(effectiveOn);
-  const [featureRows, defaultDefinitionRow, coverage] = await Promise.all([
-    loadApFeatureRows({ tenantId: normalizedTenantId, runQuery }),
+  const [defaultDefinitionRow, coverage] = await Promise.all([
     loadDefaultDefinitionRow({ tenantId: normalizedTenantId, runQuery }),
     evaluateApWorkflowLegalEntityCoverage({
       tenantId: normalizedTenantId,
@@ -488,125 +376,10 @@ export async function getApWorkflowRolloutState({
       runQuery,
     }),
   ]);
-  const features = mapFeatureRows(featureRows);
   return {
     tenantId: normalizedTenantId,
     effectiveOn: asOfDate,
-    featureEnabled: features.featureEnabled,
-    compatModeEnabled: features.compatModeEnabled,
     defaultDefinition: mapDefinitionRow(defaultDefinitionRow),
     coverage,
   };
-}
-
-/**
- * Applies one explicit AP workflow rollout phase for a tenant. The operation
- * only toggles feature flags and seeds the default definition; assignments stay
- * explicit and must be created separately by setup teams.
- */
-export async function setApWorkflowRolloutPhase({
-  tenantId,
-  updatedByUserId,
-  phase,
-  effectiveOn,
-  note = "",
-  force = false,
-  ensureDefaultDefinition = true,
-  runQuery = query,
-}) {
-  const normalizedTenantId = parsePositiveInt(tenantId);
-  const normalizedUserId = parsePositiveInt(updatedByUserId);
-  const normalizedPhase = normalizeRolloutPhase(phase);
-  const asOfDate = normalizeDateOnly(effectiveOn);
-  if (!normalizedTenantId) {
-    throw badRequest("tenantId is required");
-  }
-  if (!normalizedUserId) {
-    throw badRequest("updatedByUserId is required");
-  }
-
-  return runWithManagedTransaction(runQuery, async (txQuery) => {
-    let defaultDefinition = null;
-    if (ensureDefaultDefinition) {
-      defaultDefinition = await ensureDefaultApWorkflowDefinition({
-        tenantId: normalizedTenantId,
-        userId: normalizedUserId,
-        runQuery: txQuery,
-      });
-    }
-
-    const stateBefore = await getApWorkflowRolloutState({
-      tenantId: normalizedTenantId,
-      effectiveOn: asOfDate,
-      runQuery: txQuery,
-    });
-    if (
-      normalizedPhase === "STRICT" &&
-      stateBefore.coverage.uncoveredCount > 0 &&
-      !force
-    ) {
-      throw conflictError(
-        "Cannot disable AP workflow compat mode while active legal entities remain uncovered",
-        {
-          uncoveredLegalEntities: stateBefore.coverage.rows
-            .filter((row) => !row.covered)
-            .map((row) => ({
-              legalEntityId: row.legalEntityId,
-              legalEntityCode: row.legalEntityCode,
-            })),
-        }
-      );
-    }
-
-    const targetFlags =
-      normalizedPhase === "ROLLBACK"
-        ? {
-            [FEATURE_AP_DOCUMENT_WORKFLOW_V1]: false,
-            [AP_WORKFLOW_COMPAT_MODE]: true,
-          }
-        : normalizedPhase === "STRICT"
-          ? {
-              [FEATURE_AP_DOCUMENT_WORKFLOW_V1]: true,
-              [AP_WORKFLOW_COMPAT_MODE]: false,
-            }
-          : {
-              [FEATURE_AP_DOCUMENT_WORKFLOW_V1]: true,
-              [AP_WORKFLOW_COMPAT_MODE]: true,
-            };
-
-    const configJson = serializeRolloutConfig({
-      phase: normalizedPhase,
-      effectiveOn: asOfDate,
-      note,
-      defaultDefinitionId:
-        parsePositiveInt(defaultDefinition?.definitionId) ||
-        parsePositiveInt(stateBefore.defaultDefinition.definitionId),
-    });
-
-    for (const [featureCode, isEnabled] of Object.entries(targetFlags)) {
-      // eslint-disable-next-line no-await-in-loop
-      await upsertTenantFeatureTx(txQuery, {
-        tenantId: normalizedTenantId,
-        featureCode,
-        isEnabled,
-        updatedByUserId: normalizedUserId,
-        configJson,
-      });
-    }
-
-    const stateAfter = await getApWorkflowRolloutState({
-      tenantId: normalizedTenantId,
-      effectiveOn: asOfDate,
-      runQuery: txQuery,
-    });
-    return {
-      tenantId: normalizedTenantId,
-      phase: normalizedPhase,
-      force: Boolean(force),
-      note: String(note || "").trim() || null,
-      defaultDefinitionSeeded: Boolean(defaultDefinition),
-      before: stateBefore,
-      after: stateAfter,
-    };
-  });
 }

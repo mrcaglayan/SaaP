@@ -48,7 +48,6 @@ import {
 } from "../utils/source-ref-types.js";
 import {
   getCariDocumentClassWorkflowMetadata,
-  getCariDocumentWorkflowFeatureState,
 } from "./cari.document.workflow-governance.service.js";
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
@@ -936,49 +935,33 @@ async function evaluateCariDocumentPostingWorkflowGate({
   documentRow,
   runQuery = query,
 }) {
-  const workflowFeatureState = await getCariDocumentWorkflowFeatureState({
-    tenantId,
-    runQuery,
-  });
   const workflowGoverned = isGovernedApDocumentRow(documentRow);
   const workflowGate = await buildCariDocumentWorkflowGateSummary({
     tenantId,
     documentRow,
-    workflowFeatureState,
     runQuery,
   });
 
   if (
     normalizeUpperText(documentRow?.direction) !== "AP" ||
-    !workflowGoverned ||
-    !workflowFeatureState.featureEnabled
+    !workflowGoverned
   ) {
     return {
-      workflowFeatureState,
       workflowGoverned,
       workflowGate,
-      compatModeLegacyPost: false,
       requiredDocumentStatus: DRAFT_STATUS,
     };
   }
 
   if (!workflowGate.assignmentResolved) {
-    if (workflowFeatureState.compatModeEnabled) {
-      return {
-        workflowFeatureState,
-        workflowGoverned,
-        workflowGate,
-        compatModeLegacyPost: true,
-        requiredDocumentStatus: DRAFT_STATUS,
-      };
-    }
-    throw conflictError(
-      "No workflow assignment configured for governed AP document",
-      "NO_WORKFLOW_ASSIGNMENT_CONFIGURED",
-      {
-        workflowGate,
-      }
-    );
+    // No assignment = governance not yet configured for this scope.
+    // Document direct-posts as if non-governed. This is the natural
+    // gradual-rollout mechanism: scopes without assignments keep working.
+    return {
+      workflowGoverned,
+      workflowGate,
+      requiredDocumentStatus: DRAFT_STATUS,
+    };
   }
 
   if (
@@ -1002,10 +985,8 @@ async function evaluateCariDocumentPostingWorkflowGate({
   }
 
   return {
-    workflowFeatureState,
     workflowGoverned,
     workflowGate,
-    compatModeLegacyPost: false,
     requiredDocumentStatus: APPROVED_STATUS,
   };
 }
@@ -6887,7 +6868,6 @@ function normalizeCariWorkflowGateState(state) {
 async function buildCariDocumentWorkflowGateSummary({
   tenantId,
   documentRow,
-  workflowFeatureState = null,
   runQuery = query,
 }) {
   const normalizedTenantId = parsePositiveInt(tenantId);
@@ -6895,10 +6875,7 @@ async function buildCariDocumentWorkflowGateSummary({
   if (!normalizedTenantId || !normalizedDocumentId || !documentRow) {
     return {
       state: "none",
-      featureEnabled: false,
       workflowGoverned: false,
-      compatModeEnabled: false,
-      compatModeLegacyPost: false,
       assignmentResolved: false,
       message: "",
       latestDecisionComment: null,
@@ -6909,20 +6886,11 @@ async function buildCariDocumentWorkflowGateSummary({
     };
   }
 
-  const resolvedFeatureState =
-    workflowFeatureState ||
-    (await getCariDocumentWorkflowFeatureState({
-      tenantId: normalizedTenantId,
-      runQuery,
-    }));
   const workflowGoverned = isGovernedApDocumentRow(documentRow);
-  if (!workflowGoverned || !resolvedFeatureState.featureEnabled) {
+  if (!workflowGoverned) {
     return {
       state: "none",
-      featureEnabled: Boolean(resolvedFeatureState.featureEnabled),
       workflowGoverned,
-      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
-      compatModeLegacyPost: false,
       assignmentResolved: false,
       message: "",
       latestDecisionComment: null,
@@ -6960,18 +6928,13 @@ async function buildCariDocumentWorkflowGateSummary({
   const workflowInstanceStatus = normalizeUpperText(latestInstance?.status);
 
   if (!assignmentResolved) {
+    // No assignment = governance not yet configured for this scope.
+    // Document direct-posts. This is the natural gradual-rollout mechanism.
     return {
-      state: normalizeCariWorkflowGateState(
-        resolvedFeatureState.compatModeEnabled ? "NONE" : "BLOCKED"
-      ),
-      featureEnabled: true,
+      state: "none",
       workflowGoverned: true,
-      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
-      compatModeLegacyPost: Boolean(resolvedFeatureState.compatModeEnabled),
       assignmentResolved: false,
-      message: resolvedFeatureState.compatModeEnabled
-        ? ""
-        : "No workflow assignment configured for governed AP document",
+      message: "",
       latestDecisionComment,
       workflowInstanceId,
       workflowInstanceStatus: workflowInstanceStatus || null,
@@ -6983,10 +6946,7 @@ async function buildCariDocumentWorkflowGateSummary({
   if (documentStatus === RETURNED_STATUS) {
     return {
       state: "returned",
-      featureEnabled: true,
       workflowGoverned: true,
-      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
-      compatModeLegacyPost: false,
       assignmentResolved: true,
       message: documentRow?.return_reason
         ? `Returned for correction: ${documentRow.return_reason}`
@@ -7006,10 +6966,7 @@ async function buildCariDocumentWorkflowGateSummary({
   if (documentStatus === APPROVED_STATUS || workflowInstanceStatus === APPROVED_STATUS) {
     return {
       state: "approved",
-      featureEnabled: true,
       workflowGoverned: true,
-      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
-      compatModeLegacyPost: false,
       assignmentResolved: true,
       message: "Workflow approval is complete",
       latestDecisionComment,
@@ -7027,10 +6984,7 @@ async function buildCariDocumentWorkflowGateSummary({
   if (documentStatus === SUBMITTED_STATUS || workflowInstanceStatus === "PENDING") {
     return {
       state: "pending",
-      featureEnabled: true,
       workflowGoverned: true,
-      compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
-      compatModeLegacyPost: false,
       assignmentResolved: true,
       message: "Workflow approval is still pending for this document",
       latestDecisionComment,
@@ -7047,10 +7001,7 @@ async function buildCariDocumentWorkflowGateSummary({
 
   return {
     state: "blocked",
-    featureEnabled: true,
     workflowGoverned: true,
-    compatModeEnabled: Boolean(resolvedFeatureState.compatModeEnabled),
-    compatModeLegacyPost: false,
     assignmentResolved: true,
     message: "Submit document for workflow approval before posting",
     latestDecisionComment,
@@ -7085,10 +7036,6 @@ async function resolveCariDocumentSubmitWorkflowContext({
   resolveWorkflowAssignment = null,
   runQuery = query,
 }) {
-  const workflowFeatureState = await getCariDocumentWorkflowFeatureState({
-    tenantId,
-    runQuery,
-  });
   const docClass = await getCariDocumentClassWorkflowMetadata({
     tenantId,
     direction: documentRow?.direction,
@@ -7108,9 +7055,7 @@ async function resolveCariDocumentSubmitWorkflowContext({
           return resolved.assignmentRow;
         };
   const assignmentResolution =
-    workflowFeatureState.featureEnabled &&
-    workflowGoverned &&
-    assignmentResolver
+    workflowGoverned && assignmentResolver
       ? await assignmentResolver({
           tenantId,
           documentId: parsePositiveInt(documentRow?.id),
@@ -7122,7 +7067,6 @@ async function resolveCariDocumentSubmitWorkflowContext({
       : null;
 
   return {
-    workflowFeatureState,
     docClass,
     workflowGoverned,
     assignmentResolution,
@@ -8075,18 +8019,11 @@ export async function submitCariDocumentById({
     if (!workflowContext.workflowGoverned) {
       throw badRequest("Only governed AP documents can be submitted");
     }
-    if (!workflowContext.workflowFeatureState.featureEnabled) {
-      throw conflictError(
-        "AP document workflow submit is disabled for this tenant",
-        "AP_WORKFLOW_FEATURE_DISABLED"
-      );
-    }
     if (!workflowContext.assignmentResolved) {
       throw conflictError(
         "No workflow assignment configured for governed AP document",
         "NO_WORKFLOW_ASSIGNMENT_CONFIGURED",
         {
-          compatModeEnabled: workflowContext.workflowFeatureState.compatModeEnabled,
           direction: lockedDocument.direction,
           documentType: lockedDocument.document_type,
         }
@@ -8176,7 +8113,6 @@ export async function submitCariDocumentById({
         beforeStatus: lockedDocument.status,
         afterStatus: row.status,
         workflowGoverned: workflowContext.workflowGoverned,
-        compatModeEnabled: workflowContext.workflowFeatureState.compatModeEnabled,
         assignmentResolved: workflowContext.assignmentResolved,
         workflowInstanceId,
         workflowDefinitionId,
@@ -9113,10 +9049,6 @@ async function postCariDocumentByIdTx(
         settlementMode,
         autoSettlementBatchId,
         autoSettlementCashTransactionId,
-        compatModeLegacyPost: Boolean(postingWorkflowContext.compatModeLegacyPost),
-        workflowPostMode: postingWorkflowContext.compatModeLegacyPost
-          ? "compat_mode_legacy_post"
-          : "standard",
         workflowGate: postingWorkflowContext.workflowGate,
       },
     });
