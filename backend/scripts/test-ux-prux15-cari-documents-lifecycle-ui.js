@@ -15,8 +15,13 @@ async function main() {
     root,
     "frontend/src/lifecycle/lifecycleRules.js"
   );
+  const workflowSetupPath = path.resolve(
+    root,
+    "frontend/src/pages/settings/WorkflowSetupPage.jsx"
+  );
   const lifecycleModule = await import(pathToFileURL(lifecycleRulesPath).href);
   const documentsSource = await readCariDocumentsFeatureSource(root);
+  const workflowSetupSource = await readFile(workflowSetupPath, "utf8");
 
   const { getLifecycleStatusMeta, getLifecycleAllowedActions, buildLifecycleTimelineSteps } =
     lifecycleModule;
@@ -95,13 +100,31 @@ async function main() {
     "CARI documents detail should surface returned-for-correction messaging and reason fields"
   );
   assert(
+    documentsSource.includes("Workflow gate") &&
+      documentsSource.includes("Correction Actions") &&
+      documentsSource.includes("Legal Entity"),
+    "CARI documents workbench should surface workflow gate, correction copy, and legal-entity context"
+  );
+  assert(
     documentsSource.includes("FEATURE_AP_DOCUMENT_WORKFLOW_V1") &&
       documentsSource.includes("canSubmitSelected"),
     "CARI documents submit UI should stay gated by the workflow feature flag"
   );
+  assert(
+    workflowSetupSource.includes("Use the visual builder for normal workflow setup") &&
+      workflowSetupSource.includes("Add step") &&
+      workflowSetupSource.includes("Advanced JSON"),
+    "Workflow setup should expose the visual step builder alongside advanced JSON"
+  );
+  assert(
+    workflowSetupSource.includes("STEP_SCOPE_TYPES") &&
+      workflowSetupSource.includes("Must stay empty for AP") &&
+      workflowSetupSource.includes("COUNTRY"),
+    "Workflow setup should keep country-scoped AP step defaults visible without manual JSON-only editing"
+  );
 
   console.log(
-    "PR-UX15 smoke test passed (Cari Documents lifecycle UI wired to shared StatusTimeline/rules)."
+    "PR-UX15 smoke test passed (Cari Documents lifecycle/workbench UI and workflow setup builder remain wired)."
   );
 }
 

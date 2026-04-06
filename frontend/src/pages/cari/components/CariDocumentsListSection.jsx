@@ -8,8 +8,11 @@ import {
 } from "../cariDocumentsUtils.js";
 import {
   DOCUMENT_LIST_COLUMN_IDS,
+  getDocumentLegalEntityLabel,
   DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS,
   getDocumentOperatingUnitLabel,
+  normalizeText,
+  normalizeWorkflowGateState,
   toPositiveInt,
 } from "../cariDocumentsPageHelpers.js";
 import useCariDocumentsListController from "../hooks/useCariDocumentsListController.js";
@@ -110,6 +113,13 @@ export default function CariDocumentsListSection({
         render: (row) => row?.documentNo || "-",
       },
       {
+        id: "legalEntity",
+        label: "Legal Entity",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => getDocumentLegalEntityLabel(row),
+      },
+      {
         id: "operatingUnit",
         label: "Operating Unit",
         headerClassName: "px-3 py-2",
@@ -135,7 +145,59 @@ export default function CariDocumentsListSection({
         label: "Status",
         headerClassName: "px-3 py-2",
         cellClassName: "px-3 py-2",
-        render: (row) => row?.status || "-",
+        render: (row) => (
+          <div className="space-y-1">
+            <div className="font-medium text-slate-800">{row?.status || "-"}</div>
+            {String(row?.status || "").toUpperCase() === "RETURNED" ? (
+              <div className="text-[11px] text-amber-700">
+                {normalizeText(row?.returnReason || row?.return_reason) ||
+                  l("Returned for correction", "Duzeltme icin iade edildi")}
+              </div>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        id: "workflowGate",
+        label: "Workflow Gate",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => {
+          const gateState = normalizeWorkflowGateState(row?.workflowGate?.state);
+          const gateMessage = normalizeText(row?.workflowGate?.message);
+          const toneClass =
+            gateState === "APPROVED"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : gateState === "RETURNED"
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : gateState === "BLOCKED"
+                  ? "border-rose-200 bg-rose-50 text-rose-800"
+                  : gateState === "PENDING"
+                    ? "border-sky-200 bg-sky-50 text-sky-800"
+                    : "border-slate-200 bg-slate-50 text-slate-600";
+          const gateLabel =
+            gateState === "APPROVED"
+              ? l("Approved", "Onaylandi")
+              : gateState === "RETURNED"
+                ? l("Returned", "Iade edildi")
+                : gateState === "BLOCKED"
+                  ? l("Blocked", "Bloke")
+                  : gateState === "PENDING"
+                    ? l("Pending", "Beklemede")
+                    : l("None", "Yok");
+          return (
+            <div className="space-y-1">
+              <span
+                className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${toneClass}`}
+              >
+                {gateLabel}
+              </span>
+              {gateMessage ? (
+                <div className="max-w-xs text-[11px] text-slate-600">{gateMessage}</div>
+              ) : null}
+            </div>
+          );
+        },
       },
       {
         id: "documentDate",

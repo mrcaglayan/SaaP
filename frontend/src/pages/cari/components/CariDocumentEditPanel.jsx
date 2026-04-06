@@ -143,13 +143,27 @@ export default function CariDocumentEditPanel({
     onPreviewRow,
   } = controller;
   const canEditOrCancelSelected = canEditSelected;
+  const selectedDocumentStatus = String(
+    selectedDetail?.status || selectedSnapshot?.status || ""
+  ).toUpperCase();
+  const returnedCorrectionMode = selectedDocumentStatus === "RETURNED";
 
   return (
     <>
       <div className="rounded-lg border border-slate-200 p-4">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-          {l("Draft Actions", "Taslak Islemleri")}
+          {returnedCorrectionMode
+            ? l("Correction Actions", "Duzeltme Islemleri")
+            : l("Draft Actions", "Taslak Islemleri")}
         </h3>
+        {returnedCorrectionMode ? (
+          <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {l(
+              "This document was returned for correction. Save your changes here, then resubmit it from the workflow panel.",
+              "Bu belge duzeltme icin iade edildi. Degisiklikleri burada kaydedin, sonra workflow panelinden yeniden gonderin."
+            )}
+          </div>
+        ) : null}
         {editValidationSummary ? (
           <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             {editValidationSummary}
@@ -569,7 +583,11 @@ export default function CariDocumentEditPanel({
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             disabled={!canEditOrCancelSelected || editSaving}
           >
-            {editSaving ? l("Saving...", "Kaydediliyor...") : l("Update Draft Document", "Taslak Belgeyi Guncelle")}
+            {editSaving
+              ? l("Saving...", "Kaydediliyor...")
+              : returnedCorrectionMode
+                ? l("Save Corrections", "Duzeltmeleri Kaydet")
+                : l("Update Draft Document", "Taslak Belgeyi Guncelle")}
           </button>
           <button
             type="button"
@@ -577,7 +595,11 @@ export default function CariDocumentEditPanel({
             onClick={onCancelDraft}
             disabled={!canCancelSelected || cancelSaving}
           >
-            {cancelSaving ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel Draft", "Taslagi Iptal Et")}
+            {cancelSaving
+              ? l("Cancelling...", "Iptal ediliyor...")
+              : returnedCorrectionMode
+                ? l("Cancel Returned Document", "Iade Edilen Belgeyi Iptal Et")
+                : l("Cancel Draft", "Taslagi Iptal Et")}
           </button>
           {canCreate ? (
             <button

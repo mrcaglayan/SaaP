@@ -30,6 +30,7 @@ const PROCESS_TYPES = [
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
 ];
 const ASSIGNMENT_SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
+const STEP_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -109,6 +110,61 @@ function safeParseJsonArray(rawValue) {
   }
 }
 
+function normalizeStepDraft(rawStep, fallbackStepNo, processType) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const step = rawStep && typeof rawStep === "object" ? rawStep : {};
+  return {
+    stepNo: String(
+      Number(step.stepNo ?? step.step_no ?? fallbackStepNo) > 0
+        ? Number(step.stepNo ?? step.step_no ?? fallbackStepNo)
+        : fallbackStepNo
+    ),
+    stageScopeType: String(
+      step.stageScopeType ??
+        step.stage_scope_type ??
+        (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? "COUNTRY"
+          : "LEGAL_ENTITY")
+    ).toUpperCase(),
+    requiredPermissionCode:
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        ? ""
+        : String(step.requiredPermissionCode ?? step.required_permission_code ?? "").trim(),
+    minApproverCount: String(
+      Math.max(1, Number(step.minApproverCount ?? step.min_approver_count ?? 1) || 1)
+    ),
+    allowSelfApprove: Boolean(step.allowSelfApprove ?? step.allow_self_approve),
+    escalationAfterHours:
+      step.escalationAfterHours === null || step.escalation_after_hours === null
+        ? ""
+        : String(step.escalationAfterHours ?? step.escalation_after_hours ?? "").trim(),
+  };
+}
+
+function buildStepDrafts(processType, rows) {
+  const sourceRows = Array.isArray(rows) && rows.length > 0 ? rows : buildDefaultSteps(processType);
+  return sourceRows.map((row, index) =>
+    normalizeStepDraft(row, index + 1, processType)
+  );
+}
+
+function serializeStepDrafts(stepDrafts, processType) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  return (Array.isArray(stepDrafts) ? stepDrafts : []).map((step, index) => ({
+    stepNo: Math.max(1, Number(step?.stepNo || index + 1) || index + 1),
+    stageScopeType: String(step?.stageScopeType || "LEGAL_ENTITY").toUpperCase(),
+    requiredPermissionCode:
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        ? null
+        : String(step?.requiredPermissionCode || "").trim() || null,
+    minApproverCount: Math.max(1, Number(step?.minApproverCount || 1) || 1),
+    allowSelfApprove: Boolean(step?.allowSelfApprove),
+    escalationAfterHours: String(step?.escalationAfterHours || "").trim()
+      ? Math.max(1, Number(step.escalationAfterHours) || 1)
+      : null,
+  }));
+}
+
 /**
  * Manages workflow governance definitions, steps, and scope assignments.
  */
@@ -139,6 +195,8 @@ export default function WorkflowSetupPage() {
 
   const [selectedDefinitionId, setSelectedDefinitionId] = useState("");
   const [stepsJson, setStepsJson] = useState("[]");
+  const [stepDrafts, setStepDrafts] = useState(() => buildStepDrafts("", []));
+  const [stepsJsonError, setStepsJsonError] = useState("");
 
   const [definitionForm, setDefinitionForm] = useState({
     code: "",
@@ -274,8 +332,14 @@ export default function WorkflowSetupPage() {
 
   useEffect(() => {
     const definitionId = toPositiveInt(selectedDefinitionId);
+    const selectedProcessType = selectedDefinition?.processType;
     if (!definitionId || !canReadDefinitions) {
-      setStepsJson(JSON.stringify(buildDefaultSteps(selectedDefinition?.processType), null, 2));
+      const nextDrafts = buildStepDrafts(selectedProcessType, []);
+      setStepDrafts(nextDrafts);
+      setStepsJson(
+        JSON.stringify(serializeStepDrafts(nextDrafts, selectedProcessType), null, 2)
+      );
+      setStepsJsonError("");
       return;
     }
 
@@ -291,9 +355,15 @@ export default function WorkflowSetupPage() {
                 requiredPermissionCode: row?.requiredPermissionCode ?? null,
                 minApproverCount: Number(row?.minApproverCount || 1) || 1,
                 allowSelfApprove: Boolean(row?.allowSelfApprove),
+                escalationAfterHours: row?.escalationAfterHours ?? null,
               }))
-            : buildDefaultSteps(selectedDefinition?.processType);
-        setStepsJson(JSON.stringify(normalized, null, 2));
+            : buildDefaultSteps(selectedProcessType);
+        const nextDrafts = buildStepDrafts(selectedProcessType, normalized);
+        setStepDrafts(nextDrafts);
+        setStepsJson(
+          JSON.stringify(serializeStepDrafts(nextDrafts, selectedProcessType), null, 2)
+        );
+        setStepsJsonError("");
       } catch (err) {
         setError(
           err?.response?.data?.message ||
@@ -302,7 +372,7 @@ export default function WorkflowSetupPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDefinitionId]);
+  }, [canReadDefinitions, selectedDefinition?.processType, selectedDefinitionId]);
 
   useEffect(() => {
     if (
@@ -375,9 +445,19 @@ export default function WorkflowSetupPage() {
       return;
     }
 
-    const parsedSteps = safeParseJsonArray(stepsJson);
+    if (stepsJsonError) {
+      setError(stepsJsonError);
+      return;
+    }
+
+    const parsedSteps = serializeStepDrafts(stepDrafts, selectedDefinition?.processType);
     if (!parsedSteps || parsedSteps.length === 0) {
-      setError(l("Steps JSON must be a non-empty array.", "Adim JSON bos olmayan bir dizi olmali."));
+      setError(
+        l(
+          "Workflow steps must contain at least one step.",
+          "Workflow adimlari en az bir adim icermelidir."
+        )
+      );
       return;
     }
 
@@ -396,6 +476,66 @@ export default function WorkflowSetupPage() {
     } finally {
       setSaving("");
     }
+  }
+
+  function applyStepDrafts(nextDrafts, processType = selectedDefinition?.processType) {
+    const normalizedDrafts = buildStepDrafts(processType, nextDrafts);
+    setStepDrafts(normalizedDrafts);
+    setStepsJson(JSON.stringify(serializeStepDrafts(normalizedDrafts, processType), null, 2));
+    setStepsJsonError("");
+  }
+
+  function onStepsJsonChange(event) {
+    const nextValue = event.target.value;
+    setStepsJson(nextValue);
+    const parsed = safeParseJsonArray(nextValue);
+    if (!parsed) {
+      setStepsJsonError(
+        l(
+          "Advanced JSON must be a valid non-empty array before it can replace the visual steps.",
+          "Gelismis JSON, gorsel adimlari degistirmeden once gecerli ve bos olmayan bir dizi olmalidir."
+        )
+      );
+      return;
+    }
+    const nextDrafts = buildStepDrafts(selectedDefinition?.processType, parsed);
+    setStepDrafts(nextDrafts);
+    setStepsJsonError("");
+  }
+
+  function onStepFieldChange(index, field, value) {
+    applyStepDrafts(
+      stepDrafts.map((step, stepIndex) =>
+        stepIndex === index
+          ? {
+              ...step,
+              [field]: value,
+            }
+          : step
+      )
+    );
+  }
+
+  function onAddStep() {
+    applyStepDrafts([
+      ...stepDrafts,
+      normalizeStepDraft(
+        {},
+        (Array.isArray(stepDrafts) ? stepDrafts.length : 0) + 1,
+        selectedDefinition?.processType
+      ),
+    ]);
+  }
+
+  function onRemoveStep(index) {
+    if (!Array.isArray(stepDrafts) || stepDrafts.length <= 1) {
+      return;
+    }
+    applyStepDrafts(stepDrafts.filter((_, stepIndex) => stepIndex !== index));
+  }
+
+  function onResetStepsToDefaults() {
+    applyStepDrafts(buildDefaultSteps(selectedDefinition?.processType));
   }
 
   async function onCreateAssignment(event) {
@@ -584,12 +724,18 @@ export default function WorkflowSetupPage() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Steps (JSON)", "Adimlar (JSON)")}</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Steps", "Adimlar")}</h2>
           <p className="mb-2 text-xs text-slate-500">{selectedDefinition ? `${selectedDefinition.code} (${selectedDefinition.processType})` : l("Select a definition to edit steps.", "Adim duzenlemek icin tanim secin.")}</p>
           <p className="mb-2 text-xs text-slate-500">
             {l(
               "Valid stageScopeType values: OPERATING_UNIT, LEGAL_ENTITY, COUNTRY, GROUP.",
               "Gecerli stageScopeType degerleri: OPERATING_UNIT, LEGAL_ENTITY, COUNTRY, GROUP."
+            )}
+          </p>
+          <p className="mb-2 text-xs text-slate-500">
+            {l(
+              "Use the visual builder for normal workflow setup. Advanced JSON remains available for copy/paste or bulk edits.",
+              "Normal workflow kurulumu icin gorsel adim olusturucuyu kullanin. Gelismis JSON, kopyala/yapistir veya toplu duzenleme icin acik kalir."
             )}
           </p>
           {selectedDefinition?.processType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE ? (
@@ -600,6 +746,130 @@ export default function WorkflowSetupPage() {
               )}
             </p>
           ) : null}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onResetStepsToDefaults}
+              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+            >
+              {l("Reset to defaults", "Varsayilanlara don")}
+            </button>
+            <button
+              type="button"
+              onClick={onAddStep}
+              className="rounded border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800"
+            >
+              {l("Add step", "Adim ekle")}
+            </button>
+          </div>
+          <div className="mb-4 space-y-3">
+            {stepDrafts.map((step, index) => {
+              const apProcessType =
+                selectedDefinition?.processType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
+              return (
+                <div
+                  key={`workflow-step-builder-${index}`}
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-3"
+                >
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-slate-800">
+                      {l("Step", "Adim")} {index + 1}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveStep(index)}
+                      disabled={stepDrafts.length <= 1}
+                      className="rounded border border-rose-300 bg-white px-2 py-1 text-[11px] font-semibold text-rose-700 disabled:opacity-60"
+                    >
+                      {l("Remove", "Kaldir")}
+                    </button>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Step no", "Adim no")}
+                      <input
+                        type="number"
+                        min={1}
+                        value={step.stepNo}
+                        onChange={(event) =>
+                          onStepFieldChange(index, "stepNo", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Stage scope", "Adim kapsami")}
+                      <select
+                        value={step.stageScopeType}
+                        onChange={(event) =>
+                          onStepFieldChange(index, "stageScopeType", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                      >
+                        {STEP_SCOPE_TYPES.map((row) => (
+                          <option key={row} value={row}>
+                            {row}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Required permission code", "Gerekli yetki kodu")}
+                      <input
+                        type="text"
+                        value={step.requiredPermissionCode}
+                        onChange={(event) =>
+                          onStepFieldChange(index, "requiredPermissionCode", event.target.value)
+                        }
+                        disabled={apProcessType}
+                        placeholder={
+                          apProcessType
+                            ? l("Must stay empty for AP", "AP icin bos kalmali")
+                            : l("permission.code", "permission.code")
+                        }
+                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal disabled:bg-slate-100"
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Min approver count", "Minimum onayci sayisi")}
+                      <input
+                        type="number"
+                        min={1}
+                        value={step.minApproverCount}
+                        onChange={(event) =>
+                          onStepFieldChange(index, "minApproverCount", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {l("Escalation after hours", "Kac saat sonra escalate")}
+                      <input
+                        type="number"
+                        min={1}
+                        value={step.escalationAfterHours}
+                        onChange={(event) =>
+                          onStepFieldChange(index, "escalationAfterHours", event.target.value)
+                        }
+                        placeholder={l("Optional", "Opsiyonel")}
+                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 md:self-end">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(step.allowSelfApprove)}
+                        onChange={(event) =>
+                          onStepFieldChange(index, "allowSelfApprove", event.target.checked)
+                        }
+                      />
+                      <span>{l("Allow self approve", "Kendi kendine onay")}</span>
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
             <div className="font-semibold">
               {l("Escalation support", "Escalation destegi")}
@@ -607,9 +877,9 @@ export default function WorkflowSetupPage() {
             <p className="mt-1">
               {l(
                 "Add `escalationAfterHours` to a step when overdue reviews should escalate without leaving the normal pending queue.",
-                "Geciken incelemeler normal pending kuyrugundan cikmadan escalate olsun istiyorsaniz adima `escalationAfterHours` ekleyin."
-              )}
-            </p>
+              "Geciken incelemeler normal pending kuyrugundan cikmadan escalate olsun istiyorsaniz adima `escalationAfterHours` ekleyin."
+            )}
+          </p>
             <pre className="mt-2 overflow-x-auto rounded border border-amber-200 bg-white/80 p-2 text-[11px] text-amber-950">{`{
   "stepNo": 2,
   "stageScopeType": "LEGAL_ENTITY",
@@ -620,7 +890,26 @@ export default function WorkflowSetupPage() {
 }`}</pre>
           </div>
           <form onSubmit={onSaveSteps} className="space-y-2">
-            <textarea value={stepsJson} onChange={(event) => setStepsJson(event.target.value)} className="min-h-[260px] w-full rounded border border-slate-300 p-2 font-mono text-xs" />
+            <div>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {l("Advanced JSON", "Gelismis JSON")}
+              </p>
+              <textarea
+                value={stepsJson}
+                onChange={onStepsJsonChange}
+                className="min-h-[220px] w-full rounded border border-slate-300 p-2 font-mono text-xs"
+              />
+              {stepsJsonError ? (
+                <p className="mt-2 text-xs text-rose-700">{stepsJsonError}</p>
+              ) : (
+                <p className="mt-2 text-[11px] text-slate-500">
+                  {l(
+                    "Visual edits keep this JSON in sync. Paste JSON here only when you need bulk edits or template import.",
+                    "Gorsel duzenlemeler bu JSON'u senkron tutar. Buraya JSON yalnizca toplu duzenleme veya sablon ice aktarimi icin yapistirin."
+                  )}
+                </p>
+              )}
+            </div>
             <button type="submit" disabled={saving === "steps" || !canWriteDefinitions || !toPositiveInt(selectedDefinitionId)} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "steps" ? l("Saving...", "Kaydediliyor...") : l("Save steps", "Adimlari kaydet")}</button>
           </form>
         </section>

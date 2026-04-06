@@ -83,6 +83,18 @@ export default function CariDocumentPostReversePanel({
     setPostForm,
     setReverseForm,
   } = controller;
+  const returnedCorrectionMode =
+    String(selectedSnapshot?.status || "").trim().toUpperCase() === "RETURNED";
+  const workflowGateLabel =
+    selectedWorkflowGateState === "APPROVED"
+      ? l("Approved gate", "Onay kapisi")
+      : selectedWorkflowGateState === "RETURNED"
+        ? l("Returned gate", "Iade kapisi")
+        : selectedWorkflowGateState === "BLOCKED"
+          ? l("Blocked gate", "Bloke kapisi")
+          : selectedWorkflowGateState === "PENDING"
+            ? l("Pending gate", "Bekleyen kapi")
+            : l("No active gate", "Aktif kapi yok");
   return (
     <div className="rounded-lg border border-slate-200 p-4">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -91,7 +103,7 @@ export default function CariDocumentPostReversePanel({
       {selectedDocumentDirection === "AP" && selectedWorkflowGate ? (
         <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-900">
           <p className="font-semibold">
-            {l("Workflow gate", "Workflow kapisi")}: {selectedWorkflowGateState || "NONE"}
+            {l("Workflow gate", "Workflow kapisi")}: {workflowGateLabel}
           </p>
           <p className="mt-1 text-xs text-slate-700">
             {selectedWorkflowGate?.message ||
@@ -116,13 +128,20 @@ export default function CariDocumentPostReversePanel({
       {canSubmitSelected || submitError || submitMessage ? (
         <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-3 text-sm text-cyan-950">
           <p className="font-semibold">
-            {l("Submit for approval", "Onaya gonder")}
+            {returnedCorrectionMode
+              ? l("Resubmit for approval", "Yeniden onaya gonder")
+              : l("Submit for approval", "Onaya gonder")}
           </p>
           <p className="mt-1 text-xs text-cyan-900">
-            {l(
-              "Governed AP documents move to SUBMITTED before workflow approval and posting.",
-              "Yonetime tabi AP belgeleri workflow onayi ve kayit oncesinde SUBMITTED durumuna gecer."
-            )}
+            {returnedCorrectionMode
+              ? l(
+                  "After corrections are saved, resubmit the governed AP document so workflow review can restart.",
+                  "Duzeltmeleri kaydettikten sonra workflow incelemesinin yeniden baslamasi icin yonetime tabi AP belgeyi tekrar gonderin."
+                )
+              : l(
+                  "Governed AP documents move to SUBMITTED before workflow approval and posting.",
+                  "Yonetime tabi AP belgeleri workflow onayi ve kayit oncesinde SUBMITTED durumuna gecer."
+                )}
           </p>
           <button
             type="button"
@@ -132,7 +151,9 @@ export default function CariDocumentPostReversePanel({
           >
             {submitSaving
               ? l("Submitting...", "Gonderiliyor...")
-              : l("Submit Document", "Belgeyi Gonder")}
+              : returnedCorrectionMode
+                ? l("Resubmit Document", "Belgeyi Yeniden Gonder")
+                : l("Submit Document", "Belgeyi Gonder")}
           </button>
           {submitError ? (
             <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">

@@ -820,6 +820,8 @@ function mapDocumentRow(row, { lines, workflowGate = undefined } = {}) {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
+    legalEntityCode: row.legal_entity_code || null,
+    legalEntityName: row.legal_entity_name || null,
     operatingUnitId: parsePositiveInt(row.operating_unit_id),
     operatingUnitCode: row.operating_unit_code || null,
     operatingUnitName: row.operating_unit_name || null,
@@ -2016,15 +2018,20 @@ async function fetchDocumentRow({
     `SELECT
         d.*,
         dcm.is_workflow_governed,
+        le.code AS legal_entity_code,
+        le.name AS legal_entity_name,
         ou.code AS operating_unit_code,
         ou.name AS operating_unit_name,
         pt.code AS payment_term_code,
         pt.name AS payment_term_name
      FROM cari_documents d
      LEFT JOIN cari_document_class_metadata dcm
-       ON dcm.tenant_id = d.tenant_id
-      AND dcm.direction = d.direction
-      AND dcm.document_type = d.document_type
+      ON dcm.tenant_id = d.tenant_id
+     AND dcm.direction = d.direction
+     AND dcm.document_type = d.document_type
+     LEFT JOIN legal_entities le
+       ON le.tenant_id = d.tenant_id
+      AND le.id = d.legal_entity_id
      LEFT JOIN operating_units ou
        ON ou.id = d.operating_unit_id
      LEFT JOIN payment_terms pt
@@ -7157,7 +7164,16 @@ export async function resolveCariDocumentScope(documentId, tenantId) {
   };
 }
 
-function buildCariDocumentVisibilityFilter(req, params) {
+function buildCariDocumentVisibilityFilter(
+  req,
+  params,
+  {
+    groupIdColumn = null,
+    countryIdColumn = null,
+    legalEntityIdColumn = "d.legal_entity_id",
+    operatingUnitIdColumn = "d.operating_unit_id",
+  } = {}
+) {
   const scopeContext = getVisibilityScope(req);
   if (!scopeContext) {
     return "1 = 0";
@@ -7167,12 +7183,18 @@ function buildCariDocumentVisibilityFilter(req, params) {
   }
 
   const clause = buildVisibilityScopeWhereClause(scopeContext, params, {
-    LEGAL_ENTITY: { idColumn: "d.legal_entity_id" },
-    OPERATING_UNIT: { idColumn: "d.operating_unit_id" },
+    GROUP: groupIdColumn ? { idColumn: groupIdColumn } : null,
+    COUNTRY: countryIdColumn ? { idColumn: countryIdColumn } : null,
+    LEGAL_ENTITY: legalEntityIdColumn ? { idColumn: legalEntityIdColumn } : null,
+    OPERATING_UNIT: operatingUnitIdColumn ? { idColumn: operatingUnitIdColumn } : null,
   });
   return clause || "1 = 0";
 }
 
+/**
+ * List CARI documents inside the caller's resolved visibility context, including
+ * workflow-gate state used by the governed AP workbench.
+ */
 export async function listCariDocuments({
   req,
   tenantId,
@@ -7182,7 +7204,14 @@ export async function listCariDocuments({
 }) {
   const params = [tenantId];
   const conditions = ["d.tenant_id = ?"];
-  conditions.push(buildCariDocumentVisibilityFilter(req, params));
+  conditions.push(
+    buildCariDocumentVisibilityFilter(req, params, {
+      groupIdColumn: "le_scope.group_company_id",
+      countryIdColumn: "le_scope.country_id",
+      legalEntityIdColumn: "d.legal_entity_id",
+      operatingUnitIdColumn: "d.operating_unit_id",
+    })
+  );
 
   if (filters.legalEntityId) {
     // Keep legal-entity list filters usable for OU-scoped actors. Row-level
@@ -7231,6 +7260,9 @@ export async function listCariDocuments({
   const totalResult = await query(
     `SELECT COUNT(*) AS row_count
      FROM cari_documents d
+     LEFT JOIN legal_entities le_scope
+       ON le_scope.tenant_id = d.tenant_id
+      AND le_scope.id = d.legal_entity_id
      WHERE ${whereSql}`,
     params
   );
@@ -7246,15 +7278,23 @@ export async function listCariDocuments({
     `SELECT
         d.*,
         dcm.is_workflow_governed,
+        le.code AS legal_entity_code,
+        le.name AS legal_entity_name,
         ou.code AS operating_unit_code,
         ou.name AS operating_unit_name,
         pt.code AS payment_term_code,
         pt.name AS payment_term_name
      FROM cari_documents d
      LEFT JOIN cari_document_class_metadata dcm
-       ON dcm.tenant_id = d.tenant_id
-      AND dcm.direction = d.direction
-      AND dcm.document_type = d.document_type
+      ON dcm.tenant_id = d.tenant_id
+     AND dcm.direction = d.direction
+     AND dcm.document_type = d.document_type
+     LEFT JOIN legal_entities le
+       ON le.tenant_id = d.tenant_id
+      AND le.id = d.legal_entity_id
+     LEFT JOIN legal_entities le_scope
+       ON le_scope.tenant_id = d.tenant_id
+      AND le_scope.id = d.legal_entity_id
      LEFT JOIN operating_units ou
        ON ou.id = d.operating_unit_id
      LEFT JOIN payment_terms pt
@@ -7609,6 +7649,11 @@ export async function createCariDraftDocument({
   return created;
 }
 
+/**
+ * Updates a mutable CARI document header/lines while preserving the current
+ * workflow review cycle. Returned governed AP documents stay editable so the
+ * controller can correct and resubmit them.
+ */
 export async function updateCariDraftDocumentById({
   req,
   payload,
@@ -7627,8 +7672,11 @@ export async function updateCariDraftDocumentById({
   const existingLegalEntityId = parsePositiveInt(existing.legal_entity_id);
   const existingOperatingUnitId = parsePositiveInt(existing.operating_unit_id);
   assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
-  if (existing.status !== DRAFT_STATUS) {
-    throw badRequest("Only DRAFT documents can be updated");
+  const existingStatus = normalizeUpperText(existing.status);
+  if (existingStatus !== DRAFT_STATUS && existingStatus !== RETURNED_STATUS) {
+    // Returned governed AP documents must stay editable so entity controllers
+    // can apply corrections before resubmitting into workflow.
+    throw badRequest("Only DRAFT or RETURNED documents can be updated");
   }
 
   if (
@@ -7966,7 +8014,11 @@ export async function updateCariDraftDocumentById({
       documentId,
       runQuery: tx.query,
     });
-    return mapDocumentRow(row, { lines });
+    return mapDocumentRowWithWorkflowGate(row, {
+      lines,
+      tenantId,
+      runQuery: tx.query,
+    });
   });
 
   return updated;

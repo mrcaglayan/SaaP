@@ -5,9 +5,11 @@ import {
   firstDefinedRowValue,
   FIXED_ASSET_DETAIL_ROUTE_PREFIX,
   formatWarehouseDisplay,
+  getDocumentLegalEntityLabel,
   getDocumentOperatingUnitLabel,
   normalizeChargeAllocationMethod,
   normalizeText,
+  normalizeWorkflowGateState,
   toPositiveInt,
 } from "../cariDocumentsPageHelpers.js";
 
@@ -37,6 +39,28 @@ export default function CariDocumentDetailContent({
     return null;
   }
 
+  const workflowGateState = normalizeWorkflowGateState(selectedSnapshot?.workflowGate?.state);
+  const workflowGateToneClass =
+    workflowGateState === "APPROVED"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+      : workflowGateState === "RETURNED"
+        ? "border-amber-200 bg-amber-50 text-amber-950"
+        : workflowGateState === "BLOCKED"
+          ? "border-rose-200 bg-rose-50 text-rose-900"
+          : workflowGateState === "PENDING"
+            ? "border-sky-200 bg-sky-50 text-sky-900"
+            : "border-slate-200 bg-slate-50 text-slate-700";
+  const workflowGateLabel =
+    workflowGateState === "APPROVED"
+      ? l("Approved gate", "Onay kapisi")
+      : workflowGateState === "RETURNED"
+        ? l("Returned gate", "Iade kapisi")
+        : workflowGateState === "BLOCKED"
+          ? l("Blocked gate", "Bloke kapisi")
+          : workflowGateState === "PENDING"
+            ? l("Pending gate", "Bekleyen kapi")
+            : l("No active gate", "Aktif kapi yok");
+
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-2">
       <div className="rounded-lg border border-slate-200 p-4">
@@ -48,6 +72,8 @@ export default function CariDocumentDetailContent({
           <dd>{selectedSnapshot.documentNo || "-"}</dd>
           <dt className="font-semibold text-slate-600">status</dt>
           <dd>{selectedSnapshot.status || "-"}</dd>
+          <dt className="font-semibold text-slate-600">legalEntity</dt>
+          <dd>{getDocumentLegalEntityLabel(selectedSnapshot)}</dd>
           <dt className="font-semibold text-slate-600">operatingUnit</dt>
           <dd>{getDocumentOperatingUnitLabel(selectedSnapshot)}</dd>
           <dt className="font-semibold text-slate-600">postedJournalEntryId</dt>
@@ -155,6 +181,24 @@ export default function CariDocumentDetailContent({
               {l("Returned at", "Iade zamani")}:{" "}
               {selectedSnapshot.returnedAt || selectedSnapshot.returned_at || "-"}
             </p>
+          </div>
+        ) : null}
+        {selectedSnapshot?.workflowGate ? (
+          <div className={`mt-4 rounded-md border px-3 py-3 text-sm ${workflowGateToneClass}`}>
+            <p className="font-semibold">
+              {l("Workflow gate", "Workflow kapisi")}: {workflowGateLabel}
+            </p>
+            {normalizeText(selectedSnapshot.workflowGate?.message) ? (
+              <p className="mt-1 text-xs">
+                {normalizeText(selectedSnapshot.workflowGate.message)}
+              </p>
+            ) : null}
+            {normalizeText(selectedSnapshot.workflowGate?.latestDecisionComment) ? (
+              <p className="mt-2 text-xs">
+                {l("Latest review note", "Son inceleme notu")}:{" "}
+                {normalizeText(selectedSnapshot.workflowGate.latestDecisionComment)}
+              </p>
+            ) : null}
           </div>
         ) : null}
         <div className="mt-4 rounded-md border border-slate-200 bg-white px-3 py-3">

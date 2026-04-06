@@ -26,6 +26,7 @@ import {
 } from "../cariDocumentsUtils.js";
 import {
   analyzeDocumentWarehouseBindings,
+  canCancelDocument,
   buildChargeAllocationMethodTransitionPatch,
   buildChargeTargetDrafts,
   buildFixedAssetModeTransitionPatch,
@@ -47,6 +48,7 @@ import {
   getFixedAssetCategorySetupIssue,
   getImmediateCashSettlementLabel,
   isDraft,
+  isReturned,
   isImmediateCashSettlementMode,
   mapCashRegisterLookupOptions,
   mapCounterpartyLookupOption,
@@ -234,6 +236,11 @@ function patchDraftFormLineChargeTargetAmount(
   );
 }
 
+/**
+ * Hosts the mutable document workbench for draft and returned CARI documents,
+ * including returned AP correction flows that must stay editable until
+ * resubmission.
+ */
 export default function useCariDocumentEditController({
   selectedDetail = null,
   selectedSnapshot = null,
@@ -314,8 +321,15 @@ export default function useCariDocumentEditController({
     useState("");
 
   const activeDocumentId = toPositiveInt(selectedDetail?.id || selectedSnapshot?.id);
-  const canEditSelected = Boolean(selectedDetail && isDraft(selectedDetail) && canUpdate);
-  const canCancelSelected = Boolean(selectedDetail && isDraft(selectedDetail) && canCancel);
+  const selectedDocumentReturned = Boolean(selectedDetail && isReturned(selectedDetail));
+  const canEditSelected = Boolean(
+    selectedDetail &&
+      (isDraft(selectedDetail) || selectedDocumentReturned) &&
+      canUpdate
+  );
+  const canCancelSelected = Boolean(
+    selectedDetail && canCancelDocument(selectedDetail) && canCancel
+  );
 
   const fixedAssetCategoryRowsRef = useRef(editFixedAssetCategoryRows);
   const fixedAssetCategoryOptionsRef = useRef([]);
@@ -1196,8 +1210,8 @@ export default function useCariDocumentEditController({
       if (!activeDocumentId || !canEditSelected) {
         setEditError(
           l(
-            "Only DRAFT documents can be edited with cari.doc.update permission.",
-            "Yalnizca DRAFT belgeler `cari.doc.update` yetkisiyle duzenlenebilir."
+            "Only DRAFT or RETURNED documents can be edited with cari.doc.update permission.",
+            "Yalnizca DRAFT veya RETURNED belgeler `cari.doc.update` yetkisiyle duzenlenebilir."
           )
         );
         return;
@@ -1221,7 +1235,14 @@ export default function useCariDocumentEditController({
         }
         const response = await updateCariDocument(activeDocumentId, payload);
         const responseRow = response?.row || null;
-        setEditMessage(l("Draft document updated.", "Belge taslagi guncellendi."));
+        setEditMessage(
+          selectedDocumentReturned
+            ? l(
+                "Corrections saved. Resubmit the document when ready.",
+                "Duzeltmeler kaydedildi. Hazir oldugunuzda belgeyi yeniden gonderin."
+              )
+            : l("Draft document updated.", "Belge taslagi guncellendi.")
+        );
         if (responseRow) {
           setEditForm(mapDocumentRowToForm(responseRow));
           setEditDueDateTouched(false);
@@ -1236,7 +1257,7 @@ export default function useCariDocumentEditController({
           normalizeTranslatedApiError(
             error,
             translateDocumentMutationError,
-            l("Failed to update draft document.", "Belge taslagi guncellenemedi.")
+            l("Failed to update document.", "Belge guncellenemedi.")
           )
         );
       } finally {
@@ -1252,13 +1273,17 @@ export default function useCariDocumentEditController({
       editWarehouseValidation.blockingMessages,
       l,
       onDocumentUpdated,
+      selectedDocumentReturned,
       selectedDetail,
       translateDocumentMutationError,
     ]
   );
 
   useEffect(() => {
-    if (!selectedDetail || !isDraft(selectedDetail)) {
+    if (
+      !selectedDetail ||
+      (!isDraft(selectedDetail) && !isReturned(selectedDetail))
+    ) {
       return;
     }
     setEditForm(mapDocumentRowToForm(selectedDetail));

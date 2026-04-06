@@ -5,6 +5,7 @@ import {
   createCariDraftDocument,
   getCariDocumentByIdForTenant,
   submitCariDocumentById,
+  updateCariDraftDocumentById,
 } from "../src/services/cari.document.service.js";
 import {
   getCariCounterpartyStatementReport,
@@ -947,6 +948,30 @@ async function main() {
       returnedReadback.returnReason === returnReason &&
       toIsoPrefix(returnedReadback.returnedAt) === "2026-02-20",
     "Document GET should surface RETURNED status with returnReason and returnedAt"
+  );
+  const correctedReturned = await updateCariDraftDocumentById({
+    req,
+    payload: {
+      tenantId,
+      userId,
+      documentId: returnedDraft.id,
+      rowVersion: returnedReadback.rowVersion,
+      dueDate: "2026-03-25",
+      amountTxn: 285,
+      amountBase: 285,
+      currencyCode: fixtures.currencyCode,
+      fxRate: 1,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  assert(
+    correctedReturned.status === "RETURNED" &&
+      correctedReturned.workflowGate?.state === "returned" &&
+      correctedReturned.returnReason === returnReason &&
+      correctedReturned.dueDate === "2026-03-25" &&
+      toNumber(correctedReturned.amountTxn) === 285 &&
+      correctedReturned.rowVersion === returnedReadback.rowVersion + 1,
+    "RETURNED documents should stay editable and preserve the returned workflow gate"
   );
   const cancelled = await cancelCariDraftDocumentById({
     req,

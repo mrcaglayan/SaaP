@@ -381,10 +381,12 @@ export const DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
 export const DOCUMENT_LIST_COLUMN_IDS = [
   "id",
   "documentNo",
+  "legalEntity",
   "operatingUnit",
   "direction",
   "documentType",
   "status",
+  "workflowGate",
   "documentDate",
   "amountTxn",
   "postedJournal",
@@ -414,6 +416,14 @@ export const DOCUMENT_EXPORT_COLUMNS = [
   { header: "ID", value: (row) => row?.id },
   { header: "Document No", value: (row) => firstDefinedRowValue(row, "documentNo", "document_no") },
   { header: "Legal Entity ID", value: (row) => firstDefinedRowValue(row, "legalEntityId", "legal_entity_id") },
+  {
+    header: "Legal Entity Code",
+    value: (row) => firstDefinedRowValue(row, "legalEntityCode", "legal_entity_code"),
+  },
+  {
+    header: "Legal Entity Name",
+    value: (row) => firstDefinedRowValue(row, "legalEntityName", "legal_entity_name"),
+  },
   {
     header: "Operating Unit ID",
     value: (row) => firstDefinedRowValue(row, "operatingUnitId", "operating_unit_id"),
@@ -2192,6 +2202,41 @@ export function getDocumentOperatingUnitLabel(row, operatingUnitsById = new Map(
     firstDefinedRowValue(row, "operatingUnitCode", "operating_unit_code") || lookupUnit?.code,
     firstDefinedRowValue(row, "operatingUnitName", "operating_unit_name") || lookupUnit?.name
   );
+}
+
+export function formatLegalEntityDisplay(legalEntityId, code = "", name = "") {
+  const normalizedCode = normalizeText(code);
+  const normalizedName = normalizeText(name);
+  if (normalizedCode && normalizedName) {
+    return `${normalizedCode} - ${normalizedName}`;
+  }
+  if (normalizedCode || normalizedName) {
+    return normalizedCode || normalizedName;
+  }
+  const normalizedId = toPositiveInt(legalEntityId);
+  return normalizedId ? `#${normalizedId}` : "-";
+}
+
+export function getDocumentLegalEntityLabel(row) {
+  return formatLegalEntityDisplay(
+    firstDefinedRowValue(row, "legalEntityId", "legal_entity_id"),
+    firstDefinedRowValue(row, "legalEntityCode", "legal_entity_code"),
+    firstDefinedRowValue(row, "legalEntityName", "legal_entity_name")
+  );
+}
+
+export function normalizeWorkflowGateState(value) {
+  const normalized = normalizeText(value).toUpperCase();
+  if (
+    normalized === "NONE" ||
+    normalized === "PENDING" ||
+    normalized === "RETURNED" ||
+    normalized === "APPROVED" ||
+    normalized === "BLOCKED"
+  ) {
+    return normalized;
+  }
+  return "NONE";
 }
 
 export function buildDocumentLifecycleEvents(row, translate = (en) => en) {

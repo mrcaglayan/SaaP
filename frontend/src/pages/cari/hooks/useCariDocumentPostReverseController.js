@@ -180,6 +180,8 @@ export default function useCariDocumentPostReverseController({
   const selectedWorkflowGateState = normalizeText(
     selectedWorkflowGate?.state
   ).toUpperCase();
+  const selectedDocumentReturned =
+    normalizeText(selectedSnapshot?.status).toUpperCase() === "RETURNED";
   const canSubmitSelected = Boolean(
     selectedSnapshot &&
       selectedDocumentDirection === "AP" &&
@@ -664,10 +666,15 @@ export default function useCariDocumentPostReverseController({
       const response = await submitCariDocument(selectedDocumentId);
       const responseRow = response?.row || null;
       setSubmitMessage(
-        l(
-          `Document submitted for approval. status=${responseRow?.status || "SUBMITTED"}`,
-          `Belge onay icin gonderildi. durum=${responseRow?.status || "SUBMITTED"}`
-        )
+        selectedDocumentReturned
+          ? l(
+              `Document resubmitted for approval. status=${responseRow?.status || "SUBMITTED"}`,
+              `Belge yeniden onaya gonderildi. durum=${responseRow?.status || "SUBMITTED"}`
+            )
+          : l(
+              `Document submitted for approval. status=${responseRow?.status || "SUBMITTED"}`,
+              `Belge onay icin gonderildi. durum=${responseRow?.status || "SUBMITTED"}`
+            )
       );
       onDocumentSubmitted?.({
         responseRow,
@@ -693,6 +700,7 @@ export default function useCariDocumentPostReverseController({
     l,
     onDocumentSubmitted,
     selectedDocumentId,
+    selectedDocumentReturned,
     translateDocumentMutationError,
     workflowFeatureEnabled,
   ]);
