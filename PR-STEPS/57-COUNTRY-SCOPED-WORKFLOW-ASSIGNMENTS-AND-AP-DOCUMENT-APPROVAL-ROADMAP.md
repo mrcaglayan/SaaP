@@ -432,7 +432,7 @@ Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `
 - Keep AR and non-governed document paths behavior-preserving.
 
 ## Acceptance
-- A governed AP draft can be submitted via the domain submit action.
+- PR-2 proves submit structurally at service/mock level and behind the dark feature flag; the first true end-to-end governed submit path is accepted in PR-3.
 - A non-governed AP doc class cannot be submitted (submit action is hidden and rejected server-side).
 - AR documents are unaffected.
 - Status badges render correctly for `SUBMITTED`, `RETURNED`, and `APPROVED` (even though the latter two are not yet reachable via UI — they will be once PR-3 lands).
