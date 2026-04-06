@@ -9,7 +9,7 @@
 - Locked decision: first rollout governs AP documents only; AR and other direct CARI flows keep their current `DRAFT -> POSTED` behavior unless later expanded deliberately
 - Locked decision: PR-4 (permission codes + role split) runs **before** PR-2 and PR-3 so the new AP routes can enforce correct permissions from day one (no regression window on `cari.doc.update`/`cari.doc.post` gating the new submit/post paths)
 - Locked decision: CARI country-scoped visibility stays in PR-5, but PR-4 role provisioning and `CountryAPApprover` / `CountryAPPoster` rollout must NOT ship to production until PR-5 visibility has merged; otherwise country approvers cannot see the documents they are assigned to
-- Locked decision: `return_reason` is a first-class required field captured on every return action (required on the domain `return` path and on workflow-engine REJECTED decisions that map to RETURNED); stored on `cari_documents` and surfaced on GET
+- Locked decision: `return_reason` is a first-class required field on every transition to `RETURNED` — whether triggered by a workflow-engine return/reject decision, an escalation auto-reject, or any optional AP workbench thin proxy that delegates to workflow decisioning. Stored on `cari_documents`, surfaced on GET. Column added in PR-2; transitions that populate it arrive in PR-3.
 - Locked decision: approve / return / review are pure **workflow decisions**, authorized by workflow step assignment alone; no `cari.doc.approve`, `cari.doc.review`, or `cari.doc.return` CARI-side permission codes exist. CARI-side permissions are limited to `create`, `update`, `submit`, `post`, `reverse`, `cancel`
 - Locked decision: AP workflow steps carry **no extra step-level permission code** — assignment to the step is sufficient to act on it. The existing workflow engine's optional step-permission-code field is left null for AP steps. This preserves single-source authz from step assignment and avoids recreating a dual-gate. If finer-grained step restriction is needed later, step-level permissions can be added without a schema change.
 - Locked decision: `legal_entities.country_id` becomes NOT NULL (backfilled in PR-1 migration); country-scoped assignment resolution requires every LE to have a country
@@ -377,7 +377,7 @@ Make `COUNTRY` a first-class workflow assignment scope and workflow decision sco
 # PR-2 - Add Real AP Review States to CARI Documents
 
 ## Goal
-Expand the AP/CARI document lifecycle so the document can be submitted, returned, approved, and then posted.
+Expand the AP/CARI document model with the new governed statuses (`SUBMITTED`, `RETURNED`, `APPROVED`), add the submit domain action, harden reporting/query logic, and prepare the schema and guards that PR-3 will wire to workflow decisioning. PR-2 does NOT deliver user-facing approve or return flows — those arrive in PR-3.
 
 ## Files
 ### Backend
@@ -399,18 +399,18 @@ Expand the AP/CARI document lifecycle so the document can be submitted, returned
 
 ## Backend changes
 - Add `SUBMITTED`, `RETURNED`, and `APPROVED` to the CARI document status enum.
-- Add a first-class `return_reason` (text) column on `cari_documents`, populated on every transition into `RETURNED`. Required on the domain return path. When a workflow-engine REJECTED decision is translated to `RETURNED`, the workflow decision comment is copied into `return_reason` (reject without a comment is itself rejected at the workflow-decision validator level). Null `return_reason` is disallowed whenever `status = 'RETURNED'`.
+- Add a first-class `return_reason` (text) column on `cari_documents`, required on every transition into `RETURNED` — whether triggered by a workflow-engine return/reject decision, an escalation auto-reject, or any optional AP workbench thin proxy that delegates to workflow decisioning. Null `return_reason` is disallowed whenever `status = 'RETURNED'`. PR-2 adds the column and the constraint; PR-3 wires the actual transitions that populate it.
+- Add `returned_at` timestamp column on `cari_documents`, populated alongside `return_reason`.
 - Surface `return_reason` and `returned_at` on the document GET response so the workbench can show correction context directly.
-- Add a domain route and service action for AP **submit** (CARI business action, gated by `cari.doc.submit`).
-- AP **final approval** is exposed only through the generic workflow decision surface. No CARI-side approval route exists.
-- AP **return** is a workflow decision. If UX needs a "Return" button inside the AP workbench, it must be a thin proxy to workflow decisioning with zero separate CARI auth logic — no CARI-side return route with its own permission check.
+- Add a domain route and service action for AP **submit** (CARI business action, gated by `cari.doc.submit`). Submit is the only new user-facing CARI action in PR-2.
+- Do NOT add approve or return routes in PR-2. AP approval and return are workflow decisions that land in PR-3. PR-2 only adds the schema, the status guards, and the submit path.
 - Add an `is_workflow_governed` boolean column on the AP doc-class / doc-type metadata table, defaulting to false. Migration must reject any AR-direction doc class from being set to true. Seed the recommended V1 values (supplier invoice / credit note / AP accrual = true; petty cash and AR classes = false); final tenant-specific values are set at rollout time.
 - Add a shared helper `isDocClassWorkflowGoverned(docClass)` (or equivalent) in a module imported by both the CARI service and the governed-AP applicability checks; PR-3 will import the same helper. Do not duplicate the predicate.
-- Use the helper as the single governed-AP applicability rule everywhere: it gates submit / return / approve behavior on the shared `cari_documents.status` enum so AR and non-governed AP classes never reach SUBMITTED/RETURNED/APPROVED.
-- Enforce status guards so:
+- Use the helper to gate submit visibility so AR and non-governed AP classes never reach `SUBMITTED`.
+- Enforce status guards in the service layer (for use by both PR-2's submit and PR-3's workflow-driven transitions):
   - only `DRAFT` or `RETURNED` can be submitted
-  - only `SUBMITTED` or `APPROVED` can be returned
-  - only `APPROVED` can be posted once workflow is active
+  - only `SUBMITTED` or `APPROVED` can transition to `RETURNED` (PR-3 triggers this via workflow)
+  - only `APPROVED` can be posted once workflow is active (PR-3 enforces via gate)
 - Keep current settlement / reverse semantics after `POSTED`.
 - Explicitly preserve AP-only business use of the new governed statuses in V1.
 - Fix CARI accounting / report queries so `SUBMITTED`, `RETURNED`, and `APPROVED` are not treated as accounting-visible posted documents.
@@ -418,25 +418,29 @@ Expand the AP/CARI document lifecycle so the document can be submitted, returned
 - Update OpenAPI and CARI smoke / release-gate coverage in the same PR.
 
 ## Frontend changes
-- Add AP statuses and transitions to CARI lifecycle metadata.
-- Show correct badges, allowed actions, and copy for `SUBMITTED`, `RETURNED`, and `APPROVED`.
+- Add AP statuses to CARI lifecycle metadata so badges and labels render correctly for `SUBMITTED`, `RETURNED`, and `APPROVED`.
+- Show submit action for governed AP doc classes (using `isDocClassWorkflowGoverned`); do not show approve or return actions yet (those arrive with PR-3's workflow integration).
+- Show `RETURNED` documents with correction-oriented copy and `return_reason` display.
 - Remove any assumptions that AP documents jump directly from `DRAFT` to `POSTED`.
-- Keep AR and non-governed document paths behavior-preserving where applicable.
-- Apply the same governed-AP applicability rule in frontend action visibility and lifecycle UI.
+- Keep AR and non-governed document paths behavior-preserving.
 
 ## Acceptance
-- A draft AP document can be submitted.
-- A submitted AP document can be returned for correction and resubmitted.
-- An approved AP document can be posted.
+- A governed AP draft can be submitted via the domain submit action.
+- A non-governed AP doc class cannot be submitted (submit action is hidden and rejected server-side).
+- AR documents are unaffected.
+- Status badges render correctly for `SUBMITTED`, `RETURNED`, and `APPROVED` (even though the latter two are not yet reachable via UI — they will be once PR-3 lands).
 - Posted AP documents still settle and reverse the same way as today.
 - Accounting-facing CARI reports do not include `SUBMITTED`, `RETURNED`, or `APPROVED` as posted accounting results.
+- `return_reason` and `returned_at` are surfaced on the document GET response.
 
 ## Smoke checks
-- create AP draft -> submit -> return -> edit -> resubmit
-- create AP draft -> submit -> approve -> return -> edit -> resubmit (exercises the higher-risk path where an already-decided document is reopened)
-- confirm cancel is blocked after submit and only allowed in `DRAFT` / `RETURNED`
+- create governed AP draft -> submit successfully
+- confirm non-governed AP draft cannot be submitted (action hidden + server rejection)
+- confirm AR document cannot be submitted
+- confirm cancel is allowed in `DRAFT` and `RETURNED` only (test RETURNED by direct DB seed since workflow return is not yet wired)
 - confirm reverse remains available only after posting
 - confirm open-item / statement / aging queries do not surface pre-post governed AP statuses as posted accounting rows
+- confirm `return_reason` NOT NULL constraint fires when status is set to RETURNED without a reason (direct DB/service-level test)
 
 ---
 
@@ -495,6 +499,8 @@ Make AP document approval use the workflow-governance engine so flow selection c
 - AP documents with no active AP workflow assignment keep legacy behavior only if rollout compatibility mode is intentionally enabled.
 
 ## Smoke checks
+- full happy path: governed AP draft -> submit -> workflow approve -> post (first end-to-end governed flow)
+- full return path: submit -> workflow approve -> workflow return -> edit -> resubmit -> workflow approve -> post
 - tenant with country assignment: one country workflow governs two entities in the same country
 - legal entity with stricter local assignment overrides country assignment
 - post attempt before approval returns workflow-gate message rather than posting
