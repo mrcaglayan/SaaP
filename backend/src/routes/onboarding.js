@@ -43,6 +43,7 @@ const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
     roleCodes: Object.freeze([
       "LocalUserAdmin",
       "MasterDataSteward",
+      "EntityAPController",
       "GLOperator",
       "TreasuryOperator",
       "PayrollOperator",
@@ -55,6 +56,8 @@ const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
     code: "CountryFinanceSetupManager",
     scopeType: "COUNTRY",
     roleCodes: Object.freeze([
+      "CountryAPApprover",
+      "CountryAPPoster",
       "GLOperator",
       "TreasuryApprover",
       "PayrollApprover",

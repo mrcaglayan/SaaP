@@ -60,12 +60,34 @@ const ROLE_CATALOG = Object.freeze({
     ],
     recommendedScopes: ["LEGAL_ENTITY"],
   },
-  APDocumentPoster: {
+  EntityAPController: {
     category: "composable",
     summary:
-      "Reviews and posts AP vendor-bill drafts at legal-entity scope without broader GL or counterparty master-data authority.",
-    capabilities: ["AP draft review", "AP document updates", "AP document posting"],
+      "Reviews, edits, and submits AP documents at legal-entity scope without inheriting country-level final posting authority.",
+    capabilities: ["AP review", "AP draft correction", "AP workflow submit"],
     recommendedScopes: ["LEGAL_ENTITY"],
+  },
+  CountryAPApprover: {
+    category: "composable",
+    summary:
+      "Country-scoped AP reviewer that reads governed AP documents while approve/return authority comes from workflow-step assignment.",
+    capabilities: ["Country AP visibility", "Workflow review step", "AP return/approve via workflow"],
+    recommendedScopes: ["COUNTRY"],
+  },
+  CountryAPPoster: {
+    category: "composable",
+    summary:
+      "Country-scoped final AP posting role kept separate from workflow approval so posting authority can be assigned independently.",
+    capabilities: ["Country AP visibility", "AP final post", "AP reverse"],
+    recommendedScopes: ["COUNTRY"],
+  },
+  APDocumentPoster: {
+    category: "legacy",
+    summary:
+      "Retired compatibility AP role preserved for brownfield migration and rollback while tenants move to EntityAPController plus country-scoped AP final roles.",
+    capabilities: ["Compatibility AP submit", "Compatibility AP cancel", "Compatibility AP posting"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    legacy: true,
   },
   GLOperator: {
     category: "composable",
@@ -157,8 +179,8 @@ const ROLE_CATALOG = Object.freeze({
   BranchOperator: {
     category: "scoped",
     summary:
-      "Operating-unit visibility and operational-document role. It is not a free-form manual posting role.",
-    capabilities: ["OU visibility", "Cash basics", "Operational documents"],
+      "Operating-unit visibility and operational-document role for draft creation, editing, and cancellation. It is not a free-form manual posting role.",
+    capabilities: ["OU visibility", "Draft AP handling", "Operational documents"],
     recommendedScopes: ["OPERATING_UNIT"],
   },
   GroupController: {
@@ -196,6 +218,7 @@ export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
     roleCodes: Object.freeze([
       "LocalUserAdmin",
       "MasterDataSteward",
+      "EntityAPController",
       "GLOperator",
       "TreasuryOperator",
       "PayrollOperator",
@@ -207,9 +230,11 @@ export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
   CountryFinanceSetupManager: Object.freeze({
     code: "CountryFinanceSetupManager",
     summary:
-      "Bootstrap preset for one country-level finance reviewer using bounded composable review roles.",
+      "Bootstrap preset for one country-level finance reviewer using bounded composable AP, treasury, payroll, and close-review roles.",
     scopeType: "COUNTRY",
     roleCodes: Object.freeze([
+      "CountryAPApprover",
+      "CountryAPPoster",
       "GLOperator",
       "TreasuryApprover",
       "PayrollApprover",

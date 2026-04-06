@@ -253,6 +253,7 @@ export default function useCariDocumentEditController({
   const { hasPermission } = useAuth();
   const canCreate = hasPermission("cari.doc.create");
   const canUpdate = hasPermission("cari.doc.update");
+  const canCancel = hasPermission("cari.doc.cancel");
   const canRead = hasPermission("cari.doc.read");
   const canReadCards = hasPermission("cari.card.read");
   const canUpsertCards = hasPermission("cari.card.upsert");
@@ -313,7 +314,8 @@ export default function useCariDocumentEditController({
     useState("");
 
   const activeDocumentId = toPositiveInt(selectedDetail?.id || selectedSnapshot?.id);
-  const canEditOrCancelSelected = Boolean(selectedDetail && isDraft(selectedDetail) && canUpdate);
+  const canEditSelected = Boolean(selectedDetail && isDraft(selectedDetail) && canUpdate);
+  const canCancelSelected = Boolean(selectedDetail && isDraft(selectedDetail) && canCancel);
 
   const fixedAssetCategoryRowsRef = useRef(editFixedAssetCategoryRows);
   const fixedAssetCategoryOptionsRef = useRef([]);
@@ -565,7 +567,7 @@ export default function useCariDocumentEditController({
       : "";
   const editInlineCounterpartyName = normalizeLookupQuery(editCounterpartyLookupQuery);
   const canInlineCreateCounterpartyInEditForm = Boolean(
-    canEditOrCancelSelected &&
+    canEditSelected &&
       canReadCards &&
       canUpsertCards &&
       toPositiveInt(editForm.legalEntityId) &&
@@ -1191,7 +1193,7 @@ export default function useCariDocumentEditController({
   const handleUpdateDraft = useCallback(
     async (event) => {
       event.preventDefault();
-      if (!activeDocumentId || !canEditOrCancelSelected) {
+      if (!activeDocumentId || !canEditSelected) {
         setEditError(
           l(
             "Only DRAFT documents can be edited with cari.doc.update permission.",
@@ -1243,7 +1245,7 @@ export default function useCariDocumentEditController({
     },
     [
       activeDocumentId,
-      canEditOrCancelSelected,
+      canEditSelected,
       editDocumentMutationOptions,
       editForm,
       editValidationResult.errors.length,
@@ -1767,7 +1769,8 @@ export default function useCariDocumentEditController({
     canReadFixedAssetSettings,
     canUpsertFixedAssetSettings,
     canUpsertFixedAssets,
-    canEditOrCancelSelected,
+    canEditSelected,
+    canCancelSelected,
     editForm,
     setEditForm,
     editSaving,

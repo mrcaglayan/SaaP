@@ -218,7 +218,7 @@ router.put(
 
 router.post(
   "/:documentId/cancel",
-  requirePermission("cari.doc.update", {
+  requirePermission("cari.doc.cancel", {
     resolveScope: async (req, tenantId) => {
       return resolveCariDocumentScope(req.params?.documentId, tenantId);
     },

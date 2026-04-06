@@ -563,6 +563,8 @@ const PERMISSIONS = [
   ["cari.doc.read", "Read Cari documents"],
   ["cari.doc.create", "Create Cari documents"],
   ["cari.doc.update", "Update draft Cari documents"],
+  ["cari.doc.submit", "Submit governed Cari documents for workflow review"],
+  ["cari.doc.cancel", "Cancel draft or returned Cari documents"],
   ["cari.doc.post", "Post Cari documents"],
   ["cari.doc.reverse", "Reverse posted Cari documents"],
   ["cari.settlement.apply", "Apply Cari settlement allocations"],
@@ -754,12 +756,44 @@ const COUNTERPARTY_CARD_EDITOR_PERMISSION_CODES = buildPermissionList({
 
 const AP_DOCUMENT_POSTER_PERMISSION_CODES = buildPermissionList({
   permissions: [
-    // AP posting needs legal-entity context visibility, but it should not drag
-    // in broad GL posting or counterparty-master-data authority.
+    // Brownfield tenants may still retain this role while they migrate to the
+    // split AP submit/approve/post model. Keep it capability-complete for that
+    // compatibility window, but do not provision it for fresh tenants.
     ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
     "cari.doc.read",
     "cari.doc.update",
+    "cari.doc.submit",
+    "cari.doc.cancel",
     "cari.doc.post",
+  ],
+});
+
+const ENTITY_AP_CONTROLLER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    // Approve/return stay on workflow step assignment only. This role is the
+    // legal-entity submitter/editor seam, not a parallel reviewer gate.
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "cari.doc.read",
+    "cari.doc.update",
+    "cari.doc.submit",
+  ],
+});
+
+const COUNTRY_AP_APPROVER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    // Country approval authority is workflow-driven, so CARI-side access stays
+    // read-only here and step assignment provides the decision power.
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "cari.doc.read",
+  ],
+});
+
+const COUNTRY_AP_POSTER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "cari.doc.read",
+    "cari.doc.post",
+    "cari.doc.reverse",
   ],
 });
 
@@ -914,6 +948,7 @@ const BRANCH_OPERATOR_PERMISSION_CODES = buildPermissionList({
     "cari.doc.read",
     "cari.doc.create",
     "cari.doc.update",
+    "cari.doc.cancel",
     "cari.settlement.apply",
     "cari.report.read",
     "cari.bank.attach",
@@ -943,6 +978,9 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   LocalUserAdmin: Object.freeze([]),
   MasterDataSteward: Object.freeze(["gl.masterdata"]),
   CounterpartyCardEditor: Object.freeze([]),
+  EntityAPController: Object.freeze([]),
+  CountryAPApprover: Object.freeze([]),
+  CountryAPPoster: Object.freeze([]),
   APDocumentPoster: Object.freeze([]),
   GLOperator: Object.freeze(["gl.operations"]),
   GLPostingAuthority: Object.freeze(["gl.posting"]),
@@ -1100,6 +1138,21 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "CounterpartyCardEditor",
     name: "Counterparty Card Editor",
     permissions: COUNTERPARTY_CARD_EDITOR_PERMISSION_CODES,
+  },
+  {
+    code: "EntityAPController",
+    name: "Entity AP Controller",
+    permissions: ENTITY_AP_CONTROLLER_PERMISSION_CODES,
+  },
+  {
+    code: "CountryAPApprover",
+    name: "Country AP Approver",
+    permissions: COUNTRY_AP_APPROVER_PERMISSION_CODES,
+  },
+  {
+    code: "CountryAPPoster",
+    name: "Country AP Poster",
+    permissions: COUNTRY_AP_POSTER_PERMISSION_CODES,
   },
   {
     code: "APDocumentPoster",
@@ -1448,6 +1501,8 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
       "cari.doc.read",
       "cari.doc.create",
       "cari.doc.update",
+      "cari.doc.submit",
+      "cari.doc.cancel",
       "cari.doc.post",
       "cari.doc.reverse",
       "cari.settlement.apply",
@@ -1645,6 +1700,8 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
       "cari.doc.read",
       "cari.doc.create",
       "cari.doc.update",
+      "cari.doc.submit",
+      "cari.doc.cancel",
       "cari.doc.post",
       "cari.doc.reverse",
       "cari.settlement.apply",

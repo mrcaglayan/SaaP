@@ -554,7 +554,7 @@ export default function CariDocumentsPage({ direction = "" }) {
   const { legalEntities: workingContextLegalEntities } = useWorkingContext();
   const canRead = hasPermission("cari.doc.read");
   const canCreate = hasPermission("cari.doc.create");
-  const canUpdate = hasPermission("cari.doc.update");
+  const canCancel = hasPermission("cari.doc.cancel");
   const canReadFixedAssets = hasPermission("fixed_assets.read");
   const canReadFixedAssetSettings = hasPermission("fixed_assets.settings.read");
   const canUpsertFixedAssetSettings = hasPermission("fixed_assets.settings.upsert");
@@ -669,8 +669,8 @@ export default function CariDocumentsPage({ direction = "" }) {
     [selectedDetail, selectedDocumentId]
   );
   const selectedSnapshot = selectedResolvedDetail || selectedRow;
-  const canEditOrCancelSelected = Boolean(
-    selectedSnapshot && isDraft(selectedSnapshot) && canUpdate
+  const canCancelSelected = Boolean(
+    selectedSnapshot && isDraft(selectedSnapshot) && canCancel
   );
   const canCopySelectedToDraft = Boolean(selectedSnapshot && canCreate);
 
@@ -1125,11 +1125,11 @@ export default function CariDocumentsPage({ direction = "" }) {
   }, [selectedDocumentId]);
 
   async function handleCancelDraft() {
-    if (!selectedDocumentId || !canEditOrCancelSelected) {
+    if (!selectedDocumentId || !canCancelSelected) {
       setCancelError(
         l(
-          "Only DRAFT documents can be cancelled with cari.doc.update permission.",
-          "Yalnizca DRAFT belgeler `cari.doc.update` yetkisiyle iptal edilebilir."
+          "Only DRAFT documents can be cancelled with cari.doc.cancel permission.",
+          "Yalnizca DRAFT belgeler `cari.doc.cancel` yetkisiyle iptal edilebilir."
         )
       );
       return;
@@ -1151,11 +1151,11 @@ export default function CariDocumentsPage({ direction = "" }) {
   }
 
   async function handleCancelAndCopyDraft() {
-    if (!selectedDocumentId || !canEditOrCancelSelected || !canCreate) {
+    if (!selectedDocumentId || !canCancelSelected || !canCreate) {
       setCancelError(
         l(
-          "Draft correction copy requires both cari.doc.update and cari.doc.create permissions.",
-          "Taslak duzeltme kopyasi icin hem cari.doc.update hem de cari.doc.create yetkisi gerekir."
+          "Draft correction copy requires cari.doc.cancel and cari.doc.create permissions.",
+          "Taslak duzeltme kopyasi icin `cari.doc.cancel` ve `cari.doc.create` yetkileri gerekir."
         )
       );
       return;

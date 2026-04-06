@@ -47,7 +47,8 @@ export default function CariDocumentEditPanel({
     canReadFixedAssetSettings,
     canUpsertFixedAssetSettings,
     canUpsertFixedAssets,
-    canEditOrCancelSelected,
+    canEditSelected,
+    canCancelSelected,
     editForm,
     setEditForm,
     editSaving,
@@ -141,6 +142,7 @@ export default function CariDocumentEditPanel({
     onPreviewAll,
     onPreviewRow,
   } = controller;
+  const canEditOrCancelSelected = canEditSelected;
 
   return (
     <>
@@ -573,7 +575,7 @@ export default function CariDocumentEditPanel({
             type="button"
             className="rounded-md border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50"
             onClick={onCancelDraft}
-            disabled={!canEditOrCancelSelected || cancelSaving}
+            disabled={!canCancelSelected || cancelSaving}
           >
             {cancelSaving ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel Draft", "Taslagi Iptal Et")}
           </button>
@@ -582,7 +584,7 @@ export default function CariDocumentEditPanel({
               type="button"
               className="rounded-md border border-sky-300 px-4 py-2 text-sm font-semibold text-sky-700 disabled:opacity-50"
               onClick={onCancelAndCopyDraft}
-              disabled={!canEditOrCancelSelected || cancelSaving}
+              disabled={!canCancelSelected || cancelSaving}
             >
               {cancelSaving
                 ? l("Cancelling...", "Iptal ediliyor...")

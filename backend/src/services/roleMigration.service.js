@@ -3,7 +3,7 @@ import { invalidateRbacCache } from "../middleware/rbac.js";
 
 const MISSING_TABLE_ERRNOS = new Set([1146]);
 
-export const ROLE_MIGRATION_MAPPING_VERSION = "pr4c-v2";
+export const ROLE_MIGRATION_MAPPING_VERSION = "pr57-ap-role-split-v1";
 
 const LEGACY_ROLE_MIGRATION_RULES = Object.freeze({
   TenantAdmin: Object.freeze({
@@ -29,18 +29,22 @@ const LEGACY_ROLE_MIGRATION_RULES = Object.freeze({
       "GLOperator",
       "GLPostingAuthority",
       "ShareholderCapitalOperator",
+      "CountryAPApprover",
+      "CountryAPPoster",
       "TreasuryApprover",
       "PayrollApprover",
       "LocalCloseReviewer",
     ]),
     notes: Object.freeze([
       "CountryController maps to bounded review/approval roles at the same scope.",
+      "Country-wide AP approval/posting now lands on CountryAPApprover plus CountryAPPoster.",
       "Master-data stewardship is intentionally not auto-granted here.",
       "Shareholder capital fulfillment now migrates to the dedicated ShareholderCapitalOperator role.",
     ]),
   }),
   EntityAccountant: Object.freeze({
     targetRoleCodes: Object.freeze([
+      "EntityAPController",
       "GLOperator",
       "ShareholderCapitalOperator",
       "TreasuryOperator",
@@ -49,8 +53,17 @@ const LEGACY_ROLE_MIGRATION_RULES = Object.freeze({
     ]),
     notes: Object.freeze([
       "EntityAccountant maps to operator/preparer roles at the same scope.",
+      "Entity-level AP review/submit now lands on EntityAPController.",
       "GLPostingAuthority is not auto-added; assign it only where manual posting is explicitly approved.",
       "Shareholder capital fulfillment now migrates to the dedicated ShareholderCapitalOperator role.",
+    ]),
+  }),
+  APDocumentPoster: Object.freeze({
+    targetRoleCodes: Object.freeze(["EntityAPController"]),
+    notes: Object.freeze([
+      "APDocumentPoster is retired in favor of the split AP submit vs country-final-post model.",
+      "The same-scope migration target is EntityAPController only.",
+      "Assign CountryAPPoster separately at country scope before removing compatibility posting roles in production.",
     ]),
   }),
 });
