@@ -12,6 +12,8 @@ function toQueryString(params = {}) {
   return query ? `?${query}` : "";
 }
 
+const fixedAssetCategoryListInFlightRequests = new Map();
+
 // ── Asset register ────────────────────────────────────────────────
 
 export async function listFixedAssets(params = {}) {
@@ -153,11 +155,28 @@ export async function createFixedAssetFromCariDocumentLine(payload = {}) {
 
 // ── Categories ────────────────────────────────────────────────────
 
+/**
+ * Lists fixed asset categories for the requested context.
+ *
+ * Concurrent identical reads share one in-flight request so focus-driven
+ * lookup refreshes do not duplicate the same backend call across mounted
+ * workbench panels.
+ */
 export async function listFixedAssetCategories(params = {}) {
-  const response = await api.get(
-    `/api/v1/fixed-assets/categories${toQueryString(params)}`
-  );
-  return response.data;
+  const query = toQueryString(params);
+  const requestKey = query || "?";
+  const existingRequest = fixedAssetCategoryListInFlightRequests.get(requestKey);
+  if (existingRequest) {
+    return existingRequest;
+  }
+  const request = api
+    .get(`/api/v1/fixed-assets/categories${query}`)
+    .then((response) => response.data)
+    .finally(() => {
+      fixedAssetCategoryListInFlightRequests.delete(requestKey);
+    });
+  fixedAssetCategoryListInFlightRequests.set(requestKey, request);
+  return request;
 }
 
 export async function createFixedAssetCategory(payload = {}) {

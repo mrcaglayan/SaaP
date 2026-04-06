@@ -588,26 +588,6 @@ export default function CariDocumentsPage({ direction = "" }) {
   const refreshFixedAssetCategoryLookups = useCallback(() => {
     setFixedAssetCategoryRefreshToken((current) => current + 1);
   }, []);
-
-  useEffect(() => {
-    if (!canReadFixedAssets) {
-      return undefined;
-    }
-    function handleWindowFocus() {
-      refreshFixedAssetCategoryLookups();
-    }
-    function handleVisibilityChange() {
-      if (document.visibilityState === "visible") {
-        refreshFixedAssetCategoryLookups();
-      }
-    }
-    window.addEventListener("focus", handleWindowFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      window.removeEventListener("focus", handleWindowFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [canReadFixedAssets, refreshFixedAssetCategoryLookups]);
   const registerCreateBridgeApi = useCallback((api) => {
     createBridgeApiRef.current = api || null;
     setCreateBridgeVersion((current) => current + 1);
