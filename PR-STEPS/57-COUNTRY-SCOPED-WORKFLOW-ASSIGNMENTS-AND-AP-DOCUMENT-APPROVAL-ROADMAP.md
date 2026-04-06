@@ -94,7 +94,7 @@ This roadmap covers two linked architecture changes:
 - Workflow setup UI and API currently only expose tenant, group, legal entity, and operating unit assignment targets.
 - CARI documents currently do not support `SUBMITTED`, `RETURNED`, or `APPROVED` as first-class business states.
 - CARI routes currently expose create, update, cancel, post, and reverse only; there is no real AP submit / governed return path yet.
-- CARI permission model currently has `cari.doc.create`, `cari.doc.update`, `cari.doc.post`, and `cari.doc.reverse`, but not separated submit / review / approve / return permissions.
+- CARI permission model currently has `cari.doc.create`, `cari.doc.update`, `cari.doc.post`, and `cari.doc.reverse`; it does not yet have a separate `cari.doc.submit`, and approve / return / review are not yet modeled through workflow-step assignment.
 - Existing composable AP role `APDocumentPoster` collapses legal-entity review and posting into one role.
 - The current composable replacement for legacy `CountryController` does not include AP-document final approval / posting authority.
 - CARI document visibility currently maps only `LEGAL_ENTITY` and `OPERATING_UNIT`, so country-scoped AP actors would not reliably see the documents they govern.
