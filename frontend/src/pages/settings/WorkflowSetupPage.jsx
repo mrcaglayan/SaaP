@@ -19,7 +19,11 @@ import {
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
-import { listWorkflowPresetCatalogEntries } from "../security/roleCatalog.js";
+import {
+  listBusinessRoleCatalogEntries,
+  listWorkflowPackageCatalogEntries,
+  listWorkflowPresetCatalogEntries,
+} from "../security/roleCatalog.js";
 import {
   findOrgScopeTreeNodeByScopeSelection,
   getOrgScopeTreeRoot,
@@ -43,6 +47,7 @@ import {
   buildStepDrafts,
   buildStepPreview,
   buildWorkflowPreview,
+  listWorkflowStepPackageOptions,
   normalizeStepDraft,
   PROCESS_TYPES,
   safeParseJsonArray,
@@ -256,6 +261,33 @@ export default function WorkflowSetupPage() {
     [stepDrafts, text.stepScopeLabels, l]
   );
   const workflowPresetEntries = useMemo(() => listWorkflowPresetCatalogEntries(), []);
+  const workflowPackageEntries = useMemo(() => listWorkflowPackageCatalogEntries(), []);
+  const businessRoleEntries = useMemo(() => listBusinessRoleCatalogEntries(), []);
+  const workflowStepPackageOptions = useMemo(
+    () =>
+      listWorkflowStepPackageOptions({
+        processType: selectedProcessType,
+        workflowPackageEntries,
+      }),
+    [selectedProcessType, workflowPackageEntries]
+  );
+  const workflowStepCatalogContext = useMemo(
+    () => ({
+      workflowPackageEntries,
+      workflowPresetEntries,
+      businessRoleEntries,
+    }),
+    [businessRoleEntries, workflowPackageEntries, workflowPresetEntries]
+  );
+  const workflowStepBusinessRoleOptions = useMemo(
+    () =>
+      businessRoleEntries.map((entry) => ({
+        code: entry.code,
+        label: entry.displayName,
+        defaultScope: entry.defaultScope,
+      })),
+    [businessRoleEntries]
+  );
   const workflowPresetOptions = useMemo(
     () =>
       workflowPresetEntries.filter(
@@ -363,7 +395,11 @@ export default function WorkflowSetupPage() {
   }
 
   function applyStepDrafts(nextDrafts, processType = selectedProcessType) {
-    const normalizedDrafts = buildStepDrafts(processType, nextDrafts);
+    const normalizedDrafts = buildStepDrafts(
+      processType,
+      nextDrafts,
+      workflowStepCatalogContext
+    );
     setStepDrafts(normalizedDrafts);
     setStepsJson(JSON.stringify(serializeStepDrafts(normalizedDrafts, processType), null, 2));
     setStepsJsonError("");
@@ -547,7 +583,7 @@ export default function WorkflowSetupPage() {
     const processType = selectedDefinition?.processType || definitionForm.processType;
 
     if (!definitionId || !canReadDefinitions) {
-      const nextDrafts = buildStepDrafts(processType, []);
+      const nextDrafts = buildStepDrafts(processType, [], workflowStepCatalogContext);
       setStepDrafts(nextDrafts);
       setStepsJson(JSON.stringify(serializeStepDrafts(nextDrafts, processType), null, 2));
       setStepsJsonError("");
@@ -569,7 +605,11 @@ export default function WorkflowSetupPage() {
                 escalationAfterHours: row?.escalationAfterHours ?? null,
               }))
             : buildDefaultSteps(processType);
-        const nextDrafts = buildStepDrafts(processType, normalizedRows);
+        const nextDrafts = buildStepDrafts(
+          processType,
+          normalizedRows,
+          workflowStepCatalogContext
+        );
         setStepDrafts(nextDrafts);
         setStepsJson(JSON.stringify(serializeStepDrafts(nextDrafts, processType), null, 2));
         setStepsJsonError("");
@@ -580,7 +620,14 @@ export default function WorkflowSetupPage() {
         );
       }
     })();
-  }, [canReadDefinitions, definitionForm.processType, l, selectedDefinition?.processType, selectedDefinitionId]);
+  }, [
+    canReadDefinitions,
+    definitionForm.processType,
+    l,
+    selectedDefinition?.processType,
+    selectedDefinitionId,
+    workflowStepCatalogContext,
+  ]);
 
   useEffect(() => {
     const definitionExists = filteredDefinitionOptions.some(
@@ -835,20 +882,43 @@ export default function WorkflowSetupPage() {
       return;
     }
 
-    const nextDrafts = buildStepDrafts(selectedProcessType, parsed);
+    const nextDrafts = buildStepDrafts(
+      selectedProcessType,
+      parsed,
+      workflowStepCatalogContext
+    );
     setStepDrafts(nextDrafts);
     setStepsJsonError("");
   }
 
   function onStepFieldChange(index, field, value) {
+    const normalizedFieldValue =
+      field === "requiredPackageCode" ? String(value || "").trim().toUpperCase() : value;
     applyStepDrafts(
       stepDrafts.map((step, stepIndex) =>
-        stepIndex === index
-          ? {
-              ...step,
-              [field]: value,
-            }
-          : step
+        stepIndex !== index
+          ? step
+          : field === "requiredPackageCode"
+            ? {
+                ...step,
+                requiredPackageCode: normalizedFieldValue,
+                requiredPackageLabel: "",
+                requiredPermissionCode: "",
+                actionLabel: "",
+                eligibleBusinessRoleCodes: [],
+                eligibleBusinessRoleLabels: [],
+              }
+            : field === "stageScopeType"
+              ? {
+                  ...step,
+                  stageScopeType: normalizedFieldValue,
+                  eligibleBusinessRoleCodes: [],
+                  eligibleBusinessRoleLabels: [],
+                }
+            : {
+                ...step,
+                [field]: normalizedFieldValue,
+              }
       ),
       selectedProcessType
     );
@@ -859,9 +929,12 @@ export default function WorkflowSetupPage() {
       [
         ...stepDrafts,
         normalizeStepDraft(
-          {},
+          {
+            requiredPackageCode: workflowStepPackageOptions[0]?.code || "",
+          },
           (Array.isArray(stepDrafts) ? stepDrafts.length : 0) + 1,
-          selectedProcessType
+          selectedProcessType,
+          workflowStepCatalogContext
         ),
       ],
       selectedProcessType
@@ -1162,6 +1235,8 @@ export default function WorkflowSetupPage() {
               stepDrafts={stepDrafts}
               stepScopeTypes={STEP_SCOPE_TYPES}
               stepScopeLabels={text.stepScopeLabels}
+              workflowStepPackageOptions={workflowStepPackageOptions}
+              workflowStepBusinessRoleOptions={workflowStepBusinessRoleOptions}
               onStepFieldChange={onStepFieldChange}
               onAddStep={onAddStep}
               onRemoveStep={onRemoveStep}

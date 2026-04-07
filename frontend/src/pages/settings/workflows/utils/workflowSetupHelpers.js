@@ -35,6 +35,230 @@ const WORKFLOW_PRESET_PRIMARY_PERMISSION_CODES = Object.freeze({
   "PKG-CON-SETUP": "consolidation.group.upsert",
 });
 
+const WORKFLOW_PERMISSION_TO_PACKAGE_CODE = Object.freeze({
+  "ouclose.prepare": "PKG-LC-PREPARE",
+  "ouclose.submit": "PKG-LC-PREPARE",
+  "ouclose.review": "PKG-LC-REVIEW",
+  "ouclose.approve": "PKG-LC-APPROVE-LOCK",
+  "ouclose.lock": "PKG-LC-APPROVE-LOCK",
+  "ouclose.reopen": "PKG-LC-REOPEN-ADMIN",
+  "org.fiscal_period.read": "PKG-PC-READINESS",
+  "gl.period.close": "PKG-PC-CLOSE",
+  "consolidation.run.create": "PKG-CON-PREPARE",
+  "consolidation.run.execute": "PKG-CON-EXECUTE",
+  "consolidation.adjustment.post": "PKG-CON-ADJUST",
+  "consolidation.elimination.post": "PKG-CON-ELIM",
+  "consolidation.run.finalize": "PKG-CON-FINALIZE",
+  "consolidation.group.upsert": "PKG-CON-SETUP",
+});
+
+function normalizeWorkflowCatalogOptions(options = {}) {
+  return {
+    workflowPackageEntries: Array.isArray(options.workflowPackageEntries)
+      ? options.workflowPackageEntries
+      : [],
+    workflowPresetEntries: Array.isArray(options.workflowPresetEntries)
+      ? options.workflowPresetEntries
+      : [],
+    businessRoleEntries: Array.isArray(options.businessRoleEntries)
+      ? options.businessRoleEntries
+      : [],
+  };
+}
+
+function getWorkflowPackageLabel(requiredPackageCode, workflowPackageEntries = []) {
+  const normalizedPackageCode = String(requiredPackageCode || "").trim().toUpperCase();
+  if (!normalizedPackageCode) {
+    return "";
+  }
+  const packageEntry = (Array.isArray(workflowPackageEntries) ? workflowPackageEntries : []).find(
+    (entry) => String(entry?.code || "").trim().toUpperCase() === normalizedPackageCode
+  );
+  return packageEntry?.displayName || normalizedPackageCode;
+}
+
+function deriveActionLabelFromPackage(requiredPackageCode, workflowPackageEntries = []) {
+  const packageLabel = getWorkflowPackageLabel(requiredPackageCode, workflowPackageEntries);
+  if (!packageLabel) {
+    return "";
+  }
+  const packageLabelParts = packageLabel.split("/");
+  return String(packageLabelParts[packageLabelParts.length - 1] || packageLabel).trim();
+}
+
+function getWorkflowPackagePrimaryPermissionCode(requiredPackageCode, processType) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    return null;
+  }
+  const packageCode = String(requiredPackageCode || "").trim().toUpperCase();
+  return WORKFLOW_PRESET_PRIMARY_PERMISSION_CODES[packageCode] || "";
+}
+
+function inferWorkflowStepPackageCode(rawStep, processType) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const explicitPackageCode = String(
+    rawStep?.requiredPackageCode ?? rawStep?.required_package_code ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  if (explicitPackageCode) {
+    return explicitPackageCode;
+  }
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    return "PKG-AP-APPROVE";
+  }
+  const permissionCode = String(
+    rawStep?.requiredPermissionCode ?? rawStep?.required_permission_code ?? ""
+  )
+    .trim()
+    .toLowerCase();
+  return WORKFLOW_PERMISSION_TO_PACKAGE_CODE[permissionCode] || "";
+}
+
+function resolveWorkflowStepEligibleBusinessRoleCodes({
+  rawStep,
+  requiredPackageCode,
+  stageScopeType,
+  processType,
+  workflowPresetEntries,
+  businessRoleEntries,
+}) {
+  const rawEligibleBusinessRoleCodes =
+    rawStep?.eligibleBusinessRoleCodes ?? rawStep?.eligible_business_role_codes;
+  const explicitRoleCodes = Array.isArray(rawEligibleBusinessRoleCodes)
+    ? rawEligibleBusinessRoleCodes.map((roleCode) =>
+        String(roleCode || "").trim().toUpperCase()
+      )
+    : [];
+  if (explicitRoleCodes.length > 0) {
+    return explicitRoleCodes;
+  }
+
+  const normalizedPackageCode = String(requiredPackageCode || "").trim().toUpperCase();
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const normalizedScopeType = String(stageScopeType || "").trim().toUpperCase();
+  const suggestedRoleCodes = new Set();
+
+  const presetStepMatches = (Array.isArray(workflowPresetEntries) ? workflowPresetEntries : [])
+    .filter(
+      (entry) =>
+        String(entry?.workflowFamily || "").toUpperCase() === normalizedProcessType
+    )
+    .flatMap((entry) => (Array.isArray(entry?.steps) ? entry.steps : []))
+    .filter(
+      (step) =>
+        String(step?.requiredPackageCode || "").trim().toUpperCase() === normalizedPackageCode
+    );
+
+  const sameScopePresetMatches = presetStepMatches.filter(
+    (step) => String(step?.scopeType || "").trim().toUpperCase() === normalizedScopeType
+  );
+  const relevantPresetMatches =
+    sameScopePresetMatches.length > 0 ? sameScopePresetMatches : presetStepMatches;
+
+  relevantPresetMatches.forEach((step) => {
+    (Array.isArray(step?.eligibleBusinessRoleCodes) ? step.eligibleBusinessRoleCodes : []).forEach(
+      (roleCode) => suggestedRoleCodes.add(String(roleCode || "").trim().toUpperCase())
+    );
+  });
+
+  (Array.isArray(businessRoleEntries) ? businessRoleEntries : [])
+    .filter((entry) => {
+      const starterPackageCodes = Array.isArray(entry?.starterPackageCodes)
+        ? entry.starterPackageCodes
+        : [];
+      const optionalPackageCodes = Array.isArray(entry?.optionalPackageCodes)
+        ? entry.optionalPackageCodes
+        : [];
+      return [...starterPackageCodes, ...optionalPackageCodes].includes(normalizedPackageCode);
+    })
+    .forEach((entry) => {
+      suggestedRoleCodes.add(String(entry?.code || "").trim().toUpperCase());
+    });
+
+  const roleEntriesByCode = new Map(
+    (Array.isArray(businessRoleEntries) ? businessRoleEntries : []).map((entry) => [
+      String(entry?.code || "").trim().toUpperCase(),
+      entry,
+    ])
+  );
+
+  return Array.from(suggestedRoleCodes).sort((left, right) => {
+    const leftOrder = Number(roleEntriesByCode.get(left)?.sortOrder || 9999);
+    const rightOrder = Number(roleEntriesByCode.get(right)?.sortOrder || 9999);
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return left.localeCompare(right);
+  });
+}
+
+function inferWorkflowStepActionLabel({
+  rawStep,
+  requiredPackageCode,
+  stageScopeType,
+  processType,
+  workflowPackageEntries,
+  workflowPresetEntries,
+}) {
+  const explicitActionLabel = String(rawStep?.actionLabel ?? rawStep?.action_label ?? "").trim();
+  if (explicitActionLabel) {
+    return explicitActionLabel;
+  }
+
+  const normalizedPackageCode = String(requiredPackageCode || "").trim().toUpperCase();
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const normalizedScopeType = String(stageScopeType || "").trim().toUpperCase();
+
+  const presetStepMatches = (Array.isArray(workflowPresetEntries) ? workflowPresetEntries : [])
+    .filter(
+      (entry) =>
+        String(entry?.workflowFamily || "").toUpperCase() === normalizedProcessType
+    )
+    .flatMap((entry) => (Array.isArray(entry?.steps) ? entry.steps : []))
+    .filter(
+      (step) =>
+        String(step?.requiredPackageCode || "").trim().toUpperCase() === normalizedPackageCode
+    );
+  const sameScopePresetMatch = presetStepMatches.find(
+    (step) => String(step?.scopeType || "").trim().toUpperCase() === normalizedScopeType
+  );
+  if (sameScopePresetMatch?.actionLabel) {
+    return sameScopePresetMatch.actionLabel;
+  }
+  if (presetStepMatches[0]?.actionLabel) {
+    return presetStepMatches[0].actionLabel;
+  }
+  return deriveActionLabelFromPackage(normalizedPackageCode, workflowPackageEntries);
+}
+
+/**
+ * Lists the workflow packages the current builder can bind to for one workflow family.
+ * AP stays intentionally narrowed to `PKG-AP-APPROVE` until the backend step contract
+ * can represent submit/post stages as first-class package-bound workflow steps.
+ */
+export function listWorkflowStepPackageOptions({ processType, workflowPackageEntries = [] }) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const familyEntries = (Array.isArray(workflowPackageEntries) ? workflowPackageEntries : []).filter(
+    (entry) => String(entry?.workflowFamily || "").toUpperCase() === normalizedProcessType
+  );
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    return familyEntries.filter(
+      (entry) => String(entry?.code || "").trim().toUpperCase() === "PKG-AP-APPROVE"
+    );
+  }
+  return familyEntries.filter((entry) => {
+    const normalizedCode = String(entry?.code || "").trim().toUpperCase();
+    return (
+      !normalizedCode.startsWith("PKG-WF-") &&
+      !normalizedCode.endsWith("-VIEW") &&
+      !normalizedCode.endsWith("-SETUP") &&
+      !normalizedCode.endsWith("-SETUP-ADMIN")
+    );
+  });
+}
+
 /**
  * Predefined AP business flow templates.
  * Each template describes a real-world AP approval path in business terms.
@@ -154,28 +378,48 @@ export function safeParseJsonArray(rawValue) {
 }
 
 /**
- * Normalizes one editable step draft row.
+ * Normalizes one editable step draft row and enriches it with package-based
+ * display metadata when catalog context is supplied.
  */
-export function normalizeStepDraft(rawStep, fallbackStepNo, processType) {
+export function normalizeStepDraft(rawStep, fallbackStepNo, processType, options = {}) {
   const normalizedProcessType = String(processType || "").toUpperCase();
   const step = rawStep && typeof rawStep === "object" ? rawStep : {};
+  const catalogOptions = normalizeWorkflowCatalogOptions(options);
+  const inferredPackageCode = inferWorkflowStepPackageCode(step, processType);
+  const normalizedStageScopeType = String(
+    step.stageScopeType ??
+      step.stage_scope_type ??
+      (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        ? "COUNTRY"
+        : "LEGAL_ENTITY")
+  ).toUpperCase();
+  const normalizedRequiredPermissionCode =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+      ? ""
+      : String(step.requiredPermissionCode ?? step.required_permission_code ?? "").trim() ||
+        getWorkflowPackagePrimaryPermissionCode(inferredPackageCode, processType);
+  const eligibleBusinessRoleCodes = resolveWorkflowStepEligibleBusinessRoleCodes({
+    rawStep: step,
+    requiredPackageCode: inferredPackageCode,
+    stageScopeType: normalizedStageScopeType,
+    processType,
+    workflowPresetEntries: catalogOptions.workflowPresetEntries,
+    businessRoleEntries: catalogOptions.businessRoleEntries,
+  });
+  const businessRoleEntryMap = new Map(
+    catalogOptions.businessRoleEntries.map((entry) => [
+      String(entry?.code || "").trim().toUpperCase(),
+      entry,
+    ])
+  );
   return {
     stepNo: String(
       Number(step.stepNo ?? step.step_no ?? fallbackStepNo) > 0
         ? Number(step.stepNo ?? step.step_no ?? fallbackStepNo)
         : fallbackStepNo
     ),
-    stageScopeType: String(
-      step.stageScopeType ??
-        step.stage_scope_type ??
-        (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-          ? "COUNTRY"
-          : "LEGAL_ENTITY")
-    ).toUpperCase(),
-    requiredPermissionCode:
-      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? ""
-        : String(step.requiredPermissionCode ?? step.required_permission_code ?? "").trim(),
+    stageScopeType: normalizedStageScopeType,
+    requiredPermissionCode: normalizedRequiredPermissionCode,
     minApproverCount: String(
       Math.max(1, Number(step.minApproverCount ?? step.min_approver_count ?? 1) || 1)
     ),
@@ -185,33 +429,39 @@ export function normalizeStepDraft(rawStep, fallbackStepNo, processType) {
         ? ""
         : String(step.escalationAfterHours ?? step.escalation_after_hours ?? "").trim(),
     // These fields are UI-only until the package-native step builder lands.
-    actionLabel: String(step.actionLabel ?? step.action_label ?? "").trim(),
-    requiredPackageCode: String(
-      step.requiredPackageCode ?? step.required_package_code ?? ""
-    )
-      .trim()
-      .toUpperCase(),
-    eligibleBusinessRoleCodes: Array.isArray(
-      step.eligibleBusinessRoleCodes ?? step.eligible_business_role_codes
-    )
-      ? (step.eligibleBusinessRoleCodes ?? step.eligible_business_role_codes).map((roleCode) =>
-          String(roleCode || "").trim().toUpperCase()
-        )
-      : [],
+    actionLabel: inferWorkflowStepActionLabel({
+      rawStep: step,
+      requiredPackageCode: inferredPackageCode,
+      stageScopeType: normalizedStageScopeType,
+      processType,
+      workflowPackageEntries: catalogOptions.workflowPackageEntries,
+      workflowPresetEntries: catalogOptions.workflowPresetEntries,
+    }),
+    requiredPackageCode: inferredPackageCode,
+    requiredPackageLabel: getWorkflowPackageLabel(
+      inferredPackageCode,
+      catalogOptions.workflowPackageEntries
+    ),
+    eligibleBusinessRoleCodes,
     eligibleBusinessRoleLabels: Array.isArray(
       step.eligibleBusinessRoleLabels ?? step.eligible_business_role_labels
     )
       ? [...(step.eligibleBusinessRoleLabels ?? step.eligible_business_role_labels)]
-      : [],
+      : eligibleBusinessRoleCodes.map(
+          (roleCode) => businessRoleEntryMap.get(roleCode)?.displayName || roleCode
+        ),
   };
 }
 
 /**
- * Creates normalized step drafts from saved rows or process defaults.
+ * Creates normalized step drafts from saved rows or process defaults, with
+ * optional package/business-role enrichment for the step-builder UI.
  */
-export function buildStepDrafts(processType, rows) {
+export function buildStepDrafts(processType, rows, options = {}) {
   const sourceRows = Array.isArray(rows) && rows.length > 0 ? rows : buildDefaultSteps(processType);
-  return sourceRows.map((row, index) => normalizeStepDraft(row, index + 1, processType));
+  return sourceRows.map((row, index) =>
+    normalizeStepDraft(row, index + 1, processType, options)
+  );
 }
 
 /**
@@ -238,26 +488,20 @@ function normalizeComparableWorkflowStep(step, processType) {
   const normalizedProcessType = String(processType || "").toUpperCase();
   const normalizedStep = normalizeStepDraft(step, Number(step?.stepNo || 1) || 1, processType);
   return {
+    actionLabel: String(normalizedStep.actionLabel || "").trim(),
     stageScopeType: normalizedStep.stageScopeType,
+    requiredPackageCode: String(normalizedStep.requiredPackageCode || "").trim().toUpperCase(),
     requiredPermissionCode:
       normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
         ? ""
         : String(normalizedStep.requiredPermissionCode || "").trim(),
+    eligibleBusinessRoleCodes: Array.isArray(normalizedStep.eligibleBusinessRoleCodes)
+      ? [...normalizedStep.eligibleBusinessRoleCodes]
+      : [],
     minApproverCount: Math.max(1, Number(normalizedStep.minApproverCount || 1) || 1),
     allowSelfApprove: Boolean(normalizedStep.allowSelfApprove),
     escalationAfterHours: String(normalizedStep.escalationAfterHours || "").trim() || "",
   };
-}
-
-function getWorkflowPresetStepPermissionCode(step, processType) {
-  const normalizedProcessType = String(processType || "").toUpperCase();
-  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return null;
-  }
-  const packageCode = String(step?.requiredPackageCode || step?.required_package_code || "")
-    .trim()
-    .toUpperCase();
-  return WORKFLOW_PRESET_PRIMARY_PERMISSION_CODES[packageCode] || "";
 }
 
 /**
@@ -287,7 +531,10 @@ export function buildWorkflowPresetBaselineStepDrafts(presetEntry) {
       {
         stepNo: Number(step?.stepNo || index + 1) || index + 1,
         stageScopeType: String(step?.scopeType || step?.stageScopeType || "LEGAL_ENTITY"),
-        requiredPermissionCode: getWorkflowPresetStepPermissionCode(step, processType),
+        requiredPermissionCode: getWorkflowPackagePrimaryPermissionCode(
+          step?.requiredPackageCode,
+          processType
+        ),
         minApproverCount: Number(step?.minApproverCount || 1) || 1,
         allowSelfApprove: Boolean(step?.allowSelfApprove),
         escalationAfterHours:
@@ -383,11 +630,38 @@ export function buildWorkflowPresetComparisonModel({
         )
       );
     }
+    if (currentStep.actionLabel !== baselineStep.actionLabel) {
+      differenceLines.push(
+        l(
+          `Step ${index + 1} action label differs from the preset baseline.`,
+          `${index + 1}. adim islem etiketi preset temelinden farkli.`
+        )
+      );
+    }
+    if (currentStep.requiredPackageCode !== baselineStep.requiredPackageCode) {
+      differenceLines.push(
+        l(
+          `Step ${index + 1} required package differs from the preset baseline.`,
+          `${index + 1}. adim gerekli paketi preset temelinden farkli.`
+        )
+      );
+    }
     if (currentStep.requiredPermissionCode !== baselineStep.requiredPermissionCode) {
       differenceLines.push(
         l(
           `Step ${index + 1} permission differs from the preset baseline.`,
           `${index + 1}. adim yetkisi preset temelinden farkli.`
+        )
+      );
+    }
+    if (
+      JSON.stringify(currentStep.eligibleBusinessRoleCodes) !==
+      JSON.stringify(baselineStep.eligibleBusinessRoleCodes)
+    ) {
+      differenceLines.push(
+        l(
+          `Step ${index + 1} eligible business roles differ.`,
+          `${index + 1}. adim uygun is rolleri farkli.`
         )
       );
     }
@@ -872,33 +1146,50 @@ export function buildApBusinessPreview(stepDrafts, stepScopeLabels, l) {
  * Builds a readable explanation for one workflow step.
  */
 export function buildStepPreview(step, processType, stepScopeLabels, l) {
-  const level = getScopeLabel(step?.stageScopeType, stepScopeLabels).toLowerCase();
+  const scopeLabel = getScopeLabel(step?.stageScopeType, stepScopeLabels);
+  const packageLabel =
+    step?.requiredPackageLabel || step?.requiredPackageCode || step?.requiredPermissionCode || "-";
+  const actionLabel = step?.actionLabel || deriveActionLabelFromPackage(step?.requiredPackageCode);
+  const roleLabels = Array.isArray(step?.eligibleBusinessRoleLabels)
+    ? step.eligibleBusinessRoleLabels.filter(Boolean)
+    : [];
   const minCount = Math.max(1, Number(step?.minApproverCount || 1));
   const selfApprove = Boolean(step?.allowSelfApprove);
   const escalation = String(step?.escalationAfterHours || "").trim();
 
   const parts = [];
   parts.push(
+    l(
+      `${actionLabel || "Step"} runs at ${scopeLabel} scope using ${packageLabel}.`,
+      `${actionLabel || "Adim"}, ${scopeLabel} kapsaminda ${packageLabel} kullanir.`
+    )
+  );
+  if (roleLabels.length > 0) {
+    parts.push(
+      l(
+        `Suggested business roles: ${roleLabels.join(", ")}.`,
+        `Onerilen is rolleri: ${roleLabels.join(", ")}.`
+      )
+    );
+  }
+  parts.push(
     minCount === 1
-      ? l(`One ${level}-level approval is required.`, `${level} seviyesinde tek bir onay gerekir.`)
-      : l(
-          `${minCount} ${level}-level approvals are required.`,
-          `${level} seviyesinde ${minCount} onay gerekir.`
-        )
+      ? l("One actor is required.", "Tek bir aktor gerekir.")
+      : l(`${minCount} actors are required.`, `${minCount} aktor gerekir.`)
   );
 
   if (String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
     parts.push(
       l(
-        "Reviewer authority comes from the workflow assignment scope.",
-        "Inceleyen yetkisi workflow atama kapsamindan gelir."
+        "Current AP backend bridge still resolves reviewer authority from the workflow assignment scope.",
+        "Mevcut AP backend koprusu, inceleyen yetkisini hala workflow atama kapsamindan cozer."
       )
     );
   } else if (step?.requiredPermissionCode) {
     parts.push(
       l(
-        `Approvers must hold "${step.requiredPermissionCode}".`,
-        `Onaylayanlar "${step.requiredPermissionCode}" yetkisine sahip olmalidir.`
+        `Current runtime bridge permission: "${step.requiredPermissionCode}".`,
+        `Mevcut runtime kopru yetkisi: "${step.requiredPermissionCode}".`
       )
     );
   }
@@ -932,18 +1223,24 @@ export function buildWorkflowPreview(stepDrafts, stepScopeLabels, l) {
   if (steps.length === 0) {
     return l("No approval steps defined yet.", "Henuz onay adimi tanimlanmadi.");
   }
-  if (steps.length === 1) {
-    return l(
-      `This workflow requires ${getScopeLabel(steps[0]?.stageScopeType, stepScopeLabels)} approval.`,
-      `Bu workflow ${getScopeLabel(steps[0]?.stageScopeType, stepScopeLabels)} onayi gerektirir.`
-    );
-  }
   return l(
-    `This workflow requires approvals in this order: ${steps
-      .map((step, index) => `${index + 1}. ${getScopeLabel(step?.stageScopeType, stepScopeLabels)}`)
+    `This workflow runs in this order: ${steps
+      .map(
+        (step, index) =>
+          `${index + 1}. ${step?.actionLabel || "Step"} at ${getScopeLabel(
+            step?.stageScopeType,
+            stepScopeLabels
+          )} using ${step?.requiredPackageLabel || step?.requiredPackageCode || step?.requiredPermissionCode || "-"}`
+      )
       .join(" -> ")}.`,
-    `Bu workflow su sirada onay gerektirir: ${steps
-      .map((step, index) => `${index + 1}. ${getScopeLabel(step?.stageScopeType, stepScopeLabels)}`)
+    `Bu workflow su sirada calisir: ${steps
+      .map(
+        (step, index) =>
+          `${index + 1}. ${step?.actionLabel || "Adim"} - ${getScopeLabel(
+            step?.stageScopeType,
+            stepScopeLabels
+          )} kapsaminda ${step?.requiredPackageLabel || step?.requiredPackageCode || step?.requiredPermissionCode || "-"}`
+      )
       .join(" -> ")}.`
   );
 }
@@ -1057,6 +1354,7 @@ export default {
   toPositiveInt,
   todayIsoDate,
   buildDefaultSteps,
+  listWorkflowStepPackageOptions,
   safeParseJsonArray,
   normalizeStepDraft,
   buildStepDrafts,

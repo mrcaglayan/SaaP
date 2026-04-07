@@ -24,6 +24,8 @@ export default function ApprovalStepCard({
   processType,
   stepScopeTypes,
   stepScopeLabels,
+  workflowStepPackageOptions = [],
+  workflowStepBusinessRoleOptions = [],
   onChange,
   onRemove,
   disableRemove,
@@ -74,9 +76,20 @@ export default function ApprovalStepCard({
 
         <div className="space-y-2">
           <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            {l("Action label", "Islem etiketi")}
+          </label>
+          <Input
+            value={step.actionLabel || ""}
+            onChange={(event) => onChange("actionLabel", event.target.value)}
+            placeholder={l("Approve", "Onayla")}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             {isAp
               ? (apBusinessLabels?.atWhichScope || l("At which organizational scope", "Hangi organizasyon kapsaminda"))
-              : l("Approval level", "Onay seviyesi")}
+              : l("Step scope type", "Adim kapsam tipi")}
           </label>
           <Select value={step.stageScopeType} onValueChange={(value) => onChange("stageScopeType", value)}>
             <SelectTrigger className="w-full">
@@ -90,6 +103,43 @@ export default function ApprovalStepCard({
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            {l("Required package", "Gerekli paket")}
+          </label>
+          <Select
+            value={step.requiredPackageCode || ""}
+            onValueChange={(value) => onChange("requiredPackageCode", value)}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder={l("Choose a package", "Paket secin")} />
+            </SelectTrigger>
+            <SelectContent>
+              {workflowStepPackageOptions.map((packageEntry) => (
+                <SelectItem key={packageEntry.code} value={packageEntry.code}>
+                  {packageEntry.displayName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {step.requiredPermissionCode
+              ? l(
+                  `Current runtime bridge permission: ${step.requiredPermissionCode}`,
+                  `Mevcut runtime kopru yetkisi: ${step.requiredPermissionCode}`
+                )
+              : isAp
+                ? l(
+                    "AP review authority is still resolved from the assignment scope in the current backend bridge.",
+                    "AP inceleme yetkisi mevcut backend koprusunde hala atama kapsamindan cozulur."
+                  )
+                : l(
+                    "Choose a workflow package to define the acting authority for this step.",
+                    "Bu adimin isleyen yetkisini tanimlamak icin bir workflow paketi secin."
+                  )}
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -118,57 +168,45 @@ export default function ApprovalStepCard({
         </div>
 
         <div className="space-y-2 md:col-span-2">
-          {isAp ? (
-            <>
-              <div className="flex items-center justify-between gap-3">
-                <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  {apBusinessLabels?.whoReviews || l("Who reviews this step", "Bu adimi kim inceler")}
-                </label>
-                <Badge variant="secondary">AP</Badge>
-              </div>
-              <div className="rounded-2xl border border-border bg-muted/20 px-4 py-3">
-                <p className="text-sm text-foreground">
-                  {l(
-                    `${stepScopeLabels[step.stageScopeType] || step.stageScopeType} AP reviewer`,
-                    `${stepScopeLabels[step.stageScopeType] || step.stageScopeType} AP inceleyicisi`
-                  )}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {apBusinessLabels?.reviewerAuthority ||
-                    l(
-                      "Reviewer authority comes from the workflow assignment scope, not from a step-level permission code.",
-                      "Inceleyen yetkisi adim seviyesindeki bir yetki kodundan degil, workflow atama kapsamindan gelir."
-                    )}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground/70">
-                  {apBusinessLabels?.effectivePermission ||
-                    l(
-                      "Effective permission: approvals.requests.approve at the step\u2019s scope",
-                      "Gecerli yetki: adimin kapsaminda approvals.requests.approve"
-                    )}
-                </p>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center justify-between gap-3">
-                <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  {l("Required reviewer permission", "Gerekli inceleyen yetkisi")}
-                </label>
-              </div>
-              <Input
-                value={step.requiredPermissionCode}
-                onChange={(event) => onChange("requiredPermissionCode", event.target.value)}
-                placeholder="permission.code"
-              />
-              <p className="text-xs leading-5 text-muted-foreground">
-                {l(
-                  "Only users with this permission can approve this step.",
-                  "Yalnizca bu yetkiye sahip kullanicilar bu adimi onaylayabilir."
-                )}
-              </p>
-            </>
-          )}
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              {l("Eligible business roles", "Uygun is rolleri")}
+            </label>
+            <Badge variant="secondary">
+              {l("Helper only", "Yardimci bilgi")}
+            </Badge>
+          </div>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {l(
+              "These role suggestions improve readability and assignee filtering, but the workflow step still resolves authority from the selected package.",
+              "Bu rol onerileri okunabilirligi ve atanan kisiyi filtrelemeyi kolaylastirir; ancak workflow adimi yetkiyi yine secilen paketten cozer."
+            )}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {workflowStepBusinessRoleOptions.map((roleOption) => {
+              const selectedRoleCodes = Array.isArray(step.eligibleBusinessRoleCodes)
+                ? step.eligibleBusinessRoleCodes
+                : [];
+              const isSelected = selectedRoleCodes.includes(roleOption.code);
+              const nextRoleCodes = isSelected
+                ? selectedRoleCodes.filter((roleCode) => roleCode !== roleOption.code)
+                : [...selectedRoleCodes, roleOption.code];
+              return (
+                <button
+                  key={roleOption.code}
+                  type="button"
+                  onClick={() => onChange("eligibleBusinessRoleCodes", nextRoleCodes)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    isSelected
+                      ? "border-blue-300 bg-blue-50 text-blue-900"
+                      : "border-border bg-card text-foreground hover:border-blue-200 hover:bg-blue-50/50"
+                  }`}
+                >
+                  {roleOption.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="md:col-span-2">

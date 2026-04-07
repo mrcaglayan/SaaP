@@ -21,6 +21,8 @@ export default function WorkflowStepsBuilderStep({
   stepDrafts,
   stepScopeTypes,
   stepScopeLabels,
+  workflowStepPackageOptions = [],
+  workflowStepBusinessRoleOptions = [],
   onStepFieldChange,
   onAddStep,
   onRemoveStep,
@@ -55,8 +57,8 @@ export default function WorkflowStepsBuilderStep({
             <CardTitle>{l("Step 4 - Define approval steps", "Adim 4 - Onay adimlarini tanimlayin")}</CardTitle>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               {l(
-                "Each step defines who approves at a specific organizational level and in what order. The sequence runs from top to bottom.",
-                "Her adim, belirli bir organizasyon seviyesinde kimin hangi sirada onay verecegini tanimlar. Sira yukaridan asagiya calisir."
+                "Each step now binds to a workflow package at a specific organizational scope. Business roles stay visible only as human-friendly eligibility helpers.",
+                "Her adim artik belirli bir organizasyon kapsaminda bir workflow paketine baglanir. Is rolleri yalnizca okunabilir uygunluk yardimcisi olarak gorunur."
               )}
             </p>
           </div>
@@ -306,6 +308,8 @@ export default function WorkflowStepsBuilderStep({
                 processType={processType}
                 stepScopeTypes={stepScopeTypes}
                 stepScopeLabels={stepScopeLabels}
+                workflowStepPackageOptions={workflowStepPackageOptions}
+                workflowStepBusinessRoleOptions={workflowStepBusinessRoleOptions}
                 onChange={(field, value) => onStepFieldChange(index, field, value)}
                 onRemove={() => onRemoveStep(index)}
                 disableRemove={stepDrafts.length <= 1}

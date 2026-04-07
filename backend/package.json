@@ -329,6 +329,7 @@
     "test:security:ui2e-effective-authority-preview": "node scripts/test-security-ui2e-effective-authority-preview.js",
     "test:security:ui2f-assignment-audit-sod": "node scripts/test-security-ui2f-assignment-audit-sod-warnings.js",
     "test:security:ui3a-workflow-preset-selector": "node scripts/test-security-ui3a-workflow-preset-selector.js",
+    "test:security:ui3b-step-builder": "node scripts/test-security-ui3b-step-builder-refactor.js",
     "test:module-readiness": "node scripts/test-module-readiness.js",
     "test:onboarding:legal-entity-activation": "node scripts/test-legal-entity-activation-readiness.js",
     "test:onboarding:bootstrap-optional-advanced-setup": "node scripts/test-onboarding-pr56-bootstrap-optional-advanced-setup.js",
