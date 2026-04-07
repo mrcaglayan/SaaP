@@ -45,7 +45,7 @@ async function main() {
     workbenchSource.includes("Assignment workbench") &&
       workbenchSource.includes("People list") &&
       workbenchSource.includes("Selected user authority detail") &&
-      workbenchSource.includes("Current authority snapshot") &&
+      workbenchSource.includes("Runtime authority snapshot") &&
       workbenchSource.includes("Workflow package coverage") &&
       workbenchSource.includes("Scope targets") &&
       workbenchSource.includes("Open bulk assignment view") &&

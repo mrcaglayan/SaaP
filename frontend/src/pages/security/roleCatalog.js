@@ -10,6 +10,7 @@ const CATEGORY_LABELS = Object.freeze({
   composable: "Composable duty-boundary",
   scoped: "Scoped operations",
   readonly: "Read-only",
+  business_label: "Business role label",
   legacy: "Legacy",
   custom: "Custom tenant role",
 });
@@ -74,6 +75,7 @@ const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
   EntitySetupManager: "EntityAPController",
   CountryFinanceSetupManager: "CountryAPApprover",
 });
+export const BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX = "BUSINESS_ROLE__";
 const LEGACY_LABEL_ALIAS_CATALOG = Object.freeze({
   ENTITY_AP_CONTROLLER_LABEL: Object.freeze({
     runtimeCode: "EntityAPController",
@@ -1606,6 +1608,7 @@ const CATEGORY_ORDER = Object.freeze([
   "composable",
   "scoped",
   "readonly",
+  "business_label",
   "system",
   "legacy",
   "custom",
@@ -1623,6 +1626,16 @@ function normalizeBootstrapHandoffPresetCode(presetCode) {
 }
 function normalizeBusinessRoleCode(roleCode) {
   return normalizeText(roleCode).toUpperCase();
+}
+function getBusinessRoleAssignmentBusinessRoleCode(roleCode) {
+  const normalizedRoleCode = normalizeText(roleCode).toUpperCase();
+  if (!normalizedRoleCode.startsWith(BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX)) {
+    return "";
+  }
+  const businessRoleCode = normalizedRoleCode.slice(
+    BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX.length
+  );
+  return BUSINESS_ROLE_CATALOG[businessRoleCode] ? businessRoleCode : "";
 }
 function normalizeWorkflowPackageCode(packageCode) {
   return normalizeText(packageCode).toUpperCase();
@@ -1685,6 +1698,45 @@ function buildMetadataEntry({
 function getBusinessRoleDisplayName(roleCode) {
   const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
   return BUSINESS_ROLE_CATALOG[normalizedRoleCode]?.displayName || normalizedRoleCode;
+}
+function buildBusinessRoleAssignmentRoleEntry(roleCode) {
+  const businessRoleCode = getBusinessRoleAssignmentBusinessRoleCode(roleCode);
+  const businessRoleEntry = businessRoleCode
+    ? getBusinessRoleCatalogEntry(businessRoleCode)
+    : null;
+  const runtimeCode =
+    businessRoleCode || normalizeText(roleCode).toUpperCase() || "BUSINESS_ROLE_LABEL";
+  const metadata = buildMetadataEntry({
+    modelType: "runtime_role",
+    code: businessRoleEntry?.displayName || runtimeCode,
+    displayName: businessRoleEntry?.displayName || runtimeCode,
+    description:
+      businessRoleEntry?.description ||
+      "Non-authoritative business role label. Assign workflow packages separately.",
+    category: "business_label",
+    defaultScope: businessRoleEntry?.defaultScope || "",
+    legacy: false,
+    replacementLabel: "",
+    workflowFamily: businessRoleEntry?.workflowFamily || "CROSS_WORKFLOW",
+    sortOrder: (businessRoleEntry?.sortOrder || 9999) + 1,
+  });
+
+  return {
+    ...metadata,
+    runtimeCode,
+    technicalCode: runtimeCode,
+    summary:
+      "Business role label only. It does not grant package or permission authority by itself.",
+    capabilities: ["Label only", "No direct authority", "Packages assigned separately"],
+    recommendedScopes: metadata.defaultScope ? [metadata.defaultScope] : [],
+    companionOnly: false,
+    companionNote:
+      "Assign workflow packages separately. This label is non-authoritative by design.",
+    legacyReason: "",
+    businessRoleCode,
+    nonAuthoritative: true,
+    businessLabelOnly: true,
+  };
 }
 function getWorkflowPackageDisplayName(packageCode) {
   const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
@@ -1793,6 +1845,49 @@ export function getBootstrapHandoffPresetEntry(presetCode) {
 }
 
 /**
+ * Returns whether the supplied runtime role code is one of the dedicated
+ * zero-permission business label roles used by the UI-2B assignment flow.
+ */
+export function isBusinessRoleAssignmentRoleCode(roleCode) {
+  return Boolean(getBusinessRoleAssignmentBusinessRoleCode(roleCode));
+}
+
+/**
+ * Returns the dedicated zero-permission runtime role code used to persist one
+ * business-role label assignment safely inside the existing role-assignment
+ * system.
+ */
+export function getBusinessRoleAssignmentRuntimeRoleCode(roleCode) {
+  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
+  return BUSINESS_ROLE_CATALOG[normalizedRoleCode]
+    ? `${BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX}${normalizedRoleCode}`
+    : "";
+}
+
+/**
+ * Builds the non-authoritative tenant-role payload used when a business label
+ * role must be created before assignment.
+ */
+export function getBusinessRoleAssignmentRoleDefinition(roleCode) {
+  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
+  const businessRoleEntry = getBusinessRoleCatalogEntry(normalizedRoleCode);
+  const runtimeRoleCode = getBusinessRoleAssignmentRuntimeRoleCode(normalizedRoleCode);
+  if (!runtimeRoleCode || !businessRoleEntry.active) {
+    return null;
+  }
+
+  return {
+    businessRoleCode: normalizedRoleCode,
+    roleCode: runtimeRoleCode,
+    roleName: `Business Role Label / ${businessRoleEntry.displayName}`,
+    displayName: businessRoleEntry.displayName,
+    defaultScope: businessRoleEntry.defaultScope,
+    description:
+      "Non-authoritative business role label. Assign workflow packages separately.",
+  };
+}
+
+/**
  * Returns the UX metadata used to explain a role in admin surfaces.
  * `code` is the business-facing label while `technicalCode` is only surfaced
  * for legacy runtime roles where migration traceability still matters.
@@ -1802,6 +1897,9 @@ export function getRoleCatalogEntry(roleOrCode) {
     typeof roleOrCode === "string"
       ? normalizeText(roleOrCode)
       : normalizeText(roleOrCode?.code || roleOrCode?.roleCode);
+  if (isBusinessRoleAssignmentRoleCode(requestedRoleCode)) {
+    return buildBusinessRoleAssignmentRoleEntry(requestedRoleCode);
+  }
   const normalizedRoleCode = normalizeRoleCatalogCode(requestedRoleCode);
   const base = ROLE_CATALOG[normalizedRoleCode] || null;
   const displayCode =

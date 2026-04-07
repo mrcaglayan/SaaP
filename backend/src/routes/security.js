@@ -83,6 +83,7 @@ const VALID_USER_STATUSES = new Set(["ACTIVE", "DISABLED"]);
 const LOCAL_USER_ADMIN_PERMISSION = "security.user_admin.local";
 const ENTITY_USER_ADMIN_PERMISSION = "security.user_admin.entity";
 const BRANCH_OPERATOR_ROLE_CODE = "BranchOperator";
+const BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX = "BUSINESS_ROLE__";
 const LOCAL_USER_ADMIN_COMPAT_PERMISSION_CODES = Object.freeze([
   LOCAL_USER_ADMIN_PERMISSION,
   ENTITY_USER_ADMIN_PERMISSION,
@@ -123,6 +124,23 @@ function normalizeUserStatus(value) {
     throw badRequest("status must be ACTIVE or DISABLED");
   }
   return normalized;
+}
+
+function isBusinessRoleAssignmentRoleCode(roleCode) {
+  return String(roleCode || "")
+    .trim()
+    .toUpperCase()
+    .startsWith(BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX);
+}
+
+function assertBusinessRoleLabelRolePermissionsNotManaged(role) {
+  if (isBusinessRoleAssignmentRoleCode(role?.code)) {
+    // Business label roles are stored in the existing role-assignment system
+    // for UI-2B persistence only. They must stay zero-permission by design.
+    throw badRequest(
+      "Business role label roles cannot carry permissions. Assign workflow packages separately."
+    );
+  }
 }
 
 function validateUserPassword(value) {
@@ -1714,6 +1732,7 @@ router.post(
       throw badRequest("Role not found");
     }
     assertRetiredLegacyRoleNotManaged(role);
+    assertBusinessRoleLabelRolePermissionsNotManaged(role);
 
     const permissionCodes = Array.isArray(req.body?.permissionCodes)
       ? normalizePermissionCodeList(req.body.permissionCodes)
@@ -1779,6 +1798,7 @@ router.put(
       throw badRequest("Role not found");
     }
     assertRetiredLegacyRoleNotManaged(role);
+    assertBusinessRoleLabelRolePermissionsNotManaged(role);
 
     const permissionCodesRaw = Array.isArray(req.body?.permissionCodes)
       ? req.body.permissionCodes

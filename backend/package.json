@@ -323,6 +323,7 @@
     "test:security:ui1d-workflow-presets": "node scripts/test-security-ui1d-workflow-presets-tab.js",
     "test:security:ui1e-legacy-catalog": "node scripts/test-security-ui1e-legacy-catalog-tab.js",
     "test:security:ui2a-user-assignment-workbench": "node scripts/test-security-ui2a-user-assignment-workbench.js",
+    "test:security:ui2b-business-role-assignment": "node scripts/test-security-ui2b-business-role-assignment-ux.js",
     "test:module-readiness": "node scripts/test-module-readiness.js",
     "test:onboarding:legal-entity-activation": "node scripts/test-legal-entity-activation-readiness.js",
     "test:onboarding:bootstrap-optional-advanced-setup": "node scripts/test-onboarding-pr56-bootstrap-optional-advanced-setup.js",

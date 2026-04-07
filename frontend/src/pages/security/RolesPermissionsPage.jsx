@@ -77,6 +77,7 @@ export default function RolesPermissionsPage() {
   const canReplaceRolePermissions = hasPermission(
     "security.role_permissions.assign"
   );
+  const selectedRoleLocksPermissions = Boolean(selectedRoleEntry?.businessLabelOnly);
   const showFreshTenantAdminNote =
     securityAdminUiStateLoaded &&
     Boolean(securityAdminUiState?.roleMigrations?.simplifiedFreshTenantView);
@@ -117,6 +118,12 @@ export default function RolesPermissionsPage() {
 
   async function handleReplacePermissions() {
     if (!selectedRoleId) {
+      return;
+    }
+    if (selectedRoleLocksPermissions) {
+      setError(
+        "Business role label roles stay non-authoritative and cannot receive permissions."
+      );
       return;
     }
     if (!canReplaceRolePermissions) {
@@ -277,16 +284,29 @@ export default function RolesPermissionsPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-3">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-700">
-              {selectedRole
-                ? t("rolesPermissions.sections.permissionsFor", {
-                    code: selectedRoleEntry?.code || selectedRole.code,
-                  })
-                : t("rolesPermissions.sections.permissions")}
-            </h2>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-700">
+                {selectedRole
+                  ? t("rolesPermissions.sections.permissionsFor", {
+                      code: selectedRoleEntry?.code || selectedRole.code,
+                    })
+                  : t("rolesPermissions.sections.permissions")}
+              </h2>
+              {selectedRoleLocksPermissions ? (
+                <p className="mt-1 text-xs leading-5 text-amber-700">
+                  Business role label roles are locked to zero permissions. Assign workflow
+                  packages or runtime roles separately from the user-assignment workbench.
+                </p>
+              ) : null}
+            </div>
             <button
               type="button"
-              disabled={!selectedRoleId || saving || !canReplaceRolePermissions}
+              disabled={
+                !selectedRoleId ||
+                saving ||
+                !canReplaceRolePermissions ||
+                selectedRoleLocksPermissions
+              }
               onClick={handleReplacePermissions}
               className="rounded-lg bg-cyan-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
             >
@@ -321,7 +341,11 @@ export default function RolesPermissionsPage() {
                       type="checkbox"
                       checked={checked}
                       onChange={() => togglePermission(permission.code)}
-                      disabled={!selectedRoleId || !canReplaceRolePermissions}
+                      disabled={
+                        !selectedRoleId ||
+                        !canReplaceRolePermissions ||
+                        selectedRoleLocksPermissions
+                      }
                       className="mt-0.5"
                     />
                     <span>

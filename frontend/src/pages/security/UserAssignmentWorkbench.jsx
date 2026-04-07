@@ -188,15 +188,25 @@ function WorkbenchBundleCard({
  */
 export default function UserAssignmentWorkbench(props) {
   const {
+    businessRoleAssignmentForm,
+    businessRoleAssignmentWriteAccess,
+    businessRoleScopeOptions,
+    canUpsertRole,
     filteredUsers,
     l,
+    onAssignBusinessRoleLabel,
     onClearFilters,
     onOpenBulkAssignments,
     onOpenUserEditor,
     onSelectBundle,
     onSelectUser,
+    onRemoveBusinessRoleLabel,
+    onUpdateBusinessRoleAssignmentField,
     packageFilterOptions,
     roleFilterOptions,
+    selectedBusinessRoleAssignments,
+    selectedBusinessRoleCatalogEntry,
+    selectedBusinessRoleRuntimeRoleExists,
     scopeTargetOptions,
     selectedBundle,
     selectedUser,
@@ -380,6 +390,13 @@ export default function UserAssignmentWorkbench(props) {
                         </div>
                       </div>
                       <div className="mt-4 flex flex-wrap gap-2">
+                        {row.businessRoleLabels.slice(0, 2).map((businessRoleLabel) => (
+                          <Pill
+                            key={`workbench-user-business-role-${row.id}-${businessRoleLabel}`}
+                            label={businessRoleLabel}
+                            tone="violet"
+                          />
+                        ))}
                         {row.currentPresetCodes.slice(0, 2).map((presetCode) => (
                           <Pill
                             key={`workbench-user-preset-${row.id}-${presetCode}`}
@@ -504,19 +521,157 @@ export default function UserAssignmentWorkbench(props) {
                 <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
                   <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
                     <h3 className="text-lg font-semibold text-slate-950">
-                      {l("Current authority snapshot", "Mevcut yetki ozeti")}
+                      {l("Business role labels", "Is rol etiketleri")}
                     </h3>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
                       {l(
-                        "Business-facing role labels and workflow-package coverage are explainability helpers here; direct package assignment UX lands in the next slices.",
-                        "Buradaki is-odakli rol etiketleri ve workflow-package kapsami aciklayici yardimcilardir; dogrudan paket atama UX'i sonraki dilimlerde gelir."
+                        "Assign non-authoritative business role labels separately from package authority. These labels improve workflow readability and assignee discovery, but they do not grant action permissions on their own.",
+                        "Yetki paketlerinden ayri olarak otorite vermeyen is rol etiketleri atayin. Bu etiketler workflow okunabilirligini ve atanan kisi bulunurlugunu iyilestirir; ancak tek basina aksiyon yetkisi vermez."
+                      )}
+                    </p>
+                  </div>
+                  <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1.1fr)_320px]">
+                    <div className="space-y-3">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {l("Assigned labels", "Atanmis etiketler")}
+                      </div>
+                      {selectedBusinessRoleAssignments.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                          {l(
+                            "No business role labels are assigned yet.",
+                            "Henuz is rol etiketi atanmis degil."
+                          )}
+                        </div>
+                      ) : (
+                        selectedBusinessRoleAssignments.map((assignment) => (
+                          <div
+                            key={`business-role-assignment-${assignment.assignmentId}`}
+                            className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap gap-2">
+                                  <Pill label={assignment.businessRoleLabel} tone="violet" />
+                                  <Pill label={assignment.scopeType} tone="blue" />
+                                </div>
+                                <div className="mt-2 text-sm text-slate-700">
+                                  {assignment.scopeLabel}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => onRemoveBusinessRoleLabel(assignment)}
+                                disabled={saving && actingRowId === `business-role-${assignment.assignmentId}`}
+                                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {saving && actingRowId === `business-role-${assignment.assignmentId}`
+                                  ? l("Removing...", "Kaldiriliyor...")
+                                  : l("Remove label", "Etiketi kaldir")}
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <form
+                      onSubmit={onAssignBusinessRoleLabel}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                    >
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {l("Assign label", "Etiket ata")}
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            {l("Business role", "Is rolu")}
+                          </label>
+                          <select
+                            value={businessRoleAssignmentForm.businessRoleCode}
+                            onChange={(event) =>
+                              onUpdateBusinessRoleAssignmentField(
+                                "businessRoleCode",
+                                event.target.value
+                              )
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {roleFilterOptions.map((option) => (
+                              <option key={`business-role-form-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-900">
+                          <div className="font-semibold">
+                            {l("Suggested scope", "Onerilen kapsam")}:{" "}
+                            {selectedBusinessRoleCatalogEntry?.defaultScope || "-"}
+                          </div>
+                          <div className="mt-1 text-sky-800">
+                            {l(
+                              "This label stays non-authoritative. Package or runtime-role assignments still decide what the user can actually do.",
+                              "Bu etiket otorite vermez. Kullanicinin gercekte ne yapabilecegini hala paket veya runtime rol atamalari belirler."
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            {l("Scope target", "Kapsam hedefi")}
+                          </label>
+                          <select
+                            value={businessRoleAssignmentForm.scopeId}
+                            onChange={(event) =>
+                              onUpdateBusinessRoleAssignmentField("scopeId", event.target.value)
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {businessRoleScopeOptions.map((option) => (
+                              <option key={`business-role-scope-${option.id}`} value={String(option.id)}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {!selectedBusinessRoleRuntimeRoleExists ? (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                            {canUpsertRole
+                              ? l(
+                                  "The label-only runtime role does not exist in this tenant yet. It will be created automatically with zero permissions on first assignment.",
+                                  "Etiket-yalniz runtime rol bu tenant'ta henuz yok. Ilk atamada sifir yetki ile otomatik olusturulur."
+                                )
+                              : l(
+                                  "First assignment also needs security.role.upsert because the label-only runtime role has not been created in this tenant yet.",
+                                  "Ilk atama icin ayrica security.role.upsert gerekir; cunku etiket-yalniz runtime rol bu tenant'ta henuz olusturulmamis."
+                                )}
+                          </div>
+                        ) : null}
+                        <button
+                          type="submit"
+                          disabled={saving || !businessRoleAssignmentWriteAccess.allowed}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {saving ? l("Saving...", "Kaydediliyor...") : l("Assign business role", "Is rolu ata")}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                    <h3 className="text-lg font-semibold text-slate-950">
+                      {l("Runtime authority snapshot", "Runtime yetki ozeti")}
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {l(
+                        "This section still explains the current permission-bearing runtime role mix and the workflow-package coverage derived from it. Direct package assignment UX lands in the next slices.",
+                        "Bu bolum hala mevcut yetki veren runtime rol karisimini ve buradan tureyen workflow-package kapsamini aciklar. Dogrudan paket atama UX'i sonraki dilimlerde gelir."
                       )}
                     </p>
                   </div>
                   <div className="space-y-5 px-5 py-5">
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Business-facing role labels", "Is odakli rol etiketleri")}
+                        {l("Current runtime role mix", "Mevcut runtime rol karisimi")}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {selectedUserRoleEntries.length > 0 ? (
@@ -535,7 +690,7 @@ export default function UserAssignmentWorkbench(props) {
                           ))
                         ) : (
                           <span className="text-sm text-slate-500">
-                            {l("No role labels are assigned yet.", "Henuz rol etiketi atanmis degil.")}
+                            {l("No runtime roles are assigned yet.", "Henuz runtime rol atanmis degil.")}
                           </span>
                         )}
                       </div>

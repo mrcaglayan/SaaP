@@ -8,6 +8,7 @@ import {
   revokeOperationalCoverage,
 } from "../../api/approvalDelegations.js";
 import {
+  createOrUpdateRole,
   createRoleAssignment,
   createSecurityInvite,
   deleteRoleAssignment,
@@ -32,10 +33,13 @@ import UserAssignmentWorkbench from "./UserAssignmentWorkbench.jsx";
 import {
   BOOTSTRAP_HANDOFF_PRESET_CATALOG,
   buildScopeLabel,
+  getBusinessRoleAssignmentRoleDefinition,
   getBootstrapHandoffPresetEntry,
   getBootstrapHandoffPresetDisplayLabel,
   getRoleCatalogEntry,
   groupRolesForManagement,
+  isBusinessRoleAssignmentRoleCode,
+  listBusinessRoleCatalogEntries,
   resolveWorkflowPackagesForRuntimeRoles,
 } from "./roleCatalog.js";
 const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
@@ -398,9 +402,53 @@ function resolveAssignmentLifecycle(rows) {
   }
   return "CUSTOM";
 }
+
+function buildBusinessRoleLabelAssignments(assignments, usersById, lookups, tenantScopeId) {
+  return (Array.isArray(assignments) ? assignments : [])
+    .filter((assignment) => isBusinessRoleAssignmentRoleCode(assignment?.role_code))
+    .map((assignment) => {
+      const userId = Number(assignment.user_id || 0);
+      const user = usersById.get(userId) || null;
+      const roleEntry = getRoleCatalogEntry(assignment.role_code);
+      return {
+        assignmentId: Number(assignment.id || 0),
+        userId,
+        userName: normalizeText(user?.name || assignment.user_name || `User #${userId}`),
+        userEmail: normalizeText(user?.email || assignment.user_email),
+        businessRoleCode: roleEntry.businessRoleCode || "",
+        businessRoleLabel: roleEntry.code,
+        roleCode: normalizeText(assignment.role_code),
+        scopeType: normalizeText(assignment.scope_type).toUpperCase(),
+        scopeId: Number(assignment.scope_id || 0),
+        scopeLabel: buildScopeLabel(
+          assignment.scope_type,
+          assignment.scope_id,
+          lookups,
+          tenantScopeId
+        ),
+        effect: normalizeText(assignment.effect).toUpperCase() || "ALLOW",
+        effectiveFrom: assignment.effective_from || "",
+        effectiveTo: assignment.effective_to || "",
+        createdAt: assignment.created_at || "",
+        status: resolveAssignmentLifecycle([assignment]),
+      };
+    })
+    .sort((left, right) => {
+      if (left.userId !== right.userId) {
+        return left.userId - right.userId;
+      }
+      return left.businessRoleLabel.localeCompare(right.businessRoleLabel);
+    });
+}
+
 function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) {
   const grouped = new Map();
   for (const assignment of Array.isArray(assignments) ? assignments : []) {
+    // Label-only business roles stay outside bundle/package explainability so
+    // UI-2B does not blur non-authoritative titles with effective authority.
+    if (isBusinessRoleAssignmentRoleCode(assignment?.role_code)) {
+      continue;
+    }
     const key = [
       Number(assignment.user_id || 0),
       normalizeText(assignment.scope_type).toUpperCase(),
@@ -471,7 +519,13 @@ function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) 
       return left.userName.localeCompare(right.userName);
     });
 }
-function buildUserDirectoryRows(users, bundles, approvalRows, coverageRows) {
+function buildUserDirectoryRows(
+  users,
+  bundles,
+  approvalRows,
+  coverageRows,
+  businessRoleLabelAssignments,
+) {
   const bundleMap = new Map();
   for (const bundle of Array.isArray(bundles) ? bundles : []) {
     const userId = Number(bundle.userId || 0);
@@ -480,9 +534,20 @@ function buildUserDirectoryRows(users, bundles, approvalRows, coverageRows) {
     }
     bundleMap.get(userId).push(bundle);
   }
+  const businessRoleMap = new Map();
+  for (const assignment of Array.isArray(businessRoleLabelAssignments)
+    ? businessRoleLabelAssignments
+    : []) {
+    const userId = Number(assignment.userId || 0);
+    if (!businessRoleMap.has(userId)) {
+      businessRoleMap.set(userId, []);
+    }
+    businessRoleMap.get(userId).push(assignment);
+  }
   return (Array.isArray(users) ? users : []).map((user) => {
     const userId = Number(user.id || 0);
     const userBundles = bundleMap.get(userId) || [];
+    const userBusinessRoles = businessRoleMap.get(userId) || [];
     const roleCodes = Array.from(
       new Set(userBundles.flatMap((bundle) => bundle.roleCodes))
     );
@@ -493,7 +558,18 @@ function buildUserDirectoryRows(users, bundles, approvalRows, coverageRows) {
       new Set(userBundles.flatMap((bundle) => bundle.packageLabels || []))
     );
     const scopes = Array.from(
-      new Set(userBundles.map((bundle) => `${bundle.scopeType}:${bundle.scopeId}`))
+      new Set([
+        ...userBundles.map((bundle) => `${bundle.scopeType}:${bundle.scopeId}`),
+        ...userBusinessRoles.map(
+          (assignment) => `${assignment.scopeType}:${assignment.scopeId}`
+        ),
+      ])
+    );
+    const topScopeLabels = Array.from(
+      new Set([
+        ...userBusinessRoles.map((assignment) => assignment.scopeLabel),
+        ...userBundles.map((bundle) => bundle.scopeLabel),
+      ].filter(Boolean))
     );
     const activeApprovalDelegations = (approvalRows || []).filter((row) => {
       const state = normalizeText(row.state).toUpperCase();
@@ -513,13 +589,20 @@ function buildUserDirectoryRows(users, bundles, approvalRows, coverageRows) {
     });
     return {
       ...user,
+      businessRoleCount: userBusinessRoles.length,
+      businessRoleCodes: Array.from(
+        new Set(userBusinessRoles.map((assignment) => assignment.businessRoleCode).filter(Boolean))
+      ),
+      businessRoleLabels: Array.from(
+        new Set(userBusinessRoles.map((assignment) => assignment.businessRoleLabel).filter(Boolean))
+      ),
       assignmentCount: userBundles.length,
       presetCount: userBundles.filter((bundle) => bundle.isPresetBundle).length,
       directBundleCount: userBundles.filter((bundle) => !bundle.isPresetBundle).length,
       scopeCount: scopes.length,
       topRoleCodes: roleCodes.slice(0, 4),
       topPackageLabels: packageLabels.slice(0, 3),
-      topScopeLabels: userBundles.slice(0, 2).map((bundle) => bundle.scopeLabel),
+      topScopeLabels: topScopeLabels.slice(0, 3),
       activeDelegationCount: activeApprovalDelegations.length + activeCoverage.length,
       currentPresetCodes: Array.from(
         new Set(userBundles.map((bundle) => bundle.presetCode).filter(Boolean))
@@ -554,6 +637,8 @@ function buildUserSearchText(row) {
     row.name,
     row.email,
     row.status,
+    row.businessRoleCodes.join(" "),
+    row.businessRoleLabels.join(" "),
     row.topRoleCodes.join(" "),
     row.topRoleCodes.map((roleCode) => getRoleDisplayCode(roleCode)).join(" "),
     row.currentPresetCodes.join(" "),
@@ -1323,8 +1408,15 @@ export default function UserAssignmentsPage() {
     effectiveFrom: "",
     effectiveTo: "",
   });
+  const [businessRoleAssignmentForm, setBusinessRoleAssignmentForm] = useState({
+    userId: "",
+    businessRoleCode: "BRANCH_ACCOUNTANT",
+    scopeType: "OPERATING_UNIT",
+    scopeId: "",
+  });
   const tenantScopeId = Number(user?.tenant_id || 0);
   const canReadOrgTree = hasPermission("org.tree.read");
+  const canUpsertRole = hasPermission("security.role.upsert");
   const roleAssignmentReadAccess = getPermissionAccess("security.role_assignment.read");
   const showFreshTenantAdminNote =
     securityAdminUiStateLoaded &&
@@ -1347,15 +1439,19 @@ export default function UserAssignmentsPage() {
     [roles]
   );
   const roleGroups = useMemo(() => groupRolesForManagement(roles), [roles]);
+  const businessRoleCatalogEntries = useMemo(
+    () => listBusinessRoleCatalogEntries(),
+    []
+  );
   const roleFilterOptions = useMemo(
     () =>
-      roles
-        .map((role) => ({
-          value: normalizeText(role.code),
-          label: getRoleDisplayCode(role),
+      businessRoleCatalogEntries
+        .map((entry) => ({
+          value: normalizeText(entry.code),
+          label: entry.displayName,
         }))
         .sort((left, right) => left.label.localeCompare(right.label)),
-    [roles]
+    [businessRoleCatalogEntries]
   );
   const assignableRoleGroups = useMemo(
     () =>
@@ -1371,9 +1467,27 @@ export default function UserAssignmentsPage() {
     () => buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId),
     [assignments, lookups, tenantScopeId, usersById]
   );
+  const businessRoleLabelAssignments = useMemo(
+    () =>
+      buildBusinessRoleLabelAssignments(assignments, usersById, lookups, tenantScopeId),
+    [assignments, lookups, tenantScopeId, usersById]
+  );
   const userDirectoryRows = useMemo(
-    () => buildUserDirectoryRows(users, assignmentBundles, approvalDelegations, coverageRows),
-    [approvalDelegations, assignmentBundles, coverageRows, users]
+    () =>
+      buildUserDirectoryRows(
+        users,
+        assignmentBundles,
+        approvalDelegations,
+        coverageRows,
+        businessRoleLabelAssignments
+      ),
+    [
+      approvalDelegations,
+      assignmentBundles,
+      businessRoleLabelAssignments,
+      coverageRows,
+      users,
+    ]
   );
   const scopeTargetOptions = useMemo(
     () => buildScopeTargetOptions(assignmentBundles),
@@ -1391,26 +1505,14 @@ export default function UserAssignmentsPage() {
       }
       if (
         userFilters.scopeType &&
-        !assignmentBundles.some(
-          (bundle) =>
-            Number(bundle.userId) === Number(row.id) &&
-            bundle.scopeType === userFilters.scopeType
-        )
+        !row.scopeKeys.some((scopeKey) => scopeKey.startsWith(`${userFilters.scopeType}:`))
       ) {
         return false;
       }
       if (userFilters.scopeTarget && !row.scopeKeys.includes(userFilters.scopeTarget)) {
         return false;
       }
-      if (
-        userFilters.roleCode &&
-        !row.topRoleCodes.includes(userFilters.roleCode) &&
-        !assignmentBundles.some(
-          (bundle) =>
-            Number(bundle.userId) === Number(row.id) &&
-            bundle.roleCodes.includes(userFilters.roleCode)
-        )
-      ) {
+      if (userFilters.roleCode && !row.businessRoleCodes.includes(userFilters.roleCode)) {
         return false;
       }
       if (userFilters.packageCode && !row.currentPackageCodes.includes(userFilters.packageCode)) {
@@ -1443,7 +1545,7 @@ export default function UserAssignmentsPage() {
       }
       return true;
     });
-  }, [assignmentBundles, userDirectoryRows, userFilters]);
+  }, [userDirectoryRows, userFilters]);
   const filteredBundles = useMemo(() => {
     const searchText = normalizeText(assignmentFilters.search).toLowerCase();
     return assignmentBundles.filter((bundle) => {
@@ -1509,6 +1611,42 @@ export default function UserAssignmentsPage() {
         new Set(selectedWorkbenchUserBundles.map((bundle) => bundle.scopeLabel).filter(Boolean))
       ),
     [selectedWorkbenchUserBundles]
+  );
+  const selectedWorkbenchBusinessRoleAssignments = useMemo(
+    () =>
+      businessRoleLabelAssignments.filter(
+        (assignment) => Number(assignment.userId) === Number(selectedWorkbenchUser?.id || 0)
+      ),
+    [businessRoleLabelAssignments, selectedWorkbenchUser?.id]
+  );
+  const selectedBusinessRoleCatalogEntry = useMemo(
+    () =>
+      businessRoleCatalogEntries.find(
+        (entry) => entry.code === normalizeText(businessRoleAssignmentForm.businessRoleCode)
+      ) || businessRoleCatalogEntries[0] || null,
+    [businessRoleAssignmentForm.businessRoleCode, businessRoleCatalogEntries]
+  );
+  const selectedBusinessRoleDefinition = useMemo(
+    () =>
+      getBusinessRoleAssignmentRoleDefinition(businessRoleAssignmentForm.businessRoleCode),
+    [businessRoleAssignmentForm.businessRoleCode]
+  );
+  const selectedBusinessRoleRuntimeRoleExists = Boolean(
+    rolesByCode.get(selectedBusinessRoleDefinition?.roleCode || "")
+  );
+  const businessRoleScopeOptions = useMemo(
+    () =>
+      buildScopeOptions(
+        businessRoleAssignmentForm.scopeType || selectedBusinessRoleCatalogEntry?.defaultScope,
+        lookups,
+        tenantScopeId
+      ),
+    [
+      businessRoleAssignmentForm.scopeType,
+      lookups,
+      selectedBusinessRoleCatalogEntry?.defaultScope,
+      tenantScopeId,
+    ]
   );
   const pendingInviteRows = useMemo(
     () =>
@@ -1634,6 +1772,21 @@ export default function UserAssignmentsPage() {
         }
       : undefined
   );
+  const selectedBusinessRoleScopeId =
+    businessRoleAssignmentForm.scopeType === "TENANT"
+      ? tenantScopeId
+      : Number(businessRoleAssignmentForm.scopeId || 0);
+  const businessRoleAssignmentWriteAccess = getPermissionAccess(
+    "security.role_assignment.upsert",
+    selectedBusinessRoleScopeId
+      ? {
+          scope: {
+            scopeType: businessRoleAssignmentForm.scopeType,
+            scopeId: selectedBusinessRoleScopeId,
+          },
+        }
+      : undefined
+  );
   useEffect(() => {
     if (filteredBundles.length === 0) {
       setSelectedBundleId("");
@@ -1672,6 +1825,14 @@ export default function UserAssignmentsPage() {
     }
   }, [rawAssignmentForm.userId, users]);
   useEffect(() => {
+    if (!businessRoleAssignmentForm.userId && users.length > 0) {
+      setBusinessRoleAssignmentForm((prev) => ({
+        ...prev,
+        userId: String(users[0].id),
+      }));
+    }
+  }, [businessRoleAssignmentForm.userId, users]);
+  useEffect(() => {
     const selectedUserId = String(selectedWorkbenchUser?.id || "");
     if (!selectedUserId) {
       return;
@@ -1682,7 +1843,29 @@ export default function UserAssignmentsPage() {
     setRawAssignmentForm((prev) =>
       prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
     );
+    setBusinessRoleAssignmentForm((prev) =>
+      prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
+    );
   }, [selectedWorkbenchUser?.id]);
+  useEffect(() => {
+    setBusinessRoleAssignmentForm((prev) => {
+      const nextScopeId =
+        prev.scopeType === "TENANT"
+          ? String(tenantScopeId || "")
+          : String(businessRoleScopeOptions[0]?.id || "");
+      if (prev.scopeType === "TENANT") {
+        return prev.scopeId === nextScopeId ? prev : { ...prev, scopeId: nextScopeId };
+      }
+      const currentScopeId = Number(prev.scopeId || 0);
+      if (
+        currentScopeId &&
+        businessRoleScopeOptions.some((option) => Number(option.id) === currentScopeId)
+      ) {
+        return prev;
+      }
+      return { ...prev, scopeId: nextScopeId };
+    });
+  }, [businessRoleScopeOptions, tenantScopeId]);
   useEffect(() => {
     setAssignmentForm((prev) => {
       const currentScopeId = Number(prev.scopeId || 0);
@@ -1860,6 +2043,27 @@ export default function UserAssignmentsPage() {
   }
   function updateRawAssignmentField(field, value) {
     setRawAssignmentForm((prev) => ({ ...prev, [field]: value }));
+  }
+  function updateBusinessRoleAssignmentField(field, value) {
+    setBusinessRoleAssignmentForm((prev) => {
+      if (field === "businessRoleCode") {
+        const nextRoleDefinition = getBusinessRoleAssignmentRoleDefinition(value);
+        return {
+          ...prev,
+          businessRoleCode: value,
+          scopeType: nextRoleDefinition?.defaultScope || prev.scopeType,
+          scopeId: "",
+        };
+      }
+      if (field === "scopeType") {
+        return {
+          ...prev,
+          scopeType: value,
+          scopeId: "",
+        };
+      }
+      return { ...prev, [field]: value };
+    });
   }
   async function copyInviteLink() {
     if (!lastInviteLink) {
@@ -2099,6 +2303,171 @@ export default function UserAssignmentsPage() {
         )
       );
     } finally {
+      setSaving(false);
+    }
+  }
+  async function handleAssignBusinessRoleLabel(event) {
+    event.preventDefault();
+    const roleDefinition = getBusinessRoleAssignmentRoleDefinition(
+      businessRoleAssignmentForm.businessRoleCode
+    );
+    if (!normalizeText(businessRoleAssignmentForm.userId) || !roleDefinition) {
+      setError(
+        l(
+          "Choose both a user and a business role label first.",
+          "Once hem kullanici hem de is rol etiketi secin."
+        )
+      );
+      return;
+    }
+    if (!selectedBusinessRoleScopeId) {
+      setError(
+        l(
+          "Choose a valid scope for the business role label.",
+          "Is rol etiketi icin gecerli bir kapsam secin."
+        )
+      );
+      return;
+    }
+    if (!businessRoleAssignmentWriteAccess.allowed) {
+      setError(
+        l(
+          "You do not have permission to assign this business role label at the selected scope.",
+          "Secilen kapsamda bu is rol etiketini atama yetkiniz yok."
+        )
+      );
+      return;
+    }
+    const duplicateAssignment = selectedWorkbenchBusinessRoleAssignments.some(
+      (assignment) =>
+        assignment.businessRoleCode === roleDefinition.businessRoleCode &&
+        assignment.scopeType === businessRoleAssignmentForm.scopeType &&
+        Number(assignment.scopeId) === Number(selectedBusinessRoleScopeId)
+    );
+    if (duplicateAssignment) {
+      setError(
+        l(
+          "This business role label is already assigned at the selected scope.",
+          "Bu is rol etiketi secilen kapsamda zaten atanmis."
+        )
+      );
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setWarningMessages([]);
+    try {
+      let runtimeRole = rolesByCode.get(roleDefinition.roleCode) || null;
+      if (!runtimeRole) {
+        if (!canUpsertRole) {
+          throw new Error(
+            l(
+              "Creating the label-only runtime role requires security.role.upsert first.",
+              "Etiket-yalniz runtime rolunu olusturmak icin once security.role.upsert gerekir."
+            )
+          );
+        }
+        const createRoleResponse = await createOrUpdateRole({
+          code: roleDefinition.roleCode,
+          name: roleDefinition.roleName,
+        });
+        runtimeRole = {
+          id: Number(createRoleResponse?.id || 0),
+          code: roleDefinition.roleCode,
+          name: roleDefinition.roleName,
+          permissionCodes: [],
+        };
+      }
+
+      await createRoleAssignment({
+        userId: Number(businessRoleAssignmentForm.userId),
+        roleId: Number(runtimeRole.id),
+        scopeType: businessRoleAssignmentForm.scopeType,
+        scopeId: selectedBusinessRoleScopeId,
+        effect: "ALLOW",
+      });
+      setMessage(
+        l(
+          "Business role label assigned. Workflow packages still need their own assignment.",
+          "Is rol etiketi atandi. Workflow paketleri icin ayri atama hala gerekir."
+        )
+      );
+      await loadData();
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l(
+            "The business role label could not be assigned.",
+            "Is rol etiketi atanamadi."
+          )
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function handleRemoveBusinessRoleLabel(assignment) {
+    if (!assignment?.assignmentId) {
+      return;
+    }
+    const revokeAccess = getPermissionAccess(
+      "security.role_assignment.upsert",
+      assignment.scopeId
+        ? {
+            scope: {
+              scopeType: assignment.scopeType,
+              scopeId: assignment.scopeId,
+            },
+          }
+        : undefined
+    );
+    if (!revokeAccess.allowed) {
+      setError(
+        l(
+          "You do not have permission to remove this business role label.",
+          "Bu is rol etiketini kaldirma yetkiniz yok."
+        )
+      );
+      return;
+    }
+    const confirmed = window.confirm(
+      l(
+        "Remove this business role label only? Workflow package and runtime-role assignments will stay unchanged.",
+        "Yalnizca bu is rol etiketini kaldirmak istiyor musunuz? Workflow paketleri ve runtime rol atamalari degismeden kalir."
+      )
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setActingRowId(`business-role-${assignment.assignmentId}`);
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await deleteRoleAssignment(assignment.assignmentId);
+      setMessage(
+        l(
+          "Business role label removed. Workflow package authority stayed unchanged.",
+          "Is rol etiketi kaldirildi. Workflow paket yetkisi degismeden kaldi."
+        )
+      );
+      await loadData();
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l(
+            "The business role label could not be removed.",
+            "Is rol etiketi kaldirilamadi."
+          )
+        )
+      );
+    } finally {
+      setActingRowId("");
       setSaving(false);
     }
   }
@@ -2353,8 +2722,13 @@ export default function UserAssignmentsPage() {
       {!loading && activeTab === "users" ? (
         <UserAssignmentWorkbench
           actingRowId={actingRowId}
+          businessRoleAssignmentForm={businessRoleAssignmentForm}
+          businessRoleAssignmentWriteAccess={businessRoleAssignmentWriteAccess}
+          businessRoleScopeOptions={businessRoleScopeOptions}
+          canUpsertRole={canUpsertRole}
           filteredUsers={filteredUsers}
           l={l}
+          onAssignBusinessRoleLabel={handleAssignBusinessRoleLabel}
           onClearFilters={() =>
             setUserFilters({
               search: "",
@@ -2378,12 +2752,17 @@ export default function UserAssignmentsPage() {
               openExistingUserModal(userRow);
             }
           }}
+          onRemoveBusinessRoleLabel={handleRemoveBusinessRoleLabel}
           onRevokeBundle={handleRevokeBundle}
           onSelectBundle={setSelectedWorkbenchBundleId}
           onSelectUser={setSelectedWorkbenchUserId}
+          onUpdateBusinessRoleAssignmentField={updateBusinessRoleAssignmentField}
           packageFilterOptions={packageFilterOptions}
           roleFilterOptions={roleFilterOptions}
           saving={saving}
+          selectedBusinessRoleAssignments={selectedWorkbenchBusinessRoleAssignments}
+          selectedBusinessRoleCatalogEntry={selectedBusinessRoleCatalogEntry}
+          selectedBusinessRoleRuntimeRoleExists={selectedBusinessRoleRuntimeRoleExists}
           scopeTargetOptions={scopeTargetOptions}
           selectedBundle={selectedWorkbenchBundle}
           selectedUser={selectedWorkbenchUser}
