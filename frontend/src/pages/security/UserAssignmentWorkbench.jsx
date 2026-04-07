@@ -362,6 +362,7 @@ export default function UserAssignmentWorkbench(props) {
     selectedPackageSourceBusinessRoleEntry,
     selectedPackageSourcePackageCodes,
     selectedPackageSourcePresetEntry,
+    selectedUserEffectiveAuthorityPreview,
     selectedWorkflowPackageAssignmentRoleStatus,
     selectedWorkflowPackageAssignments,
     selectedWorkflowPackageCatalogEntry,
@@ -385,6 +386,11 @@ export default function UserAssignmentWorkbench(props) {
     workflowPackageScopeTypeOptions,
     workflowPresetCatalogEntries,
   } = props;
+  const effectiveAuthorityPreview = selectedUserEffectiveAuthorityPreview || {
+    workflowLines: [],
+    runtimeLines: [],
+    warnings: [],
+  };
 
   return (
     <section className="space-y-5">
@@ -801,12 +807,12 @@ export default function UserAssignmentWorkbench(props) {
                           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
                             {canUpsertRole
                               ? l(
-                                  "The label-only runtime role does not exist in this tenant yet. It will be created automatically with zero permissions on first assignment.",
-                                  "Etiket-yalniz runtime rol bu tenant'ta henuz yok. Ilk atamada sifir yetki ile otomatik olusturulur."
+                                  "This role has not been assigned to anyone in your organisation yet. It will be set up automatically when you save this assignment.",
+                                  "Bu rol henuz kurulusunuzda kimseye atanmamis. Bu atamayi kaydettiginizde otomatik olarak olusturulacaktir."
                                 )
                               : l(
-                                  "First assignment also needs security.role.upsert because the label-only runtime role has not been created in this tenant yet.",
-                                  "Ilk atama icin ayrica security.role.upsert gerekir; cunku etiket-yalniz runtime rol bu tenant'ta henuz olusturulmamis."
+                                  "This role has not been set up in your organisation yet. You need additional permissions to make the first assignment — please contact your administrator.",
+                                  "Bu rol henuz kurulusunuzda olusturulmamis. Ilk atamayi yapabilmek icin ek yetkilere ihtiyaciniz var — lutfen yoneticinize basvurun."
                                 )}
                           </div>
                         ) : null}
@@ -1378,6 +1384,138 @@ export default function UserAssignmentWorkbench(props) {
                         })
                       )}
                     </div>
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                    <h3 className="text-lg font-semibold text-slate-950">
+                      {l("Effective authority preview", "Etkin yetki onizlemesi")}
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {l(
+                        "Read the selected user's current allow-side authority in business language before drilling into raw roles. Scope gaps between business labels and package authority stay visible here.",
+                        "Ham rollere inmeden once secili kullanicinin mevcut allow-tarafi yetkisini is dilinde okuyun. Is rol etiketleri ile paket yetkisi arasindaki kapsam bosluklari burada gorunur kalir."
+                      )}
+                    </p>
+                  </div>
+                  <div className="space-y-5 px-5 py-5">
+                    {effectiveAuthorityPreview.workflowLines.length === 0 &&
+                    effectiveAuthorityPreview.runtimeLines.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                        {l(
+                          "No active effective authority could be summarized yet from workflow packages or mapped runtime roles. Use the runtime snapshot below for the raw role mix.",
+                          "Workflow paketlerinden veya eslenen runtime rollerinden henuz ozetlenebilir etkin bir yetki bulunamadi. Ham rol karisimini gormek icin asagidaki runtime ozetini kullanin."
+                        )}
+                      </div>
+                    ) : null}
+                    {effectiveAuthorityPreview.workflowLines.length > 0 ? (
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          {l("Workflow & package authority", "Workflow ve paket yetkisi")}
+                        </div>
+                        <div className="mt-3 space-y-3">
+                          {effectiveAuthorityPreview.workflowLines.map((line) => (
+                            <div
+                              key={line.id}
+                              className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                            >
+                              <div className="flex flex-wrap gap-2">
+                                <Pill label={line.workflowFamilyLabel} tone="violet" />
+                                <Pill label={line.scopeType} tone="blue" />
+                                {line.sourceLabels.map((sourceLabel) => (
+                                  <Pill
+                                    key={`${line.id}-${sourceLabel}`}
+                                    label={sourceLabel}
+                                    tone="green"
+                                  />
+                                ))}
+                              </div>
+                              <p className="mt-3 text-sm font-medium leading-6 text-slate-900">
+                                {l(
+                                  "Can {{summary}} in {{scope}}.",
+                                  "{{scope}} kapsaminda {{summary}}.",
+                                  {
+                                    summary: line.summaryText,
+                                    scope: line.scopeLabel,
+                                  }
+                                )}
+                              </p>
+                              {line.missingText ? (
+                                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                                  {l(
+                                    "Still missing: {{missing}}.",
+                                    "Hala eksik olan: {{missing}}.",
+                                    {
+                                      missing: line.missingText,
+                                    }
+                                  )}
+                                </div>
+                              ) : null}
+                              {line.noteText ? (
+                                <div className="mt-3 text-xs text-slate-500">{line.noteText}</div>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {effectiveAuthorityPreview.runtimeLines.length > 0 ? (
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          {l("Additional runtime authority", "Ek runtime yetkisi")}
+                        </div>
+                        <div className="mt-3 space-y-3">
+                          {effectiveAuthorityPreview.runtimeLines.map((line) => (
+                            <div
+                              key={line.id}
+                              className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                            >
+                              <div className="flex flex-wrap gap-2">
+                                <Pill
+                                  label={line.roleLabel}
+                                  tone={line.legacy ? "amber" : "slate"}
+                                />
+                                <Pill label={line.scopeType} tone="blue" />
+                                {line.sourceLabels.map((sourceLabel) => (
+                                  <Pill
+                                    key={`${line.id}-${sourceLabel}`}
+                                    label={sourceLabel}
+                                    tone={line.legacy ? "amber" : "slate"}
+                                  />
+                                ))}
+                              </div>
+                              <p className="mt-3 text-sm font-medium leading-6 text-slate-900">
+                                {l(
+                                  "Can {{summary}} in {{scope}}.",
+                                  "{{scope}} kapsaminda {{summary}}.",
+                                  {
+                                    summary: line.summaryText,
+                                    scope: line.scopeLabel,
+                                  }
+                                )}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {effectiveAuthorityPreview.warnings.length > 0 ? (
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          {l("Scope alignment warnings", "Kapsam uyum uyarilari")}
+                        </div>
+                        <div className="mt-3 space-y-3">
+                          {effectiveAuthorityPreview.warnings.map((warning) => (
+                            <div
+                              key={warning.id}
+                              className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900"
+                            >
+                              {warning.text}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">

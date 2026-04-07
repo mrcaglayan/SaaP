@@ -31,6 +31,7 @@ import {
 } from "../../utils/delegationUi.js";
 import SecurityWarningList from "./SecurityWarningList.jsx";
 import UserAssignmentWorkbench from "./UserAssignmentWorkbench.jsx";
+import { buildEffectiveAuthorityPreview } from "./userAssignmentAuthorityPreview.js";
 import {
   BOOTSTRAP_HANDOFF_PRESET_CATALOG,
   buildScopeLabel,
@@ -2044,6 +2045,21 @@ export default function UserAssignmentsPage() {
       selectedWorkbenchWorkflowPackageAssignments,
     ]
   );
+  const selectedWorkbenchEffectiveAuthorityPreview = useMemo(
+    () =>
+      buildEffectiveAuthorityPreview({
+        businessRoleAssignments: selectedWorkbenchBusinessRoleAssignments,
+        workflowPackageAssignments: selectedWorkbenchWorkflowPackageAssignments,
+        userBundles: selectedWorkbenchUserBundles,
+        l,
+      }),
+    [
+      l,
+      selectedWorkbenchBusinessRoleAssignments,
+      selectedWorkbenchUserBundles,
+      selectedWorkbenchWorkflowPackageAssignments,
+    ]
+  );
   const selectedBusinessRoleCatalogEntry = useMemo(
     () =>
       businessRoleCatalogEntries.find(
@@ -4025,6 +4041,9 @@ export default function UserAssignmentsPage() {
           }
           selectedPackageSourcePackageCodes={selectedPackageSourcePackageCodes}
           selectedPackageSourcePresetEntry={selectedPackageSourcePresetEntry}
+          selectedUserEffectiveAuthorityPreview={
+            selectedWorkbenchEffectiveAuthorityPreview
+          }
           selectedWorkflowPackageAssignmentRoleStatus={selectedWorkflowPackageRoleStatus}
           selectedWorkflowPackageAssignments={selectedWorkbenchWorkflowPackageAssignments}
           selectedWorkflowPackageCatalogEntry={selectedWorkflowPackageCatalogEntry}

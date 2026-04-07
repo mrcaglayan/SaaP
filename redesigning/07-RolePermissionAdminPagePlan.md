@@ -1014,7 +1014,7 @@ Support future period-close-specific reopen/admin packages if introduced later.
 9. UI-2B done
 10. UI-2C done
 11. UI-2D done
-12. UI-2E
+12. UI-2E done
 13. UI-2F
 14. UI-3A
 15. UI-3B
