@@ -59,6 +59,22 @@ function getInitials(name) {
   return parts.map((part) => part[0].toUpperCase()).join("");
 }
 
+function formatDate(value) {
+  const timestamp = value ? new Date(value).getTime() : Number.NaN;
+  if (Number.isNaN(timestamp)) {
+    return "-";
+  }
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function formatDateTime(value) {
+  const timestamp = value ? new Date(value).getTime() : Number.NaN;
+  if (Number.isNaN(timestamp)) {
+    return "-";
+  }
+  return new Date(timestamp).toLocaleString();
+}
+
 function Pill({ label, tone = "slate" }) {
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getToneClasses(tone)}`}>
@@ -361,6 +377,10 @@ export default function UserAssignmentWorkbench(props) {
     selectedPackageSourceBusinessRoleAssigned,
     selectedPackageSourceBusinessRoleEntry,
     selectedPackageSourcePackageCodes,
+    selectedUserAssignmentAuditReadable,
+    selectedUserAssignmentAuditSummary,
+    selectedUserAuditError,
+    selectedUserAuditLoading,
     selectedPackageSourcePresetEntry,
     selectedUserEffectiveAuthorityPreview,
     selectedWorkflowPackageAssignmentRoleStatus,
@@ -390,6 +410,10 @@ export default function UserAssignmentWorkbench(props) {
     workflowLines: [],
     runtimeLines: [],
     warnings: [],
+  };
+  const assignmentAuditSummary = selectedUserAssignmentAuditSummary || {
+    auditItems: [],
+    sodWarnings: [],
   };
 
   return (
@@ -1516,6 +1540,178 @@ export default function UserAssignmentWorkbench(props) {
                         </div>
                       </div>
                     ) : null}
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-950">
+                          {l("Assignment audit & SoD warnings", "Atama audit ve SoD uyarilari")}
+                        </h3>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">
+                          {l(
+                            "Review who granted the current labels, packages, and runtime bundles, then check for UI-level segregation-of-duties overlaps before making more changes.",
+                            "Mevcut etiketleri, paketleri ve runtime paketlerini kimin verdigini gozden gecirin; sonra daha fazla degisiklik yapmadan once UI-seviyesi gorev ayriligi cakismalarini kontrol edin."
+                          )}
+                        </p>
+                      </div>
+                      <Pill
+                        label={
+                          selectedUserAssignmentAuditReadable
+                            ? l("Audit read enabled", "Audit okuma acik")
+                            : l("Audit read required", "Audit okuma gerekli")
+                        }
+                        tone={selectedUserAssignmentAuditReadable ? "blue" : "amber"}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-5 px-5 py-5">
+                    {selectedUserAuditLoading ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                        {l(
+                          "Loading assignment audit history for the selected user...",
+                          "Secili kullanici icin atama audit gecmisi yukleniyor..."
+                        )}
+                      </div>
+                    ) : null}
+                    {!selectedUserAuditLoading && selectedUserAuditError ? (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                        {selectedUserAuditError}
+                      </div>
+                    ) : null}
+                    {!selectedUserAuditLoading && !selectedUserAssignmentAuditReadable ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+                        {l(
+                          "Granted-by attribution uses RBAC audit logs and appears only when security.audit.read is available. Granted-at and effective dates still come from the current assignment rows.",
+                          "Kim tarafindan verildigi bilgisi RBAC audit kayitlarini kullanir ve yalnizca security.audit.read mevcutsa gorunur. Verilis zamani ve etkinlik tarihleri ise mevcut atama satirlarindan gelmeye devam eder."
+                        )}
+                      </div>
+                    ) : null}
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {l("SoD warning summary", "SoD uyari ozeti")}
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        {assignmentAuditSummary.sodWarnings.length === 0 ? (
+                          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
+                            {l(
+                              "No obvious UI-level segregation-of-duties overlaps were detected from the current package and runtime-role mix.",
+                              "Mevcut paket ve runtime rol karisimindan belirgin bir UI-seviyesi gorev ayriligi cakismasi tespit edilmedi."
+                            )}
+                          </div>
+                        ) : (
+                          assignmentAuditSummary.sodWarnings.map((warning) => (
+                            <div
+                              key={warning.id}
+                              className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4"
+                            >
+                              <div className="flex flex-wrap gap-2">
+                                <Pill label={warning.title} tone="amber" />
+                                {warning.scopeLabel ? (
+                                  <Pill label={warning.scopeLabel} tone="blue" />
+                                ) : null}
+                                {(warning.sourceLabels || []).map((sourceLabel) => (
+                                  <Pill
+                                    key={`${warning.id}-${sourceLabel}`}
+                                    label={sourceLabel}
+                                    tone="slate"
+                                  />
+                                ))}
+                              </div>
+                              <p className="mt-3 text-sm leading-6 text-amber-900">
+                                {warning.description}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          {l("Assignment history", "Atama gecmisi")}
+                        </div>
+                        <Pill
+                          label={l(
+                            "{{count}} current items",
+                            "{{count}} guncel oge",
+                            { count: assignmentAuditSummary.auditItems.length }
+                          )}
+                          tone="blue"
+                        />
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        {assignmentAuditSummary.auditItems.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                            {l(
+                              "No current labels, package grants, or runtime bundles are available for audit display yet.",
+                              "Audit ekraninda gosterilecek mevcut etiket, paket yetkisi veya runtime paketi henuz bulunmuyor."
+                            )}
+                          </div>
+                        ) : (
+                          assignmentAuditSummary.auditItems.map((item) => (
+                            <div
+                              key={item.id}
+                              className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex flex-wrap gap-2">
+                                    <Pill label={item.kindLabel} tone="violet" />
+                                    <Pill label={item.sourceLabel} tone="blue" />
+                                    <Pill label={item.statusLabel} tone={item.statusTone} />
+                                  </div>
+                                  <div className="mt-3 text-sm font-semibold text-slate-950">
+                                    {item.title}
+                                  </div>
+                                  <div className="mt-1 text-sm text-slate-600">{item.scopeLabel}</div>
+                                </div>
+                                <div className="text-right text-xs text-slate-500">
+                                  <div>
+                                    {l("Granted at", "Verilis zamani")}: {formatDateTime(item.grantedAt)}
+                                  </div>
+                                  <div className="mt-1">
+                                    {l("Effective", "Yururluk")}: {formatDate(item.effectiveFrom)} -{" "}
+                                    {formatDate(item.effectiveTo)}
+                                  </div>
+                                </div>
+                              </div>
+                              {item.sourceDetail ? (
+                                <p className="mt-3 text-sm leading-6 text-slate-600">
+                                  {item.sourceDetail}
+                                </p>
+                              ) : null}
+                              <div className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+                                <div>
+                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                                    {l("Granted by", "Kim verdi")}
+                                  </div>
+                                  <div className="mt-1">{item.grantedByLabel}</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                                    {l("Last scope change", "Son kapsam degisikligi")}
+                                  </div>
+                                  <div className="mt-1">
+                                    {item.lastChangedByLabel && item.lastChangedAt
+                                      ? l(
+                                          "{{actor}} at {{time}}",
+                                          "{{actor}} tarafindan {{time}} aninda",
+                                          {
+                                            actor: item.lastChangedByLabel,
+                                            time: formatDateTime(item.lastChangedAt),
+                                          }
+                                        )
+                                      : l("No scope replacement recorded", "Kayitli kapsam degisikligi yok")}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">

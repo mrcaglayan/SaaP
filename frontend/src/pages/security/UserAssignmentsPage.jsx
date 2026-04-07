@@ -12,6 +12,7 @@ import {
   createRoleAssignment,
   createSecurityInvite,
   deleteRoleAssignment,
+  listAuditLogs,
   listCountries,
   listGroupCompanies,
   listLegalEntities,
@@ -30,6 +31,7 @@ import {
   formatDelegationWindow,
 } from "../../utils/delegationUi.js";
 import SecurityWarningList from "./SecurityWarningList.jsx";
+import { buildAssignmentAuditSummary } from "./userAssignmentAuditSummary.js";
 import UserAssignmentWorkbench from "./UserAssignmentWorkbench.jsx";
 import { buildEffectiveAuthorityPreview } from "./userAssignmentAuthorityPreview.js";
 import {
@@ -434,6 +436,7 @@ function buildBusinessRoleLabelAssignments(assignments, usersById, lookups, tena
         userId,
         userName: normalizeText(user?.name || assignment.user_name || `User #${userId}`),
         userEmail: normalizeText(user?.email || assignment.user_email),
+        roleId: Number(assignment.role_id || 0),
         businessRoleCode: roleEntry.businessRoleCode || "",
         businessRoleLabel: roleEntry.code,
         roleCode: normalizeText(assignment.role_code),
@@ -472,6 +475,7 @@ function buildWorkflowPackageAssignments(assignments, usersById, lookups, tenant
         userId,
         userName: normalizeText(user?.name || assignment.user_name || `User #${userId}`),
         userEmail: normalizeText(user?.email || assignment.user_email),
+        roleId: Number(assignment.role_id || 0),
         packageCode: roleEntry.workflowPackageCode || "",
         packageLabel: roleEntry.code,
         roleCode: normalizeText(assignment.role_code),
@@ -1668,6 +1672,9 @@ export default function UserAssignmentsPage() {
   const [operatingUnits, setOperatingUnits] = useState([]);
   const [approvalDelegations, setApprovalDelegations] = useState([]);
   const [coverageRows, setCoverageRows] = useState([]);
+  const [selectedWorkbenchAuditRows, setSelectedWorkbenchAuditRows] = useState([]);
+  const [selectedWorkbenchAuditLoading, setSelectedWorkbenchAuditLoading] = useState(false);
+  const [selectedWorkbenchAuditError, setSelectedWorkbenchAuditError] = useState("");
   const [lastInviteLink, setLastInviteLink] = useState("");
   const [userFilters, setUserFilters] = useState({
     search: "",
@@ -1741,6 +1748,7 @@ export default function UserAssignmentsPage() {
   });
   const tenantScopeId = Number(user?.tenant_id || 0);
   const canReadOrgTree = hasPermission("org.tree.read");
+  const canReadAudit = hasPermission("security.audit.read");
   const canUpsertRole = hasPermission("security.role.upsert");
   const canAssignRolePermissions = hasPermission("security.role_permissions.assign");
   const roleAssignmentReadAccess = getPermissionAccess("security.role_assignment.read");
@@ -2055,6 +2063,76 @@ export default function UserAssignmentsPage() {
       }),
     [
       l,
+      selectedWorkbenchBusinessRoleAssignments,
+      selectedWorkbenchUserBundles,
+      selectedWorkbenchWorkflowPackageAssignments,
+    ]
+  );
+  useEffect(() => {
+    if (activeTab !== "users" || !selectedWorkbenchUser?.id || !canReadAudit) {
+      setSelectedWorkbenchAuditRows([]);
+      setSelectedWorkbenchAuditLoading(false);
+      setSelectedWorkbenchAuditError("");
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedWorkbenchAuditLoading(true);
+    setSelectedWorkbenchAuditError("");
+
+    listAuditLogs({
+      page: 1,
+      pageSize: 200,
+      targetUserId: selectedWorkbenchUser.id,
+      resourceType: "user_role_scope",
+    })
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setSelectedWorkbenchAuditRows(Array.isArray(result?.rows) ? result.rows : []);
+      })
+      .catch((requestError) => {
+        if (cancelled) {
+          return;
+        }
+        setSelectedWorkbenchAuditRows([]);
+        setSelectedWorkbenchAuditError(
+          getErrorMessage(
+            requestError,
+            l(
+              "Assignment audit history is not available for the selected user.",
+              "Secili kullanici icin atama audit gecmisi kullanilamiyor."
+            )
+          )
+        );
+      })
+      .finally(() => {
+        if (cancelled) {
+          return;
+        }
+        setSelectedWorkbenchAuditLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, canReadAudit, l, selectedWorkbenchUser?.id]);
+  const selectedWorkbenchAssignmentAuditSummary = useMemo(
+    () =>
+      buildAssignmentAuditSummary({
+        businessRoleAssignments: selectedWorkbenchBusinessRoleAssignments,
+        workflowPackageAssignments: selectedWorkbenchWorkflowPackageAssignments,
+        userBundles: selectedWorkbenchUserBundles,
+        auditRows: selectedWorkbenchAuditRows,
+        auditReadable: canReadAudit && !selectedWorkbenchAuditError,
+        l,
+      }),
+    [
+      canReadAudit,
+      l,
+      selectedWorkbenchAuditError,
+      selectedWorkbenchAuditRows,
       selectedWorkbenchBusinessRoleAssignments,
       selectedWorkbenchUserBundles,
       selectedWorkbenchWorkflowPackageAssignments,
@@ -4039,6 +4117,12 @@ export default function UserAssignmentsPage() {
           selectedPackageSourceBusinessRoleEntry={
             selectedPackageSourceBusinessRoleEntry
           }
+          selectedUserAssignmentAuditReadable={canReadAudit}
+          selectedUserAssignmentAuditSummary={
+            selectedWorkbenchAssignmentAuditSummary
+          }
+          selectedUserAuditError={selectedWorkbenchAuditError}
+          selectedUserAuditLoading={selectedWorkbenchAuditLoading}
           selectedPackageSourcePackageCodes={selectedPackageSourcePackageCodes}
           selectedPackageSourcePresetEntry={selectedPackageSourcePresetEntry}
           selectedUserEffectiveAuthorityPreview={
