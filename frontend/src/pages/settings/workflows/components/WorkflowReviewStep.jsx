@@ -39,9 +39,9 @@ export default function WorkflowReviewStep({
   assignmentSaving = false,
   canWriteAssignment = false,
   assignmentSaved = false,
-  // PR-WGX-01: AP business preview
-  apBusinessPreviewLines,
-  apBusinessLabels,
+  selectedWorkflowPreset = null,
+  workflowPresetPreview = null,
+  workflowPresetComparison = null,
   coverageDiagnostics,
   coverageDiagnosticsLoading = false,
   coverageDiagnosticsError = "",
@@ -167,16 +167,51 @@ export default function WorkflowReviewStep({
             <p className="mt-2 text-sm leading-6 text-foreground">{workflowPreviewText}</p>
           </div>
 
-          {Array.isArray(apBusinessPreviewLines) && apBusinessPreviewLines.length > 0 ? (
+          {selectedWorkflowPreset ? (
             <div className="rounded-3xl border border-emerald-200 bg-emerald-50/80 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                {apBusinessLabels?.businessPreviewTitle || l("Business process preview", "Is sureci onizlemesi")}
-              </p>
-              <div className="mt-2 space-y-1">
-                {apBusinessPreviewLines.map((line, i) => (
-                  <p key={i} className="text-sm leading-6 text-emerald-900">{line}</p>
-                ))}
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                    {l("Workflow preset", "Workflow preset")}
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-emerald-950">
+                    {selectedWorkflowPreset.displayName}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-emerald-800/80">
+                    {workflowPresetPreview?.summaryText || selectedWorkflowPreset.description}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">{selectedWorkflowPreset.primaryScope}</Badge>
+                  <Badge variant="secondary">
+                    {selectedWorkflowPreset.stepCount} {l("steps", "adim")}
+                  </Badge>
+                  <Badge
+                    variant={selectedWorkflowPreset.usesExtension ? "outline" : "secondary"}
+                  >
+                    {selectedWorkflowPreset.usesExtension
+                      ? l("Extension", "Extension")
+                      : l("Shipped", "Hazir")}
+                  </Badge>
+                </div>
               </div>
+
+              {Array.isArray(workflowPresetPreview?.lines) &&
+              workflowPresetPreview.lines.length > 0 ? (
+                <div className="mt-3 space-y-1">
+                  {workflowPresetPreview.lines.map((line, index) => (
+                    <p key={`${selectedWorkflowPreset.code}-review-${index}`} className="text-sm leading-6 text-emerald-900">
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+
+              {workflowPresetComparison ? (
+                <p className="mt-3 text-xs leading-5 text-emerald-900/80">
+                  {workflowPresetComparison.summaryText}
+                </p>
+              ) : null}
             </div>
           ) : null}
 

@@ -1,4 +1,5 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -35,13 +36,14 @@ export default function WorkflowStepsBuilderStep({
   saving,
   canWrite,
   onBack,
-  // PR-WGX-01: AP business template props
-  apTemplates,
-  apTemplateLabels,
+  workflowPresetOptions = [],
+  selectedWorkflowPreset = null,
+  workflowPresetPreview = null,
+  workflowPresetComparison = null,
+  onSelectWorkflowPreset,
+  onCloneWorkflowPreset,
+  onResetStepsToSelectedPreset,
   apBusinessLabels,
-  selectedApTemplate,
-  onSelectApTemplate,
-  apBusinessPreviewLines,
 }) {
   const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
 
@@ -90,59 +92,185 @@ export default function WorkflowStepsBuilderStep({
             </Alert>
           ) : null}
 
-          {isAp && apTemplates && apTemplateLabels ? (
+          {Array.isArray(workflowPresetOptions) && workflowPresetOptions.length > 0 ? (
             <div className="space-y-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  {apBusinessLabels?.templateSectionTitle || "AP business flow template"}
+                  {l("Workflow preset", "Workflow preset")}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {apBusinessLabels?.templateSectionDescription || "Choose a predefined approval flow or customize the steps below."}
+                  {l(
+                    "Choose a business-readable preset, preview the package flow, then clone its baseline into this tenant workflow.",
+                    "Is dilinde bir preset secin, paket akisina onizleme yapin, sonra temelini bu tenant workflow'una kopyalayin."
+                  )}
                 </p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {apTemplates.map((template) => {
-                  const meta = apTemplateLabels[template.id];
-                  if (!meta) return null;
-                  const isActive = selectedApTemplate === template.id;
+              <div className="grid gap-2 lg:grid-cols-2">
+                {workflowPresetOptions.map((preset) => {
+                  const isActive =
+                    String(selectedWorkflowPreset?.code || "") === String(preset.code || "");
                   return (
                     <button
-                      key={template.id}
+                      key={preset.code}
                       type="button"
-                      onClick={() => onSelectApTemplate(template.id)}
+                      onClick={() => onSelectWorkflowPreset(preset.code)}
                       className={`rounded-2xl border px-4 py-3 text-left transition-colors ${isActive
                           ? "border-blue-500 bg-blue-50 ring-2 ring-blue-200"
                           : "border-border bg-card hover:border-blue-300 hover:bg-blue-50/50"
                         }`}
                     >
-                      <p className="text-sm font-medium text-foreground">{meta.label}</p>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">{meta.description}</p>
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">
+                          {preset.displayName}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="secondary">
+                            {preset.primaryScope || preset.defaultScope || "-"}
+                          </Badge>
+                          <Badge
+                            variant={preset.usesExtension ? "outline" : "secondary"}
+                          >
+                            {preset.stepCount} {l("steps", "adim")}
+                          </Badge>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                        {preset.description}
+                      </p>
+                      {preset.usesExtension ? (
+                        <p className="mt-2 text-[11px] font-medium text-amber-700">
+                          {preset.extensionNote ||
+                            l(
+                              "Extension-backed preset",
+                              "Extension destekli preset"
+                            )}
+                        </p>
+                      ) : null}
                     </button>
                   );
                 })}
-                <button
-                  type="button"
-                  onClick={() => onSelectApTemplate("custom")}
-                  className={`rounded-2xl border px-4 py-3 text-left transition-colors ${selectedApTemplate === "custom"
-                      ? "border-blue-500 bg-blue-50 ring-2 ring-blue-200"
-                      : "border-border bg-card hover:border-blue-300 hover:bg-blue-50/50"
-                    }`}
-                >
-                  <p className="text-sm font-medium text-foreground">
-                    {apBusinessLabels?.customTemplate || "Custom (configure manually)"}
-                  </p>
-                </button>
               </div>
             </div>
           ) : null}
 
-          {isAp && Array.isArray(apBusinessPreviewLines) && apBusinessPreviewLines.length > 0 ? (
+          {selectedWorkflowPreset ? (
+            <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
+                    {l("Selected preset", "Secilen preset")}
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-blue-950">
+                    {selectedWorkflowPreset.displayName}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-blue-800/80">
+                    {workflowPresetPreview?.summaryText || selectedWorkflowPreset.description}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">{selectedWorkflowPreset.primaryScope}</Badge>
+                  <Badge variant="secondary">
+                    {selectedWorkflowPreset.stepCount} {l("steps", "adim")}
+                  </Badge>
+                  <Badge
+                    variant={selectedWorkflowPreset.usesExtension ? "outline" : "secondary"}
+                  >
+                    {selectedWorkflowPreset.usesExtension
+                      ? l("Extension", "Extension")
+                      : l("Shipped", "Hazir")}
+                  </Badge>
+                </div>
+              </div>
+
+              {Array.isArray(workflowPresetPreview?.lines) &&
+              workflowPresetPreview.lines.length > 0 ? (
+                <div className="mt-4 space-y-2">
+                  {workflowPresetPreview.lines.map((line, index) => (
+                    <p
+                      key={`${selectedWorkflowPreset.code}-preview-${index}`}
+                      className="text-sm leading-6 text-blue-950"
+                    >
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+
+              {workflowPresetComparison ? (
+                <div className="mt-4 rounded-2xl border border-white/70 bg-white/70 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        {l("Preset comparison", "Preset karsilastirma")}
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-slate-950">
+                        {workflowPresetComparison.statusLabel}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        {workflowPresetComparison.summaryText}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-slate-500">
+                        {workflowPresetComparison.supportNote}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={onCloneWorkflowPreset}
+                        disabled={
+                          !canWrite ||
+                          !workflowPresetComparison.canApply ||
+                          workflowPresetComparison.matchesBaseline
+                        }
+                      >
+                        {l(
+                          "Clone preset into this workflow",
+                          "Preseti bu workflow'a kopyala"
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={onResetStepsToSelectedPreset}
+                        disabled={
+                          !canWrite ||
+                          !workflowPresetComparison.canApply ||
+                          workflowPresetComparison.matchesBaseline
+                        }
+                      >
+                        {l(
+                          "Reset to preset baseline",
+                          "Preset temeline sifirla"
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {workflowPresetComparison.differenceLines.length > 0 ? (
+                    <div className="mt-3 space-y-1">
+                      {workflowPresetComparison.differenceLines.slice(0, 4).map((line, index) => (
+                        <p
+                          key={`${selectedWorkflowPreset.code}-difference-${index}`}
+                          className="text-xs leading-5 text-slate-700"
+                        >
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {isAp && Array.isArray(workflowPresetPreview?.lines) && workflowPresetPreview.lines.length > 0 ? (
             <div className="rounded-2xl border border-blue-200 bg-blue-50/80 p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
-                {apBusinessLabels?.businessPreviewTitle || "Business process preview"}
+                {l("Preset business preview", "Preset is akisi onizlemesi")}
               </p>
               <div className="mt-2 space-y-1">
-                {apBusinessPreviewLines.map((line, i) => (
+                {workflowPresetPreview.lines.map((line, i) => (
                   <p key={i} className="text-sm leading-6 text-blue-900">{line}</p>
                 ))}
               </div>

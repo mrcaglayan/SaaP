@@ -19,6 +19,7 @@ import {
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
+import { listWorkflowPresetCatalogEntries } from "../security/roleCatalog.js";
 import {
   findOrgScopeTreeNodeByScopeSelection,
   getOrgScopeTreeRoot,
@@ -33,12 +34,12 @@ import WorkflowSetupSidebar from "./workflows/components/WorkflowSetupSidebar.js
 import WorkflowStepsBuilderStep from "./workflows/components/WorkflowStepsBuilderStep.jsx";
 import WorkflowTypeStep from "./workflows/components/WorkflowTypeStep.jsx";
 import {
-  AP_BUSINESS_TEMPLATES,
-  buildApBusinessPreview,
   buildAssignmentEffectText,
   buildAssignmentSelectionLabel,
   buildAssignmentScopeLabel,
   buildDefaultSteps,
+  buildWorkflowPresetComparisonModel,
+  buildWorkflowPresetPreviewModel,
   buildStepDrafts,
   buildStepPreview,
   buildWorkflowPreview,
@@ -187,7 +188,7 @@ export default function WorkflowSetupPage() {
   const [stepsJson, setStepsJson] = useState("[]");
   const [stepDrafts, setStepDrafts] = useState(() => buildStepDrafts("PERIOD_CLOSE", []));
   const [stepsJsonError, setStepsJsonError] = useState("");
-  const [selectedApTemplate, setSelectedApTemplate] = useState("branch-country");
+  const [selectedWorkflowPresetCode, setSelectedWorkflowPresetCode] = useState("");
 
   const [definitionForm, setDefinitionForm] = useState({
     code: "",
@@ -238,14 +239,7 @@ export default function WorkflowSetupPage() {
 
   const assignmentScopeSelection = useMemo(
     () => resolveAssignmentScopeSelection(assignmentForm, tenantScopeId),
-    [
-      assignmentForm.countryId,
-      assignmentForm.groupCompanyId,
-      assignmentForm.legalEntityId,
-      assignmentForm.operatingUnitId,
-      assignmentForm.scopeType,
-      tenantScopeId,
-    ]
+    [assignmentForm, tenantScopeId]
   );
   const selectedAssignmentScopeNode = useMemo(
     () =>
@@ -261,11 +255,41 @@ export default function WorkflowSetupPage() {
     () => buildWorkflowPreview(stepDrafts, text.stepScopeLabels, l),
     [stepDrafts, text.stepScopeLabels, l]
   );
-  const isApProcess =
-    String(selectedProcessType || "").toUpperCase() === "AP_DOCUMENT_POSTING";
-  const apBusinessPreviewLines = useMemo(
-    () => (isApProcess ? buildApBusinessPreview(stepDrafts, text.stepScopeLabels, l) : []),
-    [isApProcess, stepDrafts, text.stepScopeLabels, l]
+  const workflowPresetEntries = useMemo(() => listWorkflowPresetCatalogEntries(), []);
+  const workflowPresetOptions = useMemo(
+    () =>
+      workflowPresetEntries.filter(
+        (entry) =>
+          String(entry?.workflowFamily || "").toUpperCase() ===
+          String(selectedProcessType || "").toUpperCase()
+      ),
+    [selectedProcessType, workflowPresetEntries]
+  );
+  const selectedWorkflowPreset = useMemo(
+    () =>
+      workflowPresetOptions.find(
+        (entry) => String(entry?.code || "") === String(selectedWorkflowPresetCode || "")
+      ) || null,
+    [selectedWorkflowPresetCode, workflowPresetOptions]
+  );
+  const workflowPresetPreview = useMemo(
+    () =>
+      buildWorkflowPresetPreviewModel({
+        presetEntry: selectedWorkflowPreset,
+        stepScopeLabels: text.stepScopeLabels,
+        l,
+      }),
+    [selectedWorkflowPreset, text.stepScopeLabels, l]
+  );
+  const workflowPresetComparison = useMemo(
+    () =>
+      buildWorkflowPresetComparisonModel({
+        presetEntry: selectedWorkflowPreset,
+        stepDrafts,
+        stepScopeLabels: text.stepScopeLabels,
+        l,
+      }),
+    [selectedWorkflowPreset, stepDrafts, text.stepScopeLabels, l]
   );
   const assignmentEffectText = useMemo(
     () =>
@@ -588,6 +612,21 @@ export default function WorkflowSetupPage() {
   ]);
 
   useEffect(() => {
+    if (workflowPresetOptions.length === 0) {
+      setSelectedWorkflowPresetCode("");
+      return;
+    }
+    if (
+      workflowPresetOptions.some(
+        (entry) => String(entry?.code || "") === String(selectedWorkflowPresetCode || "")
+      )
+    ) {
+      return;
+    }
+    setSelectedWorkflowPresetCode(String(workflowPresetOptions[0]?.code || ""));
+  }, [selectedWorkflowPresetCode, workflowPresetOptions]);
+
+  useEffect(() => {
     if (!assignmentReviewSaved) {
       return;
     }
@@ -843,15 +882,47 @@ export default function WorkflowSetupPage() {
     applyStepDrafts(buildDefaultSteps(selectedProcessType), selectedProcessType);
   }
 
-  function onSelectApTemplate(templateId) {
-    setSelectedApTemplate(templateId);
-    if (templateId === "custom") {
+  function onSelectWorkflowPreset(presetCode) {
+    setSelectedWorkflowPresetCode(String(presetCode || ""));
+  }
+
+  function applySelectedWorkflowPresetBaseline(messageText) {
+    if (!workflowPresetComparison?.canApply || !selectedWorkflowPreset) {
+      setError(
+        workflowPresetComparison?.supportNote ||
+          selectedWorkflowPreset?.extensionNote ||
+          l(
+            "This preset is preview-only in the current workflow step model.",
+            "Bu preset mevcut workflow adim modelinde yalnizca onizlemedir."
+          )
+      );
       return;
     }
-    const template = AP_BUSINESS_TEMPLATES.find((t) => t.id === templateId);
-    if (template) {
-      applyStepDrafts(template.steps, selectedProcessType);
-    }
+
+    applyStepDrafts(
+      workflowPresetComparison.baselineDrafts,
+      selectedWorkflowPreset.workflowFamily
+    );
+    setError("");
+    setMessage(messageText);
+  }
+
+  function onCloneWorkflowPreset() {
+    applySelectedWorkflowPresetBaseline(
+      l(
+        "Preset cloned into this workflow. Review the steps before saving.",
+        "Preset bu workflow'a kopyalandi. Kaydetmeden once adimlari gozden gecirin."
+      )
+    );
+  }
+
+  function onResetStepsToSelectedPreset() {
+    applySelectedWorkflowPresetBaseline(
+      l(
+        "Current customizations were reset to the selected preset baseline.",
+        "Mevcut ozellestirmeler secilen preset temeline sifirlandi."
+      )
+    );
   }
 
   function buildStepPreviewText(step) {
@@ -1106,12 +1177,14 @@ export default function WorkflowSetupPage() {
               saving={saving === "steps"}
               canWrite={canWriteDefinitions}
               onBack={() => setCurrentStep(3)}
-              apTemplates={AP_BUSINESS_TEMPLATES}
-              apTemplateLabels={text.apBusinessTemplates}
+              workflowPresetOptions={workflowPresetOptions}
+              selectedWorkflowPreset={selectedWorkflowPreset}
+              workflowPresetPreview={workflowPresetPreview}
+              workflowPresetComparison={workflowPresetComparison}
+              onSelectWorkflowPreset={onSelectWorkflowPreset}
+              onCloneWorkflowPreset={onCloneWorkflowPreset}
+              onResetStepsToSelectedPreset={onResetStepsToSelectedPreset}
               apBusinessLabels={text.apBusinessLabels}
-              selectedApTemplate={selectedApTemplate}
-              onSelectApTemplate={onSelectApTemplate}
-              apBusinessPreviewLines={apBusinessPreviewLines}
             />
           ) : null}
 
@@ -1131,8 +1204,9 @@ export default function WorkflowSetupPage() {
               assignmentSaving={saving === "assignment"}
               canWriteAssignment={canWriteAssignments}
               assignmentSaved={assignmentReviewSaved}
-              apBusinessPreviewLines={apBusinessPreviewLines}
-              apBusinessLabels={text.apBusinessLabels}
+              selectedWorkflowPreset={selectedWorkflowPreset}
+              workflowPresetPreview={workflowPresetPreview}
+              workflowPresetComparison={workflowPresetComparison}
               coverageDiagnostics={coverageDiagnostics}
               coverageDiagnosticsLoading={coverageDiagnosticsLoading}
               coverageDiagnosticsError={coverageDiagnosticsError}
