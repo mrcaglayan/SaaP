@@ -35,6 +35,11 @@ export default function CariDocumentPostReversePanel({
     l,
   });
   const {
+    approvalDecisionNote,
+    approvalError,
+    approvalMessage,
+    approvalSaving,
+    canApproveSelected,
     canCreate,
     canFxOverride,
     canSubmitSelected,
@@ -44,6 +49,9 @@ export default function CariDocumentPostReversePanel({
     cariPostingNotReady,
     filteredPostOffsetAccountOptions,
     handleAddPostFormPostingLine,
+    handleApproveDocument,
+    handleRejectDocument,
+    handleReturnDocument,
     handleSubmitDocument,
     handlePostDraft,
     handleRemovePostFormPostingLine,
@@ -77,6 +85,7 @@ export default function CariDocumentPostReversePanel({
     selectedDocumentLegalEntityId,
     selectedWorkflowGate,
     selectedWorkflowGateState,
+    setApprovalDecisionNote,
     selectedDocumentPostingRulesReady,
     selectedDocumentUsesStoredTaxesForPosting,
     selectedOffsetAccountType,
@@ -122,6 +131,76 @@ export default function CariDocumentPostReversePanel({
             <p className="mt-2 text-xs text-slate-700">
               workflowInstanceId=#{selectedWorkflowGate.workflowInstanceId}
             </p>
+          ) : null}
+        </div>
+      ) : null}
+      {canApproveSelected || approvalError || approvalMessage ? (
+        <div className="mt-3 rounded-md border border-violet-200 bg-violet-50 px-3 py-3 text-sm text-violet-950">
+          <p className="font-semibold">
+            {l("Workflow Approval Actions", "Workflow Onay Islemleri")}
+          </p>
+          <p className="mt-1 text-xs text-violet-900">
+            {l(
+              "Review the submitted AP document and approve, reject, or return it for correction.",
+              "Gonderilen AP belgeyi inceleyip onaylayin, reddedin veya duzeltme icin iade edin."
+            )}
+          </p>
+          <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-violet-700">
+            {l("Decision Note", "Karar Notu")}
+            <textarea
+              className="mt-1 w-full rounded-md border border-violet-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+              rows={2}
+              maxLength={500}
+              placeholder={l(
+                "Optional for approve, required for reject/return",
+                "Onay icin opsiyonel, red/iade icin zorunlu"
+              )}
+              value={approvalDecisionNote}
+              onChange={(event) => setApprovalDecisionNote(event.target.value)}
+              disabled={!canApproveSelected || approvalSaving}
+            />
+          </label>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              onClick={handleApproveDocument}
+              disabled={!canApproveSelected || approvalSaving}
+            >
+              {approvalSaving
+                ? l("Processing...", "Isleniyor...")
+                : l("Approve", "Onayla")}
+            </button>
+            <button
+              type="button"
+              className="rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              onClick={handleReturnDocument}
+              disabled={!canApproveSelected || approvalSaving}
+            >
+              {approvalSaving
+                ? l("Processing...", "Isleniyor...")
+                : l("Return for Correction", "Duzeltme Icin Iade")}
+            </button>
+            <button
+              type="button"
+              className="rounded-md bg-rose-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              onClick={handleRejectDocument}
+              disabled={!canApproveSelected || approvalSaving}
+            >
+              {approvalSaving
+                ? l("Processing...", "Isleniyor...")
+                : l("Reject", "Reddet")}
+            </button>
+          </div>
+          {approvalError ? (
+            <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {approvalError}
+            </div>
+          ) : null}
+          {approvalMessage ? (
+            <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              {approvalMessage}
+            </div>
           ) : null}
         </div>
       ) : null}

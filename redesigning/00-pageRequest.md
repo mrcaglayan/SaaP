@@ -1,0 +1,1 @@
+gimme a roadmap to make it super user friendly and directive that is easy to use and easy to understand each value or text etc is written for what purpose etc. 

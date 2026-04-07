@@ -14,164 +14,84 @@ import {
   replaceWorkflowDefinitionSteps,
   updateWorkflowAssignment,
 } from "../../api/workflows.js";
-import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
-import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import WorkflowAssignmentStep from "./workflows/components/WorkflowAssignmentStep.jsx";
+import WorkflowDefinitionStep from "./workflows/components/WorkflowDefinitionStep.jsx";
+import WorkflowRecordsSection from "./workflows/components/WorkflowRecordsSection.jsx";
+import WorkflowReviewStep from "./workflows/components/WorkflowReviewStep.jsx";
+import WorkflowSetupProgress from "./workflows/components/WorkflowSetupProgress.jsx";
+import WorkflowSetupSidebar from "./workflows/components/WorkflowSetupSidebar.jsx";
+import WorkflowStepsBuilderStep from "./workflows/components/WorkflowStepsBuilderStep.jsx";
+import WorkflowTypeStep from "./workflows/components/WorkflowTypeStep.jsx";
 import {
-  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
-} from "../../../../shared/cariDocumentWorkflowGovernance.js";
+  buildAssignmentEffectText,
+  buildAssignmentSelectionLabel,
+  buildAssignmentScopeLabel,
+  buildDefaultSteps,
+  buildStepDrafts,
+  buildStepPreview,
+  buildWorkflowPreview,
+  normalizeStepDraft,
+  PROCESS_TYPES,
+  safeParseJsonArray,
+  serializeStepDrafts,
+  STEP_SCOPE_TYPES,
+  todayIsoDate,
+  toPositiveInt,
+} from "./workflows/utils/workflowSetupHelpers.js";
+import { getWorkflowSetupText } from "./workflows/utils/workflowSetupText.js";
 
-const PROCESS_TYPES = [
-  "PERIOD_CLOSE",
-  "CONSOLIDATION_RUN",
-  "LOCAL_CLOSE_PACK",
-  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
-];
-const ASSIGNMENT_SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
-const STEP_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"];
-
-function toPositiveInt(value) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function buildDefaultSteps(processType) {
-  const normalized = String(processType || "").toUpperCase();
-  if (normalized === "LOCAL_CLOSE_PACK") {
-    // CENTRAL packs do not have an operating-unit target id, so the default
-    // local-close definition must resolve at entity scope. OU-specific flows
-    // can still be customized later via the JSON step editor.
-    return [
-      {
-        stepNo: 1,
-        stageScopeType: "LEGAL_ENTITY",
-        requiredPermissionCode: "ouclose.approve",
-        minApproverCount: 1,
-        allowSelfApprove: false,
-      },
-    ];
+function resolveAssignmentScopeId(form, tenantScopeId) {
+  if (form.scopeType === "TENANT") {
+    return tenantScopeId;
   }
-  if (normalized === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return [
-      {
-        stepNo: 1,
-        stageScopeType: "COUNTRY",
-        requiredPermissionCode: null,
-        minApproverCount: 1,
-        allowSelfApprove: false,
-      },
-    ];
+  if (form.scopeType === "GROUP") {
+    return toPositiveInt(form.groupCompanyId);
   }
-  const permissionCode =
-    normalized === "CONSOLIDATION_RUN"
-      ? "consolidation.run.finalize"
-      : "gl.period.close";
-  return [
-    {
-      stepNo: 1,
-      stageScopeType: "OPERATING_UNIT",
-      requiredPermissionCode: permissionCode,
-      minApproverCount: 1,
-      allowSelfApprove: false,
-    },
-    {
-      stepNo: 2,
-      stageScopeType: "LEGAL_ENTITY",
-      requiredPermissionCode: permissionCode,
-      minApproverCount: 1,
-      allowSelfApprove: false,
-    },
-    {
-      stepNo: 3,
-      stageScopeType: "GROUP",
-      requiredPermissionCode: permissionCode,
-      minApproverCount: 1,
-      allowSelfApprove: false,
-    },
-  ];
-}
-
-function safeParseJsonArray(rawValue) {
-  const value = String(rawValue || "").trim();
-  if (!value) {
-    return null;
+  if (form.scopeType === "COUNTRY") {
+    return toPositiveInt(form.countryId);
   }
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
+  if (form.scopeType === "LEGAL_ENTITY") {
+    return toPositiveInt(form.legalEntityId);
   }
+  if (form.scopeType === "OPERATING_UNIT") {
+    return toPositiveInt(form.operatingUnitId);
+  }
+  return null;
 }
 
-function normalizeStepDraft(rawStep, fallbackStepNo, processType) {
-  const normalizedProcessType = String(processType || "").toUpperCase();
-  const step = rawStep && typeof rawStep === "object" ? rawStep : {};
-  return {
-    stepNo: String(
-      Number(step.stepNo ?? step.step_no ?? fallbackStepNo) > 0
-        ? Number(step.stepNo ?? step.step_no ?? fallbackStepNo)
-        : fallbackStepNo
-    ),
-    stageScopeType: String(
-      step.stageScopeType ??
-        step.stage_scope_type ??
-        (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-          ? "COUNTRY"
-          : "LEGAL_ENTITY")
-    ).toUpperCase(),
-    requiredPermissionCode:
-      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? ""
-        : String(step.requiredPermissionCode ?? step.required_permission_code ?? "").trim(),
-    minApproverCount: String(
-      Math.max(1, Number(step.minApproverCount ?? step.min_approver_count ?? 1) || 1)
-    ),
-    allowSelfApprove: Boolean(step.allowSelfApprove ?? step.allow_self_approve),
-    escalationAfterHours:
-      step.escalationAfterHours === null || step.escalation_after_hours === null
-        ? ""
-        : String(step.escalationAfterHours ?? step.escalation_after_hours ?? "").trim(),
-  };
-}
-
-function buildStepDrafts(processType, rows) {
-  const sourceRows = Array.isArray(rows) && rows.length > 0 ? rows : buildDefaultSteps(processType);
-  return sourceRows.map((row, index) =>
-    normalizeStepDraft(row, index + 1, processType)
-  );
-}
-
-function serializeStepDrafts(stepDrafts, processType) {
-  const normalizedProcessType = String(processType || "").toUpperCase();
-  return (Array.isArray(stepDrafts) ? stepDrafts : []).map((step, index) => ({
-    stepNo: Math.max(1, Number(step?.stepNo || index + 1) || index + 1),
-    stageScopeType: String(step?.stageScopeType || "LEGAL_ENTITY").toUpperCase(),
-    requiredPermissionCode:
-      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? null
-        : String(step?.requiredPermissionCode || "").trim() || null,
-    minApproverCount: Math.max(1, Number(step?.minApproverCount || 1) || 1),
-    allowSelfApprove: Boolean(step?.allowSelfApprove),
-    escalationAfterHours: String(step?.escalationAfterHours || "").trim()
-      ? Math.max(1, Number(step.escalationAfterHours) || 1)
-      : null,
-  }));
+function resolveAssignmentRowScope(row, tenantScopeId) {
+  if (row?.operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: row.operatingUnitId };
+  }
+  if (row?.legalEntityId) {
+    return { scopeType: "LEGAL_ENTITY", scopeId: row.legalEntityId };
+  }
+  if (row?.countryId) {
+    return { scopeType: "COUNTRY", scopeId: row.countryId };
+  }
+  if (row?.groupCompanyId) {
+    return { scopeType: "GROUP", scopeId: row.groupCompanyId };
+  }
+  if (tenantScopeId) {
+    return { scopeType: "TENANT", scopeId: tenantScopeId };
+  }
+  return null;
 }
 
 /**
- * Manages workflow governance definitions, steps, and scope assignments.
+ * Manages workflow definitions, review steps, and scope assignments in a guided setup flow.
  */
 export default function WorkflowSetupPage() {
   const { getPermissionAccess, hasPermission, user } = useAuth();
   const { language } = useI18n();
-  const { getModuleRows, refresh: refreshModuleReadiness } = useModuleReadiness();
+  const { refresh: refreshModuleReadiness } = useModuleReadiness();
+
+  const l = useMemo(() => (en, tr) => (language === "tr" ? tr : en), [language]);
+  const text = useMemo(() => getWorkflowSetupText(l), [l]);
   const tenantScopeId = toPositiveInt(user?.tenant_id);
 
   const canReadDefinitions = hasPermission("workflow.definition.read");
@@ -186,6 +106,10 @@ export default function WorkflowSetupPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  const [currentStep, setCurrentStep] = useState(1);
+  const [definitionMode, setDefinitionMode] = useState("create");
+  const [showAdvancedJson, setShowAdvancedJson] = useState(false);
+
   const [definitions, setDefinitions] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [countries, setCountries] = useState([]);
@@ -195,7 +119,7 @@ export default function WorkflowSetupPage() {
 
   const [selectedDefinitionId, setSelectedDefinitionId] = useState("");
   const [stepsJson, setStepsJson] = useState("[]");
-  const [stepDrafts, setStepDrafts] = useState(() => buildStepDrafts("", []));
+  const [stepDrafts, setStepDrafts] = useState(() => buildStepDrafts("PERIOD_CLOSE", []));
   const [stepsJsonError, setStepsJsonError] = useState("");
 
   const [definitionForm, setDefinitionForm] = useState({
@@ -217,18 +141,103 @@ export default function WorkflowSetupPage() {
     effectiveFrom: todayIsoDate(),
     status: "ACTIVE",
   });
-  const assignmentScopeId =
-    assignmentForm.scopeType === "TENANT"
-      ? tenantScopeId
-      : assignmentForm.scopeType === "GROUP"
-        ? toPositiveInt(assignmentForm.groupCompanyId)
-        : assignmentForm.scopeType === "COUNTRY"
-          ? toPositiveInt(assignmentForm.countryId)
-        : assignmentForm.scopeType === "LEGAL_ENTITY"
-          ? toPositiveInt(assignmentForm.legalEntityId)
-          : assignmentForm.scopeType === "OPERATING_UNIT"
-            ? toPositiveInt(assignmentForm.operatingUnitId)
-            : null;
+
+  const selectedDefinition = useMemo(
+    () =>
+      definitions.find(
+        (row) => toPositiveInt(row?.id) === toPositiveInt(selectedDefinitionId)
+      ) || null,
+    [definitions, selectedDefinitionId]
+  );
+
+  const selectedProcessType =
+    selectedDefinition?.processType || definitionForm.processType || assignmentForm.processType;
+  const selectedProcessTypeLabel =
+    text.workflowTypeLabels[String(selectedProcessType || "").toUpperCase()] ||
+    selectedProcessType ||
+    "-";
+  const selectedRecommendation =
+    text.processRecommendations[String(selectedProcessType || "").toUpperCase()] || null;
+
+  const filteredDefinitionOptions = useMemo(
+    () =>
+      definitions.filter(
+        (row) =>
+          String(row?.processType || "").toUpperCase() ===
+          String(assignmentForm.processType || "").toUpperCase()
+      ),
+    [definitions, assignmentForm.processType]
+  );
+
+  const selectedCountry = useMemo(
+    () => countries.find((row) => String(row.id) === String(assignmentForm.countryId)) || null,
+    [countries, assignmentForm.countryId]
+  );
+  const selectedGroupCompany = useMemo(
+    () =>
+      groupCompanies.find((row) => String(row.id) === String(assignmentForm.groupCompanyId)) ||
+      null,
+    [groupCompanies, assignmentForm.groupCompanyId]
+  );
+  const selectedLegalEntity = useMemo(
+    () =>
+      legalEntities.find((row) => String(row.id) === String(assignmentForm.legalEntityId)) ||
+      null,
+    [legalEntities, assignmentForm.legalEntityId]
+  );
+  const selectedOperatingUnit = useMemo(
+    () =>
+      operatingUnits.find((row) => String(row.id) === String(assignmentForm.operatingUnitId)) ||
+      null,
+    [operatingUnits, assignmentForm.operatingUnitId]
+  );
+
+  const workflowPreviewText = useMemo(
+    () => buildWorkflowPreview(stepDrafts, text.stepScopeLabels, l),
+    [stepDrafts, text.stepScopeLabels, l]
+  );
+  const assignmentEffectText = useMemo(
+    () =>
+      buildAssignmentEffectText({
+        assignmentForm,
+        selectedCountry,
+        selectedGroupCompany,
+        selectedLegalEntity,
+        selectedOperatingUnit,
+        l,
+      }),
+    [
+      assignmentForm,
+      selectedCountry,
+      selectedGroupCompany,
+      selectedLegalEntity,
+      selectedOperatingUnit,
+      l,
+    ]
+  );
+  const assignmentLabel = useMemo(
+    () =>
+      buildAssignmentSelectionLabel({
+        assignmentForm,
+        selectedCountry,
+        selectedGroupCompany,
+        selectedLegalEntity,
+        selectedOperatingUnit,
+        scopeTypeLabels: text.scopeTypeLabels,
+        l,
+      }),
+    [
+      assignmentForm,
+      selectedCountry,
+      selectedGroupCompany,
+      selectedLegalEntity,
+      selectedOperatingUnit,
+      text.scopeTypeLabels,
+      l,
+    ]
+  );
+
+  const assignmentScopeId = resolveAssignmentScopeId(assignmentForm, tenantScopeId);
   const assignmentWriteAccess = getPermissionAccess(
     "workflow.assignment.write",
     assignmentScopeId
@@ -242,29 +251,106 @@ export default function WorkflowSetupPage() {
   );
   const canWriteAssignments = assignmentWriteAccess.allowed;
 
-  const l = (en, tr) => (language === "tr" ? tr : en);
-
-  const selectedDefinition = useMemo(
+  const assignmentRows = useMemo(
     () =>
-      definitions.find(
-        (row) => toPositiveInt(row?.id) === toPositiveInt(selectedDefinitionId)
-      ) || null,
-    [definitions, selectedDefinitionId]
+      assignments.map((row) => {
+        const rowScope = resolveAssignmentRowScope(row, tenantScopeId);
+        const access = getPermissionAccess(
+          "workflow.assignment.write",
+          rowScope ? { scope: rowScope } : undefined
+        );
+        return {
+          ...row,
+          canToggleStatus: access.allowed,
+          isSaving: saving === `assignment-status-${row.id}`,
+          scopeLabel: buildAssignmentScopeLabel(row, l),
+        };
+      }),
+    [assignments, getPermissionAccess, l, saving, tenantScopeId]
   );
 
-  const filteredDefinitionOptions = useMemo(
-    () =>
-      definitions.filter(
-        (row) =>
-          String(row?.processType || "").toUpperCase() ===
-          String(assignmentForm.processType || "").toUpperCase()
-      ),
-    [definitions, assignmentForm.processType]
-  );
+  function applyStepDrafts(nextDrafts, processType = selectedProcessType) {
+    const normalizedDrafts = buildStepDrafts(processType, nextDrafts);
+    setStepDrafts(normalizedDrafts);
+    setStepsJson(JSON.stringify(serializeStepDrafts(normalizedDrafts, processType), null, 2));
+    setStepsJsonError("");
+  }
 
-  const workflowReadinessRows = getModuleRows("closeConsolidationWorkflow");
-  const workflowReadyCount = workflowReadinessRows.filter((row) => Boolean(row?.ready)).length;
-  const workflowTotalCount = workflowReadinessRows.length;
+  function selectDefinitionForEditing(definitionId, targetStep = 2) {
+    const nextId = String(definitionId || "");
+    const definition =
+      definitions.find((row) => toPositiveInt(row?.id) === toPositiveInt(nextId)) || null;
+
+    setSelectedDefinitionId(nextId);
+    setDefinitionMode("select");
+    if (definition) {
+      setDefinitionForm((prev) => ({
+        ...prev,
+        processType: definition.processType,
+      }));
+      setAssignmentForm((prev) => ({
+        ...prev,
+        processType: definition.processType,
+        workflowDefinitionId: nextId,
+      }));
+      setCurrentStep(targetStep);
+      return;
+    }
+
+    setCurrentStep(2);
+  }
+
+  function continueSelectedDefinition() {
+    if (!toPositiveInt(selectedDefinitionId)) {
+      setError(l("Select a workflow first.", "Once bir workflow secin."));
+      return;
+    }
+    setError("");
+    setCurrentStep(3);
+  }
+
+  function canReachStep(stepNumber) {
+    if (stepNumber <= currentStep) {
+      return true;
+    }
+    if (stepNumber === 2) {
+      return true;
+    }
+    if (stepNumber === 3) {
+      return Boolean(toPositiveInt(selectedDefinitionId));
+    }
+    if (stepNumber === 4) {
+      return currentStep >= 4;
+    }
+    if (stepNumber === 5) {
+      return currentStep >= 5;
+    }
+    return false;
+  }
+
+  function goToStep(stepNumber) {
+    if (canReachStep(stepNumber)) {
+      setCurrentStep(stepNumber);
+    }
+  }
+
+  function syncProcessType(processType) {
+    const normalizedProcessType = String(processType || "").toUpperCase();
+    const selectedMatches =
+      String(selectedDefinition?.processType || "").toUpperCase() === normalizedProcessType;
+
+    setDefinitionForm((prev) => ({ ...prev, processType }));
+    setAssignmentForm((prev) => ({
+      ...prev,
+      processType,
+      workflowDefinitionId: selectedMatches ? prev.workflowDefinitionId : "",
+    }));
+
+    if (!selectedMatches) {
+      setSelectedDefinitionId("");
+      applyStepDrafts(buildDefaultSteps(processType), processType);
+    }
+  }
 
   async function loadData() {
     if (!canReadWorkflow && !canReadOrgTree) {
@@ -277,6 +363,7 @@ export default function WorkflowSetupPage() {
       setSelectedDefinitionId("");
       return;
     }
+
     setLoading(true);
     setError("");
     try {
@@ -299,14 +386,11 @@ export default function WorkflowSetupPage() {
       setOperatingUnits(Array.isArray(unitsRes?.rows) ? unitsRes.rows : []);
 
       setSelectedDefinitionId((prev) => {
-        if (nextDefinitions.length === 0) {
-          return "";
-        }
         const current = toPositiveInt(prev);
         if (current && nextDefinitions.some((row) => toPositiveInt(row?.id) === current)) {
           return prev;
         }
-        return String(nextDefinitions[0]?.id || "");
+        return "";
       });
     } catch (err) {
       setError(
@@ -332,13 +416,12 @@ export default function WorkflowSetupPage() {
 
   useEffect(() => {
     const definitionId = toPositiveInt(selectedDefinitionId);
-    const selectedProcessType = selectedDefinition?.processType;
+    const processType = selectedDefinition?.processType || definitionForm.processType;
+
     if (!definitionId || !canReadDefinitions) {
-      const nextDrafts = buildStepDrafts(selectedProcessType, []);
+      const nextDrafts = buildStepDrafts(processType, []);
       setStepDrafts(nextDrafts);
-      setStepsJson(
-        JSON.stringify(serializeStepDrafts(nextDrafts, selectedProcessType), null, 2)
-      );
+      setStepsJson(JSON.stringify(serializeStepDrafts(nextDrafts, processType), null, 2));
       setStepsJsonError("");
       return;
     }
@@ -347,7 +430,7 @@ export default function WorkflowSetupPage() {
       try {
         const response = await listWorkflowDefinitionSteps(definitionId);
         const rows = Array.isArray(response?.rows) ? response.rows : [];
-        const normalized =
+        const normalizedRows =
           rows.length > 0
             ? rows.map((row) => ({
                 stepNo: Number(row?.stepNo || 0) || 1,
@@ -357,12 +440,10 @@ export default function WorkflowSetupPage() {
                 allowSelfApprove: Boolean(row?.allowSelfApprove),
                 escalationAfterHours: row?.escalationAfterHours ?? null,
               }))
-            : buildDefaultSteps(selectedProcessType);
-        const nextDrafts = buildStepDrafts(selectedProcessType, normalized);
+            : buildDefaultSteps(processType);
+        const nextDrafts = buildStepDrafts(processType, normalizedRows);
         setStepDrafts(nextDrafts);
-        setStepsJson(
-          JSON.stringify(serializeStepDrafts(nextDrafts, selectedProcessType), null, 2)
-        );
+        setStepsJson(JSON.stringify(serializeStepDrafts(nextDrafts, processType), null, 2));
         setStepsJsonError("");
       } catch (err) {
         setError(
@@ -371,23 +452,36 @@ export default function WorkflowSetupPage() {
         );
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canReadDefinitions, selectedDefinition?.processType, selectedDefinitionId]);
+  }, [canReadDefinitions, definitionForm.processType, l, selectedDefinition?.processType, selectedDefinitionId]);
 
   useEffect(() => {
+    const definitionExists = filteredDefinitionOptions.some(
+      (row) => toPositiveInt(row?.id) === toPositiveInt(assignmentForm.workflowDefinitionId)
+    );
+    if (definitionExists) {
+      return;
+    }
     if (
-      filteredDefinitionOptions.length > 0 &&
-      !filteredDefinitionOptions.some(
-        (row) =>
-          toPositiveInt(row?.id) === toPositiveInt(assignmentForm.workflowDefinitionId)
-      )
+      selectedDefinition &&
+      String(selectedDefinition.processType || "").toUpperCase() ===
+        String(assignmentForm.processType || "").toUpperCase()
     ) {
       setAssignmentForm((prev) => ({
         ...prev,
-        workflowDefinitionId: String(filteredDefinitionOptions[0]?.id || ""),
+        workflowDefinitionId: String(selectedDefinition.id),
       }));
+      return;
     }
-  }, [assignmentForm.workflowDefinitionId, filteredDefinitionOptions]);
+    setAssignmentForm((prev) => ({
+      ...prev,
+      workflowDefinitionId: "",
+    }));
+  }, [
+    assignmentForm.workflowDefinitionId,
+    assignmentForm.processType,
+    filteredDefinitionOptions,
+    selectedDefinition,
+  ]);
 
   async function onCreateDefinition(event) {
     event.preventDefault();
@@ -412,11 +506,24 @@ export default function WorkflowSetupPage() {
         isActive: Boolean(definitionForm.isActive),
         versionNo: Number(definitionForm.versionNo || 1),
       });
+      const newDefinitionId = String(response?.row?.id || "");
+
+      setSelectedDefinitionId(newDefinitionId);
+      setDefinitionMode("select");
+      setAssignmentForm((prev) => ({
+        ...prev,
+        processType: definitionForm.processType,
+        workflowDefinitionId: newDefinitionId,
+      }));
+
       await loadData();
-      if (toPositiveInt(response?.row?.id)) {
-        setSelectedDefinitionId(String(response.row.id));
-      }
-      setMessage(l("Workflow definition saved.", "Workflow tanimi kaydedildi."));
+      setCurrentStep(3);
+      setMessage(
+        l(
+          "Workflow created. Next, define who must approve.",
+          "Workflow olusturuldu. Siradaki adim: kimin onay verecegini tanimlayin."
+        )
+      );
     } catch (err) {
       setError(
         err?.response?.data?.message ||
@@ -441,17 +548,16 @@ export default function WorkflowSetupPage() {
 
     const definitionId = toPositiveInt(selectedDefinitionId);
     if (!definitionId) {
-      setError(l("Select a workflow definition first.", "Once workflow tanimi secin."));
+      setError(l("Select a workflow first.", "Once bir workflow secin."));
       return;
     }
-
     if (stepsJsonError) {
       setError(stepsJsonError);
       return;
     }
 
-    const parsedSteps = serializeStepDrafts(stepDrafts, selectedDefinition?.processType);
-    if (!parsedSteps || parsedSteps.length === 0) {
+    const parsedSteps = serializeStepDrafts(stepDrafts, selectedProcessType);
+    if (!parsedSteps.length) {
       setError(
         l(
           "Workflow steps must contain at least one step.",
@@ -467,7 +573,13 @@ export default function WorkflowSetupPage() {
     try {
       await replaceWorkflowDefinitionSteps(definitionId, { steps: parsedSteps });
       await refreshModuleReadiness({ global: true });
-      setMessage(l("Workflow steps saved.", "Workflow adimlari kaydedildi."));
+      setCurrentStep(4);
+      setMessage(
+        l(
+          "Approval steps saved. Next, choose where this workflow applies.",
+          "Onay adimlari kaydedildi. Siradaki adim: workflow'un nerede gecerli olacagini secin."
+        )
+      );
     } catch (err) {
       setError(
         err?.response?.data?.message ||
@@ -478,15 +590,7 @@ export default function WorkflowSetupPage() {
     }
   }
 
-  function applyStepDrafts(nextDrafts, processType = selectedDefinition?.processType) {
-    const normalizedDrafts = buildStepDrafts(processType, nextDrafts);
-    setStepDrafts(normalizedDrafts);
-    setStepsJson(JSON.stringify(serializeStepDrafts(normalizedDrafts, processType), null, 2));
-    setStepsJsonError("");
-  }
-
-  function onStepsJsonChange(event) {
-    const nextValue = event.target.value;
+  function onStepsJsonChange(nextValue) {
     setStepsJson(nextValue);
     const parsed = safeParseJsonArray(nextValue);
     if (!parsed) {
@@ -498,7 +602,8 @@ export default function WorkflowSetupPage() {
       );
       return;
     }
-    const nextDrafts = buildStepDrafts(selectedDefinition?.processType, parsed);
+
+    const nextDrafts = buildStepDrafts(selectedProcessType, parsed);
     setStepDrafts(nextDrafts);
     setStepsJsonError("");
   }
@@ -512,30 +617,41 @@ export default function WorkflowSetupPage() {
               [field]: value,
             }
           : step
-      )
+      ),
+      selectedProcessType
     );
   }
 
   function onAddStep() {
-    applyStepDrafts([
-      ...stepDrafts,
-      normalizeStepDraft(
-        {},
-        (Array.isArray(stepDrafts) ? stepDrafts.length : 0) + 1,
-        selectedDefinition?.processType
-      ),
-    ]);
+    applyStepDrafts(
+      [
+        ...stepDrafts,
+        normalizeStepDraft(
+          {},
+          (Array.isArray(stepDrafts) ? stepDrafts.length : 0) + 1,
+          selectedProcessType
+        ),
+      ],
+      selectedProcessType
+    );
   }
 
   function onRemoveStep(index) {
     if (!Array.isArray(stepDrafts) || stepDrafts.length <= 1) {
       return;
     }
-    applyStepDrafts(stepDrafts.filter((_, stepIndex) => stepIndex !== index));
+    applyStepDrafts(
+      stepDrafts.filter((_, stepIndex) => stepIndex !== index),
+      selectedProcessType
+    );
   }
 
   function onResetStepsToDefaults() {
-    applyStepDrafts(buildDefaultSteps(selectedDefinition?.processType));
+    applyStepDrafts(buildDefaultSteps(selectedProcessType), selectedProcessType);
+  }
+
+  function buildStepPreviewText(step) {
+    return buildStepPreview(step, selectedProcessType, text.stepScopeLabels, l);
   }
 
   async function onCreateAssignment(event) {
@@ -552,7 +668,7 @@ export default function WorkflowSetupPage() {
 
     const workflowDefinitionId = toPositiveInt(assignmentForm.workflowDefinitionId);
     if (!workflowDefinitionId) {
-      setError(l("workflowDefinitionId is required.", "workflowDefinitionId zorunludur."));
+      setError(l("Select a workflow definition first.", "Once workflow tanimi secin."));
       return;
     }
 
@@ -582,7 +698,13 @@ export default function WorkflowSetupPage() {
       await createWorkflowAssignment(payload);
       await loadData();
       await refreshModuleReadiness({ global: true });
-      setMessage(l("Workflow assignment saved.", "Workflow atamasi kaydedildi."));
+      setCurrentStep(5);
+      setMessage(
+        l(
+          "Assignment saved. Review the setup before leaving.",
+          "Atama kaydedildi. Ayrilmadan once kurulumu gozden gecirin."
+        )
+      );
     } catch (err) {
       setError(
         err?.response?.data?.message ||
@@ -598,7 +720,7 @@ export default function WorkflowSetupPage() {
     if (!assignmentId) {
       return;
     }
-    if (!canWriteAssignments) {
+    if (!row?.canToggleStatus) {
       setError(
         l(
           "Missing permission: workflow.assignment.write",
@@ -607,7 +729,9 @@ export default function WorkflowSetupPage() {
       );
       return;
     }
-    const nextStatus = String(row?.status || "").toUpperCase() === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+
+    const nextStatus =
+      String(row?.status || "").toUpperCase() === "ACTIVE" ? "INACTIVE" : "ACTIVE";
     setSaving(`assignment-status-${assignmentId}`);
     setError("");
     setMessage("");
@@ -626,397 +750,180 @@ export default function WorkflowSetupPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">
-          {l("Workflow Governance", "Workflow Yonetimi")}
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {l(
-            "Manage workflow definitions, review-step permissions, and scope assignments for period close, local close packs, consolidation, and governed AP posting.",
-            "Donem kapanisi, yerel kapanis paketleri, konsolidasyon ve yonetime tabi AP kaydi icin workflow tanimlarini, inceleme adimi yetkilerini ve kapsam atamalarini yonetin."
-          )}
-        </p>
-      </div>
-
-      <TenantReadinessChecklist />
-
-      <section className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-900">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            {l("Workflow readiness", "Workflow hazirligi")}: {workflowReadyCount}/{workflowTotalCount}
-          </div>
-          <button
-            type="button"
-            onClick={() => refreshModuleReadiness({ global: true })}
-            className="rounded border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold"
-          >
-            {l("Refresh readiness", "Hazirligi yenile")}
-          </button>
-        </div>
-      </section>
+    <div className="space-y-6">
+      <WorkflowSetupProgress
+        currentStep={currentStep}
+        steps={text.progressSteps}
+        canReachStep={canReachStep}
+        onSelectStep={goToStep}
+      />
 
       {error ? (
-        <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
+        <Alert variant="destructive">
+          <AlertTitle>{l("Workflow setup error", "Workflow kurulum hatasi")}</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
+
       {message ? (
-        <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div>
+        <Alert className="border-emerald-200 bg-emerald-50/90 text-emerald-900">
+          <AlertTitle>{l("Workflow setup updated", "Workflow kurulumu guncellendi")}</AlertTitle>
+          <AlertDescription className="text-emerald-800">{message}</AlertDescription>
+        </Alert>
       ) : null}
 
       {!canReadWorkflow ? (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {l(
-            "Missing workflow read permission: workflow.definition.read or workflow.assignment.read",
-            "Eksik workflow okuma yetkisi: workflow.definition.read veya workflow.assignment.read"
-          )}
-        </div>
+        <Alert>
+          <AlertTitle>{l("Workflow read access is missing", "Workflow okuma erisimi eksik")}</AlertTitle>
+          <AlertDescription>
+            {l(
+              "Missing workflow read permission: workflow.definition.read or workflow.assignment.read",
+              "Eksik workflow okuma yetkisi: workflow.definition.read veya workflow.assignment.read"
+            )}
+          </AlertDescription>
+        </Alert>
       ) : null}
+
       {!canReadOrgTree ? (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {l(
-            "org.tree.read is required to load country, group, legal entity, and operating unit scope selectors.",
-            "Country, grup, legal entity ve operating unit kapsam secicilerini yuklemek icin org.tree.read gerekir."
-          )}
-        </div>
+        <Alert>
+          <AlertTitle>{l("Organization tree access is missing", "Organizasyon agaci erisimi eksik")}</AlertTitle>
+          <AlertDescription>
+            {l(
+              "org.tree.read is required to load country, group, legal entity, and operating unit selectors.",
+              "Country, grup, legal entity ve operating unit secicilerini yuklemek icin org.tree.read gerekir."
+            )}
+          </AlertDescription>
+        </Alert>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Definitions", "Tanimlar")}</h2>
-          <p className="mb-3 text-xs text-slate-500">
-            {l(
-              "Read definitions with workflow.definition.read. Create or update them with workflow.definition.write.",
-              "Tanimlari workflow.definition.read ile goruntuleyin. workflow.definition.write ile olusturun veya guncelleyin."
-            )}
-          </p>
-          <PermissionAccessNotice
-            access={definitionWriteAccess}
-            permissionCode="workflow.definition.write"
-            className="mb-3"
-          />
-          <form onSubmit={onCreateDefinition} className="grid gap-2 md:grid-cols-2">
-            <input value={definitionForm.code} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, code: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Code", "Kod")} required />
-            <input value={definitionForm.name} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, name: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Name", "Ad")} required />
-            <select value={definitionForm.processType} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, processType: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm">
-              {PROCESS_TYPES.map((row) => <option key={row} value={row}>{row}</option>)}
-            </select>
-            <input type="number" min={1} value={definitionForm.versionNo} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, versionNo: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Version", "Versiyon")} />
-            <label className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={Boolean(definitionForm.isActive)} onChange={(event) => setDefinitionForm((prev) => ({ ...prev, isActive: event.target.checked }))} />{l("Active", "Aktif")}</label>
-            <button type="submit" disabled={saving === "definition" || !canWriteDefinitions} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "definition" ? l("Saving...", "Kaydediliyor...") : l("Save definition", "Tanimi kaydet")}</button>
-          </form>
-
-          <div className="mt-3 max-h-64 overflow-auto rounded border border-slate-200">
-            <table className="min-w-full text-xs">
-              <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-2">ID</th><th className="px-2 py-2">{l("Code", "Kod")}</th><th className="px-2 py-2">{l("Process", "Surec")}</th><th className="px-2 py-2">{l("Steps", "Adim")}</th></tr></thead>
-              <tbody>
-                {definitions.map((row) => (
-                  <tr key={row.id} className={`cursor-pointer border-t border-slate-100 ${toPositiveInt(row?.id) === toPositiveInt(selectedDefinitionId) ? "bg-cyan-50" : ""}`} onClick={() => setSelectedDefinitionId(String(row.id))}>
-                    <td className="px-2 py-2">#{row.id}</td>
-                    <td className="px-2 py-2">{row.code}</td>
-                    <td className="px-2 py-2">{row.processType}</td>
-                    <td className="px-2 py-2">{Number(row.stepCount || 0)}</td>
-                  </tr>
-                ))}
-                {definitions.length === 0 && !loading ? (<tr><td colSpan={4} className="px-2 py-3 text-slate-500">{l("No definitions.", "Tanim yok.")}</td></tr>) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Steps", "Adimlar")}</h2>
-          <p className="mb-2 text-xs text-slate-500">{selectedDefinition ? `${selectedDefinition.code} (${selectedDefinition.processType})` : l("Select a definition to edit steps.", "Adim duzenlemek icin tanim secin.")}</p>
-          <p className="mb-2 text-xs text-slate-500">
-            {l(
-              "Valid stageScopeType values: OPERATING_UNIT, LEGAL_ENTITY, COUNTRY, GROUP.",
-              "Gecerli stageScopeType degerleri: OPERATING_UNIT, LEGAL_ENTITY, COUNTRY, GROUP."
-            )}
-          </p>
-          <p className="mb-2 text-xs text-slate-500">
-            {l(
-              "Use the visual builder for normal workflow setup. Advanced JSON remains available for copy/paste or bulk edits.",
-              "Normal workflow kurulumu icin gorsel adim olusturucuyu kullanin. Gelismis JSON, kopyala/yapistir veya toplu duzenleme icin acik kalir."
-            )}
-          </p>
-          {selectedDefinition?.processType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE ? (
-            <p className="mb-2 text-xs text-slate-500">
-              {l(
-                "AP_DOCUMENT_POSTING steps must keep requiredPermissionCode as null so reviewer authority comes from workflow assignment scope only.",
-                "AP_DOCUMENT_POSTING adimlarinda requiredPermissionCode null kalmalidir; inceleyen yetkisi yalnizca workflow atama kapsamindan gelir."
-              )}
-            </p>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0">
+          {currentStep === 1 ? (
+            <WorkflowTypeStep
+              l={l}
+              processTypes={PROCESS_TYPES}
+              value={definitionForm.processType}
+              onChange={syncProcessType}
+              onNext={() => setCurrentStep(2)}
+              workflowTypeLabels={text.workflowTypeLabels}
+              workflowTypeMeta={text.workflowTypeMeta}
+            />
           ) : null}
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onResetStepsToDefaults}
-              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
-            >
-              {l("Reset to defaults", "Varsayilanlara don")}
-            </button>
-            <button
-              type="button"
-              onClick={onAddStep}
-              className="rounded border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800"
-            >
-              {l("Add step", "Adim ekle")}
-            </button>
-          </div>
-          <div className="mb-4 space-y-3">
-            {stepDrafts.map((step, index) => {
-              const apProcessType =
-                selectedDefinition?.processType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
-              return (
-                <div
-                  key={`workflow-step-builder-${index}`}
-                  className="rounded-lg border border-slate-200 bg-slate-50 p-3"
-                >
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-slate-800">
-                      {l("Step", "Adim")} {index + 1}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => onRemoveStep(index)}
-                      disabled={stepDrafts.length <= 1}
-                      className="rounded border border-rose-300 bg-white px-2 py-1 text-[11px] font-semibold text-rose-700 disabled:opacity-60"
-                    >
-                      {l("Remove", "Kaldir")}
-                    </button>
-                  </div>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      {l("Step no", "Adim no")}
-                      <input
-                        type="number"
-                        min={1}
-                        value={step.stepNo}
-                        onChange={(event) =>
-                          onStepFieldChange(index, "stepNo", event.target.value)
-                        }
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
-                      />
-                    </label>
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      {l("Stage scope", "Adim kapsami")}
-                      <select
-                        value={step.stageScopeType}
-                        onChange={(event) =>
-                          onStepFieldChange(index, "stageScopeType", event.target.value)
-                        }
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
-                      >
-                        {STEP_SCOPE_TYPES.map((row) => (
-                          <option key={row} value={row}>
-                            {row}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      {l("Required permission code", "Gerekli yetki kodu")}
-                      <input
-                        type="text"
-                        value={step.requiredPermissionCode}
-                        onChange={(event) =>
-                          onStepFieldChange(index, "requiredPermissionCode", event.target.value)
-                        }
-                        disabled={apProcessType}
-                        placeholder={
-                          apProcessType
-                            ? l("Must stay empty for AP", "AP icin bos kalmali")
-                            : l("permission.code", "permission.code")
-                        }
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal disabled:bg-slate-100"
-                      />
-                    </label>
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      {l("Min approver count", "Minimum onayci sayisi")}
-                      <input
-                        type="number"
-                        min={1}
-                        value={step.minApproverCount}
-                        onChange={(event) =>
-                          onStepFieldChange(index, "minApproverCount", event.target.value)
-                        }
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
-                      />
-                    </label>
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      {l("Escalation after hours", "Kac saat sonra escalate")}
-                      <input
-                        type="number"
-                        min={1}
-                        value={step.escalationAfterHours}
-                        onChange={(event) =>
-                          onStepFieldChange(index, "escalationAfterHours", event.target.value)
-                        }
-                        placeholder={l("Optional", "Opsiyonel")}
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-normal"
-                      />
-                    </label>
-                    <label className="flex items-center gap-2 rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 md:self-end">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(step.allowSelfApprove)}
-                        onChange={(event) =>
-                          onStepFieldChange(index, "allowSelfApprove", event.target.checked)
-                        }
-                      />
-                      <span>{l("Allow self approve", "Kendi kendine onay")}</span>
-                    </label>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
-            <div className="font-semibold">
-              {l("Escalation support", "Escalation destegi")}
-            </div>
-            <p className="mt-1">
-              {l(
-                "Add `escalationAfterHours` to a step when overdue reviews should escalate without leaving the normal pending queue.",
-              "Geciken incelemeler normal pending kuyrugundan cikmadan escalate olsun istiyorsaniz adima `escalationAfterHours` ekleyin."
-            )}
-          </p>
-            <pre className="mt-2 overflow-x-auto rounded border border-amber-200 bg-white/80 p-2 text-[11px] text-amber-950">{`{
-  "stepNo": 2,
-  "stageScopeType": "LEGAL_ENTITY",
-  "requiredPermissionCode": "gl.period.close",
-  "minApproverCount": 1,
-  "allowSelfApprove": false,
-  "escalationAfterHours": 24
-}`}</pre>
-          </div>
-          <form onSubmit={onSaveSteps} className="space-y-2">
-            <div>
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                {l("Advanced JSON", "Gelismis JSON")}
-              </p>
-              <textarea
-                value={stepsJson}
-                onChange={onStepsJsonChange}
-                className="min-h-[220px] w-full rounded border border-slate-300 p-2 font-mono text-xs"
-              />
-              {stepsJsonError ? (
-                <p className="mt-2 text-xs text-rose-700">{stepsJsonError}</p>
-              ) : (
-                <p className="mt-2 text-[11px] text-slate-500">
-                  {l(
-                    "Visual edits keep this JSON in sync. Paste JSON here only when you need bulk edits or template import.",
-                    "Gorsel duzenlemeler bu JSON'u senkron tutar. Buraya JSON yalnizca toplu duzenleme veya sablon ice aktarimi icin yapistirin."
-                  )}
-                </p>
+
+          {currentStep === 2 ? (
+            <WorkflowDefinitionStep
+              l={l}
+              mode={definitionMode}
+              onModeChange={setDefinitionMode}
+              definitions={definitions.filter(
+                (row) =>
+                  String(row?.processType || "").toUpperCase() ===
+                  String(definitionForm.processType || "").toUpperCase()
               )}
-            </div>
-            <button type="submit" disabled={saving === "steps" || !canWriteDefinitions || !toPositiveInt(selectedDefinitionId)} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "steps" ? l("Saving...", "Kaydediliyor...") : l("Save steps", "Adimlari kaydet")}</button>
-          </form>
-        </section>
+              selectedDefinitionId={selectedDefinitionId}
+              onSelectDefinition={selectDefinitionForEditing}
+              onContinueSelectedDefinition={continueSelectedDefinition}
+              form={definitionForm}
+              onFormChange={setDefinitionForm}
+              onSubmit={onCreateDefinition}
+              saving={saving === "definition"}
+              canWrite={canWriteDefinitions}
+              access={definitionWriteAccess}
+              onBack={() => setCurrentStep(1)}
+            />
+          ) : null}
+
+          {currentStep === 3 ? (
+            <WorkflowStepsBuilderStep
+              l={l}
+              processType={selectedProcessType}
+              selectedDefinition={selectedDefinition}
+              stepDrafts={stepDrafts}
+              stepScopeTypes={STEP_SCOPE_TYPES}
+              stepScopeLabels={text.stepScopeLabels}
+              onStepFieldChange={onStepFieldChange}
+              onAddStep={onAddStep}
+              onRemoveStep={onRemoveStep}
+              onResetStepsToDefaults={onResetStepsToDefaults}
+              stepsJson={stepsJson}
+              onChangeStepsJson={onStepsJsonChange}
+              stepsJsonError={stepsJsonError}
+              showAdvancedJson={showAdvancedJson}
+              onToggleAdvancedJson={() => setShowAdvancedJson((prev) => !prev)}
+              workflowPreviewText={workflowPreviewText}
+              buildStepPreviewText={buildStepPreviewText}
+              onSubmit={onSaveSteps}
+              saving={saving === "steps"}
+              canWrite={canWriteDefinitions}
+              onBack={() => setCurrentStep(2)}
+            />
+          ) : null}
+
+          {currentStep === 4 ? (
+            <WorkflowAssignmentStep
+              l={l}
+              form={assignmentForm}
+              onFormChange={setAssignmentForm}
+              definitions={filteredDefinitionOptions}
+              countries={countries}
+              groupCompanies={groupCompanies}
+              legalEntities={legalEntities}
+              operatingUnits={operatingUnits}
+              effectText={assignmentEffectText}
+              onSubmit={onCreateAssignment}
+              saving={saving === "assignment"}
+              canWrite={canWriteAssignments}
+              access={assignmentWriteAccess}
+              scopeTypeLabels={text.scopeTypeLabels}
+              scopeTypeMeta={text.scopeTypeMeta}
+              workflowTypeLabel={selectedProcessTypeLabel}
+              onBack={() => setCurrentStep(3)}
+            />
+          ) : null}
+
+          {currentStep === 5 ? (
+            <WorkflowReviewStep
+              l={l}
+              definition={selectedDefinition}
+              stepDrafts={stepDrafts}
+              assignmentForm={assignmentForm}
+              assignmentLabel={assignmentLabel}
+              workflowType={selectedProcessType}
+              workflowTypeLabel={selectedProcessTypeLabel}
+              workflowPreviewText={workflowPreviewText}
+              assignmentEffectText={assignmentEffectText}
+              onBack={() => setCurrentStep(4)}
+            />
+          ) : null}
+        </div>
+
+        <WorkflowSetupSidebar
+          l={l}
+          currentStep={currentStep}
+          processTypeLabel={selectedProcessTypeLabel}
+          definition={selectedDefinition}
+          stepDrafts={stepDrafts}
+          assignmentLabel={assignmentLabel}
+          assignmentStatus={assignmentForm.status}
+          recommendation={selectedRecommendation}
+          workflowPreviewText={workflowPreviewText}
+          assignmentEffectText={assignmentEffectText}
+          quickGuide={text.quickGuide}
+        />
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Assignments", "Atamalar")}</h2>
-        <p className="mb-3 text-xs text-slate-500">
-          {l(
-            "Read scope assignments with workflow.assignment.read. Create or update them with workflow.assignment.write.",
-            "Kapsam atamalarini workflow.assignment.read ile goruntuleyin. workflow.assignment.write ile olusturun veya guncelleyin."
-          )}
-        </p>
-        <PermissionAccessNotice
-          access={assignmentWriteAccess}
-          permissionCode="workflow.assignment.write"
-          className="mb-3"
-        />
-        <form onSubmit={onCreateAssignment} className="grid gap-2 md:grid-cols-4">
-          <select value={assignmentForm.processType} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, processType: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm">{PROCESS_TYPES.map((row) => <option key={row} value={row}>{row}</option>)}</select>
-          <select value={assignmentForm.workflowDefinitionId} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, workflowDefinitionId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-            <option value="">{l("Select definition", "Tanim secin")}</option>
-            {filteredDefinitionOptions.map((row) => <option key={row.id} value={row.id}>{row.code} - {row.name}</option>)}
-          </select>
-          <select value={assignmentForm.scopeType} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, scopeType: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm">{ASSIGNMENT_SCOPE_TYPES.map((row) => <option key={row} value={row}>{row}</option>)}</select>
-          <input type="date" value={assignmentForm.effectiveFrom} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, effectiveFrom: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required />
-
-          {assignmentForm.scopeType === "GROUP" ? (
-            <select value={assignmentForm.groupCompanyId} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, groupCompanyId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-              <option value="">{l("Select group", "Grup secin")}</option>
-              {groupCompanies.map((row) => <option key={row.id} value={row.id}>{row.code} - {row.name}</option>)}
-            </select>
-          ) : null}
-          {assignmentForm.scopeType === "COUNTRY" ? (
-            <select value={assignmentForm.countryId} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, countryId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-              <option value="">{l("Select country", "Ulke secin")}</option>
-              {countries.map((row) => <option key={row.id} value={row.id}>{row.iso2} - {row.name}</option>)}
-            </select>
-          ) : null}
-          {assignmentForm.scopeType === "LEGAL_ENTITY" ? (
-            <select value={assignmentForm.legalEntityId} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-              <option value="">{l("Select legal entity", "Legal entity secin")}</option>
-              {legalEntities.map((row) => <option key={row.id} value={row.id}>{row.code} - {row.name}</option>)}
-            </select>
-          ) : null}
-          {assignmentForm.scopeType === "OPERATING_UNIT" ? (
-            <select value={assignmentForm.operatingUnitId} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-              <option value="">{l("Select operating unit", "Operating unit secin")}</option>
-              {operatingUnits.map((row) => <option key={row.id} value={row.id}>{row.code} - {row.name}</option>)}
-            </select>
-          ) : null}
-
-          <select value={assignmentForm.status} onChange={(event) => setAssignmentForm((prev) => ({ ...prev, status: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm"><option value="ACTIVE">ACTIVE</option><option value="INACTIVE">INACTIVE</option></select>
-          <button type="submit" disabled={saving === "assignment" || !canWriteAssignments} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "assignment" ? l("Saving...", "Kaydediliyor...") : l("Save assignment", "Atamayi kaydet")}</button>
-        </form>
-
-        <div className="mt-3 max-h-72 overflow-auto rounded border border-slate-200">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-2">ID</th><th className="px-2 py-2">{l("Process", "Surec")}</th><th className="px-2 py-2">{l("Scope", "Kapsam")}</th><th className="px-2 py-2">{l("Definition", "Tanim")}</th><th className="px-2 py-2">{l("Status", "Durum")}</th><th className="px-2 py-2">{l("Action", "Islem")}</th></tr></thead>
-            <tbody>
-              {assignments.map((row) => {
-                const assignmentId = toPositiveInt(row?.id);
-                const rowSaving = saving === `assignment-status-${assignmentId}`;
-                const rowScope =
-                  row.operatingUnitId
-                    ? { scopeType: "OPERATING_UNIT", scopeId: row.operatingUnitId }
-                    : row.legalEntityId
-                      ? { scopeType: "LEGAL_ENTITY", scopeId: row.legalEntityId }
-                      : row.countryId
-                        ? { scopeType: "COUNTRY", scopeId: row.countryId }
-                      : row.groupCompanyId
-                        ? { scopeType: "GROUP", scopeId: row.groupCompanyId }
-                        : tenantScopeId
-                          ? { scopeType: "TENANT", scopeId: tenantScopeId }
-                          : null;
-                const rowScopeLabel =
-                  row.operatingUnitId
-                    ? `OPERATING_UNIT: ${row.operatingUnitCode || row.operatingUnitName || row.operatingUnitId}`
-                    : row.legalEntityId
-                      ? `LEGAL_ENTITY: ${row.legalEntityCode || row.legalEntityName || row.legalEntityId}`
-                      : row.countryId
-                        ? `COUNTRY: ${row.countryIso2 || row.countryName || row.countryId}`
-                        : row.groupCompanyId
-                          ? `GROUP: ${row.groupCompanyCode || row.groupCompanyName || row.groupCompanyId}`
-                          : "TENANT";
-                const rowWriteAccess = getPermissionAccess(
-                  "workflow.assignment.write",
-                  rowScope ? { scope: rowScope } : undefined
-                );
-                return (
-                  <tr key={row.id} className="border-t border-slate-100">
-                    <td className="px-2 py-2">#{row.id}</td>
-                    <td className="px-2 py-2">{row.processType}</td>
-                    <td className="px-2 py-2">{rowScopeLabel}</td>
-                    <td className="px-2 py-2">{row.workflowDefinitionCode} - {row.workflowDefinitionName}</td>
-                    <td className="px-2 py-2">{row.status}</td>
-                    <td className="px-2 py-2">
-                      <button type="button" onClick={() => onToggleAssignmentStatus(row)} disabled={rowSaving || !rowWriteAccess.allowed} className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60">{rowSaving ? l("Saving...", "Kaydediliyor...") : row.status === "ACTIVE" ? l("Set INACTIVE", "PASIF yap") : l("Set ACTIVE", "AKTIF yap")}</button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {assignments.length === 0 && !loading ? (<tr><td colSpan={6} className="px-2 py-3 text-slate-500">{l("No assignments.", "Atama yok.")}</td></tr>) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <WorkflowRecordsSection
+        l={l}
+        definitions={definitions}
+        assignments={assignmentRows}
+        loading={loading}
+        selectedDefinitionId={selectedDefinitionId}
+        onSelectDefinition={selectDefinitionForEditing}
+        onToggleAssignmentStatus={onToggleAssignmentStatus}
+        getWorkflowTypeLabel={(value) =>
+          text.workflowTypeLabels[String(value || "").toUpperCase()] || value || "-"
+        }
+      />
     </div>
   );
 }

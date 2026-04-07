@@ -7,6 +7,11 @@ import {
 } from "../../../api/cariDocuments.js";
 import { getCariCounterpartyStatementReport } from "../../../api/cariReports.js";
 import { listAccounts } from "../../../api/glAdmin.js";
+import {
+  approveWorkflowInstance,
+  rejectWorkflowInstance,
+  returnWorkflowInstance,
+} from "../../../api/workflows.js";
 import { useAuth } from "../../../auth/useAuth.js";
 import { useModuleReadiness } from "../../../readiness/useModuleReadiness.js";
 import { mapDocumentRowToForm } from "../cariDocumentsUtils.js";
@@ -114,6 +119,7 @@ export default function useCariDocumentPostReverseController({
   const canFxOverride = hasPermission("cari.fx.override");
   const canReadReports = hasPermission("cari.report.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
+  const canApproveWorkflow = hasPermission("approvals.requests.approve");
 
   const [postForm, setPostForm] = useState(() => buildInitialPostForm());
   const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
@@ -140,6 +146,10 @@ export default function useCariDocumentPostReverseController({
   const [reverseMessage, setReverseMessage] = useState("");
   const [reverseResult, setReverseResult] = useState(null);
   const [reverseInventoryBlocks, setReverseInventoryBlocks] = useState([]);
+  const [approvalSaving, setApprovalSaving] = useState(false);
+  const [approvalError, setApprovalError] = useState("");
+  const [approvalMessage, setApprovalMessage] = useState("");
+  const [approvalDecisionNote, setApprovalDecisionNote] = useState("");
   const [linkedCashRows, setLinkedCashRows] = useState([]);
   const [linkedCashLoading, setLinkedCashLoading] = useState(false);
   const [linkedCashError, setLinkedCashError] = useState("");
@@ -201,6 +211,15 @@ export default function useCariDocumentPostReverseController({
   );
   const canReverseSelected = Boolean(
     selectedSnapshot && canReverseDocument(selectedSnapshot) && canReverse
+  );
+  const canApproveSelected = Boolean(
+    selectedSnapshot &&
+      selectedDocumentDirection === "AP" &&
+      selectedDocumentWorkflowGoverned &&
+      canApproveWorkflow &&
+      selectedWorkflowGateState === "PENDING" &&
+      String(selectedSnapshot?.status || "").trim().toUpperCase() === "SUBMITTED" &&
+      selectedWorkflowGate?.workflowInstanceId
   );
   const filteredPostOffsetAccountOptions = useMemo(() => {
     const sourceOptions = Array.isArray(postOffsetAccountOptions)
@@ -595,6 +614,9 @@ export default function useCariDocumentPostReverseController({
     setPostMessage("");
     setPostTransferGuidance(null);
     setPostFixedAssetImprovementGuidance(null);
+    setApprovalError("");
+    setApprovalMessage("");
+    setApprovalDecisionNote("");
   }, [selectedDocumentId, selectedSnapshot]);
 
   useEffect(() => {
@@ -687,6 +709,117 @@ export default function useCariDocumentPostReverseController({
     selectedDocumentReturned,
     translateDocumentMutationError,
   ]);
+
+  const handleApproveDocument = useCallback(async () => {
+    const instanceId = toPositiveInt(selectedWorkflowGate?.workflowInstanceId);
+    if (!instanceId || !canApproveSelected) {
+      setApprovalError(
+        l(
+          "Cannot approve: document is not in a pending workflow state or you lack approvals.requests.approve permission.",
+          "Onaylanamaz: belge bekleyen workflow durumunda degil veya approvals.requests.approve yetkiniz yok."
+        )
+      );
+      return;
+    }
+    setApprovalSaving(true);
+    setApprovalError("");
+    setApprovalMessage("");
+    try {
+      await approveWorkflowInstance(instanceId, {
+        decisionNote: approvalDecisionNote.trim() || undefined,
+      });
+      setApprovalMessage(
+        l("Document approved successfully.", "Belge basariyla onaylandi.")
+      );
+      onDocumentSubmitted?.({ refreshList: true, refreshDetail: true });
+    } catch (error) {
+      setApprovalError(
+        normalizeApiError(error, l("Failed to approve document.", "Belge onaylanamadi."))
+      );
+    } finally {
+      setApprovalSaving(false);
+    }
+  }, [approvalDecisionNote, canApproveSelected, l, onDocumentSubmitted, selectedWorkflowGate]);
+
+  const handleRejectDocument = useCallback(async () => {
+    const instanceId = toPositiveInt(selectedWorkflowGate?.workflowInstanceId);
+    if (!instanceId || !canApproveSelected) {
+      setApprovalError(
+        l(
+          "Cannot reject: document is not in a pending workflow state or you lack permission.",
+          "Reddedilemez: belge bekleyen workflow durumunda degil veya yetkiniz yok."
+        )
+      );
+      return;
+    }
+    if (!approvalDecisionNote.trim()) {
+      setApprovalError(
+        l(
+          "A decision note is required when rejecting a document.",
+          "Belge reddederken karar notu zorunludur."
+        )
+      );
+      return;
+    }
+    setApprovalSaving(true);
+    setApprovalError("");
+    setApprovalMessage("");
+    try {
+      await rejectWorkflowInstance(instanceId, {
+        decisionNote: approvalDecisionNote.trim(),
+      });
+      setApprovalMessage(
+        l("Document rejected.", "Belge reddedildi.")
+      );
+      onDocumentSubmitted?.({ refreshList: true, refreshDetail: true });
+    } catch (error) {
+      setApprovalError(
+        normalizeApiError(error, l("Failed to reject document.", "Belge reddedilemedi."))
+      );
+    } finally {
+      setApprovalSaving(false);
+    }
+  }, [approvalDecisionNote, canApproveSelected, l, onDocumentSubmitted, selectedWorkflowGate]);
+
+  const handleReturnDocument = useCallback(async () => {
+    const instanceId = toPositiveInt(selectedWorkflowGate?.workflowInstanceId);
+    if (!instanceId || !canApproveSelected) {
+      setApprovalError(
+        l(
+          "Cannot return: document is not in a pending workflow state or you lack permission.",
+          "Iade edilemez: belge bekleyen workflow durumunda degil veya yetkiniz yok."
+        )
+      );
+      return;
+    }
+    if (!approvalDecisionNote.trim()) {
+      setApprovalError(
+        l(
+          "A decision note is required when returning a document for correction.",
+          "Belge duzeltme icin iade ederken karar notu zorunludur."
+        )
+      );
+      return;
+    }
+    setApprovalSaving(true);
+    setApprovalError("");
+    setApprovalMessage("");
+    try {
+      await returnWorkflowInstance(instanceId, {
+        decisionNote: approvalDecisionNote.trim(),
+      });
+      setApprovalMessage(
+        l("Document returned for correction.", "Belge duzeltme icin iade edildi.")
+      );
+      onDocumentSubmitted?.({ refreshList: true, refreshDetail: true });
+    } catch (error) {
+      setApprovalError(
+        normalizeApiError(error, l("Failed to return document.", "Belge iade edilemedi."))
+      );
+    } finally {
+      setApprovalSaving(false);
+    }
+  }, [approvalDecisionNote, canApproveSelected, l, onDocumentSubmitted, selectedWorkflowGate]);
 
   const handlePostDraft = useCallback(async () => {
     setPostTransferGuidance(null);
@@ -1064,6 +1197,11 @@ export default function useCariDocumentPostReverseController({
   ]);
 
   return {
+    approvalDecisionNote,
+    approvalError,
+    approvalMessage,
+    approvalSaving,
+    canApproveSelected,
     canCreate,
     canFxOverride,
     canSubmitSelected,
@@ -1073,6 +1211,9 @@ export default function useCariDocumentPostReverseController({
     cariPostingNotReady,
     filteredPostOffsetAccountOptions,
     handleAddPostFormPostingLine,
+    handleApproveDocument,
+    handleRejectDocument,
+    handleReturnDocument,
     handleSubmitDocument,
     handlePostDraft,
     handleRemovePostFormPostingLine,
@@ -1109,6 +1250,7 @@ export default function useCariDocumentPostReverseController({
     selectedDocumentPostingRulesReady,
     selectedDocumentUsesStoredTaxesForPosting,
     selectedOffsetAccountType,
+    setApprovalDecisionNote,
     setPostForm,
     setReverseForm,
   };

@@ -85,6 +85,19 @@ async function enforceDecisionPermission(
   if (!String(access.requiredPermissionCode || "").trim()) {
     // AP document workflow steps intentionally use a blank step permission so
     // the decision route relies on scope access and unified engine state.
+    // Still enforce the platform-level approval permission so req.rbac gets
+    // populated with the user's scope context for downstream scope checks.
+    const fallbackMiddleware = requirePermission("approvals.requests.approve", {
+      resolveScope: async () => access.scope,
+    });
+    try {
+      await runPermissionMiddleware(fallbackMiddleware, req, res);
+    } catch (err) {
+      if (Number(err?.status) === 403 && !err?.code) {
+        err.code = "APPROVAL_STEP_PERMISSION_DENIED";
+      }
+      throw err;
+    }
     return access;
   }
 

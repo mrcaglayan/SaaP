@@ -81,6 +81,13 @@ const ROLE_CATALOG = Object.freeze({
     capabilities: ["Country AP visibility", "AP final post", "AP reverse"],
     recommendedScopes: ["COUNTRY"],
   },
+  APApprover: {
+    category: "composable",
+    summary:
+      "Platform-level approval engine access for AP workflows. Grants the ability to read and act on AP workflow approval requests. Assign alongside a domain role (EntityAPController, CountryAPApprover, etc.) so the user can participate in approval decisions routed to their scope.",
+    capabilities: ["Approval request visibility", "Approve/reject workflow decisions", "Approval policy visibility"],
+    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY", "OPERATING_UNIT"],
+  },
   APDocumentPoster: {
     category: "legacy",
     summary:
@@ -220,6 +227,7 @@ export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
       "MasterDataSteward",
       "CounterpartyCardEditor",
       "EntityAPController",
+      "APApprover",
       "GLOperator",
       "TreasuryOperator",
       "PayrollOperator",
@@ -236,6 +244,7 @@ export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
     roleCodes: Object.freeze([
       "CountryAPApprover",
       "CountryAPPoster",
+      "APApprover",
       "GLOperator",
       "TreasuryApprover",
       "PayrollApprover",

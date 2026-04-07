@@ -804,6 +804,16 @@ const COUNTRY_AP_POSTER_PERMISSION_CODES = buildPermissionList({
   ],
 });
 
+const AP_APPROVER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "approvals.policies.read",
+    "approvals.requests.read",
+    "approvals.requests.approve",
+    "approvals.requests.reject",
+  ],
+});
+
 const GL_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["gl.operations"],
   permissions: [
@@ -988,6 +998,7 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   EntityAPController: Object.freeze([]),
   CountryAPApprover: Object.freeze([]),
   CountryAPPoster: Object.freeze([]),
+  APApprover: Object.freeze([]),
   APDocumentPoster: Object.freeze([]),
   GLOperator: Object.freeze(["gl.operations"]),
   GLPostingAuthority: Object.freeze(["gl.posting"]),
@@ -1160,6 +1171,11 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "CountryAPPoster",
     name: "Country AP Poster",
     permissions: COUNTRY_AP_POSTER_PERMISSION_CODES,
+  },
+  {
+    code: "APApprover",
+    name: "AP Approver",
+    permissions: AP_APPROVER_PERMISSION_CODES,
   },
   {
     code: "APDocumentPoster",
