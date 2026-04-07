@@ -1,11 +1,26 @@
 import { badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
 
+const VALID_ORG_TREE_SHAPES = new Set(["flat", "nested"]);
+
 export function requireOrgTenantId(req) {
   const tenantId = resolveTenantId(req);
   if (!tenantId) {
     throw badRequest("tenantId is required");
   }
   return tenantId;
+}
+
+/**
+ * Parse org-tree read filters while keeping the legacy flat response as the
+ * default during the additive nested-tree rollout.
+ */
+export function parseOrgTreeReadFilters(rawQuery = {}) {
+  const shape = String(rawQuery.shape || "flat").trim().toLowerCase() || "flat";
+  if (!VALID_ORG_TREE_SHAPES.has(shape)) {
+    throw badRequest("shape must be flat or nested");
+  }
+
+  return { shape };
 }
 
 /**

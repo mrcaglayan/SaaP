@@ -3659,7 +3659,7 @@ return (
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-slate-900">
-                      {ENTITY_SETUP_PRESET.code}
+                      {ENTITY_SETUP_PRESET.displayName || ENTITY_SETUP_PRESET.code}
                     </h3>
                     <p className="mt-1 text-xs text-slate-600">
                       {l(
@@ -3691,7 +3691,7 @@ return (
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-slate-900">
-                      {COUNTRY_FINANCE_SETUP_PRESET.code}
+                      {COUNTRY_FINANCE_SETUP_PRESET.displayName || COUNTRY_FINANCE_SETUP_PRESET.code}
                     </h3>
                     <p className="mt-1 text-xs text-slate-600">
                       {l(

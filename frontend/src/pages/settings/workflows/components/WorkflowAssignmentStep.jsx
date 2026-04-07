@@ -10,48 +10,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import OrgScopeTreePicker from "../../../../components/org/OrgScopeTreePicker.jsx";
 import PermissionAccessNotice from "../../../../auth/PermissionAccessNotice.jsx";
-import { Building, Globe, Layers, LayoutGrid, MapPin } from "lucide-react";
-
-const SCOPE_ICONS = {
-  TENANT: Globe,
-  GROUP: Layers,
-  COUNTRY: MapPin,
-  LEGAL_ENTITY: Building,
-  OPERATING_UNIT: LayoutGrid,
-};
-
-function resetScopeTargets(prev, scopeType) {
-  return {
-    ...prev,
-    scopeType,
-    groupCompanyId: "",
-    countryId: "",
-    legalEntityId: "",
-    operatingUnitId: "",
-  };
-}
 
 /**
- * Configures where one workflow definition becomes active.
+ * Captures the target scope and assignment timing before workflow-definition
+ * details are configured.
  */
 export default function WorkflowAssignmentStep({
   l,
   form,
   onFormChange,
-  definitions,
-  countries,
-  groupCompanies,
-  legalEntities,
-  operatingUnits,
+  orgTreeRoot = null,
+  scopeValue = null,
+  scopeValueNodeKey = "",
+  onSelectScope,
+  allowedScopeTypes = [],
+  getNodeDisabledReason = null,
   effectText,
   onSubmit,
   saving,
   canWrite,
   access,
   scopeTypeLabels,
-  scopeTypeMeta,
   workflowTypeLabel,
   onBack,
 }) {
@@ -61,12 +42,12 @@ export default function WorkflowAssignmentStep({
         <CardHeader className="space-y-3">
           <div>
             <CardTitle>
-              {l("Step 4 - Where should this workflow be active?", "Adim 4 - Bu workflow nerede aktif olmali?")}
+              {l("Step 2 - Choose target scope", "Adim 2 - Hedef kapsami secin")}
             </CardTitle>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               {l(
-                "An assignment connects the workflow to a specific part of your organization and decides which records are governed by it.",
-                "Atama, workflow'u organizasyonunuzun belirli bir kismina baglar ve hangi kayitlarin bu workflow tarafindan yonetilecegini belirler."
+                "Choose where this workflow should apply before you define the reusable approval design.",
+                "Tekrar kullanilabilir onay tasarimini tanimlamadan once bu workflow'un nerede gecerli olacagini secin."
               )}
             </p>
           </div>
@@ -80,194 +61,56 @@ export default function WorkflowAssignmentStep({
         </CardHeader>
 
         <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-foreground">
-              {l("Selected workflow", "Secili workflow")}
-            </label>
-            <p className="text-xs leading-5 text-muted-foreground">
+          <Alert>
+            <AlertTitle>{l("Scope first", "Once kapsam")}</AlertTitle>
+            <AlertDescription>
               {l(
-                "Choose which saved workflow definition becomes active at the selected scope.",
-                "Secilen kapsamda hangi kayitli workflow taniminin aktif olacagini secin."
+                "The selected scope drives the later workflow summary, coverage diagnostics, and final assignment save.",
+                "Secilen kapsam daha sonraki workflow ozetini, kapsam tanilarini ve son atama kaydini belirler."
               )}
-            </p>
-            <Select
-              value={form.workflowDefinitionId || ""}
-              onValueChange={(value) =>
-                onFormChange((prev) => ({ ...prev, workflowDefinitionId: value }))
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder={l("Select workflow", "Workflow secin")} />
-              </SelectTrigger>
-              <SelectContent>
-                {definitions.map((row) => (
-                  <SelectItem key={row.id} value={String(row.id)}>
-                    {row.code} - {row.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+            </AlertDescription>
+          </Alert>
 
           <div className="space-y-3">
-            <div>
-              <label className="text-sm font-semibold text-foreground">
-                {l("Applies to", "Kapsam")}
-              </label>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {l(
-                  "Select the organizational level where this workflow takes effect.",
-                  "Bu workflow'un hangi organizasyon seviyesinde gecerli olacagini secin."
-                )}
-              </p>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(scopeTypeLabels).map(([scopeType, scopeLabel]) => (
+                <Badge
+                  key={scopeType}
+                  variant={form.scopeType === scopeType ? "default" : "outline"}
+                >
+                  {scopeLabel}
+                </Badge>
+              ))}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              {Object.entries(scopeTypeLabels).map(([scopeType, scopeLabel]) => {
-                const Icon = SCOPE_ICONS[scopeType] || Globe;
-                const selected = form.scopeType === scopeType;
-                const meta = scopeTypeMeta?.[scopeType];
-
-                return (
-                  <button
-                    key={scopeType}
-                    type="button"
-                    onClick={() => onFormChange((prev) => resetScopeTargets(prev, scopeType))}
-                    className={cn(
-                      "rounded-2xl border p-3 text-left transition-all",
-                      selected
-                        ? "border-primary bg-primary/5 ring-2 ring-primary/15"
-                        : "border-border bg-card hover:bg-muted/40"
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={cn(
-                          "flex h-8 w-8 items-center justify-center rounded-xl border",
-                          selected
-                            ? "border-primary/20 bg-primary/10 text-primary"
-                            : "border-border bg-muted text-muted-foreground"
-                        )}
-                      >
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-foreground">{scopeLabel}</div>
-                        <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                          {meta?.shortCode || scopeType}
-                        </div>
-                      </div>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                      {meta?.description}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
+            <OrgScopeTreePicker
+              root={orgTreeRoot}
+              value={scopeValue}
+              valueNodeKey={scopeValueNodeKey}
+              onChange={onSelectScope}
+              allowedScopeTypes={allowedScopeTypes}
+              getNodeDisabledReason={getNodeDisabledReason}
+              title={l("Target scope", "Hedef kapsam")}
+              description={l(
+                "Select the scope from the canonical organization tree. The workflow definition itself is chosen in the next step.",
+                "Kapsami kanonik organizasyon agacindan secin. Workflow taniminin kendisi bir sonraki adimda secilir."
+              )}
+              searchPlaceholder={l(
+                "Search by code, name, or ISO2",
+                "Kod, ad veya ISO2 ile arayin"
+              )}
+              emptyText={l(
+                "No organization tree is available for this tenant.",
+                "Bu tenant icin organizasyon agaci mevcut degil."
+              )}
+              noResultsText={l(
+                "No matching scope was found.",
+                "Eslesen kapsam bulunamadi."
+              )}
+            />
           </div>
 
           <div className="grid gap-5 md:grid-cols-2">
-            {form.scopeType === "GROUP" ? (
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-foreground">
-                  {l("Select group company", "Grup sirketi secin")}
-                </label>
-                <Select
-                  value={form.groupCompanyId || ""}
-                  onValueChange={(value) =>
-                    onFormChange((prev) => ({ ...prev, groupCompanyId: value }))
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder={l("Select group company", "Grup sirketi secin")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {groupCompanies.map((row) => (
-                      <SelectItem key={row.id} value={String(row.id)}>
-                        {row.code} - {row.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-
-            {form.scopeType === "COUNTRY" ? (
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-foreground">
-                  {l("Select country", "Ulke secin")}
-                </label>
-                <Select
-                  value={form.countryId || ""}
-                  onValueChange={(value) =>
-                    onFormChange((prev) => ({ ...prev, countryId: value }))
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder={l("Select country", "Ulke secin")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {countries.map((row) => (
-                      <SelectItem key={row.id} value={String(row.id)}>
-                        {row.iso2} - {row.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-
-            {form.scopeType === "LEGAL_ENTITY" ? (
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-foreground">
-                  {l("Select legal entity", "Legal entity secin")}
-                </label>
-                <Select
-                  value={form.legalEntityId || ""}
-                  onValueChange={(value) =>
-                    onFormChange((prev) => ({ ...prev, legalEntityId: value }))
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder={l("Select legal entity", "Legal entity secin")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {legalEntities.map((row) => (
-                      <SelectItem key={row.id} value={String(row.id)}>
-                        {row.code} - {row.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-
-            {form.scopeType === "OPERATING_UNIT" ? (
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-foreground">
-                  {l("Select operating unit", "Operating unit secin")}
-                </label>
-                <Select
-                  value={form.operatingUnitId || ""}
-                  onValueChange={(value) =>
-                    onFormChange((prev) => ({ ...prev, operatingUnitId: value }))
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder={l("Select operating unit", "Operating unit secin")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {operatingUnits.map((row) => (
-                      <SelectItem key={row.id} value={String(row.id)}>
-                        {row.code} - {row.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-
             <div className="space-y-2">
               <label className="text-sm font-semibold text-foreground">
                 {l("Effective from", "Gecerlilik baslangici")}
@@ -312,18 +155,6 @@ export default function WorkflowAssignmentStep({
             </div>
           </div>
 
-          {definitions.length === 0 ? (
-            <Alert>
-              <AlertTitle>{l("No matching workflow available", "Eslesen workflow yok")}</AlertTitle>
-              <AlertDescription>
-                {l(
-                  "Create or select a workflow definition for this process type before saving the assignment.",
-                  "Atamayi kaydetmeden once bu surec tipi icin bir workflow tanimi olusturun veya secin."
-                )}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
           <Alert className="border-blue-200 bg-blue-50/80 text-blue-900">
             <AlertTitle>{l("Effect of this assignment", "Bu atamanin etkisi")}</AlertTitle>
             <AlertDescription className="text-blue-800">{effectText}</AlertDescription>
@@ -334,10 +165,8 @@ export default function WorkflowAssignmentStep({
           <Button type="button" variant="outline" onClick={onBack}>
             {l("Back", "Geri")}
           </Button>
-          <Button type="button" onClick={onSubmit} disabled={saving || !canWrite}>
-            {saving
-              ? l("Saving...", "Kaydediliyor...")
-              : l("Save assignment and continue", "Atamayi kaydet ve devam et")}
+          <Button type="button" onClick={onSubmit} disabled={saving || !canWrite || !orgTreeRoot || !scopeValue}>
+            {l("Continue to Definition", "Tanima devam et")}
           </Button>
         </CardFooter>
       </Card>

@@ -28,6 +28,10 @@ export function getWorkflowSetupText(l) {
         description: l("Choose the process", "Sureci secin"),
       },
       {
+        label: l("Target Scope", "Hedef Kapsam"),
+        description: l("Where it applies", "Nerede gecerli"),
+      },
+      {
         label: l("Definition", "Tanim"),
         description: l("Name and code", "Ad ve kod"),
       },
@@ -36,12 +40,8 @@ export function getWorkflowSetupText(l) {
         description: l("Who approves", "Kim onaylar"),
       },
       {
-        label: l("Assignment", "Atama"),
-        description: l("Where it applies", "Nerede gecerli"),
-      },
-      {
         label: l("Review", "Inceleme"),
-        description: l("Confirm setup", "Kurulumu dogrula"),
+        description: l("Confirm and save", "Dogrula ve kaydet"),
       },
     ],
     workflowTypeMeta: {

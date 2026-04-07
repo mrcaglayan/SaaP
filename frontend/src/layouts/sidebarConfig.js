@@ -6,6 +6,7 @@ const ROLE_PERMISSIONS_PAGE_PERMISSIONS = [
   "security.role.upsert",
   "security.role_permissions.assign",
 ];
+const ACCESS_MODEL_PAGE_PERMISSIONS = ROLE_PERMISSIONS_PAGE_PERMISSIONS;
 
 const USER_ASSIGNMENTS_PAGE_PERMISSIONS = [
   "security.role_assignment.read",
@@ -664,6 +665,12 @@ export const sidebarItems = [
         label: "Yerel Kullanici Yonetimi",
         to: "/app/ayarlar/sube-operatorleri",
         requiredPermissions: BRANCH_OPERATOR_MANAGEMENT_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Erisim Modeli",
+        to: "/app/ayarlar/rbac/access-model",
+        requiredPermissions: ACCESS_MODEL_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

@@ -68,6 +68,10 @@ export default function RolesPermissionsPage() {
     () => roles.find((row) => Number(row.id) === Number(selectedRoleId)) || null,
     [roles, selectedRoleId]
   );
+  const selectedRoleEntry = useMemo(
+    () => (selectedRole ? getRoleCatalogEntry(selectedRole) : null),
+    [selectedRole]
+  );
   const groupedRoles = useMemo(() => groupRolesForManagement(roles), [roles]);
   const canUpsertRole = hasPermission("security.role.upsert");
   const canReplaceRolePermissions = hasPermission(
@@ -150,7 +154,7 @@ export default function RolesPermissionsPage() {
 
       {showFreshTenantAdminNote ? (
         <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-          This tenant has no retired legacy role assignments, so migration-only admin surfaces stay
+          This tenant has no legacy runtime role assignments, so migration-only admin surfaces stay
           out of the normal navigation. Use the composable role catalog as the steady-state model.
         </div>
       ) : null}
@@ -171,7 +175,7 @@ export default function RolesPermissionsPage() {
         className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-4"
       >
         <div className="md:col-span-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
-          Prefer bounded composable roles for new assignments. Retired legacy roles now stay
+          Prefer bounded composable roles for new assignments. Legacy runtime roles now stay
           outside the normal admin catalog and survive only through migration or rollback seams,
           while companion roles like
           <span className="font-semibold text-slate-900"> GLPostingAuthority </span>
@@ -221,6 +225,15 @@ export default function RolesPermissionsPage() {
                   <div className="space-y-1">
                     {group.roles.map((role) => {
                       const roleEntry = getRoleCatalogEntry(role);
+                      const runtimeRoleCode = String(role?.code || "").trim();
+                      const runtimeRoleName = String(role?.name || "").trim();
+                      const secondaryText = roleEntry.technicalCode
+                        ? `Runtime code: ${roleEntry.technicalCode}`
+                        : runtimeRoleName &&
+                            runtimeRoleName !== roleEntry.code &&
+                            runtimeRoleName !== runtimeRoleCode
+                          ? runtimeRoleName
+                          : "";
                       return (
                       <button
                         key={role.id}
@@ -238,17 +251,20 @@ export default function RolesPermissionsPage() {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="font-semibold">{roleEntry.code}</div>
+                          {roleEntry.legacy ? (
+                            <span className="rounded-full border border-current/20 px-2 py-0.5 text-[11px] font-semibold">
+                              Legacy
+                            </span>
+                          ) : null}
                           {role.legacyDisabled ? (
                             <span className="rounded-full border border-current/20 px-2 py-0.5 text-[11px] font-semibold">
-                              Retired
+                              Hidden
                             </span>
                           ) : null}
                         </div>
-                        <div className="text-xs opacity-80">
-                          {roleEntry.technicalCode
-                            ? `Runtime code: ${roleEntry.technicalCode}`
-                            : role.name}
-                        </div>
+                        {secondaryText ? (
+                          <div className="text-xs opacity-80">{secondaryText}</div>
+                        ) : null}
                       </button>
                       );
                     })}
@@ -264,7 +280,7 @@ export default function RolesPermissionsPage() {
             <h2 className="text-sm font-semibold text-slate-700">
               {selectedRole
                 ? t("rolesPermissions.sections.permissionsFor", {
-                    code: selectedRole.code,
+                    code: selectedRoleEntry?.code || selectedRole.code,
                   })
                 : t("rolesPermissions.sections.permissions")}
             </h2>

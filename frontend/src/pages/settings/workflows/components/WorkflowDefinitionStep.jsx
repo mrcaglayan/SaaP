@@ -48,6 +48,8 @@ export default function WorkflowDefinitionStep({
   saving,
   canWrite,
   access,
+  targetScopeLabel = "",
+  targetScopeEffectText = "",
   onBack,
 }) {
   const currentExample =
@@ -60,7 +62,7 @@ export default function WorkflowDefinitionStep({
         <CardHeader className="space-y-3">
           <div>
             <CardTitle>
-              {l("Step 2 - Create or select a workflow", "Adim 2 - Workflow secin veya olusturun")}
+              {l("Step 3 - Create or select a workflow", "Adim 3 - Workflow secin veya olusturun")}
             </CardTitle>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               {l(
@@ -81,6 +83,16 @@ export default function WorkflowDefinitionStep({
         </CardHeader>
 
         <CardContent className="space-y-5">
+          {targetScopeLabel ? (
+            <Alert>
+              <AlertTitle>{l("Selected target scope", "Secilen hedef kapsam")}</AlertTitle>
+              <AlertDescription>
+                {targetScopeLabel}
+                {targetScopeEffectText ? ` - ${targetScopeEffectText}` : ""}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           {mode === "select" ? (
             <div className="space-y-3">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">

@@ -22,7 +22,7 @@ function ReviewStat({ label, value }) {
 }
 
 /**
- * Summarizes the saved workflow setup before the user leaves the page.
+ * Summarizes the workflow setup and acts as the final assignment-save gate.
  */
 export default function WorkflowReviewStep({
   l,
@@ -35,6 +35,10 @@ export default function WorkflowReviewStep({
   workflowPreviewText,
   assignmentEffectText,
   onBack,
+  onSubmitAssignment,
+  assignmentSaving = false,
+  canWriteAssignment = false,
+  assignmentSaved = false,
   // PR-WGX-01: AP business preview
   apBusinessPreviewLines,
   apBusinessLabels,
@@ -61,27 +65,44 @@ export default function WorkflowReviewStep({
             <CardTitle>{l("Step 5 - Review your setup", "Adim 5 - Kurulumu gozden gecirin")}</CardTitle>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               {l(
-                "Check the saved workflow definition, approval steps, and assignment scope before leaving the page.",
-                "Sayfadan ayrilmadan once kaydedilen workflow tanimini, onay adimlarini ve atama kapsamini kontrol edin."
+                "Check the workflow definition, approval steps, and target scope before saving the assignment.",
+                "Atamayi kaydetmeden once workflow tanimini, onay adimlarini ve hedef kapsami kontrol edin."
               )}
             </p>
           </div>
 
-          <Alert className="border-emerald-200 bg-emerald-50/90 text-emerald-900">
-            <CheckCircle2 className="h-4 w-4" />
-            <AlertTitle>{l("Setup saved", "Kurulum kaydedildi")}</AlertTitle>
-            <AlertDescription className="text-emerald-800">
-              {assignmentForm?.status === "ACTIVE"
-                ? l(
-                    "This workflow is active from the selected effective date and now governs matching records.",
-                    "Bu workflow secilen gecerlilik tarihinden itibaren aktiftir ve eslesen kayitlari yonetir."
-                  )
-                : l(
-                    "This workflow is saved in inactive mode. Activate the assignment when you are ready.",
-                    "Bu workflow pasif modda kaydedildi. Hazir oldugunuzda atamayi aktif hale getirin."
-                  )}
-            </AlertDescription>
-          </Alert>
+          {assignmentSaved ? (
+            <Alert className="border-emerald-200 bg-emerald-50/90 text-emerald-900">
+              <CheckCircle2 className="h-4 w-4" />
+              <AlertTitle>{l("Setup saved", "Kurulum kaydedildi")}</AlertTitle>
+              <AlertDescription className="text-emerald-800">
+                {assignmentForm?.status === "ACTIVE"
+                  ? l(
+                      "This workflow is active from the selected effective date and now governs matching records.",
+                      "Bu workflow secilen gecerlilik tarihinden itibaren aktiftir ve eslesen kayitlari yonetir."
+                    )
+                  : l(
+                      "This workflow is saved in inactive mode. Activate the assignment when you are ready.",
+                      "Bu workflow pasif modda kaydedildi. Hazir oldugunuzda atamayi aktif hale getirin."
+                    )}
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <Alert className="border-blue-200 bg-blue-50/90 text-blue-950">
+              <AlertTitle>{l("Ready to save", "Kaydetmeye hazir")}</AlertTitle>
+              <AlertDescription className="text-blue-900">
+                {assignmentForm?.status === "ACTIVE"
+                  ? l(
+                      "This review confirms the workflow before the assignment becomes active on the selected effective date.",
+                      "Bu inceleme, atama secilen gecerlilik tarihinde aktif olmadan once workflow'u dogrular."
+                    )
+                  : l(
+                      "This review confirms the workflow before the assignment is saved in inactive mode.",
+                      "Bu inceleme, atama pasif modda kaydedilmeden once workflow'u dogrular."
+                    )}
+              </AlertDescription>
+            </Alert>
+          )}
         </CardHeader>
 
         <CardContent className="space-y-5">
@@ -294,9 +315,20 @@ export default function WorkflowReviewStep({
           </div>
         </CardContent>
 
-        <CardFooter className="justify-start">
+        <CardFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <Button type="button" variant="outline" onClick={onBack}>
-            {l("Back to Assignment", "Atamaya geri don")}
+            {l("Back to Approval Steps", "Onay adimlarina geri don")}
+          </Button>
+          <Button
+            type="button"
+            onClick={onSubmitAssignment}
+            disabled={assignmentSaving || !canWriteAssignment || assignmentSaved}
+          >
+            {assignmentSaving
+              ? l("Saving assignment...", "Atama kaydediliyor...")
+              : assignmentSaved
+                ? l("Assignment saved", "Atama kaydedildi")
+                : l("Save assignment", "Atamayi kaydet")}
           </Button>
         </CardFooter>
       </Card>

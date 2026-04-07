@@ -15,6 +15,8 @@ export default function WorkflowStepsBuilderStep({
   l,
   processType,
   selectedDefinition,
+  targetScopeLabel = "",
+  targetScopeEffectText = "",
   stepDrafts,
   stepScopeTypes,
   stepScopeLabels,
@@ -48,7 +50,7 @@ export default function WorkflowStepsBuilderStep({
       <Card className="rounded-3xl">
         <CardHeader className="space-y-3">
           <div>
-            <CardTitle>{l("Step 3 - Define approval steps", "Adim 3 - Onay adimlarini tanimlayin")}</CardTitle>
+            <CardTitle>{l("Step 4 - Define approval steps", "Adim 4 - Onay adimlarini tanimlayin")}</CardTitle>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               {l(
                 "Each step defines who approves at a specific organizational level and in what order. The sequence runs from top to bottom.",
@@ -65,6 +67,16 @@ export default function WorkflowStepsBuilderStep({
             </AlertTitle>
             <AlertDescription>{workflowPreviewText}</AlertDescription>
           </Alert>
+
+          {targetScopeLabel ? (
+            <Alert>
+              <AlertTitle>{l("Current target scope", "Guncel hedef kapsam")}</AlertTitle>
+              <AlertDescription>
+                {targetScopeLabel}
+                {targetScopeEffectText ? ` - ${targetScopeEffectText}` : ""}
+              </AlertDescription>
+            </Alert>
+          ) : null}
 
           {isAp ? (
             <Alert>
@@ -206,7 +218,12 @@ export default function WorkflowStepsBuilderStep({
             {l("Back", "Geri")}
           </Button>
           <Button onClick={onSubmit} disabled={saving || !canWrite || !selectedDefinition}>
-            {saving ? l("Saving...", "Kaydediliyor...") : l("Save steps and continue", "Adimlari kaydet ve devam et")}
+            {saving
+              ? l("Saving...", "Kaydediliyor...")
+              : l(
+                  "Save steps and continue to review",
+                  "Adimlari kaydet ve incelemeye devam et"
+                )}
           </Button>
         </CardFooter>
       </Card>

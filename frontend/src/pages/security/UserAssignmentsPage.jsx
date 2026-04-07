@@ -32,6 +32,7 @@ import {
   BOOTSTRAP_HANDOFF_PRESET_CATALOG,
   buildScopeLabel,
   getBootstrapHandoffPresetEntry,
+  getBootstrapHandoffPresetDisplayLabel,
   getRoleCatalogEntry,
   groupRolesForManagement,
 } from "./roleCatalog.js";
@@ -443,6 +444,7 @@ function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) 
         roleCodes,
         status,
         presetCode: presetMatch?.presetCode || "",
+        presetDisplayName: presetMatch?.preset?.displayName || "",
         presetSummary: presetMatch?.preset?.summary || "",
         optionalRoleCodes: presetMatch?.matchedOptionalRoleCodes || [],
         isPresetBundle: Boolean(presetMatch),
@@ -511,9 +513,11 @@ function buildAssignmentSearchText(bundle) {
     bundle.userName,
     bundle.userEmail,
     bundle.presetCode,
+    bundle.presetDisplayName,
     bundle.scopeLabel,
     bundle.scopeType,
     bundle.roleCodes.join(" "),
+    bundle.roleCodes.map((roleCode) => getRoleDisplayCode(roleCode)).join(" "),
   ]
     .join(" ")
     .toLowerCase();
@@ -524,7 +528,9 @@ function buildUserSearchText(row) {
     row.email,
     row.status,
     row.topRoleCodes.join(" "),
+    row.topRoleCodes.map((roleCode) => getRoleDisplayCode(roleCode)).join(" "),
     row.currentPresetCodes.join(" "),
+    row.currentPresetCodes.map((presetCode) => getBootstrapHandoffPresetDisplayLabel(presetCode)).join(" "),
     row.topScopeLabels.join(" "),
   ]
     .join(" ")
@@ -533,6 +539,10 @@ function buildUserSearchText(row) {
 
 function getRoleDisplayCode(roleOrCode) {
   return getRoleCatalogEntry(roleOrCode).code;
+}
+
+function getPresetDisplayLabel(presetCode) {
+  return getBootstrapHandoffPresetDisplayLabel(presetCode);
 }
 function WorkspaceStatCard({ title, value, subtitle, tone = "slate" }) {
   const toneClasses =
@@ -675,7 +685,7 @@ function AssignmentBundleCard({
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-base font-semibold text-slate-950">
-              {bundle.presetCode || l("Custom assignment bundle", "Ozel atama paketi")}
+              {bundle.presetDisplayName || bundle.presetCode || l("Custom assignment bundle", "Ozel atama paketi")}
             </div>
             <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
             {bundle.effect !== "ALLOW" ? (
@@ -905,7 +915,7 @@ function UserAccessModal({
                       <option value="">{l("Invite without immediate assignment", "Anlik atama olmadan davet et")}</option>
                       {Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG).map((presetCode) => (
                         <option key={presetCode} value={presetCode}>
-                          {presetCode}
+                          {getPresetDisplayLabel(presetCode)}
                         </option>
                       ))}
                     </select>
@@ -1055,7 +1065,7 @@ function UserAccessModal({
                         >
                           <div className="flex flex-wrap items-center gap-2">
                             <div className="text-sm font-semibold text-slate-900">
-                              {bundle.presetCode || l("Custom bundle", "Ozel paket")}
+                              {bundle.presetDisplayName || bundle.presetCode || l("Custom bundle", "Ozel paket")}
                             </div>
                             <StatusPill
                               label={getBundleStatusMeta(bundle.status).label}
@@ -2266,7 +2276,7 @@ export default function UserAssignmentsPage() {
                                 row.currentPresetCodes.map((presetCode) => (
                                   <StatusPill
                                     key={`user-preset-${row.id}-${presetCode}`}
-                                    label={presetCode}
+                                    label={getPresetDisplayLabel(presetCode)}
                                     tone="blue"
                                   />
                                 ))
@@ -2398,7 +2408,7 @@ export default function UserAssignmentsPage() {
                   <option value="">{l("All presets", "Tum presetler")}</option>
                   {Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG).map((presetCode) => (
                     <option key={`assignment-preset-${presetCode}`} value={presetCode}>
-                      {presetCode}
+                      {getPresetDisplayLabel(presetCode)}
                     </option>
                   ))}
                   <option value="__custom__">{l("Custom bundle", "Ozel paket")}</option>
@@ -2475,7 +2485,7 @@ export default function UserAssignmentsPage() {
                     >
                       {Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG).map((presetCode) => (
                         <option key={`drawer-preset-${presetCode}`} value={presetCode}>
-                          {presetCode}
+                          {getPresetDisplayLabel(presetCode)}
                         </option>
                       ))}
                     </select>
@@ -2562,7 +2572,9 @@ export default function UserAssignmentsPage() {
                     <div className="mt-3 space-y-3 text-sm text-slate-700">
                       <div className="flex items-start justify-between gap-3">
                         <span>{l("Preset", "Preset")}</span>
-                        <strong className="text-right text-slate-950">{assignmentForm.presetCode}</strong>
+                        <strong className="text-right text-slate-950">
+                          {getPresetDisplayLabel(assignmentForm.presetCode)}
+                        </strong>
                       </div>
                       <div className="flex items-start justify-between gap-3">
                         <span>{l("Assignee", "Atanan kisi")}</span>
@@ -2669,8 +2681,8 @@ export default function UserAssignmentsPage() {
                       </select>
                       <p className="text-xs leading-5 text-slate-500">
                         {l(
-                          "Retired compatibility roles are hidden here for new assignments. Existing legacy assignments still remain visible for review and cleanup.",
-                          "Yeni atamalar icin kullanimi birakilan uyumluluk rolleri burada gizlenir. Mevcut legacy atamalar ise inceleme ve temizlik icin gorunur kalir."
+                          "Legacy runtime roles are hidden here for new assignments. Existing legacy assignments still remain visible for review and cleanup.",
+                          "Yeni atamalar icin legacy runtime rolleri burada gizlenir. Mevcut legacy atamalar ise inceleme ve temizlik icin gorunur kalir."
                         )}
                       </p>
                     </div>

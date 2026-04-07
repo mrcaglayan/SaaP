@@ -136,6 +136,19 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          {
+            "in": "query",
+            "name": "shape",
+            "required": false,
+            "description": "Response shape. Omit or set flat for the legacy response; set nested for the canonical tree.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "flat",
+                "nested"
+              ]
+            }
           }
         ],
         "responses": {
@@ -37235,7 +37248,66 @@
           "is_locked"
         ]
       },
-      "OrgTreeResponse": {
+      "OrgTreeNode": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "scopeType": {
+            "type": "string",
+            "enum": [
+              "TENANT",
+              "GROUP",
+              "COUNTRY",
+              "LEGAL_ENTITY",
+              "OPERATING_UNIT"
+            ]
+          },
+          "scopeId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "label": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "selectable": {
+            "type": "boolean"
+          },
+          "pathLabels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrgTreeNode"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "scopeType",
+          "scopeId",
+          "label",
+          "code",
+          "selectable",
+          "pathLabels",
+          "meta",
+          "children"
+        ]
+      },
+      "OrgTreeLegacyResponse": {
         "type": "object",
         "properties": {
           "tenantId": {
@@ -37269,6 +37341,13 @@
               "type": "object",
               "additionalProperties": true
             }
+          },
+          "rbacSource": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenantWideScope": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -37276,7 +37355,51 @@
           "groups",
           "countries",
           "legalEntities",
-          "operatingUnits"
+          "operatingUnits",
+          "rbacSource",
+          "tenantWideScope"
+        ]
+      },
+      "OrgTreeNestedResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shape": {
+            "type": "string",
+            "enum": [
+              "nested"
+            ]
+          },
+          "root": {
+            "$ref": "#/components/schemas/OrgTreeNode"
+          },
+          "rbacSource": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenantWideScope": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "shape",
+          "root",
+          "rbacSource",
+          "tenantWideScope"
+        ]
+      },
+      "OrgTreeResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OrgTreeLegacyResponse"
+          },
+          {
+            "$ref": "#/components/schemas/OrgTreeNestedResponse"
+          }
         ]
       },
       "FiscalPeriodGenerateResponse": {

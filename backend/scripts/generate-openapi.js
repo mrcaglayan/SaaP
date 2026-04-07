@@ -8699,7 +8699,15 @@ const spec = {
         tags: ["Org"],
         operationId: "getOrgTree",
         summary: "Get organization tree",
-        parameters: [queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT")],
+        parameters: [
+          queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+          queryParam(
+            "shape",
+            { type: "string", enum: ["flat", "nested"] },
+            false,
+            "Response shape. Omit or set flat for the legacy response; set nested for the canonical tree."
+          ),
+        ],
         responses: withStandardResponses("200", "Organization tree", "#/components/schemas/OrgTreeResponse"),
       },
     },
@@ -12448,7 +12456,35 @@ const spec = {
           "is_locked",
         ],
       },
-      OrgTreeResponse: {
+      OrgTreeNode: {
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          scopeType: {
+            type: "string",
+            enum: ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"],
+          },
+          scopeId: intId,
+          label: { type: "string" },
+          code: { type: "string", nullable: true },
+          selectable: { type: "boolean" },
+          pathLabels: { type: "array", items: { type: "string" } },
+          meta: { type: "object", additionalProperties: true },
+          children: { type: "array", items: { $ref: "#/components/schemas/OrgTreeNode" } },
+        },
+        required: [
+          "key",
+          "scopeType",
+          "scopeId",
+          "label",
+          "code",
+          "selectable",
+          "pathLabels",
+          "meta",
+          "children",
+        ],
+      },
+      OrgTreeLegacyResponse: {
         type: "object",
         properties: {
           tenantId: intId,
@@ -12456,8 +12492,35 @@ const spec = {
           countries: { type: "array", items: { type: "object", additionalProperties: true } },
           legalEntities: { type: "array", items: { type: "object", additionalProperties: true } },
           operatingUnits: { type: "array", items: { type: "object", additionalProperties: true } },
+          rbacSource: { type: "string", nullable: true },
+          tenantWideScope: { type: "boolean" },
         },
-        required: ["tenantId", "groups", "countries", "legalEntities", "operatingUnits"],
+        required: [
+          "tenantId",
+          "groups",
+          "countries",
+          "legalEntities",
+          "operatingUnits",
+          "rbacSource",
+          "tenantWideScope",
+        ],
+      },
+      OrgTreeNestedResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          shape: { type: "string", enum: ["nested"] },
+          root: { $ref: "#/components/schemas/OrgTreeNode" },
+          rbacSource: { type: "string", nullable: true },
+          tenantWideScope: { type: "boolean" },
+        },
+        required: ["tenantId", "shape", "root", "rbacSource", "tenantWideScope"],
+      },
+      OrgTreeResponse: {
+        oneOf: [
+          { $ref: "#/components/schemas/OrgTreeLegacyResponse" },
+          { $ref: "#/components/schemas/OrgTreeNestedResponse" },
+        ],
       },
       FiscalPeriodGenerateResponse: {
         type: "object",

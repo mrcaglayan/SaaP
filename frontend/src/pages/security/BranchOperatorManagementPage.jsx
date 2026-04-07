@@ -7,6 +7,7 @@ import {
 import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { getRoleCatalogEntry } from "./roleCatalog.js";
 
 const LOCAL_USER_ADMIN_PERMISSION_CODES = Object.freeze([
   "security.user_admin.local",
@@ -31,11 +32,10 @@ function formatOperatingUnitLabel(unit) {
 
 function formatRoleLabel(role) {
   const roleCode = String(role?.code || role?.role_code || "").trim();
-  const roleName = String(role?.name || role?.role_name || "").trim();
-  if (roleName && roleCode && roleName !== roleCode) {
-    return `${roleName} (${roleCode})`;
+  if (!roleCode) {
+    return String(role?.name || role?.role_name || "").trim() || "-";
   }
-  return roleName || roleCode || "-";
+  return getRoleCatalogEntry(roleCode).code;
 }
 
 function toStatusLabel(value) {

@@ -79,6 +79,7 @@ import {
 } from "../services/org.capital-fulfillment.service.js";
 import { recalculateShareholderOwnershipPctTx } from "../services/shareholderOwnership.js";
 import {
+  parseOrgTreeReadFilters,
   parseFiscalCalendarPeriodFilters,
   parseLegalEntityReadFilters,
   parseOperatingUnitCurrentAccountConfigReadFilters,
@@ -472,11 +473,24 @@ router.get(
   requirePermission("org.tree.read"),
   asyncHandler(async (req, res) => {
     const tenantId = requireOrgTenantId(req);
+    const { shape } = parseOrgTreeReadFilters(req.query);
     const tree = await listOrgTree({
       req,
       tenantId,
       buildScopeFilter,
+      shape,
     });
+    const tenantWideScope = Boolean(getVisibilityScope(req)?.tenantWide);
+
+    if (shape === "nested") {
+      return res.json({
+        tenantId,
+        shape: tree.shape,
+        root: tree.root,
+        rbacSource: req.rbac?.source || null,
+        tenantWideScope,
+      });
+    }
 
     return res.json({
       tenantId,
@@ -485,7 +499,7 @@ router.get(
       legalEntities: tree.legalEntities,
       operatingUnits: tree.operatingUnits,
       rbacSource: req.rbac?.source || null,
-      tenantWideScope: Boolean(getVisibilityScope(req)?.tenantWide),
+      tenantWideScope,
     });
   })
 );

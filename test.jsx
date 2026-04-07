@@ -1,2406 +1,1817 @@
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  listCountries,
-  listGroupCompanies,
-  listLegalEntities,
-  listOperatingUnits,
-} from "../../api/orgAdmin.js";
-import {
-  createWorkflowAssignment,
-  createWorkflowDefinition,
-  listWorkflowAssignments,
-  listWorkflowDefinitions,
-  listWorkflowDefinitionSteps,
-  replaceWorkflowDefinitionSteps,
-  updateWorkflowAssignment,
-} from "../../api/workflows.js";
-import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
-import { useAuth } from "../../auth/useAuth.js";
-import { useI18n } from "../../i18n/useI18n.js";
-import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
-import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
-import {
-  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
-} from "../../../../shared/cariDocumentWorkflowGovernance.js";
-
-const PROCESS_TYPES = [
-  "PERIOD_CLOSE",
-  "CONSOLIDATION_RUN",
-  "LOCAL_CLOSE_PACK",
-  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
-];
-
-const ASSIGNMENT_SCOPE_TYPES = [
-  "TENANT",
-  "GROUP",
-  "COUNTRY",
-  "LEGAL_ENTITY",
-  "OPERATING_UNIT",
-];
-
-const STEP_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"];
-
-const SETUP_STEPS = [1, 2, 3, 4, 5];
-
-function toPositiveInt(value) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+function freezeList(values) {
+  return Object.freeze(values);
 }
-
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+function freezeStep(step) {
+  return Object.freeze(step);
 }
-
-function buildDefaultSteps(processType) {
-  const normalized = String(processType || "").toUpperCase();
-
-  if (normalized === "LOCAL_CLOSE_PACK") {
-    return [
-      {
+const CATEGORY_LABELS = Object.freeze({
+  system: "System administration",
+  composable: "Composable duty-boundary",
+  scoped: "Scoped operations",
+  readonly: "Read-only",
+  legacy: "Legacy",
+  custom: "Custom tenant role",
+});
+const ACCESS_MODEL_TYPE_LABELS = Object.freeze({
+  runtime_role: "Runtime Role",
+  business_role: "Business Role",
+  workflow_package: "Workflow Package",
+  workflow_preset: "Workflow Preset",
+  assignment_preset: "Assignment Preset",
+});
+const WORKFLOW_FAMILY_LABELS = Object.freeze({
+  CROSS_WORKFLOW: "Cross-workflow",
+  AP_DOCUMENT_POSTING: "AP Document Posting",
+  LOCAL_CLOSE_PACK: "Local Close Pack",
+  PERIOD_CLOSE: "Period Close",
+  CONSOLIDATION_RUN: "Consolidation Run",
+});
+const BUSINESS_ROLE_CATEGORY_LABELS = Object.freeze({
+  operating_unit_scope: "Operating unit scope",
+  legal_entity_scope: "Legal entity scope",
+  group_scope: "Group scope",
+});
+const WORKFLOW_PACKAGE_CATEGORY_LABELS = Object.freeze({
+  shared_governance: "Shared governance",
+  core_action: "Core action package",
+  extension_package: "Extension package",
+});
+const WORKFLOW_PRESET_CATEGORY_LABELS = Object.freeze({
+  baseline_preset: "Baseline preset",
+  assisted_preset: "Assisted preset",
+  controlled_preset: "Controlled preset",
+  supervised_preset: "Supervised preset",
+  executive_preset: "Executive preset",
+  extension_preset: "Extension preset",
+});
+const ASSIGNMENT_PRESET_CATEGORY_LABELS = Object.freeze({
+  bootstrap_setup: "Bootstrap setup",
+});
+const ACCESS_MODEL_SECTION_LABELS = Object.freeze({
+  business_roles: "Business Roles",
+  workflow_packages: "Workflow Packages",
+  workflow_presets: "Workflow Presets",
+  legacy_catalog: "Legacy Catalog",
+});
+const ACCESS_MODEL_SECTION_ORDER = Object.freeze({
+  business_roles: 10,
+  workflow_packages: 20,
+  workflow_presets: 30,
+  legacy_catalog: 40,
+});
+const MODEL_CATEGORY_LABELS = Object.freeze({
+  runtime_role: CATEGORY_LABELS,
+  business_role: BUSINESS_ROLE_CATEGORY_LABELS,
+  workflow_package: WORKFLOW_PACKAGE_CATEGORY_LABELS,
+  workflow_preset: WORKFLOW_PRESET_CATEGORY_LABELS,
+  assignment_preset: ASSIGNMENT_PRESET_CATEGORY_LABELS,
+});
+const ROLE_CATALOG_CODE_ALIASES = Object.freeze({
+  CountryAPPoster: "CountryAPController",
+});
+const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
+  EntitySetupManager: "EntityAPController",
+  CountryFinanceSetupManager: "CountryAPApprover",
+});
+const ROLE_CATALOG = Object.freeze({
+  TenantAdmin: {
+    code: "Legacy Tenant Admin",
+    category: "legacy",
+    summary:
+      "Legacy tenant-wide admin role preserved only for migration rollback and historical review. Fresh tenants use SecurityAdmin plus SystemAdmin.",
+    capabilities: ["Security admin", "System operations", "Compatibility bootstrap"],
+    recommendedScopes: ["TENANT"],
+    replacementLabel: "SecurityAdmin + SystemAdmin",
+    sortOrder: 910,
+    legacy: true,
+  },
+  SecurityAdmin: {
+    category: "system",
+    summary:
+      "Manages roles, assignments, scopes, and security-facing audit surfaces.",
+    capabilities: ["Role governance", "Access administration", "Security audit"],
+    recommendedScopes: ["TENANT"],
+    sortOrder: 410,
+  },
+  SystemAdmin: {
+    category: "system",
+    summary:
+      "Manages tenant setup controls, workflow governance, jobs, retention, and broader operational controls.",
+    capabilities: [
+      "Ops jobs",
+      "Tenant setup controls",
+      "Workflow governance",
+      "Retention operations",
+    ],
+    recommendedScopes: ["TENANT"],
+    sortOrder: 420,
+  },
+  LocalUserAdmin: {
+    category: "composable",
+    summary:
+      "Invites and manages allow-listed local operational roles without opening tenant-wide security administration.",
+    capabilities: ["Scoped invites", "Allow-listed local roles", "Local assignment review"],
+    recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
+    sortOrder: 210,
+  },
+  MasterDataSteward: {
+    category: "composable",
+    summary:
+      "Owns organizational, accounting, and counterparty master data review without taking posting authority.",
+    capabilities: ["Org structure", "GL master data", "Counterparty request review"],
+    recommendedScopes: ["GROUP", "COUNTRY", "LEGAL_ENTITY"],
+    sortOrder: 220,
+  },
+  CounterpartyCardEditor: {
+    category: "composable",
+    summary:
+      "Maintains live customer/vendor cards and exceptional AP/AR control-account overrides without broad review or posting authority.",
+    capabilities: [
+      "Live card maintenance",
+      "Counterparty account overrides",
+      "Counterparty payment-term editing",
+    ],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    sortOrder: 230,
+  },
+  EntityAPController: {
+    code: "AP Submitter",
+    category: "composable",
+    summary:
+      "Prepares, corrects, and submits AP documents at legal-entity scope without inheriting review or final posting authority.",
+    capabilities: ["AP draft correction", "AP submit", "AP workflow handoff"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    replacementLabel: "AP Submitter",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 120,
+  },
+  CountryAPApprover: {
+    code: "AP Reviewer",
+    category: "composable",
+    summary:
+      "Country-scoped AP review role that reads governed AP documents while final posting stays separate.",
+    capabilities: ["Country AP visibility", "AP workflow review", "AP return/approve via workflow"],
+    recommendedScopes: ["COUNTRY"],
+    replacementLabel: "AP Reviewer",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 130,
+  },
+  CountryAPController: {
+    code: "AP Poster",
+    category: "composable",
+    summary:
+      "Country-scoped AP final-posting role for posting and reversal. Review authority stays separate from posting authority.",
+    capabilities: ["Country AP visibility", "AP final post", "AP reverse"],
+    recommendedScopes: ["COUNTRY"],
+    replacementLabel: "AP Poster",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 140,
+  },
+  APApprover: {
+    category: "composable",
+    summary:
+      "Platform-level approval engine access for AP workflows. Grants the ability to read and act on AP workflow approval requests. Assign alongside a domain role such as AP Submitter or AP Reviewer so the user can participate in approval decisions routed to their scope.",
+    capabilities: ["Approval request visibility", "Approve/reject workflow decisions", "Approval policy visibility"],
+    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY", "OPERATING_UNIT"],
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 150,
+  },
+  APDocumentPoster: {
+    code: "Legacy AP Poster",
+    category: "legacy",
+    summary:
+      "Legacy AP posting role preserved for brownfield migration and rollback while tenants move to AP Submitter plus AP Poster.",
+    capabilities: ["Compatibility AP submit", "Compatibility AP cancel", "Compatibility AP posting"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    replacementLabel: "AP Submitter + AP Poster",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 920,
+    legacy: true,
+  },
+  GLOperator: {
+    category: "composable",
+    summary:
+      "Runs GL operations and reporting without free-form manual posting authority.",
+    capabilities: ["Journal drafting", "Ledger visibility", "Period operations"],
+    recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 240,
+  },
+  GLPostingAuthority: {
+    category: "composable",
+    summary:
+      "Companion authority for manual journal post, reversal, and period close. Pair it with a read-bearing accounting role.",
+    capabilities: ["Manual posting", "Manual reversal", "Period close"],
+    recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
+    companionOnly: true,
+    companionNote:
+      "Pair with GLOperator or another read-bearing accounting role at the same or broader scope.",
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 250,
+  },
+  ShareholderCapitalOperator: {
+    category: "composable",
+    summary:
+      "Posts and reverses shareholder capital fulfillment without broader org master-data or treasury governance powers.",
+    capabilities: ["Equity funding", "Capital fulfillment", "Posting control"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    sortOrder: 260,
+  },
+  OUAccountant: {
+    category: "composable",
+    summary:
+      "Optional operating-unit accounting role for OUs that truly own local accounting adjustments.",
+    capabilities: ["OU accounting exceptions", "Operational GL work"],
+    recommendedScopes: ["OPERATING_UNIT"],
+    sortOrder: 270,
+  },
+  TreasuryOperator: {
+    category: "composable",
+    summary:
+      "Operates bank, cash, and settlement workflows without treasury approval power.",
+    capabilities: ["Cash operations", "Bank operations", "Settlement handling"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    sortOrder: 280,
+  },
+  TreasuryApprover: {
+    category: "composable",
+    summary:
+      "Approves bank and treasury governance flows without becoming the operational maker.",
+    capabilities: ["Bank governance", "Payment approval", "Cash variance approval"],
+    recommendedScopes: ["COUNTRY"],
+    sortOrder: 290,
+  },
+  PayrollOperator: {
+    category: "composable",
+    summary:
+      "Runs payroll preparation and operations without payroll governance approval power.",
+    capabilities: ["Payroll operations", "Payroll ownership", "Payroll preparation"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    sortOrder: 300,
+  },
+  PayrollApprover: {
+    category: "composable",
+    summary:
+      "Approves payroll governance actions while keeping review authority separate from payroll operations.",
+    capabilities: ["Payroll governance", "Run review", "Close approval"],
+    recommendedScopes: ["COUNTRY"],
+    sortOrder: 310,
+  },
+  LocalClosePreparer: {
+    category: "composable",
+    summary:
+      "Prepares local close work and reopen requests without reviewer authority.",
+    capabilities: ["Close preparation", "Close submission", "Reopen requests"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 320,
+  },
+  LocalCloseReviewer: {
+    category: "composable",
+    summary:
+      "Reviews and approves local close governance steps without becoming the close preparer.",
+    capabilities: ["Close review", "Close approval", "Close locking"],
+    recommendedScopes: ["COUNTRY"],
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 330,
+  },
+  GroupReportingController: {
+    category: "composable",
+    summary:
+      "Owns consolidation, intercompany, and group reporting responsibilities.",
+    capabilities: ["Consolidation", "Intercompany control", "Group reporting"],
+    recommendedScopes: ["GROUP"],
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 340,
+  },
+  AuditorReadOnly: {
+    category: "readonly",
+    summary:
+      "Read-only audit visibility across governed surfaces without operational authority.",
+    capabilities: ["Read-only visibility", "Audit review", "Reporting access"],
+    recommendedScopes: ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"],
+    sortOrder: 360,
+  },
+  BranchOperator: {
+    code: "Branch Accountant",
+    category: "scoped",
+    summary:
+      "Operating-unit AP draft and operational-document role for creation, editing, and cancellation. Review and final posting stay separate.",
+    capabilities: ["OU visibility", "Draft AP handling", "Operational documents"],
+    recommendedScopes: ["OPERATING_UNIT"],
+    replacementLabel: "Branch Accountant",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 110,
+  },
+  GroupController: {
+    code: "Legacy Group Controller",
+    category: "legacy",
+    summary:
+      "Legacy group-wide controller role preserved only for migration rollback and historical review.",
+    capabilities: ["Broad reporting", "Legacy close review", "Compatibility"],
+    recommendedScopes: ["GROUP"],
+    replacementLabel: "Group Checker / Group Approver / Group CEO",
+    sortOrder: 930,
+    legacy: true,
+  },
+  CountryController: {
+    code: "Legacy Country Controller",
+    category: "legacy",
+    summary:
+      "Legacy country-wide controller role preserved only for migration rollback and historical review.",
+    capabilities: ["Broad governance", "GL posting", "Treasury and payroll approval"],
+    recommendedScopes: ["COUNTRY"],
+    replacementLabel: "AP Reviewer / AP Poster / scoped governance packages",
+    sortOrder: 940,
+    legacy: true,
+  },
+  EntityAccountant: {
+    code: "Legacy Entity Accountant",
+    category: "legacy",
+    summary:
+      "Legacy entity-wide accountant role preserved only for migration rollback and historical review.",
+    capabilities: ["Broad entity operations", "Legacy GL operations", "Compatibility"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    replacementLabel: "Entity Accountant + workflow packages",
+    sortOrder: 950,
+    legacy: true,
+  },
+});
+// Business roles stay separate from runtime roles because the plan explicitly
+// requires human titles to remain non-authoritative helper labels.
+const BUSINESS_ROLE_CATALOG = Object.freeze({
+  BRANCH_ACCOUNTANT: Object.freeze({
+    displayName: "Branch Accountant",
+    description:
+      "Branch-level finance operator who usually drafts and submits AP work and can support branch-assisted close preparation.",
+    category: "operating_unit_scope",
+    defaultScope: "OPERATING_UNIT",
+    workflowFamily: "CROSS_WORKFLOW",
+    starterPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT"]),
+    optionalPackageCodes: freezeList(["PKG-PC-READINESS"]),
+    sortOrder: 110,
+  }),
+  BRANCH_MANAGER: Object.freeze({
+    displayName: "Branch Manager",
+    description:
+      "Optional operating-unit reviewer or manager used when the tenant wants a branch-level review checkpoint.",
+    category: "operating_unit_scope",
+    defaultScope: "OPERATING_UNIT",
+    workflowFamily: "CROSS_WORKFLOW",
+    starterPackageCodes: freezeList([]),
+    optionalPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-LC-REVIEW"]),
+    sortOrder: 120,
+  }),
+  ENTITY_ACCOUNTANT: Object.freeze({
+    displayName: "Entity Accountant",
+    description:
+      "Legal-entity accounting owner who usually reviews AP, prepares local close, and validates period-close readiness.",
+    category: "legal_entity_scope",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "CROSS_WORKFLOW",
+    starterPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-LC-PREPARE", "PKG-PC-READINESS"]),
+    optionalPackageCodes: freezeList([]),
+    sortOrder: 210,
+  }),
+  ENTITY_MANAGER: Object.freeze({
+    displayName: "Entity Manager",
+    description:
+      "Legal-entity managerial approver used for review and controlled close checkpoints above day-to-day accounting work.",
+    category: "legal_entity_scope",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "CROSS_WORKFLOW",
+    starterPackageCodes: freezeList(["PKG-LC-REVIEW"]),
+    optionalPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-PC-CLOSE"]),
+    sortOrder: 220,
+  }),
+  ENTITY_CEO: Object.freeze({
+    displayName: "Entity CEO",
+    description:
+      "Final legal-entity authority used for entity-level posting, close, and approval lock decisions.",
+    category: "legal_entity_scope",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "CROSS_WORKFLOW",
+    starterPackageCodes: freezeList(["PKG-LC-APPROVE-LOCK", "PKG-PC-CLOSE"]),
+    optionalPackageCodes: freezeList(["PKG-AP-POST"]),
+    sortOrder: 230,
+  }),
+  GROUP_CHECKER: Object.freeze({
+    displayName: "Group Checker",
+    description:
+      "Group-level checker or reviewer who prepares consolidation work and can participate in controlled execution steps.",
+    category: "group_scope",
+    defaultScope: "GROUP",
+    workflowFamily: "CROSS_WORKFLOW",
+    starterPackageCodes: freezeList(["PKG-CON-PREPARE"]),
+    optionalPackageCodes: freezeList(["PKG-CON-EXECUTE"]),
+    sortOrder: 310,
+  }),
+  GROUP_APPROVER: Object.freeze({
+    displayName: "Group Approver",
+    description:
+      "Group-level approver or finalizer used for consolidation finalization and selected controlled package handoffs.",
+    category: "group_scope",
+    defaultScope: "GROUP",
+    workflowFamily: "CROSS_WORKFLOW",
+    starterPackageCodes: freezeList(["PKG-CON-FINALIZE"]),
+    optionalPackageCodes: freezeList(["PKG-CON-ADJUST", "PKG-CON-ELIM"]),
+    sortOrder: 320,
+  }),
+  GROUP_CEO: Object.freeze({
+    displayName: "Group CEO",
+    description:
+      "Executive group authority used when the tenant wants final consolidation signoff above the normal approver tier.",
+    category: "group_scope",
+    defaultScope: "GROUP",
+    workflowFamily: "CROSS_WORKFLOW",
+    starterPackageCodes: freezeList([]),
+    optionalPackageCodes: freezeList(["PKG-CON-FINALIZE"]),
+    sortOrder: 330,
+  }),
+});
+const WORKFLOW_PACKAGE_CATALOG = Object.freeze({
+  "PKG-WF-SETUP-ADMIN": Object.freeze({
+    displayName: "Workflow Governance / Setup Admin",
+    description:
+      "Cross-workflow package for reading and editing workflow definitions, assignments, and approval policy setup.",
+    category: "shared_governance",
+    defaultScope: "TENANT",
+    allowedScopes: freezeList(["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY"]),
+    permissionCodes: freezeList([
+      "workflow.definition.read",
+      "workflow.definition.write",
+      "workflow.assignment.read",
+      "workflow.assignment.write",
+      "approvals.policies.read",
+      "approvals.policies.write",
+    ]),
+    workflowFamily: "CROSS_WORKFLOW",
+    sortOrder: 10,
+  }),
+  "PKG-WF-QUEUE-VIEW": Object.freeze({
+    displayName: "Workflow Governance / Queue Visibility",
+    description:
+      "Cross-workflow package for reading workflow definitions, assignments, and governed approval queues without setup authority.",
+    category: "shared_governance",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY"]),
+    permissionCodes: freezeList([
+      "workflow.definition.read",
+      "workflow.assignment.read",
+      "approvals.requests.read",
+    ]),
+    workflowFamily: "CROSS_WORKFLOW",
+    sortOrder: 20,
+  }),
+  "PKG-AP-VIEW": Object.freeze({
+    displayName: "AP Documents / View",
+    description:
+      "Read package for governed AP documents, reporting, and audit surfaces without workflow action authority.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"]),
+    permissionCodes: freezeList(["cari.doc.read", "cari.report.read", "cari.audit.read"]),
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 110,
+  }),
+  "PKG-AP-DRAFT-SUBMIT": Object.freeze({
+    displayName: "AP Documents / Draft & Submit",
+    description:
+      "Maker package for creating, editing, submitting, and cancelling AP drafts before review or posting.",
+    category: "core_action",
+    defaultScope: "OPERATING_UNIT",
+    allowedScopes: freezeList(["OPERATING_UNIT", "LEGAL_ENTITY"]),
+    permissionCodes: freezeList([
+      "cari.doc.read",
+      "cari.doc.create",
+      "cari.doc.update",
+      "cari.doc.submit",
+      "cari.doc.cancel",
+    ]),
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 120,
+  }),
+  "PKG-AP-APPROVE": Object.freeze({
+    displayName: "AP Documents / Approve",
+    description:
+      "Reviewer package for reading AP items and acting on approval requests without final posting rights.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY"]),
+    permissionCodes: freezeList([
+      "cari.doc.read",
+      "approvals.policies.read",
+      "approvals.requests.read",
+      "approvals.requests.approve",
+      "approvals.requests.reject",
+    ]),
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 130,
+  }),
+  "PKG-AP-POST": Object.freeze({
+    displayName: "AP Documents / Post",
+    description:
+      "Final-posting package for governed AP document posting at entity or country authority boundaries.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
+    permissionCodes: freezeList(["cari.doc.read", "cari.doc.post"]),
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 140,
+  }),
+  "PKG-AP-REVERSE": Object.freeze({
+    displayName: "AP Documents / Reverse",
+    description:
+      "Companion AP package for reversing already-posted documents without reopening draft authority.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
+    permissionCodes: freezeList(["cari.doc.read", "cari.doc.reverse"]),
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 150,
+  }),
+  "PKG-AP-FX-OVERRIDE": Object.freeze({
+    displayName: "AP Documents / FX Override",
+    description:
+      "Exceptional AP package for foreign-currency override decisions at entity or country scope.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
+    permissionCodes: freezeList(["cari.doc.read", "cari.fx.override"]),
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 160,
+  }),
+  "PKG-AP-POST-GROUP": Object.freeze({
+    displayName: "AP Documents / Group Post",
+    description:
+      "Clean future extension for tenants that want AP posting resolved at group scope instead of reusing legacy broad controller roles.",
+    category: "extension_package",
+    defaultScope: "GROUP",
+    allowedScopes: freezeList(["GROUP"]),
+    permissionCodes: freezeList([]),
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 170,
+    plannedExtension: true,
+    extensionNote:
+      "Do not enable until the backend package and entitlement model supports group-scoped AP posting.",
+  }),
+  "PKG-LC-VIEW": Object.freeze({
+    displayName: "Local Close Pack / View",
+    description:
+      "Read package for local close pack visibility across entity, country, or group reporting layers.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
+    permissionCodes: freezeList(["ouclose.read"]),
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 210,
+  }),
+  "PKG-LC-PREPARE": Object.freeze({
+    displayName: "Local Close Pack / Prepare & Submit",
+    description:
+      "Maker package for preparing local close work, submitting it, and requesting reopen when needed.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY"]),
+    permissionCodes: freezeList([
+      "ouclose.read",
+      "ouclose.prepare",
+      "ouclose.submit",
+      "ouclose.request_reopen",
+    ]),
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 220,
+  }),
+  "PKG-LC-REVIEW": Object.freeze({
+    displayName: "Local Close Pack / Review",
+    description:
+      "Review package for local close checkpoints before final approval and lock decisions.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
+    permissionCodes: freezeList(["ouclose.read", "ouclose.review"]),
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 230,
+  }),
+  "PKG-LC-APPROVE-LOCK": Object.freeze({
+    displayName: "Local Close Pack / Approve & Lock",
+    description:
+      "Final local close package for approval and locking at the supervising accounting boundary.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
+    permissionCodes: freezeList(["ouclose.read", "ouclose.approve", "ouclose.lock"]),
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 240,
+  }),
+  "PKG-LC-REOPEN-ADMIN": Object.freeze({
+    displayName: "Local Close Pack / Reopen & Admin",
+    description:
+      "Administrative local close package for reopen, override, and exceptional governance intervention.",
+    category: "core_action",
+    defaultScope: "COUNTRY",
+    allowedScopes: freezeList(["COUNTRY", "GROUP"]),
+    permissionCodes: freezeList([
+      "ouclose.read",
+      "ouclose.reopen",
+      "ouclose.override_post_lock",
+      "ouclose.admin",
+    ]),
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 250,
+  }),
+  "PKG-PC-READINESS": Object.freeze({
+    displayName: "Period Close / Readiness View",
+    description:
+      "Readiness package for reviewing fiscal periods, ledgers, journals, and reporting before close authority is used.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
+    permissionCodes: freezeList([
+      "org.fiscal_period.read",
+      "gl.book.read",
+      "gl.account.read",
+      "gl.journal.read",
+      "gl.trial_balance.read",
+      "gl.report.local.read",
+      "gl.report.ledger.read",
+      "gl.report.statement.read",
+    ]),
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 310,
+  }),
+  "PKG-PC-CLOSE": Object.freeze({
+    displayName: "Period Close / Approve & Close",
+    description:
+      "Close authority package for approving and closing periods once readiness review is complete.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
+    permissionCodes: freezeList([
+      "org.fiscal_period.read",
+      "gl.book.read",
+      "gl.account.read",
+      "gl.journal.read",
+      "gl.trial_balance.read",
+      "gl.report.local.read",
+      "gl.report.ledger.read",
+      "gl.report.statement.read",
+      "gl.period.close",
+    ]),
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 320,
+  }),
+  "PKG-CON-VIEW": Object.freeze({
+    displayName: "Consolidation / View",
+    description:
+      "Read package for group consolidation inputs, runs, and reporting without operational run authority.",
+    category: "core_action",
+    defaultScope: "GROUP",
+    allowedScopes: freezeList(["GROUP"]),
+    permissionCodes: freezeList([
+      "consolidation.group.read",
+      "consolidation.coa_mapping.read",
+      "consolidation.elimination_placeholder.read",
+      "consolidation.run.read",
+      "consolidation.report.trial_balance.read",
+      "consolidation.report.summary.read",
+      "consolidation.report.balance_sheet.read",
+      "consolidation.report.income_statement.read",
+    ]),
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 410,
+  }),
+  "PKG-CON-PREPARE": Object.freeze({
+    displayName: "Consolidation / Prepare Run",
+    description:
+      "Preparation package for opening consolidation runs and readying source inputs before execution.",
+    category: "core_action",
+    defaultScope: "GROUP",
+    allowedScopes: freezeList(["GROUP"]),
+    permissionCodes: freezeList([
+      "consolidation.group.read",
+      "consolidation.coa_mapping.read",
+      "consolidation.elimination_placeholder.read",
+      "consolidation.run.read",
+      "consolidation.run.create",
+    ]),
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 420,
+  }),
+  "PKG-CON-EXECUTE": Object.freeze({
+    displayName: "Consolidation / Execute Run",
+    description:
+      "Execution package for running consolidation once inputs and mappings are ready.",
+    category: "core_action",
+    defaultScope: "GROUP",
+    allowedScopes: freezeList(["GROUP"]),
+    permissionCodes: freezeList(["consolidation.run.read", "consolidation.run.execute"]),
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 430,
+  }),
+  "PKG-CON-ADJUST": Object.freeze({
+    displayName: "Consolidation / Post Adjustments",
+    description:
+      "Controlled consolidation package for posting group-level adjustment entries before finalization.",
+    category: "core_action",
+    defaultScope: "GROUP",
+    allowedScopes: freezeList(["GROUP"]),
+    permissionCodes: freezeList([
+      "consolidation.run.read",
+      "consolidation.adjustment.create",
+      "consolidation.adjustment.post",
+    ]),
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 440,
+  }),
+  "PKG-CON-ELIM": Object.freeze({
+    displayName: "Consolidation / Post Eliminations",
+    description:
+      "Controlled consolidation package for posting elimination entries before final group signoff.",
+    category: "core_action",
+    defaultScope: "GROUP",
+    allowedScopes: freezeList(["GROUP"]),
+    permissionCodes: freezeList([
+      "consolidation.run.read",
+      "consolidation.elimination.create",
+      "consolidation.elimination.post",
+    ]),
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 450,
+  }),
+  "PKG-CON-FINALIZE": Object.freeze({
+    displayName: "Consolidation / Finalize",
+    description:
+      "Final consolidation package for closing and finalizing the group run.",
+    category: "core_action",
+    defaultScope: "GROUP",
+    allowedScopes: freezeList(["GROUP"]),
+    permissionCodes: freezeList(["consolidation.run.read", "consolidation.run.finalize"]),
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 460,
+  }),
+  "PKG-CON-SETUP": Object.freeze({
+    displayName: "Consolidation / Setup Admin",
+    description:
+      "Administrative package for group structures, mappings, eliminations, and intercompany setup.",
+    category: "core_action",
+    defaultScope: "GROUP",
+    allowedScopes: freezeList(["GROUP"]),
+    permissionCodes: freezeList([
+      "consolidation.group.read",
+      "consolidation.group.upsert",
+      "consolidation.group_member.upsert",
+      "consolidation.coa_mapping.read",
+      "consolidation.coa_mapping.upsert",
+      "consolidation.elimination_placeholder.read",
+      "consolidation.elimination_placeholder.upsert",
+      "intercompany.flag.read",
+      "intercompany.flag.upsert",
+      "intercompany.pair.upsert",
+    ]),
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 470,
+  }),
+});
+const WORKFLOW_PRESET_CATALOG = Object.freeze({
+  AP_LEAN_ENTITY: Object.freeze({
+    displayName: "AP / Lean Entity",
+    description:
+      "Three-step AP flow with branch drafting, entity approval, and entity posting for lean entity teams.",
+    category: "baseline_preset",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT"]),
+    requiredPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT", "PKG-AP-APPROVE", "PKG-AP-POST"]),
+    usesExtension: false,
+    sortOrder: 110,
+    steps: freezeList([
+      freezeStep({
         stepNo: 1,
-        stageScopeType: "LEGAL_ENTITY",
-        requiredPermissionCode: "ouclose.approve",
+        actionLabel: "Create / Edit / Submit",
+        scopeType: "OPERATING_UNIT",
+        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
-      },
-    ];
-  }
-
-  if (normalized === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return [
-      {
-        stepNo: 1,
-        stageScopeType: "COUNTRY",
-        requiredPermissionCode: null,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Approve",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-AP-APPROVE",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
-      },
-    ];
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Post",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-AP-POST",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  AP_STANDARD_ENTITY: Object.freeze({
+    displayName: "AP / Standard Entity",
+    description:
+      "Three-step AP flow with branch drafting, entity review, and final entity-ceo posting authority.",
+    category: "baseline_preset",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
+    requiredPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT", "PKG-AP-APPROVE", "PKG-AP-POST"]),
+    usesExtension: false,
+    sortOrder: 120,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Create / Edit / Submit",
+        scopeType: "OPERATING_UNIT",
+        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Approve",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-AP-APPROVE",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Post",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-AP-POST",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  AP_GROUP_CONTROLLED_POST: Object.freeze({
+    displayName: "AP / Group-Controlled Post",
+    description:
+      "AP flow that lifts the final posting action to group authority through a clean extension package instead of legacy controller reuse.",
+    category: "extension_preset",
+    defaultScope: "GROUP",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "GROUP_APPROVER"]),
+    requiredPackageCodes: freezeList([
+      "PKG-AP-DRAFT-SUBMIT",
+      "PKG-AP-APPROVE",
+      "PKG-AP-POST-GROUP",
+    ]),
+    usesExtension: true,
+    extensionNote:
+      "Requires the optional group-scoped AP posting package before the final step can be activated.",
+    sortOrder: 130,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Create / Edit / Submit",
+        scopeType: "OPERATING_UNIT",
+        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Approve",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-AP-APPROVE",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Post",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-AP-POST-GROUP",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  LOCAL_CLOSE_STANDARD: Object.freeze({
+    displayName: "Local Close / Standard",
+    description:
+      "Entity-owned local close flow with preparation, review, and final approval-lock at legal-entity scope.",
+    category: "baseline_preset",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
+    requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
+    usesExtension: false,
+    sortOrder: 210,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Prepare & Submit",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-LC-PREPARE",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Review",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-LC-REVIEW",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Approve & Lock",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-LC-APPROVE-LOCK",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  LOCAL_CLOSE_BRANCH_ASSISTED: Object.freeze({
+    displayName: "Local Close / Branch-Assisted",
+    description:
+      "Local close flow where branch accountants help prepare the working pack before entity review and final lock.",
+    category: "assisted_preset",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
+    requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
+    usesExtension: false,
+    sortOrder: 220,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Prepare working pack",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-LC-PREPARE",
+        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Review",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-LC-REVIEW",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Approve & Lock",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-LC-APPROVE-LOCK",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  LOCAL_CLOSE_GROUP_SUPERVISED: Object.freeze({
+    displayName: "Local Close / Group-Supervised",
+    description:
+      "Local close flow that lifts the final supervision layer above the legal entity when the tenant wants centralized oversight.",
+    category: "supervised_preset",
+    defaultScope: "GROUP",
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "GROUP_APPROVER"]),
+    requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
+    usesExtension: true,
+    extensionNote:
+      "Country supervision can reuse the shipped package scopes, but true group supervision needs a companion scope extension.",
+    sortOrder: 230,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Prepare & Submit",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-LC-PREPARE",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Review",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-LC-REVIEW",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Approve & Lock",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-LC-APPROVE-LOCK",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  PERIOD_CLOSE_STANDARD: Object.freeze({
+    displayName: "Period Close / Standard",
+    description:
+      "Two-step period close with readiness review followed by entity-managed close authority.",
+    category: "baseline_preset",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "PERIOD_CLOSE",
+    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
+    requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
+    usesExtension: false,
+    sortOrder: 310,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Review readiness",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-PC-READINESS",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Close period",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-PC-CLOSE",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER", "ENTITY_CEO"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  PERIOD_CLOSE_CONTROLLED: Object.freeze({
+    displayName: "Period Close / Controlled",
+    description:
+      "Three-step period close with an explicit internal-approval handoff before final entity close.",
+    category: "controlled_preset",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "PERIOD_CLOSE",
+    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
+    requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
+    usesExtension: false,
+    sortOrder: 320,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Review readiness",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-PC-READINESS",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Internal approval",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-PC-CLOSE",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Final close",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-PC-CLOSE",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  PERIOD_CLOSE_GROUP_SUPERVISED: Object.freeze({
+    displayName: "Period Close / Group-Supervised",
+    description:
+      "Period close flow that centralizes the final close decision above the legal entity when a supervisory extension is enabled.",
+    category: "supervised_preset",
+    defaultScope: "GROUP",
+    workflowFamily: "PERIOD_CLOSE",
+    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "GROUP_APPROVER"]),
+    requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
+    usesExtension: true,
+    extensionNote:
+      "The current family ships with legal-entity and country close scopes. Group-supervised final close needs a later extension.",
+    sortOrder: 330,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Review readiness",
+        scopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-PC-READINESS",
+        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Final close",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-PC-CLOSE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  CONSOLIDATION_STANDARD: Object.freeze({
+    displayName: "Consolidation / Standard",
+    description:
+      "Three-step consolidation run with prepare, execute, and finalize actions at group scope.",
+    category: "baseline_preset",
+    defaultScope: "GROUP",
+    workflowFamily: "CONSOLIDATION_RUN",
+    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
+    requiredPackageCodes: freezeList(["PKG-CON-PREPARE", "PKG-CON-EXECUTE", "PKG-CON-FINALIZE"]),
+    usesExtension: false,
+    sortOrder: 410,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Prepare run",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-PREPARE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Execute run",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-EXECUTE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Finalize",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-FINALIZE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  CONSOLIDATION_CONTROLLED: Object.freeze({
+    displayName: "Consolidation / Controlled",
+    description:
+      "Controlled consolidation flow that separates adjustments, eliminations, and finalization for tighter group governance.",
+    category: "controlled_preset",
+    defaultScope: "GROUP",
+    workflowFamily: "CONSOLIDATION_RUN",
+    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
+    requiredPackageCodes: freezeList([
+      "PKG-CON-PREPARE",
+      "PKG-CON-ADJUST",
+      "PKG-CON-ELIM",
+      "PKG-CON-FINALIZE",
+    ]),
+    usesExtension: false,
+    sortOrder: 420,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Prepare run",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-PREPARE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Post adjustments",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-ADJUST",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Post eliminations",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-ELIM",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 4,
+        actionLabel: "Finalize",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-FINALIZE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+  CONSOLIDATION_EXECUTIVE: Object.freeze({
+    displayName: "Consolidation / Executive",
+    description:
+      "Consolidation flow that reserves final signoff for group-executive authority above the normal approver layer.",
+    category: "executive_preset",
+    defaultScope: "GROUP",
+    workflowFamily: "CONSOLIDATION_RUN",
+    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER", "GROUP_CEO"]),
+    requiredPackageCodes: freezeList(["PKG-CON-PREPARE", "PKG-CON-EXECUTE", "PKG-CON-FINALIZE"]),
+    usesExtension: false,
+    sortOrder: 430,
+    steps: freezeList([
+      freezeStep({
+        stepNo: 1,
+        actionLabel: "Prepare run",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-PREPARE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 2,
+        actionLabel: "Execute run",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-EXECUTE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+      freezeStep({
+        stepNo: 3,
+        actionLabel: "Finalize",
+        scopeType: "GROUP",
+        requiredPackageCode: "PKG-CON-FINALIZE",
+        eligibleBusinessRoleCodes: freezeList(["GROUP_CEO"]),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+      }),
+    ]),
+  }),
+});
+export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
+  EntityAPController: Object.freeze({
+    code: "EntityAPController",
+    displayName: "AP Submitter Setup Lead",
+    summary:
+      "Bootstrap preset for one legal-entity AP submitter setup lead using bounded composable operator roles.",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    category: "bootstrap_setup",
+    sortOrder: 10,
+    scopeType: "LEGAL_ENTITY",
+    roleCodes: freezeList([
+      "LocalUserAdmin",
+      "MasterDataSteward",
+      "CounterpartyCardEditor",
+      "EntityAPController",
+      "APApprover",
+      "GLOperator",
+      "TreasuryOperator",
+      "PayrollOperator",
+      "LocalClosePreparer",
+      "ShareholderCapitalOperator",
+    ]),
+    optionalRoleCodes: freezeList(["GLPostingAuthority"]),
+  }),
+  CountryAPApprover: Object.freeze({
+    code: "CountryAPApprover",
+    displayName: "AP Reviewer Setup Lead",
+    summary:
+      "Bootstrap preset for one country-level AP reviewer setup lead using bounded composable AP, treasury, payroll, and close-review roles.",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    category: "bootstrap_setup",
+    sortOrder: 20,
+    scopeType: "COUNTRY",
+    roleCodes: freezeList([
+      "CountryAPApprover",
+      "CountryAPPoster",
+      "APApprover",
+      "GLOperator",
+      "TreasuryApprover",
+      "PayrollApprover",
+      "LocalCloseReviewer",
+    ]),
+    optionalRoleCodes: freezeList(["GLPostingAuthority"]),
+  }),
+});
+const CATEGORY_ORDER = Object.freeze([
+  "composable",
+  "scoped",
+  "readonly",
+  "system",
+  "legacy",
+  "custom",
+]);
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+function normalizeRoleCatalogCode(roleCode) {
+  const normalizedRoleCode = normalizeText(roleCode);
+  return ROLE_CATALOG_CODE_ALIASES[normalizedRoleCode] || normalizedRoleCode;
+}
+function normalizeBootstrapHandoffPresetCode(presetCode) {
+  const normalizedPresetCode = normalizeText(presetCode);
+  return BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES[normalizedPresetCode] || normalizedPresetCode;
+}
+function normalizeBusinessRoleCode(roleCode) {
+  return normalizeText(roleCode).toUpperCase();
+}
+function normalizeWorkflowPackageCode(packageCode) {
+  return normalizeText(packageCode).toUpperCase();
+}
+function normalizeWorkflowPresetCode(presetCode) {
+  return normalizeText(presetCode).toUpperCase();
+}
+function cloneList(values) {
+  return Array.isArray(values) ? [...values] : [];
+}
+function getCategoryLabel(modelType, category) {
+  const normalizedCategory = normalizeText(category);
+  const labelMap = MODEL_CATEGORY_LABELS[modelType] || {};
+  if (labelMap[normalizedCategory]) {
+    return labelMap[normalizedCategory];
   }
-
-  const permissionCode =
-    normalized === "CONSOLIDATION_RUN"
-      ? "consolidation.run.finalize"
-      : "gl.period.close";
-
+  if (!normalizedCategory) {
+    return "Unclassified";
+  }
+  return normalizedCategory === "unclassified" ? "Unclassified" : normalizedCategory;
+}
+function sortCatalogEntries(left, right) {
+  const leftOrder = Number(left?.sortOrder || 9999);
+  const rightOrder = Number(right?.sortOrder || 9999);
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+  return normalizeText(left?.displayName || left?.code).localeCompare(
+    normalizeText(right?.displayName || right?.code)
+  );
+}
+function buildMetadataEntry({
+  modelType,
+  code,
+  displayName,
+  description,
+  category,
+  defaultScope = "",
+  legacy = false,
+  replacementLabel = "",
+  workflowFamily = "CROSS_WORKFLOW",
+  sortOrder = 9999,
+}) {
+  return {
+    modelType,
+    modelTypeLabel: getAccessModelTypeLabel(modelType),
+    code,
+    displayName,
+    description,
+    category,
+    categoryLabel: getCategoryLabel(modelType, category),
+    defaultScope,
+    legacy: Boolean(legacy),
+    replacementLabel,
+    workflowFamily,
+    workflowFamilyLabel: getWorkflowFamilyLabel(workflowFamily),
+    sortOrder: Number(sortOrder || 9999),
+  };
+}
+function getBusinessRoleDisplayName(roleCode) {
+  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
+  return BUSINESS_ROLE_CATALOG[normalizedRoleCode]?.displayName || normalizedRoleCode;
+}
+function getWorkflowPackageDisplayName(packageCode) {
+  const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
+  return WORKFLOW_PACKAGE_CATALOG[normalizedPackageCode]?.displayName || normalizedPackageCode;
+}
+function getWorkflowPresetDisplayName(presetCode) {
+  const normalizedPresetCode = normalizeWorkflowPresetCode(presetCode);
+  return WORKFLOW_PRESET_CATALOG[normalizedPresetCode]?.displayName || normalizedPresetCode;
+}
+function getPresetCodesUsingPackage(packageCode) {
+  const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
+  return Object.keys(WORKFLOW_PRESET_CATALOG).filter((presetCode) =>
+    cloneList(WORKFLOW_PRESET_CATALOG[presetCode]?.requiredPackageCodes).includes(normalizedPackageCode)
+  );
+}/**
++ * Returns the display label for one access-model item type.
++ */
+export function getAccessModelTypeLabel(modelType) {
+  const normalizedModelType = normalizeText(modelType);
+  return ACCESS_MODEL_TYPE_LABELS[normalizedModelType] || normalizedModelType || "Access Model Item";
+}/**
++ * Returns the display label for one workflow family code.
++ */
+export function getWorkflowFamilyLabel(workflowFamily) {
+  const normalizedWorkflowFamily = normalizeText(workflowFamily);
+  return (
+    WORKFLOW_FAMILY_LABELS[normalizedWorkflowFamily] ||
+    WORKFLOW_FAMILY_LABELS.CROSS_WORKFLOW
+  );
+}/**
++ * Returns the UX metadata for one bootstrap handoff preset.
++ * Legacy preset aliases resolve to their canonical AP-facing preset codes.
++ */
+export function getBootstrapHandoffPresetEntry(presetCode) {
+  const normalizedPresetCode = normalizeBootstrapHandoffPresetCode(presetCode);
+  const base = BOOTSTRAP_HANDOFF_PRESET_CATALOG[normalizedPresetCode] || null;
+  const metadata = buildMetadataEntry({
+    modelType: "assignment_preset",
+    code: normalizedPresetCode,
+    displayName: base?.displayName || normalizedPresetCode,
+    description:
+      base?.summary ||
+      "Bootstrap preset. Review included composable roles before assigning it broadly.",
+    category: base?.category || "bootstrap_setup",
+    defaultScope: base?.scopeType || "",
+    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
+    sortOrder: base?.sortOrder || 9999,
+  });
+  return {
+    ...metadata,
+    summary: metadata.description,
+    scopeType: base?.scopeType || "",
+    roleCodes: cloneList(base?.roleCodes),
+    roleLabels: cloneList(base?.roleCodes).map((roleCode) => getRoleCatalogEntry(roleCode).displayName),
+    optionalRoleCodes: cloneList(base?.optionalRoleCodes),
+    optionalRoleLabels: cloneList(base?.optionalRoleCodes).map(
+      (roleCode) => getRoleCatalogEntry(roleCode).displayName
+    ),
+  };
+}/**
++ * Returns the UX metadata used to explain a role in admin surfaces.
++ * `code` is the business-facing label while `technicalCode` is only surfaced
++ * for legacy runtime roles where migration traceability still matters.
++ */
+export function getRoleCatalogEntry(roleOrCode) {
+  const requestedRoleCode =
+    typeof roleOrCode === "string"
+      ? normalizeText(roleOrCode)
+      : normalizeText(roleOrCode?.code || roleOrCode?.roleCode);
+  const normalizedRoleCode = normalizeRoleCatalogCode(requestedRoleCode);
+  const base = ROLE_CATALOG[normalizedRoleCode] || null;
+  const displayCode =
+    base?.code || normalizedRoleCode || requestedRoleCode || normalizeText(roleOrCode?.roleCode);
+  const showTechnicalCode = Boolean(base?.legacy && requestedRoleCode && requestedRoleCode !== displayCode);
+  const metadata = buildMetadataEntry({
+    modelType: "runtime_role",
+    code: displayCode,
+    displayName: displayCode,
+    description:
+      base?.summary ||
+      "Tenant-local role. Review its permission set carefully before assigning it broadly.",
+    category: base?.category || "custom",
+    defaultScope: cloneList(base?.recommendedScopes)[0] || "",
+    legacy: Boolean(base?.legacy),
+    replacementLabel: base?.replacementLabel || "",
+    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
+    sortOrder:
+      typeof base?.sortOrder === "number"
+        ? base.sortOrder
+        : (Math.max(CATEGORY_ORDER.indexOf(base?.category || "custom"), 0) + 1) * 100,
+  });
+  return {
+    ...metadata,
+    technicalCode: showTechnicalCode ? requestedRoleCode : "",
+    summary: metadata.description,
+    capabilities: cloneList(base?.capabilities).length
+      ? cloneList(base?.capabilities)
+      : ["Tenant-specific permissions"],
+    recommendedScopes: cloneList(base?.recommendedScopes),
+    companionOnly: Boolean(base?.companionOnly),
+    companionNote: base?.companionNote || "",
+  };
+}/**
++ * Returns one business-role catalog entry from the plan-defined admin model.
++ */
+export function getBusinessRoleCatalogEntry(roleCode) {
+  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
+  const base = BUSINESS_ROLE_CATALOG[normalizedRoleCode] || null;
+  const metadata = buildMetadataEntry({
+    modelType: "business_role",
+    code: normalizedRoleCode,
+    displayName: base?.displayName || normalizedRoleCode,
+    description:
+      base?.description ||
+      "Business-facing title used only as an admin label. Assign workflow packages separately.",
+    category: base?.category || "unclassified",
+    defaultScope: base?.defaultScope || "",
+    legacy: false,
+    replacementLabel: "",
+    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
+    sortOrder: base?.sortOrder || 9999,
+  });
+  const starterPackageCodes = cloneList(base?.starterPackageCodes);
+  const optionalPackageCodes = cloneList(base?.optionalPackageCodes);
+  return {
+    ...metadata,
+    starterPackageCodes,
+    starterPackageLabels: starterPackageCodes.map(getWorkflowPackageDisplayName),
+    optionalPackageCodes,
+    optionalPackageLabels: optionalPackageCodes.map(getWorkflowPackageDisplayName),
+    active: Boolean(base),
+  };
+}/**
++ * Returns all business-role metadata entries in stable admin sort order.
++ */
+export function listBusinessRoleCatalogEntries() {
+  return Object.keys(BUSINESS_ROLE_CATALOG)
+    .map((roleCode) => getBusinessRoleCatalogEntry(roleCode))
+    .sort(sortCatalogEntries);
+}/**
++ * Returns one workflow-package catalog entry from the plan-defined admin model.
++ */
+export function getWorkflowPackageCatalogEntry(packageCode) {
+  const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
+  const base = WORKFLOW_PACKAGE_CATALOG[normalizedPackageCode] || null;
+  const metadata = buildMetadataEntry({
+    modelType: "workflow_package",
+    code: normalizedPackageCode,
+    displayName: base?.displayName || normalizedPackageCode,
+    description:
+      base?.description ||
+      "Workflow package metadata is not defined yet for this code.",
+    category: base?.category || "unclassified",
+    defaultScope: base?.defaultScope || "",
+    legacy: false,
+    replacementLabel: "",
+    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
+    sortOrder: base?.sortOrder || 9999,
+  });
+  const usedInPresetCodes = getPresetCodesUsingPackage(normalizedPackageCode);
+  return {
+    ...metadata,
+    allowedScopes: cloneList(base?.allowedScopes),
+    permissionCodes: cloneList(base?.permissionCodes),
+    permissionCount: cloneList(base?.permissionCodes).length,
+    usedInPresetCodes,
+    usedInPresetLabels: usedInPresetCodes.map(getWorkflowPresetDisplayName),
+    plannedExtension: Boolean(base?.plannedExtension),
+    extensionNote: base?.extensionNote || "",
+  };
+}/**
++ * Returns all workflow-package metadata entries in stable admin sort order.
++ */
+export function listWorkflowPackageCatalogEntries() {
+  return Object.keys(WORKFLOW_PACKAGE_CATALOG)
+    .map((packageCode) => getWorkflowPackageCatalogEntry(packageCode))
+    .sort(sortCatalogEntries);
+}/**
++ * Returns one workflow-preset catalog entry with step metadata ready for future catalog tabs.
++ */
+export function getWorkflowPresetCatalogEntry(presetCode) {
+  const normalizedPresetCode = normalizeWorkflowPresetCode(presetCode);
+  const base = WORKFLOW_PRESET_CATALOG[normalizedPresetCode] || null;
+  const metadata = buildMetadataEntry({
+    modelType: "workflow_preset",
+    code: normalizedPresetCode,
+    displayName: base?.displayName || normalizedPresetCode,
+    description:
+      base?.description ||
+      "Workflow preset metadata is not defined yet for this code.",
+    category: base?.category || "unclassified",
+    defaultScope: base?.defaultScope || "",
+    legacy: false,
+    replacementLabel: "",
+    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
+    sortOrder: base?.sortOrder || 9999,
+  });
+  const requiredPackageCodes = cloneList(base?.requiredPackageCodes);
+  const typicalActorCodes = cloneList(base?.typicalActorCodes);
+  const steps = cloneList(base?.steps).map((step) => ({
+    stepNo: Number(step?.stepNo || 0),
+    actionLabel: step?.actionLabel || "",
+    scopeType: step?.scopeType || "",
+    requiredPackageCode: step?.requiredPackageCode || "",
+    requiredPackageLabel: getWorkflowPackageDisplayName(step?.requiredPackageCode),
+    eligibleBusinessRoleCodes: cloneList(step?.eligibleBusinessRoleCodes),
+    eligibleBusinessRoleLabels: cloneList(step?.eligibleBusinessRoleCodes).map(
+      getBusinessRoleDisplayName
+    ),
+    minApproverCount: Number(step?.minApproverCount || 1),
+    allowSelfApprove: Boolean(step?.allowSelfApprove),
+    escalationAfterHours:
+      typeof step?.escalationAfterHours === "number" ? step.escalationAfterHours : null,
+  }));
+  return {
+    ...metadata,
+    primaryScope: metadata.defaultScope,
+    stepCount: steps.length,
+    typicalActorCodes,
+    typicalActorLabels: typicalActorCodes.map(getBusinessRoleDisplayName),
+    requiredPackageCodes,
+    requiredPackageLabels: requiredPackageCodes.map(getWorkflowPackageDisplayName),
+    usesExtension: Boolean(base?.usesExtension),
+    extensionNote: base?.extensionNote || "",
+    steps,
+  };
+}/**
++ * Returns all workflow-preset metadata entries in stable admin sort order.
++ */
+export function listWorkflowPresetCatalogEntries() {
+  return Object.keys(WORKFLOW_PRESET_CATALOG)
+    .map((presetCode) => getWorkflowPresetCatalogEntry(presetCode))
+    .sort(sortCatalogEntries);
+}/**
++ * Returns the legacy runtime-role entries that belong in the compatibility tab.
++ */
+export function listLegacyRoleCatalogEntries() {
+  return Object.keys(ROLE_CATALOG)
+    .filter((roleCode) => Boolean(ROLE_CATALOG[roleCode]?.legacy))
+    .map((roleCode) => getRoleCatalogEntry(roleCode))
+    .sort(sortCatalogEntries);
+}/**
++ * Returns the future access-model catalog sections so later tabs can render
++ * business roles, packages, presets, and legacy items from one shared source.
++ */
+export function listAccessModelCatalogSections() {
+  // The legacy section intentionally reuses runtime-role entries so migration
+  // views retain runtime traceability instead of flattening them into titles.
   return [
     {
-      stepNo: 1,
-      stageScopeType: "OPERATING_UNIT",
-      requiredPermissionCode: permissionCode,
-      minApproverCount: 1,
-      allowSelfApprove: false,
+      key: "business_roles",
+      label: ACCESS_MODEL_SECTION_LABELS.business_roles,
+      modelType: "business_role",
+      modelTypeLabel: getAccessModelTypeLabel("business_role"),
+      description:
+        "Human-facing titles only. Workflow authority still comes from assigned packages.",
+      sortOrder: ACCESS_MODEL_SECTION_ORDER.business_roles,
+      entries: listBusinessRoleCatalogEntries(),
     },
     {
-      stepNo: 2,
-      stageScopeType: "LEGAL_ENTITY",
-      requiredPermissionCode: permissionCode,
-      minApproverCount: 1,
-      allowSelfApprove: false,
+      key: "workflow_packages",
+      label: ACCESS_MODEL_SECTION_LABELS.workflow_packages,
+      modelType: "workflow_package",
+      modelTypeLabel: getAccessModelTypeLabel("workflow_package"),
+      description:
+        "Reusable action packages that workflow steps bind to across AP, close, and consolidation.",
+      sortOrder: ACCESS_MODEL_SECTION_ORDER.workflow_packages,
+      entries: listWorkflowPackageCatalogEntries(),
     },
     {
-      stepNo: 3,
-      stageScopeType: "GROUP",
-      requiredPermissionCode: permissionCode,
-      minApproverCount: 1,
-      allowSelfApprove: false,
+      key: "workflow_presets",
+      label: ACCESS_MODEL_SECTION_LABELS.workflow_presets,
+      modelType: "workflow_preset",
+      modelTypeLabel: getAccessModelTypeLabel("workflow_preset"),
+      description:
+        "Ready-made business flows admins can preview, clone, and later customize.",
+      sortOrder: ACCESS_MODEL_SECTION_ORDER.workflow_presets,
+      entries: listWorkflowPresetCatalogEntries(),
     },
-  ];
-}
-
-function safeParseJsonArray(rawValue) {
-  const value = String(rawValue || "").trim();
-  if (!value) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeStepDraft(rawStep, fallbackStepNo, processType) {
-  const normalizedProcessType = String(processType || "").toUpperCase();
-  const step = rawStep && typeof rawStep === "object" ? rawStep : {};
-
-  return {
-    stepNo: String(
-      Number(step.stepNo ?? step.step_no ?? fallbackStepNo) > 0
-        ? Number(step.stepNo ?? step.step_no ?? fallbackStepNo)
-        : fallbackStepNo
-    ),
-    stageScopeType: String(
-      step.stageScopeType ??
-        step.stage_scope_type ??
-        (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-          ? "COUNTRY"
-          : "LEGAL_ENTITY")
-    ).toUpperCase(),
-    requiredPermissionCode:
-      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? ""
-        : String(step.requiredPermissionCode ?? step.required_permission_code ?? "").trim(),
-    minApproverCount: String(
-      Math.max(1, Number(step.minApproverCount ?? step.min_approver_count ?? 1) || 1)
-    ),
-    allowSelfApprove: Boolean(step.allowSelfApprove ?? step.allow_self_approve),
-    escalationAfterHours:
-      step.escalationAfterHours === null || step.escalation_after_hours === null
-        ? ""
-        : String(step.escalationAfterHours ?? step.escalation_after_hours ?? "").trim(),
-  };
-}
-
-function buildStepDrafts(processType, rows) {
-  const sourceRows = Array.isArray(rows) && rows.length > 0 ? rows : buildDefaultSteps(processType);
-  return sourceRows.map((row, index) => normalizeStepDraft(row, index + 1, processType));
-}
-
-function serializeStepDrafts(stepDrafts, processType) {
-  const normalizedProcessType = String(processType || "").toUpperCase();
-
-  return (Array.isArray(stepDrafts) ? stepDrafts : []).map((step, index) => ({
-    stepNo: Math.max(1, Number(step?.stepNo || index + 1) || index + 1),
-    stageScopeType: String(step?.stageScopeType || "LEGAL_ENTITY").toUpperCase(),
-    requiredPermissionCode:
-      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? null
-        : String(step?.requiredPermissionCode || "").trim() || null,
-    minApproverCount: Math.max(1, Number(step?.minApproverCount || 1) || 1),
-    allowSelfApprove: Boolean(step?.allowSelfApprove),
-    escalationAfterHours: String(step?.escalationAfterHours || "").trim()
-      ? Math.max(1, Number(step?.escalationAfterHours) || 1)
-      : null,
-  }));
-}
-
-function getProcessLabel(l, processType) {
-  const normalized = String(processType || "").toUpperCase();
-
-  if (normalized === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return l("AP Document Posting", "AP Belge Kaydi");
-  }
-  if (normalized === "PERIOD_CLOSE") {
-    return l("Period Close", "Donem Kapanisi");
-  }
-  if (normalized === "CONSOLIDATION_RUN") {
-    return l("Consolidation Run", "Konsolidasyon Calistirma");
-  }
-  if (normalized === "LOCAL_CLOSE_PACK") {
-    return l("Local Close Pack", "Yerel Kapanis Paketi");
-  }
-
-  return normalized || "-";
-}
-
-function getScopeLabel(l, scopeType) {
-  const normalized = String(scopeType || "").toUpperCase();
-
-  if (normalized === "TENANT") {
-    return l("Tenant", "Tenant");
-  }
-  if (normalized === "GROUP") {
-    return l("Group", "Grup");
-  }
-  if (normalized === "COUNTRY") {
-    return l("Country", "Ulke");
-  }
-  if (normalized === "LEGAL_ENTITY") {
-    return l("Legal Entity", "Legal Entity");
-  }
-  if (normalized === "OPERATING_UNIT") {
-    return l("Operating Unit", "Operating Unit");
-  }
-
-  return normalized || "-";
-}
-
-function getProcessRecommendation(l, processType) {
-  const normalized = String(processType || "").toUpperCase();
-
-  if (normalized === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return {
-      title: l("Recommended for AP posting", "AP kaydi icin onerilen"),
-      points: [
-        l("Use 1 country-level approval step.", "1 adet country seviyesinde onay adimi kullanin."),
-        l("Leave reviewer permission empty.", "Inceleyen yetkisini bos birakin."),
-        l("Keep self-approval off.", "Kendi kendine onayi kapali tutun."),
-        l("Typical assignment scope: Country.", "Tipik atama kapsami: Country."),
-      ],
-    };
-  }
-
-  if (normalized === "PERIOD_CLOSE") {
-    return {
-      title: l("Recommended for period close", "Donem kapanisi icin onerilen"),
-      points: [
-        l(
-          "Start with Operating Unit → Legal Entity → Group.",
-          "Operating Unit → Legal Entity → Group ile baslayin."
-        ),
-        l(
-          "Required reviewer permission: gl.period.close.",
-          "Gerekli inceleyen yetkisi: gl.period.close."
-        ),
-      ],
-    };
-  }
-
-  if (normalized === "CONSOLIDATION_RUN") {
-    return {
-      title: l("Recommended for consolidation", "Konsolidasyon icin onerilen"),
-      points: [
-        l(
-          "Start with Operating Unit → Legal Entity → Group.",
-          "Operating Unit → Legal Entity → Group ile baslayin."
-        ),
-        l(
-          "Required reviewer permission: consolidation.run.finalize.",
-          "Gerekli inceleyen yetkisi: consolidation.run.finalize."
-        ),
-      ],
-    };
-  }
-
-  return {
-    title: l("Recommended for local close packs", "Yerel kapanis paketleri icin onerilen"),
-    points: [
-      l(
-        "Start with one Legal Entity approval step.",
-        "Bir adet Legal Entity onay adimi ile baslayin."
-      ),
-      l(
-        "Only add custom routing when the business process really needs it.",
-        "Sadece is sureci gercekten gerekiyorsa ozel yonlendirme ekleyin."
-      ),
-    ],
-  };
-}
-
-function buildStepPreviewText(l, step, processType) {
-  const level = getScopeLabel(l, step?.stageScopeType).toLowerCase();
-  const minCount = Math.max(1, Number(step?.minApproverCount || 1));
-  const selfApprove = Boolean(step?.allowSelfApprove);
-  const escalation = String(step?.escalationAfterHours || "").trim();
-  const permissionCode = String(step?.requiredPermissionCode || "").trim();
-  const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
-
-  const parts = [];
-
-  parts.push(
-    minCount === 1
-      ? l(`One ${level}-level approval is required.`, `${level} seviyesinde 1 onay gerekir.`)
-      : l(
-          `${minCount} ${level}-level approvals are required.`,
-          `${level} seviyesinde ${minCount} onay gerekir.`
-        )
-  );
-
-  if (isAp) {
-    parts.push(
-      l(
-        "Reviewer authority comes from the workflow assignment scope.",
-        "Inceleyen yetkisi workflow atama kapsamindan gelir."
-      )
-    );
-  } else if (permissionCode) {
-    parts.push(
-      l(
-        `Approvers must have permission "${permissionCode}".`,
-        `Onaylayanlarin "${permissionCode}" yetkisine sahip olmasi gerekir.`
-      )
-    );
-  }
-
-  parts.push(
-    selfApprove
-      ? l("The submitter may approve their own item.", "Gonderen kisi kendi kaydini onaylayabilir.")
-      : l("The submitter cannot approve their own item.", "Gonderen kisi kendi kaydini onaylayamaz.")
-  );
-
-  if (escalation) {
-    parts.push(
-      l(
-        `This step escalates after ${escalation} hours if still pending.`,
-        `Bu adim hala bekliyorsa ${escalation} saat sonra escalate olur.`
-      )
-    );
-  }
-
-  return parts.join(" ");
-}
-
-function buildWorkflowPreviewText(l, stepDrafts) {
-  const rows = Array.isArray(stepDrafts) ? stepDrafts : [];
-  if (rows.length === 0) {
-    return l("No approval steps defined yet.", "Henuz onay adimi tanimlanmadi.");
-  }
-
-  if (rows.length === 1) {
-    return l(
-      `This workflow requires ${getScopeLabel(l, rows[0]?.stageScopeType)} approval.`,
-      `Bu workflow ${getScopeLabel(l, rows[0]?.stageScopeType)} seviyesinde onay gerektirir.`
-    );
-  }
-
-  return l(
-    `This workflow requires approvals in this order: ${rows
-      .map((step, index) => `${index + 1}. ${getScopeLabel(l, step?.stageScopeType)}`)
-      .join(" → ")}.`,
-    `Bu workflow su sirayla onay ister: ${rows
-      .map((step, index) => `${index + 1}. ${getScopeLabel(l, step?.stageScopeType)}`)
-      .join(" → ")}.`
-  );
-}
-
-function buildAssignmentEffectText(
-  l,
-  assignmentForm,
-  selectedCountry,
-  selectedGroupCompany,
-  selectedLegalEntity,
-  selectedOperatingUnit
-) {
-  const scopeType = String(assignmentForm?.scopeType || "").toUpperCase();
-
-  if (scopeType === "TENANT") {
-    return l(
-      "This workflow will apply across the whole tenant.",
-      "Bu workflow tum tenant genelinde gecerli olur."
-    );
-  }
-
-  if (scopeType === "GROUP") {
-    return l(
-      `This workflow will apply under Group = ${
-        selectedGroupCompany?.code || selectedGroupCompany?.name || "-"
-      }.`,
-      `Bu workflow Group = ${
-        selectedGroupCompany?.code || selectedGroupCompany?.name || "-"
-      } altinda gecerli olur.`
-    );
-  }
-
-  if (scopeType === "COUNTRY") {
-    return l(
-      `This workflow will apply under Country = ${
-        selectedCountry?.iso2 || selectedCountry?.name || "-"
-      }.`,
-      `Bu workflow Country = ${
-        selectedCountry?.iso2 || selectedCountry?.name || "-"
-      } altinda gecerli olur.`
-    );
-  }
-
-  if (scopeType === "LEGAL_ENTITY") {
-    return l(
-      `This workflow will apply only to Legal Entity = ${
-        selectedLegalEntity?.code || selectedLegalEntity?.name || "-"
-      }.`,
-      `Bu workflow yalnizca Legal Entity = ${
-        selectedLegalEntity?.code || selectedLegalEntity?.name || "-"
-      } icin gecerli olur.`
-    );
-  }
-
-  if (scopeType === "OPERATING_UNIT") {
-    return l(
-      `This workflow will apply only to Operating Unit = ${
-        selectedOperatingUnit?.code || selectedOperatingUnit?.name || "-"
-      }.`,
-      `Bu workflow yalnizca Operating Unit = ${
-        selectedOperatingUnit?.code || selectedOperatingUnit?.name || "-"
-      } icin gecerli olur.`
-    );
-  }
-
-  return l(
-    "Choose a scope to see where this workflow will apply.",
-    "Workflow'un nerede gecerli olacagini gormek icin kapsam secin."
-  );
-}
-
-function buildAssignmentScopeLabel(l, row) {
-  if (row?.operatingUnitId) {
-    return `OPERATING_UNIT: ${row.operatingUnitCode || row.operatingUnitName || row.operatingUnitId}`;
-  }
-  if (row?.legalEntityId) {
-    return `LEGAL_ENTITY: ${row.legalEntityCode || row.legalEntityName || row.legalEntityId}`;
-  }
-  if (row?.countryId) {
-    return `COUNTRY: ${row.countryIso2 || row.countryName || row.countryId}`;
-  }
-  if (row?.groupCompanyId) {
-    return `GROUP: ${row.groupCompanyCode || row.groupCompanyName || row.groupCompanyId}`;
-  }
-  return l("TENANT", "TENANT");
-}
-
-function getMeaningText(l, currentStep) {
-  if (currentStep === 1) {
-    return l(
-      "Choose the business process this workflow will control.",
-      "Bu workflow'un hangi is surecini yonetecegini secin."
-    );
-  }
-  if (currentStep === 2) {
-    return l(
-      "A workflow is the reusable approval recipe.",
-      "Workflow tekrar kullanilabilir onay tarifidir."
-    );
-  }
-  if (currentStep === 3) {
-    return l(
-      "Steps define who approves and in what order.",
-      "Adimlar kimin hangi sirada onayladigini belirler."
-    );
-  }
-  if (currentStep === 4) {
-    return l(
-      "Assignment decides where the workflow becomes active.",
-      "Atama workflow'un nerede aktif olacagini belirler."
-    );
-  }
-  return l(
-    "Review the full setup before leaving the page.",
-    "Sayfadan ayrilmadan once tum kurulumu gozden gecirin."
-  );
-}
-
-function getNextActionText(l, currentStep) {
-  if (currentStep === 1) {
-    return l("Next: create or select a workflow.", "Siradaki adim: workflow olusturun veya secin.");
-  }
-  if (currentStep === 2) {
-    return l("Next: define approval steps.", "Siradaki adim: onay adimlarini tanimlayin.");
-  }
-  if (currentStep === 3) {
-    return l(
-      "Next: choose where this workflow applies.",
-      "Siradaki adim: workflow'un nerede gecerli olacagini secin."
-    );
-  }
-  if (currentStep === 4) {
-    return l("Next: review the setup.", "Siradaki adim: kurulumu gozden gecirin.");
-  }
-  return l("Setup review complete.", "Kurulum gozden gecirildi.");
-}
-
-function WorkflowSetupProgress({ currentStep, l }) {
-  const labels = [
-    l("Choose type", "Tur secin"),
-    l("Create or select workflow", "Workflow olustur veya sec"),
-    l("Define approvals", "Onaylari tanimla"),
-    l("Choose scope", "Kapsam sec"),
-    l("Review", "Gozden gecir"),
-  ];
-
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="mb-3 text-sm font-semibold text-slate-800">
-        {l("Setup progress", "Kurulum ilerlemesi")}
-      </div>
-      <div className="grid gap-2 md:grid-cols-5">
-        {SETUP_STEPS.map((stepNo, index) => {
-          const active = stepNo === currentStep;
-          const done = stepNo < currentStep;
-
-          return (
-            <div
-              key={stepNo}
-              className={`rounded-lg border px-3 py-2 text-sm ${
-                active
-                  ? "border-cyan-400 bg-cyan-50 text-cyan-900"
-                  : done
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                    : "border-slate-200 bg-slate-50 text-slate-600"
-              }`}
-            >
-              <div className="text-xs font-semibold uppercase tracking-wide">
-                {l("Step", "Adim")} {stepNo}
-              </div>
-              <div className="mt-1">{labels[index]}</div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function WorkflowTypeSection({ l, processType, onChange }) {
-  const recommendation = getProcessRecommendation(l, processType);
-
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <h2 className="text-base font-semibold text-slate-900">
-        {l("1. Choose workflow type", "1. Workflow turunu secin")}
-      </h2>
-      <p className="mt-1 text-sm text-slate-600">
-        {l(
-          "Choose the business process this workflow controls.",
-          "Bu workflow'un yonettigi is surecini secin."
-        )}
-      </p>
-
-      <label className="mt-4 block">
-        <span className="text-sm font-medium text-slate-800">
-          {l("Workflow type", "Workflow turu")}
-        </span>
-        <p className="mt-1 text-xs text-slate-500">
-          {l(
-            "This choice affects the recommended approval structure and defaults.",
-            "Bu secim onerilen onay yapisini ve varsayilanlari belirler."
-          )}
-        </p>
-        <select
-          value={processType}
-          onChange={(event) => onChange(event.target.value)}
-          className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-        >
-          {PROCESS_TYPES.map((row) => (
-            <option key={row} value={row}>
-              {getProcessLabel(l, row)}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50 p-3">
-        <div className="text-sm font-semibold text-cyan-900">{recommendation.title}</div>
-        <ul className="mt-2 list-disc pl-5 text-sm text-cyan-900">
-          {recommendation.points.map((point) => (
-            <li key={point}>{point}</li>
-          ))}
-        </ul>
-      </div>
-    </section>
-  );
-}
-
-function WorkflowDefinitionSection({
-  l,
-  mode,
-  onModeChange,
-  definitions,
-  selectedDefinitionId,
-  onSelectDefinition,
-  definitionForm,
-  setDefinitionForm,
-  onCreateDefinition,
-  saving,
-  canWriteDefinitions,
-  definitionWriteAccess,
-}) {
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <h2 className="text-base font-semibold text-slate-900">
-        {l("2. Create or select workflow", "2. Workflow olusturun veya secin")}
-      </h2>
-      <p className="mt-1 text-sm text-slate-600">
-        {l(
-          "A workflow is the reusable approval recipe for this process.",
-          "Workflow bu surec icin tekrar kullanilabilir onay tarifidir."
-        )}
-      </p>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => onModeChange("select")}
-          className={`rounded px-3 py-2 text-sm font-medium ${
-            mode === "select" ? "bg-slate-900 text-white" : "border border-slate-300 bg-white"
-          }`}
-        >
-          {l("Use existing", "Var olani kullan")}
-        </button>
-        <button
-          type="button"
-          onClick={() => onModeChange("create")}
-          className={`rounded px-3 py-2 text-sm font-medium ${
-            mode === "create" ? "bg-slate-900 text-white" : "border border-slate-300 bg-white"
-          }`}
-        >
-          {l("Create new", "Yeni olustur")}
-        </button>
-      </div>
-
-      <PermissionAccessNotice
-        access={definitionWriteAccess}
-        permissionCode="workflow.definition.write"
-        className="mt-4"
-      />
-
-      {mode === "select" ? (
-        <div className="mt-4 space-y-3">
-          <label className="block">
-            <span className="text-sm font-medium text-slate-800">
-              {l("Saved workflows", "Kayitli workflow'lar")}
-            </span>
-            <p className="mt-1 text-xs text-slate-500">
-              {l(
-                "Only workflows that match the selected workflow type are shown.",
-                "Yalnizca secilen workflow turune uyan kayitlar gosterilir."
-              )}
-            </p>
-            <select
-              value={selectedDefinitionId}
-              onChange={(event) => onSelectDefinition(event.target.value)}
-              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            >
-              <option value="">{l("Select a workflow", "Workflow secin")}</option>
-              {definitions.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {definitions.length === 0 ? (
-            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              {l(
-                "No workflows found for this type yet. Create one below.",
-                "Bu tur icin henuz workflow bulunmuyor. Asagida yeni bir tane olusturun."
-              )}
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <form onSubmit={onCreateDefinition} className="mt-4 grid gap-4 md:grid-cols-2">
-          <label className="block">
-            <span className="text-sm font-medium text-slate-800">
-              {l("Workflow code", "Workflow kodu")}
-            </span>
-            <p className="mt-1 text-xs text-slate-500">
-              {l(
-                "Stable technical identifier for this workflow.",
-                "Bu workflow icin sabit teknik kimliktir."
-              )}
-            </p>
-            <input
-              value={definitionForm.code}
-              onChange={(event) =>
-                setDefinitionForm((prev) => ({ ...prev, code: event.target.value }))
-              }
-              placeholder="WF_STD_AP_COUNTRY_POSTING_V1"
-              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              required
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-slate-800">
-              {l("Workflow name", "Workflow adi")}
-            </span>
-            <p className="mt-1 text-xs text-slate-500">
-              {l(
-                "Business-friendly name that admins can recognize easily.",
-                "Yoneticilerin kolayca taniyabilecegi is diliyle isim."
-              )}
-            </p>
-            <input
-              value={definitionForm.name}
-              onChange={(event) =>
-                setDefinitionForm((prev) => ({ ...prev, name: event.target.value }))
-              }
-              placeholder="Standard AP Country Approval Gate"
-              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              required
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-slate-800">
-              {l("Version", "Versiyon")}
-            </span>
-            <p className="mt-1 text-xs text-slate-500">
-              {l("Use 1 for a new workflow design.", "Yeni workflow tasarimi icin 1 kullanin.")}
-            </p>
-            <input
-              type="number"
-              min={1}
-              value={definitionForm.versionNo}
-              onChange={(event) =>
-                setDefinitionForm((prev) => ({ ...prev, versionNo: event.target.value }))
-              }
-              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
-
-          <label className="flex items-center gap-2 rounded border border-slate-300 bg-white px-3 py-3 text-sm md:self-end">
-            <input
-              type="checkbox"
-              checked={Boolean(definitionForm.isActive)}
-              onChange={(event) =>
-                setDefinitionForm((prev) => ({ ...prev, isActive: event.target.checked }))
-              }
-            />
-            <span>{l("Available for use", "Kullanima acik")}</span>
-          </label>
-
-          <div className="md:col-span-2">
-            <button
-              type="submit"
-              disabled={saving || !canWriteDefinitions}
-              className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {saving ? l("Creating...", "Olusturuluyor...") : l("Create workflow", "Workflow olustur")}
-            </button>
-          </div>
-        </form>
-      )}
-    </section>
-  );
-}
-
-function ApprovalStepCard({
-  l,
-  index,
-  step,
-  processType,
-  onFieldChange,
-  onRemove,
-  disableRemove,
-}) {
-  const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
-
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold text-slate-900">
-          {l("Step", "Adim")} {index + 1}
-        </div>
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={disableRemove}
-          className="rounded border border-rose-300 bg-white px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-60"
-        >
-          {l("Remove", "Kaldir")}
-        </button>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Step order", "Adim sirasi")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {l("Sequence number for this approval stage.", "Bu onay asamasi icin sira numarasi.")}
-          </p>
-          <input
-            type="number"
-            min={1}
-            value={step.stepNo}
-            onChange={(event) => onFieldChange("stepNo", event.target.value)}
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-          />
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Approval level", "Onay seviyesi")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {l(
-              "Choose the organizational level where the approver must exist.",
-              "Onaylayicinin bulunmasi gereken organizasyon seviyesini secin."
-            )}
-          </p>
-          <select
-            value={step.stageScopeType}
-            onChange={(event) => onFieldChange("stageScopeType", event.target.value)}
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            {STEP_SCOPE_TYPES.map((row) => (
-              <option key={row} value={row}>
-                {getScopeLabel(l, row)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Required reviewer permission", "Gerekli inceleyen yetkisi")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {isAp
-              ? l(
-                  "Not used for AP Document Posting. Reviewer authority comes from assignment scope.",
-                  "AP Belge Kaydi icin kullanilmaz. Inceleyen yetkisi atama kapsamindan gelir."
-                )
-              : l(
-                  "Permission the approver must hold for this step.",
-                  "Onaylayicinin bu adim icin sahip olmasi gereken yetki."
-                )}
-          </p>
-          <input
-            type="text"
-            value={step.requiredPermissionCode}
-            onChange={(event) => onFieldChange("requiredPermissionCode", event.target.value)}
-            disabled={isAp}
-            placeholder={isAp ? l("Leave empty for AP", "AP icin bos birakin") : "permission.code"}
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
-          />
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Minimum approvals", "Minimum onay sayisi")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {l(
-              "How many approvals are required at this step.",
-              "Bu adimda kac onay gerektigini belirler."
-            )}
-          </p>
-          <input
-            type="number"
-            min={1}
-            value={step.minApproverCount}
-            onChange={(event) => onFieldChange("minApproverCount", event.target.value)}
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-          />
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Escalate if overdue after", "Gecikirse su kadar sonra escalate et")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {l(
-              "Optional. Escalate this step after this many hours.",
-              "Opsiyonel. Bu adimi belirtilen saat sonra escalate eder."
-            )}
-          </p>
-          <input
-            type="number"
-            min={1}
-            value={step.escalationAfterHours}
-            onChange={(event) => onFieldChange("escalationAfterHours", event.target.value)}
-            placeholder="24"
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-          />
-        </label>
-
-        <label className="flex items-center gap-2 rounded border border-slate-300 bg-white px-3 py-3 text-sm md:col-span-2">
-          <input
-            type="checkbox"
-            checked={Boolean(step.allowSelfApprove)}
-            onChange={(event) => onFieldChange("allowSelfApprove", event.target.checked)}
-          />
-          <span>{l("Allow self-approval", "Kendi kendine onay ver")}</span>
-          <span className="ml-2 text-xs text-slate-500">{l("Recommended: Off", "Onerilen: Kapali")}</span>
-        </label>
-      </div>
-
-      <div className="mt-3 rounded border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-900">
-        {buildStepPreviewText(l, step, processType)}
-      </div>
-    </div>
-  );
-}
-
-function WorkflowStepsSection({
-  l,
-  selectedDefinition,
-  processType,
-  stepDrafts,
-  onChangeStepDrafts,
-  onResetStepsToDefaults,
-  onSaveSteps,
-  showAdvancedJson,
-  onToggleAdvancedJson,
-  stepsJson,
-  onStepsJsonChange,
-  stepsJsonError,
-  saving,
-  canWriteDefinitions,
-  workflowPreviewText,
-}) {
-  function onStepFieldChange(index, field, value) {
-    onChangeStepDrafts((prev) =>
-      prev.map((step, stepIndex) =>
-        stepIndex === index
-          ? {
-              ...step,
-              [field]: value,
-            }
-          : step
-      )
-    );
-  }
-
-  function onAddStep() {
-    onChangeStepDrafts((prev) => [
-      ...prev,
-      normalizeStepDraft({}, (Array.isArray(prev) ? prev.length : 0) + 1, processType),
-    ]);
-  }
-
-  function onRemoveStep(index) {
-    onChangeStepDrafts((prev) => {
-      if (!Array.isArray(prev) || prev.length <= 1) {
-        return prev;
-      }
-      return prev.filter((_, stepIndex) => stepIndex !== index);
-    });
-  }
-
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <h2 className="text-base font-semibold text-slate-900">
-        {l("3. Define approval steps", "3. Onay adimlarini tanimlayin")}
-      </h2>
-      <p className="mt-1 text-sm text-slate-600">
-        {l(
-          "Choose who must approve and in what order.",
-          "Kimin hangi sirada onay verecegini secin."
-        )}
-      </p>
-
-      <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-        {selectedDefinition
-          ? `${l("Selected workflow", "Secilen workflow")}: ${selectedDefinition.code} (${getProcessLabel(
-              l,
-              selectedDefinition.processType
-            )})`
-          : l("Create or select a workflow first.", "Once bir workflow olusturun veya secin.")}
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onResetStepsToDefaults}
-          className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
-        >
-          {l("Reset to recommended setup", "Onerilen kurulumlara don")}
-        </button>
-        <button
-          type="button"
-          onClick={onAddStep}
-          className="rounded border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-800"
-        >
-          {l("Add approval step", "Onay adimi ekle")}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleAdvancedJson}
-          className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
-        >
-          {showAdvancedJson
-            ? l("Hide advanced JSON", "Gelismis JSON'u gizle")
-            : l("Show advanced JSON", "Gelismis JSON'u goster")}
-        </button>
-      </div>
-
-      <div className="mt-4 space-y-3">
-        {stepDrafts.map((step, index) => (
-          <ApprovalStepCard
-            key={`workflow-step-${index}`}
-            l={l}
-            index={index}
-            step={step}
-            processType={processType}
-            onFieldChange={(field, value) => onStepFieldChange(index, field, value)}
-            onRemove={() => onRemoveStep(index)}
-            disableRemove={stepDrafts.length <= 1}
-          />
-        ))}
-      </div>
-
-      <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-        <div className="font-semibold">{l("Workflow preview", "Workflow onizlemesi")}</div>
-        <p className="mt-1">{workflowPreviewText}</p>
-      </div>
-
-      {showAdvancedJson ? (
-        <div className="mt-4">
-          <div className="text-sm font-semibold text-slate-800">
-            {l("Advanced step JSON", "Gelismis adim JSON")}
-          </div>
-          <p className="mt-1 text-xs text-slate-500">
-            {l(
-              "For power users only. Most workflow setups should use the visual editor.",
-              "Yalnizca ileri kullanicilar icin. Cogu workflow kurulumu gorsel editor ile yapilmalidir."
-            )}
-          </p>
-          <textarea
-            value={stepsJson}
-            onChange={onStepsJsonChange}
-            className="mt-2 min-h-[220px] w-full rounded border border-slate-300 p-2 font-mono text-xs"
-          />
-          {stepsJsonError ? (
-            <p className="mt-2 text-xs text-rose-700">{stepsJsonError}</p>
-          ) : (
-            <p className="mt-2 text-xs text-slate-500">
-              {l(
-                "Paste JSON here only for bulk edits or template import.",
-                "Buraya JSON'u yalnizca toplu duzenleme veya sablon ice aktarma icin yapistirin."
-              )}
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      <form onSubmit={onSaveSteps} className="mt-4">
-        <button
-          type="submit"
-          disabled={saving || !canWriteDefinitions || !selectedDefinition}
-          className="rounded bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-        >
-          {saving ? l("Saving...", "Kaydediliyor...") : l("Save approval steps", "Onay adimlarini kaydet")}
-        </button>
-      </form>
-    </section>
-  );
-}
-
-function WorkflowAssignmentSection({
-  l,
-  assignmentForm,
-  setAssignmentForm,
-  filteredDefinitionOptions,
-  countries,
-  groupCompanies,
-  legalEntities,
-  operatingUnits,
-  effectText,
-  assignmentWriteAccess,
-  canWriteAssignments,
-  onCreateAssignment,
-  saving,
-}) {
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <h2 className="text-base font-semibold text-slate-900">
-        {l("4. Choose where this workflow applies", "4. Workflow'un nerede gecerli oldugunu secin")}
-      </h2>
-      <p className="mt-1 text-sm text-slate-600">
-        {l(
-          "Select the organizational scope where this workflow becomes active.",
-          "Bu workflow'un aktif olacagi organizasyon kapsamını secin."
-        )}
-      </p>
-
-      <PermissionAccessNotice
-        access={assignmentWriteAccess}
-        permissionCode="workflow.assignment.write"
-        className="mt-4"
-      />
-
-      <form onSubmit={onCreateAssignment} className="mt-4 grid gap-4 md:grid-cols-2">
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Selected workflow", "Secilen workflow")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {l(
-              "Choose the workflow that will apply at the selected scope.",
-              "Secilen kapsamda gecerli olacak workflow'u secin."
-            )}
-          </p>
-          <select
-            value={assignmentForm.workflowDefinitionId}
-            onChange={(event) =>
-              setAssignmentForm((prev) => ({
-                ...prev,
-                workflowDefinitionId: event.target.value,
-              }))
-            }
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            required
-          >
-            <option value="">{l("Select workflow", "Workflow secin")}</option>
-            {filteredDefinitionOptions.map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.code} - {row.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Applies to", "Gecerli oldugu kapsam")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {l(
-              "Choose the organizational level where this workflow becomes active.",
-              "Workflow'un aktif olacagi organizasyon seviyesini secin."
-            )}
-          </p>
-          <select
-            value={assignmentForm.scopeType}
-            onChange={(event) =>
-              setAssignmentForm((prev) => ({
-                ...prev,
-                scopeType: event.target.value,
-              }))
-            }
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            {ASSIGNMENT_SCOPE_TYPES.map((row) => (
-              <option key={row} value={row}>
-                {getScopeLabel(l, row)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {assignmentForm.scopeType === "GROUP" ? (
-          <label className="block">
-            <span className="text-sm font-medium text-slate-800">
-              {l("Select group company", "Grup sirketi secin")}
-            </span>
-            <select
-              value={assignmentForm.groupCompanyId}
-              onChange={(event) =>
-                setAssignmentForm((prev) => ({
-                  ...prev,
-                  groupCompanyId: event.target.value,
-                }))
-              }
-              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              required
-            >
-              <option value="">{l("Select group company", "Grup sirketi secin")}</option>
-              {groupCompanies.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-
-        {assignmentForm.scopeType === "COUNTRY" ? (
-          <label className="block">
-            <span className="text-sm font-medium text-slate-800">
-              {l("Select country", "Ulke secin")}
-            </span>
-            <select
-              value={assignmentForm.countryId}
-              onChange={(event) =>
-                setAssignmentForm((prev) => ({
-                  ...prev,
-                  countryId: event.target.value,
-                }))
-              }
-              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              required
-            >
-              <option value="">{l("Select country", "Ulke secin")}</option>
-              {countries.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.iso2} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-
-        {assignmentForm.scopeType === "LEGAL_ENTITY" ? (
-          <label className="block">
-            <span className="text-sm font-medium text-slate-800">
-              {l("Select legal entity", "Legal entity secin")}
-            </span>
-            <select
-              value={assignmentForm.legalEntityId}
-              onChange={(event) =>
-                setAssignmentForm((prev) => ({
-                  ...prev,
-                  legalEntityId: event.target.value,
-                }))
-              }
-              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              required
-            >
-              <option value="">{l("Select legal entity", "Legal entity secin")}</option>
-              {legalEntities.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-
-        {assignmentForm.scopeType === "OPERATING_UNIT" ? (
-          <label className="block">
-            <span className="text-sm font-medium text-slate-800">
-              {l("Select operating unit", "Operating unit secin")}
-            </span>
-            <select
-              value={assignmentForm.operatingUnitId}
-              onChange={(event) =>
-                setAssignmentForm((prev) => ({
-                  ...prev,
-                  operatingUnitId: event.target.value,
-                }))
-              }
-              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              required
-            >
-              <option value="">{l("Select operating unit", "Operating unit secin")}</option>
-              {operatingUnits.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Effective from", "Gecerlilik baslangici")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {l(
-              "Date when this workflow assignment starts being valid.",
-              "Bu workflow atamasinin gecerli olmaya basladigi tarih."
-            )}
-          </p>
-          <input
-            type="date"
-            value={assignmentForm.effectiveFrom}
-            onChange={(event) =>
-              setAssignmentForm((prev) => ({
-                ...prev,
-                effectiveFrom: event.target.value,
-              }))
-            }
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-            required
-          />
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-medium text-slate-800">
-            {l("Assignment status", "Atama durumu")}
-          </span>
-          <p className="mt-1 text-xs text-slate-500">
-            {l(
-              "Choose whether this assignment is active now.",
-              "Bu atamanin simdi aktif olup olmadigini secin."
-            )}
-          </p>
-          <select
-            value={assignmentForm.status}
-            onChange={(event) =>
-              setAssignmentForm((prev) => ({
-                ...prev,
-                status: event.target.value,
-              }))
-            }
-            className="mt-2 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="ACTIVE">{l("Active", "Aktif")}</option>
-            <option value="INACTIVE">{l("Inactive", "Pasif")}</option>
-          </select>
-        </label>
-
-        <div className="md:col-span-2 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
-          <div className="font-semibold">{l("Effect of this assignment", "Bu atamanin etkisi")}</div>
-          <p className="mt-1">{effectText}</p>
-        </div>
-
-        <div className="md:col-span-2">
-          <button
-            type="submit"
-            disabled={saving || !canWriteAssignments}
-            className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-          >
-            {saving ? l("Saving...", "Kaydediliyor...") : l("Save assignment", "Atamayi kaydet")}
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
-function WorkflowReviewSection({
-  l,
-  selectedDefinition,
-  stepDrafts,
-  assignmentForm,
-  workflowPreviewText,
-  assignmentEffectText,
-}) {
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <h2 className="text-base font-semibold text-slate-900">
-        {l("5. Review your setup", "5. Kurulumu gozden gecirin")}
-      </h2>
-      <p className="mt-1 text-sm text-slate-600">
-        {l(
-          "Review the workflow before leaving this page.",
-          "Sayfadan ayrilmadan once workflow'u gozden gecirin."
-        )}
-      </p>
-
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="text-sm font-semibold text-slate-900">
-            {l("Workflow summary", "Workflow ozeti")}
-          </div>
-          <dl className="mt-2 space-y-2 text-sm text-slate-700">
-            <div>
-              <dt className="font-medium">{l("Code", "Kod")}</dt>
-              <dd>{selectedDefinition?.code || "-"}</dd>
-            </div>
-            <div>
-              <dt className="font-medium">{l("Name", "Ad")}</dt>
-              <dd>{selectedDefinition?.name || "-"}</dd>
-            </div>
-            <div>
-              <dt className="font-medium">{l("Type", "Tur")}</dt>
-              <dd>{getProcessLabel(l, selectedDefinition?.processType || assignmentForm.processType)}</dd>
-            </div>
-            <div>
-              <dt className="font-medium">{l("Steps", "Adimlar")}</dt>
-              <dd>{Array.isArray(stepDrafts) ? stepDrafts.length : 0}</dd>
-            </div>
-          </dl>
-        </div>
-
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="text-sm font-semibold text-slate-900">
-            {l("Outcome", "Sonuc")}
-          </div>
-          <p className="mt-2 text-sm text-slate-700">{workflowPreviewText}</p>
-          <p className="mt-2 text-sm text-slate-700">{assignmentEffectText}</p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function WorkflowSetupSidebar({
-  l,
-  currentStep,
-  processType,
-  selectedDefinition,
-  stepDrafts,
-  assignmentForm,
-  workflowPreviewText,
-  assignmentEffectText,
-}) {
-  const recommendation = getProcessRecommendation(l, processType);
-
-  return (
-    <aside className="space-y-4">
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="text-sm font-semibold text-slate-900">
-          {l("Current setup summary", "Mevcut kurulum ozeti")}
-        </div>
-        <dl className="mt-3 space-y-2 text-sm text-slate-700">
-          <div>
-            <dt className="font-medium">{l("Workflow type", "Workflow turu")}</dt>
-            <dd>{getProcessLabel(l, processType)}</dd>
-          </div>
-          <div>
-            <dt className="font-medium">{l("Workflow", "Workflow")}</dt>
-            <dd>{selectedDefinition?.name || selectedDefinition?.code || l("Not selected yet", "Henuz secilmedi")}</dd>
-          </div>
-          <div>
-            <dt className="font-medium">{l("Steps", "Adimlar")}</dt>
-            <dd>{Array.isArray(stepDrafts) ? stepDrafts.length : 0}</dd>
-          </div>
-          <div>
-            <dt className="font-medium">{l("Assignment status", "Atama durumu")}</dt>
-            <dd>{assignmentForm?.status || "-"}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section className="rounded-xl border border-cyan-200 bg-cyan-50 p-4">
-        <div className="text-sm font-semibold text-cyan-900">{recommendation.title}</div>
-        <ul className="mt-2 list-disc pl-5 text-sm text-cyan-900">
-          {recommendation.points.map((point) => (
-            <li key={point}>{point}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="text-sm font-semibold text-slate-900">{l("What this means", "Bu ne anlama gelir")}</div>
-        <p className="mt-2 text-sm text-slate-700">{getMeaningText(l, currentStep)}</p>
-      </section>
-
-      <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-        <div className="text-sm font-semibold text-emerald-900">{l("Next step", "Siradaki adim")}</div>
-        <p className="mt-2 text-sm text-emerald-900">{getNextActionText(l, currentStep)}</p>
-      </section>
-
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="text-sm font-semibold text-slate-900">{l("Live preview", "Canli onizleme")}</div>
-        <p className="mt-2 text-sm text-slate-700">{workflowPreviewText}</p>
-        <p className="mt-2 text-sm text-slate-700">{assignmentEffectText}</p>
-      </section>
-    </aside>
-  );
-}
-
-function WorkflowRecordsSection({
-  l,
-  definitions,
-  assignments,
-  loading,
-  selectedDefinitionId,
-  onSelectDefinition,
-  onToggleAssignmentStatus,
-  getRowToggleAccess,
-}) {
-  const [tab, setTab] = useState("workflows");
-
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setTab("workflows")}
-          className={`rounded px-3 py-2 text-sm font-medium ${
-            tab === "workflows" ? "bg-slate-900 text-white" : "border border-slate-300 bg-white"
-          }`}
-        >
-          {l("Existing workflows", "Mevcut workflow'lar")}
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("assignments")}
-          className={`rounded px-3 py-2 text-sm font-medium ${
-            tab === "assignments" ? "bg-slate-900 text-white" : "border border-slate-300 bg-white"
-          }`}
-        >
-          {l("Existing assignments", "Mevcut atamalar")}
-        </button>
-      </div>
-
-      {tab === "workflows" ? (
-        <div className="overflow-auto rounded border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-600">
-              <tr>
-                <th className="px-3 py-2">ID</th>
-                <th className="px-3 py-2">{l("Code", "Kod")}</th>
-                <th className="px-3 py-2">{l("Name", "Ad")}</th>
-                <th className="px-3 py-2">{l("Type", "Tur")}</th>
-                <th className="px-3 py-2">{l("Steps", "Adimlar")}</th>
-                <th className="px-3 py-2">{l("Action", "Islem")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {definitions.map((row) => (
-                <tr
-                  key={row.id}
-                  className={`border-t border-slate-100 ${
-                    toPositiveInt(row?.id) === toPositiveInt(selectedDefinitionId) ? "bg-cyan-50" : ""
-                  }`}
-                >
-                  <td className="px-3 py-2">#{row.id}</td>
-                  <td className="px-3 py-2">{row.code}</td>
-                  <td className="px-3 py-2">{row.name}</td>
-                  <td className="px-3 py-2">{getProcessLabel(l, row.processType)}</td>
-                  <td className="px-3 py-2">{Number(row.stepCount || 0)}</td>
-                  <td className="px-3 py-2">
-                    <button
-                      type="button"
-                      onClick={() => onSelectDefinition(String(row.id))}
-                      className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
-                    >
-                      {l("Select", "Sec")}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-
-              {definitions.length === 0 && !loading ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-4 text-slate-500">
-                    {l("No workflows found.", "Workflow bulunmadi.")}
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="overflow-auto rounded border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-600">
-              <tr>
-                <th className="px-3 py-2">ID</th>
-                <th className="px-3 py-2">{l("Type", "Tur")}</th>
-                <th className="px-3 py-2">{l("Scope", "Kapsam")}</th>
-                <th className="px-3 py-2">{l("Workflow", "Workflow")}</th>
-                <th className="px-3 py-2">{l("Status", "Durum")}</th>
-                <th className="px-3 py-2">{l("Action", "Islem")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {assignments.map((row) => {
-                const assignmentId = toPositiveInt(row?.id);
-                const rowSaving = false;
-                const rowAccess = getRowToggleAccess(row);
-
-                return (
-                  <tr key={row.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">#{row.id}</td>
-                    <td className="px-3 py-2">{getProcessLabel(l, row.processType)}</td>
-                    <td className="px-3 py-2">{buildAssignmentScopeLabel(l, row)}</td>
-                    <td className="px-3 py-2">
-                      {row.workflowDefinitionCode} - {row.workflowDefinitionName}
-                    </td>
-                    <td className="px-3 py-2">{row.status}</td>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => onToggleAssignmentStatus(row)}
-                        disabled={rowSaving || !rowAccess.allowed || !assignmentId}
-                        className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-60"
-                      >
-                        {row.status === "ACTIVE"
-                          ? l("Set inactive", "Pasif yap")
-                          : l("Set active", "Aktif yap")}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {assignments.length === 0 && !loading ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-4 text-slate-500">
-                    {l("No assignments found.", "Atama bulunmadi.")}
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
-/**
- * Guided drop-in refactor of workflow governance setup.
- * Keeps the existing API calls, permissions, and business logic,
- * but presents them as a directive setup experience.
- */
-export default function WorkflowSetupPage() {
-  const { getPermissionAccess, hasPermission, user } = useAuth();
-  const { language } = useI18n();
-  const { getModuleRows, refresh: refreshModuleReadiness } = useModuleReadiness();
-
-  const l = (en, tr) => (language === "tr" ? tr : en);
-  const tenantScopeId = toPositiveInt(user?.tenant_id);
-
-  const canReadDefinitions = hasPermission("workflow.definition.read");
-  const definitionWriteAccess = getPermissionAccess("workflow.definition.write");
-  const canWriteDefinitions = definitionWriteAccess.allowed;
-  const canReadAssignments = hasPermission("workflow.assignment.read");
-  const canReadOrgTree = hasPermission("org.tree.read");
-  const canReadWorkflow = canReadDefinitions || canReadAssignments;
-
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-
-  const [currentStep, setCurrentStep] = useState(1);
-  const [definitionMode, setDefinitionMode] = useState("create");
-  const [showAdvancedJson, setShowAdvancedJson] = useState(false);
-
-  const [definitions, setDefinitions] = useState([]);
-  const [assignments, setAssignments] = useState([]);
-  const [countries, setCountries] = useState([]);
-  const [groupCompanies, setGroupCompanies] = useState([]);
-  const [legalEntities, setLegalEntities] = useState([]);
-  const [operatingUnits, setOperatingUnits] = useState([]);
-
-  const [selectedDefinitionId, setSelectedDefinitionId] = useState("");
-  const [stepsJson, setStepsJson] = useState("[]");
-  const [stepDrafts, setStepDrafts] = useState(() => buildStepDrafts("", []));
-  const [stepsJsonError, setStepsJsonError] = useState("");
-
-  const [definitionForm, setDefinitionForm] = useState({
-    code: "",
-    name: "",
-    processType: "PERIOD_CLOSE",
-    isActive: true,
-    versionNo: "1",
+    {
+      key: "legacy_catalog",
+      label: ACCESS_MODEL_SECTION_LABELS.legacy_catalog,
+      modelType: "runtime_role",
+      modelTypeLabel: getAccessModelTypeLabel("runtime_role"),
+      description:
+        "Compatibility runtime roles that stay visible for migration review but remain hidden from fresh-tenant pickers.",
+      sortOrder: ACCESS_MODEL_SECTION_ORDER.legacy_catalog,
+      entries: listLegacyRoleCatalogEntries(),
+    },
+  ].sort(sortCatalogEntries);
+}/**
++ * Sorts roles into a stable management order with composable roles first and legacy roles last.
++ */
+export function sortRolesForManagement(roles) {
+  const safeRoles = Array.isArray(roles) ? roles : [];
+  return [...safeRoles].sort((left, right) => {
+    const leftEntry = getRoleCatalogEntry(left);
+    const rightEntry = getRoleCatalogEntry(right);
+    const leftCategoryIndex = CATEGORY_ORDER.indexOf(leftEntry.category);
+    const rightCategoryIndex = CATEGORY_ORDER.indexOf(rightEntry.category);
+    if (leftCategoryIndex !== rightCategoryIndex) {
+      return leftCategoryIndex - rightCategoryIndex;
+    }
+    if (leftEntry.sortOrder !== rightEntry.sortOrder) {
+      return leftEntry.sortOrder - rightEntry.sortOrder;
+    }
+    return normalizeText(leftEntry.code).localeCompare(normalizeText(rightEntry.code));
   });
-
-  const [assignmentForm, setAssignmentForm] = useState({
-    processType: "PERIOD_CLOSE",
-    workflowDefinitionId: "",
-    scopeType: "TENANT",
-    groupCompanyId: "",
-    countryId: "",
-    legalEntityId: "",
-    operatingUnitId: "",
-    effectiveFrom: todayIsoDate(),
-    status: "ACTIVE",
-  });
-
-  const visibleDefinitions = useMemo(
-    () =>
-      definitions.filter(
-        (row) =>
-          String(row?.processType || "").toUpperCase() ===
-          String(definitionForm.processType || "").toUpperCase()
-      ),
-    [definitions, definitionForm.processType]
-  );
-
-  const filteredDefinitionOptions = useMemo(
-    () =>
-      definitions.filter(
-        (row) =>
-          String(row?.processType || "").toUpperCase() ===
-          String(assignmentForm.processType || "").toUpperCase()
-      ),
-    [definitions, assignmentForm.processType]
-  );
-
-  const selectedDefinition = useMemo(
-    () =>
-      definitions.find(
-        (row) => toPositiveInt(row?.id) === toPositiveInt(selectedDefinitionId)
-      ) || null,
-    [definitions, selectedDefinitionId]
-  );
-
-  const selectedCountry = useMemo(
-    () => countries.find((row) => String(row.id) === String(assignmentForm.countryId)) || null,
-    [countries, assignmentForm.countryId]
-  );
-
-  const selectedGroupCompany = useMemo(
-    () =>
-      groupCompanies.find((row) => String(row.id) === String(assignmentForm.groupCompanyId)) || null,
-    [groupCompanies, assignmentForm.groupCompanyId]
-  );
-
-  const selectedLegalEntity = useMemo(
-    () =>
-      legalEntities.find((row) => String(row.id) === String(assignmentForm.legalEntityId)) || null,
-    [legalEntities, assignmentForm.legalEntityId]
-  );
-
-  const selectedOperatingUnit = useMemo(
-    () =>
-      operatingUnits.find((row) => String(row.id) === String(assignmentForm.operatingUnitId)) || null,
-    [operatingUnits, assignmentForm.operatingUnitId]
-  );
-
-  const assignmentScopeId =
-    assignmentForm.scopeType === "TENANT"
-      ? tenantScopeId
-      : assignmentForm.scopeType === "GROUP"
-        ? toPositiveInt(assignmentForm.groupCompanyId)
-        : assignmentForm.scopeType === "COUNTRY"
-          ? toPositiveInt(assignmentForm.countryId)
-          : assignmentForm.scopeType === "LEGAL_ENTITY"
-            ? toPositiveInt(assignmentForm.legalEntityId)
-            : assignmentForm.scopeType === "OPERATING_UNIT"
-              ? toPositiveInt(assignmentForm.operatingUnitId)
-              : null;
-
-  const assignmentWriteAccess = getPermissionAccess(
-    "workflow.assignment.write",
-    assignmentScopeId
-      ? {
-          scope: {
-            scopeType: assignmentForm.scopeType,
-            scopeId: assignmentScopeId,
-          },
-        }
-      : undefined
-  );
-  const canWriteAssignments = assignmentWriteAccess.allowed;
-
-  const workflowPreviewText = useMemo(
-    () => buildWorkflowPreviewText(l, stepDrafts),
-    [l, stepDrafts]
-  );
-
-  const assignmentEffectText = useMemo(
-    () =>
-      buildAssignmentEffectText(
-        l,
-        assignmentForm,
-        selectedCountry,
-        selectedGroupCompany,
-        selectedLegalEntity,
-        selectedOperatingUnit
-      ),
-    [
-      l,
-      assignmentForm,
-      selectedCountry,
-      selectedGroupCompany,
-      selectedLegalEntity,
-      selectedOperatingUnit,
-    ]
-  );
-
-  const workflowReadinessRows = getModuleRows("closeConsolidationWorkflow");
-  const workflowReadyCount = workflowReadinessRows.filter((row) => Boolean(row?.ready)).length;
-  const workflowTotalCount = workflowReadinessRows.length;
-
-  function applyStepDrafts(nextDrafts, processType = selectedDefinition?.processType || definitionForm.processType) {
-    const normalizedDrafts = buildStepDrafts(processType, nextDrafts);
-    setStepDrafts(normalizedDrafts);
-    setStepsJson(JSON.stringify(serializeStepDrafts(normalizedDrafts, processType), null, 2));
-    setStepsJsonError("");
-  }
-
-  async function loadData() {
-    if (!canReadWorkflow && !canReadOrgTree) {
-      setDefinitions([]);
-      setAssignments([]);
-      setCountries([]);
-      setGroupCompanies([]);
-      setLegalEntities([]);
-      setOperatingUnits([]);
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const [definitionsRes, assignmentsRes, countriesRes, groupsRes, entitiesRes, unitsRes] =
-        await Promise.all([
-          canReadDefinitions ? listWorkflowDefinitions({ limit: 200 }) : Promise.resolve(null),
-          canReadAssignments ? listWorkflowAssignments({ limit: 300 }) : Promise.resolve(null),
-          canReadOrgTree ? listCountries() : Promise.resolve(null),
-          canReadOrgTree ? listGroupCompanies() : Promise.resolve(null),
-          canReadOrgTree ? listLegalEntities() : Promise.resolve(null),
-          canReadOrgTree ? listOperatingUnits() : Promise.resolve(null),
-        ]);
-
-      setDefinitions(Array.isArray(definitionsRes?.rows) ? definitionsRes.rows : []);
-      setAssignments(Array.isArray(assignmentsRes?.rows) ? assignmentsRes.rows : []);
-      setCountries(Array.isArray(countriesRes?.rows) ? countriesRes.rows : []);
-      setGroupCompanies(Array.isArray(groupsRes?.rows) ? groupsRes.rows : []);
-      setLegalEntities(Array.isArray(entitiesRes?.rows) ? entitiesRes.rows : []);
-      setOperatingUnits(Array.isArray(unitsRes?.rows) ? unitsRes.rows : []);
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-          l("Failed to load workflow governance.", "Workflow yonetimi yuklenemedi.")
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canReadAssignments, canReadDefinitions, canReadOrgTree]);
-
-  useEffect(() => {
-    if (!canReadWorkflow) {
-      return;
-    }
-    refreshModuleReadiness({ global: true });
-  }, [canReadWorkflow, refreshModuleReadiness]);
-
-  useEffect(() => {
-    setAssignmentForm((prev) =>
-      prev.processType === definitionForm.processType
-        ? prev
-        : {
-            ...prev,
-            processType: definitionForm.processType,
-          }
-    );
-  }, [definitionForm.processType]);
-
-  useEffect(() => {
-    if (!visibleDefinitions.some((row) => toPositiveInt(row?.id) === toPositiveInt(selectedDefinitionId))) {
-      setSelectedDefinitionId("");
-    }
-  }, [visibleDefinitions, selectedDefinitionId]);
-
-  useEffect(() => {
-    setAssignmentForm((prev) => {
-      const selectedId = toPositiveInt(selectedDefinitionId);
-      const currentId = toPositiveInt(prev.workflowDefinitionId);
-
-      if (selectedId && filteredDefinitionOptions.some((row) => toPositiveInt(row?.id) === selectedId)) {
-        return currentId === selectedId
-          ? prev
-          : {
-              ...prev,
-              workflowDefinitionId: String(selectedId),
-            };
-      }
-
-      if (currentId && filteredDefinitionOptions.some((row) => toPositiveInt(row?.id) === currentId)) {
-        return prev;
-      }
-
-      return prev.workflowDefinitionId
-        ? {
-            ...prev,
-            workflowDefinitionId: "",
-          }
-        : prev;
-    });
-  }, [selectedDefinitionId, filteredDefinitionOptions]);
-
-  useEffect(() => {
-    const definitionId = toPositiveInt(selectedDefinitionId);
-    const selectedProcessType = selectedDefinition?.processType || definitionForm.processType;
-
-    if (!definitionId || !canReadDefinitions) {
-      const nextDrafts = buildStepDrafts(selectedProcessType, []);
-      setStepDrafts(nextDrafts);
-      setStepsJson(JSON.stringify(serializeStepDrafts(nextDrafts, selectedProcessType), null, 2));
-      setStepsJsonError("");
-      return;
-    }
-
-    let active = true;
-
-    (async () => {
-      try {
-        const response = await listWorkflowDefinitionSteps(definitionId);
-        if (!active) {
-          return;
-        }
-
-        const rows = Array.isArray(response?.rows) ? response.rows : [];
-        const normalized =
-          rows.length > 0
-            ? rows.map((row) => ({
-                stepNo: Number(row?.stepNo || 0) || 1,
-                stageScopeType: String(row?.stageScopeType || "LEGAL_ENTITY"),
-                requiredPermissionCode: row?.requiredPermissionCode ?? null,
-                minApproverCount: Number(row?.minApproverCount || 1) || 1,
-                allowSelfApprove: Boolean(row?.allowSelfApprove),
-                escalationAfterHours: row?.escalationAfterHours ?? null,
-              }))
-            : buildDefaultSteps(selectedProcessType);
-
-        const nextDrafts = buildStepDrafts(selectedProcessType, normalized);
-        setStepDrafts(nextDrafts);
-        setStepsJson(JSON.stringify(serializeStepDrafts(nextDrafts, selectedProcessType), null, 2));
-        setStepsJsonError("");
-      } catch (err) {
-        if (!active) {
-          return;
-        }
-        setError(
-          err?.response?.data?.message ||
-            l("Failed to load workflow steps.", "Workflow adimlari yuklenemedi.")
-        );
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [canReadDefinitions, definitionForm.processType, selectedDefinition?.processType, selectedDefinitionId, l]);
-
-  function onStepsJsonChange(event) {
-    const nextValue = event.target.value;
-    setStepsJson(nextValue);
-
-    const parsed = safeParseJsonArray(nextValue);
-    if (!parsed) {
-      setStepsJsonError(
-        l(
-          "Advanced JSON must be a valid non-empty array before it can replace the visual steps.",
-          "Gelismis JSON, gorsel adimlari degistirmeden once gecerli ve bos olmayan bir dizi olmalidir."
-        )
-      );
-      return;
-    }
-
-    const nextDrafts = buildStepDrafts(selectedDefinition?.processType || definitionForm.processType, parsed);
-    setStepDrafts(nextDrafts);
-    setStepsJsonError("");
-  }
-
-  function onResetStepsToDefaults() {
-    applyStepDrafts(buildDefaultSteps(selectedDefinition?.processType || definitionForm.processType));
-  }
-
-  async function onCreateDefinition(event) {
-    event.preventDefault();
-
-    if (!canWriteDefinitions) {
-      setError(
-        l(
-          "Missing permission: workflow.definition.write",
-          "Eksik yetki: workflow.definition.write"
-        )
-      );
-      return;
-    }
-
-    setSaving("definition");
-    setError("");
-    setMessage("");
-
-    try {
-      const response = await createWorkflowDefinition({
-        code: definitionForm.code,
-        name: definitionForm.name,
-        processType: definitionForm.processType,
-        isActive: Boolean(definitionForm.isActive),
-        versionNo: Number(definitionForm.versionNo || 1),
+}/**
++ * Returns the business-facing label for one bootstrap handoff preset while
++ * preserving the stored preset code separately in forms and payloads.
++ */
+export function getBootstrapHandoffPresetDisplayLabel(presetCode) {
+  const entry = getBootstrapHandoffPresetEntry(presetCode);
+  return entry.displayName || entry.code;
+}/**
++ * Groups roles by the UI category used on admin role-management screens.
++ */
+export function groupRolesForManagement(roles) {
+  const grouped = new Map();
+  for (const role of sortRolesForManagement(roles)) {
+    const entry = getRoleCatalogEntry(role);
+    const key = entry.category;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        label: entry.categoryLabel,
+        roles: [],
       });
-
-      await loadData();
-
-      if (toPositiveInt(response?.row?.id)) {
-        setSelectedDefinitionId(String(response.row.id));
-        setAssignmentForm((prev) => ({
-          ...prev,
-          processType: definitionForm.processType,
-          workflowDefinitionId: String(response.row.id),
-        }));
-      }
-
-      setDefinitionMode("select");
-      setCurrentStep(3);
-      setMessage(
-        l(
-          "Workflow created. Next, define who must approve.",
-          "Workflow olusturuldu. Siradaki adim: kimin onaylayacagini tanimlayin."
-        )
-      );
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-          l("Failed to create workflow.", "Workflow olusturulamadi.")
-      );
-    } finally {
-      setSaving("");
     }
+    grouped.get(key).roles.push(role);
   }
-
-  async function onSaveSteps(event) {
-    event.preventDefault();
-
-    if (!canWriteDefinitions) {
-      setError(
-        l(
-          "Missing permission: workflow.definition.write",
-          "Eksik yetki: workflow.definition.write"
-        )
-      );
-      return;
-    }
-
-    const definitionId = toPositiveInt(selectedDefinitionId);
-    if (!definitionId) {
-      setError(l("Select a workflow first.", "Once bir workflow secin."));
-      return;
-    }
-
-    if (stepsJsonError) {
-      setError(stepsJsonError);
-      return;
-    }
-
-    const parsedSteps = serializeStepDrafts(
-      stepDrafts,
-      selectedDefinition?.processType || definitionForm.processType
-    );
-
-    if (!parsedSteps || parsedSteps.length === 0) {
-      setError(
-        l(
-          "Workflow steps must contain at least one step.",
-          "Workflow adimlari en az bir adim icermelidir."
-        )
-      );
-      return;
-    }
-
-    setSaving("steps");
-    setError("");
-    setMessage("");
-
-    try {
-      await replaceWorkflowDefinitionSteps(definitionId, { steps: parsedSteps });
-      await refreshModuleReadiness({ global: true });
-      setCurrentStep(4);
-      setMessage(
-        l(
-          "Approval steps saved. Next, choose where this workflow applies.",
-          "Onay adimlari kaydedildi. Siradaki adim: workflow'un nerede gecerli olacagini secin."
-        )
-      );
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-          l("Failed to save workflow steps.", "Workflow adimlari kaydedilemedi.")
-      );
-    } finally {
-      setSaving("");
-    }
+  return Array.from(grouped.values());
+}/**
++ * Builds a human-readable scope label using lookup rows when available.
++ */
+export function buildScopeLabel(scopeType, scopeId, lookups = {}, tenantScopeId = null) {
+  const normalizedScopeType = normalizeText(scopeType).toUpperCase();
+  const numericScopeId = Number(scopeId || 0);
+  if (!numericScopeId) {
+    return `${normalizedScopeType || "SCOPE"} #?`;
   }
-
-  async function onCreateAssignment(event) {
-    event.preventDefault();
-
-    if (!canWriteAssignments) {
-      setError(
-        l(
-          "Missing permission: workflow.assignment.write",
-          "Eksik yetki: workflow.assignment.write"
-        )
-      );
-      return;
-    }
-
-    const workflowDefinitionId = toPositiveInt(assignmentForm.workflowDefinitionId);
-    if (!workflowDefinitionId) {
-      setError(l("A workflow must be selected.", "Bir workflow secilmelidir."));
-      return;
-    }
-
-    const payload = {
-      processType: assignmentForm.processType,
-      workflowDefinitionId,
-      effectiveFrom: assignmentForm.effectiveFrom,
-      status: assignmentForm.status,
-    };
-
-    if (assignmentForm.scopeType === "GROUP") {
-      payload.groupCompanyId = toPositiveInt(assignmentForm.groupCompanyId) || undefined;
-    }
-    if (assignmentForm.scopeType === "COUNTRY") {
-      payload.countryId = toPositiveInt(assignmentForm.countryId) || undefined;
-    }
-    if (assignmentForm.scopeType === "LEGAL_ENTITY") {
-      payload.legalEntityId = toPositiveInt(assignmentForm.legalEntityId) || undefined;
-    }
-    if (assignmentForm.scopeType === "OPERATING_UNIT") {
-      payload.operatingUnitId = toPositiveInt(assignmentForm.operatingUnitId) || undefined;
-    }
-
-    setSaving("assignment");
-    setError("");
-    setMessage("");
-
-    try {
-      await createWorkflowAssignment(payload);
-      await loadData();
-      await refreshModuleReadiness({ global: true });
-      setCurrentStep(5);
-      setMessage(
-        l(
-          "Assignment saved. Review the setup summary below.",
-          "Atama kaydedildi. Asagidaki kurulum ozetini gozden gecirin."
-        )
-      );
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-          l("Failed to save workflow assignment.", "Workflow atamasi kaydedilemedi.")
-      );
-    } finally {
-      setSaving("");
-    }
+  if (normalizedScopeType === "TENANT") {
+    return numericScopeId === Number(tenantScopeId || 0)
+      ? `Tenant #${numericScopeId}`
+      : `Tenant #${numericScopeId}`;
   }
-
-  function getAssignmentRowWriteAccess(row) {
-    const rowScope = row?.operatingUnitId
-      ? { scopeType: "OPERATING_UNIT", scopeId: row.operatingUnitId }
-      : row?.legalEntityId
-        ? { scopeType: "LEGAL_ENTITY", scopeId: row.legalEntityId }
-        : row?.countryId
-          ? { scopeType: "COUNTRY", scopeId: row.countryId }
-          : row?.groupCompanyId
-            ? { scopeType: "GROUP", scopeId: row.groupCompanyId }
-            : tenantScopeId
-              ? { scopeType: "TENANT", scopeId: tenantScopeId }
-              : null;
-
-    return getPermissionAccess(
-      "workflow.assignment.write",
-      rowScope ? { scope: rowScope } : undefined
-    );
-  }
-
-  async function onToggleAssignmentStatus(row) {
-    const assignmentId = toPositiveInt(row?.id);
-    if (!assignmentId) {
-      return;
-    }
-
-    const rowWriteAccess = getAssignmentRowWriteAccess(row);
-    if (!rowWriteAccess.allowed) {
-      setError(
-        l(
-          "Missing permission: workflow.assignment.write",
-          "Eksik yetki: workflow.assignment.write"
-        )
-      );
-      return;
-    }
-
-    const nextStatus = String(row?.status || "").toUpperCase() === "ACTIVE" ? "INACTIVE" : "ACTIVE";
-
-    setSaving(`assignment-status-${assignmentId}`);
-    setError("");
-    setMessage("");
-
-    try {
-      await updateWorkflowAssignment(assignmentId, { status: nextStatus });
-      await loadData();
-      await refreshModuleReadiness({ global: true });
-      setMessage(l("Assignment status updated.", "Atama durumu guncellendi."));
-    } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-          l("Failed to update assignment status.", "Atama durumu guncellenemedi.")
-      );
-    } finally {
-      setSaving("");
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-slate-900">
-          {l("Workflow Setup", "Workflow Kurulumu")}
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {l(
-            "Create approval workflows, define approval steps, and choose where they apply.",
-            "Onay workflow'lari olusturun, onay adimlarini tanimlayin ve nerede gecerli olacaklarini secin."
-          )}
-        </p>
-
-        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
-          <div className="font-semibold">{l("How this page works", "Bu sayfa nasil calisir")}</div>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>{l("Workflow = the reusable approval recipe", "Workflow = tekrar kullanilabilir onay tarifi")}</li>
-            <li>{l("Steps = who approves and in what order", "Adimlar = kimin hangi sirada onayladigi")}</li>
-            <li>{l("Assignment = where that workflow becomes active", "Atama = workflow'un nerede aktif oldugu")}</li>
-          </ul>
-        </div>
-      </div>
-
-      <TenantReadinessChecklist />
-
-      <section className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-900">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            {l("Workflow readiness", "Workflow hazirligi")}: {workflowReadyCount}/{workflowTotalCount}
-          </div>
-          <button
-            type="button"
-            onClick={() => refreshModuleReadiness({ global: true })}
-            className="rounded border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold"
-          >
-            {l("Refresh readiness", "Hazirligi yenile")}
-          </button>
-        </div>
-      </section>
-
-      {error ? (
-        <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {error}
-        </div>
-      ) : null}
-
-      {message ? (
-        <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {message}
-        </div>
-      ) : null}
-
-      {!canReadWorkflow ? (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {l(
-            "Missing workflow read permission: workflow.definition.read or workflow.assignment.read",
-            "Eksik workflow okuma yetkisi: workflow.definition.read veya workflow.assignment.read"
-          )}
-        </div>
-      ) : null}
-
-      {!canReadOrgTree ? (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {l(
-            "org.tree.read is required to load country, group, legal entity, and operating unit selectors.",
-            "Country, grup, legal entity ve operating unit secicilerini yuklemek icin org.tree.read gerekir."
-          )}
-        </div>
-      ) : null}
-
-      <WorkflowSetupProgress currentStep={currentStep} l={l} />
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-6">
-          <WorkflowTypeSection
-            l={l}
-            processType={definitionForm.processType}
-            onChange={(processType) => {
-              setDefinitionForm((prev) => ({ ...prev, processType }));
-              setAssignmentForm((prev) => ({
-                ...prev,
-                processType,
-                workflowDefinitionId: "",
-              }));
-              setSelectedDefinitionId("");
-              setDefinitionMode("create");
-              setCurrentStep(2);
-            }}
-          />
-
-          <WorkflowDefinitionSection
-            l={l}
-            mode={definitionMode}
-            onModeChange={(nextMode) => {
-              setDefinitionMode(nextMode);
-              setCurrentStep(2);
-            }}
-            definitions={visibleDefinitions}
-            selectedDefinitionId={selectedDefinitionId}
-            onSelectDefinition={(value) => {
-              setSelectedDefinitionId(value);
-              setAssignmentForm((prev) => ({ ...prev, workflowDefinitionId: value }));
-              setCurrentStep(3);
-            }}
-            definitionForm={definitionForm}
-            setDefinitionForm={setDefinitionForm}
-            onCreateDefinition={onCreateDefinition}
-            saving={saving === "definition"}
-            canWriteDefinitions={canWriteDefinitions}
-            definitionWriteAccess={definitionWriteAccess}
-          />
-
-          <WorkflowStepsSection
-            l={l}
-            selectedDefinition={selectedDefinition}
-            processType={selectedDefinition?.processType || definitionForm.processType}
-            stepDrafts={stepDrafts}
-            onChangeStepDrafts={(updater) => {
-              if (typeof updater === "function") {
-                setStepDrafts((prev) => {
-                  const nextDrafts = updater(prev);
-                  const normalized = buildStepDrafts(
-                    selectedDefinition?.processType || definitionForm.processType,
-                    nextDrafts
-                  );
-                  setStepsJson(
-                    JSON.stringify(
-                      serializeStepDrafts(
-                        normalized,
-                        selectedDefinition?.processType || definitionForm.processType
-                      ),
-                      null,
-                      2
-                    )
-                  );
-                  setStepsJsonError("");
-                  return normalized;
-                });
-                return;
-              }
-
-              applyStepDrafts(updater, selectedDefinition?.processType || definitionForm.processType);
-            }}
-            onResetStepsToDefaults={onResetStepsToDefaults}
-            onSaveSteps={onSaveSteps}
-            showAdvancedJson={showAdvancedJson}
-            onToggleAdvancedJson={() => setShowAdvancedJson((prev) => !prev)}
-            stepsJson={stepsJson}
-            onStepsJsonChange={onStepsJsonChange}
-            stepsJsonError={stepsJsonError}
-            saving={saving === "steps"}
-            canWriteDefinitions={canWriteDefinitions}
-            workflowPreviewText={workflowPreviewText}
-          />
-
-          <WorkflowAssignmentSection
-            l={l}
-            assignmentForm={assignmentForm}
-            setAssignmentForm={setAssignmentForm}
-            filteredDefinitionOptions={filteredDefinitionOptions}
-            countries={countries}
-            groupCompanies={groupCompanies}
-            legalEntities={legalEntities}
-            operatingUnits={operatingUnits}
-            effectText={assignmentEffectText}
-            assignmentWriteAccess={assignmentWriteAccess}
-            canWriteAssignments={canWriteAssignments}
-            onCreateAssignment={onCreateAssignment}
-            saving={saving === "assignment"}
-          />
-
-          <WorkflowReviewSection
-            l={l}
-            selectedDefinition={selectedDefinition}
-            stepDrafts={stepDrafts}
-            assignmentForm={assignmentForm}
-            workflowPreviewText={workflowPreviewText}
-            assignmentEffectText={assignmentEffectText}
-          />
-        </div>
-
-        <WorkflowSetupSidebar
-          l={l}
-          currentStep={currentStep}
-          processType={definitionForm.processType}
-          selectedDefinition={selectedDefinition}
-          stepDrafts={stepDrafts}
-          assignmentForm={assignmentForm}
-          workflowPreviewText={workflowPreviewText}
-          assignmentEffectText={assignmentEffectText}
-        />
-      </div>
-
-      <WorkflowRecordsSection
-        l={l}
-        definitions={definitions}
-        assignments={assignments}
-        loading={loading}
-        selectedDefinitionId={selectedDefinitionId}
-        onSelectDefinition={(value) => {
-          const selectedRow = definitions.find((row) => String(row.id) === String(value));
-          if (!selectedRow) {
-            return;
-          }
-
-          setDefinitionForm((prev) => ({
-            ...prev,
-            processType: selectedRow.processType,
-          }));
-
-          setAssignmentForm((prev) => ({
-            ...prev,
-            processType: selectedRow.processType,
-            workflowDefinitionId: String(selectedRow.id),
-          }));
-
-          setDefinitionMode("select");
-          setSelectedDefinitionId(String(selectedRow.id));
-          setCurrentStep(3);
-        }}
-        onToggleAssignmentStatus={onToggleAssignmentStatus}
-        getRowToggleAccess={getAssignmentRowWriteAccess}
-      />
-    </div>
+  const sourceRows =
+    normalizedScopeType === "GROUP"
+      ? lookups.groups
+      : normalizedScopeType === "COUNTRY"
+        ? lookups.countries
+        : normalizedScopeType === "LEGAL_ENTITY"
+          ? lookups.legalEntities
+          : normalizedScopeType === "OPERATING_UNIT"
+            ? lookups.operatingUnits
+            : [];
+  const matchedRow = (Array.isArray(sourceRows) ? sourceRows : []).find(
+    (row) => Number(row.id) === numericScopeId
   );
+  if (!matchedRow) {
+    return `${normalizedScopeType} #${numericScopeId}`;
+  }
+  if (normalizedScopeType === "COUNTRY") {
+    return `${matchedRow.iso2 || matchedRow.iso3 || numericScopeId} - ${matchedRow.name || ""}`.trim();
+  }
+  return `${matchedRow.code || numericScopeId} - ${matchedRow.name || ""}`.trim();
+}/**
++ * Returns whether the supplied scope type matches the role's recommended assignment shape.
++ */
+export function isRecommendedScopeForRole(roleOrCode, scopeType) {
+  const entry = getRoleCatalogEntry(roleOrCode);
+  const normalizedScopeType = normalizeText(scopeType).toUpperCase();
+  if (!normalizedScopeType || entry.recommendedScopes.length === 0) {
+    return true;
+  }
+  return entry.recommendedScopes.includes(normalizedScopeType);
 }

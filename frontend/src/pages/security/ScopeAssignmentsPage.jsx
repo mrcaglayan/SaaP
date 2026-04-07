@@ -15,7 +15,7 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import RoleSummaryCard from "./RoleSummaryCard.jsx";
 import SecurityWarningList from "./SecurityWarningList.jsx";
-import { buildScopeLabel } from "./roleCatalog.js";
+import { buildScopeLabel, getRoleCatalogEntry } from "./roleCatalog.js";
 
 const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 const EFFECTS = ["ALLOW", "DENY"];
@@ -496,7 +496,8 @@ export default function ScopeAssignmentsPage() {
               <option value="">{t("scopeAssignments.selectAssignment")}</option>
               {assignments.map((assignment) => (
                 <option key={assignment.id} value={assignment.id}>
-                  #{assignment.id} {assignment.user_email} {"->"} {assignment.role_code} (
+                  #{assignment.id} {assignment.user_email} {"->"}{" "}
+                  {getRoleCatalogEntry(assignment.role_code).code} (
                   {assignment.scope_type}:{assignment.scope_id})
                 </option>
               ))}

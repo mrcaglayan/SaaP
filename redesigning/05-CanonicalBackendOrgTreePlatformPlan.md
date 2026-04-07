@@ -537,7 +537,7 @@ model and admin-surface refactors begin.
 
 - shared tree behavior has smoke coverage in workflow setup
 - workflow setup no longer keeps duplicated local scope-selection logic
-- the tree contract is clearly ready to be consumed by the 04 and 06 plans
+- the tree contract is clearly ready to be consumed by the 06 and 07 plans
 
 ## Tests
 
@@ -567,10 +567,42 @@ model and admin-surface refactors begin.
 
 - backend owns the canonical nested org-tree contract
 - frontend consumes that contract through one shared helper
-- one shared picker is reused in workflow setup and is ready for later 04/06
+- one shared picker is reused in workflow setup and is ready for later 06/07
   admin-surface reuse
 - no composite scope semantics are introduced in this track
 - the plan remains compatible with `06-WorkflowGovernanceRolePackagePresetSpec.md`
+
+## 06/07 Integration Handoff
+
+### Handoff to `06-WorkflowGovernanceRolePackagePresetSpec.md`
+
+- package, business-role, and preset target-scope pickers should reuse:
+  - `GET /api/v1/org/tree?shape=nested`
+  - `getOrgScopeTreeRoot(...)`
+  - shared org-tree helpers/components
+- page write payloads still resolve to only:
+  - `scopeType`
+  - `scopeId`
+- page-specific targeting rules should be layered through:
+  - allowed scope-type filters
+  - disabled node reasons
+  - page-provided selectability rules
+- stable compact scope labels and breadcrumb/path labels should come from the
+  canonical tree contract, not rebuilt from page-local flat lookup logic
+
+### Handoff to `07-RolePermissionAdminPagePlan.md`
+
+- security/admin scope targeting should adopt the same shared tree contract and
+  picker instead of page-local group/country/entity/unit selector stacks
+- backend remains the authority for hierarchy shape and ancestor completeness;
+  admin pages may only add page-specific disabled/selectability overlays
+- duplicated country branches remain navigation structure only; consumers must
+  preserve the selected branch breadcrumb with shared node-key-aware helpers
+  while still persisting plain `COUNTRY` scope semantics
+- this track does not add:
+  - composite scope persistence such as `GROUP+COUNTRY`
+  - RBAC redesign
+  - lazy tree loading requirements unless later demand appears
 
 ## Deferred Items Already Covered By Later Direction
 

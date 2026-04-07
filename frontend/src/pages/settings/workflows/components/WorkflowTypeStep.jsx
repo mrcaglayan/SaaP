@@ -114,7 +114,7 @@ export default function WorkflowTypeStep({
 
         <CardFooter className="justify-end">
           <Button disabled={!value} onClick={onNext}>
-            {l("Continue to Definition", "Tanima devam et")}
+            {l("Continue to Target Scope", "Hedef kapsama devam et")}
           </Button>
         </CardFooter>
       </Card>

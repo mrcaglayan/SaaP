@@ -1003,11 +1003,11 @@ Support future period-close-specific reopen/admin packages if introduced later.
 
 ## Recommended order
 
-1. UI-0A
-2. UI-0B
-3. UI-1A
-4. UI-1B
-5. UI-1C
+1. UI-0A done
+2. UI-0B done
+3. UI-1A done
+4. UI-1B done
+5. UI-1C done
 6. UI-1D
 7. UI-1E
 8. UI-2A

@@ -12,6 +12,18 @@ function toQueryString(params = {}) {
   return query ? `?${query}` : "";
 }
 
+/**
+ * Load the org tree contract, defaulting to the canonical nested shape used by
+ * admin scope-selection flows.
+ */
+export async function listOrgTree(params = {}) {
+  const { shape = "nested", ...rest } = params || {};
+  const response = await api.get(
+    `/api/v1/org/tree${toQueryString({ shape, ...rest })}`
+  );
+  return response.data;
+}
+
 export async function listGroupCompanies(params = {}) {
   const response = await api.get(
     `/api/v1/org/group-companies${toQueryString(params)}`

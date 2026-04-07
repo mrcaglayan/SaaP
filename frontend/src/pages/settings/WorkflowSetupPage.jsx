@@ -4,6 +4,7 @@ import {
   listGroupCompanies,
   listLegalEntities,
   listOperatingUnits,
+  listOrgTree,
 } from "../../api/orgAdmin.js";
 import {
   createWorkflowAssignment,
@@ -18,6 +19,10 @@ import {
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
+import {
+  findOrgScopeTreeNodeByScopeSelection,
+  getOrgScopeTreeRoot,
+} from "../../shared/orgScopeTree.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import WorkflowAssignmentStep from "./workflows/components/WorkflowAssignmentStep.jsx";
 import WorkflowDefinitionStep from "./workflows/components/WorkflowDefinitionStep.jsx";
@@ -66,6 +71,58 @@ function resolveAssignmentScopeId(form, tenantScopeId) {
   return null;
 }
 
+function resolveAssignmentScopeSelection(form, tenantScopeId) {
+  const scopeId = resolveAssignmentScopeId(form, tenantScopeId);
+  if (!scopeId) {
+    return null;
+  }
+
+  return {
+    scopeType: String(form?.scopeType || "").trim().toUpperCase(),
+    scopeId,
+  };
+}
+
+function applyAssignmentScopeSelection(previousForm, selection) {
+  const scopeType = String(selection?.scopeType || "").trim().toUpperCase();
+  const scopeId = toPositiveInt(selection?.scopeId);
+  if (!scopeType || !scopeId) {
+    return previousForm;
+  }
+
+  const scopeValue = String(scopeId);
+  return {
+    ...previousForm,
+    scopeType,
+    groupCompanyId: scopeType === "GROUP" ? scopeValue : "",
+    countryId: scopeType === "COUNTRY" ? scopeValue : "",
+    legalEntityId: scopeType === "LEGAL_ENTITY" ? scopeValue : "",
+    operatingUnitId: scopeType === "OPERATING_UNIT" ? scopeValue : "",
+  };
+}
+
+function getWorkflowAssignmentScopeDisabledReason(access, l) {
+  if (!access || access.allowed) {
+    return "";
+  }
+  if (access.missingPermission) {
+    return l(
+      "Missing permission: workflow.assignment.write",
+      "Eksik yetki: workflow.assignment.write"
+    );
+  }
+  if (access.wrongScope) {
+    return l(
+      "Your workflow assignment access does not cover this scope.",
+      "Workflow atama yetkiniz bu kapsami icermiyor."
+    );
+  }
+  return l(
+    "This scope cannot be used for workflow assignments.",
+    "Bu kapsam workflow atamalari icin kullanilamaz."
+  );
+}
+
 function resolveAssignmentRowScope(row, tenantScopeId) {
   if (row?.operatingUnitId) {
     return { scopeType: "OPERATING_UNIT", scopeId: row.operatingUnitId };
@@ -108,6 +165,7 @@ export default function WorkflowSetupPage() {
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [assignmentReviewSaved, setAssignmentReviewSaved] = useState(false);
   const [coverageDiagnostics, setCoverageDiagnostics] = useState(null);
   const [coverageDiagnosticsLoading, setCoverageDiagnosticsLoading] = useState(false);
   const [coverageDiagnosticsError, setCoverageDiagnosticsError] = useState("");
@@ -118,10 +176,12 @@ export default function WorkflowSetupPage() {
 
   const [definitions, setDefinitions] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [orgTreeRoot, setOrgTreeRoot] = useState(null);
   const [countries, setCountries] = useState([]);
   const [groupCompanies, setGroupCompanies] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
+  const [assignmentScopeNodeKey, setAssignmentScopeNodeKey] = useState("");
 
   const [selectedDefinitionId, setSelectedDefinitionId] = useState("");
   const [stepsJson, setStepsJson] = useState("[]");
@@ -176,27 +236,25 @@ export default function WorkflowSetupPage() {
     [definitions, assignmentForm.processType]
   );
 
-  const selectedCountry = useMemo(
-    () => countries.find((row) => String(row.id) === String(assignmentForm.countryId)) || null,
-    [countries, assignmentForm.countryId]
+  const assignmentScopeSelection = useMemo(
+    () => resolveAssignmentScopeSelection(assignmentForm, tenantScopeId),
+    [
+      assignmentForm.countryId,
+      assignmentForm.groupCompanyId,
+      assignmentForm.legalEntityId,
+      assignmentForm.operatingUnitId,
+      assignmentForm.scopeType,
+      tenantScopeId,
+    ]
   );
-  const selectedGroupCompany = useMemo(
+  const selectedAssignmentScopeNode = useMemo(
     () =>
-      groupCompanies.find((row) => String(row.id) === String(assignmentForm.groupCompanyId)) ||
-      null,
-    [groupCompanies, assignmentForm.groupCompanyId]
-  );
-  const selectedLegalEntity = useMemo(
-    () =>
-      legalEntities.find((row) => String(row.id) === String(assignmentForm.legalEntityId)) ||
-      null,
-    [legalEntities, assignmentForm.legalEntityId]
-  );
-  const selectedOperatingUnit = useMemo(
-    () =>
-      operatingUnits.find((row) => String(row.id) === String(assignmentForm.operatingUnitId)) ||
-      null,
-    [operatingUnits, assignmentForm.operatingUnitId]
+      findOrgScopeTreeNodeByScopeSelection(
+        orgTreeRoot,
+        assignmentScopeSelection,
+        assignmentScopeNodeKey
+      ),
+    [assignmentScopeNodeKey, assignmentScopeSelection, orgTreeRoot]
   );
 
   const workflowPreviewText = useMemo(
@@ -213,18 +271,12 @@ export default function WorkflowSetupPage() {
     () =>
       buildAssignmentEffectText({
         assignmentForm,
-        selectedCountry,
-        selectedGroupCompany,
-        selectedLegalEntity,
-        selectedOperatingUnit,
+        scopeNode: selectedAssignmentScopeNode,
         l,
       }),
     [
       assignmentForm,
-      selectedCountry,
-      selectedGroupCompany,
-      selectedLegalEntity,
-      selectedOperatingUnit,
+      selectedAssignmentScopeNode,
       l,
     ]
   );
@@ -232,33 +284,22 @@ export default function WorkflowSetupPage() {
     () =>
       buildAssignmentSelectionLabel({
         assignmentForm,
-        selectedCountry,
-        selectedGroupCompany,
-        selectedLegalEntity,
-        selectedOperatingUnit,
+        scopeNode: selectedAssignmentScopeNode,
         scopeTypeLabels: text.scopeTypeLabels,
         l,
       }),
     [
       assignmentForm,
-      selectedCountry,
-      selectedGroupCompany,
-      selectedLegalEntity,
-      selectedOperatingUnit,
+      selectedAssignmentScopeNode,
       text.scopeTypeLabels,
       l,
     ]
   );
-
-  const assignmentScopeId = resolveAssignmentScopeId(assignmentForm, tenantScopeId);
   const assignmentWriteAccess = getPermissionAccess(
     "workflow.assignment.write",
-    assignmentScopeId
+    assignmentScopeSelection
       ? {
-          scope: {
-            scopeType: assignmentForm.scopeType,
-            scopeId: assignmentScopeId,
-          },
+          scope: assignmentScopeSelection,
         }
       : undefined
   );
@@ -282,6 +323,21 @@ export default function WorkflowSetupPage() {
     [assignments, getPermissionAccess, l, saving, tenantScopeId]
   );
 
+  function handleAssignmentScopeSelect(nextSelection, node = null) {
+    setAssignmentScopeNodeKey(String(node?.key || ""));
+    setAssignmentForm((prev) => applyAssignmentScopeSelection(prev, nextSelection));
+  }
+
+  function getAssignmentNodeDisabledReason(_node, selection) {
+    // The backend can keep ancestor nodes visible for navigation, so workflow
+    // assignment overlays scope-write access on top of backend selectability.
+    const access = getPermissionAccess(
+      "workflow.assignment.write",
+      selection ? { scope: selection } : undefined
+    );
+    return getWorkflowAssignmentScopeDisabledReason(access, l);
+  }
+
   function applyStepDrafts(nextDrafts, processType = selectedProcessType) {
     const normalizedDrafts = buildStepDrafts(processType, nextDrafts);
     setStepDrafts(normalizedDrafts);
@@ -289,7 +345,7 @@ export default function WorkflowSetupPage() {
     setStepsJsonError("");
   }
 
-  function selectDefinitionForEditing(definitionId, targetStep = 2) {
+  function selectDefinitionForEditing(definitionId, targetStep = 3) {
     const nextId = String(definitionId || "");
     const definition =
       definitions.find((row) => toPositiveInt(row?.id) === toPositiveInt(nextId)) || null;
@@ -310,12 +366,39 @@ export default function WorkflowSetupPage() {
       return;
     }
 
-    setCurrentStep(2);
+    setCurrentStep(3);
   }
 
   function continueSelectedDefinition() {
     if (!toPositiveInt(selectedDefinitionId)) {
       setError(l("Select a workflow first.", "Once bir workflow secin."));
+      return;
+    }
+    setError("");
+    setCurrentStep(4);
+  }
+
+  function continueToDefinitionStep() {
+    if (!canWriteAssignments) {
+      setError(getWorkflowAssignmentScopeDisabledReason(assignmentWriteAccess, l));
+      return;
+    }
+    if (!orgTreeRoot) {
+      setError(
+        l(
+          "Load the organization tree before continuing.",
+          "Devam etmeden once organizasyon agacini yukleyin."
+        )
+      );
+      return;
+    }
+    if (!assignmentScopeSelection) {
+      setError(
+        l(
+          "Select a target scope first.",
+          "Once bir hedef kapsam secin."
+        )
+      );
       return;
     }
     setError("");
@@ -330,10 +413,10 @@ export default function WorkflowSetupPage() {
       return true;
     }
     if (stepNumber === 3) {
-      return Boolean(toPositiveInt(selectedDefinitionId));
+      return currentStep >= 2 && Boolean(assignmentScopeSelection);
     }
     if (stepNumber === 4) {
-      return currentStep >= 4;
+      return currentStep >= 3 && Boolean(toPositiveInt(selectedDefinitionId));
     }
     if (stepNumber === 5) {
       return currentStep >= 5;
@@ -369,10 +452,12 @@ export default function WorkflowSetupPage() {
     if (!canReadWorkflow && !canReadOrgTree) {
       setDefinitions([]);
       setAssignments([]);
+      setOrgTreeRoot(null);
       setCountries([]);
       setGroupCompanies([]);
       setLegalEntities([]);
       setOperatingUnits([]);
+      setAssignmentScopeNodeKey("");
       setSelectedDefinitionId("");
       return;
     }
@@ -380,10 +465,11 @@ export default function WorkflowSetupPage() {
     setLoading(true);
     setError("");
     try {
-      const [definitionsRes, assignmentsRes, countriesRes, groupsRes, entitiesRes, unitsRes] =
+      const [definitionsRes, assignmentsRes, orgTreeRes, countriesRes, groupsRes, entitiesRes, unitsRes] =
         await Promise.all([
           canReadDefinitions ? listWorkflowDefinitions({ limit: 200 }) : Promise.resolve(null),
           canReadAssignments ? listWorkflowAssignments({ limit: 300 }) : Promise.resolve(null),
+          canReadOrgTree ? listOrgTree({ shape: "nested" }) : Promise.resolve(null),
           canReadOrgTree ? listCountries() : Promise.resolve(null),
           canReadOrgTree ? listGroupCompanies() : Promise.resolve(null),
           canReadOrgTree ? listLegalEntities() : Promise.resolve(null),
@@ -393,6 +479,9 @@ export default function WorkflowSetupPage() {
       const nextDefinitions = Array.isArray(definitionsRes?.rows) ? definitionsRes.rows : [];
       setDefinitions(nextDefinitions);
       setAssignments(Array.isArray(assignmentsRes?.rows) ? assignmentsRes.rows : []);
+      setOrgTreeRoot(getOrgScopeTreeRoot(orgTreeRes));
+      // Keep the flat lookups only for coverage diagnostics compatibility. The
+      // workflow scope summaries now come from the canonical tree itself.
       setCountries(Array.isArray(countriesRes?.rows) ? countriesRes.rows : []);
       setGroupCompanies(Array.isArray(groupsRes?.rows) ? groupsRes.rows : []);
       setLegalEntities(Array.isArray(entitiesRes?.rows) ? entitiesRes.rows : []);
@@ -406,6 +495,8 @@ export default function WorkflowSetupPage() {
         return "";
       });
     } catch (err) {
+      setOrgTreeRoot(null);
+      setAssignmentScopeNodeKey("");
       setError(
         err?.response?.data?.message ||
           l("Failed to load workflow governance.", "Workflow yonetimi yuklenemedi.")
@@ -494,6 +585,27 @@ export default function WorkflowSetupPage() {
     assignmentForm.processType,
     filteredDefinitionOptions,
     selectedDefinition,
+  ]);
+
+  useEffect(() => {
+    if (!assignmentReviewSaved) {
+      return;
+    }
+    setAssignmentReviewSaved(false);
+    setMessage("");
+  }, [
+    assignmentForm.countryId,
+    assignmentForm.effectiveFrom,
+    assignmentForm.groupCompanyId,
+    assignmentForm.legalEntityId,
+    assignmentForm.operatingUnitId,
+    assignmentForm.processType,
+    assignmentForm.scopeType,
+    assignmentForm.status,
+    assignmentForm.workflowDefinitionId,
+    assignmentReviewSaved,
+    selectedDefinitionId,
+    stepsJson,
   ]);
 
   useEffect(() => {
@@ -598,7 +710,7 @@ export default function WorkflowSetupPage() {
       }));
 
       await loadData();
-      setCurrentStep(3);
+      setCurrentStep(4);
       setMessage(
         l(
           "Workflow created. Next, define who must approve.",
@@ -654,11 +766,11 @@ export default function WorkflowSetupPage() {
     try {
       await replaceWorkflowDefinitionSteps(definitionId, { steps: parsedSteps });
       await refreshModuleReadiness({ global: true });
-      setCurrentStep(4);
+      setCurrentStep(5);
       setMessage(
         l(
-          "Approval steps saved. Next, choose where this workflow applies.",
-          "Onay adimlari kaydedildi. Siradaki adim: workflow'un nerede gecerli olacagini secin."
+          "Approval steps saved. Review the setup and save the assignment.",
+          "Onay adimlari kaydedildi. Kurulumu inceleyin ve atamayi kaydedin."
         )
       );
     } catch (err) {
@@ -747,12 +859,31 @@ export default function WorkflowSetupPage() {
   }
 
   async function onCreateAssignment(event) {
-    event.preventDefault();
+    event?.preventDefault?.();
     if (!canWriteAssignments) {
       setError(
         l(
           "Missing permission: workflow.assignment.write",
           "Eksik yetki: workflow.assignment.write"
+        )
+      );
+      return;
+    }
+    if (!orgTreeRoot) {
+      setError(
+        l(
+          "Load the organization tree before saving the assignment.",
+          "Atamayi kaydetmeden once organizasyon agacini yukleyin."
+        )
+      );
+      return;
+    }
+
+    if (!assignmentScopeSelection) {
+      setError(
+        l(
+          "Select an assignment scope first.",
+          "Once bir atama kapsami secin."
         )
       );
       return;
@@ -790,6 +921,7 @@ export default function WorkflowSetupPage() {
       await createWorkflowAssignment(payload);
       await loadData();
       await refreshModuleReadiness({ global: true });
+      setAssignmentReviewSaved(true);
       setCurrentStep(5);
       setMessage(
         l(
@@ -881,8 +1013,8 @@ export default function WorkflowSetupPage() {
           <AlertTitle>{l("Organization tree access is missing", "Organizasyon agaci erisimi eksik")}</AlertTitle>
           <AlertDescription>
             {l(
-              "org.tree.read is required to load country, group, legal entity, and operating unit selectors.",
-              "Country, grup, legal entity ve operating unit secicilerini yuklemek icin org.tree.read gerekir."
+              "org.tree.read is required to load the shared workflow assignment scope tree.",
+              "Paylasilan workflow atama kapsam agacini yuklemek icin org.tree.read gerekir."
             )}
           </AlertDescription>
         </Alert>
@@ -903,6 +1035,28 @@ export default function WorkflowSetupPage() {
           ) : null}
 
           {currentStep === 2 ? (
+            <WorkflowAssignmentStep
+              l={l}
+              form={assignmentForm}
+              onFormChange={setAssignmentForm}
+              orgTreeRoot={orgTreeRoot}
+              scopeValue={assignmentScopeSelection}
+              scopeValueNodeKey={assignmentScopeNodeKey}
+              onSelectScope={handleAssignmentScopeSelect}
+              allowedScopeTypes={Object.keys(text.scopeTypeLabels)}
+              getNodeDisabledReason={getAssignmentNodeDisabledReason}
+              effectText={assignmentEffectText}
+              onSubmit={continueToDefinitionStep}
+              saving={false}
+              canWrite={canWriteAssignments}
+              access={assignmentWriteAccess}
+              scopeTypeLabels={text.scopeTypeLabels}
+              workflowTypeLabel={selectedProcessTypeLabel}
+              onBack={() => setCurrentStep(1)}
+            />
+          ) : null}
+
+          {currentStep === 3 ? (
             <WorkflowDefinitionStep
               l={l}
               mode={definitionMode}
@@ -921,15 +1075,19 @@ export default function WorkflowSetupPage() {
               saving={saving === "definition"}
               canWrite={canWriteDefinitions}
               access={definitionWriteAccess}
-              onBack={() => setCurrentStep(1)}
+              targetScopeLabel={assignmentLabel}
+              targetScopeEffectText={assignmentEffectText}
+              onBack={() => setCurrentStep(2)}
             />
           ) : null}
 
-          {currentStep === 3 ? (
+          {currentStep === 4 ? (
             <WorkflowStepsBuilderStep
               l={l}
               processType={selectedProcessType}
               selectedDefinition={selectedDefinition}
+              targetScopeLabel={assignmentLabel}
+              targetScopeEffectText={assignmentEffectText}
               stepDrafts={stepDrafts}
               stepScopeTypes={STEP_SCOPE_TYPES}
               stepScopeLabels={text.stepScopeLabels}
@@ -947,35 +1105,13 @@ export default function WorkflowSetupPage() {
               onSubmit={onSaveSteps}
               saving={saving === "steps"}
               canWrite={canWriteDefinitions}
-              onBack={() => setCurrentStep(2)}
+              onBack={() => setCurrentStep(3)}
               apTemplates={AP_BUSINESS_TEMPLATES}
               apTemplateLabels={text.apBusinessTemplates}
               apBusinessLabels={text.apBusinessLabels}
               selectedApTemplate={selectedApTemplate}
               onSelectApTemplate={onSelectApTemplate}
               apBusinessPreviewLines={apBusinessPreviewLines}
-            />
-          ) : null}
-
-          {currentStep === 4 ? (
-            <WorkflowAssignmentStep
-              l={l}
-              form={assignmentForm}
-              onFormChange={setAssignmentForm}
-              definitions={filteredDefinitionOptions}
-              countries={countries}
-              groupCompanies={groupCompanies}
-              legalEntities={legalEntities}
-              operatingUnits={operatingUnits}
-              effectText={assignmentEffectText}
-              onSubmit={onCreateAssignment}
-              saving={saving === "assignment"}
-              canWrite={canWriteAssignments}
-              access={assignmentWriteAccess}
-              scopeTypeLabels={text.scopeTypeLabels}
-              scopeTypeMeta={text.scopeTypeMeta}
-              workflowTypeLabel={selectedProcessTypeLabel}
-              onBack={() => setCurrentStep(3)}
             />
           ) : null}
 
@@ -991,6 +1127,10 @@ export default function WorkflowSetupPage() {
               workflowPreviewText={workflowPreviewText}
               assignmentEffectText={assignmentEffectText}
               onBack={() => setCurrentStep(4)}
+              onSubmitAssignment={onCreateAssignment}
+              assignmentSaving={saving === "assignment"}
+              canWriteAssignment={canWriteAssignments}
+              assignmentSaved={assignmentReviewSaved}
               apBusinessPreviewLines={apBusinessPreviewLines}
               apBusinessLabels={text.apBusinessLabels}
               coverageDiagnostics={coverageDiagnostics}
@@ -1013,6 +1153,7 @@ export default function WorkflowSetupPage() {
           processTypeLabel={selectedProcessTypeLabel}
           definition={selectedDefinition}
           stepDrafts={stepDrafts}
+          hasTargetScope={currentStep >= 2 && Boolean(assignmentScopeSelection)}
           assignmentLabel={assignmentLabel}
           assignmentStatus={assignmentForm.status}
           recommendation={selectedRecommendation}

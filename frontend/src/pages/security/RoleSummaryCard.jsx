@@ -38,14 +38,18 @@ export default function RoleSummaryCard({
   }
 
   const entry = getRoleCatalogEntry(role);
+  const runtimeRoleCode = String(role?.code || role?.roleCode || "").trim();
+  const runtimeRoleName = String(role?.name || role?.roleName || "").trim();
   const recommendedScopeMatch = isRecommendedScopeForRole(role, scopeType);
   const resolvedScopeLabel =
     scopeType && scopeId
       ? buildScopeLabel(scopeType, scopeId, lookups, tenantScopeId)
       : "";
   const roleDetailLabel = entry.technicalCode
-    ? "Compatibility runtime role"
-    : String(role?.name || role?.roleName || "").trim() || "Role detail";
+    ? "Legacy runtime role"
+    : runtimeRoleName && runtimeRoleName !== entry.code && runtimeRoleName !== runtimeRoleCode
+      ? runtimeRoleName
+      : "";
 
   return (
     <section
@@ -58,13 +62,18 @@ export default function RoleSummaryCard({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-base font-semibold text-slate-900">{entry.code}</div>
-          <div className="mt-1 text-sm text-slate-600">
-            {roleDetailLabel}
-            {entry.technicalCode ? ` | Runtime code: ${entry.technicalCode}` : ""}
-          </div>
+          <div className="text-base font-semibold text-slate-900">{entry.displayName}</div>
+          {roleDetailLabel || entry.technicalCode ? (
+            <div className="mt-1 text-sm text-slate-600">
+              {roleDetailLabel}
+              {entry.technicalCode ? `${roleDetailLabel ? " | " : ""}Runtime code: ${entry.technicalCode}` : ""}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+            {entry.modelTypeLabel}
+          </span>
           <span
             className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${getBadgeClasses(
               entry.category
@@ -79,13 +88,13 @@ export default function RoleSummaryCard({
           ) : null}
           {role?.legacyDisabled ? (
             <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-800">
-              Retired for new assignments
+              Hidden for new assignments
             </span>
           ) : null}
         </div>
       </div>
 
-      <p className="mt-3 text-sm leading-6 text-slate-700">{entry.summary}</p>
+      <p className="mt-3 text-sm leading-6 text-slate-700">{entry.description}</p>
 
       <div className="mt-3 flex flex-wrap gap-2">
         {entry.capabilities.map((capability) => (
@@ -99,6 +108,10 @@ export default function RoleSummaryCard({
       </div>
 
       <div className="mt-4 grid gap-2 text-sm text-slate-600">
+        <div>
+          <span className="font-semibold text-slate-800">Workflow family:</span>{" "}
+          {entry.workflowFamilyLabel}
+        </div>
         <div>
           <span className="font-semibold text-slate-800">Recommended scope:</span>{" "}
           {entry.recommendedScopes.length > 0
@@ -118,6 +131,12 @@ export default function RoleSummaryCard({
           </div>
         ) : null}
       </div>
+
+      {entry.legacy && entry.replacementLabel ? (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <span className="font-semibold">Replacement path:</span> {entry.replacementLabel}
+        </div>
+      ) : null}
 
       {!recommendedScopeMatch && scopeType ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">

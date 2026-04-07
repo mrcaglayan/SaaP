@@ -1,6 +1,7 @@
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
 } from "../../../../../../shared/cariDocumentWorkflowGovernance.js";
+import { getOrgScopeTreeNodeSummaryValue } from "../../../../shared/orgScopeTree.js";
 
 export const PROCESS_TYPES = [
   "PERIOD_CLOSE",
@@ -544,8 +545,8 @@ export function buildApBusinessPreview(stepDrafts, stepScopeLabels, l) {
   // Submit line — always branch-level for AP
   lines.push(
     l(
-      "Branch operators with submit authority can submit this AP document.",
-      "Gonderim yetkisine sahip sube operatorleri bu AP belgesini gonderebilir."
+      "Branch accountants with submit authority can submit this AP document.",
+      "Gonderim yetkisine sahip sube muhasebecileri bu AP belgesini gonderebilir."
     )
   );
 
@@ -689,13 +690,11 @@ export function buildWorkflowPreview(stepDrafts, stepScopeLabels, l) {
  */
 export function buildAssignmentEffectText({
   assignmentForm,
-  selectedCountry,
-  selectedGroupCompany,
-  selectedLegalEntity,
-  selectedOperatingUnit,
+  scopeNode,
   l,
 }) {
   const scopeType = assignmentForm?.scopeType;
+  const scopeSummary = getOrgScopeTreeNodeSummaryValue(scopeNode) || "-";
 
   if (scopeType === "TENANT") {
     return l(
@@ -705,34 +704,26 @@ export function buildAssignmentEffectText({
   }
   if (scopeType === "GROUP") {
     return l(
-      `This workflow will apply under Group = ${
-        selectedGroupCompany?.code || selectedGroupCompany?.name || "-"
-      }.`,
-      `Bu workflow Grup = ${selectedGroupCompany?.code || selectedGroupCompany?.name || "-"} altinda gecerli olur.`
+      `This workflow will apply under Group = ${scopeSummary}.`,
+      `Bu workflow Grup = ${scopeSummary} altinda gecerli olur.`
     );
   }
   if (scopeType === "COUNTRY") {
     return l(
-      `This workflow will apply under Country = ${
-        selectedCountry?.iso2 || selectedCountry?.name || "-"
-      }.`,
-      `Bu workflow Ulke = ${selectedCountry?.iso2 || selectedCountry?.name || "-"} altinda gecerli olur.`
+      `This workflow will apply under Country = ${scopeSummary}.`,
+      `Bu workflow Ulke = ${scopeSummary} altinda gecerli olur.`
     );
   }
   if (scopeType === "LEGAL_ENTITY") {
     return l(
-      `This workflow will apply only to Legal Entity = ${
-        selectedLegalEntity?.code || selectedLegalEntity?.name || "-"
-      }.`,
-      `Bu workflow yalnizca Legal Entity = ${selectedLegalEntity?.code || selectedLegalEntity?.name || "-"} icin gecerli olur.`
+      `This workflow will apply only to Legal Entity = ${scopeSummary}.`,
+      `Bu workflow yalnizca Legal Entity = ${scopeSummary} icin gecerli olur.`
     );
   }
   if (scopeType === "OPERATING_UNIT") {
     return l(
-      `This workflow will apply only to Operating Unit = ${
-        selectedOperatingUnit?.code || selectedOperatingUnit?.name || "-"
-      }.`,
-      `Bu workflow yalnizca Operating Unit = ${selectedOperatingUnit?.code || selectedOperatingUnit?.name || "-"} icin gecerli olur.`
+      `This workflow will apply only to Operating Unit = ${scopeSummary}.`,
+      `Bu workflow yalnizca Operating Unit = ${scopeSummary} icin gecerli olur.`
     );
   }
   return l(
@@ -746,36 +737,28 @@ export function buildAssignmentEffectText({
  */
 export function buildAssignmentSelectionLabel({
   assignmentForm,
-  selectedCountry,
-  selectedGroupCompany,
-  selectedLegalEntity,
-  selectedOperatingUnit,
+  scopeNode,
   scopeTypeLabels,
   l,
 }) {
   const scopeType = String(assignmentForm?.scopeType || "").toUpperCase();
   const scopeLabel = scopeTypeLabels?.[scopeType] || scopeType || "-";
+  const scopeSummary = getOrgScopeTreeNodeSummaryValue(scopeNode) || "-";
 
   if (scopeType === "TENANT") {
     return scopeLabel;
   }
   if (scopeType === "GROUP") {
-    return `${scopeLabel} = ${
-      selectedGroupCompany?.code || selectedGroupCompany?.name || "-"
-    }`;
+    return `${scopeLabel} = ${scopeSummary}`;
   }
   if (scopeType === "COUNTRY") {
-    return `${scopeLabel} = ${selectedCountry?.iso2 || selectedCountry?.name || "-"}`;
+    return `${scopeLabel} = ${scopeSummary}`;
   }
   if (scopeType === "LEGAL_ENTITY") {
-    return `${scopeLabel} = ${
-      selectedLegalEntity?.code || selectedLegalEntity?.name || "-"
-    }`;
+    return `${scopeLabel} = ${scopeSummary}`;
   }
   if (scopeType === "OPERATING_UNIT") {
-    return `${scopeLabel} = ${
-      selectedOperatingUnit?.code || selectedOperatingUnit?.name || "-"
-    }`;
+    return `${scopeLabel} = ${scopeSummary}`;
   }
   return l("Not assigned yet", "Henuz atanmadi");
 }

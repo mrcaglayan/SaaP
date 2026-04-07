@@ -8,6 +8,7 @@ import {
 } from "../../api/rbacAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import SecurityWarningList from "./SecurityWarningList.jsx";
+import { getRoleCatalogEntry } from "./roleCatalog.js";
 
 function formatDateTime(value) {
   if (!value) {
@@ -181,7 +182,7 @@ export default function RoleMigrationsPage() {
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Role Migration</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Review how retired legacy roles map into composable roles when a brownfield tenant
+            Review how legacy runtime roles map into composable roles when a brownfield tenant
             still carries compatibility assignments. Executed runs remain reviewable and
             rollback-capable from the stored snapshot.
           </p>
@@ -202,7 +203,7 @@ export default function RoleMigrationsPage() {
         <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
           <div className="font-semibold">Fresh-tenant simplified view</div>
           <p className="mt-1">
-            This tenant has no retired legacy role assignments and no stored migration runs, so
+            This tenant has no legacy runtime role assignments and no stored migration runs, so
             the migration tool is hidden from the normal admin navigation. Keep using the steady
             state role, delegation, diagnostics, and compliance surfaces.
           </p>
@@ -381,6 +382,7 @@ export default function RoleMigrationsPage() {
                   <tbody>
                     {(selectedRun.items || []).map((item) => {
                       const sourceSnapshot = item.sourceSnapshot || {};
+                      const sourceRoleEntry = getRoleCatalogEntry(item.source_role_code);
                       const targetAssignments = Array.isArray(item.targetAssignments)
                         ? item.targetAssignments
                         : [];
@@ -397,10 +399,12 @@ export default function RoleMigrationsPage() {
                           </td>
                           <td className="px-3 py-2">
                             <div className="font-medium text-slate-800">
-                              {item.source_role_code}
+                              {sourceRoleEntry.code}
                             </div>
                             <div className="text-xs text-slate-500">
-                              {item.source_role_name}
+                              {sourceRoleEntry.technicalCode
+                                ? `Runtime code: ${sourceRoleEntry.technicalCode}`
+                                : item.source_role_name}
                             </div>
                           </td>
                           <td className="px-3 py-2">
@@ -408,14 +412,19 @@ export default function RoleMigrationsPage() {
                               <span className="text-slate-500">No target roles</span>
                             ) : (
                               <div className="flex flex-wrap gap-1.5">
-                                {targetAssignments.map((targetAssignment) => (
-                                  <span
-                                    key={`${item.id}-${targetAssignment.roleCode}`}
-                                    className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-medium text-cyan-800"
-                                  >
-                                    {targetAssignment.roleCode}
-                                  </span>
-                                ))}
+                                {targetAssignments.map((targetAssignment) => {
+                                  const targetRoleEntry = getRoleCatalogEntry(
+                                    targetAssignment.roleCode
+                                  );
+                                  return (
+                                    <span
+                                      key={`${item.id}-${targetAssignment.roleCode}`}
+                                      className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-medium text-cyan-800"
+                                    >
+                                      {targetRoleEntry.code}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             )}
                           </td>

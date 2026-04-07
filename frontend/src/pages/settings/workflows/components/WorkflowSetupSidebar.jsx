@@ -30,6 +30,7 @@ export default function WorkflowSetupSidebar({
   processTypeLabel,
   definition,
   stepDrafts,
+  hasTargetScope = false,
   assignmentLabel,
   assignmentStatus,
   recommendation,
@@ -54,9 +55,15 @@ export default function WorkflowSetupSidebar({
             fallback={l("Not selected yet", "Henuz secilmedi")}
           />
           <SummaryRow
+            label={l("Target scope", "Hedef kapsam")}
+            value={assignmentLabel}
+            done={hasTargetScope}
+            fallback={l("Not selected yet", "Henuz secilmedi")}
+          />
+          <SummaryRow
             label={l("Workflow", "Workflow")}
             value={definition?.name || definition?.code}
-            done={currentStep >= 3}
+            done={Boolean(definition)}
             fallback={l("Not selected yet", "Henuz secilmedi")}
           />
           <SummaryRow
@@ -66,20 +73,14 @@ export default function WorkflowSetupSidebar({
                 ? `${stepCount} ${l("steps", "adim")}`
                 : l("No steps yet", "Henuz adim yok")
             }
-            done={currentStep >= 4}
-            fallback={l("No steps yet", "Henuz adim yok")}
-          />
-          <SummaryRow
-            label={l("Assignment", "Atama")}
-            value={assignmentLabel}
             done={currentStep >= 5}
-            fallback={l("Not saved yet", "Henuz kaydedilmedi")}
+            fallback={l("Save steps to continue", "Devam etmek icin adimlari kaydedin")}
           />
           <SummaryRow
             label={l("Status", "Durum")}
             value={assignmentStatus || "-"}
-            done={currentStep >= 5}
-            fallback={l("Waiting for assignment", "Atama bekleniyor")}
+            done={hasTargetScope}
+            fallback={l("Choose target scope first", "Once hedef kapsami secin")}
           />
 
           <div className="space-y-2 pt-2">

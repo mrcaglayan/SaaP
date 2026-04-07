@@ -23,6 +23,7 @@ import FxRatesPage from "./pages/settings/FxRatesPage";
 import ConsolidationSetupPage from "./pages/settings/ConsolidationSetupPage";
 import TaxSetupPage from "./pages/settings/TaxSetupPage.jsx";
 import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
+import AccessModelCatalogPage from "./pages/security/AccessModelCatalogPage.jsx";
 import FieldVisibilityPoliciesPage from "./pages/security/FieldVisibilityPoliciesPage.jsx";
 import ApprovalDelegationsPage from "./pages/security/ApprovalDelegationsPage.jsx";
 import TemporaryOperationalCoveragePage from "./pages/security/TemporaryOperationalCoveragePage.jsx";
@@ -676,6 +677,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/sube-operatorleri",
     childPath: "ayarlar/sube-operatorleri",
     element: <BranchOperatorManagementPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/access-model",
+    childPath: "ayarlar/rbac/access-model",
+    element: <AccessModelCatalogPage />,
   },
   {
     appPath: "/app/ayarlar/rbac/roles-permissions",
