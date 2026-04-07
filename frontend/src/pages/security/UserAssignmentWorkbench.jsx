@@ -78,6 +78,145 @@ function WorkbenchMetric({ label, value }) {
   );
 }
 
+function getWorkflowPackageSourceTone(sourceType) {
+  if (sourceType === "STARTER_DERIVED") {
+    return "blue";
+  }
+  if (sourceType === "PRESET_DERIVED") {
+    return "violet";
+  }
+  return "slate";
+}
+
+function getWorkflowPackageSourceLabel(l, sourceType) {
+  if (sourceType === "STARTER_DERIVED") {
+    return l("Starter-derived", "Starter-turevli");
+  }
+  if (sourceType === "PRESET_DERIVED") {
+    return l("Preset-derived", "Preset-turevli");
+  }
+  return l("Direct / custom", "Dogrudan / ozel");
+}
+
+function getWorkflowPackageSourceDetail(l, assignment) {
+  if (
+    assignment?.sourceType === "STARTER_DERIVED" &&
+    assignment?.sourceBusinessRoleLabel
+  ) {
+    return l(
+      "Derived from {{label}} starter bundle.",
+      "{{label}} starter paketinden turedi.",
+      { label: assignment.sourceBusinessRoleLabel }
+    );
+  }
+  if (assignment?.sourceType === "PRESET_DERIVED") {
+    const labels = Array.isArray(assignment?.sourcePresetLabels)
+      ? assignment.sourcePresetLabels.filter(Boolean)
+      : [];
+    if (labels.length > 0) {
+      const previewLabels = labels.slice(0, 2).join(", ");
+      const suffix = labels.length > 2 ? ` +${labels.length - 2}` : "";
+      return l(
+        "Derived from workflow preset {{label}}.",
+        "{{label}} workflow presetinden turedi.",
+        { label: `${previewLabels}${suffix}` }
+      );
+    }
+  }
+  return l(
+    "Direct workflow package grant.",
+    "Dogrudan workflow paketi yetkisi."
+  );
+}
+
+function getPackageSourceRecommendationTone(recommendationType) {
+  if (recommendationType === "starter") {
+    return "blue";
+  }
+  if (recommendationType === "preset") {
+    return "violet";
+  }
+  return "slate";
+}
+
+function getPackageSourceRecommendationLabel(l, recommendationType) {
+  if (recommendationType === "starter") {
+    return l("Starter package", "Starter paket");
+  }
+  if (recommendationType === "preset") {
+    return l("Preset package", "Preset paket");
+  }
+  return l("Optional package", "Opsiyonel paket");
+}
+
+function getPackageSourcePreviewNote(l, entry) {
+  const sourceName = entry?.recommendationSourceName || l("this source", "bu kaynak");
+  if (entry?.recommendationType === "preset") {
+    if (Array.isArray(entry?.previewStepLabels) && entry.previewStepLabels.length > 0) {
+      return l(
+        "Used in: {{steps}}",
+        "Kullanildigi adimlar: {{steps}}",
+        { steps: entry.previewStepLabels.join(", ") }
+      );
+    }
+    return l(
+      "Required by {{name}}.",
+      "{{name}} icin gerekir.",
+      { name: sourceName }
+    );
+  }
+  if (entry?.recommendationType === "starter") {
+    return l(
+      "Recommended starter package for {{name}}.",
+      "{{name}} icin onerilen starter paket.",
+      { name: sourceName }
+    );
+  }
+  return l(
+    "Optional add-on package for {{name}}.",
+    "{{name}} icin opsiyonel ek paket.",
+    { name: sourceName }
+  );
+}
+
+function getPackageSourcePreviewState(l, entry, scopeType) {
+  if (entry?.alreadyAssigned) {
+    return {
+      tone: "amber",
+      text: l(
+        "Already assigned at this scope.",
+        "Bu kapsamda zaten atanmis."
+      ),
+    };
+  }
+  if (!entry?.allowedAtScope) {
+    return {
+      tone: "amber",
+      text: l(
+        "Not available at {{scopeType}} scope.",
+        "{{scopeType}} kapsaminda kullanilamaz.",
+        { scopeType }
+      ),
+    };
+  }
+  if (entry?.assignmentBlockedByExtension) {
+    return {
+      tone: "amber",
+      text: l(
+        "Extension placeholder. This package cannot be applied yet.",
+        "Extension taslagi. Bu paket henuz uygulanamaz."
+      ),
+    };
+  }
+  return {
+    tone: "green",
+    text: l(
+      "Will be applied as a direct package grant.",
+      "Dogrudan paket yetkisi olarak uygulanacak."
+    ),
+  };
+}
+
 function WorkbenchBundleCard({
   actingRowId,
   bundle,
@@ -191,22 +330,42 @@ export default function UserAssignmentWorkbench(props) {
     businessRoleAssignmentForm,
     businessRoleAssignmentWriteAccess,
     businessRoleScopeOptions,
+    canAssignRolePermissions,
     canUpsertRole,
     filteredUsers,
     l,
     onAssignBusinessRoleLabel,
+    onApplyPackageSource,
+    onAssignWorkflowPackage,
     onClearFilters,
     onOpenBulkAssignments,
     onOpenUserEditor,
     onSelectBundle,
     onSelectUser,
     onRemoveBusinessRoleLabel,
+    onRemoveWorkflowPackage,
     onUpdateBusinessRoleAssignmentField,
+    onUpdatePackageSourceApplyField,
+    onUpdateWorkflowPackageAssignmentField,
+    onTogglePackageSourcePreviewPackage,
+    packageSourceApplyForm,
+    packageSourceApplyWriteAccess,
+    packageSourcePreviewEntries,
+    packageSourceScopeOptions,
+    packageSourceScopeTypeOptions,
     packageFilterOptions,
     roleFilterOptions,
     selectedBusinessRoleAssignments,
     selectedBusinessRoleCatalogEntry,
     selectedBusinessRoleRuntimeRoleExists,
+    selectedPackageSourceBusinessRoleAssigned,
+    selectedPackageSourceBusinessRoleEntry,
+    selectedPackageSourcePackageCodes,
+    selectedPackageSourcePresetEntry,
+    selectedWorkflowPackageAssignmentRoleStatus,
+    selectedWorkflowPackageAssignments,
+    selectedWorkflowPackageCatalogEntry,
+    selectedWorkflowPackageRuntimeRoleExists,
     scopeTargetOptions,
     selectedBundle,
     selectedUser,
@@ -219,6 +378,12 @@ export default function UserAssignmentWorkbench(props) {
     actingRowId,
     userFilters,
     onRevokeBundle,
+    workflowPackageAssignmentForm,
+    workflowPackageAssignmentWriteAccess,
+    workflowPackageCatalogEntries,
+    workflowPackageScopeOptions,
+    workflowPackageScopeTypeOptions,
+    workflowPresetCatalogEntries,
   } = props;
 
   return (
@@ -314,8 +479,8 @@ export default function UserAssignmentWorkbench(props) {
                 onChange={(event) => setUserFilters((prev) => ({ ...prev, sourceType: event.target.value }))}
                 className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
               >
-                <option value="">{l("Direct or preset-derived", "Dogrudan veya preset")}</option>
-                <option value="PRESET_DERIVED">{l("Preset-derived", "Preset-turevli")}</option>
+                <option value="">{l("All sources", "Tum kaynaklar")}</option>
+                <option value="DERIVED">{l("Derived (starter/preset)", "Turevli (starter/preset)")}</option>
                 <option value="DIRECT">{l("Direct / custom", "Dogrudan / ozel")}</option>
               </select>
               <select
@@ -429,9 +594,9 @@ export default function UserAssignmentWorkbench(props) {
                         </div>
                         <div>
                           <div className="font-semibold text-slate-900">
-                            {row.presetCount} / {row.directBundleCount}
+                            {row.derivedAssignmentCount} / {row.directAssignmentCount}
                           </div>
-                          <div>{l("Preset / direct", "Preset / dogrudan")}</div>
+                          <div>{l("Derived / direct", "Turevli / dogrudan")}</div>
                         </div>
                       </div>
                     </button>
@@ -479,8 +644,8 @@ export default function UserAssignmentWorkbench(props) {
                     </div>
                     <p className="mt-3 text-sm leading-6 text-slate-600">
                       {l(
-                        "The workbench keeps one user in focus so scope, package, and source filters stay visible while deeper assignment editors land in the next slices.",
-                        "Daha derin atama editorleri sonraki dilimlerde gelirken kapsam, paket ve kaynak filtreleri gorunur kalsin diye bu calisma alani bir kullaniciyi odakta tutar."
+                        "The workbench keeps one user in focus so scope, package, and source filters stay visible while deeper audit and diagnostics tools land in later slices.",
+                        "Daha derin denetim ve teshis araclari sonraki dilimlerde gelirken kapsam, paket ve kaynak filtreleri gorunur kalsin diye bu calisma alani bir kullaniciyi odakta tutar."
                       )}
                     </p>
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -505,8 +670,8 @@ export default function UserAssignmentWorkbench(props) {
                     <WorkbenchMetric label={l("Packages", "Paketler")} value={selectedUserPackageLabels.length} />
                     <WorkbenchMetric label={l("Scopes", "Kapsamlar")} value={selectedUser.scopeCount} />
                     <WorkbenchMetric
-                      label={l("Preset / direct", "Preset / dogrudan")}
-                      value={`${selectedUser.presetCount} / ${selectedUser.directBundleCount}`}
+                      label={l("Derived / direct", "Turevli / dogrudan")}
+                      value={`${selectedUser.derivedAssignmentCount} / ${selectedUser.directAssignmentCount}`}
                     />
                   </div>
                   {selectedUser.hasLegacyAssignments ? (
@@ -659,12 +824,571 @@ export default function UserAssignmentWorkbench(props) {
                 <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
                   <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
                     <h3 className="text-lg font-semibold text-slate-950">
+                      {l("Direct workflow packages", "Dogrudan workflow paketleri")}
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {l(
+                        "Assign exact package authority by scope without bundling unrelated review or posting powers. Each package grant stays removable on its own, even when it started from a starter bundle or preset preview.",
+                        "Ilgisiz inceleme veya posting yetkilerini paketlemeden, tam paket otoritesini kapsama gore atayin. Her paket yetkisi, starter paket veya preset onizlemesinden baslamis olsa bile tek basina kaldirilabilir."
+                      )}
+                    </p>
+                  </div>
+                  <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1.1fr)_360px]">
+                    <div className="space-y-3">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {l("Assigned packages", "Atanmis paketler")}
+                      </div>
+                      {selectedWorkflowPackageAssignments.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                          {l(
+                            "No direct workflow packages are assigned yet.",
+                            "Henuz dogrudan workflow paketi atanmis degil."
+                          )}
+                        </div>
+                      ) : (
+                        selectedWorkflowPackageAssignments.map((assignment) => (
+                          <div
+                            key={`workflow-package-assignment-${assignment.assignmentId}`}
+                            className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap gap-2">
+                                  <Pill label={assignment.packageLabel} tone="green" />
+                                  <Pill label={assignment.scopeType} tone="blue" />
+                                  {assignment.workflowFamilyLabel ? (
+                                    <Pill label={assignment.workflowFamilyLabel} tone="violet" />
+                                  ) : null}
+                                  <Pill
+                                    label={getWorkflowPackageSourceLabel(l, assignment.sourceType)}
+                                    tone={getWorkflowPackageSourceTone(assignment.sourceType)}
+                                  />
+                                </div>
+                                <div className="mt-2 text-sm text-slate-700">
+                                  {assignment.scopeLabel}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {getWorkflowPackageSourceDetail(l, assignment)}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {l(
+                                    "{{count}} permission codes",
+                                    "{{count}} yetki kodu",
+                                    { count: assignment.permissionCount }
+                                  )}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => onRemoveWorkflowPackage(assignment)}
+                                disabled={saving && actingRowId === `workflow-package-${assignment.assignmentId}`}
+                                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {saving && actingRowId === `workflow-package-${assignment.assignmentId}`
+                                  ? l("Removing...", "Kaldiriliyor...")
+                                  : l("Remove package", "Paketi kaldir")}
+                              </button>
+                            </div>
+                            <p className="mt-3 text-sm leading-6 text-slate-600">
+                              {assignment.packageSummary}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <form
+                      onSubmit={onAssignWorkflowPackage}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                    >
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {l("Assign package", "Paket ata")}
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            {l("Workflow package", "Workflow paketi")}
+                          </label>
+                          <select
+                            value={workflowPackageAssignmentForm.packageCode}
+                            onChange={(event) =>
+                              onUpdateWorkflowPackageAssignmentField("packageCode", event.target.value)
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {workflowPackageCatalogEntries.map((entry) => (
+                              <option key={`workflow-package-form-${entry.code}`} value={entry.code}>
+                                {entry.displayName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-900">
+                          <div className="font-semibold">
+                            {selectedWorkflowPackageCatalogEntry?.displayName || "-"}
+                          </div>
+                          <div className="mt-1 text-emerald-800">
+                            {selectedWorkflowPackageCatalogEntry?.description || ""}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <Pill
+                              label={l(
+                                "{{count}} permission codes",
+                                "{{count}} yetki kodu",
+                                { count: selectedWorkflowPackageCatalogEntry?.permissionCount || 0 }
+                              )}
+                              tone="green"
+                            />
+                            {workflowPackageScopeTypeOptions.map((scopeType) => (
+                              <Pill key={`workflow-package-scope-type-${scopeType}`} label={scopeType} tone="blue" />
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            {l("Scope type", "Kapsam tipi")}
+                          </label>
+                          <select
+                            value={workflowPackageAssignmentForm.scopeType}
+                            onChange={(event) =>
+                              onUpdateWorkflowPackageAssignmentField("scopeType", event.target.value)
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {workflowPackageScopeTypeOptions.map((scopeType) => (
+                              <option key={`workflow-package-scope-type-option-${scopeType}`} value={scopeType}>
+                                {scopeType}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            {l("Scope target", "Kapsam hedefi")}
+                          </label>
+                          <select
+                            value={workflowPackageAssignmentForm.scopeId}
+                            onChange={(event) =>
+                              onUpdateWorkflowPackageAssignmentField("scopeId", event.target.value)
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {workflowPackageScopeOptions.map((option) => (
+                              <option key={`workflow-package-scope-${option.id}`} value={String(option.id)}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {selectedWorkflowPackageAssignmentRoleStatus !== "aligned" ? (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                            {selectedWorkflowPackageAssignmentRoleStatus === "missing"
+                              ? canUpsertRole && canAssignRolePermissions
+                                ? l(
+                                    "The managed package role does not exist in this tenant yet. First assignment will create it and align the exact package permissions automatically.",
+                                    "Yonetilen paket rolu bu tenant'ta henuz yok. Ilk atama onu olusturup tam paket yetkilerini otomatik hizalar."
+                                  )
+                                : l(
+                                    "First assignment needs both security.role.upsert and security.role_permissions.assign so the managed package role can be created and aligned.",
+                                    "Ilk atama icin security.role.upsert ve security.role_permissions.assign birlikte gerekir; boylece yonetilen paket rolu olusturulup hizalanabilir."
+                                  )
+                              : selectedWorkflowPackageRuntimeRoleExists
+                                ? canAssignRolePermissions
+                                  ? l(
+                                      "This managed package role exists but its permissions drifted. Saving will realign it to the package definition first.",
+                                      "Bu yonetilen paket rolu mevcut; ancak yetkileri sapmis. Kaydetme once onu paket tanimina geri hizalar."
+                                    )
+                                  : l(
+                                      "This managed package role exists but its permissions drifted. security.role_permissions.assign is required before it can be used safely.",
+                                      "Bu yonetilen paket rolu mevcut; ancak yetkileri sapmis. Guvenli kullanilabilmesi icin once security.role_permissions.assign gerekir."
+                                    )
+                                : null}
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-600">
+                            {l(
+                              "This package role is already aligned. Saving will only add the scoped assignment row.",
+                              "Bu paket rolu zaten hizali. Kaydetme yalnizca kapsama bagli atama satirini ekler."
+                            )}
+                          </div>
+                        )}
+                        <button
+                          type="submit"
+                          disabled={saving || !workflowPackageAssignmentWriteAccess.allowed}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {saving ? l("Saving...", "Kaydediliyor...") : l("Assign workflow package", "Workflow paketini ata")}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                    <h3 className="text-lg font-semibold text-slate-950">
+                      {l("Starter bundles & presets", "Starter paketler ve presetler")}
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {l(
+                        "Start from a recommended business-role bundle or workflow preset, preview the exact packages, then apply only what you want. The resulting authority still lands as direct package grants, so nothing is hidden or all-or-nothing.",
+                        "Onerilen bir is rolu paketi veya workflow presetinden baslayin, tam paketleri onizleyin ve sadece istediklerinizi uygulayin. Ortaya cikan yetki yine dogrudan paket yetkileri olarak yazilir; boylece hicbir sey gizli ya da ya-hep-ya-hic kalmaz."
+                      )}
+                    </p>
+                  </div>
+                  <div className="grid gap-5 px-5 py-5 lg:grid-cols-[340px_minmax(0,1fr)]">
+                    <form
+                      onSubmit={onApplyPackageSource}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                    >
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {l("Quick apply", "Hizli uygula")}
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            {l("Source", "Kaynak")}
+                          </label>
+                          <select
+                            value={packageSourceApplyForm.sourceKind}
+                            onChange={(event) =>
+                              onUpdatePackageSourceApplyField("sourceKind", event.target.value)
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            <option value="STARTER">
+                              {l("Business role starter", "Is rolu starter")}
+                            </option>
+                            <option value="PRESET">
+                              {l("Workflow preset", "Workflow preset")}
+                            </option>
+                          </select>
+                        </div>
+                        {packageSourceApplyForm.sourceKind === "STARTER" ? (
+                          <div className="space-y-2">
+                            <label className="text-sm font-semibold text-slate-700">
+                              {l("Business role", "Is rolu")}
+                            </label>
+                            <select
+                              value={packageSourceApplyForm.businessRoleCode}
+                              onChange={(event) =>
+                                onUpdatePackageSourceApplyField(
+                                  "businessRoleCode",
+                                  event.target.value
+                                )
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                            >
+                              {roleFilterOptions.map((option) => (
+                                <option
+                                  key={`starter-business-role-${option.value}`}
+                                  value={option.value}
+                                >
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <label className="text-sm font-semibold text-slate-700">
+                              {l("Workflow preset", "Workflow preset")}
+                            </label>
+                            <select
+                              value={packageSourceApplyForm.presetCode}
+                              onChange={(event) =>
+                                onUpdatePackageSourceApplyField("presetCode", event.target.value)
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                            >
+                              {workflowPresetCatalogEntries.map((entry) => (
+                                <option key={`starter-preset-${entry.code}`} value={entry.code}>
+                                  {entry.displayName}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-900">
+                          {packageSourceApplyForm.sourceKind === "STARTER" ? (
+                            <>
+                              <div className="font-semibold">
+                                {selectedPackageSourceBusinessRoleEntry?.displayName || "-"}
+                              </div>
+                              <div className="mt-1 text-sky-800">
+                                {selectedPackageSourceBusinessRoleEntry?.description || ""}
+                              </div>
+                              <div className="mt-2 text-xs text-sky-700">
+                                {l("Default scope", "Varsayilan kapsam")}:{" "}
+                                {selectedPackageSourceBusinessRoleEntry?.defaultScope || "-"}
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="font-semibold">
+                                {selectedPackageSourcePresetEntry?.displayName || "-"}
+                              </div>
+                              <div className="mt-1 text-sky-800">
+                                {selectedPackageSourcePresetEntry?.description || ""}
+                              </div>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {selectedPackageSourcePresetEntry?.workflowFamilyLabel ? (
+                                  <Pill
+                                    label={selectedPackageSourcePresetEntry.workflowFamilyLabel}
+                                    tone="violet"
+                                  />
+                                ) : null}
+                                <Pill
+                                  label={l(
+                                    "{{count}} steps",
+                                    "{{count}} adim",
+                                    {
+                                      count:
+                                        selectedPackageSourcePresetEntry?.stepCount || 0,
+                                    }
+                                  )}
+                                  tone="blue"
+                                />
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            {l("Scope type", "Kapsam tipi")}
+                          </label>
+                          <select
+                            value={packageSourceApplyForm.scopeType}
+                            onChange={(event) =>
+                              onUpdatePackageSourceApplyField("scopeType", event.target.value)
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {packageSourceScopeTypeOptions.map((scopeType) => (
+                              <option
+                                key={`package-source-scope-type-${scopeType}`}
+                                value={scopeType}
+                              >
+                                {scopeType}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            {l("Scope target", "Kapsam hedefi")}
+                          </label>
+                          <select
+                            value={packageSourceApplyForm.scopeId}
+                            onChange={(event) =>
+                              onUpdatePackageSourceApplyField("scopeId", event.target.value)
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {packageSourceScopeOptions.map((option) => (
+                              <option
+                                key={`package-source-scope-${option.id}`}
+                                value={String(option.id)}
+                              >
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {packageSourceApplyForm.sourceKind === "STARTER" ? (
+                          <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={
+                                selectedPackageSourceBusinessRoleAssigned ||
+                                packageSourceApplyForm.assignBusinessRoleLabel
+                              }
+                              disabled={selectedPackageSourceBusinessRoleAssigned}
+                              onChange={(event) =>
+                                onUpdatePackageSourceApplyField(
+                                  "assignBusinessRoleLabel",
+                                  event.target.checked
+                                )
+                              }
+                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900"
+                            />
+                            <span>
+                              <span className="block font-semibold text-slate-900">
+                                {l(
+                                  "Also assign the business role label",
+                                  "Is rol etiketini de ata"
+                                )}
+                              </span>
+                              <span className="mt-1 block text-slate-600">
+                                {selectedPackageSourceBusinessRoleAssigned
+                                  ? l(
+                                      "This non-authoritative label already exists at the selected scope.",
+                                      "Bu otorite vermeyen etiket secilen kapsamda zaten var."
+                                    )
+                                  : l(
+                                      "Recommended when you want the resulting package mix to remain explainable as a starter-derived setup instead of plain direct grants.",
+                                      "Ortaya cikan paket karisiminin siradan dogrudan yetkiler yerine starter-turevli bir kurulum olarak gorunmesini istiyorsaniz onerilir."
+                                    )}
+                              </span>
+                            </span>
+                          </label>
+                        ) : null}
+                        {!packageSourceApplyWriteAccess.allowed ? (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                            {l(
+                              "You do not have permission to apply starter or preset suggestions at the selected scope.",
+                              "Secilen kapsamda starter veya preset onerilerini uygulama yetkiniz yok."
+                            )}
+                          </div>
+                        ) : null}
+                        <button
+                          type="submit"
+                          disabled={
+                            saving ||
+                            !packageSourceApplyWriteAccess.allowed ||
+                            selectedPackageSourcePackageCodes.length === 0
+                          }
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {saving
+                            ? l("Applying...", "Uygulaniyor...")
+                            : l(
+                                "Apply {{count}} selected packages",
+                                "{{count}} secili paketi uygula",
+                                { count: selectedPackageSourcePackageCodes.length }
+                              )}
+                        </button>
+                      </div>
+                    </form>
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            {l("Preview packages", "Onizleme paketleri")}
+                          </div>
+                          <p className="mt-1 text-sm leading-6 text-slate-600">
+                            {l(
+                              "Preview the exact packages that will be written as direct grants. Uncheck any package you do not want to apply.",
+                              "Dogrudan yetki olarak yazilacak tam paketleri onizleyin. Uygulamak istemediginiz paketlerin isaretini kaldirin."
+                            )}
+                          </p>
+                        </div>
+                        <Pill
+                          label={l(
+                            "{{count}} selected",
+                            "{{count}} secili",
+                            { count: selectedPackageSourcePackageCodes.length }
+                          )}
+                          tone="blue"
+                        />
+                      </div>
+                      {packageSourcePreviewEntries.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                          {l(
+                            "This source does not currently expose any workflow packages.",
+                            "Bu kaynak su anda hic workflow paketi sunmuyor."
+                          )}
+                        </div>
+                      ) : (
+                        packageSourcePreviewEntries.map((entry) => {
+                          const previewState = getPackageSourcePreviewState(
+                            l,
+                            entry,
+                            packageSourceApplyForm.scopeType
+                          );
+                          return (
+                            <label
+                              key={`package-source-preview-${entry.code}`}
+                              className={`block rounded-2xl border px-4 py-4 ${
+                                entry.assignable
+                                  ? "border-slate-200 bg-white"
+                                  : "border-slate-200 bg-slate-50"
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  checked={entry.selected && entry.assignable}
+                                  disabled={!entry.assignable}
+                                  onChange={() =>
+                                    onTogglePackageSourcePreviewPackage(entry.code)
+                                  }
+                                  className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap gap-2">
+                                    <Pill label={entry.displayName} tone="green" />
+                                    <Pill
+                                      label={getPackageSourceRecommendationLabel(
+                                        l,
+                                        entry.recommendationType
+                                      )}
+                                      tone={getPackageSourceRecommendationTone(
+                                        entry.recommendationType
+                                      )}
+                                    />
+                                    {entry.workflowFamilyLabel ? (
+                                      <Pill
+                                        label={entry.workflowFamilyLabel}
+                                        tone="violet"
+                                      />
+                                    ) : null}
+                                    {entry.assignmentBlockedByExtension ? (
+                                      <Pill
+                                        label={l(
+                                          "Extension placeholder",
+                                          "Extension taslagi"
+                                        )}
+                                        tone="amber"
+                                      />
+                                    ) : null}
+                                  </div>
+                                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                                    {entry.description}
+                                  </p>
+                                  <div className="mt-2 text-xs text-slate-500">
+                                    {getPackageSourcePreviewNote(l, entry)}
+                                  </div>
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    <Pill
+                                      label={l(
+                                        "{{count}} permission codes",
+                                        "{{count}} yetki kodu",
+                                        { count: entry.permissionCount || 0 }
+                                      )}
+                                      tone="green"
+                                    />
+                                    {(entry.allowedScopes || []).map((scopeType) => (
+                                      <Pill
+                                        key={`package-source-preview-scope-${entry.code}-${scopeType}`}
+                                        label={scopeType}
+                                        tone="blue"
+                                      />
+                                    ))}
+                                  </div>
+                                  <div
+                                    className={`mt-3 rounded-xl border px-3 py-2 text-xs ${getToneClasses(
+                                      previewState.tone
+                                    )}`}
+                                  >
+                                    {previewState.text}
+                                  </div>
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                    <h3 className="text-lg font-semibold text-slate-950">
                       {l("Runtime authority snapshot", "Runtime yetki ozeti")}
                     </h3>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
                       {l(
-                        "This section still explains the current permission-bearing runtime role mix and the workflow-package coverage derived from it. Direct package assignment UX lands in the next slices.",
-                        "Bu bolum hala mevcut yetki veren runtime rol karisimini ve buradan tureyen workflow-package kapsamini aciklar. Dogrudan paket atama UX'i sonraki dilimlerde gelir."
+                        "This section explains the current permission-bearing runtime role mix and the workflow-package coverage visible from both direct package grants and older compatibility roles.",
+                        "Bu bolum hem dogrudan paket yetkilerinden hem de eski uyumluluk rollerinden gorunen mevcut yetki veren runtime rol karisimini ve workflow-package kapsamini aciklar."
                       )}
                     </p>
                   </div>
@@ -699,7 +1423,6 @@ export default function UserAssignmentWorkbench(props) {
                       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                         {l("Workflow package coverage", "Workflow paket kapsami")}
                       </div>
-                      {/* Package coverage stays derived from runtime-role mappings until direct package assignment ships. */}
                       <div className="mt-3 flex flex-wrap gap-2">
                         {selectedUserPackageLabels.length > 0 ? (
                           selectedUserPackageLabels.map((packageLabel) => (

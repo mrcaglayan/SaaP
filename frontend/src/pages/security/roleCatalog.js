@@ -11,6 +11,7 @@ const CATEGORY_LABELS = Object.freeze({
   scoped: "Scoped operations",
   readonly: "Read-only",
   business_label: "Business role label",
+  package_authority: "Workflow package role",
   legacy: "Legacy",
   custom: "Custom tenant role",
 });
@@ -76,6 +77,7 @@ const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
   CountryFinanceSetupManager: "CountryAPApprover",
 });
 export const BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX = "BUSINESS_ROLE__";
+export const WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX = "WORKFLOW_PACKAGE__";
 const LEGACY_LABEL_ALIAS_CATALOG = Object.freeze({
   ENTITY_AP_CONTROLLER_LABEL: Object.freeze({
     runtimeCode: "EntityAPController",
@@ -1609,6 +1611,7 @@ const CATEGORY_ORDER = Object.freeze([
   "scoped",
   "readonly",
   "business_label",
+  "package_authority",
   "system",
   "legacy",
   "custom",
@@ -1636,6 +1639,16 @@ function getBusinessRoleAssignmentBusinessRoleCode(roleCode) {
     BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX.length
   );
   return BUSINESS_ROLE_CATALOG[businessRoleCode] ? businessRoleCode : "";
+}
+function getWorkflowPackageAssignmentPackageCode(roleCode) {
+  const normalizedRoleCode = normalizeText(roleCode).toUpperCase();
+  if (!normalizedRoleCode.startsWith(WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX)) {
+    return "";
+  }
+  const packageCode = normalizedRoleCode.slice(
+    WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX.length
+  );
+  return WORKFLOW_PACKAGE_CATALOG[packageCode] ? packageCode : "";
 }
 function normalizeWorkflowPackageCode(packageCode) {
   return normalizeText(packageCode).toUpperCase();
@@ -1736,6 +1749,53 @@ function buildBusinessRoleAssignmentRoleEntry(roleCode) {
     businessRoleCode,
     nonAuthoritative: true,
     businessLabelOnly: true,
+  };
+}
+function buildWorkflowPackageAssignmentRoleEntry(roleCode) {
+  const workflowPackageCode = getWorkflowPackageAssignmentPackageCode(roleCode);
+  const workflowPackageEntry = workflowPackageCode
+    ? getWorkflowPackageCatalogEntry(workflowPackageCode)
+    : null;
+  const runtimeCode =
+    workflowPackageCode ||
+    normalizeText(roleCode).toUpperCase() ||
+    "WORKFLOW_PACKAGE_ROLE";
+  const metadata = buildMetadataEntry({
+    modelType: "runtime_role",
+    code: workflowPackageEntry?.displayName || runtimeCode,
+    displayName: workflowPackageEntry?.displayName || runtimeCode,
+    description:
+      workflowPackageEntry?.description ||
+      "Managed workflow package role. Keep its permissions aligned to the package definition.",
+    category: "package_authority",
+    defaultScope: workflowPackageEntry?.defaultScope || "",
+    legacy: false,
+    replacementLabel: "",
+    workflowFamily: workflowPackageEntry?.workflowFamily || "CROSS_WORKFLOW",
+    sortOrder: (workflowPackageEntry?.sortOrder || 9999) + 2,
+  });
+
+  return {
+    ...metadata,
+    runtimeCode,
+    technicalCode: runtimeCode,
+    summary:
+      "Managed workflow package role. It carries the exact package permission set for direct package assignment.",
+    capabilities:
+      cloneList(workflowPackageEntry?.permissionCodes).length > 0
+        ? cloneList(workflowPackageEntry?.permissionCodes)
+        : ["Managed package authority"],
+    recommendedScopes: cloneList(workflowPackageEntry?.allowedScopes),
+    companionOnly: false,
+    companionNote:
+      "Assign and remove this role through workflow package UX so the permission set stays aligned to the package definition.",
+    legacyReason: "",
+    workflowPackageCode,
+    packageAuthorityOnly: true,
+    managedPackageRole: true,
+    permissionCodes: cloneList(workflowPackageEntry?.permissionCodes),
+    allowedScopes: cloneList(workflowPackageEntry?.allowedScopes),
+    plannedExtension: Boolean(workflowPackageEntry?.plannedExtension),
   };
 }
 function getWorkflowPackageDisplayName(packageCode) {
@@ -1853,6 +1913,14 @@ export function isBusinessRoleAssignmentRoleCode(roleCode) {
 }
 
 /**
+ * Returns whether the supplied runtime role code is one of the managed
+ * workflow-package roles used by the UI-2C direct package assignment flow.
+ */
+export function isWorkflowPackageAssignmentRoleCode(roleCode) {
+  return Boolean(getWorkflowPackageAssignmentPackageCode(roleCode));
+}
+
+/**
  * Returns the dedicated zero-permission runtime role code used to persist one
  * business-role label assignment safely inside the existing role-assignment
  * system.
@@ -1861,6 +1929,17 @@ export function getBusinessRoleAssignmentRuntimeRoleCode(roleCode) {
   const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
   return BUSINESS_ROLE_CATALOG[normalizedRoleCode]
     ? `${BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX}${normalizedRoleCode}`
+    : "";
+}
+
+/**
+ * Returns the dedicated runtime role code used to persist one workflow
+ * package assignment with the exact package permission set.
+ */
+export function getWorkflowPackageAssignmentRuntimeRoleCode(packageCode) {
+  const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
+  return WORKFLOW_PACKAGE_CATALOG[normalizedPackageCode]
+    ? `${WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX}${normalizedPackageCode}`
     : "";
 }
 
@@ -1888,6 +1967,33 @@ export function getBusinessRoleAssignmentRoleDefinition(roleCode) {
 }
 
 /**
+ * Builds the managed runtime-role payload used when a direct workflow package
+ * assignment needs an exact package-backed role created or repaired.
+ */
+export function getWorkflowPackageAssignmentRoleDefinition(packageCode) {
+  const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
+  const workflowPackageEntry = getWorkflowPackageCatalogEntry(normalizedPackageCode);
+  const runtimeRoleCode =
+    getWorkflowPackageAssignmentRuntimeRoleCode(normalizedPackageCode);
+  if (!runtimeRoleCode || !workflowPackageEntry.code) {
+    return null;
+  }
+
+  return {
+    packageCode: normalizedPackageCode,
+    roleCode: runtimeRoleCode,
+    roleName: `Workflow Package / ${workflowPackageEntry.displayName}`,
+    displayName: workflowPackageEntry.displayName,
+    defaultScope: workflowPackageEntry.defaultScope,
+    description: workflowPackageEntry.description,
+    allowedScopes: cloneList(workflowPackageEntry.allowedScopes),
+    permissionCodes: cloneList(workflowPackageEntry.permissionCodes),
+    plannedExtension: Boolean(workflowPackageEntry.plannedExtension),
+    extensionNote: workflowPackageEntry.extensionNote || "",
+  };
+}
+
+/**
  * Returns the UX metadata used to explain a role in admin surfaces.
  * `code` is the business-facing label while `technicalCode` is only surfaced
  * for legacy runtime roles where migration traceability still matters.
@@ -1899,6 +2005,9 @@ export function getRoleCatalogEntry(roleOrCode) {
       : normalizeText(roleOrCode?.code || roleOrCode?.roleCode);
   if (isBusinessRoleAssignmentRoleCode(requestedRoleCode)) {
     return buildBusinessRoleAssignmentRoleEntry(requestedRoleCode);
+  }
+  if (isWorkflowPackageAssignmentRoleCode(requestedRoleCode)) {
+    return buildWorkflowPackageAssignmentRoleEntry(requestedRoleCode);
   }
   const normalizedRoleCode = normalizeRoleCatalogCode(requestedRoleCode);
   const base = ROLE_CATALOG[normalizedRoleCode] || null;
@@ -2101,20 +2210,33 @@ export function listWorkflowPackageCatalogEntries() {
  * brownfield admin screens while direct package assignment lands later.
  */
 export function resolveWorkflowPackagesForRuntimeRoles(roleCodes) {
+  const requestedRoleCodes = Array.isArray(roleCodes) ? roleCodes : [];
+  const directPackageEntries = requestedRoleCodes
+    .map((roleCode) => getWorkflowPackageAssignmentPackageCode(roleCode))
+    .filter(Boolean)
+    .map((packageCode) => getWorkflowPackageCatalogEntry(packageCode));
   const normalizedRoleCodes = new Set(
-    (Array.isArray(roleCodes) ? roleCodes : [])
+    requestedRoleCodes
       .map((roleCode) => normalizeRoleCatalogCode(roleCode))
       .filter(Boolean)
   );
-  if (normalizedRoleCodes.size === 0) {
+  if (normalizedRoleCodes.size === 0 && directPackageEntries.length === 0) {
     return [];
   }
 
-  return listWorkflowPackageCatalogEntries().filter((entry) =>
+  const mappedEntries = listWorkflowPackageCatalogEntries().filter((entry) =>
     cloneList(entry?.runtimeRoleCodes).some((roleCode) =>
       normalizedRoleCodes.has(normalizeRoleCatalogCode(roleCode))
     )
   );
+
+  return Array.from(
+    new Map(
+      [...directPackageEntries, ...mappedEntries]
+        .filter(Boolean)
+        .map((entry) => [entry.code, entry])
+    ).values()
+  ).sort(sortCatalogEntries);
 }
 
 /**
