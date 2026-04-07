@@ -74,12 +74,55 @@ const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
   EntitySetupManager: "EntityAPController",
   CountryFinanceSetupManager: "CountryAPApprover",
 });
+const LEGACY_LABEL_ALIAS_CATALOG = Object.freeze({
+  ENTITY_AP_CONTROLLER_LABEL: Object.freeze({
+    runtimeCode: "EntityAPController",
+    displayName: "EntityAPController label",
+    description:
+      "Older AP controller wording kept only as a compatibility reference while fresh-tenant admin UX uses stage-based submit/review/post labels.",
+    legacyReason:
+      "Old AP controller wording is retired from fresh-tenant UX. Use the stage-based AP Submitter label instead.",
+    replacementLabel: "AP Submitter",
+    defaultScope: "LEGAL_ENTITY",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    usageSourceRoleCodes: freezeList(["EntityAPController"]),
+    sortOrder: 960,
+  }),
+  COUNTRY_AP_APPROVER_LABEL: Object.freeze({
+    runtimeCode: "CountryAPApprover",
+    displayName: "CountryAPApprover label",
+    description:
+      "Older AP approver wording kept only as a compatibility reference while fresh-tenant admin UX uses AP Reviewer.",
+    legacyReason:
+      "The old AP approver label is retired from fresh-tenant UX. Use AP Reviewer for review-stage authority.",
+    replacementLabel: "AP Reviewer",
+    defaultScope: "COUNTRY",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    usageSourceRoleCodes: freezeList(["CountryAPApprover"]),
+    sortOrder: 970,
+  }),
+  COUNTRY_AP_CONTROLLER_POSTER_LABELS: Object.freeze({
+    runtimeCode: "CountryAPController / CountryAPPoster",
+    displayName: "CountryAPController / CountryAPPoster labels",
+    description:
+      "Older AP controller/poster wording kept only as a compatibility reference while fresh-tenant admin UX uses AP Poster.",
+    legacyReason:
+      "Old AP controller/poster wording is retired from fresh-tenant UX. Use AP Poster for final posting authority.",
+    replacementLabel: "AP Poster",
+    defaultScope: "COUNTRY",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    usageSourceRoleCodes: freezeList(["CountryAPController", "CountryAPPoster"]),
+    sortOrder: 980,
+  }),
+});
 const ROLE_CATALOG = Object.freeze({
   TenantAdmin: {
     code: "Legacy Tenant Admin",
     category: "legacy",
     summary:
       "Legacy tenant-wide admin role preserved only for migration rollback and historical review. Fresh tenants use SecurityAdmin plus SystemAdmin.",
+    legacyReason:
+      "Broad tenant-wide compatibility role kept only for migration rollback and brownfield review.",
     capabilities: ["Security admin", "System operations", "Compatibility bootstrap"],
     recommendedScopes: ["TENANT"],
     replacementLabel: "SecurityAdmin + SystemAdmin",
@@ -182,6 +225,8 @@ const ROLE_CATALOG = Object.freeze({
     category: "legacy",
     summary:
       "Legacy AP posting role preserved for brownfield migration and rollback while tenants move to AP Submitter plus AP Poster.",
+    legacyReason:
+      "Old combined AP submit/post role kept only while tenants move to the separated AP Submitter and AP Poster model.",
     capabilities: ["Compatibility AP submit", "Compatibility AP cancel", "Compatibility AP posting"],
     recommendedScopes: ["LEGAL_ENTITY"],
     replacementLabel: "AP Submitter + AP Poster",
@@ -309,6 +354,8 @@ const ROLE_CATALOG = Object.freeze({
     category: "legacy",
     summary:
       "Legacy group-wide controller role preserved only for migration rollback and historical review.",
+    legacyReason:
+      "Old broad group controller role is retained only for rollback and brownfield review while clean group packages take over.",
     capabilities: ["Broad reporting", "Legacy close review", "Compatibility"],
     recommendedScopes: ["GROUP"],
     replacementLabel: "Group Checker / Group Approver / Group CEO",
@@ -320,6 +367,8 @@ const ROLE_CATALOG = Object.freeze({
     category: "legacy",
     summary:
       "Legacy country-wide controller role preserved only for migration rollback and historical review.",
+    legacyReason:
+      "Old broad country controller role is retained only for rollback and brownfield review while scoped AP and governance packages take over.",
     capabilities: ["Broad governance", "GL posting", "Treasury and payroll approval"],
     recommendedScopes: ["COUNTRY"],
     replacementLabel: "AP Reviewer / AP Poster / scoped governance packages",
@@ -331,6 +380,8 @@ const ROLE_CATALOG = Object.freeze({
     category: "legacy",
     summary:
       "Legacy entity-wide accountant role preserved only for migration rollback and historical review.",
+    legacyReason:
+      "Old broad entity accountant role is retained only for rollback and brownfield review while business-role labels and workflow packages take over.",
     capabilities: ["Broad entity operations", "Legacy GL operations", "Compatibility"],
     recommendedScopes: ["LEGAL_ENTITY"],
     replacementLabel: "Entity Accountant + workflow packages",
@@ -1776,6 +1827,7 @@ export function getRoleCatalogEntry(roleOrCode) {
 
   return {
     ...metadata,
+    runtimeCode: normalizedRoleCode || requestedRoleCode || displayCode,
     technicalCode: showTechnicalCode ? requestedRoleCode : "",
     summary: metadata.description,
     capabilities: cloneList(base?.capabilities).length
@@ -1784,6 +1836,61 @@ export function getRoleCatalogEntry(roleOrCode) {
     recommendedScopes: cloneList(base?.recommendedScopes),
     companionOnly: Boolean(base?.companionOnly),
     companionNote: base?.companionNote || "",
+    legacyReason: base?.legacyReason || "",
+  };
+}
+
+function buildLegacyRuntimeRoleCatalogEntry(roleCode) {
+  const normalizedRoleCode = normalizeRoleCatalogCode(roleCode);
+  const base = ROLE_CATALOG[normalizedRoleCode] || null;
+  const roleEntry = getRoleCatalogEntry(normalizedRoleCode);
+  return {
+    ...roleEntry,
+    runtimeCode: normalizedRoleCode || roleEntry.runtimeCode || roleEntry.technicalCode || roleEntry.code,
+    legacyReason:
+      base?.legacyReason ||
+      "Compatibility runtime role retained only for brownfield review and rollback.",
+    visibleInNewTenant: false,
+    visibleInNewTenantLabel: "No",
+    usageSourceRoleCodes: normalizedRoleCode ? [normalizedRoleCode] : [],
+    legacyItemType: "runtime_role",
+  };
+}
+
+function buildLegacyLabelAliasCatalogEntry(aliasCode) {
+  const normalizedAliasCode = normalizeText(aliasCode);
+  const base = LEGACY_LABEL_ALIAS_CATALOG[normalizedAliasCode] || null;
+  const metadata = buildMetadataEntry({
+    modelType: "runtime_role",
+    code: base?.displayName || normalizedAliasCode,
+    displayName: base?.displayName || normalizedAliasCode,
+    description:
+      base?.description ||
+      "Legacy admin label kept only as a compatibility reference for migration-aware review.",
+    category: "legacy",
+    defaultScope: base?.defaultScope || "",
+    legacy: true,
+    replacementLabel: base?.replacementLabel || "",
+    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
+    sortOrder: base?.sortOrder || 9999,
+  });
+
+  return {
+    ...metadata,
+    runtimeCode: base?.runtimeCode || normalizedAliasCode,
+    technicalCode: base?.runtimeCode || normalizedAliasCode,
+    summary: metadata.description,
+    capabilities: [],
+    recommendedScopes: metadata.defaultScope ? [metadata.defaultScope] : [],
+    companionOnly: false,
+    companionNote: "",
+    legacyReason:
+      base?.legacyReason ||
+      "Legacy admin label kept only for compatibility review.",
+    visibleInNewTenant: false,
+    visibleInNewTenantLabel: "No",
+    usageSourceRoleCodes: cloneList(base?.usageSourceRoleCodes),
+    legacyItemType: "label_alias",
   };
 }
 
@@ -1891,6 +1998,28 @@ export function listWorkflowPackageCatalogEntries() {
 }
 
 /**
+ * Resolves the clean workflow-package catalog entries explained by the
+ * supplied runtime-role codes. This is a compatibility-only UX helper for
+ * brownfield admin screens while direct package assignment lands later.
+ */
+export function resolveWorkflowPackagesForRuntimeRoles(roleCodes) {
+  const normalizedRoleCodes = new Set(
+    (Array.isArray(roleCodes) ? roleCodes : [])
+      .map((roleCode) => normalizeRoleCatalogCode(roleCode))
+      .filter(Boolean)
+  );
+  if (normalizedRoleCodes.size === 0) {
+    return [];
+  }
+
+  return listWorkflowPackageCatalogEntries().filter((entry) =>
+    cloneList(entry?.runtimeRoleCodes).some((roleCode) =>
+      normalizedRoleCodes.has(normalizeRoleCatalogCode(roleCode))
+    )
+  );
+}
+
+/**
  * Returns one workflow-preset catalog entry with step metadata ready for future catalog tabs.
  */
 export function getWorkflowPresetCatalogEntry(presetCode) {
@@ -1913,6 +2042,7 @@ export function getWorkflowPresetCatalogEntry(presetCode) {
 
   const requiredPackageCodes = cloneList(base?.requiredPackageCodes);
   const typicalActorCodes = cloneList(base?.typicalActorCodes);
+  const draft = Boolean(base?.draft);
   const steps = cloneList(base?.steps).map((step) => ({
     stepNo: Number(step?.stepNo || 0),
     actionLabel: step?.actionLabel || "",
@@ -1933,11 +2063,14 @@ export function getWorkflowPresetCatalogEntry(presetCode) {
     ...metadata,
     primaryScope: metadata.defaultScope,
     stepCount: steps.length,
+    draft,
+    statusLabel: draft ? "Draft" : "Active",
     typicalActorCodes,
     typicalActorLabels: typicalActorCodes.map(getBusinessRoleDisplayName),
     requiredPackageCodes,
     requiredPackageLabels: requiredPackageCodes.map(getWorkflowPackageDisplayName),
     usesExtension: Boolean(base?.usesExtension),
+    usesExtensionLabel: base?.usesExtension ? "Yes" : "No",
     extensionNote: base?.extensionNote || "",
     steps,
   };
@@ -1956,9 +2089,16 @@ export function listWorkflowPresetCatalogEntries() {
  * Returns the legacy runtime-role entries that belong in the compatibility tab.
  */
 export function listLegacyRoleCatalogEntries() {
-  return Object.keys(ROLE_CATALOG)
-    .filter((roleCode) => Boolean(ROLE_CATALOG[roleCode]?.legacy))
-    .map((roleCode) => getRoleCatalogEntry(roleCode))
+  // The legacy tab keeps both retired runtime roles and retired admin labels in
+  // one compatibility-only surface so fresh-tenant pickers stay clean.
+  return [
+    ...Object.keys(ROLE_CATALOG)
+      .filter((roleCode) => Boolean(ROLE_CATALOG[roleCode]?.legacy))
+      .map((roleCode) => buildLegacyRuntimeRoleCatalogEntry(roleCode)),
+    ...Object.keys(LEGACY_LABEL_ALIAS_CATALOG).map((aliasCode) =>
+      buildLegacyLabelAliasCatalogEntry(aliasCode)
+    ),
+  ]
     .sort(sortCatalogEntries);
 }
 

@@ -1,4 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { listRoleAssignments } from "../../api/rbacAdmin.js";
+import { useAuth } from "../../auth/useAuth.js";
 import { listAccessModelCatalogSections } from "./roleCatalog.js";
 
 const ACCESS_MODEL_TAB_ORDER = Object.freeze([
@@ -14,6 +17,10 @@ function normalizeText(value) {
   return String(value || "").trim();
 }
 
+function toCount(value) {
+  return Number(value || 0);
+}
+
 function buildEntrySearchText(entry) {
   const stepValues = Array.isArray(entry?.steps)
     ? entry.steps.flatMap((step) => [
@@ -22,6 +29,9 @@ function buildEntrySearchText(entry) {
         step.requiredPackageCode,
         step.requiredPackageLabel,
         ...(step.eligibleBusinessRoleLabels || []),
+        step.minApproverCount,
+        step.allowSelfApprove ? "self approve allowed" : "self approve disabled",
+        step.escalationAfterHours,
       ])
     : [];
   return [
@@ -34,7 +44,12 @@ function buildEntrySearchText(entry) {
     entry?.defaultScope,
     entry?.primaryScope,
     entry?.technicalCode,
+    entry?.runtimeCode,
     entry?.replacementLabel,
+    entry?.legacyReason,
+    entry?.visibleInNewTenantLabel,
+    entry?.usedByCountLabel,
+    entry?.usedByCount,
     ...(entry?.starterPackageLabels || []),
     ...(entry?.optionalPackageLabels || []),
     ...(entry?.allowedScopes || []),
@@ -89,6 +104,12 @@ function getSearchPlaceholder(tabKey) {
   if (tabKey === "workflow_packages") {
     return "Search by package, workflow family, scope, permission, runtime role, or preset";
   }
+  if (tabKey === "workflow_presets") {
+    return "Search by preset, workflow family, actor, package, step action, or scope";
+  }
+  if (tabKey === "legacy_catalog") {
+    return "Search by runtime code, legacy reason, replacement, scope, or visibility";
+  }
   return "Search by label, description, scope, package, preset, or replacement";
 }
 
@@ -99,7 +120,10 @@ function getStatusLabel(entry) {
   if (entry?.legacy) {
     return "Legacy";
   }
-  if (entry?.plannedExtension || entry?.usesExtension) {
+  if (entry?.draft) {
+    return "Draft";
+  }
+  if (entry?.plannedExtension) {
     return "Extension";
   }
   return "Active";
@@ -112,7 +136,10 @@ function getStatusClasses(entry) {
   if (entry?.legacy) {
     return "border-amber-200 bg-amber-50 text-amber-800";
   }
-  if (entry?.plannedExtension || entry?.usesExtension) {
+  if (entry?.draft) {
+    return "border-sky-200 bg-sky-50 text-sky-800";
+  }
+  if (entry?.plannedExtension) {
     return "border-violet-200 bg-violet-50 text-violet-800";
   }
   return "border-emerald-200 bg-emerald-50 text-emerald-800";
@@ -168,6 +195,63 @@ function getPreviewValues(values, limit = 3) {
     return rows;
   }
   return [...rows.slice(0, limit), `+${rows.length - limit} more`];
+}
+
+function buildLegacyRoleAssignmentCounts(assignments) {
+  const counts = {};
+  for (const assignment of Array.isArray(assignments) ? assignments : []) {
+    const roleCode = normalizeText(assignment?.roleCode || assignment?.role_code);
+    if (!roleCode) {
+      continue;
+    }
+    counts[roleCode] = toCount(counts[roleCode]) + 1;
+  }
+  return counts;
+}
+
+function getLegacyUsedByCount(entry, assignmentCountsByRoleCode) {
+  return (Array.isArray(entry?.usageSourceRoleCodes) ? entry.usageSourceRoleCodes : []).reduce(
+    (total, roleCode) => total + toCount(assignmentCountsByRoleCode?.[roleCode]),
+    0
+  );
+}
+
+function buildLegacyCatalogViewEntry(entry, {
+  canReadRoleAssignments,
+  assignmentCountsByRoleCode,
+  assignmentCountsLoaded,
+  assignmentCountsLoading,
+  assignmentCountsError,
+}) {
+  const usedByCount = getLegacyUsedByCount(entry, assignmentCountsByRoleCode);
+  let usedByCountLabel = String(usedByCount);
+  let usedByCountNote = usedByCount === 1
+    ? "1 live tenant role assignment."
+    : `${usedByCount} live tenant role assignments.`;
+
+  if (!canReadRoleAssignments) {
+    usedByCountLabel = "Requires assignment read";
+    usedByCountNote =
+      "Used By Count requires security.role_assignment.read before live tenant assignments can be summarized.";
+  } else if (assignmentCountsError) {
+    usedByCountLabel = "Unavailable";
+    usedByCountNote =
+      "Live assignment counts could not be loaded from the role-assignment API.";
+  } else if (assignmentCountsLoading && !assignmentCountsLoaded) {
+    usedByCountLabel = "Loading...";
+    usedByCountNote = "Loading live tenant role assignments for this compatibility row.";
+  } else if (!assignmentCountsLoaded) {
+    usedByCountLabel = "Pending";
+    usedByCountNote = "Live assignment counts have not been loaded yet.";
+  }
+
+  return {
+    ...entry,
+    usedByCount,
+    usedByCountLabel,
+    usedByCountNote,
+    visibleInNewTenantLabel: entry?.visibleInNewTenant ? "Yes" : "No",
+  };
 }
 
 function AccessModelTabButton({ active, count, label, onClick }) {
@@ -472,6 +556,178 @@ function WorkflowPackageCatalogTable({ entries, selectedEntryCode, onOpen }) {
   );
 }
 
+function WorkflowPresetCatalogTable({ entries, selectedEntryCode, onOpen }) {
+  return (
+    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
+            <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              <th className="px-5 py-4">Preset name</th>
+              <th className="px-5 py-4">Workflow family</th>
+              <th className="px-5 py-4">Primary scope</th>
+              <th className="px-5 py-4">Step count</th>
+              <th className="px-5 py-4">Typical actors</th>
+              <th className="px-5 py-4">Uses extension?</th>
+              <th className="px-5 py-4">Active / Draft</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {entries.map((entry) => {
+              const isSelected = selectedEntryCode === entry.code;
+              return (
+                <tr key={entry.code} className={isSelected ? "bg-slate-950/5" : "bg-white"}>
+                  <td className="px-5 py-4 align-top">
+                    <button
+                      type="button"
+                      onClick={() => onOpen(entry.code)}
+                      className="text-left"
+                    >
+                      <div className="text-sm font-semibold text-slate-950">{entry.displayName}</div>
+                      <div className="mt-1 text-xs text-slate-500">{entry.categoryLabel}</div>
+                    </button>
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                      {entry.workflowFamilyLabel}
+                    </span>
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                      {entry.primaryScope || "-"}
+                    </span>
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <div className="text-sm font-semibold text-slate-900">{entry.stepCount}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {entry.stepCount === 1 ? "Single-step preset" : "Ordered business flow"}
+                    </div>
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <MetadataPillList
+                      values={getPreviewValues(entry.typicalActorLabels, 3)}
+                      emptyLabel="No typical actors are documented."
+                    />
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <div className="space-y-2">
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                          entry.usesExtension
+                            ? "border-violet-200 bg-violet-50 text-violet-800"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        }`}
+                      >
+                        {entry.usesExtensionLabel}
+                      </span>
+                      <div className="text-xs leading-5 text-slate-500">
+                        {entry.usesExtension
+                          ? "Requires or anticipates an extension-aware rollout."
+                          : "Runs on the shipped package model."}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <div className="space-y-2">
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getStatusClasses(
+                          entry
+                        )}`}
+                      >
+                        {getStatusLabel(entry)}
+                      </span>
+                      <div className="text-xs leading-5 text-slate-500">
+                        {entry.draft
+                          ? "Draft-only preset definition."
+                          : "Ready-made business-readable preset."}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function LegacyCatalogTable({ entries, selectedEntryCode, onOpen }) {
+  return (
+    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
+            <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              <th className="px-5 py-4">Runtime code</th>
+              <th className="px-5 py-4">Scope</th>
+              <th className="px-5 py-4">Legacy reason</th>
+              <th className="px-5 py-4">Replacement</th>
+              <th className="px-5 py-4">Used By Count</th>
+              <th className="px-5 py-4">Visible In New Tenant?</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {entries.map((entry) => {
+              const isSelected = selectedEntryCode === entry.code;
+              return (
+                <tr key={entry.code} className={isSelected ? "bg-slate-950/5" : "bg-white"}>
+                  <td className="px-5 py-4 align-top">
+                    <button
+                      type="button"
+                      onClick={() => onOpen(entry.code)}
+                      className="text-left"
+                    >
+                      <div className="text-sm font-semibold text-slate-950">
+                        {entry.runtimeCode || entry.technicalCode || entry.code}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">{entry.displayName}</div>
+                    </button>
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <div className="space-y-2">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                        {entry.defaultScope || "-"}
+                      </span>
+                      <div className="text-xs text-slate-500">{entry.workflowFamilyLabel}</div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-4 align-top text-sm leading-6 text-slate-600">
+                    {entry.legacyReason || entry.description}
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <div className="text-sm font-semibold text-slate-900">
+                      {entry.replacementLabel || "Review manually"}
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">
+                      Replacement guidance only. This tab does not execute migration.
+                    </div>
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <div className="text-sm font-semibold text-slate-900">{entry.usedByCountLabel}</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">{entry.usedByCountNote}</div>
+                  </td>
+                  <td className="px-5 py-4 align-top">
+                    <div className="space-y-2">
+                      <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                        {entry.visibleInNewTenantLabel}
+                      </span>
+                      <div className="text-xs leading-5 text-slate-500">
+                        Compatibility-only. Fresh-tenant pickers should default to No.
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function MetadataPillList({ values, emptyLabel }) {
   const rows = Array.isArray(values) ? values.filter(Boolean) : [];
   if (rows.length === 0) {
@@ -683,6 +939,55 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
             </section>
           ) : null}
 
+          {entry.legacy && entry.legacyReason ? (
+            <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+                Compatibility status
+              </div>
+              <div className="mt-2 text-sm leading-6 text-amber-950">{entry.legacyReason}</div>
+              <div className="mt-5 grid gap-4 md:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+                    Used By Count
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-amber-950">
+                    {entry.usedByCountLabel || "Pending"}
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-amber-900">
+                    {entry.usedByCountNote ||
+                      "Used By Count reflects live tenant role assignments when available."}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+                    Visible In New Tenant?
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-amber-950">
+                    {entry.visibleInNewTenantLabel || "No"}
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-amber-900">
+                    Fresh-tenant admin pickers should stay on the cleaned business labels and
+                    package model.
+                  </div>
+                </div>
+              </div>
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Link
+                  to="/app/ayarlar/rbac/role-migrations"
+                  className="rounded-2xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-950"
+                >
+                  Open migration workspace
+                </Link>
+                <Link
+                  to="/app/ayarlar/rbac/roles-permissions"
+                  className="rounded-2xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-950"
+                >
+                  Open current role editor
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
           {entry.modelType === "workflow_package" && Array.isArray(entry.legacyWarnings) && entry.legacyWarnings.length > 0 ? (
             <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
@@ -693,6 +998,56 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
                   <div key={`${entry.code}-${warning}`}>{warning}</div>
                 ))}
               </div>
+            </section>
+          ) : null}
+
+          {entry.modelType === "workflow_preset" ? (
+            <section className="rounded-3xl border border-slate-200 bg-white p-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Typical actors
+                  </div>
+                  <div className="mt-3">
+                    <MetadataPillList
+                      values={entry.typicalActorLabels}
+                      emptyLabel="No typical actors are documented for this preset."
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Required packages
+                  </div>
+                  <div className="mt-3">
+                    <MetadataPillList
+                      values={entry.requiredPackageLabels}
+                      emptyLabel="No required packages are documented for this preset."
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Uses extension?
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-slate-900">
+                    {entry.usesExtensionLabel}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Status
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-slate-900">
+                    {entry.statusLabel}
+                  </div>
+                </div>
+              </div>
+              {entry.extensionNote ? (
+                <div className="mt-5 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">
+                  {entry.extensionNote}
+                </div>
+              ) : null}
             </section>
           ) : null}
 
@@ -768,6 +1123,32 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
                         emptyLabel="No typical actor labels are defined for this step."
                       />
                     </div>
+                    <div className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          Min approver count
+                        </div>
+                        <div className="mt-1 font-semibold text-slate-900">{step.minApproverCount}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          Self-approve rule
+                        </div>
+                        <div className="mt-1 font-semibold text-slate-900">
+                          {step.allowSelfApprove ? "Allowed" : "Not allowed"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          Escalation rule
+                        </div>
+                        <div className="mt-1 font-semibold text-slate-900">
+                          {step.escalationAfterHours == null
+                            ? "No escalation"
+                            : `${step.escalationAfterHours} hour${step.escalationAfterHours === 1 ? "" : "s"}`}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -815,19 +1196,40 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
  */
 export default function AccessModelCatalogPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { hasPermission, securityAdminUiState, securityAdminUiStateLoaded } = useAuth();
+  const [legacyAssignmentCountsByRoleCode, setLegacyAssignmentCountsByRoleCode] = useState({});
+  const [legacyAssignmentCountsLoading, setLegacyAssignmentCountsLoading] = useState(false);
+  const [legacyAssignmentCountsLoaded, setLegacyAssignmentCountsLoaded] = useState(false);
+  const [legacyAssignmentCountsError, setLegacyAssignmentCountsError] = useState("");
   const sections = listAccessModelCatalogSections();
   const currentTab = ACCESS_MODEL_TAB_ORDER.includes(searchParams.get("tab"))
     ? searchParams.get("tab")
     : ACCESS_MODEL_TAB_ORDER[0];
   const isBusinessRolesTab = currentTab === "business_roles";
   const isWorkflowPackagesTab = currentTab === "workflow_packages";
+  const isWorkflowPresetsTab = currentTab === "workflow_presets";
+  const isLegacyCatalogTab = currentTab === "legacy_catalog";
+  const canReadRoleAssignments = hasPermission("security.role_assignment.read");
+  const isFreshTenantSimplified =
+    securityAdminUiStateLoaded &&
+    Boolean(securityAdminUiState?.roleMigrations?.simplifiedFreshTenantView);
   const currentSection =
     sections.find((section) => section.key === currentTab) || sections[0] || null;
   const searchValue = normalizeText(searchParams.get("q"));
   const scopeFilter = normalizeText(searchParams.get("scope")).toUpperCase() || FILTER_ALL;
   const familyFilter = normalizeText(searchParams.get("family")) || FILTER_ALL;
   const selectedEntryCode = normalizeText(searchParams.get("item"));
-  const currentEntries = currentSection?.entries || [];
+  const currentEntries = (currentSection?.entries || []).map((entry) =>
+    isLegacyCatalogTab
+      ? buildLegacyCatalogViewEntry(entry, {
+          canReadRoleAssignments,
+          assignmentCountsByRoleCode: legacyAssignmentCountsByRoleCode,
+          assignmentCountsLoaded: legacyAssignmentCountsLoaded,
+          assignmentCountsLoading: legacyAssignmentCountsLoading,
+          assignmentCountsError: legacyAssignmentCountsError,
+        })
+      : entry
+  );
   const familyOptions = buildFilterOptions(currentEntries, (entry) => [entry.workflowFamily]);
   const scopeOptions = buildFilterOptions(currentEntries, (entry) => getEntryScopes(entry));
   const filteredEntries = currentEntries.filter((entry) => {
@@ -857,10 +1259,81 @@ export default function AccessModelCatalogPage() {
             label: "Open current role editor",
           };
 
+  useEffect(() => {
+    if (!isLegacyCatalogTab) {
+      return undefined;
+    }
+    if (!canReadRoleAssignments) {
+      setLegacyAssignmentCountsByRoleCode({});
+      setLegacyAssignmentCountsLoading(false);
+      setLegacyAssignmentCountsLoaded(false);
+      setLegacyAssignmentCountsError("");
+      return undefined;
+    }
+    if (isFreshTenantSimplified) {
+      setLegacyAssignmentCountsByRoleCode({});
+      setLegacyAssignmentCountsLoading(false);
+      setLegacyAssignmentCountsLoaded(true);
+      setLegacyAssignmentCountsError("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLegacyAssignmentCountsLoading(true);
+    setLegacyAssignmentCountsError("");
+
+    // UI-1E keeps Used By Count tied to live role assignments so the legacy
+    // catalog stays read-only and does not depend on a migration preview run.
+    listRoleAssignments()
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setLegacyAssignmentCountsByRoleCode(
+          buildLegacyRoleAssignmentCounts(response?.rows || [])
+        );
+        setLegacyAssignmentCountsLoaded(true);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setLegacyAssignmentCountsByRoleCode({});
+        setLegacyAssignmentCountsLoaded(false);
+        setLegacyAssignmentCountsError(
+          error?.response?.data?.message ||
+            "Legacy role assignment counts could not be loaded."
+        );
+      })
+      .finally(() => {
+        if (cancelled) {
+          return;
+        }
+        setLegacyAssignmentCountsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadRoleAssignments, isFreshTenantSimplified, isLegacyCatalogTab]);
+
   const activeCount = currentEntries.filter((entry) => !entry.legacy && !entry.hiddenFromPicker).length;
   const hiddenCount = currentEntries.filter((entry) => entry.hiddenFromPicker).length;
   const extensionCount = currentEntries.filter((entry) => entry.plannedExtension).length;
-  const legacyCount = currentEntries.filter((entry) => entry.legacy).length;
+  const draftCount = currentEntries.filter((entry) => entry.draft).length;
+  const legacyHiddenCount = currentEntries.filter((entry) => entry.visibleInNewTenant === false).length;
+  const legacyAssignedCount = currentEntries.filter((entry) => toCount(entry.usedByCount) > 0).length;
+  const legacyMixLabel =
+    canReadRoleAssignments && (legacyAssignmentCountsLoaded || isFreshTenantSimplified)
+      ? `${legacyHiddenCount} hidden / ${legacyAssignedCount} assigned`
+      : `${legacyHiddenCount} hidden / live counts pending`;
+  const legacyMixDescription = !canReadRoleAssignments
+    ? "Used By Count requires role-assignment read permission."
+    : legacyAssignmentCountsError
+      ? "Live compatibility counts are temporarily unavailable from the role-assignment API."
+      : isFreshTenantSimplified
+        ? "This tenant currently has no live compatibility assignments."
+        : "Used By Count reflects current live role assignments, not preset suggestions.";
 
   return (
     <div className="space-y-6">
@@ -897,14 +1370,18 @@ export default function AccessModelCatalogPage() {
                     ? `${activeCount} active / ${hiddenCount} hidden`
                     : isWorkflowPackagesTab
                       ? `${activeCount - extensionCount} active / ${extensionCount} extension`
-                    : `${activeCount} active / ${legacyCount} legacy`}
+                      : isWorkflowPresetsTab
+                        ? `${activeCount - draftCount} active / ${draftCount} draft`
+                        : legacyMixLabel}
                 </div>
                 <div className="mt-2 text-sm text-slate-600">
                   {isBusinessRolesTab
                     ? "Business roles stay human-friendly and separate from authority packages."
                     : isWorkflowPackagesTab
                       ? "Runtime mappings show how clean packages sit on top of current seeded roles."
-                    : "Legacy stays isolated behind its own tab by default."}
+                      : isWorkflowPresetsTab
+                        ? "Presets stay readable as business flows before any tenant-specific workflow customization."
+                        : legacyMixDescription}
                 </div>
               </div>
             </div>
@@ -1074,6 +1551,77 @@ export default function AccessModelCatalogPage() {
             </section>
           ) : null}
 
+          {isWorkflowPresetsTab ? (
+            <section className="rounded-[28px] border border-indigo-200 bg-[linear-gradient(135deg,_rgba(238,242,255,0.96),_rgba(255,255,255,0.98))] px-5 py-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="max-w-3xl">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                    Workflow preset guidance
+                  </div>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-950">
+                    Presets should read like business flows
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Presets bundle the ordered steps, package requirements, scopes, and typical
+                    actors into a ready-made governance flow. This tab is preview-only for now and
+                    intentionally avoids turning the preset catalog into the actual save/apply UI.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Link
+                    to="/app/ayarlar/workflow-kurulumu"
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                  >
+                    Open workflow governance
+                  </Link>
+                  <Link
+                    to="/app/ayarlar/rbac/access-model?tab=workflow_packages"
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                  >
+                    Open workflow packages
+                  </Link>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {isLegacyCatalogTab ? (
+            <section className="rounded-[28px] border border-amber-200 bg-[linear-gradient(135deg,_rgba(255,251,235,0.96),_rgba(255,255,255,0.98))] px-5 py-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="max-w-3xl">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
+                    Legacy catalog guidance
+                  </div>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-950">
+                    Compatibility stays visible but out of fresh-tenant pickers
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    This tab keeps retired runtime roles and retired admin labels visible for
+                    power-admin review while the normal tenant UX stays on the cleaned business
+                    labels and package model.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Link
+                    to="/app/ayarlar/rbac/role-migrations"
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                  >
+                    Open migration workspace
+                  </Link>
+                  <Link
+                    to="/app/ayarlar/rbac/roles-permissions"
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                  >
+                    Open current role editor
+                  </Link>
+                </div>
+              </div>
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-white/80 px-4 py-3 text-sm text-slate-700">
+                {legacyMixDescription}
+              </div>
+            </section>
+          ) : null}
+
           <section className="space-y-4">
             {filteredEntries.length === 0 ? (
               <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
@@ -1093,6 +1641,30 @@ export default function AccessModelCatalogPage() {
               />
             ) : isWorkflowPackagesTab ? (
               <WorkflowPackageCatalogTable
+                entries={filteredEntries}
+                selectedEntryCode={selectedEntryCode}
+                onOpen={(entryCode) =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      item: entryCode,
+                    })
+                  )
+                }
+              />
+            ) : isWorkflowPresetsTab ? (
+              <WorkflowPresetCatalogTable
+                entries={filteredEntries}
+                selectedEntryCode={selectedEntryCode}
+                onOpen={(entryCode) =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      item: entryCode,
+                    })
+                  )
+                }
+              />
+            ) : isLegacyCatalogTab ? (
+              <LegacyCatalogTable
                 entries={filteredEntries}
                 selectedEntryCode={selectedEntryCode}
                 onOpen={(entryCode) =>

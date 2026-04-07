@@ -28,6 +28,7 @@ import {
   formatDelegationWindow,
 } from "../../utils/delegationUi.js";
 import SecurityWarningList from "./SecurityWarningList.jsx";
+import UserAssignmentWorkbench from "./UserAssignmentWorkbench.jsx";
 import {
   BOOTSTRAP_HANDOFF_PRESET_CATALOG,
   buildScopeLabel,
@@ -35,6 +36,7 @@ import {
   getBootstrapHandoffPresetDisplayLabel,
   getRoleCatalogEntry,
   groupRolesForManagement,
+  resolveWorkflowPackagesForRuntimeRoles,
 } from "./roleCatalog.js";
 const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 const EFFECT_OPTIONS = ["ALLOW", "DENY"];
@@ -207,13 +209,6 @@ function formatDateTime(value) {
     return String(value);
   }
   return parsed.toLocaleString();
-}
-function getInitials(name) {
-  const parts = normalizeText(name).split(/\s+/).filter(Boolean).slice(0, 2);
-  if (parts.length === 0) {
-    return "U";
-  }
-  return parts.map((part) => part[0].toUpperCase()).join("");
 }
 function getToneClasses(tone) {
   if (tone === "blue") {
@@ -427,8 +422,12 @@ function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) 
       const roleCodes = Array.from(
         new Set(rows.map((row) => normalizeText(row.role_code)).filter(Boolean))
       ).sort();
+      const roleEntries = roleCodes.map((roleCode) => getRoleCatalogEntry(roleCode));
+      const packageEntries = resolveWorkflowPackagesForRuntimeRoles(roleCodes);
       const presetMatch = findPresetMatch(roleCodes);
       const status = resolveAssignmentLifecycle(rows);
+      const hasLegacyRole = roleEntries.some((entry) => entry.legacy);
+      const hasComposableRole = roleEntries.some((entry) => !entry.legacy);
       return {
         id: key,
         assignmentIds: rows.map((row) => Number(row.id)).filter(Boolean),
@@ -442,12 +441,24 @@ function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) 
         effectiveFrom: first.effective_from || "",
         effectiveTo: first.effective_to || "",
         roleCodes,
+        roleLabels: roleEntries.map((entry) => entry.code),
+        packageCodes: packageEntries.map((entry) => entry.code),
+        packageLabels: packageEntries.map((entry) => entry.displayName),
+        workflowFamilyLabels: Array.from(
+          new Set(packageEntries.map((entry) => entry.workflowFamilyLabel).filter(Boolean))
+        ),
         status,
         presetCode: presetMatch?.presetCode || "",
         presetDisplayName: presetMatch?.preset?.displayName || "",
         presetSummary: presetMatch?.preset?.summary || "",
         optionalRoleCodes: presetMatch?.matchedOptionalRoleCodes || [],
         isPresetBundle: Boolean(presetMatch),
+        sourceType: presetMatch ? "PRESET_DERIVED" : "DIRECT",
+        sourceTypeLabel: presetMatch ? "Preset-derived" : "Direct / custom",
+        hasLegacyRole,
+        hasComposableRole,
+        roleMixLabel: hasLegacyRole ? "Legacy present" : "Composable only",
+        scopeKey: `${normalizeText(first.scope_type).toUpperCase()}:${Number(first.scope_id || 0)}`,
         rows,
       };
     })
@@ -475,6 +486,12 @@ function buildUserDirectoryRows(users, bundles, approvalRows, coverageRows) {
     const roleCodes = Array.from(
       new Set(userBundles.flatMap((bundle) => bundle.roleCodes))
     );
+    const packageCodes = Array.from(
+      new Set(userBundles.flatMap((bundle) => bundle.packageCodes || []))
+    );
+    const packageLabels = Array.from(
+      new Set(userBundles.flatMap((bundle) => bundle.packageLabels || []))
+    );
     const scopes = Array.from(
       new Set(userBundles.map((bundle) => `${bundle.scopeType}:${bundle.scopeId}`))
     );
@@ -498,13 +515,20 @@ function buildUserDirectoryRows(users, bundles, approvalRows, coverageRows) {
       ...user,
       assignmentCount: userBundles.length,
       presetCount: userBundles.filter((bundle) => bundle.isPresetBundle).length,
+      directBundleCount: userBundles.filter((bundle) => !bundle.isPresetBundle).length,
       scopeCount: scopes.length,
       topRoleCodes: roleCodes.slice(0, 4),
+      topPackageLabels: packageLabels.slice(0, 3),
       topScopeLabels: userBundles.slice(0, 2).map((bundle) => bundle.scopeLabel),
       activeDelegationCount: activeApprovalDelegations.length + activeCoverage.length,
       currentPresetCodes: Array.from(
         new Set(userBundles.map((bundle) => bundle.presetCode).filter(Boolean))
       ),
+      currentPackageCodes: packageCodes,
+      currentPackageLabels: packageLabels,
+      scopeKeys: scopes,
+      hasLegacyAssignments: userBundles.some((bundle) => bundle.hasLegacyRole),
+      hasComposableAssignments: userBundles.some((bundle) => bundle.hasComposableRole),
     };
   });
 }
@@ -516,6 +540,9 @@ function buildAssignmentSearchText(bundle) {
     bundle.presetDisplayName,
     bundle.scopeLabel,
     bundle.scopeType,
+    bundle.sourceTypeLabel,
+    bundle.packageCodes.join(" "),
+    bundle.packageLabels.join(" "),
     bundle.roleCodes.join(" "),
     bundle.roleCodes.map((roleCode) => getRoleDisplayCode(roleCode)).join(" "),
   ]
@@ -531,7 +558,10 @@ function buildUserSearchText(row) {
     row.topRoleCodes.map((roleCode) => getRoleDisplayCode(roleCode)).join(" "),
     row.currentPresetCodes.join(" "),
     row.currentPresetCodes.map((presetCode) => getBootstrapHandoffPresetDisplayLabel(presetCode)).join(" "),
+    row.currentPackageCodes.join(" "),
+    row.currentPackageLabels.join(" "),
     row.topScopeLabels.join(" "),
+    row.scopeKeys.join(" "),
   ]
     .join(" ")
     .toLowerCase();
@@ -543,6 +573,41 @@ function getRoleDisplayCode(roleOrCode) {
 
 function getPresetDisplayLabel(presetCode) {
   return getBootstrapHandoffPresetDisplayLabel(presetCode);
+}
+
+function buildScopeTargetOptions(bundles) {
+  const byScopeKey = new Map();
+  for (const bundle of Array.isArray(bundles) ? bundles : []) {
+    if (!bundle?.scopeKey || !bundle?.scopeLabel) {
+      continue;
+    }
+    if (!byScopeKey.has(bundle.scopeKey)) {
+      byScopeKey.set(bundle.scopeKey, {
+        value: bundle.scopeKey,
+        label: bundle.scopeLabel,
+      });
+    }
+  }
+  return Array.from(byScopeKey.values()).sort((left, right) =>
+    left.label.localeCompare(right.label)
+  );
+}
+
+function buildPackageFilterOptions(bundles) {
+  const byPackageCode = new Map();
+  for (const bundle of Array.isArray(bundles) ? bundles : []) {
+    for (const packageEntry of resolveWorkflowPackagesForRuntimeRoles(bundle.roleCodes)) {
+      if (!byPackageCode.has(packageEntry.code)) {
+        byPackageCode.set(packageEntry.code, {
+          value: packageEntry.code,
+          label: packageEntry.displayName,
+        });
+      }
+    }
+  }
+  return Array.from(byPackageCode.values()).sort((left, right) =>
+    left.label.localeCompare(right.label)
+  );
 }
 function WorkspaceStatCard({ title, value, subtitle, tone = "slate" }) {
   const toneClasses =
@@ -718,6 +783,31 @@ function AssignmentBundleCard({
                 )}
               </p>
             )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <StatusPill
+                label={bundle.sourceTypeLabel}
+                tone={bundle.isPresetBundle ? "blue" : "slate"}
+              />
+              <StatusPill
+                label={bundle.roleMixLabel}
+                tone={bundle.hasLegacyRole ? "amber" : "green"}
+              />
+              {bundle.workflowFamilyLabels.map((familyLabel) => (
+                <StatusPill key={`${bundle.id}-${familyLabel}`} label={familyLabel} tone="violet" />
+              ))}
+            </div>
+            {bundle.packageLabels.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {bundle.packageLabels.map((packageLabel) => (
+                  <span
+                    key={`${bundle.id}-${packageLabel}`}
+                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800"
+                  >
+                    {packageLabel}
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
               {bundle.roleCodes.map((roleCode) => {
                 const roleEntry = getRoleCatalogEntry(roleCode);
@@ -1153,6 +1243,10 @@ function UserAccessModal({
  * delegation operations. The backend still persists raw RBAC rows one at a
  * time, but this page groups them into calmer business-first admin flows.
  */
+/**
+ * Combined security workspace for user access, business assignment bundles,
+ * and delegation administration while the package-first admin model rolls out.
+ */
 export default function UserAssignmentsPage() {
   const {
     getPermissionAccess,
@@ -1183,16 +1277,21 @@ export default function UserAssignmentsPage() {
   const [lastInviteLink, setLastInviteLink] = useState("");
   const [userFilters, setUserFilters] = useState({
     search: "",
-    scopeType: "",
-    roleCode: "",
     status: "ALL",
-    delegationState: "",
+    roleCode: "",
+    packageCode: "",
+    scopeType: "",
+    scopeTarget: "",
+    sourceType: "",
+    roleMix: "",
   });
   const [assignmentFilters, setAssignmentFilters] = useState({
     search: "",
     presetCode: "",
     status: "ALL",
   });
+  const [selectedWorkbenchUserId, setSelectedWorkbenchUserId] = useState("");
+  const [selectedWorkbenchBundleId, setSelectedWorkbenchBundleId] = useState("");
   const [selectedBundleId, setSelectedBundleId] = useState("");
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [userModalMode, setUserModalMode] = useState("invite");
@@ -1248,6 +1347,16 @@ export default function UserAssignmentsPage() {
     [roles]
   );
   const roleGroups = useMemo(() => groupRolesForManagement(roles), [roles]);
+  const roleFilterOptions = useMemo(
+    () =>
+      roles
+        .map((role) => ({
+          value: normalizeText(role.code),
+          label: getRoleDisplayCode(role),
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label)),
+    [roles]
+  );
   const assignableRoleGroups = useMemo(
     () =>
       roleGroups
@@ -1266,6 +1375,14 @@ export default function UserAssignmentsPage() {
     () => buildUserDirectoryRows(users, assignmentBundles, approvalDelegations, coverageRows),
     [approvalDelegations, assignmentBundles, coverageRows, users]
   );
+  const scopeTargetOptions = useMemo(
+    () => buildScopeTargetOptions(assignmentBundles),
+    [assignmentBundles]
+  );
+  const packageFilterOptions = useMemo(
+    () => buildPackageFilterOptions(assignmentBundles),
+    [assignmentBundles]
+  );
   const filteredUsers = useMemo(() => {
     const searchText = normalizeText(userFilters.search).toLowerCase();
     return userDirectoryRows.filter((row) => {
@@ -1282,6 +1399,9 @@ export default function UserAssignmentsPage() {
       ) {
         return false;
       }
+      if (userFilters.scopeTarget && !row.scopeKeys.includes(userFilters.scopeTarget)) {
+        return false;
+      }
       if (
         userFilters.roleCode &&
         !row.topRoleCodes.includes(userFilters.roleCode) &&
@@ -1291,6 +1411,9 @@ export default function UserAssignmentsPage() {
             bundle.roleCodes.includes(userFilters.roleCode)
         )
       ) {
+        return false;
+      }
+      if (userFilters.packageCode && !row.currentPackageCodes.includes(userFilters.packageCode)) {
         return false;
       }
       if (userFilters.status !== "ALL") {
@@ -1303,10 +1426,19 @@ export default function UserAssignmentsPage() {
           return false;
         }
       }
-      if (userFilters.delegationState === "HAS_DELEGATION" && row.activeDelegationCount === 0) {
+      if (userFilters.sourceType === "PRESET_DERIVED" && row.presetCount === 0) {
         return false;
       }
-      if (userFilters.delegationState === "NO_DELEGATION" && row.activeDelegationCount > 0) {
+      if (userFilters.sourceType === "DIRECT" && row.directBundleCount === 0) {
+        return false;
+      }
+      if (userFilters.roleMix === "LEGACY_PRESENT" && !row.hasLegacyAssignments) {
+        return false;
+      }
+      if (
+        userFilters.roleMix === "COMPOSABLE_ONLY" &&
+        (!row.hasComposableAssignments || row.hasLegacyAssignments)
+      ) {
         return false;
       }
       return true;
@@ -1338,6 +1470,46 @@ export default function UserAssignmentsPage() {
     filteredBundles.find((bundle) => bundle.id === selectedBundleId) ||
     filteredBundles[0] ||
     null;
+  const selectedWorkbenchUser =
+    filteredUsers.find((row) => Number(row.id) === Number(selectedWorkbenchUserId)) ||
+    filteredUsers[0] ||
+    null;
+  const selectedWorkbenchUserBundles = useMemo(
+    () =>
+      assignmentBundles.filter(
+        (bundle) => Number(bundle.userId) === Number(selectedWorkbenchUser?.id || 0)
+      ),
+    [assignmentBundles, selectedWorkbenchUser?.id]
+  );
+  const selectedWorkbenchBundle =
+    selectedWorkbenchUserBundles.find((bundle) => bundle.id === selectedWorkbenchBundleId) ||
+    selectedWorkbenchUserBundles[0] ||
+    null;
+  const selectedWorkbenchRoleEntries = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          selectedWorkbenchUserBundles
+            .flatMap((bundle) => bundle.roleCodes)
+            .map((roleCode) => [roleCode, getRoleCatalogEntry(roleCode)])
+        ).values()
+      ),
+    [selectedWorkbenchUserBundles]
+  );
+  const selectedWorkbenchPackageLabels = useMemo(
+    () =>
+      Array.from(
+        new Set(selectedWorkbenchUserBundles.flatMap((bundle) => bundle.packageLabels || []))
+      ),
+    [selectedWorkbenchUserBundles]
+  );
+  const selectedWorkbenchScopeLabels = useMemo(
+    () =>
+      Array.from(
+        new Set(selectedWorkbenchUserBundles.map((bundle) => bundle.scopeLabel).filter(Boolean))
+      ),
+    [selectedWorkbenchUserBundles]
+  );
   const pendingInviteRows = useMemo(
     () =>
       users.filter((row) => {
@@ -1472,6 +1644,24 @@ export default function UserAssignmentsPage() {
     }
   }, [filteredBundles, selectedBundleId]);
   useEffect(() => {
+    if (filteredUsers.length === 0) {
+      setSelectedWorkbenchUserId("");
+      return;
+    }
+    if (!filteredUsers.some((row) => Number(row.id) === Number(selectedWorkbenchUserId))) {
+      setSelectedWorkbenchUserId(String(filteredUsers[0].id));
+    }
+  }, [filteredUsers, selectedWorkbenchUserId]);
+  useEffect(() => {
+    if (selectedWorkbenchUserBundles.length === 0) {
+      setSelectedWorkbenchBundleId("");
+      return;
+    }
+    if (!selectedWorkbenchUserBundles.some((bundle) => bundle.id === selectedWorkbenchBundleId)) {
+      setSelectedWorkbenchBundleId(selectedWorkbenchUserBundles[0].id);
+    }
+  }, [selectedWorkbenchBundleId, selectedWorkbenchUserBundles]);
+  useEffect(() => {
     if (!assignmentForm.userId && users.length > 0) {
       setAssignmentForm((prev) => ({ ...prev, userId: String(users[0].id) }));
     }
@@ -1481,6 +1671,18 @@ export default function UserAssignmentsPage() {
       setRawAssignmentForm((prev) => ({ ...prev, userId: String(users[0].id) }));
     }
   }, [rawAssignmentForm.userId, users]);
+  useEffect(() => {
+    const selectedUserId = String(selectedWorkbenchUser?.id || "");
+    if (!selectedUserId) {
+      return;
+    }
+    setAssignmentForm((prev) =>
+      prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
+    );
+    setRawAssignmentForm((prev) =>
+      prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
+    );
+  }, [selectedWorkbenchUser?.id]);
   useEffect(() => {
     setAssignmentForm((prev) => {
       const currentScopeId = Number(prev.scopeId || 0);
@@ -2126,7 +2328,7 @@ export default function UserAssignmentsPage() {
           <WorkspaceTabButton
             active={activeTab === "users"}
             count={userDirectoryRows.length}
-            label={l("Users", "Kullanicilar")}
+            label={l("Assignment Workbench", "Atama Calisma Alani")}
             onClick={() => setActiveTab("users")}
           />
           <WorkspaceTabButton
@@ -2149,226 +2351,49 @@ export default function UserAssignmentsPage() {
         </div>
       ) : null}
       {!loading && activeTab === "users" ? (
-        <section className="space-y-5">
-          <div className="grid gap-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm xl:grid-cols-[1.3fr_repeat(4,minmax(0,0.8fr))]">
-            <input
-              type="text"
-              value={userFilters.search}
-              onChange={(event) =>
-                setUserFilters((prev) => ({ ...prev, search: event.target.value }))
-              }
-              placeholder={l(
-                "Search by name, email, entity, branch, or preset",
-                "Ad, e-posta, entity, sube veya presete gore ara"
-              )}
-              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-            />
-            <select
-              value={userFilters.scopeType}
-              onChange={(event) =>
-                setUserFilters((prev) => ({ ...prev, scopeType: event.target.value }))
-              }
-              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-            >
-              <option value="">{l("All scopes", "Tum kapsamlar")}</option>
-              {SCOPE_TYPES.map((scopeType) => (
-                <option key={`user-scope-${scopeType}`} value={scopeType}>
-                  {scopeType}
-                </option>
-              ))}
-            </select>
-            <select
-              value={userFilters.roleCode}
-              onChange={(event) =>
-                setUserFilters((prev) => ({ ...prev, roleCode: event.target.value }))
-              }
-              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-            >
-              <option value="">{l("All roles", "Tum roller")}</option>
-              {roles.map((role) => (
-                <option key={`user-role-filter-${role.id}`} value={role.code}>
-                  {getRoleDisplayCode(role)}
-                </option>
-              ))}
-            </select>
-            <select
-              value={userFilters.status}
-              onChange={(event) =>
-                setUserFilters((prev) => ({ ...prev, status: event.target.value }))
-              }
-              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-            >
-              {USER_STATUS_FILTERS.map((status) => (
-                <option key={`user-status-${status}`} value={status}>
-                  {status === "ALL"
-                    ? l("All statuses", "Tum durumlar")
-                    : status === "INVITED"
-                      ? l("Pending invite", "Bekleyen davet")
-                      : status}
-                </option>
-              ))}
-            </select>
-            <select
-              value={userFilters.delegationState}
-              onChange={(event) =>
-                setUserFilters((prev) => ({ ...prev, delegationState: event.target.value }))
-              }
-              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-            >
-              <option value="">{l("All delegation states", "Tum delegation durumlari")}</option>
-              <option value="HAS_DELEGATION">{l("Has delegation", "Delegation var")}</option>
-              <option value="NO_DELEGATION">{l("No delegation", "Delegation yok")}</option>
-            </select>
-          </div>
-          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-950">
-                  {l("People directory", "Kisi dizini")}
-                </h2>
-                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
-                  {l(
-                    "Use this surface for full user admin work: invite, review scope coverage, inspect current access, and jump directly into assignment or delegation follow-up.",
-                    "Bu yuzeyi tam kullanici yonetimi icin kullanin: davet etme, kapsam kapsamasi inceleme, mevcut erisimi denetleme ve dogrudan atama veya delegation takibine gecme."
-                  )}
-                </p>
-              </div>
-              <StatusPill label={l("Directory view", "Dizin gorunumu")} />
-            </div>
-            {filteredUsers.length === 0 ? (
-              <div className="px-5 py-10 text-sm text-slate-500">
-                {l("No users match the current filters.", "Mevcut filtrelere uyan kullanici yok.")}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200">
-                  <thead className="bg-white">
-                    <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                      <th className="px-5 py-3">{l("User", "Kullanici")}</th>
-                      <th className="px-5 py-3">{l("Role", "Rol")}</th>
-                      <th className="px-5 py-3">{l("Scope", "Kapsam")}</th>
-                      <th className="px-5 py-3">{l("Access", "Erisim")}</th>
-                      <th className="px-5 py-3">{l("Status", "Durum")}</th>
-                      <th className="px-5 py-3">{l("Delegation", "Delegation")}</th>
-                      <th className="px-5 py-3">{l("Last created", "Son olusum")}</th>
-                      <th className="px-5 py-3">{l("Actions", "Aksiyonlar")}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-white">
-                    {filteredUsers.map((row) => {
-                      const statusMeta = getUserStatusMeta(row.status);
-                      return (
-                        <tr key={`user-row-${row.id}`}>
-                          <td className="px-5 py-4">
-                            <div className="flex items-start gap-3">
-                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sm font-bold text-sky-800">
-                                {getInitials(row.name)}
-                              </div>
-                              <div>
-                                <div className="font-semibold text-slate-950">{row.name}</div>
-                                <div className="mt-1 text-sm text-slate-500">{row.email}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-5 py-4">
-                            <div className="space-y-2">
-                              {row.currentPresetCodes.length > 0 ? (
-                                row.currentPresetCodes.map((presetCode) => (
-                                  <StatusPill
-                                    key={`user-preset-${row.id}-${presetCode}`}
-                                    label={getPresetDisplayLabel(presetCode)}
-                                    tone="blue"
-                                  />
-                                ))
-                              ) : row.topRoleCodes.length > 0 ? (
-                                row.topRoleCodes.map((roleCode) => (
-                                  <StatusPill
-                                    key={`user-role-${row.id}-${roleCode}`}
-                                    label={getRoleDisplayCode(roleCode)}
-                                  />
-                                ))
-                              ) : (
-                                <span className="text-sm text-slate-500">
-                                  {l("No assigned roles", "Atanmis rol yok")}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-5 py-4">
-                            <div className="space-y-1 text-sm text-slate-700">
-                              {row.topScopeLabels.length > 0 ? (
-                                row.topScopeLabels.map((scopeLabel) => (
-                                  <div key={`user-scope-${row.id}-${scopeLabel}`}>{scopeLabel}</div>
-                                ))
-                              ) : (
-                                <div className="text-slate-500">{l("No active scope", "Aktif kapsam yok")}</div>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-5 py-4 text-sm text-slate-700">
-                            <div>{row.assignmentCount} {l("assignment bundles", "atama paketi")}</div>
-                            <div className="mt-1 text-slate-500">
-                              {row.scopeCount} {l("scopes covered", "kapsam")}
-                            </div>
-                          </td>
-                          <td className="px-5 py-4">
-                            <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
-                          </td>
-                          <td className="px-5 py-4 text-sm text-slate-700">
-                            {row.activeDelegationCount > 0 ? (
-                              <StatusPill
-                                label={l("{{count}} active", "{{count}} aktif", {
-                                  count: row.activeDelegationCount,
-                                })}
-                                tone="violet"
-                              />
-                            ) : (
-                              <span className="text-slate-500">{l("None", "Yok")}</span>
-                            )}
-                          </td>
-                          <td className="px-5 py-4 text-sm text-slate-500">
-                            {formatDateTime(row.created_at)}
-                          </td>
-                          <td className="px-5 py-4">
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => openExistingUserModal(row)}
-                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
-                              >
-                                {l("Edit access", "Erisimi duzenle")}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAssignmentForm((prev) => ({
-                                    ...prev,
-                                    userId: String(row.id),
-                                  }));
-                                  setActiveTab("assignments");
-                                }}
-                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
-                              >
-                                {l("Assignments", "Atamalar")}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setActiveTab("delegations")}
-                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
-                              >
-                                {l("Delegations", "Delegation")}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </section>
+        <UserAssignmentWorkbench
+          actingRowId={actingRowId}
+          filteredUsers={filteredUsers}
+          l={l}
+          onClearFilters={() =>
+            setUserFilters({
+              search: "",
+              status: "ALL",
+              roleCode: "",
+              packageCode: "",
+              scopeType: "",
+              scopeTarget: "",
+              sourceType: "",
+              roleMix: "",
+            })
+          }
+          onOpenBulkAssignments={() => setActiveTab("assignments")}
+          onOpenUserEditor={(userOrId) => {
+            if (typeof userOrId === "object" && userOrId) {
+              openExistingUserModal(userOrId);
+              return;
+            }
+            const userRow = usersById.get(Number(userOrId || 0));
+            if (userRow) {
+              openExistingUserModal(userRow);
+            }
+          }}
+          onRevokeBundle={handleRevokeBundle}
+          onSelectBundle={setSelectedWorkbenchBundleId}
+          onSelectUser={setSelectedWorkbenchUserId}
+          packageFilterOptions={packageFilterOptions}
+          roleFilterOptions={roleFilterOptions}
+          saving={saving}
+          scopeTargetOptions={scopeTargetOptions}
+          selectedBundle={selectedWorkbenchBundle}
+          selectedUser={selectedWorkbenchUser}
+          selectedUserBundles={selectedWorkbenchUserBundles}
+          selectedUserPackageLabels={selectedWorkbenchPackageLabels}
+          selectedUserRoleEntries={selectedWorkbenchRoleEntries}
+          selectedUserScopeLabels={selectedWorkbenchScopeLabels}
+          setUserFilters={setUserFilters}
+          userFilters={userFilters}
+        />
       ) : null}
       {!loading && activeTab === "assignments" ? (
         <section className="space-y-5">
