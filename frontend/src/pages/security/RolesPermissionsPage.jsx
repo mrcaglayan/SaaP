@@ -9,7 +9,7 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import RoleSummaryCard from "./RoleSummaryCard.jsx";
 import SecurityWarningList from "./SecurityWarningList.jsx";
-import { groupRolesForManagement } from "./roleCatalog.js";
+import { getRoleCatalogEntry, groupRolesForManagement } from "./roleCatalog.js";
 
 /**
  * Lets security admins review composable-role intent, permission sets, and
@@ -219,7 +219,9 @@ export default function RolesPermissionsPage() {
                     {group.label}
                   </div>
                   <div className="space-y-1">
-                    {group.roles.map((role) => (
+                    {group.roles.map((role) => {
+                      const roleEntry = getRoleCatalogEntry(role);
+                      return (
                       <button
                         key={role.id}
                         type="button"
@@ -235,16 +237,21 @@ export default function RolesPermissionsPage() {
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <div className="font-semibold">{role.code}</div>
+                          <div className="font-semibold">{roleEntry.code}</div>
                           {role.legacyDisabled ? (
                             <span className="rounded-full border border-current/20 px-2 py-0.5 text-[11px] font-semibold">
                               Retired
                             </span>
                           ) : null}
                         </div>
-                        <div className="text-xs opacity-80">{role.name}</div>
+                        <div className="text-xs opacity-80">
+                          {roleEntry.technicalCode
+                            ? `Runtime code: ${roleEntry.technicalCode}`
+                            : role.name}
+                        </div>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}

@@ -28,6 +28,7 @@ export default function ApprovalStepCard({
   onRemove,
   disableRemove,
   previewText,
+  apBusinessLabels,
 }) {
   const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
 
@@ -73,7 +74,9 @@ export default function ApprovalStepCard({
 
         <div className="space-y-2">
           <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {l("Approval level", "Onay seviyesi")}
+            {isAp
+              ? (apBusinessLabels?.atWhichScope || l("At which organizational scope", "Hangi organizasyon kapsaminda"))
+              : l("Approval level", "Onay seviyesi")}
           </label>
           <Select value={step.stageScopeType} onValueChange={(value) => onChange("stageScopeType", value)}>
             <SelectTrigger className="w-full">
@@ -115,29 +118,57 @@ export default function ApprovalStepCard({
         </div>
 
         <div className="space-y-2 md:col-span-2">
-          <div className="flex items-center justify-between gap-3">
-            <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              {l("Required reviewer permission", "Gerekli inceleyen yetkisi")}
-            </label>
-            {isAp ? <Badge variant="secondary">AP</Badge> : null}
-          </div>
-          <Input
-            value={step.requiredPermissionCode}
-            onChange={(event) => onChange("requiredPermissionCode", event.target.value)}
-            disabled={isAp}
-            placeholder={isAp ? l("Leave empty for AP", "AP icin bos birakin") : "permission.code"}
-          />
-          <p className="text-xs leading-5 text-muted-foreground">
-            {isAp
-              ? l(
-                  "AP uses workflow scope assignment instead of a step-level permission code.",
-                  "AP, adim seviyesinde yetki kodu yerine workflow kapsam atamasini kullanir."
-                )
-              : l(
+          {isAp ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  {apBusinessLabels?.whoReviews || l("Who reviews this step", "Bu adimi kim inceler")}
+                </label>
+                <Badge variant="secondary">AP</Badge>
+              </div>
+              <div className="rounded-2xl border border-border bg-muted/20 px-4 py-3">
+                <p className="text-sm text-foreground">
+                  {l(
+                    `${stepScopeLabels[step.stageScopeType] || step.stageScopeType} AP reviewer`,
+                    `${stepScopeLabels[step.stageScopeType] || step.stageScopeType} AP inceleyicisi`
+                  )}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {apBusinessLabels?.reviewerAuthority ||
+                    l(
+                      "Reviewer authority comes from the workflow assignment scope, not from a step-level permission code.",
+                      "Inceleyen yetkisi adim seviyesindeki bir yetki kodundan degil, workflow atama kapsamindan gelir."
+                    )}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground/70">
+                  {apBusinessLabels?.effectivePermission ||
+                    l(
+                      "Effective permission: approvals.requests.approve at the step\u2019s scope",
+                      "Gecerli yetki: adimin kapsaminda approvals.requests.approve"
+                    )}
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  {l("Required reviewer permission", "Gerekli inceleyen yetkisi")}
+                </label>
+              </div>
+              <Input
+                value={step.requiredPermissionCode}
+                onChange={(event) => onChange("requiredPermissionCode", event.target.value)}
+                placeholder="permission.code"
+              />
+              <p className="text-xs leading-5 text-muted-foreground">
+                {l(
                   "Only users with this permission can approve this step.",
                   "Yalnizca bu yetkiye sahip kullanicilar bu adimi onaylayabilir."
                 )}
-          </p>
+              </p>
+            </>
+          )}
         </div>
 
         <div className="md:col-span-2">

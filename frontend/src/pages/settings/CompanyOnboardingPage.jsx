@@ -56,9 +56,9 @@ Object.freeze({
   titleTr: "Cari Ic Hesaplar",
 }),
 ]);
-const ENTITY_SETUP_PRESET = getBootstrapHandoffPresetEntry("EntitySetupManager");
+const ENTITY_SETUP_PRESET = getBootstrapHandoffPresetEntry("EntityAPController");
 const COUNTRY_FINANCE_SETUP_PRESET = getBootstrapHandoffPresetEntry(
-  "CountryFinanceSetupManager"
+  "CountryAPApprover"
 );
 const GL_POSTING_AUTHORITY_ENTRY = getRoleCatalogEntry("GLPostingAuthority");
 

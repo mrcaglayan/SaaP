@@ -43,6 +43,9 @@ export default function RoleSummaryCard({
     scopeType && scopeId
       ? buildScopeLabel(scopeType, scopeId, lookups, tenantScopeId)
       : "";
+  const roleDetailLabel = entry.technicalCode
+    ? "Compatibility runtime role"
+    : String(role?.name || role?.roleName || "").trim() || "Role detail";
 
   return (
     <section
@@ -55,9 +58,10 @@ export default function RoleSummaryCard({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-base font-semibold text-slate-900">{roleCode}</div>
+          <div className="text-base font-semibold text-slate-900">{entry.code}</div>
           <div className="mt-1 text-sm text-slate-600">
-            {String(role?.name || role?.roleName || "").trim() || "Role detail"}
+            {roleDetailLabel}
+            {entry.technicalCode ? ` | Runtime code: ${entry.technicalCode}` : ""}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">

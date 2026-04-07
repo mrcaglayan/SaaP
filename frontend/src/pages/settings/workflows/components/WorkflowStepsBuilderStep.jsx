@@ -33,6 +33,13 @@ export default function WorkflowStepsBuilderStep({
   saving,
   canWrite,
   onBack,
+  // PR-WGX-01: AP business template props
+  apTemplates,
+  apTemplateLabels,
+  apBusinessLabels,
+  selectedApTemplate,
+  onSelectApTemplate,
+  apBusinessPreviewLines,
 }) {
   const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
 
@@ -70,6 +77,68 @@ export default function WorkflowStepsBuilderStep({
               </AlertDescription>
             </Alert>
           ) : null}
+
+          {isAp && apTemplates && apTemplateLabels ? (
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  {apBusinessLabels?.templateSectionTitle || "AP business flow template"}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {apBusinessLabels?.templateSectionDescription || "Choose a predefined approval flow or customize the steps below."}
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {apTemplates.map((template) => {
+                  const meta = apTemplateLabels[template.id];
+                  if (!meta) return null;
+                  const isActive = selectedApTemplate === template.id;
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      onClick={() => onSelectApTemplate(template.id)}
+                      className={`rounded-2xl border px-4 py-3 text-left transition-colors ${isActive
+                          ? "border-blue-500 bg-blue-50 ring-2 ring-blue-200"
+                          : "border-border bg-card hover:border-blue-300 hover:bg-blue-50/50"
+                        }`}
+                    >
+                      <p className="text-sm font-medium text-foreground">{meta.label}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">{meta.description}</p>
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => onSelectApTemplate("custom")}
+                  className={`rounded-2xl border px-4 py-3 text-left transition-colors ${selectedApTemplate === "custom"
+                      ? "border-blue-500 bg-blue-50 ring-2 ring-blue-200"
+                      : "border-border bg-card hover:border-blue-300 hover:bg-blue-50/50"
+                    }`}
+                >
+                  <p className="text-sm font-medium text-foreground">
+                    {apBusinessLabels?.customTemplate || "Custom (configure manually)"}
+                  </p>
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {isAp && Array.isArray(apBusinessPreviewLines) && apBusinessPreviewLines.length > 0 ? (
+            <div className="rounded-2xl border border-blue-200 bg-blue-50/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
+                {apBusinessLabels?.businessPreviewTitle || "Business process preview"}
+              </p>
+              <div className="mt-2 space-y-1">
+                {apBusinessPreviewLines.map((line, i) => (
+                  <p key={i} className="text-sm leading-6 text-blue-900">{line}</p>
+                ))}
+              </div>
+              <p className="mt-3 text-xs leading-5 text-blue-700/80">
+                {apBusinessLabels?.effectivePermission}
+              </p>
+            </div>
+          ) : null}
         </CardHeader>
 
         <CardContent className="space-y-4">
@@ -101,6 +170,7 @@ export default function WorkflowStepsBuilderStep({
                 onRemove={() => onRemoveStep(index)}
                 disableRemove={stepDrafts.length <= 1}
                 previewText={buildStepPreviewText(step)}
+                apBusinessLabels={apBusinessLabels}
               />
             ))}
           </div>
@@ -121,7 +191,7 @@ export default function WorkflowStepsBuilderStep({
                 <Textarea
                   value={stepsJson}
                   onChange={(event) => onChangeStepsJson(event.target.value)}
-                  className="min-h-[220px] font-mono text-xs"
+                  className="min-h-55 font-mono text-xs"
                 />
                 {stepsJsonError ? (
                   <p className="text-xs font-medium text-destructive">{stepsJsonError}</p>

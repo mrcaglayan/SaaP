@@ -16,7 +16,14 @@
       "Bash(ls -la /c/Users/Maarif/Desktop/my-app/backend/src/migrations/m141* m142* m143*)",
       "Bash(node scripts/preflight-journal-source-link-primary.js)",
       "Bash(node -e \":*)",
-      "Bash(node -e ':*)"
+      "Bash(node -e ':*)",
+      "Bash(grep -A 12 \"return {$\" \"c:/Users/ufukk/Desktop/SaaP/backend/src/services/cari.document.service.js\")",
+      "Bash(grep -rn \"requiredPermissionCode\\\\|effectiveApprovalPermission\\\\|approvalAuthority\\\\|getApprovalAuthority\" /c/Users/ufukk/Desktop/SaaP/backend/src/services/ap*.service.js)",
+      "Bash(grep -A 20 \"CREATE TABLE.*roles\\\\|CREATE TABLE.*permissions\\\\|CREATE TABLE.*user_role\" /c/Users/ufukk/Desktop/SaaP/backend/src/migrations/*.js)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -rn \"country.*approval\\\\|country.*posting\\\\|country-scoped\\\\|scope-driven.*review\\\\|authority.*scope\" /c/Users/ufukk/Desktop/SaaP/backend/src/services/*.service.js)",
+      "Bash(grep -rn \"scope.*assignment\\\\|assignment.*scope\\\\|getApproversAtScope\\\\|findApprovers\" /c/Users/ufukk/Desktop/SaaP/backend/src/services/approval*.service.js)",
+      "Bash(npx --yes vite build --mode development)"
     ]
   }
 }

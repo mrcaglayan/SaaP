@@ -139,14 +139,14 @@ async function main() {
         ],
         handoffAssignments: [
           {
-            presetCode: "EntitySetupManager",
+            presetCode: "EntityAPController",
             scopeType: "LEGAL_ENTITY",
             legalEntityCode,
             email: invitedUserEmail,
             name: "Invited Entity Setup Lead",
           },
           {
-            presetCode: "CountryFinanceSetupManager",
+            presetCode: "CountryAPApprover",
             scopeType: "COUNTRY",
             countryIso2: "US",
             userId: existingUserId,
@@ -177,6 +177,10 @@ async function main() {
         (assignment) => assignment.email === invitedUserEmail
       ) || null;
     assert(invitedAssignment, "Bootstrap handoff summary should include invited entity lead");
+    assert(
+      invitedAssignment.presetCode === "EntityAPController",
+      "Bootstrap handoff summary should return the canonical entity preset code"
+    );
 
     const countryAssignment =
       (handoffSummary.assignments || []).find(
@@ -187,6 +191,10 @@ async function main() {
     assert(
       countryAssignment && countryAssignment.includeGlPostingAuthority === true,
       "Bootstrap handoff summary should include the explicit country GL posting companion"
+    );
+    assert(
+      countryAssignment?.presetCode === "CountryAPApprover",
+      "Bootstrap handoff summary should return the canonical country preset code"
     );
 
     const invitedUserId = Number(invitedAssignment.userId || 0);
@@ -203,6 +211,7 @@ async function main() {
       [
         "LocalUserAdmin",
         "MasterDataSteward",
+        "APApprover",
         "GLOperator",
         "TreasuryOperator",
         "PayrollOperator",
@@ -234,6 +243,9 @@ async function main() {
     assertIncludesAll(
       countryRoleCodes,
       [
+        "CountryAPApprover",
+        "CountryAPPoster",
+        "APApprover",
         "GLOperator",
         "TreasuryApprover",
         "PayrollApprover",
@@ -241,6 +253,11 @@ async function main() {
         "GLPostingAuthority",
       ],
       "Country handoff should grant the review preset plus explicit GLPostingAuthority"
+    );
+    assert(
+      !countryRoleCodes.includes("LocalUserAdmin") &&
+        !countryRoleCodes.includes("MasterDataSteward"),
+      "Country handoff should not over-grant local setup admin roles"
     );
 
     console.log("PR-F13 bootstrap handoff smoke passed.");

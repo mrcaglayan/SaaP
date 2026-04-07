@@ -12,6 +12,7 @@ import {
   listWorkflowDefinitions,
   listWorkflowDefinitionSteps,
   replaceWorkflowDefinitionSteps,
+  runWorkflowCoverageDiagnostics,
   updateWorkflowAssignment,
 } from "../../api/workflows.js";
 import { useAuth } from "../../auth/useAuth.js";
@@ -27,6 +28,8 @@ import WorkflowSetupSidebar from "./workflows/components/WorkflowSetupSidebar.js
 import WorkflowStepsBuilderStep from "./workflows/components/WorkflowStepsBuilderStep.jsx";
 import WorkflowTypeStep from "./workflows/components/WorkflowTypeStep.jsx";
 import {
+  AP_BUSINESS_TEMPLATES,
+  buildApBusinessPreview,
   buildAssignmentEffectText,
   buildAssignmentSelectionLabel,
   buildAssignmentScopeLabel,
@@ -105,6 +108,9 @@ export default function WorkflowSetupPage() {
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [coverageDiagnostics, setCoverageDiagnostics] = useState(null);
+  const [coverageDiagnosticsLoading, setCoverageDiagnosticsLoading] = useState(false);
+  const [coverageDiagnosticsError, setCoverageDiagnosticsError] = useState("");
 
   const [currentStep, setCurrentStep] = useState(1);
   const [definitionMode, setDefinitionMode] = useState("create");
@@ -121,6 +127,7 @@ export default function WorkflowSetupPage() {
   const [stepsJson, setStepsJson] = useState("[]");
   const [stepDrafts, setStepDrafts] = useState(() => buildStepDrafts("PERIOD_CLOSE", []));
   const [stepsJsonError, setStepsJsonError] = useState("");
+  const [selectedApTemplate, setSelectedApTemplate] = useState("branch-country");
 
   const [definitionForm, setDefinitionForm] = useState({
     code: "",
@@ -195,6 +202,12 @@ export default function WorkflowSetupPage() {
   const workflowPreviewText = useMemo(
     () => buildWorkflowPreview(stepDrafts, text.stepScopeLabels, l),
     [stepDrafts, text.stepScopeLabels, l]
+  );
+  const isApProcess =
+    String(selectedProcessType || "").toUpperCase() === "AP_DOCUMENT_POSTING";
+  const apBusinessPreviewLines = useMemo(
+    () => (isApProcess ? buildApBusinessPreview(stepDrafts, text.stepScopeLabels, l) : []),
+    [isApProcess, stepDrafts, text.stepScopeLabels, l]
   );
   const assignmentEffectText = useMemo(
     () =>
@@ -483,6 +496,74 @@ export default function WorkflowSetupPage() {
     selectedDefinition,
   ]);
 
+  useEffect(() => {
+    if (currentStep !== 5 || !canReadAssignments) {
+      setCoverageDiagnostics(null);
+      setCoverageDiagnosticsLoading(false);
+      setCoverageDiagnosticsError("");
+      return undefined;
+    }
+
+    const assignmentPayload = {
+      processType: selectedProcessType,
+      scopeType: assignmentForm.scopeType,
+      groupCompanyId: assignmentForm.groupCompanyId || undefined,
+      countryId: assignmentForm.countryId || undefined,
+      legalEntityId: assignmentForm.legalEntityId || undefined,
+      operatingUnitId: assignmentForm.operatingUnitId || undefined,
+      effectiveOn: assignmentForm.effectiveFrom || undefined,
+      steps: serializeStepDrafts(stepDrafts, selectedProcessType).map((step) => ({
+        stepNo: step.stepNo,
+        stageScopeType: step.stageScopeType,
+        requiredPermissionCode: step.requiredPermissionCode,
+        minApproverCount: step.minApproverCount,
+      })),
+    };
+
+    let ignore = false;
+    setCoverageDiagnosticsLoading(true);
+    setCoverageDiagnosticsError("");
+    (async () => {
+      try {
+        const response = await runWorkflowCoverageDiagnostics(assignmentPayload);
+        if (!ignore) {
+          setCoverageDiagnostics(response || null);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setCoverageDiagnostics(null);
+          setCoverageDiagnosticsError(
+            err?.response?.data?.message ||
+              l(
+                "Workflow coverage diagnostics could not be loaded.",
+                "Workflow kapsam tanilari yuklenemedi."
+              )
+          );
+        }
+      } finally {
+        if (!ignore) {
+          setCoverageDiagnosticsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      ignore = true;
+    };
+  }, [
+    assignmentForm.countryId,
+    assignmentForm.effectiveFrom,
+    assignmentForm.groupCompanyId,
+    assignmentForm.legalEntityId,
+    assignmentForm.operatingUnitId,
+    assignmentForm.scopeType,
+    canReadAssignments,
+    currentStep,
+    l,
+    selectedProcessType,
+    stepDrafts,
+  ]);
+
   async function onCreateDefinition(event) {
     event.preventDefault();
     if (!canWriteDefinitions) {
@@ -648,6 +729,17 @@ export default function WorkflowSetupPage() {
 
   function onResetStepsToDefaults() {
     applyStepDrafts(buildDefaultSteps(selectedProcessType), selectedProcessType);
+  }
+
+  function onSelectApTemplate(templateId) {
+    setSelectedApTemplate(templateId);
+    if (templateId === "custom") {
+      return;
+    }
+    const template = AP_BUSINESS_TEMPLATES.find((t) => t.id === templateId);
+    if (template) {
+      applyStepDrafts(template.steps, selectedProcessType);
+    }
   }
 
   function buildStepPreviewText(step) {
@@ -856,6 +948,12 @@ export default function WorkflowSetupPage() {
               saving={saving === "steps"}
               canWrite={canWriteDefinitions}
               onBack={() => setCurrentStep(2)}
+              apTemplates={AP_BUSINESS_TEMPLATES}
+              apTemplateLabels={text.apBusinessTemplates}
+              apBusinessLabels={text.apBusinessLabels}
+              selectedApTemplate={selectedApTemplate}
+              onSelectApTemplate={onSelectApTemplate}
+              apBusinessPreviewLines={apBusinessPreviewLines}
             />
           ) : null}
 
@@ -893,6 +991,18 @@ export default function WorkflowSetupPage() {
               workflowPreviewText={workflowPreviewText}
               assignmentEffectText={assignmentEffectText}
               onBack={() => setCurrentStep(4)}
+              apBusinessPreviewLines={apBusinessPreviewLines}
+              apBusinessLabels={text.apBusinessLabels}
+              coverageDiagnostics={coverageDiagnostics}
+              coverageDiagnosticsLoading={coverageDiagnosticsLoading}
+              coverageDiagnosticsError={coverageDiagnosticsError}
+              coverageLookups={{
+                countries,
+                groupCompanies,
+                legalEntities,
+                operatingUnits,
+              }}
+              tenantScopeId={tenantScopeId}
             />
           ) : null}
         </div>

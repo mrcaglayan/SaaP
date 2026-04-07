@@ -67,6 +67,11 @@ export async function updateWorkflowAssignment(assignmentId, payload) {
   return response.data;
 }
 
+export async function runWorkflowCoverageDiagnostics(payload) {
+  const response = await api.post("/api/v1/workflows/coverage-diagnostics", payload);
+  return response.data;
+}
+
 export async function listWorkflowInstances(params = {}) {
   const response = await api.get(
     `/api/v1/workflows/instances${toQueryString(params)}`

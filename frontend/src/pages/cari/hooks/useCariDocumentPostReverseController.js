@@ -1196,6 +1196,156 @@ export default function useCariDocumentPostReverseController({
     selectedSnapshot,
   ]);
 
+  // -- PR-WGX-03: ERP-style workflow explanation for the action panel --
+  const workflowExplanation = useMemo(() => {
+    const gate = selectedWorkflowGate;
+    const docStatus = normalizeText(selectedSnapshot?.status).toUpperCase();
+    const direction = selectedDocumentDirection;
+    const isAp = direction === "AP";
+    const isGoverned = selectedDocumentWorkflowGoverned;
+    const gateState = selectedWorkflowGateState;
+
+    // A. Process status
+    let processStatus = "";
+    let processSubtext = "";
+    if (docStatus === "POSTED" || docStatus === "PARTIALLY_SETTLED" || docStatus === "SETTLED") {
+      processStatus = l("Posted", "Kaydedildi");
+      processSubtext = l("This document has been posted to the ledger.", "Bu belge muhasebeye kaydedildi.");
+    } else if (docStatus === "REVERSED") {
+      processStatus = l("Reversed", "Ters kaydedildi");
+    } else if (docStatus === "APPROVED" || gateState === "APPROVED") {
+      processStatus = l("Approved", "Onaylandi");
+      processSubtext = gate?.waitingForSummary || l("Ready for posting.", "Kayit icin hazir.");
+    } else if (docStatus === "SUBMITTED" || gateState === "PENDING") {
+      processStatus = l("Submitted", "Gonderildi");
+      processSubtext = gate?.waitingForSummary || l("Pending approval.", "Onay bekleniyor.");
+    } else if (docStatus === "RETURNED") {
+      processStatus = l("Returned", "Iade edildi");
+      processSubtext = gate?.blockingReasonDetail || l("Returned for correction.", "Duzeltme icin iade edildi.");
+    } else if (docStatus === "CANCELLED") {
+      processStatus = l("Cancelled", "Iptal edildi");
+    } else {
+      processStatus = l("Draft", "Taslak");
+      if (isAp && isGoverned) {
+        processSubtext = l("Submit for workflow approval before posting.", "Kayit oncesinde workflow onayina gonderin.");
+      }
+    }
+
+    // B. Waiting / blocked explanation
+    let waitingLines = [];
+    if (isAp && isGoverned && gate) {
+      if (gateState === "PENDING" && gate.currentStageScopeLabel) {
+        waitingLines.push(
+          l(`Waiting for ${gate.currentStageScopeLabel} approval`, `${gate.currentStageScopeLabel} onayi bekleniyor`)
+        );
+        if (gate.effectiveApprovalPermissionCode) {
+          waitingLines.push(
+            l(
+              `Required authority: ${gate.effectiveApprovalPermissionLabel || gate.effectiveApprovalPermissionCode}`,
+              `Gerekli yetki: ${gate.effectiveApprovalPermissionLabel || gate.effectiveApprovalPermissionCode}`
+            )
+          );
+        }
+        if (gate.currentStepNo && gate.totalSteps) {
+          waitingLines.push(
+            l(`Step ${gate.currentStepNo} of ${gate.totalSteps}`, `${gate.totalSteps} adimdan ${gate.currentStepNo}. adim`)
+          );
+        }
+      }
+      if (gateState === "RETURNED") {
+        waitingLines.push(
+          l("Document was returned for correction.", "Belge duzeltme icin iade edildi.")
+        );
+        if (gate.latestDecisionComment) {
+          waitingLines.push(
+            l(`Return reason: ${gate.latestDecisionComment}`, `Iade nedeni: ${gate.latestDecisionComment}`)
+          );
+        }
+      }
+      if (gateState === "BLOCKED") {
+        waitingLines.push(
+          l("Posting blocked until document is submitted for workflow approval.", "Belge workflow onayina gonderilene kadar kayit engellendi.")
+        );
+      }
+      // Next action
+      if (gate.nextActionLabel && (gateState === "PENDING" || gateState === "APPROVED")) {
+        const prefix = gateState === "APPROVED"
+          ? l("Next", "Sonraki")
+          : l("After approval", "Onaydan sonra");
+        waitingLines.push(`${prefix}: ${gate.nextActionLabel}`);
+      }
+    }
+
+    // C. Current user capability
+    let userCapabilityLines = [];
+    if (isAp && isGoverned) {
+      if (canSubmitSelected) {
+        userCapabilityLines.push(
+          docStatus === "RETURNED"
+            ? l("You can resubmit this document.", "Bu belgeyi yeniden gonderebilirsiniz.")
+            : l("You can submit this document for approval.", "Bu belgeyi onaya gonderebilirsiniz.")
+        );
+      }
+      if (canApproveSelected) {
+        userCapabilityLines.push(
+          l("You can approve, return, or reject this document.", "Bu belgeyi onaylayabilir, iade edebilir veya reddedebilirsiniz.")
+        );
+      } else if (gateState === "PENDING" && !canApproveWorkflow) {
+        userCapabilityLines.push(
+          l("You do not have approval authority for this step.", "Bu adim icin onay yetkiniz yok.")
+        );
+      }
+      if (canPostSelected) {
+        userCapabilityLines.push(
+          l("You can post this document.", "Bu belgeyi kaydedebilirsiniz.")
+        );
+      } else if (gateState === "PENDING") {
+        userCapabilityLines.push(
+          l("You cannot post because approval is still pending.", "Onay hala beklemede oldugu icin kaydedemezsiniz.")
+        );
+      } else if (gateState === "BLOCKED") {
+        userCapabilityLines.push(
+          l("You cannot post because the document has not been submitted yet.", "Belge henuz gonderilmedigi icin kaydedemezsiniz.")
+        );
+      }
+    }
+
+    // Technical detail (secondary)
+    let technicalLines = [];
+    if (isAp && isGoverned && gate) {
+      if (gate.effectiveApprovalPermissionCode && gateState === "PENDING") {
+        technicalLines.push(
+          `${l("Permission", "Yetki")}: ${gate.effectiveApprovalPermissionCode}`
+        );
+      }
+      if (gate.assignmentScopeLabel && gate.assignmentScopeType) {
+        technicalLines.push(
+          `${l("Assignment scope", "Atama kapsami")}: ${gate.assignmentScopeLabel}`
+        );
+      }
+    }
+
+    return {
+      processStatus,
+      processSubtext,
+      waitingLines,
+      userCapabilityLines,
+      technicalLines,
+      isApGoverned: isAp && isGoverned,
+    };
+  }, [
+    canApproveSelected,
+    canApproveWorkflow,
+    canPostSelected,
+    canSubmitSelected,
+    l,
+    selectedDocumentDirection,
+    selectedDocumentWorkflowGoverned,
+    selectedSnapshot?.status,
+    selectedWorkflowGate,
+    selectedWorkflowGateState,
+  ]);
+
   return {
     approvalDecisionNote,
     approvalError,
@@ -1247,6 +1397,7 @@ export default function useCariDocumentPostReverseController({
     selectedDocumentLegalEntityId,
     selectedWorkflowGate,
     selectedWorkflowGateState,
+    workflowExplanation,
     selectedDocumentPostingRulesReady,
     selectedDocumentUsesStoredTaxesForPosting,
     selectedOffsetAccountType,

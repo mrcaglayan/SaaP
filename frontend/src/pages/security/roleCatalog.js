@@ -7,6 +7,15 @@ const CATEGORY_LABELS = Object.freeze({
   custom: "Custom tenant role",
 });
 
+const ROLE_CATALOG_CODE_ALIASES = Object.freeze({
+  CountryAPPoster: "CountryAPController",
+});
+
+const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
+  EntitySetupManager: "EntityAPController",
+  CountryFinanceSetupManager: "CountryAPApprover",
+});
+
 const ROLE_CATALOG = Object.freeze({
   TenantAdmin: {
     category: "legacy",
@@ -74,10 +83,10 @@ const ROLE_CATALOG = Object.freeze({
     capabilities: ["Country AP visibility", "Workflow review step", "AP return/approve via workflow"],
     recommendedScopes: ["COUNTRY"],
   },
-  CountryAPPoster: {
+  CountryAPController: {
     category: "composable",
     summary:
-      "Country-scoped final AP posting role kept separate from workflow approval so posting authority can be assigned independently.",
+      "Country-scoped AP control role for final posting and reversal. The runtime permission row still uses the brownfield CountryAPPoster compatibility code until full role-code retirement.",
     capabilities: ["Country AP visibility", "AP final post", "AP reverse"],
     recommendedScopes: ["COUNTRY"],
   },
@@ -217,10 +226,10 @@ const ROLE_CATALOG = Object.freeze({
 });
 
 export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
-  EntitySetupManager: Object.freeze({
-    code: "EntitySetupManager",
+  EntityAPController: Object.freeze({
+    code: "EntityAPController",
     summary:
-      "Bootstrap preset for one legal-entity setup lead using bounded composable operator roles.",
+      "Bootstrap preset for one legal-entity AP setup lead using bounded composable operator roles.",
     scopeType: "LEGAL_ENTITY",
     roleCodes: Object.freeze([
       "LocalUserAdmin",
@@ -236,10 +245,10 @@ export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
     ]),
     optionalRoleCodes: Object.freeze(["GLPostingAuthority"]),
   }),
-  CountryFinanceSetupManager: Object.freeze({
-    code: "CountryFinanceSetupManager",
+  CountryAPApprover: Object.freeze({
+    code: "CountryAPApprover",
     summary:
-      "Bootstrap preset for one country-level finance reviewer using bounded composable AP, treasury, payroll, and close-review roles.",
+      "Bootstrap preset for one country-level AP/controller reviewer using bounded composable AP, treasury, payroll, and close-review roles.",
     scopeType: "COUNTRY",
     roleCodes: Object.freeze([
       "CountryAPApprover",
@@ -267,11 +276,22 @@ function normalizeText(value) {
   return String(value || "").trim();
 }
 
+function normalizeRoleCatalogCode(roleCode) {
+  const normalizedRoleCode = normalizeText(roleCode);
+  return ROLE_CATALOG_CODE_ALIASES[normalizedRoleCode] || normalizedRoleCode;
+}
+
+function normalizeBootstrapHandoffPresetCode(presetCode) {
+  const normalizedPresetCode = normalizeText(presetCode);
+  return BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES[normalizedPresetCode] || normalizedPresetCode;
+}
+
 /**
  * Returns the UX metadata for one bootstrap handoff preset.
+ * Legacy preset aliases resolve to their canonical AP-facing preset codes.
  */
 export function getBootstrapHandoffPresetEntry(presetCode) {
-  const normalizedPresetCode = normalizeText(presetCode);
+  const normalizedPresetCode = normalizeBootstrapHandoffPresetCode(presetCode);
   const base = BOOTSTRAP_HANDOFF_PRESET_CATALOG[normalizedPresetCode] || null;
   return {
     code: normalizedPresetCode,
@@ -286,16 +306,23 @@ export function getBootstrapHandoffPresetEntry(presetCode) {
 
 /**
  * Returns the UX metadata used to explain a role in admin surfaces.
+ * `code` is the business-facing label while `technicalCode` preserves the
+ * stored brownfield role code when it differs.
  */
 export function getRoleCatalogEntry(roleOrCode) {
-  const roleCode =
+  const requestedRoleCode =
     typeof roleOrCode === "string"
       ? normalizeText(roleOrCode)
-      : normalizeText(roleOrCode?.code);
-  const base = ROLE_CATALOG[roleCode] || null;
+      : normalizeText(roleOrCode?.code || roleOrCode?.roleCode);
+  const normalizedRoleCode = normalizeRoleCatalogCode(requestedRoleCode);
+  const base = ROLE_CATALOG[normalizedRoleCode] || null;
+  const displayCode =
+    base?.code || normalizedRoleCode || requestedRoleCode || normalizeText(roleOrCode?.roleCode);
 
   return {
-    code: roleCode || normalizeText(roleOrCode?.roleCode),
+    code: displayCode,
+    technicalCode:
+      requestedRoleCode && requestedRoleCode !== displayCode ? requestedRoleCode : "",
     category: base?.category || "custom",
     categoryLabel: CATEGORY_LABELS[base?.category || "custom"] || CATEGORY_LABELS.custom,
     summary:

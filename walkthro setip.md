@@ -23,8 +23,8 @@ Invite 3 users:
 
 # | Email | Preset | Scope | What they get
 --- | --- | --- | --- | ---
-1 | `entity@test.com` | `EntitySetupManager` | `LEGAL_ENTITY = TR01` | `LocalUserAdmin`, `MasterDataSteward`, `CounterpartyCardEditor`, `EntityAPController`, `GLOperator`, `TreasuryOperator`, `PayrollOperator`, `LocalClosePreparer`, `ShareholderCapitalOperator`
-2 | `country@test.com` | `CountryFinanceSetupManager` | `COUNTRY = TR` | `LocalUserAdmin`, `MasterDataSteward`, `CountryAPApprover`, `CountryAPPoster`, `GLOperator`, `TreasuryApprover`, `PayrollApprover`, `LocalCloseReviewer`
+1 | `entity@test.com` | `EntityAPController` | `LEGAL_ENTITY = TR01` | `LocalUserAdmin`, `MasterDataSteward`, `CounterpartyCardEditor`, `EntityAPController`, `APApprover`, `GLOperator`, `TreasuryOperator`, `PayrollOperator`, `LocalClosePreparer`, `ShareholderCapitalOperator`
+2 | `country@test.com` | `CountryAPApprover` | `COUNTRY = TR` | `CountryAPApprover`, `CountryAPController` (`CountryAPPoster` runtime code), `APApprover`, `GLOperator`, `TreasuryApprover`, `PayrollApprover`, `LocalCloseReviewer`
 3 | `branch@test.com` | `BranchOperator` | `OPERATING_UNIT = TR01-IST` | Draft creation, cash, basic GL read
 
 User 3 can also be created later by User 1 because the entity user has `LocalUserAdmin`.
@@ -90,7 +90,7 @@ Order | Login as | Action | Expected
 2 | `entity@test.com` (`EntityAPController`) | Review draft -> Submit | Status = `SUBMITTED`, gate = `PENDING`
 3 | `country@test.com` (`CountryAPApprover`) | See submitted doc -> Approve or Return | If returned: gate = `RETURNED` with reason. If approved: gate = `APPROVED`
 4 | `entity@test.com` | Correct -> resubmit | New workflow instance, gate = `PENDING` again
-5 | `country@test.com` (`CountryAPPoster`) | Post the approved doc | Status = `POSTED`
+5 | `country@test.com` (`CountryAPController`) | Post the approved doc | Status = `POSTED`
 
 Step 7 - Expand Coverage
 

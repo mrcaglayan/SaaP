@@ -4,6 +4,7 @@ import { parsePositiveInt } from "./_utils.js";
 import { requireTenantId } from "./cash.validators.common.js";
 import {
   parseWorkflowAssignmentCreateInput,
+  parseWorkflowCoverageDiagnosticsInput,
   parseWorkflowAssignmentsListInput,
   parseWorkflowAssignmentUpdateInput,
   parseWorkflowDefinitionCreateInput,
@@ -15,6 +16,7 @@ import {
   parseWorkflowInstanceIdParam,
   parseWorkflowInstancesListInput,
 } from "./workflows.validators.js";
+import { evaluateWorkflowCoverageDiagnostics } from "../services/rbac.diagnostics.service.js";
 import {
   approveWorkflowInstance,
   createWorkflowAssignment,
@@ -276,6 +278,22 @@ router.patch(
         tenantId: input.tenantId,
         row,
       });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+router.post(
+  "/coverage-diagnostics",
+  requirePermission("workflow.assignment.read", {
+    resolveScope: (req) => resolveScopeFromInput(req.body),
+  }),
+  async (req, res, next) => {
+    try {
+      const input = parseWorkflowCoverageDiagnosticsInput(req);
+      const diagnostics = await evaluateWorkflowCoverageDiagnostics(input);
+      return res.json(diagnostics);
     } catch (err) {
       return next(err);
     }

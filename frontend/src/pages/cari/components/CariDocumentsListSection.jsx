@@ -12,11 +12,14 @@ import {
   DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS,
   getDocumentOperatingUnitLabel,
   normalizeText,
-  normalizeWorkflowGateState,
   toPositiveInt,
 } from "../cariDocumentsPageHelpers.js";
+import { buildCariWorkflowListSummaryModel } from "../cariWorkflowExplainability.js";
 import useCariDocumentsListController from "../hooks/useCariDocumentsListController.js";
 
+/**
+ * Renders the CARI document list, filters, and compact workflow queue summaries.
+ */
 export default function CariDocumentsListSection({
   fixedDirection = "",
   selectedDocumentId = null,
@@ -163,37 +166,24 @@ export default function CariDocumentsListSection({
         headerClassName: "px-3 py-2",
         cellClassName: "px-3 py-2",
         render: (row) => {
-          const gateState = normalizeWorkflowGateState(row?.workflowGate?.state);
-          const gateMessage = normalizeText(row?.workflowGate?.message);
-          const toneClass =
-            gateState === "APPROVED"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-              : gateState === "RETURNED"
-                ? "border-amber-200 bg-amber-50 text-amber-900"
-                : gateState === "BLOCKED"
-                  ? "border-rose-200 bg-rose-50 text-rose-800"
-                  : gateState === "PENDING"
-                    ? "border-sky-200 bg-sky-50 text-sky-800"
-                    : "border-slate-200 bg-slate-50 text-slate-600";
-          const gateLabel =
-            gateState === "APPROVED"
-              ? l("Approved", "Onaylandi")
-              : gateState === "RETURNED"
-                ? l("Returned", "Iade edildi")
-                : gateState === "BLOCKED"
-                  ? l("Blocked", "Bloke")
-                  : gateState === "PENDING"
-                    ? l("Pending", "Beklemede")
-                    : l("None", "Yok");
+          const workflowSummary = buildCariWorkflowListSummaryModel(row, l);
+          if (!workflowSummary) {
+            return <span className="text-[11px] text-slate-500">-</span>;
+          }
           return (
             <div className="space-y-1">
               <span
-                className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${toneClass}`}
+                className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${workflowSummary.toneClass}`}
               >
-                {gateLabel}
+                {workflowSummary.badgeLabel}
               </span>
-              {gateMessage ? (
-                <div className="max-w-xs text-[11px] text-slate-600">{gateMessage}</div>
+              <div className="max-w-xs text-xs font-medium text-slate-800">
+                {workflowSummary.headline}
+              </div>
+              {workflowSummary.detail ? (
+                <div className="max-w-xs text-[11px] text-slate-600">
+                  {workflowSummary.detail}
+                </div>
               ) : null}
             </div>
           );

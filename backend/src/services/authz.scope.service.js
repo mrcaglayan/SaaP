@@ -473,7 +473,10 @@ async function loadHierarchyFromDb(tenantId, runQuery = query) {
     legalEntityIdsByCountryId,
     operatingUnitIdsByLegalEntityId,
   };}
-async function loadHierarchy({ tenantId, tenantVersion = null, runQuery = query }) {
+/**
+ * Load the tenant org hierarchy used for hierarchy-aware scope expansion and diagnostics.
+ */
+export async function loadHierarchy({ tenantId, tenantVersion = null, runQuery = query }) {
   if (runQuery !== query) {
     return loadHierarchyFromDb(tenantId, runQuery);
   }

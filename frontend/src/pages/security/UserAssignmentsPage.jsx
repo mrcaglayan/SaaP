@@ -530,6 +530,10 @@ function buildUserSearchText(row) {
     .join(" ")
     .toLowerCase();
 }
+
+function getRoleDisplayCode(roleOrCode) {
+  return getRoleCatalogEntry(roleOrCode).code;
+}
 function WorkspaceStatCard({ title, value, subtitle, tone = "slate" }) {
   const toneClasses =
     tone === "blue"
@@ -722,7 +726,7 @@ function AssignmentBundleCard({
                               : "violet"
                     )}`}
                   >
-                    {roleCode}
+                    {roleEntry.code}
                   </span>
                 );
               })}
@@ -1077,7 +1081,7 @@ function UserAccessModal({
                           key={`modal-current-role-${roleCode}`}
                           className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
                         >
-                          {roleCode}
+                          {getRoleDisplayCode(roleCode)}
                         </span>
                       ))
                     ) : (
@@ -1195,7 +1199,7 @@ export default function UserAssignmentsPage() {
   });
   const [assignmentForm, setAssignmentForm] = useState({
     userId: "",
-    presetCode: "EntitySetupManager",
+    presetCode: "EntityAPController",
     scopeId: "",
     effectiveFrom: "",
     effectiveTo: "",
@@ -2173,7 +2177,7 @@ export default function UserAssignmentsPage() {
               <option value="">{l("All roles", "Tum roller")}</option>
               {roles.map((role) => (
                 <option key={`user-role-filter-${role.id}`} value={role.code}>
-                  {role.code}
+                  {getRoleDisplayCode(role)}
                 </option>
               ))}
             </select>
@@ -2270,7 +2274,7 @@ export default function UserAssignmentsPage() {
                                 row.topRoleCodes.map((roleCode) => (
                                   <StatusPill
                                     key={`user-role-${row.id}-${roleCode}`}
-                                    label={roleCode}
+                                    label={getRoleDisplayCode(roleCode)}
                                   />
                                 ))
                               ) : (
@@ -2657,7 +2661,7 @@ export default function UserAssignmentsPage() {
                           <optgroup key={`raw-role-group-${group.key}`} label={group.label}>
                             {group.roles.map((role) => (
                               <option key={`raw-role-${role.id}`} value={String(role.id)}>
-                                {role.code}
+                                {getRoleDisplayCode(role)}
                               </option>
                             ))}
                           </optgroup>

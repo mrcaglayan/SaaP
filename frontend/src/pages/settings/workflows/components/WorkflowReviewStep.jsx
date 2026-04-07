@@ -2,7 +2,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { BookOpen, CheckCircle2, Clock, FileText, Layers } from "lucide-react";
+import { BookOpen, CheckCircle2, Clock, FileText, Layers, ShieldAlert } from "lucide-react";
+import { buildWorkflowCoverageReviewModel } from "../utils/workflowSetupHelpers.js";
 
 const PROCESS_ICONS = {
   AP_DOCUMENT_POSTING: FileText,
@@ -34,8 +35,23 @@ export default function WorkflowReviewStep({
   workflowPreviewText,
   assignmentEffectText,
   onBack,
+  // PR-WGX-01: AP business preview
+  apBusinessPreviewLines,
+  apBusinessLabels,
+  coverageDiagnostics,
+  coverageDiagnosticsLoading = false,
+  coverageDiagnosticsError = "",
+  coverageLookups = {},
+  tenantScopeId = null,
 }) {
   const Icon = PROCESS_ICONS[String(workflowType || "").toUpperCase()] || FileText;
+  const coverageReview = buildWorkflowCoverageReviewModel({
+    diagnostics: coverageDiagnostics,
+    workflowType,
+    lookups: coverageLookups,
+    tenantScopeId,
+    l,
+  });
 
   return (
     <div className="space-y-5">
@@ -130,6 +146,19 @@ export default function WorkflowReviewStep({
             <p className="mt-2 text-sm leading-6 text-foreground">{workflowPreviewText}</p>
           </div>
 
+          {Array.isArray(apBusinessPreviewLines) && apBusinessPreviewLines.length > 0 ? (
+            <div className="rounded-3xl border border-emerald-200 bg-emerald-50/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                {apBusinessLabels?.businessPreviewTitle || l("Business process preview", "Is sureci onizlemesi")}
+              </p>
+              <div className="mt-2 space-y-1">
+                {apBusinessPreviewLines.map((line, i) => (
+                  <p key={i} className="text-sm leading-6 text-emerald-900">{line}</p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="rounded-3xl border border-blue-200 bg-blue-50/80 p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">
               {l("Assignment outcome", "Atama sonucu")}
@@ -138,6 +167,130 @@ export default function WorkflowReviewStep({
             <p className="mt-3 text-sm font-medium text-blue-900">
               {l("Applied scope", "Uygulanan kapsam")}: {assignmentLabel}
             </p>
+          </div>
+
+          <div className="rounded-3xl border border-border bg-card p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  {l("Coverage diagnostics", "Kapsam tanilari")}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-foreground">
+                  {l(
+                    "Check whether active users currently exist for submit, approval, and posting roles before rollout.",
+                    "Canliya almadan once gonderim, onay ve kayit rolleri icin aktif kullanici olup olmadigini kontrol edin."
+                  )}
+                </p>
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-amber-200 bg-amber-50 text-amber-700">
+                <ShieldAlert className="h-5 w-5" />
+              </div>
+            </div>
+
+            {coverageDiagnosticsLoading ? (
+              <Alert className="mt-4 border-slate-200 bg-slate-50/80 text-slate-900">
+                <AlertTitle>{l("Checking coverage", "Kapsam kontrol ediliyor")}</AlertTitle>
+                <AlertDescription>
+                  {l(
+                    "The system is checking whether the configured workflow actors currently exist at the selected scopes.",
+                    "Sistem, yapilandirilan workflow aktorlerinin secilen kapsamlarda su anda mevcut olup olmadigini kontrol ediyor."
+                  )}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {!coverageDiagnosticsLoading && coverageDiagnosticsError ? (
+              <Alert variant="destructive" className="mt-4">
+                <AlertTitle>{l("Coverage check failed", "Kapsam kontrolu basarisiz")}</AlertTitle>
+                <AlertDescription>{coverageDiagnosticsError}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {!coverageDiagnosticsLoading &&
+            !coverageDiagnosticsError &&
+            coverageReview?.successText ? (
+              <Alert className="mt-4 border-emerald-200 bg-emerald-50/90 text-emerald-900">
+                <CheckCircle2 className="h-4 w-4" />
+                <AlertTitle>{l("Coverage looks healthy", "Kapsam saglikli gorunuyor")}</AlertTitle>
+                <AlertDescription className="text-emerald-800">
+                  {coverageReview.successText}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {!coverageDiagnosticsLoading &&
+            !coverageDiagnosticsError &&
+            coverageReview?.warningCards?.length > 0 ? (
+              <div className="mt-4 space-y-3">
+                {coverageReview.warningCards.map((warningCard) => (
+                  <Alert
+                    key={warningCard.key}
+                    className="border-amber-200 bg-amber-50/90 text-amber-950"
+                  >
+                    <ShieldAlert className="h-4 w-4" />
+                    <AlertTitle>{warningCard.title}</AlertTitle>
+                    <AlertDescription className="space-y-2 text-amber-900">
+                      <p>{warningCard.description}</p>
+                      {warningCard.technicalHint ? (
+                        <p className="text-xs">{warningCard.technicalHint}</p>
+                      ) : null}
+                      {warningCard.uncoveredScopeLabels.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {warningCard.uncoveredScopeLabels.map((scopeLabel) => (
+                            <span
+                              key={`${warningCard.key}-${scopeLabel}`}
+                              className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] font-medium text-amber-900"
+                            >
+                              {scopeLabel}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </AlertDescription>
+                  </Alert>
+                ))}
+              </div>
+            ) : null}
+
+            {!coverageDiagnosticsLoading &&
+            !coverageDiagnosticsError &&
+            coverageReview?.summaryCards?.length > 0 ? (
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  {coverageReview.checkedOnLabel}
+                </p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {coverageReview.summaryCards.map((summaryCard) => (
+                    <div
+                      key={summaryCard.key}
+                      className={`rounded-2xl border px-4 py-3 ${summaryCard.toneClass}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold">{summaryCard.actorLabel}</p>
+                          <p className="mt-1 text-xs opacity-80">{summaryCard.detailText}</p>
+                        </div>
+                        <Badge variant="secondary" className="border-current/20 bg-white/70">
+                          {summaryCard.statusLabel}
+                        </Badge>
+                      </div>
+                      {summaryCard.uncoveredScopeLabels.length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {summaryCard.uncoveredScopeLabels.map((scopeLabel) => (
+                            <span
+                              key={`${summaryCard.key}-${scopeLabel}`}
+                              className="rounded-full border border-current/15 bg-white/70 px-2 py-1 text-[11px] font-medium"
+                            >
+                              {scopeLabel}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </CardContent>
 

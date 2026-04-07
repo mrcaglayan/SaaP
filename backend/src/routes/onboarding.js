@@ -36,15 +36,23 @@ const SHAREHOLDER_PURPOSE_CODES = Object.freeze([
   SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
 ]);
 const SHAREHOLDER_PURPOSE_CODE_SET = new Set(SHAREHOLDER_PURPOSE_CODES);
+// Fresh onboarding surfaces now speak in canonical AP role names, but the
+// route still accepts the older preset codes so existing drafts and scripts
+// do not break during rollout.
+const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
+  EntitySetupManager: "EntityAPController",
+  CountryFinanceSetupManager: "CountryAPApprover",
+});
 const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
-  EntitySetupManager: Object.freeze({
-    code: "EntitySetupManager",
+  EntityAPController: Object.freeze({
+    code: "EntityAPController",
     scopeType: "LEGAL_ENTITY",
     roleCodes: Object.freeze([
       "LocalUserAdmin",
       "MasterDataSteward",
       "CounterpartyCardEditor",
       "EntityAPController",
+      "APApprover",
       "GLOperator",
       "TreasuryOperator",
       "PayrollOperator",
@@ -53,14 +61,13 @@ const BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS = Object.freeze({
     ]),
     optionalRoleCodes: Object.freeze(["GLPostingAuthority"]),
   }),
-  CountryFinanceSetupManager: Object.freeze({
-    code: "CountryFinanceSetupManager",
+  CountryAPApprover: Object.freeze({
+    code: "CountryAPApprover",
     scopeType: "COUNTRY",
     roleCodes: Object.freeze([
-      "LocalUserAdmin",
-      "MasterDataSteward",
       "CountryAPApprover",
       "CountryAPPoster",
+      "APApprover",
       "GLOperator",
       "TreasuryApprover",
       "PayrollApprover",
@@ -1119,11 +1126,13 @@ async function bootstrapPaymentTermsForLegalEntities({
 }
 
 function getBootstrapHandoffPresetDefinition(presetCode) {
-  const normalizedPresetCode = String(presetCode || "").trim();
+  const rawPresetCode = String(presetCode || "").trim();
+  const normalizedPresetCode =
+    BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES[rawPresetCode] || rawPresetCode;
   const definition =
     BOOTSTRAP_HANDOFF_PRESET_DEFINITIONS[normalizedPresetCode] || null;
   if (!definition) {
-    throw badRequest(`Unknown handoff presetCode: ${normalizedPresetCode || "<empty>"}`);
+    throw badRequest(`Unknown handoff presetCode: ${rawPresetCode || "<empty>"}`);
   }
   return definition;
 }
@@ -1180,7 +1189,7 @@ function normalizeCompanyBootstrapHandoffAssignment(assignment, index) {
   }
 
   const normalizedAssignment = {
-    presetCode,
+    presetCode: presetDefinition.code,
     scopeType,
     targetMode: hasUserId ? "EXISTING_USER" : "INVITE",
     userId: hasUserId ? userId : null,

@@ -14,6 +14,7 @@ import {
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+  WORKFLOW_GATE_BLOCKING_REASON_CODES,
 } from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function assert(condition, message) {
@@ -21,6 +22,9 @@ function assert(condition, message) {
     throw new Error(message);
   }
 }
+
+const RETURNED_FOR_CORRECTION_SUMMARY =
+  "Returned for correction \u2014 resubmission required";
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -462,6 +466,70 @@ async function listWorkflowInstancesForDocument({ tenantId, documentId }) {
   return result.rows || [];
 }
 
+async function updateLatestWorkflowInstanceForDocument({
+  tenantId,
+  documentId,
+  status,
+  decision = "",
+  decisionByUserId = null,
+  decisionNote = null,
+  decisionAt = null,
+  resolvedAt = null,
+  resolutionNote = null,
+}) {
+  const workflowInstances = await listWorkflowInstancesForDocument({
+    tenantId,
+    documentId,
+  });
+  const latestInstance = workflowInstances[workflowInstances.length - 1] || null;
+  const workflowInstanceId = toPositiveInt(latestInstance?.id);
+  assert(
+    workflowInstanceId > 0,
+    `Workflow instance is required before updating document ${documentId}`
+  );
+
+  await query(
+    `UPDATE workflow_instances
+        SET status = ?,
+            resolved_at = ?,
+            resolution_note = ?,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE tenant_id = ?
+        AND id = ?`,
+    [
+      status,
+      resolvedAt || null,
+      resolutionNote || decisionNote || null,
+      tenantId,
+      workflowInstanceId,
+    ]
+  );
+
+  if (decision) {
+    await query(
+      `INSERT INTO workflow_instance_decisions (
+          workflow_instance_id,
+          step_no,
+          decision,
+          decision_by_user_id,
+          decision_note,
+          created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        workflowInstanceId,
+        Math.max(1, Number(latestInstance?.current_step_no || 1)),
+        decision,
+        toPositiveInt(decisionByUserId),
+        decisionNote || null,
+        decisionAt || "2026-02-01 00:00:00",
+      ]
+    );
+  }
+
+  return workflowInstanceId;
+}
+
 async function createDraftDocument({
   req,
   tenantId,
@@ -717,6 +785,17 @@ async function main() {
       noAssignmentReadback.workflowGate?.assignmentResolved === false,
     "Governed AP readback without assignment should expose a none-state workflow gate without assignment resolution"
   );
+  assert(
+    noAssignmentReadback.workflowGate?.blockingReasonCode ===
+      WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_ASSIGNMENT_NOT_RESOLVED &&
+      noAssignmentReadback.workflowGate?.blockingReasonDetail ===
+        "No workflow assignment configured for this document scope" &&
+      noAssignmentReadback.workflowGate?.submitPermissionCode === "cari.doc.submit" &&
+      noAssignmentReadback.workflowGate?.postPermissionCode === "cari.doc.post" &&
+      noAssignmentReadback.workflowGate?.assignmentScopeType === null &&
+      Number(noAssignmentReadback.workflowGate?.totalSteps || 0) === 0,
+    "Governed AP readback without assignment should expose structured explainability fields"
+  );
 
   const governedApWorkflow = await createGovernedApWorkflowAssignment({
     tenantId,
@@ -724,6 +803,46 @@ async function main() {
     countryId: fixtures.countryId,
     stamp,
   });
+
+  const submissionRequiredDraft = await createDraftDocument({
+    req,
+    tenantId,
+    userId,
+    legalEntityId: fixtures.legalEntityId,
+    counterpartyId: fixtures.vendorId,
+    paymentTermId: fixtures.paymentTermId,
+    direction: "AP",
+    documentType: "INVOICE",
+    documentDate: "2026-02-11",
+    dueDate: "2026-03-13",
+    currencyCode: fixtures.currencyCode,
+    amountTxn: 260,
+  });
+  const submissionRequiredReadback = await getCariDocumentByIdForTenant({
+    req,
+    tenantId,
+    documentId: submissionRequiredDraft.id,
+    assertScopeAccess: allowAllScopes,
+  });
+  assert(
+    submissionRequiredReadback.workflowGate?.state === "blocked" &&
+      submissionRequiredReadback.workflowGate?.assignmentResolved === true &&
+      submissionRequiredReadback.workflowGate?.assignmentScopeType === "COUNTRY" &&
+      toPositiveInt(submissionRequiredReadback.workflowGate?.assignmentScopeId) ===
+        fixtures.countryId &&
+      submissionRequiredReadback.workflowGate?.assignmentScopeLabel === "Country" &&
+      submissionRequiredReadback.workflowGate?.waitingForSummary ===
+        "Waiting for document submission" &&
+      submissionRequiredReadback.workflowGate?.blockingReasonCode ===
+        WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REQUIRED &&
+      submissionRequiredReadback.workflowGate?.blockingReasonDetail ===
+        "Document must be submitted for workflow approval before posting" &&
+      submissionRequiredReadback.workflowGate?.submitPermissionCode === "cari.doc.submit" &&
+      submissionRequiredReadback.workflowGate?.postPermissionCode === "cari.doc.post" &&
+      submissionRequiredReadback.workflowGate?.currentStepNo === null &&
+      Number(submissionRequiredReadback.workflowGate?.totalSteps || 0) === 0,
+    "Governed AP draft readback should expose the blocked-before-submit explainability contract"
+  );
 
   const governedSubmitDraft = await createDraftDocument({
     req,
@@ -765,6 +884,36 @@ async function main() {
       governedApWorkflow.workflowDefinitionId,
     "Successful submit should surface the resolved workflow definition id"
   );
+  const submittedPendingExplainabilityMatches =
+    submitted.workflowGate?.assignmentScopeType === "COUNTRY" &&
+    toPositiveInt(submitted.workflowGate?.assignmentScopeId) === fixtures.countryId &&
+    submitted.workflowGate?.assignmentScopeLabel === "Country" &&
+    Number(submitted.workflowGate?.currentStepNo || 0) === 1 &&
+    Number(submitted.workflowGate?.totalSteps || 0) === 1 &&
+    submitted.workflowGate?.currentStageScopeType === "COUNTRY" &&
+    submitted.workflowGate?.currentStageScopeLabel === "Country" &&
+    submitted.workflowGate?.effectiveApprovalPermissionCode ===
+      "approvals.requests.approve" &&
+    submitted.workflowGate?.effectiveApprovalPermissionLabel ===
+      "AP approval at Country scope" &&
+    submitted.workflowGate?.nextActorType === "POSTER" &&
+    submitted.workflowGate?.nextActionCode === "POST" &&
+    submitted.workflowGate?.nextActionLabel === "Country posting" &&
+    submitted.workflowGate?.waitingForSummary === "Waiting for Country approval" &&
+    submitted.workflowGate?.blockingReasonCode ===
+      WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_PENDING &&
+    submitted.workflowGate?.blockingReasonDetail ===
+      "Approval is pending at Country scope" &&
+    submitted.workflowGate?.submitPermissionCode === "cari.doc.submit" &&
+    submitted.workflowGate?.postPermissionCode === "cari.doc.post";
+  assert(
+    submittedPendingExplainabilityMatches,
+    `Successful submit should return enriched pending workflow explainability fields: ${JSON.stringify(
+      submitted.workflowGate,
+      null,
+      2
+    )}`
+  );
   const workflowInstances = await listWorkflowInstancesForDocument({
     tenantId,
     documentId: governedSubmitDraft.id,
@@ -797,12 +946,54 @@ async function main() {
     "Document GET should expose the pending AP workflow gate after submit"
   );
   assert(
+    submittedReadback.workflowGate?.waitingForSummary === "Waiting for Country approval" &&
+      submittedReadback.workflowGate?.currentStageScopeLabel === "Country" &&
+      submittedReadback.workflowGate?.nextActionLabel === "Country posting",
+    "Document GET should preserve enriched workflow explainability fields after submit"
+  );
+  assert(
     (await countAuditRows({
       tenantId,
       action: "cari.document.submit",
       documentId: governedSubmitDraft.id,
     })) >= 1,
     "Submit should write cari.document.submit audit rows"
+  );
+  const approvalNote = "Country AP approval completed after reviewer sign-off.";
+  const approvedWorkflowInstanceId = await updateLatestWorkflowInstanceForDocument({
+    tenantId,
+    documentId: governedSubmitDraft.id,
+    status: "APPROVED",
+    decision: "APPROVE",
+    decisionByUserId: userId,
+    decisionNote: approvalNote,
+    decisionAt: "2026-02-14 10:15:00",
+    resolvedAt: "2026-02-14 10:15:00",
+    resolutionNote: approvalNote,
+  });
+  await setDocumentStatus({
+    tenantId,
+    documentId: governedSubmitDraft.id,
+    status: "APPROVED",
+  });
+  const approvedReadback = await getCariDocumentByIdForTenant({
+    req,
+    tenantId,
+    documentId: governedSubmitDraft.id,
+    assertScopeAccess: allowAllScopes,
+  });
+  assert(
+    approvedReadback.workflowGate?.state === "approved" &&
+      toPositiveInt(approvedReadback.workflowGate?.workflowInstanceId) ===
+        approvedWorkflowInstanceId &&
+      approvedReadback.workflowGate?.workflowInstanceStatus === "APPROVED" &&
+      approvedReadback.workflowGate?.waitingForSummary === "Ready for Country posting" &&
+      approvedReadback.workflowGate?.nextActorType === "POSTER" &&
+      approvedReadback.workflowGate?.nextActionCode === "POST" &&
+      approvedReadback.workflowGate?.nextActionLabel === "Country posting" &&
+      approvedReadback.workflowGate?.blockingReasonCode === null &&
+      approvedReadback.workflowGate?.latestDecisionComment === approvalNote,
+    "Approved governed AP readback should expose the ready-to-post explainability contract"
   );
 
   const nonGovernedApDraft = await createDraftDocument({
@@ -863,6 +1054,127 @@ async function main() {
     400
   );
 
+  const returnedWorkflowDraft = await createDraftDocument({
+    req,
+    tenantId,
+    userId,
+    legalEntityId: fixtures.legalEntityId,
+    counterpartyId: fixtures.vendorId,
+    paymentTermId: fixtures.paymentTermId,
+    direction: "AP",
+    documentType: "INVOICE",
+    documentDate: "2026-02-15",
+    dueDate: "2026-03-17",
+    currencyCode: fixtures.currencyCode,
+    amountTxn: 280,
+  });
+  const returnedWorkflowSubmitted = await submitCariDocumentById({
+    req,
+    payload: {
+      tenantId,
+      userId,
+      documentId: returnedWorkflowDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  const workflowReturnReason = "Supplier evidence is incomplete for the reviewed bill.";
+  const originalReturnedWorkflowInstanceId = toPositiveInt(
+    returnedWorkflowSubmitted.workflowGate?.workflowInstanceId
+  );
+  assert(
+    originalReturnedWorkflowInstanceId > 0,
+    "Returned/resubmitted scenario requires a live workflow instance"
+  );
+  await updateLatestWorkflowInstanceForDocument({
+    tenantId,
+    documentId: returnedWorkflowDraft.id,
+    status: "REJECTED",
+    decision: "RETURN",
+    decisionByUserId: userId,
+    decisionNote: workflowReturnReason,
+    decisionAt: "2026-02-18 09:30:00",
+    resolvedAt: "2026-02-18 09:30:00",
+    resolutionNote: workflowReturnReason,
+  });
+  await setDocumentStatus({
+    tenantId,
+    documentId: returnedWorkflowDraft.id,
+    status: "RETURNED",
+    returnReason: workflowReturnReason,
+    returnedAt: "2026-02-18 09:30:00",
+  });
+  const returnedWorkflowReadback = await getCariDocumentByIdForTenant({
+    req,
+    tenantId,
+    documentId: returnedWorkflowDraft.id,
+    assertScopeAccess: allowAllScopes,
+  });
+  const returnedWorkflowExplainabilityMatches =
+    returnedWorkflowReadback.workflowGate?.state === "returned" &&
+    returnedWorkflowReadback.workflowGate?.workflowInstanceStatus === "REJECTED" &&
+    returnedWorkflowReadback.workflowGate?.waitingForSummary ===
+      RETURNED_FOR_CORRECTION_SUMMARY &&
+    returnedWorkflowReadback.workflowGate?.blockingReasonCode ===
+      WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REJECTED &&
+    returnedWorkflowReadback.workflowGate?.blockingReasonDetail === workflowReturnReason &&
+    returnedWorkflowReadback.workflowGate?.latestDecisionComment === workflowReturnReason &&
+    Number(returnedWorkflowReadback.workflowGate?.currentStepNo || 0) === 1 &&
+    Number(returnedWorkflowReadback.workflowGate?.totalSteps || 0) === 1 &&
+    returnedWorkflowReadback.workflowGate?.currentStageScopeLabel === "Country";
+  assert(
+    returnedWorkflowExplainabilityMatches,
+    `Returned governed AP readback should expose returned explainability fields from the workflow instance: ${JSON.stringify(
+      returnedWorkflowReadback.workflowGate,
+      null,
+      2
+    )}`
+  );
+  const correctedReturnedWorkflow = await updateCariDraftDocumentById({
+    req,
+    payload: {
+      tenantId,
+      userId,
+      documentId: returnedWorkflowDraft.id,
+      rowVersion: returnedWorkflowReadback.rowVersion,
+      dueDate: "2026-03-28",
+      amountTxn: 281,
+      amountBase: 281,
+      currencyCode: fixtures.currencyCode,
+      fxRate: 1,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  assert(
+    correctedReturnedWorkflow.status === "RETURNED" &&
+      correctedReturnedWorkflow.workflowGate?.state === "returned" &&
+      correctedReturnedWorkflow.workflowGate?.blockingReasonDetail === workflowReturnReason,
+    "Returned governed AP documents should stay editable until resubmitted"
+  );
+  const resubmittedReturnedWorkflow = await submitCariDocumentById({
+    req,
+    payload: {
+      tenantId,
+      userId,
+      documentId: returnedWorkflowDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  const returnedWorkflowInstances = await listWorkflowInstancesForDocument({
+    tenantId,
+    documentId: returnedWorkflowDraft.id,
+  });
+  assert(
+    returnedWorkflowInstances.length === 2 &&
+      resubmittedReturnedWorkflow.status === "SUBMITTED" &&
+      resubmittedReturnedWorkflow.workflowGate?.state === "pending" &&
+      toPositiveInt(resubmittedReturnedWorkflow.workflowGate?.workflowInstanceId) >
+        originalReturnedWorkflowInstanceId &&
+      resubmittedReturnedWorkflow.workflowGate?.waitingForSummary ===
+        "Waiting for Country approval" &&
+      !resubmittedReturnedWorkflow.workflowGate?.latestDecisionComment,
+    "Resubmitted governed AP documents should create a fresh pending workflow instance and clear the old return note"
+  );
+
   const returnedDraft = await createDraftDocument({
     req,
     tenantId,
@@ -915,6 +1227,10 @@ async function main() {
   assert(
     correctedReturned.status === "RETURNED" &&
       correctedReturned.workflowGate?.state === "returned" &&
+      correctedReturned.workflowGate?.waitingForSummary ===
+        RETURNED_FOR_CORRECTION_SUMMARY &&
+      correctedReturned.workflowGate?.blockingReasonCode ===
+        WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REJECTED &&
       correctedReturned.returnReason === returnReason &&
       correctedReturned.dueDate === "2026-03-25" &&
       toNumber(correctedReturned.amountTxn) === 285 &&

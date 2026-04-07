@@ -53,6 +53,7 @@ import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   CARI_DOCUMENT_WORKFLOW_GATE_STATES,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+  WORKFLOW_GATE_BLOCKING_REASON_CODES,
   canCariDocumentBeCancelled,
   canCariDocumentBeReturned,
   canCariDocumentBeSubmitted,
@@ -62,6 +63,7 @@ import {
   cancelUnifiedWorkflowInstanceBridge,
   ensureUnifiedWorkflowInstanceBridge,
   findActiveWorkflowAssignmentForScope,
+  getUnifiedWorkflowRequestRowById,
   getWorkflowInstanceByTarget,
   listWorkflowInstanceDecisionRows,
 } from "./workflows.service.js";
@@ -6865,6 +6867,148 @@ function normalizeCariWorkflowGateState(state) {
     : "none";
 }
 
+/**
+ * Resolves the assignment scope type and label from a raw assignment row.
+ */
+function resolveAssignmentScopeFromRow(assignmentRow) {
+  if (!assignmentRow) return { scopeType: null, scopeId: null };
+  if (parsePositiveInt(assignmentRow.operating_unit_id)) {
+    return { scopeType: "OPERATING_UNIT", scopeId: parsePositiveInt(assignmentRow.operating_unit_id) };
+  }
+  if (parsePositiveInt(assignmentRow.legal_entity_id)) {
+    return { scopeType: "LEGAL_ENTITY", scopeId: parsePositiveInt(assignmentRow.legal_entity_id) };
+  }
+  if (parsePositiveInt(assignmentRow.country_id)) {
+    return { scopeType: "COUNTRY", scopeId: parsePositiveInt(assignmentRow.country_id) };
+  }
+  if (parsePositiveInt(assignmentRow.group_company_id)) {
+    return { scopeType: "GROUP", scopeId: parsePositiveInt(assignmentRow.group_company_id) };
+  }
+  return { scopeType: "TENANT", scopeId: null };
+}
+
+/**
+ * Loads the policy snapshot steps from the unified approval request
+ * bridged to a workflow instance.  Returns [] if unavailable.
+ */
+async function loadWorkflowInstancePolicySteps({ tenantId, instanceRow, runQuery }) {
+  const genericRequestId = parsePositiveInt(instanceRow?.generic_request_id);
+  if (!genericRequestId) return [];
+  const requestRow = await getUnifiedWorkflowRequestRowById({
+    tenantId,
+    requestId: genericRequestId,
+    runQuery,
+  });
+  const snapshot = requestRow?.policy_snapshot_json;
+  return Array.isArray(snapshot?.steps) ? snapshot.steps : [];
+}
+
+/**
+ * Human-readable scope type label for business-facing explanations.
+ */
+const SCOPE_TYPE_LABELS = {
+  OPERATING_UNIT: "Operating Unit",
+  LEGAL_ENTITY: "Legal Entity",
+  COUNTRY: "Country",
+  GROUP: "Group",
+  TENANT: "Tenant",
+};
+
+function resolveWorkflowStageScopeType(step) {
+  const explicitStageScopeType = normalizeUpperText(
+    step?.stage_scope_type || step?.stageScopeType
+  );
+  if (explicitStageScopeType) {
+    return explicitStageScopeType;
+  }
+
+  // Bridged approval-request snapshots persist the scope as scope_resolution_mode
+  // rather than the legacy workflow stage_scope_type field.
+  const scopeResolutionMode = normalizeUpperText(
+    step?.scope_resolution_mode || step?.scopeResolutionMode
+  );
+  if (scopeResolutionMode === "TARGET_OPERATING_UNIT") {
+    return "OPERATING_UNIT";
+  }
+  if (scopeResolutionMode === "TARGET_LEGAL_ENTITY") {
+    return "LEGAL_ENTITY";
+  }
+  if (scopeResolutionMode === "TARGET_COUNTRY") {
+    return "COUNTRY";
+  }
+  if (scopeResolutionMode === "TARGET_GROUP") {
+    return "GROUP";
+  }
+  return null;
+}
+
+/**
+ * Derives step-level enrichment fields from the policy snapshot steps and current step number.
+ */
+function deriveStepEnrichment(policySteps, currentStepNo) {
+  const steps = Array.isArray(policySteps) ? policySteps : [];
+  const totalSteps = steps.length;
+  if (totalSteps === 0) {
+    return {
+      currentStepNo: null,
+      totalSteps: 0,
+      currentStageScopeType: null,
+      currentStageScopeLabel: null,
+      effectiveApprovalPermissionCode: null,
+      effectiveApprovalPermissionLabel: null,
+      nextActorType: null,
+      nextActionCode: null,
+      nextActionLabel: null,
+    };
+  }
+
+  const resolvedStepNo = Math.max(1, Number(currentStepNo || 1));
+  const currentStep = steps.find(
+    (s) => Number(s.step_no || s.stepNo || 1) === resolvedStepNo
+  );
+  const currentStageScopeType = resolveWorkflowStageScopeType(currentStep);
+  const currentStageScopeLabel = SCOPE_TYPE_LABELS[currentStageScopeType] || currentStageScopeType;
+
+  // Effective approval permission — surfaces the existing route-layer fallback
+  const rawPermission = String(
+    currentStep?.required_permission_code ?? currentStep?.requiredPermissionCode ?? ""
+  ).trim();
+  const effectiveApprovalPermissionCode = rawPermission || "approvals.requests.approve";
+  const effectiveApprovalPermissionLabel = rawPermission
+    ? rawPermission
+    : `AP approval at ${currentStageScopeLabel || "scope"} scope`;
+
+  // Next-step lookahead — pure in-memory derivation from loaded data
+  const nextStep = steps.find(
+    (s) => Number(s.step_no || s.stepNo || 0) === resolvedStepNo + 1
+  );
+  let nextActorType;
+  let nextActionCode;
+  let nextActionLabel;
+  if (nextStep) {
+    const nextScopeType = resolveWorkflowStageScopeType(nextStep);
+    nextActorType = nextScopeType || "REVIEWER";
+    nextActionCode = "APPROVE";
+    nextActionLabel = `${SCOPE_TYPE_LABELS[nextScopeType] || nextScopeType} approval`;
+  } else {
+    nextActorType = "POSTER";
+    nextActionCode = "POST";
+    nextActionLabel = `${currentStageScopeLabel || "Scope"} posting`;
+  }
+
+  return {
+    currentStepNo: resolvedStepNo,
+    totalSteps,
+    currentStageScopeType,
+    currentStageScopeLabel,
+    effectiveApprovalPermissionCode,
+    effectiveApprovalPermissionLabel,
+    nextActorType,
+    nextActionCode,
+    nextActionLabel,
+  };
+}
+
 async function buildCariDocumentWorkflowGateSummary({
   tenantId,
   documentRow,
@@ -6872,6 +7016,28 @@ async function buildCariDocumentWorkflowGateSummary({
 }) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedDocumentId = parsePositiveInt(documentRow?.id);
+
+  // Default enrichment fields — appended to every return path
+  const emptyEnrichment = {
+    assignmentScopeType: null,
+    assignmentScopeId: null,
+    assignmentScopeLabel: null,
+    currentStepNo: null,
+    totalSteps: 0,
+    currentStageScopeType: null,
+    currentStageScopeLabel: null,
+    effectiveApprovalPermissionCode: null,
+    effectiveApprovalPermissionLabel: null,
+    nextActorType: null,
+    nextActionCode: null,
+    nextActionLabel: null,
+    waitingForSummary: null,
+    blockingReasonCode: null,
+    blockingReasonDetail: null,
+    submitPermissionCode: "cari.doc.submit",
+    postPermissionCode: "cari.doc.post",
+  };
+
   if (!normalizedTenantId || !normalizedDocumentId || !documentRow) {
     return {
       state: "none",
@@ -6883,6 +7049,7 @@ async function buildCariDocumentWorkflowGateSummary({
       workflowInstanceStatus: null,
       workflowDefinitionId: null,
       workflowAssignmentId: null,
+      ...emptyEnrichment,
     };
   }
 
@@ -6898,6 +7065,7 @@ async function buildCariDocumentWorkflowGateSummary({
       workflowInstanceStatus: null,
       workflowDefinitionId: null,
       workflowAssignmentId: null,
+      ...emptyEnrichment,
     };
   }
 
@@ -6927,6 +7095,35 @@ async function buildCariDocumentWorkflowGateSummary({
   const documentStatus = normalizeUpperText(documentRow?.status);
   const workflowInstanceStatus = normalizeUpperText(latestInstance?.status);
 
+  // -- Enrichment: assignment scope --
+  const assignmentScope = resolveAssignmentScopeFromRow(assignmentRow);
+  const assignmentScopeType = assignmentScope.scopeType;
+  const assignmentScopeId = assignmentScope.scopeId;
+  const assignmentScopeLabel = SCOPE_TYPE_LABELS[assignmentScopeType] || assignmentScopeType;
+
+  // -- Enrichment: step data from policy snapshot --
+  const policySteps = workflowInstanceId
+    ? await loadWorkflowInstancePolicySteps({
+        tenantId: normalizedTenantId,
+        instanceRow: latestInstance,
+        runQuery,
+      })
+    : [];
+  const stepEnrichment = deriveStepEnrichment(
+    policySteps,
+    latestInstance?.current_step_no
+  );
+
+  // Shared enrichment fields for all resolved states
+  const resolvedEnrichment = {
+    assignmentScopeType,
+    assignmentScopeId,
+    assignmentScopeLabel,
+    ...stepEnrichment,
+    submitPermissionCode: "cari.doc.submit",
+    postPermissionCode: "cari.doc.post",
+  };
+
   if (!assignmentResolved) {
     // No assignment = governance not yet configured for this scope.
     // Document direct-posts. This is the natural gradual-rollout mechanism.
@@ -6940,8 +7137,18 @@ async function buildCariDocumentWorkflowGateSummary({
       workflowInstanceStatus: workflowInstanceStatus || null,
       workflowDefinitionId: parsePositiveInt(latestInstance?.workflow_definition_id) || null,
       workflowAssignmentId: null,
+      ...emptyEnrichment,
+      blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_ASSIGNMENT_NOT_RESOLVED,
+      blockingReasonDetail: "No workflow assignment configured for this document scope",
     };
   }
+
+  const commonDefinitionId =
+    parsePositiveInt(
+      latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
+    ) || null;
+  const commonAssignmentId =
+    parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null;
 
   if (documentStatus === RETURNED_STATUS) {
     return {
@@ -6954,16 +7161,17 @@ async function buildCariDocumentWorkflowGateSummary({
       latestDecisionComment: documentRow?.return_reason || latestDecisionComment,
       workflowInstanceId,
       workflowInstanceStatus: workflowInstanceStatus || null,
-      workflowDefinitionId:
-        parsePositiveInt(
-          latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
-        ) || null,
-      workflowAssignmentId:
-        parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null,
+      workflowDefinitionId: commonDefinitionId,
+      workflowAssignmentId: commonAssignmentId,
+      ...resolvedEnrichment,
+      waitingForSummary: "Returned for correction — resubmission required",
+      blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REJECTED,
+      blockingReasonDetail: documentRow?.return_reason || "Document was returned for correction",
     };
   }
 
   if (documentStatus === APPROVED_STATUS || workflowInstanceStatus === APPROVED_STATUS) {
+    const postScopeLabel = stepEnrichment.currentStageScopeLabel || assignmentScopeLabel;
     return {
       state: "approved",
       workflowGoverned: true,
@@ -6972,16 +7180,21 @@ async function buildCariDocumentWorkflowGateSummary({
       latestDecisionComment,
       workflowInstanceId,
       workflowInstanceStatus: workflowInstanceStatus || null,
-      workflowDefinitionId:
-        parsePositiveInt(
-          latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
-        ) || null,
-      workflowAssignmentId:
-        parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null,
+      workflowDefinitionId: commonDefinitionId,
+      workflowAssignmentId: commonAssignmentId,
+      ...resolvedEnrichment,
+      waitingForSummary: `Ready for ${postScopeLabel} posting`,
+      blockingReasonCode: null,
+      blockingReasonDetail: null,
+      // Override next action — after last approval, next is POST
+      nextActorType: "POSTER",
+      nextActionCode: "POST",
+      nextActionLabel: `${postScopeLabel} posting`,
     };
   }
 
   if (documentStatus === SUBMITTED_STATUS || workflowInstanceStatus === "PENDING") {
+    const scopeLabel = stepEnrichment.currentStageScopeLabel || assignmentScopeLabel;
     return {
       state: "pending",
       workflowGoverned: true,
@@ -6990,12 +7203,12 @@ async function buildCariDocumentWorkflowGateSummary({
       latestDecisionComment,
       workflowInstanceId,
       workflowInstanceStatus: workflowInstanceStatus || "PENDING",
-      workflowDefinitionId:
-        parsePositiveInt(
-          latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
-        ) || null,
-      workflowAssignmentId:
-        parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null,
+      workflowDefinitionId: commonDefinitionId,
+      workflowAssignmentId: commonAssignmentId,
+      ...resolvedEnrichment,
+      waitingForSummary: `Waiting for ${scopeLabel} approval`,
+      blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_PENDING,
+      blockingReasonDetail: `Approval is pending at ${scopeLabel} scope`,
     };
   }
 
@@ -7007,12 +7220,12 @@ async function buildCariDocumentWorkflowGateSummary({
     latestDecisionComment,
     workflowInstanceId,
     workflowInstanceStatus: workflowInstanceStatus || null,
-    workflowDefinitionId:
-      parsePositiveInt(
-        latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
-      ) || null,
-    workflowAssignmentId:
-      parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null,
+    workflowDefinitionId: commonDefinitionId,
+    workflowAssignmentId: commonAssignmentId,
+    ...resolvedEnrichment,
+    waitingForSummary: "Waiting for document submission",
+    blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REQUIRED,
+    blockingReasonDetail: "Document must be submitted for workflow approval before posting",
   };
 }
 

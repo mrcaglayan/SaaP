@@ -112,6 +112,61 @@ function assertSingleAssignmentScopeTarget(input, label) {
   }
 }
 
+function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
+  if (steps === undefined) {
+    return [];
+  }
+  if (!Array.isArray(steps)) {
+    throw badRequest("steps must be an array");
+  }
+
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const seenStepNos = new Set();
+  return steps.map((rawStep, index) => {
+    const step = rawStep || {};
+    const resolvedStepNo =
+      step.stepNo ?? step.step_no ?? (Number.isInteger(index + 1) ? index + 1 : null);
+    const stepNo = requirePositiveInt(resolvedStepNo, `steps[${index}].stepNo`);
+    if (seenStepNos.has(stepNo)) {
+      throw badRequest(`Duplicate stepNo detected: ${stepNo}`);
+    }
+    seenStepNos.add(stepNo);
+
+    const requiredPermissionCode = normalizeText(
+      step.requiredPermissionCode ?? step.required_permission_code,
+      `steps[${index}].requiredPermissionCode`,
+      120
+    );
+    if (
+      normalizedProcessType !== AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+      !requiredPermissionCode
+    ) {
+      throw badRequest(`steps[${index}].requiredPermissionCode is required`);
+    }
+
+    return {
+      stepNo,
+      stageScopeType: normalizeEnum(
+        step.stageScopeType ?? step.stage_scope_type,
+        `steps[${index}].stageScopeType`,
+        STAGE_SCOPE_TYPES
+      ),
+      requiredPermissionCode:
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? requiredPermissionCode || null
+          : requiredPermissionCode,
+      minApproverCount:
+        step.minApproverCount === undefined &&
+        step.min_approver_count === undefined
+          ? 1
+          : requirePositiveInt(
+              step.minApproverCount ?? step.min_approver_count,
+              `steps[${index}].minApproverCount`
+            ),
+    };
+  });
+}
+
 export function parseWorkflowDefinitionIdParam(req) {
   return requirePositiveInt(
     req.params?.definitionId ?? req.params?.id,
@@ -434,6 +489,81 @@ export function parseWorkflowAssignmentCreateInput(req) {
 }
 
 /**
+ * Parse one workflow coverage-diagnostics request for the setup review screen.
+ */
+export function parseWorkflowCoverageDiagnosticsInput(req) {
+  const tenantId = requireTenantId(req);
+  const body = req.body || {};
+  const scopeType = normalizeOptionalEnum(
+    body.scopeType ?? body.scope_type,
+    "scopeType",
+    ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"]
+  );
+
+  const input = {
+    tenantId,
+    processType: normalizeEnum(
+      body.processType ?? body.process_type,
+      "processType",
+      PROCESS_TYPES
+    ),
+    groupCompanyId: optionalPositiveInt(
+      body.groupCompanyId ?? body.group_company_id,
+      "groupCompanyId"
+    ),
+    countryId: optionalPositiveInt(
+      body.countryId ?? body.country_id,
+      "countryId"
+    ),
+    legalEntityId: optionalPositiveInt(
+      body.legalEntityId ?? body.legal_entity_id,
+      "legalEntityId"
+    ),
+    operatingUnitId: optionalPositiveInt(
+      body.operatingUnitId ?? body.operating_unit_id,
+      "operatingUnitId"
+    ),
+    effectiveOn: parseDateOnly(
+      body.effectiveOn ?? body.effective_on,
+      "effectiveOn"
+    ),
+  };
+  assertSingleAssignmentScopeTarget(input, "Workflow coverage diagnostics");
+
+  if ((scopeType === "GROUP" && !input.groupCompanyId) ||
+      (scopeType === "COUNTRY" && !input.countryId) ||
+      (scopeType === "LEGAL_ENTITY" && !input.legalEntityId) ||
+      (scopeType === "OPERATING_UNIT" && !input.operatingUnitId)) {
+    throw badRequest(`scopeType ${scopeType} requires the matching scope id field`);
+  }
+
+  input.scopeType =
+    scopeType ||
+    (input.operatingUnitId
+      ? "OPERATING_UNIT"
+      : input.legalEntityId
+        ? "LEGAL_ENTITY"
+        : input.countryId
+          ? "COUNTRY"
+          : input.groupCompanyId
+            ? "GROUP"
+            : "TENANT");
+  input.scopeId =
+    input.scopeType === "OPERATING_UNIT"
+      ? input.operatingUnitId
+      : input.scopeType === "LEGAL_ENTITY"
+        ? input.legalEntityId
+        : input.scopeType === "COUNTRY"
+          ? input.countryId
+          : input.scopeType === "GROUP"
+            ? input.groupCompanyId
+            : tenantId;
+  input.steps = parseWorkflowCoverageDiagnosticSteps(body.steps, input.processType);
+
+  return input;
+}
+
+/**
  * Parse one workflow-assignment patch request and reject ambiguous scope-target combinations.
  */
 export function parseWorkflowAssignmentUpdateInput(req) {
@@ -583,6 +713,7 @@ export default {
   parseWorkflowAssignmentsListInput,
   parseWorkflowInstancesListInput,
   parseWorkflowAssignmentCreateInput,
+  parseWorkflowCoverageDiagnosticsInput,
   parseWorkflowAssignmentUpdateInput,
   parseWorkflowInstanceDecisionInput,
 };

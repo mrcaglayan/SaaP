@@ -85,6 +85,7 @@ export default function CariDocumentPostReversePanel({
     selectedDocumentLegalEntityId,
     selectedWorkflowGate,
     selectedWorkflowGateState,
+    workflowExplanation,
     setApprovalDecisionNote,
     selectedDocumentPostingRulesReady,
     selectedDocumentUsesStoredTaxesForPosting,
@@ -94,43 +95,72 @@ export default function CariDocumentPostReversePanel({
   } = controller;
   const returnedCorrectionMode =
     String(selectedSnapshot?.status || "").trim().toUpperCase() === "RETURNED";
-  const workflowGateLabel =
-    selectedWorkflowGateState === "APPROVED"
-      ? l("Approved gate", "Onay kapisi")
-      : selectedWorkflowGateState === "RETURNED"
-        ? l("Returned gate", "Iade kapisi")
-        : selectedWorkflowGateState === "BLOCKED"
-          ? l("Blocked gate", "Bloke kapisi")
-          : selectedWorkflowGateState === "PENDING"
-            ? l("Pending gate", "Bekleyen kapi")
-            : l("No active gate", "Aktif kapi yok");
   return (
     <div className="rounded-lg border border-slate-200 p-4">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
         {l("Submit / Post / Reverse", "Gonder / Kaydet / Ters Kayit")}
       </h3>
-      {selectedDocumentDirection === "AP" && selectedWorkflowGate ? (
-        <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-900">
-          <p className="font-semibold">
-            {l("Workflow gate", "Workflow kapisi")}: {workflowGateLabel}
-          </p>
-          <p className="mt-1 text-xs text-slate-700">
-            {selectedWorkflowGate?.message ||
-              l(
-                "No workflow gate message is currently available.",
-                "Su anda workflow kapisi mesaji yok."
-              )}
-          </p>
-          {selectedWorkflowGate?.latestDecisionComment ? (
-            <p className="mt-2 text-xs text-slate-700">
-              {l("Latest decision note", "Son karar notu")}:{" "}
-              {selectedWorkflowGate.latestDecisionComment}
-            </p>
+      {workflowExplanation?.isApGoverned && selectedWorkflowGate ? (
+        <div className="mt-3 space-y-2">
+          {/* A. Process status */}
+          <div className={`rounded-md border px-3 py-3 text-sm ${
+            selectedWorkflowGateState === "APPROVED"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : selectedWorkflowGateState === "RETURNED"
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : selectedWorkflowGateState === "PENDING"
+                  ? "border-blue-200 bg-blue-50 text-blue-900"
+                  : "border-slate-200 bg-slate-50 text-slate-900"
+          }`}>
+            <p className="font-semibold">{workflowExplanation.processStatus}</p>
+            {workflowExplanation.processSubtext ? (
+              <p className="mt-1 text-xs opacity-90">{workflowExplanation.processSubtext}</p>
+            ) : null}
+          </div>
+
+          {/* B. Waiting / blocked explanation */}
+          {workflowExplanation.waitingLines.length > 0 ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-900">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {l("Workflow status", "Workflow durumu")}
+              </p>
+              <ul className="mt-1 space-y-1">
+                {workflowExplanation.waitingLines.map((line, i) => (
+                  <li key={i} className="text-xs text-slate-800">{line}</li>
+                ))}
+              </ul>
+            </div>
           ) : null}
-          {selectedWorkflowGate?.workflowInstanceId ? (
-            <p className="mt-2 text-xs text-slate-700">
-              workflowInstanceId=#{selectedWorkflowGate.workflowInstanceId}
-            </p>
+
+          {/* C. Current user capability */}
+          {workflowExplanation.userCapabilityLines.length > 0 ? (
+            <div className="rounded-md border border-violet-200 bg-violet-50/50 px-3 py-2 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
+                {l("Your access", "Erisiminiz")}
+              </p>
+              <ul className="mt-1 space-y-1">
+                {workflowExplanation.userCapabilityLines.map((line, i) => (
+                  <li key={i} className="text-xs text-violet-900">{line}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {/* Technical detail (secondary, collapsible) */}
+          {workflowExplanation.technicalLines.length > 0 ? (
+            <details className="text-xs text-slate-500">
+              <summary className="cursor-pointer font-semibold uppercase tracking-wide">
+                {l("Technical detail", "Teknik detay")}
+              </summary>
+              <ul className="mt-1 space-y-0.5 pl-3">
+                {workflowExplanation.technicalLines.map((line, i) => (
+                  <li key={i}>{line}</li>
+                ))}
+                {selectedWorkflowGate?.workflowInstanceId ? (
+                  <li>workflowInstanceId: #{selectedWorkflowGate.workflowInstanceId}</li>
+                ) : null}
+              </ul>
+            </details>
           ) : null}
         </div>
       ) : null}

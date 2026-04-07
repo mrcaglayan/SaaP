@@ -3,7 +3,9 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   checkUserHasPermissionAtScope,
   doesScopeIncludeScope,
+  findUsersWithPermissionAtScope,
   isScopeAllowed,
+  loadHierarchy,
   loadPermissionBundle,
   loadUserEntitlements,
   normalizeAuthzScope,
@@ -13,6 +15,7 @@ import { evaluateSoD } from "./sod.service.js";
 import { canManageSecurity } from "./systemRoles.service.js";
 import { getRequestDiagnostics } from "./approval.engine.service.js";
 import { evaluateWorkflowApprovalGate } from "./workflows.service.js";
+import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../../shared/cariDocumentWorkflowGovernance.js";
 
 const DIAGNOSTIC_LAYER_STATUS = Object.freeze({
   PASS: "PASS",
@@ -28,6 +31,19 @@ const FIELD_VISIBILITY_POLICY_SCOPE_RANK = Object.freeze({
   GROUP: 2,
   TENANT: 1,
   GLOBAL: 0,
+});
+
+const WORKFLOW_COVERAGE_ACTOR_TYPES = Object.freeze({
+  SUBMITTER: "SUBMITTER",
+  APPROVER: "APPROVER",
+  POSTER: "POSTER",
+});
+
+const WORKFLOW_COVERAGE_STATUS = Object.freeze({
+  COVERED: "COVERED",
+  PARTIAL_GAP: "PARTIAL_GAP",
+  NO_COVERAGE: "NO_COVERAGE",
+  NO_TARGET_SCOPES: "NO_TARGET_SCOPES",
 });
 
 function forbidden(message) {
@@ -692,6 +708,449 @@ function computeOverallDecision(layers) {
   };
 }
 
+function normalizeWorkflowCoverageProcessType(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeWorkflowCoverageStep(step, index = 0) {
+  return {
+    stepNo: Math.max(
+      1,
+      Number(step?.stepNo ?? step?.step_no ?? index + 1) || index + 1
+    ),
+    stageScopeType: normalizeUpperText(
+      step?.stageScopeType ?? step?.stage_scope_type
+    ),
+    requiredPermissionCode:
+      String(
+        step?.requiredPermissionCode ?? step?.required_permission_code ?? ""
+      ).trim() || null,
+    minApproverCount: Math.max(
+      1,
+      Number(step?.minApproverCount ?? step?.min_approver_count ?? 1) || 1
+    ),
+  };
+}
+
+function addHierarchyIds(targetSet, sourceSet) {
+  for (const id of sourceSet || []) {
+    const normalizedId = parsePositiveInt(id);
+    if (normalizedId) {
+      targetSet.add(normalizedId);
+    }
+  }
+}
+
+function findParentLegalEntityIdForOperatingUnit(hierarchy, operatingUnitId) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (!normalizedOperatingUnitId) {
+    return null;
+  }
+  for (const [legalEntityId, operatingUnitIds] of hierarchy.operatingUnitIdsByLegalEntityId?.entries() ||
+    []) {
+    if ((operatingUnitIds || new Set()).has(normalizedOperatingUnitId)) {
+      return parsePositiveInt(legalEntityId);
+    }
+  }
+  return null;
+}
+
+function buildAssignmentCoverageSets(assignmentScope, hierarchy, tenantId) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedScopeType = normalizeUpperText(assignmentScope?.scopeType);
+  const normalizedScopeId = parsePositiveInt(assignmentScope?.scopeId);
+  const coverage = {
+    TENANT: new Set(normalizedTenantId ? [normalizedTenantId] : []),
+    GROUP: new Set(),
+    COUNTRY: new Set(),
+    LEGAL_ENTITY: new Set(),
+    OPERATING_UNIT: new Set(),
+  };
+
+  if (!normalizedScopeType || !normalizedScopeId) {
+    return coverage;
+  }
+
+  if (normalizedScopeType === "TENANT") {
+    addHierarchyIds(coverage.GROUP, hierarchy.groupIds);
+    addHierarchyIds(coverage.COUNTRY, hierarchy.countryIds);
+    addHierarchyIds(coverage.LEGAL_ENTITY, hierarchy.legalEntityIds);
+    addHierarchyIds(coverage.OPERATING_UNIT, hierarchy.operatingUnitIds);
+    return coverage;
+  }
+
+  if (normalizedScopeType === "GROUP") {
+    coverage.GROUP.add(normalizedScopeId);
+    const legalEntityIds =
+      hierarchy.legalEntityIdsByGroupId?.get(normalizedScopeId) || new Set();
+    addHierarchyIds(coverage.LEGAL_ENTITY, legalEntityIds);
+    for (const legalEntityId of legalEntityIds) {
+      const entity = hierarchy.entityById?.get(legalEntityId) || null;
+      const operatingUnitIds =
+        hierarchy.operatingUnitIdsByLegalEntityId?.get(legalEntityId) || new Set();
+      if (entity?.countryId) {
+        coverage.COUNTRY.add(parsePositiveInt(entity.countryId));
+      }
+      addHierarchyIds(coverage.OPERATING_UNIT, operatingUnitIds);
+    }
+    return coverage;
+  }
+
+  if (normalizedScopeType === "COUNTRY") {
+    coverage.COUNTRY.add(normalizedScopeId);
+    const legalEntityIds =
+      hierarchy.legalEntityIdsByCountryId?.get(normalizedScopeId) || new Set();
+    addHierarchyIds(coverage.LEGAL_ENTITY, legalEntityIds);
+    for (const legalEntityId of legalEntityIds) {
+      const entity = hierarchy.entityById?.get(legalEntityId) || null;
+      const operatingUnitIds =
+        hierarchy.operatingUnitIdsByLegalEntityId?.get(legalEntityId) || new Set();
+      if (entity?.groupId) {
+        coverage.GROUP.add(parsePositiveInt(entity.groupId));
+      }
+      addHierarchyIds(coverage.OPERATING_UNIT, operatingUnitIds);
+    }
+    return coverage;
+  }
+
+  if (normalizedScopeType === "LEGAL_ENTITY") {
+    coverage.LEGAL_ENTITY.add(normalizedScopeId);
+    const entity = hierarchy.entityById?.get(normalizedScopeId) || null;
+    const operatingUnitIds =
+      hierarchy.operatingUnitIdsByLegalEntityId?.get(normalizedScopeId) || new Set();
+    if (entity?.groupId) {
+      coverage.GROUP.add(parsePositiveInt(entity.groupId));
+    }
+    if (entity?.countryId) {
+      coverage.COUNTRY.add(parsePositiveInt(entity.countryId));
+    }
+    addHierarchyIds(coverage.OPERATING_UNIT, operatingUnitIds);
+    return coverage;
+  }
+
+  if (normalizedScopeType === "OPERATING_UNIT") {
+    coverage.OPERATING_UNIT.add(normalizedScopeId);
+    const parentLegalEntityId = findParentLegalEntityIdForOperatingUnit(
+      hierarchy,
+      normalizedScopeId
+    );
+    if (parentLegalEntityId) {
+      coverage.LEGAL_ENTITY.add(parentLegalEntityId);
+      const entity = hierarchy.entityById?.get(parentLegalEntityId) || null;
+      if (entity?.groupId) {
+        coverage.GROUP.add(parsePositiveInt(entity.groupId));
+      }
+      if (entity?.countryId) {
+        coverage.COUNTRY.add(parsePositiveInt(entity.countryId));
+      }
+    }
+  }
+
+  return coverage;
+}
+
+function listTargetScopesForCoverage({
+  assignmentScope,
+  targetScopeType,
+  hierarchy,
+  tenantId,
+}) {
+  const normalizedTargetScopeType = normalizeUpperText(targetScopeType);
+  if (normalizedTargetScopeType === "TENANT") {
+    const normalizedTenantId = parsePositiveInt(tenantId);
+    return normalizedTenantId
+      ? [{ scopeType: "TENANT", scopeId: normalizedTenantId }]
+      : [];
+  }
+
+  const coverage = buildAssignmentCoverageSets(assignmentScope, hierarchy, tenantId);
+  const targetIds = Array.from(coverage[normalizedTargetScopeType] || [])
+    .map((value) => parsePositiveInt(value))
+    .filter(Boolean)
+    .sort((left, right) => left - right);
+  return targetIds.map((scopeId) => ({
+    scopeType: normalizedTargetScopeType,
+    scopeId,
+  }));
+}
+
+async function evaluateWorkflowCoverageCheck({
+  tenantId,
+  actorType,
+  permissionCode,
+  targetScopeType,
+  targetScopes,
+  stepNo = null,
+  minRequiredActors = 1,
+  runQuery = query,
+  effectiveOn = null,
+}) {
+  const normalizedPermissionCode = String(permissionCode || "").trim();
+  const normalizedMinRequiredActors = Math.max(1, Number(minRequiredActors || 1) || 1);
+  const sortedTargetScopes = [...(Array.isArray(targetScopes) ? targetScopes : [])].sort(
+    (left, right) => Number(left?.scopeId || 0) - Number(right?.scopeId || 0)
+  );
+
+  if (!normalizedPermissionCode) {
+    return {
+      actorType,
+      stepNo,
+      scopeType: normalizeUpperText(targetScopeType),
+      permissionCode: null,
+      minRequiredActors: normalizedMinRequiredActors,
+      targetScopeCount: sortedTargetScopes.length,
+      coveredScopeCount: 0,
+      uncoveredScopeCount: sortedTargetScopes.length,
+      matchedUserCount: 0,
+      status:
+        sortedTargetScopes.length > 0
+          ? WORKFLOW_COVERAGE_STATUS.NO_COVERAGE
+          : WORKFLOW_COVERAGE_STATUS.NO_TARGET_SCOPES,
+      uncoveredScopes: sortedTargetScopes.map((scope) => ({
+        scopeType: scope.scopeType,
+        scopeId: scope.scopeId,
+        matchedUserCount: 0,
+      })),
+    };
+  }
+
+  if (sortedTargetScopes.length === 0) {
+    return {
+      actorType,
+      stepNo,
+      scopeType: normalizeUpperText(targetScopeType),
+      permissionCode: normalizedPermissionCode,
+      minRequiredActors: normalizedMinRequiredActors,
+      targetScopeCount: 0,
+      coveredScopeCount: 0,
+      uncoveredScopeCount: 0,
+      matchedUserCount: 0,
+      status: WORKFLOW_COVERAGE_STATUS.NO_TARGET_SCOPES,
+      uncoveredScopes: [],
+    };
+  }
+
+  const scopeCoverageRows = await Promise.all(
+    sortedTargetScopes.map(async (scope) => {
+      const matchedUserIds = await findUsersWithPermissionAtScope(
+        tenantId,
+        normalizedPermissionCode,
+        scope.scopeType,
+        scope.scopeId,
+        {
+          runQuery,
+          asOfDate: effectiveOn,
+        }
+      );
+      return {
+        scopeType: scope.scopeType,
+        scopeId: scope.scopeId,
+        matchedUserIds,
+      };
+    })
+  );
+
+  const matchedUserIds = new Set();
+  const uncoveredScopes = [];
+  let coveredScopeCount = 0;
+  for (const row of scopeCoverageRows) {
+    if ((row.matchedUserIds || []).length >= normalizedMinRequiredActors) {
+      coveredScopeCount += 1;
+      for (const matchedUserId of row.matchedUserIds || []) {
+        const normalizedUserId = parsePositiveInt(matchedUserId);
+        if (normalizedUserId) {
+          matchedUserIds.add(normalizedUserId);
+        }
+      }
+      continue;
+    }
+    uncoveredScopes.push({
+      scopeType: row.scopeType,
+      scopeId: row.scopeId,
+      matchedUserCount: Number(row.matchedUserIds?.length || 0),
+    });
+  }
+
+  let status = WORKFLOW_COVERAGE_STATUS.COVERED;
+  if (coveredScopeCount === 0) {
+    status = WORKFLOW_COVERAGE_STATUS.NO_COVERAGE;
+  } else if (coveredScopeCount < scopeCoverageRows.length) {
+    status = WORKFLOW_COVERAGE_STATUS.PARTIAL_GAP;
+  }
+
+  return {
+    actorType,
+    stepNo,
+    scopeType: normalizeUpperText(targetScopeType),
+    permissionCode: normalizedPermissionCode,
+    minRequiredActors: normalizedMinRequiredActors,
+    targetScopeCount: scopeCoverageRows.length,
+    coveredScopeCount,
+    uncoveredScopeCount: uncoveredScopes.length,
+    matchedUserCount: matchedUserIds.size,
+    status,
+    uncoveredScopes,
+  };
+}
+
+function buildWorkflowCoverageWarning(check) {
+  if (!check || check.status === WORKFLOW_COVERAGE_STATUS.COVERED) {
+    return null;
+  }
+  const actorType = normalizeUpperText(check.actorType);
+  const status = normalizeUpperText(check.status);
+  return {
+    code:
+      status === WORKFLOW_COVERAGE_STATUS.NO_TARGET_SCOPES
+        ? `NO_${actorType}_TARGET_SCOPES`
+        : status === WORKFLOW_COVERAGE_STATUS.NO_COVERAGE
+          ? `NO_${actorType}_COVERAGE`
+          : `PARTIAL_${actorType}_COVERAGE`,
+    actorType,
+    stepNo: parsePositiveInt(check.stepNo) || null,
+    scopeType: normalizeUpperText(check.scopeType),
+    permissionCode: String(check.permissionCode || "").trim() || null,
+    status,
+    minRequiredActors: Math.max(1, Number(check.minRequiredActors || 1) || 1),
+    targetScopeCount: Number(check.targetScopeCount || 0),
+    coveredScopeCount: Number(check.coveredScopeCount || 0),
+    uncoveredScopeCount: Number(check.uncoveredScopeCount || 0),
+    matchedUserCount: Number(check.matchedUserCount || 0),
+    uncoveredScopes: Array.isArray(check.uncoveredScopes) ? check.uncoveredScopes : [],
+  };
+}
+
+/**
+ * Evaluate whether the configured workflow actors currently exist at the
+ * assignment-covered scopes. This is on-demand setup diagnostics, not a batch
+ * rollout job.
+ */
+export async function evaluateWorkflowCoverageDiagnostics(input, options = {}) {
+  const normalizedTenantId = parsePositiveInt(input?.tenantId ?? input?.tenant_id);
+  const normalizedProcessType = normalizeWorkflowCoverageProcessType(
+    input?.processType ?? input?.process_type
+  );
+  const normalizedEffectiveOn =
+    String(input?.effectiveOn ?? input?.effective_on ?? "").trim() || null;
+  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
+
+  if (!normalizedTenantId) {
+    throw badRequest("tenantId is required");
+  }
+  if (!normalizedProcessType) {
+    throw badRequest("processType is required");
+  }
+  const assignmentScope = normalizeAuthzScope(
+    {
+      scopeType: input?.scopeType ?? input?.scope_type,
+      scopeId: input?.scopeId ?? input?.scope_id,
+    },
+    normalizedTenantId
+  );
+
+  const hierarchy = await loadHierarchy({
+    tenantId: normalizedTenantId,
+    runQuery,
+  });
+  const normalizedSteps = (Array.isArray(input?.steps) ? input.steps : []).map((step, index) =>
+    normalizeWorkflowCoverageStep(step, index)
+  );
+  const warnings = [];
+  const approverChecks = [];
+
+  for (const step of normalizedSteps) {
+    const permissionCode =
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        ? step.requiredPermissionCode || "approvals.requests.approve"
+        : step.requiredPermissionCode;
+    const targetScopes = listTargetScopesForCoverage({
+      assignmentScope,
+      targetScopeType: step.stageScopeType,
+      hierarchy,
+      tenantId: normalizedTenantId,
+    });
+    const check = await evaluateWorkflowCoverageCheck({
+      tenantId: normalizedTenantId,
+      actorType: WORKFLOW_COVERAGE_ACTOR_TYPES.APPROVER,
+      permissionCode,
+      targetScopeType: step.stageScopeType,
+      targetScopes,
+      stepNo: step.stepNo,
+      minRequiredActors: step.minApproverCount,
+      runQuery,
+      effectiveOn: normalizedEffectiveOn,
+    });
+    approverChecks.push(check);
+    const warning = buildWorkflowCoverageWarning(check);
+    if (warning) {
+      warnings.push(warning);
+    }
+  }
+
+  let submitterCheck = null;
+  let posterCheck = null;
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    const submitterTargetScopes = listTargetScopesForCoverage({
+      assignmentScope,
+      targetScopeType: "OPERATING_UNIT",
+      hierarchy,
+      tenantId: normalizedTenantId,
+    });
+    submitterCheck = await evaluateWorkflowCoverageCheck({
+      tenantId: normalizedTenantId,
+      actorType: WORKFLOW_COVERAGE_ACTOR_TYPES.SUBMITTER,
+      permissionCode: "cari.doc.submit",
+      targetScopeType: "OPERATING_UNIT",
+      targetScopes: submitterTargetScopes,
+      minRequiredActors: 1,
+      runQuery,
+      effectiveOn: normalizedEffectiveOn,
+    });
+    const submitterWarning = buildWorkflowCoverageWarning(submitterCheck);
+    if (submitterWarning) {
+      warnings.push(submitterWarning);
+    }
+
+    const posterScopeType =
+      normalizedSteps.length > 0
+        ? normalizedSteps[normalizedSteps.length - 1].stageScopeType
+        : assignmentScope.scopeType;
+    const posterTargetScopes = listTargetScopesForCoverage({
+      assignmentScope,
+      targetScopeType: posterScopeType,
+      hierarchy,
+      tenantId: normalizedTenantId,
+    });
+    posterCheck = await evaluateWorkflowCoverageCheck({
+      tenantId: normalizedTenantId,
+      actorType: WORKFLOW_COVERAGE_ACTOR_TYPES.POSTER,
+      permissionCode: "cari.doc.post",
+      targetScopeType: posterScopeType,
+      targetScopes: posterTargetScopes,
+      minRequiredActors: 1,
+      runQuery,
+      effectiveOn: normalizedEffectiveOn,
+    });
+    const posterWarning = buildWorkflowCoverageWarning(posterCheck);
+    if (posterWarning) {
+      warnings.push(posterWarning);
+    }
+  }
+
+  return {
+    tenantId: normalizedTenantId,
+    processType: normalizedProcessType,
+    effectiveOn: normalizedEffectiveOn,
+    assignmentScope,
+    checks: {
+      submitter: submitterCheck,
+      approvers: approverChecks,
+      poster: posterCheck,
+    },
+    warnings,
+  };
+}
+
 /**
  * Evaluate one explainable access-check chain for self-service debugging or
  * elevated admin diagnostics.
@@ -805,4 +1264,5 @@ export async function evaluateAccessCheck(input, options = {}) {
 
 export default {
   evaluateAccessCheck,
+  evaluateWorkflowCoverageDiagnostics,
 };

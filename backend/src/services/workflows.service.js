@@ -1190,7 +1190,7 @@ async function listWorkflowAssignmentRowsByDefinitionId({
   return result.rows || [];
 }
 
-async function getUnifiedWorkflowRequestRowById({
+export async function getUnifiedWorkflowRequestRowById({
   tenantId,
   requestId,
   runQuery = query,
@@ -3399,6 +3399,7 @@ export async function updateWorkflowAssignment({
 export default {
   findActiveWorkflowAssignmentForScope,
   getWorkflowInstanceByTarget,
+  getUnifiedWorkflowRequestRowById,
   listWorkflowInstanceDecisionRows,
   resolveWorkflowAssignmentScope,
   resolveWorkflowInstanceScope,
