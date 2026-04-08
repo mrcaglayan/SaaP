@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { BookOpen, CheckCircle2, Clock, FileText, Layers, ShieldAlert } from "lucide-react";
 import { buildWorkflowCoverageReviewModel } from "../utils/workflowSetupHelpers.js";
+import WorkflowExplainabilityPreviewPanel from "./WorkflowExplainabilityPreviewPanel.jsx";
 
 const PROCESS_ICONS = {
   AP_DOCUMENT_POSTING: FileText,
@@ -33,6 +34,7 @@ export default function WorkflowReviewStep({
   workflowType,
   workflowTypeLabel,
   workflowPreviewText,
+  workflowExplainabilityPreview = null,
   assignmentEffectText,
   onBack,
   onSubmitAssignment,
@@ -160,9 +162,15 @@ export default function WorkflowReviewStep({
             <ReviewStat label={l("Assignment status", "Atama durumu")} value={assignmentForm?.status} />
           </div>
 
+          <WorkflowExplainabilityPreviewPanel
+            title={l("Approval path", "Onay yolu")}
+            previewModel={workflowExplainabilityPreview}
+            tone="emerald"
+          />
+
           <div className="rounded-3xl border border-border bg-muted/20 p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              {l("Approval path", "Onay yolu")}
+              {l("Compact summary", "Kisa ozet")}
             </p>
             <p className="mt-2 text-sm leading-6 text-foreground">{workflowPreviewText}</p>
           </div>

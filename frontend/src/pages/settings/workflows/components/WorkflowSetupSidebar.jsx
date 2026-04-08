@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { CheckCircle2, Circle } from "lucide-react";
+import WorkflowExplainabilityPreviewPanel from "./WorkflowExplainabilityPreviewPanel.jsx";
 
 function SummaryRow({ label, value, done, fallback }) {
   return (
@@ -35,6 +36,7 @@ export default function WorkflowSetupSidebar({
   assignmentStatus,
   recommendation,
   workflowPreviewText,
+  workflowExplainabilityPreview = null,
   assignmentEffectText,
   quickGuide,
 }) {
@@ -120,10 +122,18 @@ export default function WorkflowSetupSidebar({
         </CardContent>
       </Card>
 
+      <WorkflowExplainabilityPreviewPanel
+        title={l("Live preview", "Canli onizleme")}
+        previewModel={workflowExplainabilityPreview}
+        tone="blue"
+        compact
+        maxEntries={3}
+      />
+
       <Card className="rounded-3xl border-blue-200 bg-blue-50/80">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm text-blue-900">
-            {l("Live preview", "Canli onizleme")}
+            {l("Scope outcome", "Kapsam sonucu")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-blue-900">

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  buildCariWorkflowActionExplainabilityModel,
   buildCariWorkflowDetailCardModel,
   buildCariWorkflowListSummaryModel,
 } from "../../frontend/src/pages/cari/cariWorkflowExplainability.js";
@@ -29,12 +30,15 @@ function findItemValue(items, label) {
 
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const hookSource = await readFile(
-    path.resolve(root, "frontend/src/pages/cari/hooks/useCariDocumentPostReverseController.js"),
-    "utf8"
-  );
   const panelSource = await readFile(
     path.resolve(root, "frontend/src/pages/cari/components/CariDocumentPostReversePanel.jsx"),
+    "utf8"
+  );
+  const runtimeExplainabilityPanelSource = await readFile(
+    path.resolve(
+      root,
+      "frontend/src/components/workflows/GovernedRuntimeExplainabilityPanel.jsx"
+    ),
     "utf8"
   );
   const setupPageSource = await readFile(
@@ -62,7 +66,7 @@ async function main() {
   );
   assert(
     apPreviewLines[0] ===
-      "Branch operators with submit authority can submit this AP document." &&
+      "Branch accountants with submit authority can submit this AP document." &&
       apPreviewLines.includes("Step 1: One Legal Entity AP reviewer must approve.") &&
       apPreviewLines.includes("Step 2: One Country AP reviewer must approve.") &&
       apPreviewLines.includes(
@@ -100,6 +104,11 @@ async function main() {
   assert(
     pendingDetailModel?.headline === "Waiting for Legal Entity approval" &&
       findItemValue(pendingDetailModel?.factItems, "Current step") === "Step 1 of 2" &&
+      pendingDetailModel?.currentStepLabel === "Step 1 of 2" &&
+      pendingDetailModel?.requiredPackageLabel === "AP Documents / Approve" &&
+      pendingDetailModel?.requiredScopeLabel === "Legal Entity" &&
+      pendingDetailModel?.eligibleActorSummary ===
+        "Users assigned AP Documents / Approve at Legal Entity scope can approve the current step." &&
       findItemValue(pendingDetailModel?.factItems, "Active scope") === "Legal Entity" &&
       findItemValue(pendingDetailModel?.factItems, "Next action") === "Country approval" &&
       findItemValue(pendingDetailModel?.technicalItems, "Required authority") ===
@@ -107,6 +116,64 @@ async function main() {
       findItemValue(pendingDetailModel?.technicalItems, "Technical permission") ===
         "approvals.requests.approve",
     "Detail-card explainability should describe pending legal-entity approval with business and technical context"
+  );
+
+  const pendingActionModel = buildCariWorkflowActionExplainabilityModel({
+    row: {
+      status: "SUBMITTED",
+      direction: "AP",
+      workflowGate: {
+        state: "pending",
+        workflowGoverned: true,
+        assignmentResolved: true,
+        assignmentScopeType: "LEGAL_ENTITY",
+        assignmentScopeLabel: "Legal Entity",
+        currentStepNo: 1,
+        totalSteps: 2,
+        currentStageScopeType: "LEGAL_ENTITY",
+        currentStageScopeLabel: "Legal Entity",
+        effectiveApprovalPermissionCode: "approvals.requests.approve",
+        effectiveApprovalPermissionLabel: "AP approval at Legal Entity scope",
+        nextActorType: "COUNTRY",
+        nextActionCode: "APPROVE",
+        nextActionLabel: "Country approval",
+        waitingForSummary: "Waiting for Legal Entity approval",
+        blockingReasonDetail: "Approval is pending at Legal Entity scope",
+        workflowInstanceId: 91,
+        workflowInstanceStatus: "PENDING",
+      },
+    },
+    workflowInstance: {
+      id: 91,
+      decisions: [
+        {
+          id: 7,
+          stepNo: 1,
+          decision: "APPROVE",
+          decisionByUserName: "Entity Reviewer",
+          decisionNote: "Approved after invoice review.",
+          createdAt: "2026-04-08T09:15:00Z",
+        },
+      ],
+    },
+    canSubmitSelected: false,
+    canApproveSelected: false,
+    canApproveWorkflow: false,
+    canPostSelected: false,
+    l,
+  });
+  assert(
+    pendingActionModel?.userCapabilityLines.includes(
+      "You do not have approval authority for this step."
+    ) &&
+      pendingActionModel?.userCapabilityLines.includes(
+        "You cannot post because approval is still pending."
+      ) &&
+      pendingActionModel?.historyItems?.[0]?.title === "Step 1" &&
+      pendingActionModel?.historyItems?.[0]?.summary ===
+        "Approved • by Entity Reviewer • 2026-04-08T09:15:00Z" &&
+      pendingActionModel?.historyItems?.[0]?.note === "Approved after invoice review.",
+    "Action-panel explainability should add user-relative access text and prior-step history"
   );
 
   const approvedListModel = buildCariWorkflowListSummaryModel(
@@ -230,19 +297,14 @@ async function main() {
   );
 
   assert(
-    hookSource.includes("You cannot post because approval is still pending.") &&
-      hookSource.includes(
-        "You cannot post because the document has not been submitted yet."
-      ) &&
-      hookSource.includes("You can resubmit this document."),
-    "Action-panel hook should explain blocked posting and returned resubmission in user-relative wording"
-  );
-  assert(
-    panelSource.includes("Workflow status") &&
-      panelSource.includes("Your access") &&
-      panelSource.includes("Technical detail") &&
-      panelSource.includes("Resubmit for approval"),
-    "Action-panel component should render workflow status, user access, technical detail, and resubmit copy"
+    panelSource.includes("GovernedRuntimeExplainabilityPanel") &&
+      runtimeExplainabilityPanelSource.includes("Current step") &&
+      runtimeExplainabilityPanelSource.includes("Required package") &&
+      runtimeExplainabilityPanelSource.includes("Required scope") &&
+      runtimeExplainabilityPanelSource.includes("Who can act next") &&
+      runtimeExplainabilityPanelSource.includes("Your access") &&
+      runtimeExplainabilityPanelSource.includes("Prior step history"),
+    "Shared runtime panel should centralize the governed-record explainability sections"
   );
   assert(
     setupPageSource.includes("runWorkflowCoverageDiagnostics") &&

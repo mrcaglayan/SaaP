@@ -42,10 +42,12 @@ import {
   buildAssignmentSelectionLabel,
   buildAssignmentScopeLabel,
   buildDefaultSteps,
+  buildWorkflowExplainabilityPreviewModel,
   buildWorkflowPresetComparisonModel,
   buildWorkflowPresetPreviewModel,
   buildStepDrafts,
   buildStepPreview,
+  buildWorkflowStepValidationModel,
   buildWorkflowPreview,
   listWorkflowStepPackageOptions,
   normalizeStepDraft,
@@ -260,6 +262,16 @@ export default function WorkflowSetupPage() {
     () => buildWorkflowPreview(stepDrafts, text.stepScopeLabels, l),
     [stepDrafts, text.stepScopeLabels, l]
   );
+  const workflowExplainabilityPreview = useMemo(
+    () =>
+      buildWorkflowExplainabilityPreviewModel({
+        stepDrafts,
+        processType: selectedProcessType,
+        stepScopeLabels: text.stepScopeLabels,
+        l,
+      }),
+    [l, selectedProcessType, stepDrafts, text.stepScopeLabels]
+  );
   const workflowPresetEntries = useMemo(() => listWorkflowPresetCatalogEntries(), []);
   const workflowPackageEntries = useMemo(() => listWorkflowPackageCatalogEntries(), []);
   const businessRoleEntries = useMemo(() => listBusinessRoleCatalogEntries(), []);
@@ -322,6 +334,25 @@ export default function WorkflowSetupPage() {
         l,
       }),
     [selectedWorkflowPreset, stepDrafts, text.stepScopeLabels, l]
+  );
+  const workflowStepValidation = useMemo(
+    () =>
+      buildWorkflowStepValidationModel({
+        stepDrafts,
+        processType: selectedProcessType,
+        workflowPackageEntries,
+        coverageDiagnostics,
+        stepScopeLabels: text.stepScopeLabels,
+        l,
+      }),
+    [
+      coverageDiagnostics,
+      l,
+      selectedProcessType,
+      stepDrafts,
+      text.stepScopeLabels,
+      workflowPackageEntries,
+    ]
   );
   const assignmentEffectText = useMemo(
     () =>
@@ -695,7 +726,7 @@ export default function WorkflowSetupPage() {
   ]);
 
   useEffect(() => {
-    if (currentStep !== 5 || !canReadAssignments) {
+    if (currentStep < 4 || !canReadAssignments) {
       setCoverageDiagnostics(null);
       setCoverageDiagnosticsLoading(false);
       setCoverageDiagnosticsError("");
@@ -832,6 +863,10 @@ export default function WorkflowSetupPage() {
     }
     if (stepsJsonError) {
       setError(stepsJsonError);
+      return;
+    }
+    if (workflowStepValidation.hasBlockingIssues) {
+      setError(workflowStepValidation.summaryText);
       return;
     }
 
@@ -1259,6 +1294,11 @@ export default function WorkflowSetupPage() {
               onSelectWorkflowPreset={onSelectWorkflowPreset}
               onCloneWorkflowPreset={onCloneWorkflowPreset}
               onResetStepsToSelectedPreset={onResetStepsToSelectedPreset}
+              workflowStepValidation={workflowStepValidation}
+              coverageDiagnosticsLoading={coverageDiagnosticsLoading}
+              coverageDiagnosticsError={coverageDiagnosticsError}
+              canReadCoverageDiagnostics={canReadAssignments}
+              workflowExplainabilityPreview={workflowExplainabilityPreview}
               apBusinessLabels={text.apBusinessLabels}
             />
           ) : null}
@@ -1273,6 +1313,7 @@ export default function WorkflowSetupPage() {
               workflowType={selectedProcessType}
               workflowTypeLabel={selectedProcessTypeLabel}
               workflowPreviewText={workflowPreviewText}
+              workflowExplainabilityPreview={workflowExplainabilityPreview}
               assignmentEffectText={assignmentEffectText}
               onBack={() => setCurrentStep(4)}
               onSubmitAssignment={onCreateAssignment}
@@ -1307,6 +1348,7 @@ export default function WorkflowSetupPage() {
           assignmentStatus={assignmentForm.status}
           recommendation={selectedRecommendation}
           workflowPreviewText={workflowPreviewText}
+          workflowExplainabilityPreview={workflowExplainabilityPreview}
           assignmentEffectText={assignmentEffectText}
           quickGuide={text.quickGuide}
         />

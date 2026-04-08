@@ -30,9 +30,16 @@ export default function ApprovalStepCard({
   onRemove,
   disableRemove,
   previewText,
+  validation = null,
   apBusinessLabels,
 }) {
   const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
+  const blockingIssueCount = Array.isArray(validation?.blockingIssues)
+    ? validation.blockingIssues.length
+    : 0;
+  const warningIssueCount = Array.isArray(validation?.warningIssues)
+    ? validation.warningIssues.length
+    : 0;
 
   return (
     <Card className="rounded-2xl border-border/80">
@@ -49,15 +56,27 @@ export default function ApprovalStepCard({
               <p className="mt-1 text-xs text-muted-foreground">{previewText}</p>
             </div>
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onRemove}
-            disabled={disableRemove}
-          >
-            {l("Remove", "Kaldir")}
-          </Button>
+          <div className="flex items-center gap-2">
+            {blockingIssueCount > 0 ? (
+              <Badge variant="outline" className="border-rose-300 bg-rose-50 text-rose-900">
+                {blockingIssueCount} {l("blocker", "engel")}
+              </Badge>
+            ) : null}
+            {warningIssueCount > 0 ? (
+              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">
+                {warningIssueCount} {l("warning", "uyari")}
+              </Badge>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onRemove}
+              disabled={disableRemove}
+            >
+              {l("Remove", "Kaldir")}
+            </Button>
+          </div>
         </div>
       </CardHeader>
 
@@ -227,6 +246,31 @@ export default function ApprovalStepCard({
             </span>
           </div>
         </div>
+
+        {Array.isArray(validation?.allIssues) && validation.allIssues.length > 0 ? (
+          <div className="space-y-2 md:col-span-2">
+            {validation.allIssues.map((issue) => (
+              <div
+                key={`${issue.code}-${issue.severity}`}
+                className={`rounded-2xl border px-4 py-3 ${
+                  issue.severity === "error"
+                    ? "border-rose-200 bg-rose-50/80 text-rose-950"
+                    : "border-amber-200 bg-amber-50/80 text-amber-950"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em]">
+                    {issue.severity === "error"
+                      ? l("Blocking issue", "Engelleyici sorun")
+                      : l("Warning", "Uyari")}
+                  </span>
+                  <span className="text-sm font-medium">{issue.title}</span>
+                </div>
+                <p className="mt-1 text-sm leading-6">{issue.description}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

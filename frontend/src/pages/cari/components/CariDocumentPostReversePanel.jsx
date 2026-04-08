@@ -1,5 +1,6 @@
 
 import { Link } from "react-router-dom";
+import GovernedRuntimeExplainabilityPanel from "../../../components/workflows/GovernedRuntimeExplainabilityPanel.jsx";
 import {
   FIXED_ASSET_DETAIL_ROUTE_PREFIX,
   buildInventoryMovementLink,
@@ -83,8 +84,6 @@ export default function CariDocumentPostReversePanel({
     selectedDocumentDirection,
     selectedDocumentId,
     selectedDocumentLegalEntityId,
-    selectedWorkflowGate,
-    selectedWorkflowGateState,
     workflowExplanation,
     setApprovalDecisionNote,
     selectedDocumentPostingRulesReady,
@@ -100,69 +99,13 @@ export default function CariDocumentPostReversePanel({
       <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
         {l("Submit / Post / Reverse", "Gonder / Kaydet / Ters Kayit")}
       </h3>
-      {workflowExplanation?.isApGoverned && selectedWorkflowGate ? (
-        <div className="mt-3 space-y-2">
-          {/* A. Process status */}
-          <div className={`rounded-md border px-3 py-3 text-sm ${
-            selectedWorkflowGateState === "APPROVED"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : selectedWorkflowGateState === "RETURNED"
-                ? "border-amber-200 bg-amber-50 text-amber-900"
-                : selectedWorkflowGateState === "PENDING"
-                  ? "border-blue-200 bg-blue-50 text-blue-900"
-                  : "border-slate-200 bg-slate-50 text-slate-900"
-          }`}>
-            <p className="font-semibold">{workflowExplanation.processStatus}</p>
-            {workflowExplanation.processSubtext ? (
-              <p className="mt-1 text-xs opacity-90">{workflowExplanation.processSubtext}</p>
-            ) : null}
-          </div>
-
-          {/* B. Waiting / blocked explanation */}
-          {workflowExplanation.waitingLines.length > 0 ? (
-            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-900">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                {l("Workflow status", "Workflow durumu")}
-              </p>
-              <ul className="mt-1 space-y-1">
-                {workflowExplanation.waitingLines.map((line, i) => (
-                  <li key={i} className="text-xs text-slate-800">{line}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {/* C. Current user capability */}
-          {workflowExplanation.userCapabilityLines.length > 0 ? (
-            <div className="rounded-md border border-violet-200 bg-violet-50/50 px-3 py-2 text-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
-                {l("Your access", "Erisiminiz")}
-              </p>
-              <ul className="mt-1 space-y-1">
-                {workflowExplanation.userCapabilityLines.map((line, i) => (
-                  <li key={i} className="text-xs text-violet-900">{line}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {/* Technical detail (secondary, collapsible) */}
-          {workflowExplanation.technicalLines.length > 0 ? (
-            <details className="text-xs text-slate-500">
-              <summary className="cursor-pointer font-semibold uppercase tracking-wide">
-                {l("Technical detail", "Teknik detay")}
-              </summary>
-              <ul className="mt-1 space-y-0.5 pl-3">
-                {workflowExplanation.technicalLines.map((line, i) => (
-                  <li key={i}>{line}</li>
-                ))}
-                {selectedWorkflowGate?.workflowInstanceId ? (
-                  <li>workflowInstanceId: #{selectedWorkflowGate.workflowInstanceId}</li>
-                ) : null}
-              </ul>
-            </details>
-          ) : null}
-        </div>
+      {workflowExplanation ? (
+        <GovernedRuntimeExplainabilityPanel
+          className="mt-3"
+          l={l}
+          model={workflowExplanation}
+          title={l("Workflow explainability", "Workflow aciklamasi")}
+        />
       ) : null}
       {canApproveSelected || approvalError || approvalMessage ? (
         <div className="mt-3 rounded-md border border-violet-200 bg-violet-50 px-3 py-3 text-sm text-violet-950">

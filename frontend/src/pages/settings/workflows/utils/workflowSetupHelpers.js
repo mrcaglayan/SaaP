@@ -737,6 +737,567 @@ export function buildWorkflowPresetComparisonModel({
   };
 }
 
+function buildWorkflowExplainabilityActorText(roleLabels, fallbackText, l) {
+  const normalizedLabels = (Array.isArray(roleLabels) ? roleLabels : [])
+    .map((label) => String(label || "").trim())
+    .filter(Boolean);
+  if (normalizedLabels.length === 0) {
+    return fallbackText;
+  }
+  if (normalizedLabels.length === 1) {
+    return normalizedLabels[0];
+  }
+  if (normalizedLabels.length === 2) {
+    return l(
+      `${normalizedLabels[0]} or ${normalizedLabels[1]}`,
+      `${normalizedLabels[0]} veya ${normalizedLabels[1]}`
+    );
+  }
+  return normalizedLabels.join(", ");
+}
+
+function buildWorkflowExplainabilityEntry({
+  key,
+  stepNo,
+  actionLabel,
+  requiredPackageLabel,
+  scopeType,
+  actorText,
+  minApproverCount,
+  allowSelfApprove,
+  escalationAfterHours,
+  stepScopeLabels,
+  l,
+}) {
+  const scopeLabel = getScopeLabel(scopeType, stepScopeLabels);
+  const normalizedActionLabel = String(actionLabel || "").trim() || l("Step", "Adim");
+  const normalizedPackageLabel =
+    String(requiredPackageLabel || "").trim() || l("Package not selected", "Paket secilmedi");
+  const normalizedActorText =
+    String(actorText || "").trim() ||
+    l("In-scope package holders", "Kapsam ici paket sahipleri");
+  const minCount = Math.max(1, Number(minApproverCount || 1) || 1);
+  const escalationText = String(escalationAfterHours || "").trim();
+
+  const detailBadges = [
+    {
+      key: "package",
+      label: l(`Package: ${normalizedPackageLabel}`, `Paket: ${normalizedPackageLabel}`),
+    },
+    {
+      key: "scope",
+      label: l(`Scope: ${scopeLabel}`, `Kapsam: ${scopeLabel}`),
+    },
+    {
+      key: "actors",
+      label: l(`Usually: ${normalizedActorText}`, `Genelde: ${normalizedActorText}`),
+    },
+    {
+      key: "count",
+      label:
+        minCount === 1
+          ? l("1 actor required", "1 aktor gerekir")
+          : l(`${minCount} actors required`, `${minCount} aktor gerekir`),
+    },
+    {
+      key: "self",
+      label: allowSelfApprove
+        ? l("Self-approve on", "Kendi kendine onay acik")
+        : l("Self-approve off", "Kendi kendine onay kapali"),
+    },
+  ];
+
+  if (escalationText) {
+    detailBadges.push({
+      key: "escalation",
+      label: l(
+        `Escalates after ${escalationText}h`,
+        `${escalationText}s sonra escalation`
+      ),
+    });
+  }
+
+  return {
+    key,
+    stepNo,
+    actionLabel: normalizedActionLabel,
+    requiredPackageLabel: normalizedPackageLabel,
+    scopeType,
+    scopeLabel,
+    actorText: normalizedActorText,
+    lineText: l(
+      `Step ${stepNo}: ${normalizedPackageLabel} at ${scopeLabel} scope - usually ${normalizedActorText}`,
+      `${stepNo}. adim: ${normalizedPackageLabel} - ${scopeLabel} kapsaminda - genelde ${normalizedActorText}`
+    ),
+    helperText: l(
+      `${normalizedActionLabel} runs at ${scopeLabel} scope.`,
+      `${normalizedActionLabel}, ${scopeLabel} kapsaminda calisir.`
+    ),
+    detailBadges,
+  };
+}
+
+function buildApPosterActorText(scopeType, l) {
+  const normalizedScopeType = String(scopeType || "").toUpperCase();
+  if (normalizedScopeType === "GROUP") {
+    return l("Group posting authority", "Grup kayit yetkisi");
+  }
+  if (normalizedScopeType === "COUNTRY") {
+    return l("Country posting authority", "Ulke kayit yetkisi");
+  }
+  return l("Entity posting authority", "Entity kayit yetkisi");
+}
+
+/**
+ * Builds the business-readable explainability preview used while configuring a
+ * workflow. This is a design-time preview only; runtime waiting/cannot-act
+ * explanations land in the later explainability phases.
+ */
+export function buildWorkflowExplainabilityPreviewModel({
+  stepDrafts,
+  processType,
+  stepScopeLabels,
+  l,
+}) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const normalizedSteps = Array.isArray(stepDrafts) ? stepDrafts : [];
+  const previewEntries = [];
+  const notes = [];
+
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    previewEntries.push(
+      buildWorkflowExplainabilityEntry({
+        key: "ap-submit",
+        stepNo: 1,
+        actionLabel: l("Create / Edit / Submit", "Olustur / Duzenle / Gonder"),
+        requiredPackageLabel: "AP Documents / Draft & Submit",
+        scopeType: "OPERATING_UNIT",
+        actorText: l("Branch Accountant", "Sube Muhasebecisi"),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+        stepScopeLabels,
+        l,
+      })
+    );
+
+    normalizedSteps.forEach((step, index) => {
+      const actorText = buildWorkflowExplainabilityActorText(
+        step?.eligibleBusinessRoleLabels,
+        l("In-scope AP reviewers", "Kapsam ici AP inceleyicileri"),
+        l
+      );
+      previewEntries.push(
+        buildWorkflowExplainabilityEntry({
+          key: `ap-approval-${index + 1}`,
+          stepNo: index + 2,
+          actionLabel: step?.actionLabel || l("Approve", "Onayla"),
+          requiredPackageLabel:
+            step?.requiredPackageLabel ||
+            step?.requiredPackageCode ||
+            "AP Documents / Approve",
+          scopeType: step?.stageScopeType || "LEGAL_ENTITY",
+          actorText,
+          minApproverCount: step?.minApproverCount,
+          allowSelfApprove: step?.allowSelfApprove,
+          escalationAfterHours: step?.escalationAfterHours,
+          stepScopeLabels,
+          l,
+        })
+      );
+    });
+
+    const finalApprovalStep =
+      normalizedSteps[normalizedSteps.length - 1] || null;
+    const posterScopeType = String(
+      finalApprovalStep?.stageScopeType || "LEGAL_ENTITY"
+    ).toUpperCase();
+    previewEntries.push(
+      buildWorkflowExplainabilityEntry({
+        key: "ap-post",
+        stepNo: previewEntries.length + 1,
+        actionLabel: l("Post", "Kaydet"),
+        requiredPackageLabel:
+          posterScopeType === "GROUP"
+            ? "AP Documents / Group Post"
+            : "AP Documents / Post",
+        scopeType: posterScopeType,
+        actorText: buildApPosterActorText(posterScopeType, l),
+        minApproverCount: 1,
+        allowSelfApprove: false,
+        escalationAfterHours: null,
+        stepScopeLabels,
+        l,
+      })
+    );
+
+    notes.push(
+      l(
+        "The current AP backend bridge still stores only the approval-stage rows directly. This preview keeps submit and post visible in business language.",
+        "Mevcut AP backend koprusu dogrudan yalnizca onay asamasi satirlarini saklar. Bu onizleme, gonderim ve kaydi is dilinde gorunur tutar."
+      )
+    );
+  } else {
+    normalizedSteps.forEach((step, index) => {
+      const actorText = buildWorkflowExplainabilityActorText(
+        step?.eligibleBusinessRoleLabels,
+        l("In-scope package holders", "Kapsam ici paket sahipleri"),
+        l
+      );
+      previewEntries.push(
+        buildWorkflowExplainabilityEntry({
+          key: `workflow-step-${index + 1}`,
+          stepNo: index + 1,
+          actionLabel: step?.actionLabel || l("Step", "Adim"),
+          requiredPackageLabel:
+            step?.requiredPackageLabel ||
+            step?.requiredPackageCode ||
+            step?.requiredPermissionCode,
+          scopeType: step?.stageScopeType || "LEGAL_ENTITY",
+          actorText,
+          minApproverCount: step?.minApproverCount,
+          allowSelfApprove: step?.allowSelfApprove,
+          escalationAfterHours: step?.escalationAfterHours,
+          stepScopeLabels,
+          l,
+        })
+      );
+    });
+  }
+
+  return {
+    entryCount: previewEntries.length,
+    summaryText: l(
+      `This business preview shows ${previewEntries.length} explainable stage(s) in the current flow.`,
+      `Bu is onizlemesi mevcut akistaki ${previewEntries.length} adet aciklanabilir asamayi gosterir.`
+    ),
+    entries: previewEntries,
+    notes,
+  };
+}
+
+function buildWorkflowStepIssue(severity, code, title, description) {
+  return {
+    severity,
+    code,
+    title,
+    description,
+  };
+}
+
+function findWorkflowCoverageApproverCheck(coverageDiagnostics, stepNo) {
+  const checks = Array.isArray(coverageDiagnostics?.checks?.approvers)
+    ? coverageDiagnostics.checks.approvers
+    : [];
+  return (
+    checks.find(
+      (check) => Math.max(1, Number(check?.stepNo || 0) || 0) === Math.max(1, Number(stepNo || 0) || 0)
+    ) || null
+  );
+}
+
+function buildWorkflowCoverageStepIssue({
+  step,
+  coverageDiagnostics,
+  packageLabel,
+  stepScopeLabels,
+  l,
+}) {
+  const coverageCheck = findWorkflowCoverageApproverCheck(
+    coverageDiagnostics,
+    step?.stepNo
+  );
+  if (!coverageCheck) {
+    return null;
+  }
+
+  const status = String(coverageCheck.status || "").toUpperCase();
+  const scopeLabel = getScopeLabel(step?.stageScopeType, stepScopeLabels);
+  const uncoveredScopeCount = Math.max(0, Number(coverageCheck.uncoveredScopeCount || 0) || 0);
+
+  if (status === "NO_TARGET_SCOPES") {
+    return buildWorkflowStepIssue(
+      "warning",
+      "no_target_scopes",
+      l("No target scopes resolved", "Hedef kapsam cozulmedi"),
+      l(
+        `This assignment currently resolves no concrete ${scopeLabel} targets for ${packageLabel}.`,
+        `Bu atama su anda ${packageLabel} icin somut ${scopeLabel} hedefi cozmuyor.`
+      )
+    );
+  }
+
+  if (status === "NO_COVERAGE") {
+    return buildWorkflowStepIssue(
+      "warning",
+      "no_eligible_users",
+      l("No eligible users found", "Uygun kullanici bulunamadi"),
+      l(
+        `No active users currently hold ${packageLabel} authority at the selected ${scopeLabel} targets.`,
+        `Secilen ${scopeLabel} hedeflerinde su anda ${packageLabel} yetkisine sahip aktif kullanici yok.`
+      )
+    );
+  }
+
+  if (status === "PARTIAL_GAP") {
+    return buildWorkflowStepIssue(
+      "warning",
+      "partial_coverage_gap",
+      l("Partial actor coverage", "Kismi aktor kapsami"),
+      l(
+        `${uncoveredScopeCount} ${scopeLabel} target scope(s) currently have no active users for ${packageLabel}.`,
+        `${uncoveredScopeCount} ${scopeLabel} hedef kapsaminda su anda ${packageLabel} icin aktif kullanici yok.`
+      )
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Builds the blocking and advisory validation state for the current workflow
+ * step draft list. This keeps step-level warnings consistent between the page
+ * save gate and the inline card UI.
+ */
+export function buildWorkflowStepValidationModel({
+  stepDrafts,
+  processType,
+  workflowPackageEntries = [],
+  coverageDiagnostics = null,
+  stepScopeLabels = {},
+  l,
+}) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const packageEntriesByCode = new Map(
+    (Array.isArray(workflowPackageEntries) ? workflowPackageEntries : []).map((entry) => [
+      String(entry?.code || "").trim().toUpperCase(),
+      entry,
+    ])
+  );
+
+  const steps = (Array.isArray(stepDrafts) ? stepDrafts : []).map((step, index) => {
+    const normalizedPackageCode = String(step?.requiredPackageCode || "").trim().toUpperCase();
+    const normalizedScopeType = String(step?.stageScopeType || "").trim().toUpperCase();
+    const packageEntry = packageEntriesByCode.get(normalizedPackageCode) || null;
+    const packageLabel =
+      packageEntry?.displayName ||
+      step?.requiredPackageLabel ||
+      normalizedPackageCode ||
+      l("this step", "bu adim");
+    const blockingIssues = [];
+    const warningIssues = [];
+
+    if (!normalizedPackageCode) {
+      blockingIssues.push(
+        buildWorkflowStepIssue(
+          "error",
+          "no_package_selected",
+          l("Package required", "Paket gerekli"),
+          l(
+            "Select a workflow package before saving this step.",
+            "Bu adimi kaydetmeden once bir workflow paketi secin."
+          )
+        )
+      );
+    } else if (!packageEntry) {
+      blockingIssues.push(
+        buildWorkflowStepIssue(
+          "error",
+          "unknown_package",
+          l("Unknown package", "Bilinmeyen paket"),
+          l(
+            `${normalizedPackageCode} is not available in the current workflow package catalog.`,
+            `${normalizedPackageCode} mevcut workflow paket katalogunda bulunmuyor.`
+          )
+        )
+      );
+    } else {
+      const allowedScopes = Array.isArray(packageEntry.allowedScopes)
+        ? packageEntry.allowedScopes
+        : [];
+      const allowedScopeLabels = allowedScopes.map((scopeType) =>
+        getScopeLabel(scopeType, stepScopeLabels)
+      );
+
+      if (normalizedPackageCode === "PKG-AP-POST-GROUP") {
+        blockingIssues.push(
+          buildWorkflowStepIssue(
+            "error",
+            "ap_group_post_extension_not_enabled",
+            l("Group AP post is not enabled", "Grup AP kaydi etkin degil"),
+            packageEntry.extensionNote ||
+              l(
+                "Group-scoped AP posting remains preview-only until the clean extension package ships.",
+                "Grup kapsamli AP kaydi, temiz extension paketi cikana kadar yalnizca onizlemedir."
+              )
+          )
+        );
+      } else if (
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+        normalizedPackageCode !== "PKG-AP-APPROVE"
+      ) {
+        // The current AP backend bridge can only represent approval-stage
+        // packages. Submit/post remain explained by preset preview for now.
+        blockingIssues.push(
+          buildWorkflowStepIssue(
+            "error",
+            "ap_package_bridge_not_supported",
+            l("AP package bridge not supported", "AP paket koprusu desteklenmiyor"),
+            l(
+              "The current AP step builder can only bind approval-stage steps to AP Documents / Approve.",
+              "Mevcut AP adim olusturucusu yalnizca onay adimlarini AP Documents / Approve paketine baglayabilir."
+            )
+          )
+        );
+      }
+
+      if (
+        normalizedProcessType === "PERIOD_CLOSE" &&
+        normalizedScopeType === "GROUP" &&
+        normalizedPackageCode.startsWith("PKG-PC-")
+      ) {
+        blockingIssues.push(
+          buildWorkflowStepIssue(
+            "error",
+            "period_close_group_extension_not_ready",
+            l(
+              "Group period-close extension is not ready",
+              "Grup donem kapama extension'i hazir degil"
+            ),
+            l(
+              "Period Close packages currently support LEGAL_ENTITY and COUNTRY only. GROUP final-close needs a later backend extension.",
+              "Period Close paketleri su an yalnizca LEGAL_ENTITY ve COUNTRY destekler. GROUP final-close icin daha sonraki bir backend extension gerekir."
+            )
+          )
+        );
+      } else if (
+        allowedScopes.length > 0 &&
+        normalizedScopeType &&
+        !allowedScopes.includes(normalizedScopeType)
+      ) {
+        blockingIssues.push(
+          buildWorkflowStepIssue(
+            "error",
+            "package_scope_mismatch",
+            l("Package scope mismatch", "Paket kapsam uyusmazligi"),
+            l(
+              `${packageLabel} supports ${allowedScopeLabels.join(", ")}, but this step uses ${getScopeLabel(normalizedScopeType, stepScopeLabels)}.`,
+              `${packageLabel}, ${allowedScopeLabels.join(", ")} destekler; ancak bu adim ${getScopeLabel(normalizedScopeType, stepScopeLabels)} kullaniyor.`
+            )
+          )
+        );
+      }
+
+      if (packageEntry.plannedExtension && normalizedPackageCode !== "PKG-AP-POST-GROUP") {
+        blockingIssues.push(
+          buildWorkflowStepIssue(
+            "error",
+            "planned_extension",
+            l("Extension not enabled", "Extension etkin degil"),
+            packageEntry.extensionNote ||
+              l(
+                "This workflow package depends on an extension that is not enabled yet.",
+                "Bu workflow paketi henuz etkin olmayan bir extension'a baglidir."
+              )
+          )
+        );
+      }
+
+      const legacyWarnings = Array.isArray(packageEntry.legacyWarnings)
+        ? packageEntry.legacyWarnings
+        : [];
+      if (legacyWarnings.length > 0) {
+        warningIssues.push(
+          buildWorkflowStepIssue(
+            "warning",
+            "legacy_runtime_mapping",
+            l("Compatibility runtime mapping", "Uyumluluk runtime eslemesi"),
+            legacyWarnings[0]
+          )
+        );
+      }
+    }
+
+    if (step?.allowSelfApprove) {
+      warningIssues.push(
+        buildWorkflowStepIssue(
+          "warning",
+          "self_approve_enabled",
+          l("Self-approval enabled", "Kendi kendine onay acik"),
+          l(
+            "All shipped governance presets keep self-approval off. Enable it only for an intentional exception.",
+            "Tum hazir governance presetleri kendi kendine onayi kapali tutar. Bunu yalnizca bilincli bir istisna icin acin."
+          )
+        )
+      );
+    }
+
+    const coverageIssue = buildWorkflowCoverageStepIssue({
+      step,
+      coverageDiagnostics,
+      packageLabel,
+      stepScopeLabels,
+      l,
+    });
+    if (coverageIssue) {
+      warningIssues.push(coverageIssue);
+    }
+
+    return {
+      index,
+      stepNo: Math.max(1, Number(step?.stepNo || index + 1) || index + 1),
+      blockingIssues,
+      warningIssues,
+      allIssues: [...blockingIssues, ...warningIssues],
+      hasBlockingIssues: blockingIssues.length > 0,
+      hasWarnings: warningIssues.length > 0,
+    };
+  });
+
+  const blockingIssueCount = steps.reduce(
+    (total, step) => total + step.blockingIssues.length,
+    0
+  );
+  const warningCount = steps.reduce(
+    (total, step) => total + step.warningIssues.length,
+    0
+  );
+
+  return {
+    steps,
+    blockingIssueCount,
+    warningCount,
+    hasBlockingIssues: blockingIssueCount > 0,
+    hasWarnings: warningCount > 0,
+    summaryTitle:
+      blockingIssueCount > 0
+        ? l("Workflow step fixes required", "Workflow adim duzeltmeleri gerekli")
+        : warningCount > 0
+          ? l("Workflow warnings to review", "Workflow uyarilarini gozden gecirin")
+          : l("Workflow step checks passed", "Workflow adim kontrolleri gecti"),
+    summaryText:
+      blockingIssueCount > 0
+        ? warningCount > 0
+          ? l(
+              `Fix ${blockingIssueCount} blocking issue(s) before saving. ${warningCount} additional warning(s) remain visible for rollout review.`,
+              `Kaydetmeden once ${blockingIssueCount} engelleyici sorunu duzeltin. Canliya alma incelemesi icin ${warningCount} ek uyari gorunur kalir.`
+            )
+          : l(
+              `Fix ${blockingIssueCount} blocking issue(s) before saving this workflow.`,
+              `Bu workflow'u kaydetmeden once ${blockingIssueCount} engelleyici sorunu duzeltin.`
+            )
+        : warningCount > 0
+          ? l(
+              `${warningCount} warning(s) are visible. The draft can still be saved, but review rollout risks first.`,
+              `${warningCount} uyari gorunuyor. Taslak yine de kaydedilebilir; ancak once canliya alma risklerini gozden gecirin.`
+            )
+          : l(
+              "No blocking or advisory step issues were found in the current draft.",
+              "Mevcut taslakta engelleyici veya danisma niteliginde adim sorunu bulunmadi."
+            ),
+  };
+}
+
 function getScopeLabel(value, labels = {}) {
   return labels[String(value || "").toUpperCase()] || value || "-";
 }
@@ -1359,12 +1920,14 @@ export default {
   normalizeStepDraft,
   buildStepDrafts,
   serializeStepDrafts,
+  buildWorkflowExplainabilityPreviewModel,
   buildStepPreview,
   buildWorkflowPreview,
   buildApBusinessPreview,
   buildWorkflowPresetBaselineStepDrafts,
   buildWorkflowPresetPreviewModel,
   buildWorkflowPresetComparisonModel,
+  buildWorkflowStepValidationModel,
   buildAssignmentEffectText,
   buildAssignmentSelectionLabel,
   buildAssignmentScopeLabel,

@@ -1,5 +1,6 @@
 import MoneyText from "../../../components/MoneyText.jsx";
 import StatusTimeline from "../../../components/StatusTimeline.jsx";
+import GovernedRuntimeExplainabilityPanel from "../../../components/workflows/GovernedRuntimeExplainabilityPanel.jsx";
 import { Link } from "react-router-dom";
 import { buildCariWorkflowDetailCardModel } from "../cariWorkflowExplainability.js";
 import {
@@ -164,81 +165,12 @@ export default function CariDocumentDetailContent({
           </div>
         ) : null}
         {workflowDetailCard ? (
-          <div className={`mt-4 rounded-xl border px-4 py-4 ${workflowDetailCard.toneClass}`}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <span
-                  className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${workflowDetailCard.chipClass}`}
-                >
-                  {workflowDetailCard.badgeLabel}
-                </span>
-                <p className="mt-2 text-sm font-semibold">
-                  {workflowDetailCard.headline}
-                </p>
-                {workflowDetailCard.supportingText ? (
-                  <p className="mt-1 text-xs opacity-90">
-                    {workflowDetailCard.supportingText}
-                  </p>
-                ) : null}
-              </div>
-              {selectedSnapshot?.workflowGate?.workflowInstanceStatus ? (
-                <div className="text-right text-[11px] font-medium uppercase tracking-wide opacity-80">
-                  {l("Workflow status", "Workflow durumu")}:{" "}
-                  {selectedSnapshot.workflowGate.workflowInstanceStatus}
-                </div>
-              ) : null}
-            </div>
-            {workflowDetailCard.factItems.length > 0 ? (
-              <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-                {workflowDetailCard.factItems.map((item) => (
-                  <div
-                    key={`${item.label}-${item.value}`}
-                    className="rounded-lg border border-white/70 bg-white/60 px-3 py-2"
-                  >
-                    <dt className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
-                      {item.label}
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-slate-900">
-                      {item.value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            ) : null}
-            {workflowDetailCard.noteItems.length > 0 ? (
-              <div className="mt-4 space-y-2">
-                {workflowDetailCard.noteItems.map((item) => (
-                  <div
-                    key={`${item.label}-${item.value}`}
-                    className="rounded-lg border border-white/70 bg-white/65 px-3 py-2 text-sm text-slate-900"
-                  >
-                    <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
-                      {item.label}
-                    </p>
-                    <p className="mt-1">{item.value}</p>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {workflowDetailCard.technicalItems.length > 0 ? (
-              <details className="mt-4 text-xs text-slate-700">
-                <summary className="cursor-pointer font-semibold uppercase tracking-wide text-slate-800">
-                  {l("Technical detail", "Teknik detay")}
-                </summary>
-                <dl className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {workflowDetailCard.technicalItems.map((item) => (
-                    <div
-                      key={`${item.label}-${item.value}`}
-                      className="rounded-md border border-white/70 bg-white/60 px-3 py-2"
-                    >
-                      <dt className="font-semibold text-slate-700">{item.label}</dt>
-                      <dd className="mt-1 break-all text-slate-900">{item.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </details>
-            ) : null}
-          </div>
+          <GovernedRuntimeExplainabilityPanel
+            className="mt-4"
+            l={l}
+            model={workflowDetailCard}
+            title={l("Workflow explainability", "Workflow aciklamasi")}
+          />
         ) : null}
         <div className="mt-4 rounded-md border border-slate-200 bg-white px-3 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
