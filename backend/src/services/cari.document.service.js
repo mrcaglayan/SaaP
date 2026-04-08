@@ -62,10 +62,10 @@ import {
 import {
   cancelUnifiedWorkflowInstanceBridge,
   ensureUnifiedWorkflowInstanceBridge,
-  findActiveWorkflowAssignmentForScope,
   getUnifiedWorkflowRequestRowById,
   getWorkflowInstanceByTarget,
   listWorkflowInstanceDecisionRows,
+  resolveWorkflowAssignmentForScope,
 } from "./workflows.service.js";
 
 const DRAFT_STATUS = "DRAFT";
@@ -6751,6 +6751,9 @@ function isWorkflowAssignmentResolved(assignmentResolution) {
   if (!assignmentResolution || typeof assignmentResolution !== "object") {
     return false;
   }
+  if (assignmentResolution.assignmentRow) {
+    return isWorkflowAssignmentResolved(assignmentResolution.assignmentRow);
+  }
   if (assignmentResolution.resolved === true) {
     return true;
   }
@@ -6759,6 +6762,235 @@ function isWorkflowAssignmentResolved(assignmentResolution) {
       parsePositiveInt(assignmentResolution.assignment_id) ||
       parsePositiveInt(assignmentResolution.id)
   );
+}
+
+function parseBooleanFlag(value) {
+  return value === true || value === 1 || value === "1";
+}
+
+function buildCariDocumentWorkflowRoutingInput(documentRow = {}) {
+  return {
+    thresholdAmount: documentRow?.amount_base ?? documentRow?.amountBase ?? null,
+    amountBasis: "BASE_AMOUNT",
+  };
+}
+
+function mapCariDocumentRoutingRuleSnapshot(source = null) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  const assignmentId = parsePositiveInt(source.assignment_id ?? source.assignmentId ?? source.id);
+  const workflowDefinitionId = parsePositiveInt(
+    source.workflow_definition_id ?? source.workflowDefinitionId
+  );
+  const workflowDefinitionCode = toNullableString(
+    source.workflow_definition_code ?? source.workflowDefinitionCode,
+    100
+  );
+  const workflowDefinitionName = toNullableString(
+    source.workflow_definition_name ?? source.workflowDefinitionName
+  );
+  const scopeType = normalizeUpperText(source.scope_type ?? source.scopeType);
+  const scopeId = parsePositiveInt(source.scope_id ?? source.scopeId);
+  const scopeLayer = normalizeUpperText(source.scope_layer ?? source.scopeLayer);
+  const amountBasis = normalizeUpperText(source.amount_basis ?? source.amountBasis);
+  const minAmount = toDecimalNumber(source.min_amount ?? source.minAmount);
+  const maxAmount = toDecimalNumber(source.max_amount ?? source.maxAmount);
+  const priority = Number.isInteger(Number(source.priority)) ? Number(source.priority) : null;
+  const isFallback = parseBooleanFlag(source.is_fallback ?? source.isFallback);
+  const effectiveFrom = toDateOnlyString(
+    source.effective_from ?? source.effectiveFrom,
+    "routingRule.effectiveFrom"
+  );
+  const effectiveTo = toDateOnlyString(
+    source.effective_to ?? source.effectiveTo,
+    "routingRule.effectiveTo"
+  );
+  const status = normalizeUpperText(source.status);
+  if (
+    !assignmentId &&
+    !workflowDefinitionId &&
+    !workflowDefinitionCode &&
+    !workflowDefinitionName &&
+    !scopeType &&
+    !scopeLayer
+  ) {
+    return null;
+  }
+  return {
+    assignment_id: assignmentId || null,
+    workflow_definition_id: workflowDefinitionId || null,
+    workflow_definition_code: workflowDefinitionCode,
+    workflow_definition_name: workflowDefinitionName,
+    scope_type: scopeType || null,
+    scope_id: scopeId || null,
+    scope_layer: scopeLayer || null,
+    amount_basis: amountBasis || null,
+    min_amount: minAmount,
+    max_amount: maxAmount,
+    priority,
+    is_fallback: isFallback,
+    effective_from: effectiveFrom,
+    effective_to: effectiveTo,
+    status: status || null,
+  };
+}
+
+function buildCariDocumentWorkflowTargetSnapshotOverrides(assignmentResolution = null) {
+  const diagnostics = assignmentResolution?.selection?.diagnostics || null;
+  const routingRuleSnapshot = mapCariDocumentRoutingRuleSnapshot(
+    diagnostics?.selectedAssignment || assignmentResolution?.assignmentRow
+  );
+  return {
+    workflow_assignment_id:
+      parsePositiveInt(assignmentResolution?.assignmentRow?.id) ||
+      parsePositiveInt(routingRuleSnapshot?.assignment_id) ||
+      null,
+    workflow_definition_id:
+      parsePositiveInt(
+        assignmentResolution?.assignmentRow?.workflow_definition_id ??
+          assignmentResolution?.assignmentRow?.workflowDefinitionId
+      ) ||
+      parsePositiveInt(routingRuleSnapshot?.workflow_definition_id) ||
+      null,
+    workflow_definition_code: routingRuleSnapshot?.workflow_definition_code || null,
+    workflow_definition_name: routingRuleSnapshot?.workflow_definition_name || null,
+    evaluated_amount: toDecimalNumber(assignmentResolution?.thresholdAmount),
+    evaluated_amount_basis:
+      normalizeUpperText(assignmentResolution?.amountBasis) || "BASE_AMOUNT",
+    routing_match_type: normalizeUpperText(diagnostics?.matchType) || null,
+    routing_matched_scope_layer: normalizeUpperText(diagnostics?.matchedScopeLayer) || null,
+    routing_priority_applied: Boolean(diagnostics?.priorityApplied),
+    routing_no_match_reason: normalizeUpperText(diagnostics?.noMatchReason) || null,
+    routing_rule_snapshot: routingRuleSnapshot,
+  };
+}
+
+function normalizeCariDocumentWorkflowAssignmentResolution(assignmentResolution) {
+  if (!assignmentResolution || typeof assignmentResolution !== "object") {
+    return {
+      assignmentRow: null,
+      selection: null,
+      scope: null,
+      thresholdAmount: null,
+      amountBasis: null,
+      targetSnapshotOverrides: null,
+    };
+  }
+  const assignmentRow =
+    assignmentResolution.assignmentRow ||
+    assignmentResolution.assignment ||
+    assignmentResolution.row ||
+    (isWorkflowAssignmentResolved(assignmentResolution) ? assignmentResolution : null);
+  const normalized = {
+    ...assignmentResolution,
+    assignmentRow,
+    selection:
+      assignmentResolution.selection ||
+      (assignmentResolution.diagnostics || assignmentRow
+        ? {
+            assignmentRow,
+            diagnostics: assignmentResolution.diagnostics || null,
+          }
+        : null),
+    scope: assignmentResolution.scope || null,
+    thresholdAmount:
+      assignmentResolution.thresholdAmount ?? assignmentResolution.threshold_amount ?? null,
+    amountBasis:
+      assignmentResolution.amountBasis ?? assignmentResolution.amount_basis ?? null,
+  };
+  return {
+    ...normalized,
+    targetSnapshotOverrides:
+      assignmentResolution.targetSnapshotOverrides ||
+      assignmentResolution.target_snapshot_overrides ||
+      buildCariDocumentWorkflowTargetSnapshotOverrides(normalized),
+  };
+}
+
+function normalizeCariDocumentWorkflowSnapshotData(snapshot = null) {
+  const source = snapshot && typeof snapshot === "object" ? snapshot : {};
+  const routingRuleSnapshot = mapCariDocumentRoutingRuleSnapshot(
+    source.routing_rule_snapshot ?? source.routingRuleSnapshot
+  );
+  return {
+    workflowAssignmentId:
+      parsePositiveInt(source.workflow_assignment_id ?? source.workflowAssignmentId) ||
+      parsePositiveInt(routingRuleSnapshot?.assignment_id) ||
+      null,
+    workflowDefinitionId:
+      parsePositiveInt(source.workflow_definition_id ?? source.workflowDefinitionId) ||
+      parsePositiveInt(routingRuleSnapshot?.workflow_definition_id) ||
+      null,
+    workflowDefinitionCode:
+      toNullableString(source.workflow_definition_code ?? source.workflowDefinitionCode, 100) ||
+      toNullableString(routingRuleSnapshot?.workflow_definition_code, 100) ||
+      null,
+    workflowDefinitionName:
+      toNullableString(source.workflow_definition_name ?? source.workflowDefinitionName) ||
+      toNullableString(routingRuleSnapshot?.workflow_definition_name) ||
+      null,
+    evaluatedAmount: toDecimalNumber(source.evaluated_amount ?? source.evaluatedAmount),
+    evaluatedAmountBasis:
+      normalizeUpperText(source.evaluated_amount_basis ?? source.evaluatedAmountBasis) || null,
+    routingMatchType:
+      normalizeUpperText(source.routing_match_type ?? source.routingMatchType) || null,
+    routingMatchedScopeLayer:
+      normalizeUpperText(
+        source.routing_matched_scope_layer ?? source.routingMatchedScopeLayer
+      ) || null,
+    routingPriorityApplied: parseBooleanFlag(
+      source.routing_priority_applied ?? source.routingPriorityApplied
+    ),
+    routingNoMatchReason:
+      normalizeUpperText(
+        source.routing_no_match_reason ?? source.routingNoMatchReason
+      ) || null,
+    routingRuleSnapshot,
+  };
+}
+
+function buildCariDocumentWorkflowGateRoutingFromResolution(assignmentResolution = null) {
+  const normalized = normalizeCariDocumentWorkflowAssignmentResolution(assignmentResolution);
+  const snapshotData = normalizeCariDocumentWorkflowSnapshotData(
+    normalized.targetSnapshotOverrides
+  );
+  return {
+    workflowAssignmentId:
+      snapshotData.workflowAssignmentId ||
+      parsePositiveInt(normalized.assignmentRow?.id) ||
+      null,
+    workflowDefinitionId:
+      snapshotData.workflowDefinitionId ||
+      parsePositiveInt(
+        normalized.assignmentRow?.workflow_definition_id ??
+          normalized.assignmentRow?.workflowDefinitionId
+      ) ||
+      null,
+    workflowDefinitionCode:
+      snapshotData.workflowDefinitionCode ||
+      toNullableString(
+        normalized.assignmentRow?.workflow_definition_code ??
+          normalized.assignmentRow?.workflowDefinitionCode,
+        100
+      ) ||
+      null,
+    workflowDefinitionName:
+      snapshotData.workflowDefinitionName ||
+      toNullableString(
+        normalized.assignmentRow?.workflow_definition_name ??
+          normalized.assignmentRow?.workflowDefinitionName
+      ) ||
+      null,
+    evaluatedAmount: snapshotData.evaluatedAmount,
+    evaluatedAmountBasis: snapshotData.evaluatedAmountBasis,
+    routingMatchType: snapshotData.routingMatchType,
+    routingMatchedScopeLayer: snapshotData.routingMatchedScopeLayer,
+    routingPriorityApplied: snapshotData.routingPriorityApplied,
+    routingNoMatchReason: snapshotData.routingNoMatchReason,
+    routingRuleSnapshot: snapshotData.routingRuleSnapshot,
+    routingUsedFallback: Boolean(snapshotData.routingRuleSnapshot?.is_fallback),
+  };
 }
 
 async function loadCariDocumentWorkflowHierarchy({
@@ -6814,7 +7046,8 @@ async function buildCariDocumentWorkflowScope({
 }
 
 /**
- * Resolve the effective AP workflow assignment for one governed CARI document.
+ * Resolve the effective AP workflow assignment for one governed CARI document
+ * using the document base amount as the V1 routing threshold input.
  */
 async function resolveCariDocumentWorkflowAssignment({
   tenantId,
@@ -6827,7 +7060,8 @@ async function resolveCariDocumentWorkflowAssignment({
     documentRow,
     runQuery,
   });
-  const assignmentRow = await findActiveWorkflowAssignmentForScope({
+  const routingInput = buildCariDocumentWorkflowRoutingInput(documentRow);
+  const selection = await resolveWorkflowAssignmentForScope({
     tenantId,
     processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
     effectiveOn:
@@ -6836,11 +7070,24 @@ async function resolveCariDocumentWorkflowAssignment({
       documentRow?.documentDate ||
       new Date().toISOString().slice(0, 10),
     scope,
+    thresholdAmount: routingInput.thresholdAmount,
+    amountBasis: routingInput.amountBasis,
     runQuery,
   });
+  const assignmentRow = selection?.assignmentRow || null;
   return {
     assignmentRow,
     scope,
+    selection,
+    thresholdAmount: routingInput.thresholdAmount,
+    amountBasis: routingInput.amountBasis,
+    targetSnapshotOverrides: buildCariDocumentWorkflowTargetSnapshotOverrides({
+      assignmentRow,
+      scope,
+      selection,
+      thresholdAmount: routingInput.thresholdAmount,
+      amountBasis: routingInput.amountBasis,
+    }),
   };
 }
 
@@ -6858,6 +7105,33 @@ async function loadLatestCariDocumentWorkflowInstance({
   });
 }
 
+async function loadCariDocumentWorkflowDefinitionDescriptor({
+  tenantId,
+  workflowDefinitionId,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedWorkflowDefinitionId = parsePositiveInt(workflowDefinitionId);
+  if (!normalizedTenantId || !normalizedWorkflowDefinitionId) {
+    return {
+      workflowDefinitionCode: null,
+      workflowDefinitionName: null,
+    };
+  }
+  const result = await runQuery(
+    `SELECT code, name
+       FROM workflow_definitions
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [normalizedTenantId, normalizedWorkflowDefinitionId]
+  );
+  return {
+    workflowDefinitionCode: toNullableString(result.rows?.[0]?.code, 100),
+    workflowDefinitionName: toNullableString(result.rows?.[0]?.name),
+  };
+}
+
 function normalizeCariWorkflowGateState(state) {
   const normalized = String(state || "")
     .trim()
@@ -6868,39 +7142,85 @@ function normalizeCariWorkflowGateState(state) {
 }
 
 /**
- * Resolves the assignment scope type and label from a raw assignment row.
+ * Resolves the assignment scope type and label from a raw assignment row or
+ * persisted routing-rule snapshot.
  */
 function resolveAssignmentScopeFromRow(assignmentRow) {
   if (!assignmentRow) return { scopeType: null, scopeId: null };
+  const explicitScopeType = normalizeUpperText(
+    assignmentRow.scope_type ?? assignmentRow.scopeType
+  );
+  const explicitScopeId = parsePositiveInt(assignmentRow.scope_id ?? assignmentRow.scopeId);
+  if (explicitScopeType) {
+    return {
+      scopeType: explicitScopeType,
+      scopeId: explicitScopeId || null,
+    };
+  }
   if (parsePositiveInt(assignmentRow.operating_unit_id)) {
-    return { scopeType: "OPERATING_UNIT", scopeId: parsePositiveInt(assignmentRow.operating_unit_id) };
+    return {
+      scopeType: "OPERATING_UNIT",
+      scopeId: parsePositiveInt(assignmentRow.operating_unit_id),
+    };
   }
   if (parsePositiveInt(assignmentRow.legal_entity_id)) {
-    return { scopeType: "LEGAL_ENTITY", scopeId: parsePositiveInt(assignmentRow.legal_entity_id) };
+    return {
+      scopeType: "LEGAL_ENTITY",
+      scopeId: parsePositiveInt(assignmentRow.legal_entity_id),
+    };
   }
   if (parsePositiveInt(assignmentRow.country_id)) {
-    return { scopeType: "COUNTRY", scopeId: parsePositiveInt(assignmentRow.country_id) };
+    return {
+      scopeType: "COUNTRY",
+      scopeId: parsePositiveInt(assignmentRow.country_id),
+    };
   }
   if (parsePositiveInt(assignmentRow.group_company_id)) {
-    return { scopeType: "GROUP", scopeId: parsePositiveInt(assignmentRow.group_company_id) };
+    return {
+      scopeType: "GROUP",
+      scopeId: parsePositiveInt(assignmentRow.group_company_id),
+    };
   }
   return { scopeType: "TENANT", scopeId: null };
 }
 
 /**
- * Loads the policy snapshot steps from the unified approval request
- * bridged to a workflow instance.  Returns [] if unavailable.
+ * Loads the bridged unified approval request snapshots for one workflow
+ * instance. Returns empty objects when the bridge row does not exist yet.
  */
-async function loadWorkflowInstancePolicySteps({ tenantId, instanceRow, runQuery }) {
+async function loadWorkflowInstanceBridgeSnapshots({
+  tenantId,
+  instanceRow,
+  runQuery,
+}) {
   const genericRequestId = parsePositiveInt(instanceRow?.generic_request_id);
-  if (!genericRequestId) return [];
+  if (!genericRequestId) {
+    return {
+      requestRow: null,
+      policySnapshot: {},
+      targetSnapshot: {},
+    };
+  }
   const requestRow = await getUnifiedWorkflowRequestRowById({
     tenantId,
     requestId: genericRequestId,
     runQuery,
   });
-  const snapshot = requestRow?.policy_snapshot_json;
-  return Array.isArray(snapshot?.steps) ? snapshot.steps : [];
+  return {
+    requestRow,
+    policySnapshot:
+      requestRow?.policy_snapshot_json &&
+      typeof requestRow.policy_snapshot_json === "object" &&
+      !Array.isArray(requestRow.policy_snapshot_json)
+        ? requestRow.policy_snapshot_json
+        : {},
+    targetSnapshot:
+      requestRow?.target_snapshot_json &&
+      typeof requestRow.target_snapshot_json === "object" &&
+      !Array.isArray(requestRow.target_snapshot_json)
+        ? requestRow.target_snapshot_json
+        : {},
+  };
 }
 
 /**
@@ -7022,6 +7342,16 @@ async function buildCariDocumentWorkflowGateSummary({
     assignmentScopeType: null,
     assignmentScopeId: null,
     assignmentScopeLabel: null,
+    workflowDefinitionCode: null,
+    workflowDefinitionName: null,
+    evaluatedAmount: null,
+    evaluatedAmountBasis: null,
+    routingMatchType: null,
+    routingMatchedScopeLayer: null,
+    routingPriorityApplied: false,
+    routingNoMatchReason: null,
+    routingRuleSnapshot: null,
+    routingUsedFallback: false,
     currentStepNo: null,
     totalSteps: 0,
     currentStageScopeType: null,
@@ -7069,18 +7399,45 @@ async function buildCariDocumentWorkflowGateSummary({
     };
   }
 
-  const { assignmentRow } = await resolveCariDocumentWorkflowAssignment({
-    tenantId: normalizedTenantId,
-    documentRow,
-    runQuery,
-  });
-  const assignmentResolved = Boolean(assignmentRow);
   const latestInstance = await loadLatestCariDocumentWorkflowInstance({
     tenantId: normalizedTenantId,
     documentId: normalizedDocumentId,
     runQuery,
   });
   const workflowInstanceId = parsePositiveInt(latestInstance?.id) || null;
+  const bridgedSnapshots = workflowInstanceId
+    ? await loadWorkflowInstanceBridgeSnapshots({
+        tenantId: normalizedTenantId,
+        instanceRow: latestInstance,
+        runQuery,
+      })
+    : {
+        requestRow: null,
+        policySnapshot: {},
+        targetSnapshot: {},
+      };
+  const snapshotRouting = normalizeCariDocumentWorkflowSnapshotData(
+    bridgedSnapshots.targetSnapshot
+  );
+  const hasPersistedRoutingSnapshot =
+    Boolean(snapshotRouting.workflowAssignmentId) ||
+    Boolean(snapshotRouting.routingRuleSnapshot) ||
+    snapshotRouting.evaluatedAmount !== null ||
+    Boolean(snapshotRouting.evaluatedAmountBasis);
+  const liveAssignmentResolution = hasPersistedRoutingSnapshot
+    ? null
+    : await resolveCariDocumentWorkflowAssignment({
+        tenantId: normalizedTenantId,
+        documentRow,
+        runQuery,
+      });
+  const assignmentRow = liveAssignmentResolution?.assignmentRow || null;
+  const liveRouting = buildCariDocumentWorkflowGateRoutingFromResolution(
+    liveAssignmentResolution
+  );
+  const effectiveRouting = hasPersistedRoutingSnapshot ? snapshotRouting : liveRouting;
+  const assignmentResolved =
+    Boolean(effectiveRouting.workflowAssignmentId) || Boolean(assignmentRow);
   const latestDecisions = workflowInstanceId
     ? await listWorkflowInstanceDecisionRows({
         tenantId: normalizedTenantId,
@@ -7096,29 +7453,71 @@ async function buildCariDocumentWorkflowGateSummary({
   const workflowInstanceStatus = normalizeUpperText(latestInstance?.status);
 
   // -- Enrichment: assignment scope --
-  const assignmentScope = resolveAssignmentScopeFromRow(assignmentRow);
+  const assignmentScope = resolveAssignmentScopeFromRow(
+    effectiveRouting.routingRuleSnapshot || assignmentRow
+  );
   const assignmentScopeType = assignmentScope.scopeType;
   const assignmentScopeId = assignmentScope.scopeId;
   const assignmentScopeLabel = SCOPE_TYPE_LABELS[assignmentScopeType] || assignmentScopeType;
 
   // -- Enrichment: step data from policy snapshot --
-  const policySteps = workflowInstanceId
-    ? await loadWorkflowInstancePolicySteps({
-        tenantId: normalizedTenantId,
-        instanceRow: latestInstance,
-        runQuery,
-      })
+  const policySteps = Array.isArray(bridgedSnapshots.policySnapshot?.steps)
+    ? bridgedSnapshots.policySnapshot.steps
     : [];
   const stepEnrichment = deriveStepEnrichment(
     policySteps,
     latestInstance?.current_step_no
   );
+  const commonDefinitionId =
+    parsePositiveInt(
+      latestInstance?.workflow_definition_id ??
+        effectiveRouting.workflowDefinitionId ??
+        assignmentRow?.workflow_definition_id
+    ) || null;
+  const commonAssignmentId =
+    effectiveRouting.workflowAssignmentId ||
+    parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) ||
+    null;
+  let commonWorkflowDefinitionCode =
+    effectiveRouting.workflowDefinitionCode ||
+    toNullableString(
+      assignmentRow?.workflow_definition_code ?? assignmentRow?.workflowDefinitionCode,
+      100
+    ) ||
+    null;
+  let commonWorkflowDefinitionName =
+    effectiveRouting.workflowDefinitionName ||
+    toNullableString(
+      assignmentRow?.workflow_definition_name ?? assignmentRow?.workflowDefinitionName
+    ) ||
+    null;
+  if (commonDefinitionId && (!commonWorkflowDefinitionCode || !commonWorkflowDefinitionName)) {
+    const definitionDescriptor = await loadCariDocumentWorkflowDefinitionDescriptor({
+      tenantId: normalizedTenantId,
+      workflowDefinitionId: commonDefinitionId,
+      runQuery,
+    });
+    commonWorkflowDefinitionCode =
+      commonWorkflowDefinitionCode || definitionDescriptor.workflowDefinitionCode || null;
+    commonWorkflowDefinitionName =
+      commonWorkflowDefinitionName || definitionDescriptor.workflowDefinitionName || null;
+  }
 
   // Shared enrichment fields for all resolved states
   const resolvedEnrichment = {
     assignmentScopeType,
     assignmentScopeId,
     assignmentScopeLabel,
+    workflowDefinitionCode: commonWorkflowDefinitionCode,
+    workflowDefinitionName: commonWorkflowDefinitionName,
+    evaluatedAmount: effectiveRouting.evaluatedAmount,
+    evaluatedAmountBasis: effectiveRouting.evaluatedAmountBasis,
+    routingMatchType: effectiveRouting.routingMatchType,
+    routingMatchedScopeLayer: effectiveRouting.routingMatchedScopeLayer,
+    routingPriorityApplied: effectiveRouting.routingPriorityApplied,
+    routingNoMatchReason: effectiveRouting.routingNoMatchReason,
+    routingRuleSnapshot: effectiveRouting.routingRuleSnapshot,
+    routingUsedFallback: effectiveRouting.routingUsedFallback,
     ...stepEnrichment,
     submitPermissionCode: "cari.doc.submit",
     postPermissionCode: "cari.doc.post",
@@ -7135,20 +7534,26 @@ async function buildCariDocumentWorkflowGateSummary({
       latestDecisionComment,
       workflowInstanceId,
       workflowInstanceStatus: workflowInstanceStatus || null,
-      workflowDefinitionId: parsePositiveInt(latestInstance?.workflow_definition_id) || null,
+      workflowDefinitionId:
+        parsePositiveInt(latestInstance?.workflow_definition_id) ||
+        effectiveRouting.workflowDefinitionId ||
+        null,
       workflowAssignmentId: null,
       ...emptyEnrichment,
+      workflowDefinitionCode: commonWorkflowDefinitionCode,
+      workflowDefinitionName: commonWorkflowDefinitionName,
+      evaluatedAmount: effectiveRouting.evaluatedAmount,
+      evaluatedAmountBasis: effectiveRouting.evaluatedAmountBasis,
+      routingMatchType: effectiveRouting.routingMatchType,
+      routingMatchedScopeLayer: effectiveRouting.routingMatchedScopeLayer,
+      routingPriorityApplied: effectiveRouting.routingPriorityApplied,
+      routingNoMatchReason: effectiveRouting.routingNoMatchReason,
+      routingRuleSnapshot: effectiveRouting.routingRuleSnapshot,
+      routingUsedFallback: effectiveRouting.routingUsedFallback,
       blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_ASSIGNMENT_NOT_RESOLVED,
       blockingReasonDetail: "No workflow assignment configured for this document scope",
     };
   }
-
-  const commonDefinitionId =
-    parsePositiveInt(
-      latestInstance?.workflow_definition_id ?? assignmentRow.workflow_definition_id
-    ) || null;
-  const commonAssignmentId =
-    parsePositiveInt(assignmentRow?.id ?? assignmentRow?.assignment_id) || null;
 
   if (documentStatus === RETURNED_STATUS) {
     return {
@@ -7260,14 +7665,13 @@ async function resolveCariDocumentSubmitWorkflowContext({
     typeof resolveWorkflowAssignment === "function"
       ? resolveWorkflowAssignment
       : async ({ tenantId: scopedTenantId }) => {
-          const resolved = await resolveCariDocumentWorkflowAssignment({
+          return resolveCariDocumentWorkflowAssignment({
             tenantId: scopedTenantId,
             documentRow,
             runQuery,
           });
-          return resolved.assignmentRow;
         };
-  const assignmentResolution =
+  const assignmentResolutionRaw =
     workflowGoverned && assignmentResolver
       ? await assignmentResolver({
           tenantId,
@@ -7278,6 +7682,9 @@ async function resolveCariDocumentSubmitWorkflowContext({
           operatingUnitId: parsePositiveInt(documentRow?.operating_unit_id),
         })
       : null;
+  const assignmentResolution = normalizeCariDocumentWorkflowAssignmentResolution(
+    assignmentResolutionRaw
+  );
 
   return {
     docClass,
@@ -8243,10 +8650,13 @@ export async function submitCariDocumentById({
       );
     }
 
+    const resolvedAssignmentRow =
+      workflowContext.assignmentResolution?.assignmentRow ||
+      workflowContext.assignmentResolution;
     const workflowDefinitionId =
       parsePositiveInt(
-        workflowContext.assignmentResolution?.workflow_definition_id ??
-          workflowContext.assignmentResolution?.workflowDefinitionId
+        resolvedAssignmentRow?.workflow_definition_id ??
+          resolvedAssignmentRow?.workflowDefinitionId
       ) || null;
     if (!workflowDefinitionId) {
       throw conflictError(
@@ -8255,11 +8665,13 @@ export async function submitCariDocumentById({
       );
     }
 
-    const workflowScope = await buildCariDocumentWorkflowScope({
-      tenantId,
-      documentRow: lockedDocument,
-      runQuery: tx.query,
-    });
+    const workflowScope =
+      workflowContext.assignmentResolution?.scope ||
+      (await buildCariDocumentWorkflowScope({
+        tenantId,
+        documentRow: lockedDocument,
+        runQuery: tx.query,
+      }));
     const instanceInsert = await tx.query(
       `INSERT INTO workflow_instances (
          tenant_id,
@@ -8290,6 +8702,8 @@ export async function submitCariDocumentById({
       instanceId: workflowInstanceId,
       requestedByUserId: payload.userId,
       fallbackScope: workflowScope,
+      targetSnapshotOverrides:
+        workflowContext.assignmentResolution?.targetSnapshotOverrides || null,
       resetToPending: true,
       runQuery: tx.query,
     });
@@ -8330,10 +8744,33 @@ export async function submitCariDocumentById({
         workflowInstanceId,
         workflowDefinitionId,
         assignmentId:
-          parsePositiveInt(workflowContext.assignmentResolution?.assignmentId) ||
-          parsePositiveInt(workflowContext.assignmentResolution?.assignment_id) ||
-          parsePositiveInt(workflowContext.assignmentResolution?.id) ||
+          parsePositiveInt(
+            workflowContext.assignmentResolution?.targetSnapshotOverrides?.workflow_assignment_id
+          ) ||
+          parsePositiveInt(resolvedAssignmentRow?.assignmentId) ||
+          parsePositiveInt(resolvedAssignmentRow?.assignment_id) ||
+          parsePositiveInt(resolvedAssignmentRow?.id) ||
           null,
+        evaluatedAmount: toDecimalNumber(
+          workflowContext.assignmentResolution?.targetSnapshotOverrides?.evaluated_amount
+        ),
+        evaluatedAmountBasis:
+          normalizeUpperText(
+            workflowContext.assignmentResolution?.targetSnapshotOverrides
+              ?.evaluated_amount_basis
+          ) || null,
+        routingMatchType:
+          normalizeUpperText(
+            workflowContext.assignmentResolution?.targetSnapshotOverrides?.routing_match_type
+          ) || null,
+        routingMatchedScopeLayer:
+          normalizeUpperText(
+            workflowContext.assignmentResolution?.targetSnapshotOverrides
+              ?.routing_matched_scope_layer
+          ) || null,
+        routingRuleSnapshot:
+          workflowContext.assignmentResolution?.targetSnapshotOverrides
+            ?.routing_rule_snapshot || null,
       },
     });
 

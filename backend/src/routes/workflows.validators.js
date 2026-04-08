@@ -4,6 +4,7 @@ import {
   normalizeEnum,
   normalizeText,
   optionalPositiveInt,
+  parseAmount,
   parseBooleanFlag,
   parsePagination,
   requirePositiveInt,
@@ -27,6 +28,7 @@ const PROCESS_TYPES = [
 ];
 const STAGE_SCOPE_TYPES = ["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"];
 const ASSIGNMENT_STATUS = ["ACTIVE", "INACTIVE"];
+const ASSIGNMENT_AMOUNT_BASIS = ["BASE_AMOUNT"];
 const INSTANCE_STATUS = ["PENDING", "APPROVED", "REJECTED", "CANCELLED", "SUPERSEDED"];
 const TARGET_TYPES = [
   "PERIOD_CLOSE_RUN",
@@ -34,6 +36,7 @@ const TARGET_TYPES = [
   LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
 ];
+const DEFAULT_WORKFLOW_ASSIGNMENT_PRIORITY = 100;
 
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj || {}, key);
@@ -87,6 +90,59 @@ function parseNullableDateField(body, camelKey, snakeKey, label) {
     return { provided: true, value: null };
   }
   return { provided: true, value: parseDateOnly(raw, label) };
+}
+
+function parseOptionalAmount(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return Number(parseAmount(value, label, { allowZero: true, required: false }));
+}
+
+function parseNullableAmountField(body, camelKey, snakeKey, label) {
+  const provided = hasOwn(body, camelKey) || hasOwn(body, snakeKey);
+  if (!provided) {
+    return { provided: false, value: undefined };
+  }
+  const raw = hasOwn(body, camelKey) ? body[camelKey] : body[snakeKey];
+  if (raw === null || raw === "") {
+    return { provided: true, value: null };
+  }
+  return { provided: true, value: parseOptionalAmount(raw, label) };
+}
+
+function parseNonNegativeInteger(value, label) {
+  if (value === undefined || value === null || value === "") {
+    throw badRequest(`${label} is required`);
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw badRequest(`${label} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parseOptionalBooleanFlag(obj, camelKey, snakeKey, fallback = null) {
+  const provided = hasOwn(obj, camelKey) || hasOwn(obj, snakeKey);
+  if (!provided) {
+    return fallback;
+  }
+  return parseBooleanFlag(obj[camelKey] ?? obj[snakeKey], false);
+}
+
+function resolveAssignmentAmountBasisFromBody(body, { minAmount, maxAmount, isFallback }) {
+  const hasExplicitAmountBasis = hasOwn(body, "amountBasis") || hasOwn(body, "amount_basis");
+  if (hasExplicitAmountBasis) {
+    return normalizeOptionalEnum(
+      body.amountBasis ?? body.amount_basis,
+      "amountBasis",
+      ASSIGNMENT_AMOUNT_BASIS
+    );
+  }
+  if (minAmount !== null || maxAmount !== null || isFallback === true) {
+    return "BASE_AMOUNT";
+  }
+  return null;
 }
 
 function parseOptionalIsActiveFlag(query = {}) {
@@ -370,6 +426,11 @@ export function parseWorkflowAssignmentsListInput(req) {
       req.query?.workflowDefinitionId ?? req.query?.workflow_definition_id,
       "workflowDefinitionId"
     ),
+    amountBasis: normalizeOptionalEnum(
+      req.query?.amountBasis ?? req.query?.amount_basis,
+      "amountBasis",
+      ASSIGNMENT_AMOUNT_BASIS
+    ),
     groupCompanyId: optionalPositiveInt(
       req.query?.groupCompanyId ?? req.query?.group_company_id,
       "groupCompanyId"
@@ -390,6 +451,7 @@ export function parseWorkflowAssignmentsListInput(req) {
       req.query?.effectiveOn ?? req.query?.effective_on,
       "effectiveOn"
     ),
+    isFallback: parseOptionalBooleanFlag(req.query, "isFallback", "is_fallback", null),
     q: normalizeText(req.query?.q, "q", 120),
   };
 }
@@ -448,6 +510,25 @@ export function parseWorkflowAssignmentCreateInput(req) {
     throw badRequest("effectiveTo cannot be earlier than effectiveFrom");
   }
 
+  const minAmount = parseOptionalAmount(
+    body.minAmount ?? body.min_amount,
+    "minAmount"
+  );
+  const maxAmount = parseOptionalAmount(
+    body.maxAmount ?? body.max_amount,
+    "maxAmount"
+  );
+  if (minAmount !== null && maxAmount !== null && maxAmount < minAmount) {
+    throw badRequest("maxAmount cannot be earlier than minAmount");
+  }
+  const isFallback = parseBooleanFlag(
+    body.isFallback ?? body.is_fallback,
+    false
+  );
+  if (isFallback && (minAmount !== null || maxAmount !== null)) {
+    throw badRequest("Fallback workflow assignment cannot set minAmount or maxAmount");
+  }
+
   const input = {
     tenantId,
     userId,
@@ -476,6 +557,18 @@ export function parseWorkflowAssignmentCreateInput(req) {
       body.operatingUnitId ?? body.operating_unit_id,
       "operatingUnitId"
     ),
+    amountBasis: resolveAssignmentAmountBasisFromBody(body, {
+      minAmount,
+      maxAmount,
+      isFallback,
+    }),
+    minAmount,
+    maxAmount,
+    priority:
+      body.priority === undefined
+        ? DEFAULT_WORKFLOW_ASSIGNMENT_PRIORITY
+        : parseNonNegativeInteger(body.priority, "priority"),
+    isFallback,
     effectiveFrom,
     effectiveTo,
     status: normalizeEnum(
@@ -577,6 +670,10 @@ export function parseWorkflowAssignmentUpdateInput(req) {
   const workflowDefinitionIdProvided =
     hasOwn(body, "workflowDefinitionId") || hasOwn(body, "workflow_definition_id");
   const statusProvided = hasOwn(body, "status");
+  const priorityProvided = hasOwn(body, "priority");
+  const isFallbackProvided = hasOwn(body, "isFallback") || hasOwn(body, "is_fallback");
+  const amountBasisProvided =
+    hasOwn(body, "amountBasis") || hasOwn(body, "amount_basis");
 
   const groupCompanyField = parseNullablePositiveIntField(
     body,
@@ -614,6 +711,18 @@ export function parseWorkflowAssignmentUpdateInput(req) {
     "effective_to",
     "effectiveTo"
   );
+  const minAmountField = parseNullableAmountField(
+    body,
+    "minAmount",
+    "min_amount",
+    "minAmount"
+  );
+  const maxAmountField = parseNullableAmountField(
+    body,
+    "maxAmount",
+    "max_amount",
+    "maxAmount"
+  );
 
   const patch = {
     tenantId,
@@ -637,6 +746,31 @@ export function parseWorkflowAssignmentUpdateInput(req) {
   if (statusProvided) {
     patch.status = normalizeEnum(body.status, "status", ASSIGNMENT_STATUS);
   }
+  if (amountBasisProvided) {
+    patch.amountBasis =
+      body.amountBasis === null ||
+      body.amount_basis === null ||
+      body.amountBasis === "" ||
+      body.amount_basis === ""
+        ? null
+        : normalizeEnum(
+            body.amountBasis ?? body.amount_basis,
+            "amountBasis",
+            ASSIGNMENT_AMOUNT_BASIS
+          );
+  }
+  if (priorityProvided) {
+    patch.priority =
+      body.priority === null || body.priority === ""
+        ? DEFAULT_WORKFLOW_ASSIGNMENT_PRIORITY
+        : parseNonNegativeInteger(body.priority, "priority");
+  }
+  if (isFallbackProvided) {
+    patch.isFallback = parseBooleanFlag(
+      body.isFallback ?? body.is_fallback,
+      false
+    );
+  }
 
   if (groupCompanyField.provided) {
     patch.groupCompanyId = groupCompanyField.value;
@@ -656,6 +790,12 @@ export function parseWorkflowAssignmentUpdateInput(req) {
   if (effectiveToField.provided) {
     patch.effectiveTo = effectiveToField.value;
   }
+  if (minAmountField.provided) {
+    patch.minAmount = minAmountField.value;
+  }
+  if (maxAmountField.provided) {
+    patch.maxAmount = maxAmountField.value;
+  }
 
   const patchKeys = Object.keys(patch).filter(
     (key) => !["tenantId", "userId", "assignmentId"].includes(key)
@@ -669,6 +809,22 @@ export function parseWorkflowAssignmentUpdateInput(req) {
     patch.effectiveTo < patch.effectiveFrom
   ) {
     throw badRequest("effectiveTo cannot be earlier than effectiveFrom");
+  }
+  if (
+    patch.minAmount !== undefined &&
+    patch.maxAmount !== undefined &&
+    patch.minAmount !== null &&
+    patch.maxAmount !== null &&
+    patch.maxAmount < patch.minAmount
+  ) {
+    throw badRequest("maxAmount cannot be earlier than minAmount");
+  }
+  if (
+    patch.isFallback === true &&
+    ((patch.minAmount !== undefined && patch.minAmount !== null) ||
+      (patch.maxAmount !== undefined && patch.maxAmount !== null))
+  ) {
+    throw badRequest("Fallback workflow assignment cannot set minAmount or maxAmount");
   }
   assertSingleAssignmentScopeTarget(patch, "Workflow assignment patch");
 

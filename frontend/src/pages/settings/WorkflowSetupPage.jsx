@@ -30,6 +30,7 @@ import {
 } from "../../shared/orgScopeTree.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import WorkflowAssignmentStep from "./workflows/components/WorkflowAssignmentStep.jsx";
+import ApprovalRoutingMatrixSection from "./workflows/components/ApprovalRoutingMatrixSection.jsx";
 import WorkflowDefinitionStep from "./workflows/components/WorkflowDefinitionStep.jsx";
 import WorkflowRecordsSection from "./workflows/components/WorkflowRecordsSection.jsx";
 import WorkflowReviewStep from "./workflows/components/WorkflowReviewStep.jsx";
@@ -41,6 +42,7 @@ import {
   buildAssignmentEffectText,
   buildAssignmentSelectionLabel,
   buildAssignmentScopeLabel,
+  buildWorkflowPresetBaselineStepDrafts,
   buildDefaultSteps,
   buildWorkflowExplainabilityPreviewModel,
   buildWorkflowPresetComparisonModel,
@@ -59,6 +61,7 @@ import {
   toPositiveInt,
 } from "./workflows/utils/workflowSetupHelpers.js";
 import { getWorkflowSetupText } from "./workflows/utils/workflowSetupText.js";
+import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../../../shared/cariDocumentWorkflowGovernance.js";
 
 function resolveAssignmentScopeId(form, tenantScopeId) {
   if (form.scopeType === "TENANT") {
@@ -402,6 +405,7 @@ export default function WorkflowSetupPage() {
         );
         return {
           ...row,
+          canEdit: access.allowed,
           canToggleStatus: access.allowed,
           isSaving: saving === `assignment-status-${row.id}`,
           scopeLabel: buildAssignmentScopeLabel(row, l),
@@ -423,6 +427,16 @@ export default function WorkflowSetupPage() {
       selection ? { scope: selection } : undefined
     );
     return getWorkflowAssignmentScopeDisabledReason(access, l);
+  }
+
+  function canWriteAssignmentAtScope(selection) {
+    if (!selection) {
+      return false;
+    }
+    const access = getPermissionAccess("workflow.assignment.write", {
+      scope: selection,
+    });
+    return access.allowed;
   }
 
   function applyStepDrafts(nextDrafts, processType = selectedProcessType) {
@@ -1037,6 +1051,162 @@ export default function WorkflowSetupPage() {
     return buildStepPreview(step, selectedProcessType, text.stepScopeLabels, l);
   }
 
+  /**
+   * Save one AP routing-matrix row through the existing workflow definition and
+   * assignment APIs so the matrix stays an admin layer over the current model.
+   */
+  async function onSaveApprovalRoutingRule(draft, { selectedPreset } = {}) {
+    const targetMode = String(draft?.targetMode || "definition").trim().toLowerCase();
+    const selectedScope = resolveAssignmentScopeSelection(draft, tenantScopeId);
+
+    if (!selectedScope) {
+      setError(l("Select a route scope first.", "Once bir rota kapsami secin."));
+      return;
+    }
+    if (!canWriteAssignmentAtScope(selectedScope)) {
+      setError(getWorkflowAssignmentScopeDisabledReason(getPermissionAccess("workflow.assignment.write", {
+        scope: selectedScope,
+      }), l));
+      return;
+    }
+
+    let workflowDefinitionId = toPositiveInt(draft?.workflowDefinitionId);
+    setSaving(`routing-save-${toPositiveInt(draft?.id) || "new"}`);
+    setError("");
+    setMessage("");
+    try {
+      if (targetMode === "preset") {
+        if (!selectedPreset) {
+          throw new Error(
+            l("Choose a workflow preset first.", "Once bir workflow preset secin.")
+          );
+        }
+        const definitionResponse = await createWorkflowDefinition({
+          code: String(draft?.newDefinitionCode || "").trim(),
+          name: String(draft?.newDefinitionName || "").trim(),
+          processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+          isActive: true,
+          versionNo: 1,
+        });
+        workflowDefinitionId = toPositiveInt(definitionResponse?.row?.id);
+        if (!workflowDefinitionId) {
+          throw new Error(
+            l(
+              "Preset-backed workflow definition could not be created.",
+              "Preset tabanli workflow tanimi olusturulamadi."
+            )
+          );
+        }
+
+        const presetDrafts = buildWorkflowPresetBaselineStepDrafts(selectedPreset);
+        const presetSteps = serializeStepDrafts(
+          presetDrafts,
+          AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        );
+        await replaceWorkflowDefinitionSteps(workflowDefinitionId, { steps: presetSteps });
+      }
+
+      const payload = {
+        processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+        workflowDefinitionId,
+        effectiveFrom: draft?.effectiveFrom,
+        effectiveTo: draft?.effectiveTo || undefined,
+        status: draft?.status || "ACTIVE",
+        priority:
+          draft?.priority === undefined || draft?.priority === null || draft?.priority === ""
+            ? 100
+            : Number(draft.priority),
+        isFallback: Boolean(draft?.isFallback),
+        minAmount:
+          draft?.minAmount === undefined || draft?.minAmount === null || draft?.minAmount === ""
+            ? undefined
+            : Number(draft.minAmount),
+        maxAmount:
+          draft?.maxAmount === undefined || draft?.maxAmount === null || draft?.maxAmount === ""
+            ? undefined
+            : Number(draft.maxAmount),
+      };
+
+      if (draft?.scopeType === "GROUP") {
+        payload.groupCompanyId = toPositiveInt(draft?.groupCompanyId) || undefined;
+      }
+      if (draft?.scopeType === "COUNTRY") {
+        payload.countryId = toPositiveInt(draft?.countryId) || undefined;
+      }
+      if (draft?.scopeType === "LEGAL_ENTITY") {
+        payload.legalEntityId = toPositiveInt(draft?.legalEntityId) || undefined;
+      }
+      if (draft?.scopeType === "OPERATING_UNIT") {
+        payload.operatingUnitId = toPositiveInt(draft?.operatingUnitId) || undefined;
+      }
+
+      if (toPositiveInt(draft?.id)) {
+        await updateWorkflowAssignment(toPositiveInt(draft.id), payload);
+      } else {
+        await createWorkflowAssignment(payload);
+      }
+
+      await loadData();
+      await refreshModuleReadiness({ global: true });
+      setMessage(
+        toPositiveInt(draft?.id)
+          ? l("Routing rule updated.", "Yonlendirme kurali guncellendi.")
+          : l("Routing rule saved.", "Yonlendirme kurali kaydedildi.")
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          err?.message ||
+          l("Routing rule could not be saved.", "Yonlendirme kurali kaydedilemedi.")
+      );
+      throw err;
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function onRetireApprovalRoutingRule(row) {
+    const assignmentId = toPositiveInt(row?.id);
+    if (!assignmentId) {
+      return;
+    }
+    if (!row?.canEdit) {
+      setError(
+        l(
+          "Missing permission: workflow.assignment.write",
+          "Eksik yetki: workflow.assignment.write"
+        )
+      );
+      return;
+    }
+
+    setSaving(`routing-retire-${assignmentId}`);
+    setError("");
+    setMessage("");
+    try {
+      await updateWorkflowAssignment(assignmentId, {
+        status: "INACTIVE",
+        effectiveTo: row?.effectiveTo || todayIsoDate(),
+      });
+      await loadData();
+      await refreshModuleReadiness({ global: true });
+      setMessage(
+        l(
+          "Routing rule removed from the active matrix.",
+          "Yonlendirme kurali aktif matristen kaldirildi."
+        )
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Routing rule could not be removed.", "Yonlendirme kurali kaldirilamadi.")
+      );
+      throw err;
+    } finally {
+      setSaving("");
+    }
+  }
+
   async function onCreateAssignment(event) {
     event?.preventDefault?.();
     if (!canWriteAssignments) {
@@ -1353,6 +1523,24 @@ export default function WorkflowSetupPage() {
           quickGuide={text.quickGuide}
         />
       </div>
+
+      {canReadAssignments ? (
+        <ApprovalRoutingMatrixSection
+          l={l}
+          assignments={assignmentRows}
+          definitions={definitions}
+          presetEntries={workflowPresetEntries}
+          orgTreeRoot={orgTreeRoot}
+          tenantScopeId={tenantScopeId}
+          scopeTypeLabels={text.scopeTypeLabels}
+          getNodeDisabledReason={getAssignmentNodeDisabledReason}
+          canWriteAny={hasPermission("workflow.assignment.write")}
+          canWriteScopeSelection={canWriteAssignmentAtScope}
+          saving={saving}
+          onSaveRule={onSaveApprovalRoutingRule}
+          onRetireRule={onRetireApprovalRoutingRule}
+        />
+      ) : null}
 
       <WorkflowRecordsSection
         l={l}

@@ -169,7 +169,7 @@ export default function CariDocumentDetailContent({
             className="mt-4"
             l={l}
             model={workflowDetailCard}
-            title={l("Workflow explainability", "Workflow aciklamasi")}
+            title={l("Workflow route + status", "Workflow rota + durum")}
           />
         ) : null}
         <div className="mt-4 rounded-md border border-slate-200 bg-white px-3 py-3">

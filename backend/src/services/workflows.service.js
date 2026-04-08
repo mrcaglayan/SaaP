@@ -26,6 +26,8 @@ const FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1 =
   "FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1";
 const WORKFLOW_UNIFIED_MODULE_CODE = "WORKFLOW";
 const WORKFLOW_UNIFIED_ACTION_TYPE = "APPROVE_WORKFLOW";
+const WORKFLOW_ASSIGNMENT_AMOUNT_BASES = ["BASE_AMOUNT"];
+const DEFAULT_WORKFLOW_ASSIGNMENT_PRIORITY = 100;
 
 const WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL = `COALESCE(
       period_close_book.legal_entity_id,
@@ -102,6 +104,14 @@ function toDateOnly(value) {
     return null;
   }
   return parsed.toISOString().slice(0, 10);
+}
+
+function toAmount(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Number(parsed.toFixed(6)) : null;
 }
 
 function notFound(message, code = "") {
@@ -184,6 +194,259 @@ function isApDocumentWorkflowInstanceRow(row) {
 function normalizeWorkflowStepPermissionCode(value) {
   const normalized = String(value || "").trim();
   return normalized || null;
+}
+
+function normalizeWorkflowAssignmentAmountBasis(value) {
+  const normalized = toUpper(value);
+  return WORKFLOW_ASSIGNMENT_AMOUNT_BASES.includes(normalized) ? normalized : null;
+}
+
+function normalizeWorkflowAssignmentPriority(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_WORKFLOW_ASSIGNMENT_PRIORITY;
+}
+
+function resolveWorkflowAssignmentRoutingState(source = {}) {
+  const minAmount = toAmount(source?.minAmount ?? source?.min_amount);
+  const maxAmount = toAmount(source?.maxAmount ?? source?.max_amount);
+  const isFallback = toDbBoolean(source?.isFallback ?? source?.is_fallback);
+  let amountBasis = normalizeWorkflowAssignmentAmountBasis(
+    source?.amountBasis ?? source?.amount_basis
+  );
+  if (!amountBasis && (minAmount !== null || maxAmount !== null || isFallback)) {
+    amountBasis = "BASE_AMOUNT";
+  }
+  return {
+    amountBasis,
+    minAmount,
+    maxAmount,
+    priority: normalizeWorkflowAssignmentPriority(source?.priority),
+    isFallback,
+  };
+}
+
+function isLegacyWorkflowAssignmentRoutingRule(source = {}) {
+  const routing = resolveWorkflowAssignmentRoutingState(source);
+  return (
+    routing.amountBasis === null &&
+    routing.minAmount === null &&
+    routing.maxAmount === null &&
+    routing.isFallback === false
+  );
+}
+
+function compareWorkflowAssignmentSelectionPriority(left, right) {
+  const priorityDiff =
+    normalizeWorkflowAssignmentPriority(right?.priority) -
+    normalizeWorkflowAssignmentPriority(left?.priority);
+  if (priorityDiff !== 0) {
+    return priorityDiff;
+  }
+  const effectiveFromDiff = String(right?.effective_from || "").localeCompare(
+    String(left?.effective_from || "")
+  );
+  if (effectiveFromDiff !== 0) {
+    return effectiveFromDiff;
+  }
+  return parsePositiveInt(right?.id) - parsePositiveInt(left?.id);
+}
+
+function evaluateWorkflowAssignmentBandMatch(
+  assignmentRow,
+  { thresholdAmount = null, amountBasis = null } = {}
+) {
+  const routing = resolveWorkflowAssignmentRoutingState(assignmentRow);
+  if (routing.isFallback) {
+    return { matches: false, reason: "FALLBACK_RULE" };
+  }
+  if (isLegacyWorkflowAssignmentRoutingRule(assignmentRow)) {
+    return { matches: true, reason: "LEGACY_RULE" };
+  }
+  const normalizedAmountBasis = normalizeWorkflowAssignmentAmountBasis(amountBasis);
+  if (!normalizedAmountBasis) {
+    return { matches: false, reason: "AMOUNT_BASIS_REQUIRED" };
+  }
+  if (normalizedAmountBasis !== routing.amountBasis) {
+    return { matches: false, reason: "AMOUNT_BASIS_MISMATCH" };
+  }
+  if (routing.minAmount === null && routing.maxAmount === null) {
+    return { matches: true, reason: "AMOUNT_BAND_UNBOUNDED" };
+  }
+  const evaluatedAmount = toAmount(thresholdAmount);
+  if (evaluatedAmount === null) {
+    return { matches: false, reason: "THRESHOLD_AMOUNT_REQUIRED" };
+  }
+  if (routing.minAmount !== null && evaluatedAmount < routing.minAmount) {
+    return { matches: false, reason: "BELOW_MIN_AMOUNT" };
+  }
+  if (routing.maxAmount !== null && evaluatedAmount > routing.maxAmount) {
+    return { matches: false, reason: "ABOVE_MAX_AMOUNT" };
+  }
+  return { matches: true, reason: "AMOUNT_BAND_MATCH" };
+}
+
+function resolveWorkflowAssignmentScopeLayer(row, resolvedScope = {}) {
+  const operatingUnitId = parsePositiveInt(resolvedScope?.operatingUnitId);
+  if (
+    parsePositiveInt(row?.operating_unit_id) &&
+    parsePositiveInt(row?.operating_unit_id) === operatingUnitId
+  ) {
+    return "OPERATING_UNIT";
+  }
+
+  const legalEntityId = parsePositiveInt(resolvedScope?.legalEntityId);
+  if (
+    !parsePositiveInt(row?.operating_unit_id) &&
+    parsePositiveInt(row?.legal_entity_id) &&
+    parsePositiveInt(row?.legal_entity_id) === legalEntityId
+  ) {
+    return "LEGAL_ENTITY";
+  }
+
+  const countryId = parsePositiveInt(resolvedScope?.countryId);
+  if (
+    !parsePositiveInt(row?.operating_unit_id) &&
+    !parsePositiveInt(row?.legal_entity_id) &&
+    parsePositiveInt(row?.country_id) &&
+    parsePositiveInt(row?.country_id) === countryId
+  ) {
+    return "COUNTRY";
+  }
+
+  const groupCompanyId = parsePositiveInt(resolvedScope?.groupCompanyId);
+  if (
+    !parsePositiveInt(row?.operating_unit_id) &&
+    !parsePositiveInt(row?.legal_entity_id) &&
+    !parsePositiveInt(row?.country_id) &&
+    parsePositiveInt(row?.group_company_id) &&
+    parsePositiveInt(row?.group_company_id) === groupCompanyId
+  ) {
+    return "GROUP";
+  }
+
+  if (
+    !parsePositiveInt(row?.operating_unit_id) &&
+    !parsePositiveInt(row?.legal_entity_id) &&
+    !parsePositiveInt(row?.country_id) &&
+    !parsePositiveInt(row?.group_company_id)
+  ) {
+    return "TENANT";
+  }
+
+  return null;
+}
+
+function listWorkflowAssignmentScopeLayers(resolvedScope = {}) {
+  const layers = [];
+  if (parsePositiveInt(resolvedScope?.operatingUnitId)) {
+    layers.push("OPERATING_UNIT");
+  }
+  if (parsePositiveInt(resolvedScope?.legalEntityId)) {
+    layers.push("LEGAL_ENTITY");
+  }
+  if (parsePositiveInt(resolvedScope?.countryId)) {
+    layers.push("COUNTRY");
+  }
+  if (parsePositiveInt(resolvedScope?.groupCompanyId)) {
+    layers.push("GROUP");
+  }
+  layers.push("TENANT");
+  return layers;
+}
+
+function normalizeWorkflowAssignmentResolutionScope(resolvedScope = {}) {
+  return {
+    operatingUnitId: parsePositiveInt(resolvedScope?.operatingUnitId) || null,
+    legalEntityId: parsePositiveInt(resolvedScope?.legalEntityId) || null,
+    countryId: parsePositiveInt(resolvedScope?.countryId) || null,
+    groupCompanyId: parsePositiveInt(resolvedScope?.groupCompanyId) || null,
+  };
+}
+
+function mapWorkflowAssignmentSelectionCandidate(
+  assignmentRow,
+  resolvedScope,
+  bandEvaluation
+) {
+  const routing = resolveWorkflowAssignmentRoutingState(assignmentRow);
+  const assignmentScope = mapWorkflowAssignmentRowToUnifiedScope(assignmentRow);
+  return {
+    id: parsePositiveInt(assignmentRow?.id),
+    workflowDefinitionId: parsePositiveInt(assignmentRow?.workflow_definition_id),
+    workflowDefinitionCode: String(assignmentRow?.workflow_definition_code || "").trim() || null,
+    workflowDefinitionName: String(assignmentRow?.workflow_definition_name || "").trim() || null,
+    processType: toUpper(assignmentRow?.process_type),
+    scopeType: assignmentScope.scopeType,
+    scopeId: assignmentScope.scopeId,
+    scopeLayer: resolveWorkflowAssignmentScopeLayer(assignmentRow, resolvedScope),
+    amountBasis: routing.amountBasis,
+    minAmount: routing.minAmount,
+    maxAmount: routing.maxAmount,
+    priority: routing.priority,
+    isFallback: routing.isFallback,
+    effectiveFrom: toDateOnly(assignmentRow?.effective_from),
+    effectiveTo: toDateOnly(assignmentRow?.effective_to),
+    status: toUpper(assignmentRow?.status),
+    bandMatch: Boolean(bandEvaluation?.matches),
+    bandReason: bandEvaluation?.reason || null,
+  };
+}
+
+function resolveWorkflowAssignmentNoMatchReason(layerEvaluations = []) {
+  const reasons = new Set(
+    layerEvaluations
+      .filter((entry) => !entry.summary.isFallback)
+      .map((entry) => entry.bandEvaluation.reason)
+  );
+  if (reasons.has("THRESHOLD_AMOUNT_REQUIRED")) {
+    return "THRESHOLD_AMOUNT_REQUIRED";
+  }
+  if (reasons.has("AMOUNT_BASIS_REQUIRED")) {
+    return "AMOUNT_BASIS_REQUIRED";
+  }
+  if (reasons.has("AMOUNT_BASIS_MISMATCH")) {
+    return "AMOUNT_BASIS_MISMATCH";
+  }
+  if (reasons.has("BELOW_MIN_AMOUNT") || reasons.has("ABOVE_MAX_AMOUNT")) {
+    return "THRESHOLD_OUT_OF_RANGE";
+  }
+  return "NO_BAND_MATCH_IN_SCOPE";
+}
+
+function buildWorkflowAssignmentResolutionDiagnostics({
+  effectiveOn,
+  resolvedScope,
+  thresholdAmount,
+  amountBasis,
+  scopeLayersTried,
+  candidateCount,
+  matchedScopeLayer = null,
+  evaluatedAssignments = [],
+  matchType = "NONE",
+  noMatchReason = null,
+  selectedAssignment = null,
+  priorityApplied = false,
+}) {
+  const bandMatchCount = evaluatedAssignments.filter((item) => item.bandMatch).length;
+  return {
+    effectiveOn,
+    resolvedScope: normalizeWorkflowAssignmentResolutionScope(resolvedScope),
+    thresholdAmount: toAmount(thresholdAmount),
+    amountBasis: normalizeWorkflowAssignmentAmountBasis(amountBasis),
+    scopeLayersTried,
+    matchedScopeLayer,
+    matchType,
+    noMatchReason,
+    candidateCount,
+    matchedScopeCandidateCount: evaluatedAssignments.length,
+    bandMatchCount,
+    fallbackCount: evaluatedAssignments.filter((item) => item.isFallback).length,
+    priorityApplied: Boolean(priorityApplied),
+    selectedAssignment,
+    evaluatedAssignments,
+  };
 }
 
 function assertWorkflowStepPermissionCompatibility(processType, step, index) {
@@ -408,6 +671,146 @@ function buildWorkflowUnifiedTargetSnapshot(instanceRow, fallbackScope = {}) {
   };
 }
 
+function buildWorkflowUnifiedTargetSnapshotWithOverrides(
+  instanceRow,
+  fallbackScope = {},
+  existingSnapshot = null,
+  targetSnapshotOverrides = null
+) {
+  const baseSnapshot = buildWorkflowUnifiedTargetSnapshot(instanceRow, fallbackScope);
+  const preservedSnapshot =
+    existingSnapshot && typeof existingSnapshot === "object" && !Array.isArray(existingSnapshot)
+      ? existingSnapshot
+      : {};
+  const overrides =
+    targetSnapshotOverrides &&
+    typeof targetSnapshotOverrides === "object" &&
+    !Array.isArray(targetSnapshotOverrides)
+      ? targetSnapshotOverrides
+      : {};
+  return {
+    ...preservedSnapshot,
+    ...baseSnapshot,
+    ...overrides,
+  };
+}
+
+function normalizeWorkflowUnifiedRoutingRuleSnapshot(source = null) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  const assignmentId = parsePositiveInt(
+    source.assignment_id ?? source.assignmentId ?? source.id
+  );
+  const workflowDefinitionId = parsePositiveInt(
+    source.workflow_definition_id ?? source.workflowDefinitionId
+  );
+  const scopeType = toUpper(source.scope_type ?? source.scopeType);
+  const scopeId = parsePositiveInt(source.scope_id ?? source.scopeId);
+  const scopeLayer = toUpper(source.scope_layer ?? source.scopeLayer);
+  const amountBasis = normalizeWorkflowAssignmentAmountBasis(
+    source.amount_basis ?? source.amountBasis
+  );
+  const minAmount = toAmount(source.min_amount ?? source.minAmount);
+  const maxAmount = toAmount(source.max_amount ?? source.maxAmount);
+  const priority = Number.isInteger(Number(source.priority)) ? Number(source.priority) : null;
+  const isFallback = toDbBoolean(source.is_fallback ?? source.isFallback);
+  const effectiveFrom = toDateOnly(source.effective_from ?? source.effectiveFrom);
+  const effectiveTo = toDateOnly(source.effective_to ?? source.effectiveTo);
+  const status = toUpper(source.status);
+  if (
+    !assignmentId &&
+    !workflowDefinitionId &&
+    !scopeType &&
+    !scopeLayer &&
+    minAmount === null &&
+    maxAmount === null
+  ) {
+    return null;
+  }
+  return {
+    id: assignmentId || null,
+    workflow_definition_id: workflowDefinitionId || null,
+    scope_type: scopeType || null,
+    scope_id: scopeId || null,
+    scope_layer: scopeLayer || null,
+    amount_basis: amountBasis || null,
+    min_amount: minAmount,
+    max_amount: maxAmount,
+    priority,
+    is_fallback: isFallback,
+    effective_from: effectiveFrom,
+    effective_to: effectiveTo,
+    status: status || null,
+  };
+}
+
+function buildWorkflowUnifiedPolicySnapshotOverrides(targetSnapshot = null) {
+  const normalizedTargetSnapshot =
+    targetSnapshot && typeof targetSnapshot === "object" && !Array.isArray(targetSnapshot)
+      ? targetSnapshot
+      : {};
+  const matchedAssignment = normalizeWorkflowUnifiedRoutingRuleSnapshot(
+    normalizedTargetSnapshot.routing_rule_snapshot ??
+      normalizedTargetSnapshot.routingRuleSnapshot
+  );
+  const evaluatedAmount = toAmount(
+    normalizedTargetSnapshot.evaluated_amount ??
+      normalizedTargetSnapshot.evaluatedAmount
+  );
+  const amountBasis = normalizeWorkflowAssignmentAmountBasis(
+    normalizedTargetSnapshot.evaluated_amount_basis ??
+      normalizedTargetSnapshot.evaluatedAmountBasis
+  );
+  const matchType = toUpper(
+    normalizedTargetSnapshot.routing_match_type ??
+      normalizedTargetSnapshot.routingMatchType
+  );
+  const matchedScopeLayer = toUpper(
+    normalizedTargetSnapshot.routing_matched_scope_layer ??
+      normalizedTargetSnapshot.routingMatchedScopeLayer
+  );
+  const priorityApplied = toDbBoolean(
+    normalizedTargetSnapshot.routing_priority_applied ??
+      normalizedTargetSnapshot.routingPriorityApplied
+  );
+  const noMatchReason = toUpper(
+    normalizedTargetSnapshot.routing_no_match_reason ??
+      normalizedTargetSnapshot.routingNoMatchReason
+  );
+
+  if (
+    !matchedAssignment &&
+    evaluatedAmount === null &&
+    !amountBasis &&
+    !matchType &&
+    !matchedScopeLayer &&
+    !priorityApplied &&
+    !noMatchReason
+  ) {
+    return null;
+  }
+
+  return {
+    matched_assignment: matchedAssignment,
+    routing_context: {
+      match_type: matchType || null,
+      matched_scope_layer: matchedScopeLayer || null,
+      evaluated_amount: evaluatedAmount,
+      amount_basis: amountBasis || null,
+      priority_applied: priorityApplied,
+      no_match_reason: noMatchReason || null,
+      workflow_definition_id:
+        parsePositiveInt(
+          normalizedTargetSnapshot.workflow_definition_id ??
+            normalizedTargetSnapshot.workflowDefinitionId
+        ) ||
+        matchedAssignment?.workflow_definition_id ||
+        null,
+    },
+  };
+}
+
 function buildWorkflowUnifiedActionPayload(instanceId, processType) {
   return {
     legacy_workflow_instance_id: parsePositiveInt(instanceId),
@@ -420,7 +823,11 @@ function buildWorkflowUnifiedRequestCode(tenantId, instanceId) {
   return `WFR-${parsePositiveInt(tenantId)}-${parsePositiveInt(instanceId)}`;
 }
 
-function buildWorkflowUnifiedPolicySnapshot(definitionRow, stepRows) {
+function buildWorkflowUnifiedPolicySnapshot(
+  definitionRow,
+  stepRows,
+  snapshotOverrides = null
+) {
   const normalizedSteps = (Array.isArray(stepRows) ? stepRows : []).map((step) => ({
     step_no: Number(step.step_no || step.stepNo || 1),
     required_permission_code: normalizeWorkflowStepPermissionCode(
@@ -442,7 +849,7 @@ function buildWorkflowUnifiedPolicySnapshot(definitionRow, stepRows) {
       null,
   }));
 
-  return {
+  const baseSnapshot = {
     id:
       parsePositiveInt(definitionRow?.generic_policy_id) ||
       parsePositiveInt(definitionRow?.genericPolicyId) ||
@@ -476,6 +883,13 @@ function buildWorkflowUnifiedPolicySnapshot(definitionRow, stepRows) {
     matched_assignment: null,
     steps: normalizedSteps,
   };
+  const overrides =
+    snapshotOverrides &&
+    typeof snapshotOverrides === "object" &&
+    !Array.isArray(snapshotOverrides)
+      ? snapshotOverrides
+      : null;
+  return overrides ? { ...baseSnapshot, ...overrides } : baseSnapshot;
 }
 
 function mapWorkflowInstanceStatusToUnifiedRequestStatus(status) {
@@ -550,6 +964,7 @@ function mapWorkflowAssignmentRow(row) {
   if (!row) {
     return null;
   }
+  const routing = resolveWorkflowAssignmentRoutingState(row);
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -569,6 +984,11 @@ function mapWorkflowAssignmentRow(row) {
     operatingUnitId: parsePositiveInt(row.operating_unit_id),
     operatingUnitCode: row.operating_unit_code || null,
     operatingUnitName: row.operating_unit_name || null,
+    amountBasis: routing.amountBasis,
+    minAmount: routing.minAmount,
+    maxAmount: routing.maxAmount,
+    priority: routing.priority,
+    isFallback: routing.isFallback,
     effectiveFrom: toDateOnly(row.effective_from),
     effectiveTo: toDateOnly(row.effective_to),
     status: toUpper(row.status),
@@ -850,13 +1270,16 @@ async function isWorkflowGateFeatureEnabled(tenantId, runQuery = query) {
 }
 
 /**
- * Resolve the most specific ACTIVE workflow assignment for one scoped target.
+ * Resolve the most specific ACTIVE workflow assignment for one scoped target,
+ * including structured routing diagnostics for explainability and audits.
  */
-export async function findActiveWorkflowAssignmentForScope({
+export async function resolveWorkflowAssignmentForScope({
   tenantId,
   processType,
   effectiveOn,
   scope = {},
+  thresholdAmount = null,
+  amountBasis = null,
   runQuery = query,
 }) {
   const effectiveDate = toDateOnly(effectiveOn) || new Date().toISOString().slice(0, 10);
@@ -871,8 +1294,12 @@ export async function findActiveWorkflowAssignmentForScope({
   const groupCompanyId = parsePositiveInt(resolvedScope?.groupCompanyId) || -1;
 
   const result = await runQuery(
-    `SELECT wa.*
+    `SELECT
+       wa.*,
+       wd.code AS workflow_definition_code,
+       wd.name AS workflow_definition_name
      FROM workflow_assignments wa
+     JOIN workflow_definitions wd ON wd.id = wa.workflow_definition_id
      WHERE wa.tenant_id = ?
        AND wa.process_type = ?
        AND wa.status = 'ACTIVE'
@@ -905,29 +1332,7 @@ export async function findActiveWorkflowAssignmentForScope({
            AND wa.group_company_id IS NULL
          )
        )
-     ORDER BY
-       CASE
-         WHEN wa.operating_unit_id IS NOT NULL AND wa.operating_unit_id = ? THEN 1
-         WHEN
-           wa.operating_unit_id IS NULL
-           AND wa.legal_entity_id IS NOT NULL
-           AND wa.legal_entity_id = ? THEN 2
-         WHEN
-           wa.operating_unit_id IS NULL
-           AND wa.legal_entity_id IS NULL
-           AND wa.country_id IS NOT NULL
-           AND wa.country_id = ? THEN 3
-         WHEN
-           wa.operating_unit_id IS NULL
-           AND wa.legal_entity_id IS NULL
-           AND wa.country_id IS NULL
-           AND wa.group_company_id IS NOT NULL
-           AND wa.group_company_id = ? THEN 4
-         ELSE 5
-       END,
-       wa.effective_from DESC,
-       wa.id DESC
-     LIMIT 1`,
+     ORDER BY wa.effective_from DESC, wa.id DESC`,
     [
       tenantId,
       toUpper(processType),
@@ -937,13 +1342,121 @@ export async function findActiveWorkflowAssignmentForScope({
       legalEntityId,
       countryId,
       groupCompanyId,
-      operatingUnitId,
-      legalEntityId,
-      countryId,
-      groupCompanyId,
     ]
   );
-  return result.rows?.[0] || null;
+  const candidates = result.rows || [];
+  const scopeLayers = listWorkflowAssignmentScopeLayers(resolvedScope);
+
+  for (const scopeLayer of scopeLayers) {
+    const layerRows = candidates
+      .filter((row) => resolveWorkflowAssignmentScopeLayer(row, resolvedScope) === scopeLayer)
+      .sort(compareWorkflowAssignmentSelectionPriority);
+    if (layerRows.length === 0) {
+      continue;
+    }
+
+    const layerEvaluations = layerRows.map((row) => {
+      const bandEvaluation = evaluateWorkflowAssignmentBandMatch(row, {
+        thresholdAmount,
+        amountBasis,
+      });
+      return {
+        row,
+        bandEvaluation,
+        summary: mapWorkflowAssignmentSelectionCandidate(
+          row,
+          resolvedScope,
+          bandEvaluation
+        ),
+      };
+    });
+    const evaluatedAssignments = layerEvaluations.map((entry) => entry.summary);
+    const bandMatches = layerEvaluations.filter((entry) => entry.bandEvaluation.matches);
+    if (bandMatches.length > 0) {
+      const selected = bandMatches[0];
+      return {
+        assignmentRow: selected.row,
+        diagnostics: buildWorkflowAssignmentResolutionDiagnostics({
+          effectiveOn: effectiveDate,
+          resolvedScope,
+          thresholdAmount,
+          amountBasis,
+          scopeLayersTried: scopeLayers,
+          candidateCount: candidates.length,
+          matchedScopeLayer: scopeLayer,
+          evaluatedAssignments,
+          matchType:
+            selected.bandEvaluation.reason === "LEGACY_RULE" ? "LEGACY" : "BAND",
+          selectedAssignment: selected.summary,
+          priorityApplied: bandMatches.length > 1,
+        }),
+      };
+    }
+
+    const fallbackMatches = layerEvaluations.filter((entry) => entry.summary.isFallback);
+    if (fallbackMatches.length > 0) {
+      const selectedFallback = fallbackMatches[0];
+      return {
+        assignmentRow: selectedFallback.row,
+        diagnostics: buildWorkflowAssignmentResolutionDiagnostics({
+          effectiveOn: effectiveDate,
+          resolvedScope,
+          thresholdAmount,
+          amountBasis,
+          scopeLayersTried: scopeLayers,
+          candidateCount: candidates.length,
+          matchedScopeLayer: scopeLayer,
+          evaluatedAssignments,
+          matchType: "FALLBACK",
+          selectedAssignment: selectedFallback.summary,
+          priorityApplied: fallbackMatches.length > 1,
+        }),
+      };
+    }
+
+    // Once a more-specific scope layer exists, broader scopes must not win as a
+    // side effect of missing threshold context or a missing amount band.
+    return {
+      assignmentRow: null,
+      diagnostics: buildWorkflowAssignmentResolutionDiagnostics({
+        effectiveOn: effectiveDate,
+        resolvedScope,
+        thresholdAmount,
+        amountBasis,
+        scopeLayersTried: scopeLayers,
+        candidateCount: candidates.length,
+        matchedScopeLayer: scopeLayer,
+        evaluatedAssignments,
+        noMatchReason: resolveWorkflowAssignmentNoMatchReason(layerEvaluations),
+      }),
+    };
+  }
+
+  return {
+    assignmentRow: null,
+    diagnostics: buildWorkflowAssignmentResolutionDiagnostics({
+      effectiveOn: effectiveDate,
+      resolvedScope,
+      thresholdAmount,
+      amountBasis,
+      scopeLayersTried: scopeLayers,
+      candidateCount: candidates.length,
+      noMatchReason: "NO_ACTIVE_SCOPE_ROWS",
+    }),
+  };
+}
+
+/**
+ * Resolve the most specific ACTIVE workflow assignment row for one scoped
+ * target. Threshold routing is evaluated only inside the first matched scope
+ * layer. Pass `includeDiagnostics = true` to also receive the routing trace.
+ */
+export async function findActiveWorkflowAssignmentForScope({
+  includeDiagnostics = false,
+  ...selection
+}) {
+  const resolved = await resolveWorkflowAssignmentForScope(selection);
+  return includeDiagnostics ? resolved : resolved.assignmentRow;
 }
 
 /**
@@ -995,6 +1508,7 @@ function makeWorkflowGateResult({
   message = "",
   assignmentRow = null,
   instanceRow = null,
+  routing = null,
   processType = "",
   targetType = "",
   targetId = null,
@@ -1017,11 +1531,17 @@ function makeWorkflowGateResult({
           countryId: parsePositiveInt(assignmentRow.country_id),
           legalEntityId: parsePositiveInt(assignmentRow.legal_entity_id),
           operatingUnitId: parsePositiveInt(assignmentRow.operating_unit_id),
+          amountBasis: resolveWorkflowAssignmentRoutingState(assignmentRow).amountBasis,
+          minAmount: resolveWorkflowAssignmentRoutingState(assignmentRow).minAmount,
+          maxAmount: resolveWorkflowAssignmentRoutingState(assignmentRow).maxAmount,
+          priority: resolveWorkflowAssignmentRoutingState(assignmentRow).priority,
+          isFallback: resolveWorkflowAssignmentRoutingState(assignmentRow).isFallback,
           effectiveFrom: toDateOnly(assignmentRow.effective_from),
           effectiveTo: toDateOnly(assignmentRow.effective_to),
           status: toUpper(assignmentRow.status),
         }
       : null,
+    routing,
     instance: mapWorkflowGateInstanceRow(instanceRow),
   };
 }
@@ -1082,6 +1602,197 @@ async function getWorkflowAssignmentRowById({
     [tenantId, assignmentId]
   );
   return result.rows?.[0] || null;
+}
+
+function assertWorkflowAssignmentRoutingState(assignment) {
+  const rawAmountBasis = assignment?.amountBasis ?? assignment?.amount_basis;
+  const rawPriority = assignment?.priority;
+  const routing = resolveWorkflowAssignmentRoutingState(assignment);
+
+  if (
+    rawAmountBasis !== undefined &&
+    rawAmountBasis !== null &&
+    rawAmountBasis !== "" &&
+    !routing.amountBasis
+  ) {
+    throw badRequest("amountBasis must be BASE_AMOUNT");
+  }
+  if (routing.minAmount !== null && routing.minAmount < 0) {
+    throw badRequest("minAmount must be >= 0");
+  }
+  if (routing.maxAmount !== null && routing.maxAmount < 0) {
+    throw badRequest("maxAmount must be >= 0");
+  }
+  if (
+    routing.minAmount !== null &&
+    routing.maxAmount !== null &&
+    routing.maxAmount < routing.minAmount
+  ) {
+    throw badRequest("maxAmount cannot be earlier than minAmount");
+  }
+  if (
+    rawPriority !== undefined &&
+    rawPriority !== null &&
+    rawPriority !== "" &&
+    (!Number.isInteger(Number(rawPriority)) || Number(rawPriority) < 0)
+  ) {
+    throw badRequest("priority must be a non-negative integer");
+  }
+  if (routing.isFallback && (routing.minAmount !== null || routing.maxAmount !== null)) {
+    throw badRequest("Fallback workflow assignment cannot set minAmount or maxAmount");
+  }
+
+  return routing;
+}
+
+function amountBandsOverlap(leftMinAmount, leftMaxAmount, rightMinAmount, rightMaxAmount) {
+  if (leftMaxAmount !== null && rightMinAmount !== null && leftMaxAmount < rightMinAmount) {
+    return false;
+  }
+  if (rightMaxAmount !== null && leftMinAmount !== null && rightMaxAmount < leftMinAmount) {
+    return false;
+  }
+  return true;
+}
+
+function workflowAssignmentRoutingRulesOverlap(left, right) {
+  const leftRouting = resolveWorkflowAssignmentRoutingState(left);
+  const rightRouting = resolveWorkflowAssignmentRoutingState(right);
+
+  if (leftRouting.isFallback || rightRouting.isFallback) {
+    return false;
+  }
+  if (isLegacyWorkflowAssignmentRoutingRule(left) || isLegacyWorkflowAssignmentRoutingRule(right)) {
+    return true;
+  }
+  if (leftRouting.amountBasis !== rightRouting.amountBasis) {
+    return false;
+  }
+
+  return amountBandsOverlap(
+    leftRouting.minAmount,
+    leftRouting.maxAmount,
+    rightRouting.minAmount,
+    rightRouting.maxAmount
+  );
+}
+
+async function listPotentiallyOverlappingWorkflowAssignments({
+  tenantId,
+  processType,
+  groupCompanyId = null,
+  countryId = null,
+  legalEntityId = null,
+  operatingUnitId = null,
+  effectiveFrom,
+  effectiveTo = null,
+  ignoreAssignmentId = null,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedProcessType = toUpper(processType);
+  const normalizedEffectiveFrom = toDateOnly(effectiveFrom);
+  const normalizedEffectiveTo = toDateOnly(effectiveTo);
+  const where = [
+    "tenant_id = ?",
+    "process_type = ?",
+    "status = 'ACTIVE'",
+  ];
+  const params = [normalizedTenantId, normalizedProcessType];
+
+  const applyNullableScopeFilter = (columnName, rawValue) => {
+    const normalizedValue = parsePositiveInt(rawValue) || null;
+    if (normalizedValue) {
+      where.push(`${columnName} = ?`);
+      params.push(normalizedValue);
+      return;
+    }
+    where.push(`${columnName} IS NULL`);
+  };
+
+  applyNullableScopeFilter("group_company_id", groupCompanyId);
+  applyNullableScopeFilter("country_id", countryId);
+  applyNullableScopeFilter("legal_entity_id", legalEntityId);
+  applyNullableScopeFilter("operating_unit_id", operatingUnitId);
+
+  if (normalizedEffectiveTo) {
+    where.push("effective_from <= ?");
+    params.push(normalizedEffectiveTo);
+  }
+  where.push("(effective_to IS NULL OR effective_to >= ?)");
+  params.push(normalizedEffectiveFrom);
+
+  if (parsePositiveInt(ignoreAssignmentId)) {
+    where.push("id <> ?");
+    params.push(parsePositiveInt(ignoreAssignmentId));
+  }
+
+  const result = await runQuery(
+    `SELECT *
+       FROM workflow_assignments
+      WHERE ${where.join(" AND ")}`,
+    params
+  );
+  return result.rows || [];
+}
+
+async function validateWorkflowAssignmentRoutingWrite({
+  tenantId,
+  assignment,
+  ignoreAssignmentId = null,
+  runQuery = query,
+}) {
+  const routing = assertWorkflowAssignmentRoutingState(assignment);
+  const normalizedAssignment = {
+    ...assignment,
+    amountBasis: routing.amountBasis,
+    minAmount: routing.minAmount,
+    maxAmount: routing.maxAmount,
+    priority: routing.priority,
+    isFallback: routing.isFallback,
+  };
+
+  if (toUpper(normalizedAssignment.status || "ACTIVE") !== "ACTIVE") {
+    return normalizedAssignment;
+  }
+
+  const overlappingRows = await listPotentiallyOverlappingWorkflowAssignments({
+    tenantId,
+    processType: normalizedAssignment.processType,
+    groupCompanyId: normalizedAssignment.groupCompanyId,
+    countryId: normalizedAssignment.countryId,
+    legalEntityId: normalizedAssignment.legalEntityId,
+    operatingUnitId: normalizedAssignment.operatingUnitId,
+    effectiveFrom: normalizedAssignment.effectiveFrom,
+    effectiveTo: normalizedAssignment.effectiveTo,
+    ignoreAssignmentId,
+    runQuery,
+  });
+
+  if (routing.isFallback) {
+    const conflictingFallbackRow = overlappingRows.find(
+      (row) => resolveWorkflowAssignmentRoutingState(row).isFallback
+    );
+    if (conflictingFallbackRow) {
+      throw conflict(
+        "Only one ACTIVE fallback workflow assignment is allowed for the same process, scope, and effective window",
+        "WORKFLOW_ASSIGNMENT_FALLBACK_CONFLICT"
+      );
+    }
+    return normalizedAssignment;
+  }
+
+  const overlappingRoutingRow = overlappingRows.find((row) =>
+    workflowAssignmentRoutingRulesOverlap(normalizedAssignment, row)
+  );
+  if (overlappingRoutingRow) {
+    throw conflict(
+      "ACTIVE workflow assignment amount bands cannot overlap for the same process, scope, and effective window",
+      "WORKFLOW_ASSIGNMENT_AMOUNT_OVERLAP"
+    );
+  }
+
+  return normalizedAssignment;
 }
 
 function buildWorkflowInstanceBaseSelect({ forUpdate = false } = {}) {
@@ -1529,6 +2240,7 @@ async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
   policyId,
   runQuery = query,
   fallbackScope = {},
+  targetSnapshotOverrides = null,
 }) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedInstanceId = parsePositiveInt(instanceRow?.id);
@@ -1543,12 +2255,26 @@ async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
     parsePositiveInt(instanceRow.workflow_definition_id),
     runQuery
   );
+  const requestRow = await getUnifiedWorkflowRequestRowById({
+    tenantId: normalizedTenantId,
+    requestId: normalizedRequestId,
+    runQuery,
+  });
   const stepRows = await listWorkflowDefinitionStepRowsRaw(
     parsePositiveInt(instanceRow.workflow_definition_id),
     runQuery
   );
   const requestScope = resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope);
-  const targetSnapshot = buildWorkflowUnifiedTargetSnapshot(instanceRow, fallbackScope);
+  const targetSnapshot = buildWorkflowUnifiedTargetSnapshotWithOverrides(
+    instanceRow,
+    fallbackScope,
+    requestRow?.target_snapshot_json,
+    targetSnapshotOverrides
+  );
+  // Mirror the already-resolved workflow route into the unified policy snapshot
+  // so audit/debug reads never need to re-run routing after admin edits.
+  const policySnapshotOverrides =
+    buildWorkflowUnifiedPolicySnapshotOverrides(targetSnapshot);
   const policySnapshot = buildWorkflowUnifiedPolicySnapshot(
     {
       ...definitionRow,
@@ -1557,7 +2283,8 @@ async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
         parsePositiveInt(definitionRow.generic_policy_id) ||
         null,
     },
-    stepRows
+    stepRows,
+    policySnapshotOverrides
   );
   const requestStatus = mapWorkflowInstanceStatusToUnifiedRequestStatus(
     instanceRow.status
@@ -1801,13 +2528,16 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
 }
 
 /**
- * Ensure one workflow instance has a bridged generic approval request.
+ * Ensure one workflow instance has a bridged generic approval request. Optional
+ * target-snapshot overrides let callers persist runtime routing context such as
+ * matched assignment, evaluated amount, and amount basis.
  */
 export async function ensureUnifiedWorkflowInstanceBridge({
   tenantId,
   instanceId,
   requestedByUserId = null,
   fallbackScope = {},
+  targetSnapshotOverrides = null,
   resetToPending = false,
   runQuery = query,
 }) {
@@ -1832,6 +2562,16 @@ export async function ensureUnifiedWorkflowInstanceBridge({
   }
 
   let genericRequestId = parsePositiveInt(instanceRow.generic_request_id);
+  const initialTargetSnapshot = buildWorkflowUnifiedTargetSnapshotWithOverrides(
+    instanceRow,
+    fallbackScope,
+    null,
+    targetSnapshotOverrides
+  );
+  // First-write bridge inserts must carry the same persisted routing metadata
+  // into both target and policy snapshots for later explainability.
+  const initialPolicySnapshotOverrides =
+    buildWorkflowUnifiedPolicySnapshotOverrides(initialTargetSnapshot);
   if (!genericRequestId) {
     const requestScope = resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope);
     const submitterUserId =
@@ -1848,7 +2588,8 @@ export async function ensureUnifiedWorkflowInstanceBridge({
         scopeId: requestScope.scopeId,
         legalEntityId: requestScope.legalEntityId || null,
         operatingUnitId: requestScope.operatingUnitId || null,
-        targetSnapshot: buildWorkflowUnifiedTargetSnapshot(instanceRow, fallbackScope),
+        targetSnapshot: initialTargetSnapshot,
+        policySnapshotOverrides: initialPolicySnapshotOverrides,
         actionPayload: buildWorkflowUnifiedActionPayload(
           instanceRow.id,
           instanceRow.process_type
@@ -1872,7 +2613,8 @@ export async function ensureUnifiedWorkflowInstanceBridge({
   if (
     resetToPending ||
     toUpper(instanceRow.status) !== "PENDING" ||
-    Number(instanceRow.current_step_no || 1) !== 1
+    Number(instanceRow.current_step_no || 1) !== 1 ||
+    Boolean(initialPolicySnapshotOverrides)
   ) {
     await syncUnifiedWorkflowRequestFromLegacyInstanceTx({
       tenantId,
@@ -1881,6 +2623,7 @@ export async function ensureUnifiedWorkflowInstanceBridge({
       policyId: genericPolicyId,
       runQuery,
       fallbackScope,
+      targetSnapshotOverrides,
     });
   }
 
@@ -2100,6 +2843,7 @@ export async function resolveWorkflowInstanceScope(instanceId, tenantId) {
 
 /**
  * Evaluate whether one target action is blocked by the configured workflow gate.
+ * Optional threshold context is forwarded into workflow-assignment resolution.
  */
 export async function evaluateWorkflowApprovalGate({
   tenantId,
@@ -2109,6 +2853,8 @@ export async function evaluateWorkflowApprovalGate({
   requestedByUserId,
   scope = {},
   effectiveOn = null,
+  thresholdAmount = null,
+  amountBasis = null,
   runQuery = query,
 }) {
   const normalizedTenantId = parsePositiveInt(tenantId);
@@ -2145,13 +2891,16 @@ export async function evaluateWorkflowApprovalGate({
     });
   }
 
-  const assignmentRow = await findActiveWorkflowAssignmentForScope({
+  const assignmentResolution = await resolveWorkflowAssignmentForScope({
     tenantId: normalizedTenantId,
     processType: normalizedProcessType,
     effectiveOn,
     scope,
+    thresholdAmount,
+    amountBasis,
     runQuery,
   });
+  const assignmentRow = assignmentResolution.assignmentRow;
   if (!assignmentRow) {
     return makeWorkflowGateResult({
       enabled: true,
@@ -2160,6 +2909,7 @@ export async function evaluateWorkflowApprovalGate({
       errorCode: "WORKFLOW_NOT_ASSIGNED",
       message:
         "Workflow approval gate is enabled but no ACTIVE workflow assignment was found for scope",
+      routing: assignmentResolution.diagnostics,
       processType: normalizedProcessType,
       targetType: normalizedTargetType,
       targetId: normalizedTargetId,
@@ -2177,6 +2927,7 @@ export async function evaluateWorkflowApprovalGate({
       message:
         "Assigned workflow definition has no approval steps; define steps before finalization",
       assignmentRow,
+      routing: assignmentResolution.diagnostics,
       processType: normalizedProcessType,
       targetType: normalizedTargetType,
       targetId: normalizedTargetId,
@@ -2255,6 +3006,7 @@ export async function evaluateWorkflowApprovalGate({
       approved: true,
       assignmentRow,
       instanceRow,
+      routing: assignmentResolution.diagnostics,
       processType: normalizedProcessType,
       targetType: normalizedTargetType,
       targetId: normalizedTargetId,
@@ -2269,6 +3021,7 @@ export async function evaluateWorkflowApprovalGate({
       message: "Workflow instance is REJECTED; finalization is blocked",
       assignmentRow,
       instanceRow,
+      routing: assignmentResolution.diagnostics,
       processType: normalizedProcessType,
       targetType: normalizedTargetType,
       targetId: normalizedTargetId,
@@ -2283,6 +3036,7 @@ export async function evaluateWorkflowApprovalGate({
     message: "Workflow approval is required before finalization",
     assignmentRow,
     instanceRow,
+    routing: assignmentResolution.diagnostics,
     processType: normalizedProcessType,
     targetType: normalizedTargetType,
     targetId: normalizedTargetId,
@@ -3068,6 +3822,9 @@ export async function replaceWorkflowDefinitionSteps({ input }) {
   });
 }
 
+/**
+ * List workflow assignments, including optional routing-matrix metadata filters.
+ */
 export async function listWorkflowAssignments({
   req,
   tenantId,
@@ -3095,6 +3852,10 @@ export async function listWorkflowAssignments({
     where.push("wa.workflow_definition_id = ?");
     params.push(parsePositiveInt(filters.workflowDefinitionId));
   }
+  if (filters?.amountBasis) {
+    where.push("wa.amount_basis = ?");
+    params.push(normalizeWorkflowAssignmentAmountBasis(filters.amountBasis));
+  }
   if (filters?.groupCompanyId) {
     where.push("wa.group_company_id = ?");
     params.push(parsePositiveInt(filters.groupCompanyId));
@@ -3115,6 +3876,10 @@ export async function listWorkflowAssignments({
     where.push("wa.effective_from <= ?");
     where.push("(wa.effective_to IS NULL OR wa.effective_to >= ?)");
     params.push(filters.effectiveOn, filters.effectiveOn);
+  }
+  if (filters?.isFallback !== null && filters?.isFallback !== undefined) {
+    where.push("wa.is_fallback = ?");
+    params.push(filters.isFallback ? 1 : 0);
   }
   if (filters?.q) {
     where.push(
@@ -3181,6 +3946,7 @@ export async function listWorkflowAssignments({
 
 /**
  * Create one workflow assignment and refresh the related generic approval-policy mirror.
+ * ACTIVE rows are rejected when their amount bands or fallback rules collide.
  */
 export async function createWorkflowAssignment({
   req,
@@ -3206,13 +3972,35 @@ export async function createWorkflowAssignment({
     throw badRequest("processType must match workflow definition processType");
   }
 
-  assertAssignmentWriteScope(req, input, assertScopeAccess);
+  const next = {
+    processType: toUpper(input.processType),
+    workflowDefinitionId: parsePositiveInt(input.workflowDefinitionId),
+    groupCompanyId: parsePositiveInt(input.groupCompanyId) || null,
+    countryId: parsePositiveInt(input.countryId) || null,
+    legalEntityId: parsePositiveInt(input.legalEntityId) || null,
+    operatingUnitId: parsePositiveInt(input.operatingUnitId) || null,
+    amountBasis: input.amountBasis,
+    minAmount: input.minAmount,
+    maxAmount: input.maxAmount,
+    priority: input.priority,
+    isFallback: input.isFallback,
+    effectiveFrom: input.effectiveFrom,
+    effectiveTo: input.effectiveTo || null,
+    status: toUpper(input.status || "ACTIVE"),
+  };
+
+  assertAssignmentWriteScope(req, next, assertScopeAccess);
   await resolveAssignmentScopeReferences({
     tenantId,
-    groupCompanyId: input.groupCompanyId,
-    countryId: input.countryId,
-    legalEntityId: input.legalEntityId,
-    operatingUnitId: input.operatingUnitId,
+    groupCompanyId: next.groupCompanyId,
+    countryId: next.countryId,
+    legalEntityId: next.legalEntityId,
+    operatingUnitId: next.operatingUnitId,
+  });
+  const validated = await validateWorkflowAssignmentRoutingWrite({
+    tenantId,
+    assignment: next,
+    runQuery,
   });
 
   const insertResult = await runQuery(
@@ -3224,22 +4012,32 @@ export async function createWorkflowAssignment({
        country_id,
        legal_entity_id,
        operating_unit_id,
+       amount_basis,
+       min_amount,
+       max_amount,
+       priority,
+       is_fallback,
        effective_from,
        effective_to,
        status,
        created_by_user_id
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       tenantId,
-      toUpper(input.processType),
-      parsePositiveInt(input.workflowDefinitionId),
-      parsePositiveInt(input.groupCompanyId) || null,
-      parsePositiveInt(input.countryId) || null,
-      parsePositiveInt(input.legalEntityId) || null,
-      parsePositiveInt(input.operatingUnitId) || null,
-      input.effectiveFrom,
-      input.effectiveTo || null,
-      toUpper(input.status || "ACTIVE"),
+      validated.processType,
+      validated.workflowDefinitionId,
+      validated.groupCompanyId,
+      validated.countryId,
+      validated.legalEntityId,
+      validated.operatingUnitId,
+      validated.amountBasis,
+      validated.minAmount,
+      validated.maxAmount,
+      validated.priority,
+      validated.isFallback ? 1 : 0,
+      validated.effectiveFrom,
+      validated.effectiveTo,
+      validated.status,
       userId,
     ]
   );
@@ -3252,7 +4050,7 @@ export async function createWorkflowAssignment({
   });
   await ensureUnifiedWorkflowPolicyForDefinition({
     tenantId,
-    definitionId: parsePositiveInt(input.workflowDefinitionId),
+    definitionId: validated.workflowDefinitionId,
     runQuery,
   });
   return mapWorkflowAssignmentRow(row);
@@ -3260,6 +4058,7 @@ export async function createWorkflowAssignment({
 
 /**
  * Update one workflow assignment and refresh the affected generic approval-policy mirrors.
+ * ACTIVE rows are rejected when their amount bands or fallback rules collide.
  */
 export async function updateWorkflowAssignment({
   req,
@@ -3311,6 +4110,26 @@ export async function updateWorkflowAssignment({
       input.operatingUnitId !== undefined
         ? parsePositiveInt(input.operatingUnitId) || null
         : parsePositiveInt(existing.operating_unit_id) || null,
+    amountBasis:
+      input.amountBasis !== undefined
+        ? input.amountBasis
+        : normalizeWorkflowAssignmentAmountBasis(existing.amount_basis),
+    minAmount:
+      input.minAmount !== undefined
+        ? input.minAmount
+        : toAmount(existing.min_amount),
+    maxAmount:
+      input.maxAmount !== undefined
+        ? input.maxAmount
+        : toAmount(existing.max_amount),
+    priority:
+      input.priority !== undefined
+        ? input.priority
+        : normalizeWorkflowAssignmentPriority(existing.priority),
+    isFallback:
+      input.isFallback !== undefined
+        ? Boolean(input.isFallback)
+        : toDbBoolean(existing.is_fallback),
     effectiveFrom:
       input.effectiveFrom !== undefined
         ? input.effectiveFrom
@@ -3344,6 +4163,12 @@ export async function updateWorkflowAssignment({
   if (toUpper(definitionRow.process_type) !== next.processType) {
     throw badRequest("processType must match workflow definition processType");
   }
+  const validated = await validateWorkflowAssignmentRoutingWrite({
+    tenantId,
+    assignment: next,
+    ignoreAssignmentId: assignmentId,
+    runQuery,
+  });
 
   await runQuery(
     `UPDATE workflow_assignments
@@ -3353,21 +4178,31 @@ export async function updateWorkflowAssignment({
          country_id = ?,
          legal_entity_id = ?,
          operating_unit_id = ?,
+         amount_basis = ?,
+         min_amount = ?,
+         max_amount = ?,
+         priority = ?,
+         is_fallback = ?,
          effective_from = ?,
          effective_to = ?,
          status = ?
      WHERE tenant_id = ?
        AND id = ?`,
     [
-      next.processType,
-      next.workflowDefinitionId,
-      next.groupCompanyId,
-      next.countryId,
-      next.legalEntityId,
-      next.operatingUnitId,
-      next.effectiveFrom,
-      next.effectiveTo,
-      next.status,
+      validated.processType,
+      validated.workflowDefinitionId,
+      validated.groupCompanyId,
+      validated.countryId,
+      validated.legalEntityId,
+      validated.operatingUnitId,
+      validated.amountBasis,
+      validated.minAmount,
+      validated.maxAmount,
+      validated.priority,
+      validated.isFallback ? 1 : 0,
+      validated.effectiveFrom,
+      validated.effectiveTo,
+      validated.status,
       tenantId,
       assignmentId,
     ]
@@ -3380,12 +4215,12 @@ export async function updateWorkflowAssignment({
   });
   await ensureUnifiedWorkflowPolicyForDefinition({
     tenantId,
-    definitionId: next.workflowDefinitionId,
+    definitionId: validated.workflowDefinitionId,
     runQuery,
   });
   if (
     parsePositiveInt(existing.workflow_definition_id) &&
-    parsePositiveInt(existing.workflow_definition_id) !== next.workflowDefinitionId
+    parsePositiveInt(existing.workflow_definition_id) !== validated.workflowDefinitionId
   ) {
     await ensureUnifiedWorkflowPolicyForDefinition({
       tenantId,
@@ -3397,6 +4232,7 @@ export async function updateWorkflowAssignment({
 }
 
 export default {
+  resolveWorkflowAssignmentForScope,
   findActiveWorkflowAssignmentForScope,
   getWorkflowInstanceByTarget,
   getUnifiedWorkflowRequestRowById,

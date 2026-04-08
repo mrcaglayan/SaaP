@@ -121,8 +121,11 @@ export default function GovernedRuntimeExplainabilityPanel({
   const eligibleRoleLabels = Array.isArray(model.eligibleRoleLabels)
     ? model.eligibleRoleLabels
     : [];
+  const factItems = Array.isArray(model.factItems) ? model.factItems : [];
   const noteItems = Array.isArray(model.noteItems) ? model.noteItems : [];
   const technicalItems = Array.isArray(model.technicalItems) ? model.technicalItems : [];
+  const factSectionTitle =
+    model.factSectionTitle || l("Routing context", "Yonlendirme baglami");
 
   return (
     <div className={`rounded-xl border px-4 py-4 ${styles.panel} ${className}`.trim()}>
@@ -151,6 +154,27 @@ export default function GovernedRuntimeExplainabilityPanel({
 
       {summaryTiles.length > 0 ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-3">{summaryTiles}</div>
+      ) : null}
+
+      {factItems.length > 0 ? (
+        <div className="mt-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+            {factSectionTitle}
+          </p>
+          <dl className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {factItems.map((item) => (
+              <div
+                key={`${item.label}-${item.value}`}
+                className={`rounded-lg border px-3 py-3 ${sectionClass}`}
+              >
+                <dt className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                  {item.label}
+                </dt>
+                <dd className="mt-1 text-sm font-medium">{item.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       ) : null}
 
       {model.eligibleActorSummary || eligibleRoleLabels.length > 0 ? (

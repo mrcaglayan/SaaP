@@ -1911,6 +1911,481 @@ export function buildAssignmentScopeLabel(row, l) {
   return l("TENANT", "TENANT");
 }
 
+function parseOptionalRoutingAmount(value) {
+  if (value === undefined || value === null || value === "") {
+    return { value: null, invalid: false };
+  }
+  const parsed = Number(String(value).replaceAll(",", "").trim());
+  if (!Number.isFinite(parsed)) {
+    return { value: null, invalid: true };
+  }
+  return { value: parsed, invalid: false };
+}
+
+function parseOptionalRoutingPriority(value) {
+  if (value === undefined || value === null || value === "") {
+    return { value: 100, invalid: false };
+  }
+  const parsed = Number(String(value).trim());
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return { value: 100, invalid: true };
+  }
+  return { value: parsed, invalid: false };
+}
+
+function normalizeRoutingBoolean(value) {
+  if (value === true || value === false) {
+    return value;
+  }
+  return String(value || "").trim().toLowerCase() === "true";
+}
+
+function resolveWorkflowAssignmentScopeType(item = {}) {
+  if (toPositiveInt(item?.operatingUnitId ?? item?.operating_unit_id)) {
+    return "OPERATING_UNIT";
+  }
+  if (toPositiveInt(item?.legalEntityId ?? item?.legal_entity_id)) {
+    return "LEGAL_ENTITY";
+  }
+  if (toPositiveInt(item?.countryId ?? item?.country_id)) {
+    return "COUNTRY";
+  }
+  if (toPositiveInt(item?.groupCompanyId ?? item?.group_company_id)) {
+    return "GROUP";
+  }
+  return String(item?.scopeType || "").trim().toUpperCase() || "TENANT";
+}
+
+function resolveWorkflowAssignmentScopeId(item = {}) {
+  return (
+    toPositiveInt(item?.operatingUnitId ?? item?.operating_unit_id) ||
+    toPositiveInt(item?.legalEntityId ?? item?.legal_entity_id) ||
+    toPositiveInt(item?.countryId ?? item?.country_id) ||
+    toPositiveInt(item?.groupCompanyId ?? item?.group_company_id) ||
+    toPositiveInt(item?.scopeId) ||
+    null
+  );
+}
+
+function buildWorkflowAssignmentScopeKey(item = {}) {
+  return [
+    resolveWorkflowAssignmentScopeType(item),
+    toPositiveInt(item?.groupCompanyId ?? item?.group_company_id) || 0,
+    toPositiveInt(item?.countryId ?? item?.country_id) || 0,
+    toPositiveInt(item?.legalEntityId ?? item?.legal_entity_id) || 0,
+    toPositiveInt(item?.operatingUnitId ?? item?.operating_unit_id) || 0,
+  ].join(":");
+}
+
+function normalizeWorkflowRoutingRule(item = {}) {
+  const minAmount = parseOptionalRoutingAmount(item?.minAmount ?? item?.min_amount).value;
+  const maxAmount = parseOptionalRoutingAmount(item?.maxAmount ?? item?.max_amount).value;
+  const isFallback = normalizeRoutingBoolean(item?.isFallback ?? item?.is_fallback);
+  const explicitAmountBasis = String(
+    item?.amountBasis ?? item?.amount_basis ?? ""
+  )
+    .trim()
+    .toUpperCase();
+
+  return {
+    id: toPositiveInt(item?.id),
+    processType: String(item?.processType ?? item?.process_type ?? "").trim().toUpperCase(),
+    status: String(item?.status || "ACTIVE").trim().toUpperCase() || "ACTIVE",
+    scopeType: resolveWorkflowAssignmentScopeType(item),
+    scopeId: resolveWorkflowAssignmentScopeId(item),
+    scopeKey: buildWorkflowAssignmentScopeKey(item),
+    amountBasis:
+      explicitAmountBasis || minAmount !== null || maxAmount !== null || isFallback
+        ? "BASE_AMOUNT"
+        : null,
+    minAmount,
+    maxAmount,
+    priority: parseOptionalRoutingPriority(item?.priority).value,
+    isFallback,
+    effectiveFrom: String(item?.effectiveFrom ?? item?.effective_from ?? "").trim(),
+    effectiveTo: String(item?.effectiveTo ?? item?.effective_to ?? "").trim() || null,
+  };
+}
+
+function workflowEffectiveWindowsOverlap(left, right) {
+  const leftFrom = String(left?.effectiveFrom || "").trim();
+  const rightFrom = String(right?.effectiveFrom || "").trim();
+  const leftTo = String(left?.effectiveTo || "9999-12-31").trim();
+  const rightTo = String(right?.effectiveTo || "9999-12-31").trim();
+
+  if (!leftFrom || !rightFrom) {
+    return false;
+  }
+  return leftFrom <= rightTo && rightFrom <= leftTo;
+}
+
+function isLegacyWorkflowRoutingRule(rule) {
+  return (
+    !rule?.isFallback &&
+    rule?.amountBasis === null &&
+    rule?.minAmount === null &&
+    rule?.maxAmount === null
+  );
+}
+
+function workflowAmountBandsOverlap(left, right) {
+  if (left?.maxAmount !== null && right?.minAmount !== null && left.maxAmount < right.minAmount) {
+    return false;
+  }
+  if (right?.maxAmount !== null && left?.minAmount !== null && right.maxAmount < left.minAmount) {
+    return false;
+  }
+  return true;
+}
+
+function workflowRoutingRulesOverlap(left, right) {
+  if (left?.isFallback || right?.isFallback) {
+    return false;
+  }
+  if (isLegacyWorkflowRoutingRule(left) || isLegacyWorkflowRoutingRule(right)) {
+    return true;
+  }
+  if (left?.amountBasis !== right?.amountBasis) {
+    return false;
+  }
+  return workflowAmountBandsOverlap(left, right);
+}
+
+function formatRoutingPreviewAmount(value, language) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "";
+  }
+  return new Intl.NumberFormat(language === "tr" ? "tr-TR" : "en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(Number(value));
+}
+
+/**
+ * Build the plain-language sentence shown for one AP routing rule preview row.
+ */
+export function buildApprovalRoutingRulePreview({
+  scopeType,
+  scopeSummary,
+  minAmount,
+  maxAmount,
+  amountBasis,
+  isFallback = false,
+  targetLabel,
+  l,
+}) {
+  const language = String(l("en", "tr"));
+  const normalizedScopeType = String(scopeType || "").trim().toUpperCase();
+  const normalizedScopeSummary = String(scopeSummary || "").trim();
+  const normalizedTargetLabel =
+    String(targetLabel || "").trim() || l("the selected workflow", "secilen workflow");
+  const normalizedAmountBasis =
+    String(amountBasis || "").trim().toUpperCase() || "BASE_AMOUNT";
+  const amountBasisLabel =
+    normalizedAmountBasis === "BASE_AMOUNT"
+      ? l("base amount", "baz tutar")
+      : normalizedAmountBasis;
+  const minAmountLabel = formatRoutingPreviewAmount(minAmount, language);
+  const maxAmountLabel = formatRoutingPreviewAmount(maxAmount, language);
+
+  const scopeText =
+    normalizedScopeType === "TENANT"
+      ? l("across the tenant", "tenant genelinde")
+      : l(
+          `for ${normalizedScopeSummary || normalizedScopeType}`,
+          `${normalizedScopeSummary || normalizedScopeType} icin`
+        );
+
+  let amountText = l(`for any ${amountBasisLabel}`, `${amountBasisLabel} icin herhangi bir tutarda`);
+  if (isFallback) {
+    amountText = l(
+      `for all remaining ${amountBasisLabel}`,
+      `kalan tum ${amountBasisLabel} durumlarinda`
+    );
+  } else if (minAmount !== null && maxAmount !== null) {
+    amountText = l(
+      `from ${minAmountLabel} to ${maxAmountLabel} ${amountBasisLabel}`,
+      `${minAmountLabel} ile ${maxAmountLabel} ${amountBasisLabel} arasinda`
+    );
+  } else if (minAmount !== null) {
+    amountText = l(
+      `above ${minAmountLabel} ${amountBasisLabel}`,
+      `${minAmountLabel} ${amountBasisLabel} uzerinde`
+    );
+  } else if (maxAmount !== null) {
+    amountText = l(
+      `up to ${maxAmountLabel} ${amountBasisLabel}`,
+      `${maxAmountLabel} ${amountBasisLabel} seviyesine kadar`
+    );
+  }
+
+  return l(
+    `AP documents ${scopeText} ${amountText} use ${normalizedTargetLabel}.`,
+    `${scopeText} AP belgeleri ${amountText} icin ${normalizedTargetLabel} kullanir.`
+  );
+}
+
+/**
+ * Sort AP routing rows so the matrix reads close to the runtime matching order.
+ */
+export function sortApprovalRoutingMatrixRows(rows = [], l) {
+  const scopeRank = {
+    OPERATING_UNIT: 5,
+    LEGAL_ENTITY: 4,
+    COUNTRY: 3,
+    GROUP: 2,
+    TENANT: 1,
+  };
+
+  return [...(Array.isArray(rows) ? rows : [])].sort((left, right) => {
+    const leftRule = normalizeWorkflowRoutingRule(left);
+    const rightRule = normalizeWorkflowRoutingRule(right);
+    const leftStatusRank = leftRule.status === "ACTIVE" ? 0 : 1;
+    const rightStatusRank = rightRule.status === "ACTIVE" ? 0 : 1;
+    if (leftStatusRank !== rightStatusRank) {
+      return leftStatusRank - rightStatusRank;
+    }
+
+    const scopeDiff =
+      (scopeRank[rightRule.scopeType] || 0) - (scopeRank[leftRule.scopeType] || 0);
+    if (scopeDiff !== 0) {
+      return scopeDiff;
+    }
+
+    const leftScopeLabel = buildAssignmentScopeLabel(left, l);
+    const rightScopeLabel = buildAssignmentScopeLabel(right, l);
+    const scopeLabelDiff = leftScopeLabel.localeCompare(rightScopeLabel);
+    if (scopeLabelDiff !== 0) {
+      return scopeLabelDiff;
+    }
+
+    const fallbackDiff = Number(leftRule.isFallback) - Number(rightRule.isFallback);
+    if (fallbackDiff !== 0) {
+      return fallbackDiff;
+    }
+
+    const leftMinSort = leftRule.minAmount === null ? -1 : leftRule.minAmount;
+    const rightMinSort = rightRule.minAmount === null ? -1 : rightRule.minAmount;
+    if (leftMinSort !== rightMinSort) {
+      return leftMinSort - rightMinSort;
+    }
+
+    const leftMaxSort = leftRule.maxAmount === null ? Number.MAX_SAFE_INTEGER : leftRule.maxAmount;
+    const rightMaxSort =
+      rightRule.maxAmount === null ? Number.MAX_SAFE_INTEGER : rightRule.maxAmount;
+    if (leftMaxSort !== rightMaxSort) {
+      return leftMaxSort - rightMaxSort;
+    }
+
+    if (leftRule.priority !== rightRule.priority) {
+      return rightRule.priority - leftRule.priority;
+    }
+
+    return (toPositiveInt(right?.id) || 0) - (toPositiveInt(left?.id) || 0);
+  });
+}
+
+/**
+ * Validate one AP routing-matrix draft against the frontend form rules and
+ * the currently loaded ACTIVE rows for the same scope.
+ */
+export function buildApprovalRoutingMatrixValidationModel({
+  draft,
+  assignments = [],
+  definitions = [],
+  presetEntries = [],
+  editingAssignmentId = null,
+  l,
+}) {
+  const errors = [];
+  const warnings = [];
+  const conflicts = [];
+  const minAmountInfo = parseOptionalRoutingAmount(draft?.minAmount);
+  const maxAmountInfo = parseOptionalRoutingAmount(draft?.maxAmount);
+  const priorityInfo = parseOptionalRoutingPriority(draft?.priority);
+  const normalizedRule = normalizeWorkflowRoutingRule({
+    ...draft,
+    minAmount: minAmountInfo.value,
+    maxAmount: maxAmountInfo.value,
+    priority: priorityInfo.value,
+  });
+  const draftStatus = String(draft?.status || "ACTIVE").trim().toUpperCase() || "ACTIVE";
+  const targetMode = String(draft?.targetMode || "definition").trim().toLowerCase();
+  const selectedDefinition = (Array.isArray(definitions) ? definitions : []).find(
+    (row) => toPositiveInt(row?.id) === toPositiveInt(draft?.workflowDefinitionId)
+  );
+  const selectedPreset = (Array.isArray(presetEntries) ? presetEntries : []).find(
+    (entry) => String(entry?.code || "") === String(draft?.workflowPresetCode || "")
+  );
+
+  if (!normalizedRule.scopeType) {
+    errors.push(l("Choose a scope first.", "Once bir kapsam secin."));
+  }
+  if (!normalizedRule.effectiveFrom) {
+    errors.push(l("Effective from is required.", "Gecerlilik baslangici zorunludur."));
+  }
+  if (draft?.effectiveTo && draft.effectiveFrom && String(draft.effectiveTo) < String(draft.effectiveFrom)) {
+    errors.push(
+      l(
+        "Effective to cannot be earlier than effective from.",
+        "Gecerlilik bitisi, baslangictan once olamaz."
+      )
+    );
+  }
+  if (minAmountInfo.invalid) {
+    errors.push(l("Amount from must be a number.", "Tutar alt siniri sayi olmalidir."));
+  }
+  if (maxAmountInfo.invalid) {
+    errors.push(l("Amount to must be a number.", "Tutar ust siniri sayi olmalidir."));
+  }
+  if (priorityInfo.invalid) {
+    errors.push(l("Priority must be a non-negative integer.", "Oncelik negatif olmayan tam sayi olmalidir."));
+  }
+  if (normalizedRule.minAmount !== null && normalizedRule.minAmount < 0) {
+    errors.push(l("Amount from cannot be negative.", "Tutar alt siniri negatif olamaz."));
+  }
+  if (normalizedRule.maxAmount !== null && normalizedRule.maxAmount < 0) {
+    errors.push(l("Amount to cannot be negative.", "Tutar ust siniri negatif olamaz."));
+  }
+  if (
+    normalizedRule.minAmount !== null &&
+    normalizedRule.maxAmount !== null &&
+    normalizedRule.maxAmount < normalizedRule.minAmount
+  ) {
+    errors.push(
+      l(
+        "Amount to cannot be smaller than amount from.",
+        "Tutar ust siniri, alt sinirdan kucuk olamaz."
+      )
+    );
+  }
+  if (
+    normalizedRule.isFallback &&
+    (normalizedRule.minAmount !== null || normalizedRule.maxAmount !== null)
+  ) {
+    errors.push(
+      l(
+        "Fallback rules cannot set amount from or amount to.",
+        "Fallback kurallari tutar alt veya ust siniri belirleyemez."
+      )
+    );
+  }
+
+  if (targetMode === "definition") {
+    if (!toPositiveInt(draft?.workflowDefinitionId)) {
+      errors.push(
+        l(
+          "Choose a workflow definition for this route.",
+          "Bu rota icin bir workflow tanimi secin."
+        )
+      );
+    } else if (
+      String(selectedDefinition?.processType || "").trim().toUpperCase() !==
+      AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+    ) {
+      errors.push(
+        l(
+          "The selected definition must belong to AP Document Posting.",
+          "Secilen tanim AP Belge Kaydi surecine ait olmalidir."
+        )
+      );
+    }
+  } else if (targetMode === "preset") {
+    if (!selectedPreset) {
+      errors.push(l("Choose a workflow preset first.", "Once bir workflow preset secin."));
+    } else if (selectedPreset.usesExtension) {
+      errors.push(
+        selectedPreset.extensionNote ||
+          l(
+            "This preset is preview-only until its extension package is available.",
+            "Bu preset extension paketi hazir olana kadar yalnizca onizlemedir."
+          )
+      );
+    }
+    if (!String(draft?.newDefinitionCode || "").trim()) {
+      errors.push(
+        l(
+          "Preset-backed routes need a workflow code.",
+          "Preset tabanli rotalar bir workflow kodu ister."
+        )
+      );
+    }
+    if (!String(draft?.newDefinitionName || "").trim()) {
+      errors.push(
+        l(
+          "Preset-backed routes need a workflow name.",
+          "Preset tabanli rotalar bir workflow adi ister."
+        )
+      );
+    }
+  }
+
+  if (
+    draftStatus === "ACTIVE" &&
+    normalizedRule.minAmount === null &&
+    normalizedRule.maxAmount === null &&
+    !normalizedRule.isFallback
+  ) {
+    warnings.push(
+      l(
+        "A rule with no amount band matches every amount at this scope. Keep it only when that is intentional.",
+        "Tutar bandi olmayan bir kural bu kapsamda tum tutarlari eslestirir. Bunu yalnizca bilerek istiyorsaniz kullanin."
+      )
+    );
+  }
+
+  if (draftStatus === "ACTIVE" && errors.length === 0) {
+    (Array.isArray(assignments) ? assignments : []).forEach((row) => {
+      const rowRule = normalizeWorkflowRoutingRule(row);
+      if (rowRule.processType !== AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+        return;
+      }
+      if (rowRule.status !== "ACTIVE") {
+        return;
+      }
+      if (toPositiveInt(rowRule.id) === toPositiveInt(editingAssignmentId)) {
+        return;
+      }
+      if (rowRule.scopeKey !== normalizedRule.scopeKey) {
+        return;
+      }
+      if (!workflowEffectiveWindowsOverlap(normalizedRule, rowRule)) {
+        return;
+      }
+
+      if (normalizedRule.isFallback && rowRule.isFallback) {
+        conflicts.push({
+          row,
+          code: "FALLBACK_CONFLICT",
+          message: l(
+            "Only one active fallback rule can exist for the same scope and effective window.",
+            "Ayni kapsam ve gecerlilik araliginda yalnizca bir aktif fallback kurali olabilir."
+          ),
+        });
+        return;
+      }
+
+      if (workflowRoutingRulesOverlap(normalizedRule, rowRule)) {
+        conflicts.push({
+          row,
+          code: "AMOUNT_OVERLAP",
+          message: l(
+            "Active amount bands cannot overlap at the same scope and effective window.",
+            "Aktif tutar bantlari ayni kapsam ve gecerlilik araliginda cakisamaz."
+          ),
+        });
+      }
+    });
+  }
+
+  return {
+    errors,
+    warnings,
+    conflicts,
+    isValid: errors.length === 0 && conflicts.length === 0,
+  };
+}
+
 export default {
   PROCESS_TYPES,
   ASSIGNMENT_SCOPE_TYPES,
@@ -1935,5 +2410,8 @@ export default {
   buildAssignmentEffectText,
   buildAssignmentSelectionLabel,
   buildAssignmentScopeLabel,
+  buildApprovalRoutingRulePreview,
+  sortApprovalRoutingMatrixRows,
+  buildApprovalRoutingMatrixValidationModel,
   buildWorkflowCoverageReviewModel,
 };

@@ -27,6 +27,7 @@ import {
   evaluateApprovalNeed as evaluateGenericApprovalNeed,
   executeRequest as executeUnifiedApprovalRequest,
   getApprovalRequestDelegationPreview as getUnifiedApprovalRequestDelegationPreview,
+  getApprovalRequestRoutingSummary,
   recordDecision,
   submitRequest,
 } from "./approval.engine.service.js";
@@ -210,6 +211,8 @@ function mapGenericApprovalRequestRow(row) {
   if (!row) {
     return null;
   }
+  const policySnapshot = parseJson(row.policy_snapshot_json, {});
+  const targetSnapshot = parseJson(row.target_snapshot_json, null);
   return {
     id: parsePositiveInt(row.id),
     tenant_id: parsePositiveInt(row.tenant_id),
@@ -237,8 +240,12 @@ function mapGenericApprovalRequestRow(row) {
     executed_at: row.executed_at || null,
     executed_by_user_id: parsePositiveInt(row.executed_by_user_id),
     last_activity_at: row.last_activity_at || null,
-    policy_snapshot_json: parseJson(row.policy_snapshot_json, {}),
-    target_snapshot_json: parseJson(row.target_snapshot_json, null),
+    policy_snapshot_json: policySnapshot,
+    target_snapshot_json: targetSnapshot,
+    routing_summary: getApprovalRequestRoutingSummary({
+      policySnapshot,
+      targetSnapshot,
+    }),
     action_payload_json: parseJson(row.action_payload_json, null),
     execution_result_json: parseJson(row.execution_result_json, null),
     execution_error_text: row.execution_error_text || null,

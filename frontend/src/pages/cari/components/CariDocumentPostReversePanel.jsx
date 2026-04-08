@@ -131,7 +131,7 @@ export default function CariDocumentPostReversePanel({
           className="mt-3"
           l={l}
           model={workflowExplanation}
-          title={l("Workflow explainability", "Workflow aciklamasi")}
+          title={l("Your workflow access", "Workflow erisiminiz")}
         />
       ) : null}
       {showApprovalActionsSection || approvalError || approvalMessage ? (

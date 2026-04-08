@@ -57,6 +57,10 @@ async function main() {
       processType: "CONSOLIDATION_RUN",
       workflowDefinitionId: 23,
       legalEntityId: 45,
+      amountBasis: "base_amount",
+      minAmount: 0,
+      maxAmount: 50000,
+      priority: 80,
       effectiveFrom: "2026-01-01",
       effectiveTo: "2026-12-31",
       status: "active",
@@ -68,6 +72,11 @@ async function main() {
   );
   assert(assignmentInput.workflowDefinitionId === 23, "assignment workflowDefinitionId parse failed");
   assert(assignmentInput.legalEntityId === 45, "assignment legalEntityId parse failed");
+  assert(assignmentInput.amountBasis === "BASE_AMOUNT", "assignment amountBasis parse failed");
+  assert(assignmentInput.minAmount === 0, "assignment minAmount parse failed");
+  assert(assignmentInput.maxAmount === 50000, "assignment maxAmount parse failed");
+  assert(assignmentInput.priority === 80, "assignment priority parse failed");
+  assert(assignmentInput.isFallback === false, "assignment isFallback parse failed");
   assert(assignmentInput.status === "ACTIVE", "assignment status parse failed");
 
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -100,7 +109,9 @@ async function main() {
   assert(
     serviceSource.includes("resolveWorkflowAssignmentScope") &&
       serviceSource.includes("listWorkflowDefinitions") &&
-      serviceSource.includes("listWorkflowAssignments"),
+      serviceSource.includes("listWorkflowAssignments") &&
+      serviceSource.includes("amount_basis") &&
+      serviceSource.includes("is_fallback"),
     "workflow service is missing required definitions/assignments exports"
   );
 

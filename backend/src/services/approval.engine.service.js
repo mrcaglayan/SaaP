@@ -164,6 +164,8 @@ function mapStepRow(row) {
 
 function mapRequestRow(row) {
   if (!row) return null;
+  const policySnapshot = parseJson(row.policy_snapshot_json, {});
+  const targetSnapshot = parseJson(row.target_snapshot_json, null);
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -189,8 +191,12 @@ function mapRequestRow(row) {
     executedAt: row.executed_at || null,
     executedByUserId: parsePositiveInt(row.executed_by_user_id),
     lastActivityAt: row.last_activity_at || null,
-    policySnapshot: parseJson(row.policy_snapshot_json, {}),
-    targetSnapshot: parseJson(row.target_snapshot_json, null),
+    policySnapshot,
+    targetSnapshot,
+    routingSummary: getApprovalRequestRoutingSummary({
+      policySnapshot,
+      targetSnapshot,
+    }),
     actionPayload: parseJson(row.action_payload_json, null),
     executionResult: parseJson(row.execution_result_json, null),
     executionErrorText: row.execution_error_text || null,
@@ -214,6 +220,161 @@ function mapDecisionRow(row) {
     reviewerAuthorityUserId: parsePositiveInt(row.reviewer_authority_user_id),
     comment: row.comment || null,
     decidedAt: row.decided_at || null,
+  };
+}
+
+function normalizeRoutingRuleSnapshot(source = null) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  const assignmentId = parsePositiveInt(
+    source.assignment_id ?? source.assignmentId ?? source.id
+  );
+  const workflowDefinitionId = parsePositiveInt(
+    source.workflow_definition_id ?? source.workflowDefinitionId
+  );
+  const scopeType = toUpper(source.scope_type ?? source.scopeType);
+  const scopeId = parsePositiveInt(source.scope_id ?? source.scopeId);
+  const scopeLayer = toUpper(source.scope_layer ?? source.scopeLayer);
+  const amountBasis = toUpper(source.amount_basis ?? source.amountBasis);
+  const minAmount = toAmount(source.min_amount ?? source.minAmount);
+  const maxAmount = toAmount(source.max_amount ?? source.maxAmount);
+  const priority = Number.isInteger(Number(source.priority)) ? Number(source.priority) : null;
+  const isFallback = toDbBoolean(source.is_fallback ?? source.isFallback);
+  const effectiveFrom = parseDateOnly(source.effective_from ?? source.effectiveFrom);
+  const effectiveTo = parseDateOnly(source.effective_to ?? source.effectiveTo);
+  const status = toUpper(source.status);
+  if (
+    !assignmentId &&
+    !workflowDefinitionId &&
+    !scopeType &&
+    !scopeLayer &&
+    minAmount === null &&
+    maxAmount === null
+  ) {
+    return null;
+  }
+  return {
+    id: assignmentId || null,
+    workflowDefinitionId: workflowDefinitionId || null,
+    scopeType: scopeType || null,
+    scopeId: scopeId || null,
+    scopeLayer: scopeLayer || null,
+    amountBasis: amountBasis || null,
+    minAmount,
+    maxAmount,
+    priority,
+    isFallback,
+    effectiveFrom,
+    effectiveTo,
+    status: status || null,
+  };
+}
+
+function normalizeRoutingContextSnapshot(source = null) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  const matchType = toUpper(source.match_type ?? source.matchType);
+  const matchedScopeLayer = toUpper(
+    source.matched_scope_layer ?? source.matchedScopeLayer
+  );
+  const evaluatedAmount = toAmount(
+    source.evaluated_amount ?? source.evaluatedAmount
+  );
+  const amountBasis = toUpper(source.amount_basis ?? source.amountBasis);
+  const priorityApplied = toDbBoolean(
+    source.priority_applied ?? source.priorityApplied
+  );
+  const noMatchReason = toUpper(source.no_match_reason ?? source.noMatchReason);
+  const workflowDefinitionId = parsePositiveInt(
+    source.workflow_definition_id ?? source.workflowDefinitionId
+  );
+  if (
+    !matchType &&
+    !matchedScopeLayer &&
+    evaluatedAmount === null &&
+    !amountBasis &&
+    !priorityApplied &&
+    !noMatchReason &&
+    !workflowDefinitionId
+  ) {
+    return null;
+  }
+  return {
+    matchType: matchType || null,
+    matchedScopeLayer: matchedScopeLayer || null,
+    evaluatedAmount,
+    amountBasis: amountBasis || null,
+    priorityApplied,
+    noMatchReason: noMatchReason || null,
+    workflowDefinitionId: workflowDefinitionId || null,
+  };
+}
+
+/**
+ * Normalize one approval request's persisted routing snapshot into a single
+ * explainable summary so audit/debug surfaces do not need to re-run matching.
+ */
+export function getApprovalRequestRoutingSummary(request = {}) {
+  const policySnapshot =
+    request?.policySnapshot ??
+    request?.policy_snapshot_json ??
+    {};
+  const targetSnapshot =
+    request?.targetSnapshot ??
+    request?.target_snapshot_json ??
+    {};
+  const policyMatchedAssignment = normalizeRoutingRuleSnapshot(
+    policySnapshot?.matched_assignment
+  );
+  const targetRoutingRule = normalizeRoutingRuleSnapshot(
+    targetSnapshot?.routing_rule_snapshot ?? targetSnapshot?.routingRuleSnapshot
+  );
+  const matchedAssignment = policyMatchedAssignment || targetRoutingRule;
+  const routingContext =
+    normalizeRoutingContextSnapshot(policySnapshot?.routing_context) ||
+    normalizeRoutingContextSnapshot({
+      match_type: targetSnapshot?.routing_match_type ?? targetSnapshot?.routingMatchType,
+      matched_scope_layer:
+        targetSnapshot?.routing_matched_scope_layer ??
+        targetSnapshot?.routingMatchedScopeLayer,
+      evaluated_amount:
+        targetSnapshot?.evaluated_amount ?? targetSnapshot?.evaluatedAmount,
+      amount_basis:
+        targetSnapshot?.evaluated_amount_basis ?? targetSnapshot?.evaluatedAmountBasis,
+      priority_applied:
+        targetSnapshot?.routing_priority_applied ??
+        targetSnapshot?.routingPriorityApplied,
+      no_match_reason:
+        targetSnapshot?.routing_no_match_reason ?? targetSnapshot?.routingNoMatchReason,
+      workflow_definition_id:
+        targetSnapshot?.workflow_definition_id ?? targetSnapshot?.workflowDefinitionId,
+    });
+
+  const workflowDefinitionId =
+    routingContext?.workflowDefinitionId ||
+    matchedAssignment?.workflowDefinitionId ||
+    parsePositiveInt(
+      targetSnapshot?.workflow_definition_id ?? targetSnapshot?.workflowDefinitionId
+    ) ||
+    null;
+  if (!matchedAssignment && !routingContext && !workflowDefinitionId) {
+    return null;
+  }
+  return {
+    workflowDefinitionId,
+    matchType: routingContext?.matchType || null,
+    matchedScopeLayer: routingContext?.matchedScopeLayer || null,
+    evaluatedAmount: routingContext?.evaluatedAmount ?? null,
+    amountBasis: routingContext?.amountBasis || null,
+    priorityApplied: Boolean(routingContext?.priorityApplied),
+    noMatchReason: routingContext?.noMatchReason || null,
+    matchedAssignment,
+    routingRule: targetRoutingRule || matchedAssignment,
+    usedFallback: Boolean(
+      targetRoutingRule?.isFallback ?? matchedAssignment?.isFallback
+    ),
   };
 }
 
@@ -475,10 +636,15 @@ function buildSyntheticPolicyStep(policy) {
   };
 }
 
-function buildPolicySnapshot(policy, steps, matchedAssignment = null) {
+function buildPolicySnapshot(
+  policy,
+  steps,
+  matchedAssignment = null,
+  snapshotOverrides = null
+) {
   const effectiveSteps =
     Array.isArray(steps) && steps.length > 0 ? steps : [buildSyntheticPolicyStep(policy)];
-  return {
+  const baseSnapshot = {
     id: policy.id,
     tenant_id: policy.tenantId,
     module_code: policy.moduleCode,
@@ -522,6 +688,13 @@ function buildPolicySnapshot(policy, steps, matchedAssignment = null) {
       escalation_max_count: step.escalationMaxCount || null,
     })),
   };
+  const overrides =
+    snapshotOverrides &&
+    typeof snapshotOverrides === "object" &&
+    !Array.isArray(snapshotOverrides)
+      ? snapshotOverrides
+      : null;
+  return overrides ? { ...baseSnapshot, ...overrides } : baseSnapshot;
 }
 
 function getPolicySnapshotSteps(policySnapshot) {
@@ -1123,7 +1296,12 @@ export async function submitRequest(
     runQuery,
   });
   const steps = await listApprovalPolicySteps(policy.id, runQuery);
-  const policySnapshot = buildPolicySnapshot(policy, steps, matchedAssignment);
+  const policySnapshot = buildPolicySnapshot(
+    policy,
+    steps,
+    matchedAssignment,
+    snapshot.policySnapshotOverrides ?? snapshot.policy_snapshot_overrides ?? null
+  );
   const idempotencyKey = String(
     snapshot.idempotencyKey ?? snapshot.idempotency_key ?? ""
   ).trim();
@@ -1687,6 +1865,8 @@ export async function getRequestDiagnostics(requestId) {
 
   return {
     request: requestRow,
+    routingSummary:
+      requestRow.routingSummary || getApprovalRequestRoutingSummary(requestRow),
     currentStep: currentStep
       ? {
           ...currentStep,

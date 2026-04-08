@@ -3,6 +3,7 @@ import {
   normalizeWorkflowGateState,
 } from "./cariDocumentsPageHelpers.js";
 import { listBusinessRoleCatalogEntries } from "../security/roleCatalog.js";
+import { formatMoneyAmount } from "../../utils/money.js";
 
 const POSTED_DOCUMENT_STATUSES = new Set(["POSTED", "PARTIALLY_SETTLED", "SETTLED"]);
 
@@ -150,13 +151,13 @@ function resolveApEligibleBusinessRoleLabels(requiredPackageCode, requiredScopeT
     .filter(Boolean);
 }
 
-function buildApCurrentGateLine(requiredPackageLabel, requiredScopeType, l) {
-  if (!requiredPackageLabel || !requiredScopeType) {
+function buildApCurrentGateLine(requiredPackageLabel, requiredScopeLabel, l) {
+  if (!requiredPackageLabel || !requiredScopeLabel) {
     return "";
   }
   return l(
-    `Waiting for ${requiredPackageLabel} at ${requiredScopeType} scope.`,
-    `${requiredScopeType} kapsaminda ${requiredPackageLabel} bekleniyor.`
+    `Waiting for ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
+    `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} bekleniyor.`
   );
 }
 
@@ -167,6 +168,12 @@ function resolveWorkflowEligibleActorSummary(
   requiredScopeLabel,
   l
 ) {
+  if (surfaceState.stage === "DIRECT_POST") {
+    return l(
+      "Workflow approval is not required. Users with posting authority can act now.",
+      "Workflow onayi gerekmiyor. Kayit yetkisi olan kullanicilar simdi islem yapabilir."
+    );
+  }
   if (!requiredPackageLabel || !requiredScopeLabel) {
     return "";
   }
@@ -209,6 +216,149 @@ function formatWorkflowDecisionLabel(decision, l) {
     return l("Returned", "Iade edildi");
   }
   return normalizedDecision || l("Workflow decision", "Workflow karari");
+}
+
+function toFiniteWorkflowNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function translateWorkflowAmountBasisLabel(amountBasis, l) {
+  const normalizedAmountBasis = normalizeText(amountBasis).toUpperCase();
+  if (normalizedAmountBasis === "BASE_AMOUNT") {
+    return l("Base amount", "Baz tutar");
+  }
+  return normalizedAmountBasis;
+}
+
+function translateWorkflowRoutingMatchType(matchType, l) {
+  const normalizedMatchType = normalizeText(matchType).toUpperCase();
+  if (normalizedMatchType === "BAND") {
+    return l("Amount band", "Tutar bandi");
+  }
+  if (normalizedMatchType === "FALLBACK") {
+    return l("Fallback route", "Fallback rota");
+  }
+  if (normalizedMatchType === "LEGACY") {
+    return l("Legacy unbanded rule", "Eski bantsiz kural");
+  }
+  if (normalizedMatchType === "NONE") {
+    return l("No route matched", "Rota eslesmedi");
+  }
+  return normalizedMatchType;
+}
+
+function translateWorkflowRoutingNoMatchReason(noMatchReason, l) {
+  const normalizedNoMatchReason = normalizeText(noMatchReason).toUpperCase();
+  if (normalizedNoMatchReason === "THRESHOLD_AMOUNT_REQUIRED") {
+    return l(
+      "The evaluated threshold amount was missing for route selection.",
+      "Rota secimi icin degerlendirilen esik tutar eksikti."
+    );
+  }
+  if (normalizedNoMatchReason === "AMOUNT_BASIS_REQUIRED") {
+    return l(
+      "The route matrix required an amount basis before it could evaluate this document.",
+      "Bu belgeyi degerlendirebilmek icin rota matrisinde tutar bazinin belirtilmesi gerekiyordu."
+    );
+  }
+  if (normalizedNoMatchReason === "AMOUNT_BASIS_MISMATCH") {
+    return l(
+      "The document amount basis did not match the configured route basis.",
+      "Belge tutar bazi, tanimli rota baziyla eslesmedi."
+    );
+  }
+  if (normalizedNoMatchReason === "THRESHOLD_OUT_OF_RANGE") {
+    return l(
+      "The evaluated amount fell outside the configured amount bands.",
+      "Degerlendirilen tutar, tanimli tutar bantlarinin disinda kaldi."
+    );
+  }
+  if (normalizedNoMatchReason === "NO_BAND_MATCH_IN_SCOPE") {
+    return l(
+      "No amount band matched inside the selected scope layer.",
+      "Secilen kapsam katmaninda hicbir tutar bandi eslesmedi."
+    );
+  }
+  return normalizedNoMatchReason;
+}
+
+function resolveWorkflowDefinitionLabel(gate, workflowInstance) {
+  const code = normalizeText(
+    gate?.workflowDefinitionCode ||
+      gate?.routingRuleSnapshot?.workflow_definition_code ||
+      workflowInstance?.workflowDefinitionCode
+  );
+  const name = normalizeText(
+    gate?.workflowDefinitionName ||
+      gate?.routingRuleSnapshot?.workflow_definition_name ||
+      workflowInstance?.workflowDefinitionName
+  );
+  const workflowDefinitionId = Number(
+    gate?.workflowDefinitionId || workflowInstance?.workflowDefinitionId || 0
+  );
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  if (code || name) {
+    return code || name;
+  }
+  return workflowDefinitionId > 0 ? `#${workflowDefinitionId}` : "";
+}
+
+function resolveWorkflowRoutingScopeLabel(gate, l) {
+  return translateWorkflowScopeLabel(
+    gate?.routingRuleSnapshot?.scope_type || gate?.assignmentScopeType,
+    gate?.assignmentScopeLabel,
+    l
+  );
+}
+
+function resolveWorkflowRoutingRuleSummary(gate, l) {
+  const routingRuleSnapshot = gate?.routingRuleSnapshot || null;
+  if (!routingRuleSnapshot) {
+    return gate?.assignmentResolved
+      ? ""
+      : l("No active workflow route matched.", "Aktif workflow rotasi eslesmedi.");
+  }
+  const scopeLabel = resolveWorkflowRoutingScopeLabel(gate, l) || l("Scope", "Kapsam");
+  if (routingRuleSnapshot.is_fallback ?? routingRuleSnapshot.isFallback) {
+    return l(`${scopeLabel} fallback route`, `${scopeLabel} fallback rota`);
+  }
+  const minAmount = toFiniteWorkflowNumber(
+    routingRuleSnapshot.min_amount ?? routingRuleSnapshot.minAmount
+  );
+  const maxAmount = toFiniteWorkflowNumber(
+    routingRuleSnapshot.max_amount ?? routingRuleSnapshot.maxAmount
+  );
+  const minAmountLabel = minAmount === null ? "" : formatMoneyAmount(minAmount);
+  const maxAmountLabel = maxAmount === null ? "" : formatMoneyAmount(maxAmount);
+  if (minAmount !== null && maxAmount !== null) {
+    return l(
+      `${scopeLabel} ${minAmountLabel} to ${maxAmountLabel}`,
+      `${scopeLabel} ${minAmountLabel} - ${maxAmountLabel}`
+    );
+  }
+  if (minAmount !== null) {
+    return l(
+      `${scopeLabel} ${minAmountLabel} and above`,
+      `${scopeLabel} ${minAmountLabel} ve uzeri`
+    );
+  }
+  if (maxAmount !== null) {
+    return l(`${scopeLabel} up to ${maxAmountLabel}`, `${scopeLabel} ${maxAmountLabel}'e kadar`);
+  }
+  return l(`${scopeLabel} all amounts`, `${scopeLabel} tum tutarlar`);
+}
+
+function resolveWorkflowEvaluatedAmountLabel(gate, l) {
+  const evaluatedAmount = toFiniteWorkflowNumber(gate?.evaluatedAmount);
+  if (evaluatedAmount === null) {
+    return "";
+  }
+  const amountBasisLabel = translateWorkflowAmountBasisLabel(gate?.evaluatedAmountBasis, l);
+  const amountLabel = formatMoneyAmount(evaluatedAmount);
+  return amountBasisLabel ? `${amountLabel} (${amountBasisLabel})` : amountLabel;
 }
 
 function buildWorkflowHistoryItems(workflowInstance, l) {
@@ -254,6 +404,7 @@ function buildWorkflowSurfaceState(row, l) {
   const documentStatus = normalizeText(row?.status).toUpperCase();
   const documentDirection = normalizeText(row?.direction).toUpperCase();
   const workflowGoverned = Boolean(gate?.workflowGoverned);
+  const assignmentResolved = Boolean(gate?.assignmentResolved);
   const waitingForSummary = normalizeText(gate?.waitingForSummary);
   const blockingReasonDetail = normalizeText(gate?.blockingReasonDetail);
   const latestDecisionComment = normalizeText(
@@ -338,6 +489,25 @@ function buildWorkflowSurfaceState(row, l) {
               "This document does not use workflow approval.",
               "Bu belge workflow onayi kullanmaz."
             )),
+      latestDecisionComment,
+    };
+  }
+
+  if (!assignmentResolved) {
+    return {
+      stage: "DIRECT_POST",
+      tone: "slate",
+      badgeLabel: l("Direct post", "Dogrudan kayit"),
+      toneClass: "border-slate-200 bg-slate-50 text-slate-800",
+      chipClass: "border-slate-300 bg-white/70 text-slate-700",
+      headline: l("No workflow route matched", "Workflow rotasi eslesmedi"),
+      supportingText:
+        blockingReasonDetail ||
+        gateMessage ||
+        l(
+          "No active workflow assignment is configured for this document scope.",
+          "Bu belge kapsami icin aktif workflow atamasi tanimli degil."
+        ),
       latestDecisionComment,
     };
   }
@@ -427,12 +597,12 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
   const surfaceState = buildWorkflowSurfaceState(row, l);
   const currentScopeLabel = resolveWorkflowCurrentScopeLabel(gate, l);
   const assignmentScopeLabel = resolveWorkflowAssignmentScopeLabel(gate, l);
-  const nextActionLabel = resolveWorkflowNextActionLabel(gate, l);
   const currentStepLabel = resolveWorkflowCurrentStepLabel(gate, surfaceState, l);
   const requiredPackageCode = resolveApRequiredPackageCode(row, gate, surfaceState);
   const requiredPackageLabel = translateApRequiredPackageLabel(requiredPackageCode, l);
   const requiredScopeLabel = currentScopeLabel || assignmentScopeLabel;
   const requiredScopeType = resolveWorkflowRequiredScopeType(gate);
+  const routeScopeLabel = resolveWorkflowRoutingScopeLabel(gate, l);
   const eligibleRoleLabels = resolveApEligibleBusinessRoleLabels(
     requiredPackageCode,
     requiredScopeType
@@ -443,40 +613,47 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
     l
   );
   const historyItems = buildWorkflowHistoryItems(options.workflowInstance, l);
+  const workflowDefinitionLabel = resolveWorkflowDefinitionLabel(gate, options.workflowInstance);
+  const routingRuleSummary = resolveWorkflowRoutingRuleSummary(gate, l);
+  const evaluatedAmountLabel = resolveWorkflowEvaluatedAmountLabel(gate, l);
+  const amountBasisLabel = translateWorkflowAmountBasisLabel(gate?.evaluatedAmountBasis, l);
   const factItems = [];
   const noteItems = [];
   const technicalItems = [];
 
-  if (currentStepLabel) {
+  if (workflowDefinitionLabel) {
     appendWorkflowItem(
       factItems,
-      l("Current step", "Guncel adim"),
-      currentStepLabel
+      l("Matched route", "Eslesen rota"),
+      workflowDefinitionLabel
     );
   }
-  if (currentScopeLabel && surfaceState.stage !== "DIRECT_POST") {
+  if (routeScopeLabel && routeScopeLabel !== requiredScopeLabel && surfaceState.stage !== "DIRECT_POST") {
     appendWorkflowItem(
       factItems,
-      l("Active scope", "Aktif kapsam"),
-      currentScopeLabel
+      l("Route scope", "Rota kapsami"),
+      routeScopeLabel
     );
   }
-  if (nextActionLabel && surfaceState.stage !== "POSTED" && surfaceState.stage !== "REVERSED") {
+  if (routingRuleSummary) {
     appendWorkflowItem(
       factItems,
-      l("Next action", "Sonraki islem"),
-      nextActionLabel
+      l("Matched rule", "Eslesen kural"),
+      routingRuleSummary
     );
   }
-  if (
-    assignmentScopeLabel &&
-    assignmentScopeLabel !== currentScopeLabel &&
-    surfaceState.stage !== "DIRECT_POST"
-  ) {
+  if (evaluatedAmountLabel) {
     appendWorkflowItem(
       factItems,
-      l("Assignment scope", "Atama kapsami"),
-      assignmentScopeLabel
+      l("Evaluated amount", "Degerlendirilen tutar"),
+      evaluatedAmountLabel
+    );
+  }
+  if (amountBasisLabel && evaluatedAmountLabel) {
+    appendWorkflowItem(
+      factItems,
+      l("Amount basis", "Tutar bazi"),
+      amountBasisLabel
     );
   }
 
@@ -498,7 +675,36 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
     appendWorkflowItem(
       noteItems,
       l("Current gate", "Guncel gecit"),
-      buildApCurrentGateLine(requiredPackageLabel, requiredScopeType, l)
+      buildApCurrentGateLine(requiredPackageLabel, requiredScopeLabel || requiredScopeType, l)
+    );
+  }
+  if (gate?.routingUsedFallback) {
+    appendWorkflowItem(
+      noteItems,
+      l("Fallback route used", "Fallback rota kullanildi"),
+      l(
+        "No amount band matched in the selected scope, so the fallback route was used.",
+        "Secilen kapsamda hicbir tutar bandi eslesmedigi icin fallback rota kullanildi."
+      )
+    );
+  } else if (gate?.routingPriorityApplied) {
+    appendWorkflowItem(
+      noteItems,
+      l("Priority tie-break", "Oncelik esitleyici"),
+      l(
+        "Multiple active routes matched. The highest-priority route was selected.",
+        "Birden fazla aktif rota eslesti. En yuksek oncelikli rota secildi."
+      )
+    );
+  } else if (!gate?.assignmentResolved) {
+    appendWorkflowItem(
+      noteItems,
+      l("Routing decision", "Rota karari"),
+      translateWorkflowRoutingNoMatchReason(gate?.routingNoMatchReason, l) ||
+        l(
+          "No active workflow route is configured for this document scope.",
+          "Bu belge kapsami icin aktif workflow rotasi tanimli degil."
+        )
     );
   }
 
@@ -521,6 +727,27 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
       technicalItems,
       l("Workflow assignment", "Workflow atamasi"),
       assignmentScopeLabel
+    );
+  }
+  if (gate?.routingMatchType) {
+    appendWorkflowItem(
+      technicalItems,
+      l("Routing match type", "Rota eslesme tipi"),
+      translateWorkflowRoutingMatchType(gate?.routingMatchType, l)
+    );
+  }
+  if (gate?.routingMatchedScopeLayer) {
+    appendWorkflowItem(
+      technicalItems,
+      l("Matched scope layer", "Eslesen kapsam katmani"),
+      translateWorkflowScopeLabel(gate?.routingMatchedScopeLayer, gate?.routingMatchedScopeLayer, l)
+    );
+  }
+  if (gate?.routingNoMatchReason) {
+    appendWorkflowItem(
+      technicalItems,
+      l("Routing no-match reason", "Rota eslesmeme nedeni"),
+      translateWorkflowRoutingNoMatchReason(gate?.routingNoMatchReason, l)
     );
   }
   if (Number(gate?.workflowInstanceId) > 0) {
@@ -548,6 +775,7 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
     ),
     eligibleRoleLabels,
     userCapabilityLines: [],
+    factSectionTitle: l("Routing context", "Yonlendirme baglami"),
     historyItems,
     factItems,
     noteItems,
@@ -569,13 +797,15 @@ function buildCariWorkflowUserCapabilityLines({
   const direction = normalizeText(row?.direction).toUpperCase();
   const isAp = direction === "AP";
   const gateState = normalizeWorkflowGateState(gate?.state);
+  const surfaceState = buildWorkflowSurfaceState(row, l);
   const requiredPackageCode = resolveApRequiredPackageCode(
     row,
     gate,
-    buildWorkflowSurfaceState(row, l)
+    surfaceState
   );
   const requiredPackageLabel = translateApRequiredPackageLabel(requiredPackageCode, l);
-  const requiredScopeType = resolveWorkflowRequiredScopeType(gate);
+  const requiredScopeLabel =
+    resolveWorkflowCurrentScopeLabel(gate, l) || resolveWorkflowAssignmentScopeLabel(gate, l);
   if (!isAp || !gate?.workflowGoverned) {
     return [];
   }
@@ -591,6 +821,31 @@ function buildCariWorkflowUserCapabilityLines({
       )
     );
   }
+  if (
+    (surfaceState.stage === "BLOCKED" || surfaceState.stage === "RETURNED") &&
+    canReadSelected &&
+    !canSubmitSelected
+  ) {
+    userCapabilityLines.push(
+      surfaceState.stage === "RETURNED"
+        ? l(
+            "You can view this document but cannot resubmit it.",
+            "Bu belgeyi goruntuleyebilirsiniz ancak yeniden gonderemezsiniz."
+          )
+        : l(
+            "You can view this document but cannot submit it.",
+            "Bu belgeyi goruntuleyebilirsiniz ancak gonderemezsiniz."
+          )
+    );
+    if (requiredPackageLabel && requiredScopeLabel) {
+      userCapabilityLines.push(
+        l(
+          `Submission requires ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
+          `Gonderim icin ${requiredScopeLabel} kapsaminda ${requiredPackageLabel} gerekir.`
+        )
+      );
+    }
+  }
   if (canApproveSelected) {
     userCapabilityLines.push(
       l(
@@ -605,11 +860,11 @@ function buildCariWorkflowUserCapabilityLines({
         "Bu belgeyi goruntuleyebilirsiniz ancak onaylayamazsiniz."
       )
     );
-    if (!canApproveWorkflow && requiredPackageLabel && requiredScopeType) {
+    if (!canApproveWorkflow && requiredPackageLabel && requiredScopeLabel) {
       userCapabilityLines.push(
         l(
-          `This step requires ${requiredPackageLabel} at ${requiredScopeType} scope.`,
-          `Bu adim ${requiredScopeType} kapsaminda ${requiredPackageLabel} gerektirir.`
+          `This step requires ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
+          `Bu adim ${requiredScopeLabel} kapsaminda ${requiredPackageLabel} gerektirir.`
         )
       );
       userCapabilityLines.push(
@@ -629,7 +884,12 @@ function buildCariWorkflowUserCapabilityLines({
   }
   if (canPostSelected) {
     userCapabilityLines.push(
-      l("You can post this document.", "Bu belgeyi kaydedebilirsiniz.")
+      surfaceState.stage === "DIRECT_POST"
+        ? l(
+            "No workflow approval is required. You can post this document now.",
+            "Workflow onayi gerekmiyor. Bu belgeyi simdi kaydedebilirsiniz."
+          )
+        : l("You can post this document.", "Bu belgeyi kaydedebilirsiniz.")
     );
   } else if (gateState === "APPROVED" && canReadSelected) {
     userCapabilityLines.push(
@@ -638,14 +898,21 @@ function buildCariWorkflowUserCapabilityLines({
         "Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz."
       )
     );
-    if (requiredPackageLabel && requiredScopeType) {
+    if (requiredPackageLabel && requiredScopeLabel) {
       userCapabilityLines.push(
         l(
-          `Posting requires ${requiredPackageLabel} at ${requiredScopeType} scope.`,
-          `Kayit icin ${requiredScopeType} kapsaminda ${requiredPackageLabel} gerekir.`
+          `Posting requires ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
+          `Kayit icin ${requiredScopeLabel} kapsaminda ${requiredPackageLabel} gerekir.`
         )
       );
     }
+  } else if (surfaceState.stage === "DIRECT_POST" && canReadSelected) {
+    userCapabilityLines.push(
+      l(
+        "Workflow approval is not required, but you do not have posting authority for this document.",
+        "Workflow onayi gerekmiyor ancak bu belge icin kayit yetkiniz yok."
+      )
+    );
   } else if (gateState === "PENDING") {
     userCapabilityLines.push(
       l(
