@@ -23,6 +23,7 @@ const SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS = [
   "security.role_assignment.read",
 ];
 const ROLE_MIGRATIONS_PAGE_PERMISSIONS = ["security.role.read"];
+const LEGACY_MIGRATION_VISIBILITY_PAGE_PERMISSIONS = ["security.role.read", "security.role_assignment.read"];
 const ACCESS_DEBUGGER_PAGE_PERMISSIONS = ["security.role_assignment.read"];
 const COMPLIANCE_REPORTS_PAGE_PERMISSIONS = [
   "security.audit.report.generate",
@@ -720,6 +721,18 @@ export const sidebarItems = [
         label: "Erisim Tanilari",
         to: "/app/ayarlar/rbac/access-debugger",
         requiredPermissions: ACCESS_DEBUGGER_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Eski Rol Gecis Gorunumu",
+        to: "/app/ayarlar/rbac/legacy-migration-visibility",
+        requiredPermissions: LEGACY_MIGRATION_VISIBILITY_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Grup AP Kaydi Uzantisi",
+        to: "/app/ayarlar/rbac/group-ap-post-extension",
+        requiredPermissions: ROLE_MIGRATIONS_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

@@ -32,6 +32,8 @@ import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
 import BranchOperatorManagementPage from "./pages/security/BranchOperatorManagementPage.jsx";
 import RoleMigrationsPage from "./pages/security/RoleMigrationsPage.jsx";
 import AccessDebuggerPage from "./pages/security/AccessDebuggerPage.jsx";
+import LegacyMigrationVisibilityPage from "./pages/security/LegacyMigrationVisibilityPage.jsx";
+import GroupApPostExtensionPage from "./pages/security/GroupApPostExtensionPage.jsx";
 import ComplianceReportsPage from "./pages/security/ComplianceReportsPage.jsx";
 import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
 import RawAuditLogsPage from "./pages/security/RawAuditLogsPage.jsx";
@@ -722,6 +724,16 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/rbac/access-debugger",
     childPath: "ayarlar/rbac/access-debugger",
     element: <AccessDebuggerPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/legacy-migration-visibility",
+    childPath: "ayarlar/rbac/legacy-migration-visibility",
+    element: <LegacyMigrationVisibilityPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/group-ap-post-extension",
+    childPath: "ayarlar/rbac/group-ap-post-extension",
+    element: <GroupApPostExtensionPage />,
   },
   {
     appPath: "/app/ayarlar/rbac/compliance-reports",

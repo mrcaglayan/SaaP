@@ -53,6 +53,13 @@ export const PERMISSION_GROUPS = {
       "gl.period.close",
     ],
   },
+  "gl.period_governance": {
+    permissions: [
+      "gl.period.close",
+      "gl.period.reopen",
+      "gl.period.admin",
+    ],
+  },
   "org.capital_fulfillment": {
     permissions: [
       "org.tree.read",

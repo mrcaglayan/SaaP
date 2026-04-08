@@ -971,7 +971,7 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
 
   router.post(
     "/period-closing/:bookId/:periodId/reopen",
-    requirePermission("gl.period.close", {
+    requirePermission("gl.period.reopen", {
       resolveScope: async (req, tenantId) => {
         return resolveScopeFromBookId(req.params?.bookId, tenantId);
       },

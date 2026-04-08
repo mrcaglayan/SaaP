@@ -215,6 +215,7 @@ function resolveEligibleActorSummary(stage, requiredPackageLabel, l) {
 function buildUserCapabilityLines({
   stage,
   canClosePeriod,
+  canReopenPeriod = false,
   canReadTrialBalance,
   canReadJournals,
   canOverrideCashFxRevaluation,
@@ -292,12 +293,21 @@ function buildUserCapabilityLines({
   }
 
   if (stage === "CLOSED") {
-    lines.push(
-      l(
-        "This period is already closed. Reopen it before running another close cycle.",
-        "Bu donem zaten kapali. Yeni bir kapanis dongusu calistirmadan once yeniden acin."
-      )
-    );
+    if (canReopenPeriod) {
+      lines.push(
+        l(
+          "This period is already closed. You have Period Close / Reopen authority and can reopen it before running another close cycle.",
+          "Bu donem zaten kapali. Period Close / Reopen yetkiniz var; yeni bir kapanis dongusu calistirmadan once yeniden acabilirsiniz."
+        )
+      );
+    } else {
+      lines.push(
+        l(
+          "This period is already closed. You do not have Period Close / Reopen authority. Ask someone with gl.period.reopen permission to reopen it.",
+          "Bu donem zaten kapali. Period Close / Reopen yetkiniz yok. gl.period.reopen yetkisine sahip birinden yeniden acmasini isteyin."
+        )
+      );
+    }
     return lines;
   }
 
@@ -410,6 +420,7 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
   workflowGateBlock = null,
   fxGateBlock = null,
   canClosePeriod = false,
+  canReopenPeriod = false,
   canReadTrialBalance = false,
   canReadJournals = false,
   canOverrideCashFxRevaluation = false,
@@ -483,6 +494,7 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
     userCapabilityLines: buildUserCapabilityLines({
       stage,
       canClosePeriod,
+      canReopenPeriod,
       canReadTrialBalance,
       canReadJournals,
       canOverrideCashFxRevaluation,
@@ -501,8 +513,8 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
                 "Hazirlik incelemesi, nihai kapanis aksiyonundan ayridir. Bu yuzey iki asamayi da acikca gosterir."
               )
             : l(
-                "The current runtime bridge still uses gl.period.close for final close authority while the package-first model is rolling out.",
-                "Paket-oncelikli model yayilirken mevcut runtime bridge, nihai kapanis yetkisi icin hala gl.period.close kullanir."
+                "Period close uses gl.period.close for final close and gl.period.reopen for reopen authority. The package-first model splits these into PKG-PC-CLOSE and PKG-PC-REOPEN.",
+                "Donem kapanisi, nihai kapanis icin gl.period.close ve yeniden acma icin gl.period.reopen kullanir. Paket modeli bunlari PKG-PC-CLOSE ve PKG-PC-REOPEN olarak ayirir."
               ),
       },
       {

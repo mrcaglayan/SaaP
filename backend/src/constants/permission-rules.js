@@ -4,6 +4,8 @@ export const PERMISSION_DEPENDENCIES = Object.freeze({
   "gl.journal.post": Object.freeze(["gl.journal.read"]),
   "gl.journal.reverse": Object.freeze(["gl.journal.read"]),
   "gl.period.close": Object.freeze(["gl.journal.read", "gl.trial_balance.read"]),
+  "gl.period.reopen": Object.freeze(["gl.journal.read", "gl.trial_balance.read", "gl.period.close"]),
+  "gl.period.admin": Object.freeze(["gl.journal.read", "gl.trial_balance.read", "gl.period.close"]),
   "ouclose.approve": Object.freeze(["ouclose.read"]),
   "ouclose.lock": Object.freeze(["ouclose.read", "ouclose.approve"]),
   "bank.reconcile.write": Object.freeze(["bank.reconcile.read"]),
@@ -57,6 +59,12 @@ export const PERMISSION_CONFLICTS = Object.freeze([
     rightPermissionCode: "cari.request.review",
     severity: "warn",
     reason: "Review authority should stay distinct from counterparty request submission.",
+  }),
+  Object.freeze({
+    leftPermissionCode: "gl.period.close",
+    rightPermissionCode: "gl.period.reopen",
+    severity: "warn",
+    reason: "SoD: period close and reopen authority should be separated where practical.",
   }),
 ]);
 

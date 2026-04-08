@@ -989,13 +989,31 @@ This is optional and should only ship when the backend package/entitlement model
 
 Support future period-close-specific reopen/admin packages if introduced later.
 
+### Features
+
+- keep period-close admin surfaces package-list-based, not hardcoded to today's two-package family
+- allow future real packages such as reopen/admin slices to appear beside readiness/close in the normal package catalog
+- allow period-close presets to grow extra governed steps without changing the preset page structure
+- show family-level extension messaging that explains what ships now versus what needs a backend extension
+- block direct assignment and workflow activation for extension placeholders until real package metadata and entitlements exist
+
+### Notes
+
+- current shipped period-close family stays `PKG-PC-READINESS` + `PKG-PC-CLOSE`
+- future advanced slices may later separate reopen, override, or exceptional-admin authority from normal close authority
+- reuse the existing package `plannedExtension` / `extensionNote` pattern instead of inventing a period-close-only UI model
+
 ### Acceptance
 
 - UI can add these as real packages later without redesigning the page again
+- period-close pages do not assume the family will always contain exactly two packages
+- future packages can flow through the same catalog, preset, and assignment seams as other workflow families
 
 ### Non-goals
 
 - do not fake this in early phases
+- no disabled placeholder rows/cards for period-close packages that do not exist yet
+- no frontend-only reopen/admin permissions, buttons, or preset steps before backend support exists
 
 ---
 
@@ -1026,9 +1044,9 @@ Support future period-close-specific reopen/admin packages if introduced later.
 21. UI-4D done
 22. UI-4E done
 23. UI-5A done
-24. UI-5B
-25. UI-5C
-26. UI-5D
+24. UI-5B done
+25. UI-5C done
+26. UI-5D done
 
 ---
 

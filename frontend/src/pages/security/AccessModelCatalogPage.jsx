@@ -24,15 +24,15 @@ function toCount(value) {
 function buildEntrySearchText(entry) {
   const stepValues = Array.isArray(entry?.steps)
     ? entry.steps.flatMap((step) => [
-        step.actionLabel,
-        step.scopeType,
-        step.requiredPackageCode,
-        step.requiredPackageLabel,
-        ...(step.eligibleBusinessRoleLabels || []),
-        step.minApproverCount,
-        step.allowSelfApprove ? "self approve allowed" : "self approve disabled",
-        step.escalationAfterHours,
-      ])
+      step.actionLabel,
+      step.scopeType,
+      step.requiredPackageCode,
+      step.requiredPackageLabel,
+      ...(step.eligibleBusinessRoleLabels || []),
+      step.minApproverCount,
+      step.allowSelfApprove ? "self approve allowed" : "self approve disabled",
+      step.escalationAfterHours,
+    ])
     : [];
   return [
     entry?.code,
@@ -259,19 +259,17 @@ function AccessModelTabButton({ active, count, label, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-2xl border px-4 py-3 text-left transition ${
-        active
-          ? "border-slate-900 bg-slate-900 text-white shadow-sm"
-          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-      }`}
+      className={`rounded-2xl border px-4 py-3 text-left transition ${active
+        ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+        }`}
     >
       <div className="text-xs font-semibold uppercase tracking-[0.18em] opacity-75">Catalog</div>
       <div className="mt-2 flex items-center justify-between gap-3">
         <span className="text-sm font-semibold">{label}</span>
         <span
-          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-            active ? "bg-white/15 text-white" : "bg-slate-100 text-slate-700"
-          }`}
+          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${active ? "bg-white/15 text-white" : "bg-slate-100 text-slate-700"
+            }`}
         >
           {count}
         </span>
@@ -285,11 +283,10 @@ function AccessModelEntryCard({ active, entry, highlights, onOpen }) {
     <button
       type="button"
       onClick={onOpen}
-      className={`w-full rounded-3xl border px-5 py-5 text-left transition ${
-        active
-          ? "border-slate-900 bg-slate-900 text-white shadow-lg shadow-slate-300/50"
-          : "border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50"
-      }`}
+      className={`w-full rounded-3xl border px-5 py-5 text-left transition ${active
+        ? "border-slate-900 bg-slate-900 text-white shadow-lg shadow-slate-300/50"
+        : "border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50"
+        }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -300,16 +297,14 @@ function AccessModelEntryCard({ active, entry, highlights, onOpen }) {
         </div>
         <div className="flex flex-wrap gap-2">
           <span
-            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-              active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
-            }`}
+            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
+              }`}
           >
             {entry.modelTypeLabel}
           </span>
           <span
-            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-              active ? "border-white/20 bg-white/10 text-white" : getStatusClasses(entry)
-            }`}
+            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${active ? "border-white/20 bg-white/10 text-white" : getStatusClasses(entry)
+              }`}
           >
             {getStatusLabel(entry)}
           </span>
@@ -317,16 +312,14 @@ function AccessModelEntryCard({ active, entry, highlights, onOpen }) {
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <span
-          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-            active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
-          }`}
+          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
+            }`}
         >
           {entry.categoryLabel}
         </span>
         <span
-          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-            active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
-          }`}
+          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
+            }`}
         >
           {entry.workflowFamilyLabel}
         </span>
@@ -346,11 +339,10 @@ function BusinessRoleActionButton({ children, disabled = false, onClick }) {
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-        disabled
-          ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-      }`}
+      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${disabled
+        ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+        }`}
     >
       {children}
     </button>
@@ -612,11 +604,10 @@ function WorkflowPresetCatalogTable({ entries, selectedEntryCode, onOpen }) {
                   <td className="px-5 py-4 align-top">
                     <div className="space-y-2">
                       <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                          entry.usesExtension
-                            ? "border-violet-200 bg-violet-50 text-violet-800"
-                            : "border-emerald-200 bg-emerald-50 text-emerald-800"
-                        }`}
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${entry.usesExtension
+                          ? "border-violet-200 bg-violet-50 text-violet-800"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                          }`}
                       >
                         {entry.usesExtensionLabel}
                       </span>
@@ -1222,12 +1213,12 @@ export default function AccessModelCatalogPage() {
   const currentEntries = (currentSection?.entries || []).map((entry) =>
     isLegacyCatalogTab
       ? buildLegacyCatalogViewEntry(entry, {
-          canReadRoleAssignments,
-          assignmentCountsByRoleCode: legacyAssignmentCountsByRoleCode,
-          assignmentCountsLoaded: legacyAssignmentCountsLoaded,
-          assignmentCountsLoading: legacyAssignmentCountsLoading,
-          assignmentCountsError: legacyAssignmentCountsError,
-        })
+        canReadRoleAssignments,
+        assignmentCountsByRoleCode: legacyAssignmentCountsByRoleCode,
+        assignmentCountsLoaded: legacyAssignmentCountsLoaded,
+        assignmentCountsLoading: legacyAssignmentCountsLoading,
+        assignmentCountsError: legacyAssignmentCountsError,
+      })
       : entry
   );
   const familyOptions = buildFilterOptions(currentEntries, (entry) => [entry.workflowFamily]);
@@ -1246,18 +1237,18 @@ export default function AccessModelCatalogPage() {
   const currentActionLink =
     currentTab === "workflow_packages" || currentTab === "workflow_presets"
       ? {
-          to: "/app/ayarlar/workflow-kurulumu",
-          label: "Open workflow governance",
-        }
+        to: "/app/ayarlar/workflow-kurulumu",
+        label: "Open workflow governance",
+      }
       : currentTab === "legacy_catalog"
         ? {
-            to: "/app/ayarlar/rbac/role-migrations",
-            label: "Open migration workspace",
-          }
+          to: "/app/ayarlar/rbac/role-migrations",
+          label: "Open migration workspace",
+        }
         : {
-            to: "/app/ayarlar/rbac/roles-permissions",
-            label: "Open current role editor",
-          };
+          to: "/app/ayarlar/rbac/roles-permissions",
+          label: "Open current role editor",
+        };
 
   useEffect(() => {
     if (!isLegacyCatalogTab) {
@@ -1302,7 +1293,7 @@ export default function AccessModelCatalogPage() {
         setLegacyAssignmentCountsLoaded(false);
         setLegacyAssignmentCountsError(
           error?.response?.data?.message ||
-            "Legacy role assignment counts could not be loaded."
+          "Legacy role assignment counts could not be loaded."
         );
       })
       .finally(() => {
@@ -1338,7 +1329,7 @@ export default function AccessModelCatalogPage() {
   return (
     <div className="space-y-6">
       <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-        <div className="relative overflow-hidden border-b border-slate-200 bg-[radial-gradient(circle_at_top_left,_#e0f2fe,_transparent_45%),radial-gradient(circle_at_top_right,_#fef3c7,_transparent_35%),linear-gradient(135deg,_#f8fafc,_#ffffff)] px-6 py-6">
+        <div className="relative overflow-hidden border-b border-slate-200 bg-[radial-gradient(circle_at_top_left,#e0f2fe,transparent_45%),radial-gradient(circle_at_top_right,#fef3c7,transparent_35%),linear-gradient(135deg,#f8fafc,#ffffff)] px-6 py-6">
           <div className="relative z-10 flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-3xl">
               <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
@@ -1353,7 +1344,7 @@ export default function AccessModelCatalogPage() {
                 away from compatibility roles while the deeper editors land in the next slices.
               </p>
             </div>
-            <div className="grid min-w-[240px] gap-3 sm:grid-cols-2">
+            <div className="grid min-w-60 gap-3 sm:grid-cols-2">
               <div className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Visible in tab
@@ -1464,7 +1455,7 @@ export default function AccessModelCatalogPage() {
                     {familyCode === FILTER_ALL
                       ? "All workflow families"
                       : currentEntries.find((entry) => entry.workflowFamily === familyCode)
-                          ?.workflowFamilyLabel || familyCode}
+                        ?.workflowFamilyLabel || familyCode}
                   </option>
                 ))}
               </select>
@@ -1489,7 +1480,7 @@ export default function AccessModelCatalogPage() {
           </section>
 
           {isBusinessRolesTab ? (
-            <section className="rounded-[28px] border border-sky-200 bg-[linear-gradient(135deg,_rgba(240,249,255,0.95),_rgba(255,255,255,0.98))] px-5 py-5">
+            <section className="rounded-[28px] border border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.95),rgba(255,255,255,0.98))] px-5 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
@@ -1518,7 +1509,7 @@ export default function AccessModelCatalogPage() {
           ) : null}
 
           {isWorkflowPackagesTab ? (
-            <section className="rounded-[28px] border border-emerald-200 bg-[linear-gradient(135deg,_rgba(236,253,245,0.96),_rgba(255,255,255,0.98))] px-5 py-5">
+            <section className="rounded-[28px] border border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.96),rgba(255,255,255,0.98))] px-5 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
@@ -1552,7 +1543,7 @@ export default function AccessModelCatalogPage() {
           ) : null}
 
           {isWorkflowPresetsTab ? (
-            <section className="rounded-[28px] border border-indigo-200 bg-[linear-gradient(135deg,_rgba(238,242,255,0.96),_rgba(255,255,255,0.98))] px-5 py-5">
+            <section className="rounded-[28px] border border-indigo-200 bg-[linear-gradient(135deg,rgba(238,242,255,0.96),rgba(255,255,255,0.98))] px-5 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700">
@@ -1586,7 +1577,7 @@ export default function AccessModelCatalogPage() {
           ) : null}
 
           {isLegacyCatalogTab ? (
-            <section className="rounded-[28px] border border-amber-200 bg-[linear-gradient(135deg,_rgba(255,251,235,0.96),_rgba(255,255,255,0.98))] px-5 py-5">
+            <section className="rounded-[28px] border border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,0.96),rgba(255,255,255,0.98))] px-5 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">

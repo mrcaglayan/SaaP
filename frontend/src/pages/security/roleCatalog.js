@@ -717,6 +717,43 @@ const WORKFLOW_PACKAGE_CATALOG = Object.freeze({
     workflowFamily: "PERIOD_CLOSE",
     sortOrder: 320,
   }),
+  "PKG-PC-REOPEN": Object.freeze({
+    displayName: "Period Close / Reopen",
+    description:
+      "Reopen authority package for reversing a completed period close when corrections are needed. Separate from close authority so reopen can be restricted to senior roles.",
+    category: "core_action",
+    defaultScope: "LEGAL_ENTITY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
+    permissionCodes: freezeList([
+      "org.fiscal_period.read",
+      "gl.book.read",
+      "gl.journal.read",
+      "gl.trial_balance.read",
+      "gl.period.close",
+      "gl.period.reopen",
+    ]),
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 330,
+  }),
+  "PKG-PC-ADMIN": Object.freeze({
+    displayName: "Period Close / Admin",
+    description:
+      "Administrative authority package for period close overrides and operational controls. Combines close, reopen, and admin permissions for power-admin use cases.",
+    category: "core_action",
+    defaultScope: "COUNTRY",
+    allowedScopes: freezeList(["COUNTRY", "GROUP"]),
+    permissionCodes: freezeList([
+      "org.fiscal_period.read",
+      "gl.book.read",
+      "gl.journal.read",
+      "gl.trial_balance.read",
+      "gl.period.close",
+      "gl.period.reopen",
+      "gl.period.admin",
+    ]),
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 340,
+  }),
   "PKG-CON-VIEW": Object.freeze({
     displayName: "Consolidation / View",
     description:
@@ -967,6 +1004,22 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     runtimeRoleCodes: freezeList(["GLPostingAuthority"]),
     legacyWarnings: freezeList([
       "The current runtime role is a broad manual-posting companion, not a full period-close governance family yet.",
+    ]),
+  }),
+  "PKG-PC-REOPEN": Object.freeze({
+    runtimeMappingLabel: "GLPostingAuthority + CountryController compatibility companion",
+    helperBundleCodes: freezeList(["gl.posting", "gl.period_governance"]),
+    runtimeRoleCodes: freezeList(["GLPostingAuthority", "CountryController"]),
+    legacyWarnings: freezeList([
+      "Period reopen was previously guarded by the same gl.period.close permission. The new gl.period.reopen permission separates reopen authority from close authority.",
+    ]),
+  }),
+  "PKG-PC-ADMIN": Object.freeze({
+    runtimeMappingLabel: "CountryController broad compatibility companion",
+    helperBundleCodes: freezeList(["gl.period_governance"]),
+    runtimeRoleCodes: freezeList(["CountryController"]),
+    legacyWarnings: freezeList([
+      "Period admin authority was previously bundled into the broad CountryController role. The new gl.period.admin permission enables clean separation.",
     ]),
   }),
   "PKG-CON-VIEW": Object.freeze({

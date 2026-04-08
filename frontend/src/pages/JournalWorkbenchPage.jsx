@@ -577,6 +577,7 @@ export default function JournalWorkbenchPage() {
   const canReverse = hasPermission("gl.journal.reverse");
   const canReadTrialBalance = hasPermission("gl.trial_balance.read");
   const canClosePeriod = hasPermission("gl.period.close");
+  const canReopenPeriod = hasPermission("gl.period.reopen");
   const canOverrideCashFxRevaluation = hasPermission("cash.fx.revaluation.override");
   const canReadIntercompanyFlags = hasPermission("intercompany.flag.read");
   const canUpsertIntercompanyFlags = hasPermission("intercompany.flag.upsert");
@@ -1232,6 +1233,7 @@ export default function JournalWorkbenchPage() {
         workflowGateBlock: periodCloseWorkflowGate,
         fxGateBlock: periodCloseFxGate,
         canClosePeriod,
+        canReopenPeriod,
         canReadTrialBalance,
         canReadJournals,
         canOverrideCashFxRevaluation,
@@ -1240,6 +1242,7 @@ export default function JournalWorkbenchPage() {
       }),
     [
       canClosePeriod,
+      canReopenPeriod,
       canOverrideCashFxRevaluation,
       canReadJournals,
       canReadTrialBalance,
@@ -3068,8 +3071,8 @@ export default function JournalWorkbenchPage() {
 
   async function onReopenPeriodClose(event) {
     event.preventDefault();
-    if (!canClosePeriod) {
-      setError(l("Missing permission: gl.period.close", "Eksik yetki: gl.period.close"));
+    if (!canReopenPeriod) {
+      setError(l("Missing permission: gl.period.reopen", "Eksik yetki: gl.period.reopen"));
       return;
     }
 
@@ -3812,7 +3815,7 @@ export default function JournalWorkbenchPage() {
 
           <form onSubmit={onReopenPeriodClose} className="grid gap-2 md:grid-cols-2">
             <input value={periodCloseForm.reopenReason} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, reopenReason: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2" placeholder={l("Reopen reason (required)", "Yeniden acma nedeni (zorunlu)")} required />
-            <button type="submit" disabled={saving === "periodReopen" || !canClosePeriod} className="rounded bg-amber-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-2">{saving === "periodReopen" ? l("Reopening...", "Yeniden aciliyor...") : l("Reopen Last Close Run", "Son Kapanis Calismasini Yeniden Ac")}</button>
+            <button type="submit" disabled={saving === "periodReopen" || !canReopenPeriod} className="rounded bg-amber-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-2">{saving === "periodReopen" ? l("Reopening...", "Yeniden aciliyor...") : l("Reopen Last Close Run", "Son Kapanis Calismasini Yeniden Ac")}</button>
           </form>
 
           <div className="overflow-x-auto rounded border border-slate-200">
