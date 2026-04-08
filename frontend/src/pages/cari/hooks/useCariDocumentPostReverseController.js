@@ -189,8 +189,14 @@ export default function useCariDocumentPostReverseController({
   const selectedWorkflowGateState = normalizeText(
     selectedWorkflowGate?.state
   ).toUpperCase();
+  const selectedDocumentStatus = normalizeText(selectedSnapshot?.status).toUpperCase();
+  const isApGovernedDocument = Boolean(
+    selectedSnapshot &&
+      selectedDocumentDirection === "AP" &&
+      selectedDocumentWorkflowGoverned
+  );
   const selectedDocumentReturned =
-    normalizeText(selectedSnapshot?.status).toUpperCase() === "RETURNED";
+    selectedDocumentStatus === "RETURNED";
   const canSubmitSelected = Boolean(
     selectedSnapshot &&
       selectedDocumentDirection === "AP" &&
@@ -223,6 +229,13 @@ export default function useCariDocumentPostReverseController({
       selectedWorkflowGateState === "PENDING" &&
       String(selectedSnapshot?.status || "").trim().toUpperCase() === "SUBMITTED" &&
       selectedWorkflowGate?.workflowInstanceId
+  );
+  const showApprovalActionsSection = Boolean(
+    isApGovernedDocument && selectedWorkflowGateState === "PENDING"
+  );
+  const showSubmitActionsSection = Boolean(
+    isApGovernedDocument &&
+      (selectedDocumentStatus === "DRAFT" || selectedDocumentStatus === "RETURNED")
   );
   const filteredPostOffsetAccountOptions = useMemo(() => {
     const sourceOptions = Array.isArray(postOffsetAccountOptions)
@@ -1229,6 +1242,7 @@ export default function useCariDocumentPostReverseController({
     return buildCariWorkflowActionExplainabilityModel({
       row: selectedSnapshot,
       workflowInstance: workflowInstanceDetail,
+      canReadSelected: canRead,
       canSubmitSelected,
       canApproveSelected,
       canApproveWorkflow,
@@ -1240,13 +1254,186 @@ export default function useCariDocumentPostReverseController({
     canApproveWorkflow,
     canPostSelected,
     canSubmitSelected,
+    canRead,
     l,
     selectedSnapshot,
     workflowInstanceDetail,
   ]);
 
+  const approvalActionDisabledReason = useMemo(() => {
+    if (!showApprovalActionsSection || canApproveSelected) {
+      return "";
+    }
+    if (approvalSaving) {
+      return l(
+        "Approval decision is already being processed.",
+        "Onay karari zaten isleniyor."
+      );
+    }
+    if (!canRead) {
+      return l(
+        "You cannot review this document because you do not have document visibility.",
+        "Belge goruntuleme yetkiniz olmadigi icin bu belgeyi inceleyemezsiniz."
+      );
+    }
+    if (workflowExplanation?.requiredPackageLabel && workflowExplanation?.requiredScopeType) {
+      return l(
+        `You can view this document but cannot approve it because ${workflowExplanation.requiredPackageLabel} is required at ${workflowExplanation.requiredScopeType} scope.`,
+        `Bu belgeyi goruntuleyebilirsiniz ancak onaylayamazsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredPackageLabel} gerekir.`
+      );
+    }
+    if (!canApproveWorkflow) {
+      return l(
+        "You can view this document but cannot approve it from your current access scope.",
+        "Bu belgeyi goruntuleyebilirsiniz ancak mevcut erisim kapsaminizla onaylayamazsiniz."
+      );
+    }
+    return l(
+      "This approval step is not currently actionable for your access context.",
+      "Bu onay adimi mevcut erisim baglaminiz icin su anda uygulanabilir degil."
+    );
+  }, [
+    approvalSaving,
+    canApproveSelected,
+    canApproveWorkflow,
+    canRead,
+    l,
+    showApprovalActionsSection,
+    workflowExplanation?.requiredPackageLabel,
+    workflowExplanation?.requiredScopeType,
+  ]);
+
+  const submitActionDisabledReason = useMemo(() => {
+    if (!showSubmitActionsSection || canSubmitSelected) {
+      return "";
+    }
+    if (submitSaving) {
+      return l(
+        "Submit is already being processed.",
+        "Gonderim zaten isleniyor."
+      );
+    }
+    if (!canRead) {
+      return l(
+        "You cannot submit because this document is not visible to your current access context.",
+        "Bu belge mevcut erisim baglaminizda gorunur olmadigi icin gonderemezsiniz."
+      );
+    }
+    if (!canSubmit) {
+      return l(
+        "You can view this document but cannot submit it because `cari.doc.submit` is missing.",
+        "Bu belgeyi goruntuleyebilirsiniz ancak `cari.doc.submit` eksik oldugu icin gonderemezsiniz."
+      );
+    }
+    if (!selectedWorkflowGate?.assignmentResolved) {
+      return l(
+        "Submit is disabled because no active workflow assignment exists for this document scope.",
+        "Bu belge kapsami icin aktif workflow atamasi olmadigindan gonderim kapali."
+      );
+    }
+    return l(
+      "Only governed AP drafts or returned documents can be submitted.",
+      "Yalnizca yonetime tabi AP taslaklari veya iade edilen belgeler gonderilebilir."
+    );
+  }, [
+    canRead,
+    canSubmit,
+    canSubmitSelected,
+    l,
+    selectedWorkflowGate?.assignmentResolved,
+    showSubmitActionsSection,
+    submitSaving,
+  ]);
+
+  const postActionDisabledReason = useMemo(() => {
+    if (canPostSelected && postingLinesReadyForSubmit) {
+      return "";
+    }
+    if (postSaving) {
+      return l(
+        "Posting is already being processed.",
+        "Kayit islemi zaten isleniyor."
+      );
+    }
+    if (!canRead) {
+      return l(
+        "You cannot post because this document is not visible to your current access context.",
+        "Bu belge mevcut erisim baglaminizda gorunur olmadigi icin kaydedemezsiniz."
+      );
+    }
+    if (isApGovernedDocument && workflowExplanation?.requiredPackageLabel && workflowExplanation?.requiredScopeType) {
+      if (selectedWorkflowGateState === "PENDING") {
+        return l(
+          `You can view this document but cannot post it because it is waiting for ${workflowExplanation.requiredPackageLabel} at ${workflowExplanation.requiredScopeType} scope.`,
+          `Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredPackageLabel} bekleniyor.`
+        );
+      }
+      if (selectedWorkflowGateState === "BLOCKED") {
+        return l(
+          "You cannot post because the document has not been submitted yet.",
+          "Belge henuz gonderilmedigi icin kaydedemezsiniz."
+        );
+      }
+      if (selectedWorkflowGateState === "RETURNED") {
+        return l(
+          "You cannot post while the document is returned for correction. Resubmit it after the correction is complete.",
+          "Belge duzeltme icin iade edildigi surece kaydedemezsiniz. Duzeltme tamamlaninca yeniden gonderin."
+        );
+      }
+      if (selectedWorkflowGateState === "APPROVED" && !canPost) {
+        return l(
+          `You can view this document but cannot post it because ${workflowExplanation.requiredPackageLabel} is required at ${workflowExplanation.requiredScopeType} scope.`,
+          `Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz; cunku ${workflowExplanation.requiredScopeType} kapsaminda ${workflowExplanation.requiredPackageLabel} gerekir.`
+        );
+      }
+    }
+    if (cariPostingNotReady) {
+      return l(
+        `Posting is disabled until CARI setup is completed for legalEntityId=${selectedDocumentLegalEntityId}.`,
+        `legalEntityId=${selectedDocumentLegalEntityId} icin CARI kurulumu tamamlanana kadar kayit kapali.`
+      );
+    }
+    if (!canPost) {
+      return l(
+        "You do not have posting authority for this document.",
+        "Bu belge icin kayit yetkiniz yok."
+      );
+    }
+    if (!postingLinesReadyForSubmit) {
+      return l(
+        "Posting line totals must be valid and match the draft totals before posting.",
+        "Kayit oncesinde kayit satiri toplamlari gecerli olmali ve taslak toplamlariyla eslesmelidir."
+      );
+    }
+    if (selectedDocumentStatus === "POSTED") {
+      return l(
+        "This document is already posted.",
+        "Bu belge zaten kaydedildi."
+      );
+    }
+    return l(
+      "This document cannot be posted in its current status.",
+      "Bu belge mevcut durumunda kaydedilemez."
+    );
+  }, [
+    canPost,
+    canPostSelected,
+    canRead,
+    cariPostingNotReady,
+    isApGovernedDocument,
+    l,
+    postSaving,
+    postingLinesReadyForSubmit,
+    selectedDocumentLegalEntityId,
+    selectedDocumentStatus,
+    selectedWorkflowGateState,
+    workflowExplanation?.requiredPackageLabel,
+    workflowExplanation?.requiredScopeType,
+  ]);
+
   return {
     approvalDecisionNote,
+    approvalActionDisabledReason,
     approvalError,
     approvalMessage,
     approvalSaving,
@@ -1289,14 +1476,19 @@ export default function useCariDocumentPostReverseController({
     reverseMessage,
     reverseSaving,
     selectedCariPostingReadiness,
+    selectedDocumentStatus,
     selectedDocumentAmountBase,
     selectedDocumentAmountTxn,
     selectedDocumentDirection,
     selectedDocumentId,
     selectedDocumentLegalEntityId,
+    showApprovalActionsSection,
+    showSubmitActionsSection,
+    submitActionDisabledReason,
     selectedWorkflowGate,
     selectedWorkflowGateState,
     workflowExplanation,
+    postActionDisabledReason,
     selectedDocumentPostingRulesReady,
     selectedDocumentUsesStoredTaxesForPosting,
     selectedOffsetAccountType,

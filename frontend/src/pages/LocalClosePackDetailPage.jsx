@@ -1,6 +1,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import GovernedRuntimeExplainabilityPanel from "../components/workflows/GovernedRuntimeExplainabilityPanel.jsx";
 import {
   approveLocalClosePack,
   createLocalClosePackComment,
@@ -21,6 +22,10 @@ import {
 import { buildLocalReportLocation } from "../api/glReports.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useI18n } from "../i18n/useI18n.js";
+import {
+  buildLocalCloseActionDisabledReason,
+  buildLocalCloseRuntimeExplainabilityModel,
+} from "./localCloseRuntimeExplainability.js";
 const TAB_KEYS = Object.freeze([
   "overview",
   "checklist",
@@ -323,6 +328,27 @@ function TabButton({ active, onClick, children }) {
     </button>
   );
 }
+
+function ActionButtonWithTooltip({
+  disabled = false,
+  disabledReason = "",
+  children,
+  ...props
+}) {
+  const button = (
+    <button {...props} disabled={disabled}>
+      {children}
+    </button>
+  );
+  if (!disabled || !disabledReason) {
+    return button;
+  }
+  return (
+    <span className="inline-flex" title={disabledReason}>
+      {button}
+    </span>
+  );
+}
 /**
  * First-pass RP07 local close-pack detail shell with reports, evidence,
  * comments, reopen context, and audit in one page.
@@ -426,6 +452,103 @@ export default function LocalClosePackDetailPage() {
   const checklistItems = useMemo(
     () => deriveChecklist(pack, reportReviews, evidenceRows, commentRows, reopenRows, entityReadiness, l),
     [commentRows, entityReadiness, evidenceRows, l, pack, reportReviews, reopenRows]
+  );
+  const runtimeExplainabilityModel = useMemo(
+    () =>
+      buildLocalCloseRuntimeExplainabilityModel({
+        pack,
+        reviewGate,
+        auditRows,
+        canRead,
+        canPrepare,
+        canSubmit,
+        canReview,
+        canApprove,
+        canLock,
+        l,
+      }),
+    [
+      auditRows,
+      canApprove,
+      canLock,
+      canPrepare,
+      canRead,
+      canReview,
+      canSubmit,
+      l,
+      pack,
+      reviewGate,
+    ]
+  );
+  const actionDisabledReasons = useMemo(
+    () => ({
+      submit: buildLocalCloseActionDisabledReason({
+        actionKey: "submit",
+        reviewGate,
+        l,
+      }),
+      return: buildLocalCloseActionDisabledReason({
+        actionKey: "return",
+        reviewGate,
+        l,
+      }),
+      approve: buildLocalCloseActionDisabledReason({
+        actionKey: "approve",
+        reviewGate,
+        l,
+      }),
+      lock: buildLocalCloseActionDisabledReason({
+        actionKey: "lock",
+        reviewGate,
+        l,
+      }),
+    }),
+    [l, reviewGate]
+  );
+  const visibleActionDisabledReasons = useMemo(
+    () =>
+      [
+        canSubmit && !reviewGate?.actionAvailability?.submit?.allowed
+          ? {
+              key: "submit",
+              label: l("Submit", "Gonder"),
+              reason: actionDisabledReasons.submit,
+            }
+          : null,
+        canReview && !reviewGate?.actionAvailability?.return?.allowed
+          ? {
+              key: "return",
+              label: l("Return", "Iade et"),
+              reason: actionDisabledReasons.return,
+            }
+          : null,
+        canApprove && !reviewGate?.actionAvailability?.approve?.allowed
+          ? {
+              key: "approve",
+              label: l("Approve", "Onayla"),
+              reason: actionDisabledReasons.approve,
+            }
+          : null,
+        canLock && !reviewGate?.actionAvailability?.lock?.allowed
+          ? {
+              key: "lock",
+              label: l("Lock", "Kilitle"),
+              reason: actionDisabledReasons.lock,
+            }
+          : null,
+      ].filter((row) => row?.reason),
+    [
+      actionDisabledReasons.approve,
+      actionDisabledReasons.lock,
+      actionDisabledReasons.return,
+      actionDisabledReasons.submit,
+      canApprove,
+      canLock,
+      canReview,
+      canSubmit,
+      l,
+      reviewGate,
+    ]
   );
   async function handleAttachEvidence(event) {
     event.preventDefault();
@@ -702,6 +825,12 @@ export default function LocalClosePackDetailPage() {
               </div>
             </div>
           </div>
+          <GovernedRuntimeExplainabilityPanel
+            className="mt-4"
+            l={l}
+            model={runtimeExplainabilityModel}
+            title={l("Close-stage explainability", "Kapanis asamasi aciklamasi")}
+          />
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -757,46 +886,62 @@ export default function LocalClosePackDetailPage() {
             />
             <div className="mt-3 flex flex-wrap gap-2">
               {canSubmit ? (
-                <button
+                <ActionButtonWithTooltip
                   type="button"
                   onClick={() => void handlePackAction("submit")}
                   disabled={!reviewGate.actionAvailability?.submit?.allowed || Boolean(actionSaving)}
+                  disabledReason={actionDisabledReasons.submit}
                   className="rounded-lg border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   {actionSaving === "submit" ? l("Submitting...", "Gonderiliyor...") : l("Submit", "Gonder")}
-                </button>
+                </ActionButtonWithTooltip>
               ) : null}
               {canReview ? (
-                <button
+                <ActionButtonWithTooltip
                   type="button"
                   onClick={() => void handlePackAction("return")}
                   disabled={!reviewGate.actionAvailability?.return?.allowed || Boolean(actionSaving)}
+                  disabledReason={actionDisabledReasons.return}
                   className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 disabled:opacity-60"
                 >
                   {actionSaving === "return" ? l("Returning...", "Iade ediliyor...") : l("Return", "Iade et")}
-                </button>
+                </ActionButtonWithTooltip>
               ) : null}
               {canApprove ? (
-                <button
+                <ActionButtonWithTooltip
                   type="button"
                   onClick={() => void handlePackAction("approve")}
                   disabled={!reviewGate.actionAvailability?.approve?.allowed || Boolean(actionSaving)}
+                  disabledReason={actionDisabledReasons.approve}
                   className="rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   {actionSaving === "approve" ? l("Approving...", "Onaylaniyor...") : l("Approve", "Onayla")}
-                </button>
+                </ActionButtonWithTooltip>
               ) : null}
               {canLock ? (
-                <button
+                <ActionButtonWithTooltip
                   type="button"
                   onClick={() => void handlePackAction("lock")}
                   disabled={!reviewGate.actionAvailability?.lock?.allowed || Boolean(actionSaving)}
+                  disabledReason={actionDisabledReasons.lock}
                   className="rounded-lg border border-cyan-600 bg-cyan-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   {actionSaving === "lock" ? l("Locking...", "Kilitleniyor...") : l("Lock", "Kilitle")}
-                </button>
+                </ActionButtonWithTooltip>
               ) : null}
             </div>
+            {visibleActionDisabledReasons.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {visibleActionDisabledReasons.map((row) => (
+                  <div
+                    key={row.key}
+                    className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                  >
+                    <span className="font-semibold">{row.label}:</span> {row.reason}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="mt-4 space-y-3">
             {[...(reviewGate.blockers || []), ...(reviewGate.warnings || [])].map((gateRow) => {

@@ -2,6 +2,7 @@ import {
   normalizeText,
   normalizeWorkflowGateState,
 } from "./cariDocumentsPageHelpers.js";
+import { listBusinessRoleCatalogEntries } from "../security/roleCatalog.js";
 
 const POSTED_DOCUMENT_STATUSES = new Set(["POSTED", "PARTIALLY_SETTLED", "SETTLED"]);
 
@@ -39,6 +40,10 @@ function resolveWorkflowAssignmentScopeLabel(gate, l) {
     gate?.assignmentScopeLabel,
     l
   );
+}
+
+function resolveWorkflowRequiredScopeType(gate) {
+  return normalizeText(gate?.currentStageScopeType || gate?.assignmentScopeType).toUpperCase();
 }
 
 function resolveWorkflowNextActionLabel(gate, l) {
@@ -124,6 +129,35 @@ function translateApRequiredPackageLabel(packageCode, l) {
     return l("AP Documents / Post", "AP Belgeleri / Kaydet");
   }
   return "";
+}
+
+function resolveApEligibleBusinessRoleLabels(requiredPackageCode, requiredScopeType) {
+  if (!requiredPackageCode || !requiredScopeType) {
+    return [];
+  }
+  return listBusinessRoleCatalogEntries()
+    .filter((entry) => entry.defaultScope === requiredScopeType)
+    .filter((entry) => {
+      const starterPackageCodes = Array.isArray(entry?.starterPackageCodes)
+        ? entry.starterPackageCodes
+        : [];
+      const optionalPackageCodes = Array.isArray(entry?.optionalPackageCodes)
+        ? entry.optionalPackageCodes
+        : [];
+      return [...starterPackageCodes, ...optionalPackageCodes].includes(requiredPackageCode);
+    })
+    .map((entry) => entry.displayName)
+    .filter(Boolean);
+}
+
+function buildApCurrentGateLine(requiredPackageLabel, requiredScopeType, l) {
+  if (!requiredPackageLabel || !requiredScopeType) {
+    return "";
+  }
+  return l(
+    `Waiting for ${requiredPackageLabel} at ${requiredScopeType} scope.`,
+    `${requiredScopeType} kapsaminda ${requiredPackageLabel} bekleniyor.`
+  );
 }
 
 function resolveWorkflowEligibleActorSummary(
@@ -398,6 +432,11 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
   const requiredPackageCode = resolveApRequiredPackageCode(row, gate, surfaceState);
   const requiredPackageLabel = translateApRequiredPackageLabel(requiredPackageCode, l);
   const requiredScopeLabel = currentScopeLabel || assignmentScopeLabel;
+  const requiredScopeType = resolveWorkflowRequiredScopeType(gate);
+  const eligibleRoleLabels = resolveApEligibleBusinessRoleLabels(
+    requiredPackageCode,
+    requiredScopeType
+  );
   const approvalAuthorityLabel = resolveWorkflowApprovalAuthorityLabel(
     gate,
     currentScopeLabel,
@@ -455,6 +494,13 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
       surfaceState.latestDecisionComment
     );
   }
+  if (requiredPackageLabel && requiredScopeType) {
+    appendWorkflowItem(
+      noteItems,
+      l("Current gate", "Guncel gecit"),
+      buildApCurrentGateLine(requiredPackageLabel, requiredScopeType, l)
+    );
+  }
 
   if (approvalAuthorityLabel && surfaceState.stage !== "DIRECT_POST") {
     appendWorkflowItem(
@@ -491,6 +537,7 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
     currentStepLabel,
     requiredPackageCode,
     requiredPackageLabel,
+    requiredScopeType,
     requiredScopeLabel,
     eligibleActorSummary: resolveWorkflowEligibleActorSummary(
       surfaceState,
@@ -499,7 +546,7 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
       requiredScopeLabel,
       l
     ),
-    eligibleRoleLabels: [],
+    eligibleRoleLabels,
     userCapabilityLines: [],
     historyItems,
     factItems,
@@ -510,6 +557,7 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
 
 function buildCariWorkflowUserCapabilityLines({
   row,
+  canReadSelected,
   canSubmitSelected,
   canApproveSelected,
   canApproveWorkflow,
@@ -521,6 +569,13 @@ function buildCariWorkflowUserCapabilityLines({
   const direction = normalizeText(row?.direction).toUpperCase();
   const isAp = direction === "AP";
   const gateState = normalizeWorkflowGateState(gate?.state);
+  const requiredPackageCode = resolveApRequiredPackageCode(
+    row,
+    gate,
+    buildWorkflowSurfaceState(row, l)
+  );
+  const requiredPackageLabel = translateApRequiredPackageLabel(requiredPackageCode, l);
+  const requiredScopeType = resolveWorkflowRequiredScopeType(gate);
   if (!isAp || !gate?.workflowGoverned) {
     return [];
   }
@@ -533,7 +588,7 @@ function buildCariWorkflowUserCapabilityLines({
         : l(
             "You can submit this document for approval.",
             "Bu belgeyi onaya gonderebilirsiniz."
-          )
+      )
     );
   }
   if (canApproveSelected) {
@@ -543,18 +598,54 @@ function buildCariWorkflowUserCapabilityLines({
         "Bu belgeyi onaylayabilir, iade edebilir veya reddedebilirsiniz."
       )
     );
-  } else if (gateState === "PENDING" && !canApproveWorkflow) {
+  } else if (gateState === "PENDING" && canReadSelected) {
     userCapabilityLines.push(
       l(
-        "You do not have approval authority for this step.",
-        "Bu adim icin onay yetkiniz yok."
+        "You can view this document but cannot approve it.",
+        "Bu belgeyi goruntuleyebilirsiniz ancak onaylayamazsiniz."
       )
     );
+    if (!canApproveWorkflow && requiredPackageLabel && requiredScopeType) {
+      userCapabilityLines.push(
+        l(
+          `This step requires ${requiredPackageLabel} at ${requiredScopeType} scope.`,
+          `Bu adim ${requiredScopeType} kapsaminda ${requiredPackageLabel} gerektirir.`
+        )
+      );
+      userCapabilityLines.push(
+        l(
+          "You do not have approval authority for this step.",
+          "Bu adim icin onay yetkiniz yok."
+        )
+      );
+    } else if (!canApproveWorkflow) {
+      userCapabilityLines.push(
+        l(
+          "You do not have approval authority for this step.",
+          "Bu adim icin onay yetkiniz yok."
+        )
+      );
+    }
   }
   if (canPostSelected) {
     userCapabilityLines.push(
       l("You can post this document.", "Bu belgeyi kaydedebilirsiniz.")
     );
+  } else if (gateState === "APPROVED" && canReadSelected) {
+    userCapabilityLines.push(
+      l(
+        "You can view this document but cannot post it.",
+        "Bu belgeyi goruntuleyebilirsiniz ancak kaydedemezsiniz."
+      )
+    );
+    if (requiredPackageLabel && requiredScopeType) {
+      userCapabilityLines.push(
+        l(
+          `Posting requires ${requiredPackageLabel} at ${requiredScopeType} scope.`,
+          `Kayit icin ${requiredScopeType} kapsaminda ${requiredPackageLabel} gerekir.`
+        )
+      );
+    }
   } else if (gateState === "PENDING") {
     userCapabilityLines.push(
       l(
@@ -579,6 +670,7 @@ function buildCariWorkflowUserCapabilityLines({
 export function buildCariWorkflowActionExplainabilityModel({
   row,
   workflowInstance = null,
+  canReadSelected = false,
   canSubmitSelected = false,
   canApproveSelected = false,
   canApproveWorkflow = false,
@@ -594,6 +686,7 @@ export function buildCariWorkflowActionExplainabilityModel({
     ...buildCariWorkflowDetailCardModel(row, l, { workflowInstance }),
     userCapabilityLines: buildCariWorkflowUserCapabilityLines({
       row,
+      canReadSelected,
       canSubmitSelected,
       canApproveSelected,
       canApproveWorkflow,

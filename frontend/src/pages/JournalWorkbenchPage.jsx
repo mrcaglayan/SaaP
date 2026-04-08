@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Combobox from "../components/Combobox.jsx";
+import GovernedRuntimeExplainabilityPanel from "../components/workflows/GovernedRuntimeExplainabilityPanel.jsx";
 import {
   closePeriod,
   cancelJournalDraft,
@@ -32,6 +33,10 @@ import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.
 import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
 import { useToastMessage } from "../hooks/useToastMessage.js";
 import { useI18n } from "../i18n/useI18n.js";
+import {
+  buildPeriodCloseRunDisabledReason,
+  buildPeriodCloseRuntimeExplainabilityModel,
+} from "./periodCloseRuntimeExplainability.js";
 import {
   formatMoneyText,
   resolveBookBaseCurrencyCode,
@@ -75,6 +80,11 @@ const PERIOD_CLOSE_FX_GATE_REVERSAL_CODE =
 const PERIOD_CLOSE_FX_GATE_CODES = new Set([
   PERIOD_CLOSE_FX_GATE_REQUIRED_CODE,
   PERIOD_CLOSE_FX_GATE_REVERSAL_CODE,
+]);
+const PERIOD_CLOSE_WORKFLOW_GATE_CODES = new Set([
+  "APPROVAL_REQUIRED",
+  "WORKFLOW_NOT_ASSIGNED",
+  "APPROVAL_INSTANCE_REJECTED",
 ]);
 
 function normalizeSourceRefType(value) {
@@ -344,6 +354,39 @@ function normalizePeriodCloseFxGate(error) {
   };
 }
 
+function normalizePeriodCloseWorkflowGate(error) {
+  const data = error?.response?.data || {};
+  const code = normalizeErrorCode(data?.code);
+  const details =
+    data?.details && typeof data.details === "object" && !Array.isArray(data.details)
+      ? data.details
+      : {};
+  if (
+    !PERIOD_CLOSE_WORKFLOW_GATE_CODES.has(code) ||
+    normalizeErrorCode(details?.processType) !== "PERIOD_CLOSE" ||
+    normalizeErrorCode(details?.targetType) !== "PERIOD_CLOSE_RUN"
+  ) {
+    return null;
+  }
+  return {
+    code,
+    message: String(data?.message || error?.message || "Period close is waiting for workflow approval."),
+    details,
+    requestId:
+      data?.requestId ||
+      error?.response?.headers?.["x-request-id"] ||
+      null,
+  };
+}
+
+function upsertPeriodCloseRunRow(rows, nextRow) {
+  if (!nextRow || !toInt(nextRow.id)) {
+    return Array.isArray(rows) ? rows : [];
+  }
+  const existingRows = Array.isArray(rows) ? rows : [];
+  return [nextRow, ...existingRows.filter((row) => toInt(row?.id) !== toInt(nextRow.id))];
+}
+
 function isIsoDateOnly(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
 }
@@ -370,6 +413,27 @@ function formatPeriodLabel(row) {
     return "";
   }
   return `FY${row.fiscal_year} P${String(row.period_no).padStart(2, "0")} - ${row.period_name}`;
+}
+
+function ActionButtonWithTooltip({
+  disabled = false,
+  disabledReason = "",
+  children,
+  ...props
+}) {
+  const button = (
+    <button {...props} disabled={disabled}>
+      {children}
+    </button>
+  );
+  if (!disabled || !disabledReason) {
+    return button;
+  }
+  return (
+    <span className="inline-flex" title={disabledReason}>
+      {button}
+    </span>
+  );
 }
 
 function isDraftStatus(status) {
@@ -582,6 +646,7 @@ export default function JournalWorkbenchPage() {
   });
   const [periodCloseRuns, setPeriodCloseRuns] = useState([]);
   const [periodCloseFxGate, setPeriodCloseFxGate] = useState(null);
+  const [periodCloseWorkflowGate, setPeriodCloseWorkflowGate] = useState(null);
 
   const [historyFilters, setHistoryFilters, resetHistoryFilters] = usePersistedFilters(
     JOURNAL_HISTORY_FILTERS_STORAGE_SCOPE,
@@ -1119,6 +1184,80 @@ export default function JournalWorkbenchPage() {
       },
     ];
   }, [l, periodCloseFxGate]);
+  const selectedPeriodCloseBook = useMemo(
+    () => books.find((row) => toInt(row?.id) === toInt(periodForm.bookId)) || null,
+    [books, periodForm.bookId]
+  );
+  const selectedPeriodClosePeriod = useMemo(
+    () => periods.find((row) => toInt(row?.id) === toInt(periodForm.periodId)) || null,
+    [periodForm.periodId, periods]
+  );
+  const selectedPeriodCloseBookLabel = useMemo(() => {
+    if (!selectedPeriodCloseBook) {
+      return "";
+    }
+    return [selectedPeriodCloseBook.code, selectedPeriodCloseBook.name]
+      .filter(Boolean)
+      .join(" - ");
+  }, [selectedPeriodCloseBook]);
+  const selectedPeriodClosePeriodLabel = useMemo(
+    () => formatPeriodLabel(selectedPeriodClosePeriod),
+    [selectedPeriodClosePeriod]
+  );
+  const latestPeriodCloseRun = useMemo(() => {
+    if (periodCloseRuns.length > 0) {
+      return periodCloseRuns[0] || null;
+    }
+    return periodCloseWorkflowGate?.details?.run || null;
+  }, [periodCloseRuns, periodCloseWorkflowGate]);
+  const periodCloseRunDisabledReason = useMemo(
+    () =>
+      buildPeriodCloseRunDisabledReason({
+        canClosePeriod,
+        bookId: periodForm.bookId,
+        fiscalPeriodId: periodForm.periodId,
+        saving,
+        l,
+      }),
+    [canClosePeriod, l, periodForm.bookId, periodForm.periodId, saving]
+  );
+  const periodCloseExplainabilityModel = useMemo(
+    () =>
+      buildPeriodCloseRuntimeExplainabilityModel({
+        selectedBookLabel: selectedPeriodCloseBookLabel,
+        selectedPeriodLabel: selectedPeriodClosePeriodLabel,
+        requestedCloseStatus: periodCloseForm.closeStatus,
+        latestRun: latestPeriodCloseRun,
+        periodCloseRuns,
+        workflowGateBlock: periodCloseWorkflowGate,
+        fxGateBlock: periodCloseFxGate,
+        canClosePeriod,
+        canReadTrialBalance,
+        canReadJournals,
+        canOverrideCashFxRevaluation,
+        closeButtonDisabledReason: periodCloseRunDisabledReason,
+        l,
+      }),
+    [
+      canClosePeriod,
+      canOverrideCashFxRevaluation,
+      canReadJournals,
+      canReadTrialBalance,
+      l,
+      latestPeriodCloseRun,
+      periodCloseForm.closeStatus,
+      periodCloseFxGate,
+      periodCloseRunDisabledReason,
+      periodCloseRuns,
+      periodCloseWorkflowGate,
+      selectedPeriodCloseBookLabel,
+      selectedPeriodClosePeriodLabel,
+    ]
+  );
+  useEffect(() => {
+    setPeriodCloseFxGate(null);
+    setPeriodCloseWorkflowGate(null);
+  }, [periodForm.bookId, periodForm.periodId]);
   const selectedEntityIntercompanyEnabled = Boolean(
     selectedLegalEntity?.is_intercompany_enabled ?? true
   );
@@ -2872,6 +3011,7 @@ export default function JournalWorkbenchPage() {
     setError("");
     setMessage("");
     setPeriodCloseFxGate(null);
+    setPeriodCloseWorkflowGate(null);
     try {
       const res = await runPeriodClose(bookId, periodId, {
         closeStatus: periodCloseForm.closeStatus,
@@ -2904,10 +3044,20 @@ export default function JournalWorkbenchPage() {
       const fxGate = normalizePeriodCloseFxGate(err);
       if (fxGate) {
         setPeriodCloseFxGate(fxGate);
+        setPeriodCloseWorkflowGate(null);
+        setError("");
+        return;
+      }
+      const workflowGate = normalizePeriodCloseWorkflowGate(err);
+      if (workflowGate) {
+        setPeriodCloseFxGate(null);
+        setPeriodCloseWorkflowGate(workflowGate);
+        setPeriodCloseRuns((prev) => upsertPeriodCloseRunRow(prev, workflowGate?.details?.run));
         setError("");
         return;
       }
       setPeriodCloseFxGate(null);
+      setPeriodCloseWorkflowGate(null);
       setError(
         err?.response?.data?.message || l("Failed to execute period close run.", "Donem kapanis calismasi baslatilamadi.")
       );
@@ -2939,6 +3089,8 @@ export default function JournalWorkbenchPage() {
     setSaving("periodReopen");
     setError("");
     setMessage("");
+    setPeriodCloseFxGate(null);
+    setPeriodCloseWorkflowGate(null);
     try {
       const res = await reopenPeriodClose(bookId, periodId, { reason });
       const reversalIds = Array.isArray(res?.reversalJournalEntryIds)
@@ -3498,6 +3650,15 @@ export default function JournalWorkbenchPage() {
             <button type="submit" disabled={saving === "periodStatus" || !canClosePeriod} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-2">{saving === "periodStatus" ? l("Saving...", "Kaydediliyor...") : l("Update Status", "Durumu Guncelle")}</button>
           </form>
 
+          {periodCloseExplainabilityModel ? (
+            <GovernedRuntimeExplainabilityPanel
+              className="mb-4"
+              l={l}
+              model={periodCloseExplainabilityModel}
+              title={l("Period-close explainability", "Donem kapanisi aciklamasi")}
+            />
+          ) : null}
+
           {periodCloseFxGate ? (
             <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
               <div className="font-semibold">
@@ -3632,9 +3793,21 @@ export default function JournalWorkbenchPage() {
               </>
             ) : null}
             <div className="flex flex-wrap items-center gap-2 md:col-span-2">
-              <button type="submit" disabled={saving === "periodCloseRun" || !canClosePeriod} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "periodCloseRun" ? l("Running...", "Calisiyor...") : l("Run Auto Close", "Otomatik Kapanisi Calistir")}</button>
+              <ActionButtonWithTooltip
+                type="submit"
+                disabled={Boolean(periodCloseRunDisabledReason)}
+                disabledReason={periodCloseRunDisabledReason}
+                className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving === "periodCloseRun" ? l("Running...", "Calisiyor...") : l("Run Auto Close", "Otomatik Kapanisi Calistir")}
+              </ActionButtonWithTooltip>
               <button type="button" onClick={onLoadPeriodCloseRuns} disabled={saving === "periodCloseRuns" || !canClosePeriod} className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60">{saving === "periodCloseRuns" ? l("Loading...", "Yukleniyor...") : l("Load Close Runs", "Kapanis Calismalarini Yukle")}</button>
             </div>
+            {periodCloseRunDisabledReason ? (
+              <div className="md:col-span-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {periodCloseRunDisabledReason}
+              </div>
+            ) : null}
           </form>
 
           <form onSubmit={onReopenPeriodClose} className="grid gap-2 md:grid-cols-2">

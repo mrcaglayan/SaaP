@@ -11,6 +11,28 @@ import {
   normalizePositiveIntText,
 } from "../cariDocumentsPageHelpers.js";
 import useCariDocumentPostReverseController from "../hooks/useCariDocumentPostReverseController.js";
+
+function ActionButtonWithTooltip({
+  disabled = false,
+  disabledReason = "",
+  children,
+  ...props
+}) {
+  const button = (
+    <button {...props} disabled={disabled}>
+      {children}
+    </button>
+  );
+  if (!disabled || !disabledReason) {
+    return button;
+  }
+  return (
+    <span className="inline-flex" title={disabledReason}>
+      {button}
+    </span>
+  );
+}
+
 export default function CariDocumentPostReversePanel({
   selectedSnapshot = null,
   selectedDetailForPosting = null,
@@ -37,6 +59,7 @@ export default function CariDocumentPostReversePanel({
   });
   const {
     approvalDecisionNote,
+    approvalActionDisabledReason,
     approvalError,
     approvalMessage,
     approvalSaving,
@@ -68,10 +91,12 @@ export default function CariDocumentPostReversePanel({
     postOffsetAccountsLoading,
     postSaving,
     postTransferGuidance,
+    postActionDisabledReason,
     postingLinesReadyForSubmit,
     submitError,
     submitMessage,
     submitSaving,
+    submitActionDisabledReason,
     reverseError,
     reverseForm,
     reverseInventoryBlockSummary,
@@ -84,6 +109,8 @@ export default function CariDocumentPostReversePanel({
     selectedDocumentDirection,
     selectedDocumentId,
     selectedDocumentLegalEntityId,
+    showApprovalActionsSection,
+    showSubmitActionsSection,
     workflowExplanation,
     setApprovalDecisionNote,
     selectedDocumentPostingRulesReady,
@@ -107,7 +134,7 @@ export default function CariDocumentPostReversePanel({
           title={l("Workflow explainability", "Workflow aciklamasi")}
         />
       ) : null}
-      {canApproveSelected || approvalError || approvalMessage ? (
+      {showApprovalActionsSection || approvalError || approvalMessage ? (
         <div className="mt-3 rounded-md border border-violet-200 bg-violet-50 px-3 py-3 text-sm text-violet-950">
           <p className="font-semibold">
             {l("Workflow Approval Actions", "Workflow Onay Islemleri")}
@@ -131,40 +158,47 @@ export default function CariDocumentPostReversePanel({
               value={approvalDecisionNote}
               onChange={(event) => setApprovalDecisionNote(event.target.value)}
               disabled={!canApproveSelected || approvalSaving}
+              title={!canApproveSelected ? approvalActionDisabledReason : undefined}
             />
           </label>
           <div className="mt-2 flex flex-wrap gap-2">
-            <button
+            <ActionButtonWithTooltip
               type="button"
               className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               onClick={handleApproveDocument}
               disabled={!canApproveSelected || approvalSaving}
+              disabledReason={approvalActionDisabledReason}
             >
               {approvalSaving
                 ? l("Processing...", "Isleniyor...")
                 : l("Approve", "Onayla")}
-            </button>
-            <button
+            </ActionButtonWithTooltip>
+            <ActionButtonWithTooltip
               type="button"
               className="rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               onClick={handleReturnDocument}
               disabled={!canApproveSelected || approvalSaving}
+              disabledReason={approvalActionDisabledReason}
             >
               {approvalSaving
                 ? l("Processing...", "Isleniyor...")
                 : l("Return for Correction", "Duzeltme Icin Iade")}
-            </button>
-            <button
+            </ActionButtonWithTooltip>
+            <ActionButtonWithTooltip
               type="button"
               className="rounded-md bg-rose-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               onClick={handleRejectDocument}
               disabled={!canApproveSelected || approvalSaving}
+              disabledReason={approvalActionDisabledReason}
             >
               {approvalSaving
                 ? l("Processing...", "Isleniyor...")
                 : l("Reject", "Reddet")}
-            </button>
+            </ActionButtonWithTooltip>
           </div>
+          {!canApproveSelected && approvalActionDisabledReason ? (
+            <p className="mt-2 text-xs text-violet-900">{approvalActionDisabledReason}</p>
+          ) : null}
           {approvalError ? (
             <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
               {approvalError}
@@ -177,7 +211,7 @@ export default function CariDocumentPostReversePanel({
           ) : null}
         </div>
       ) : null}
-      {canSubmitSelected || submitError || submitMessage ? (
+      {showSubmitActionsSection || submitError || submitMessage ? (
         <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-3 text-sm text-cyan-950">
           <p className="font-semibold">
             {returnedCorrectionMode
@@ -195,18 +229,22 @@ export default function CariDocumentPostReversePanel({
                   "Yonetime tabi AP belgeleri workflow onayi ve kayit oncesinde SUBMITTED durumuna gecer."
                 )}
           </p>
-          <button
+          <ActionButtonWithTooltip
             type="button"
             className="mt-3 rounded-md bg-cyan-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             onClick={handleSubmitDocument}
             disabled={!canSubmitSelected || submitSaving}
+            disabledReason={submitActionDisabledReason}
           >
             {submitSaving
               ? l("Submitting...", "Gonderiliyor...")
               : returnedCorrectionMode
                 ? l("Resubmit Document", "Belgeyi Yeniden Gonder")
                 : l("Submit Document", "Belgeyi Gonder")}
-          </button>
+          </ActionButtonWithTooltip>
+          {!canSubmitSelected && submitActionDisabledReason ? (
+            <p className="mt-2 text-xs text-cyan-900">{submitActionDisabledReason}</p>
+          ) : null}
           {submitError ? (
             <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
               {submitError}
@@ -601,14 +639,20 @@ export default function CariDocumentPostReversePanel({
           )}
         </p>
       ) : null}
-      <button
+      <ActionButtonWithTooltip
         type="button"
         className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
         onClick={handlePostDraft}
         disabled={!canPostSelected || postSaving || !postingLinesReadyForSubmit}
+        disabledReason={postActionDisabledReason}
       >
         {postSaving ? l("Posting...", "Kaydediliyor...") : l("Post Draft", "Taslagi Kaydet")}
-      </button>
+      </ActionButtonWithTooltip>
+      {!canPostSelected || !postingLinesReadyForSubmit ? (
+        postActionDisabledReason ? (
+          <p className="mt-2 text-xs text-slate-600">{postActionDisabledReason}</p>
+        ) : null
+      ) : null}
       {postError ? (
         <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {postError}

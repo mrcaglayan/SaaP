@@ -106,9 +106,14 @@ async function main() {
       findItemValue(pendingDetailModel?.factItems, "Current step") === "Step 1 of 2" &&
       pendingDetailModel?.currentStepLabel === "Step 1 of 2" &&
       pendingDetailModel?.requiredPackageLabel === "AP Documents / Approve" &&
+      pendingDetailModel?.requiredScopeType === "LEGAL_ENTITY" &&
       pendingDetailModel?.requiredScopeLabel === "Legal Entity" &&
       pendingDetailModel?.eligibleActorSummary ===
         "Users assigned AP Documents / Approve at Legal Entity scope can approve the current step." &&
+      pendingDetailModel?.eligibleRoleLabels?.includes("Entity Accountant") &&
+      pendingDetailModel?.eligibleRoleLabels?.includes("Entity Manager") &&
+      findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
+        "Waiting for AP Documents / Approve at LEGAL_ENTITY scope." &&
       findItemValue(pendingDetailModel?.factItems, "Active scope") === "Legal Entity" &&
       findItemValue(pendingDetailModel?.factItems, "Next action") === "Country approval" &&
       findItemValue(pendingDetailModel?.technicalItems, "Required authority") ===
@@ -156,6 +161,7 @@ async function main() {
         },
       ],
     },
+    canReadSelected: true,
     canSubmitSelected: false,
     canApproveSelected: false,
     canApproveWorkflow: false,
