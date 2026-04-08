@@ -336,6 +336,7 @@
     "test:security:ui4b-ap-runtime-explainability": "node scripts/test-security-ui4b-ap-runtime-explainability.js",
     "test:security:ui4c-local-close-runtime-explainability": "node scripts/test-security-ui4c-local-close-runtime-explainability.js",
     "test:security:ui4d-period-close-runtime-explainability": "node scripts/test-security-ui4d-period-close-runtime-explainability.js",
+    "test:security:ui4e-consolidation-runtime-explainability": "node scripts/test-security-ui4e-consolidation-runtime-explainability.js",
     "test:module-readiness": "node scripts/test-module-readiness.js",
     "test:onboarding:legal-entity-activation": "node scripts/test-legal-entity-activation-readiness.js",
     "test:onboarding:bootstrap-optional-advanced-setup": "node scripts/test-onboarding-pr56-bootstrap-optional-advanced-setup.js",

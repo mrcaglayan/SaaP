@@ -20,8 +20,13 @@ import {
 } from "../api/consolidationAdmin.js";
 import { buildLocalReportLocation } from "../api/glReports.js";
 import { useAuth } from "../auth/useAuth.js";
+import GovernedRuntimeExplainabilityPanel from "../components/workflows/GovernedRuntimeExplainabilityPanel.jsx";
 import MoneyText from "../components/MoneyText.jsx";
 import { useI18n } from "../i18n/useI18n.js";
+import {
+  buildConsolidationFinalizeDisabledReason,
+  buildConsolidationRuntimeExplainabilityModel,
+} from "./consolidationRuntimeExplainability.js";
 import { exportRowsAsCsv } from "../utils/csvExport.js";
 import { formatMoneyText } from "../utils/money.js";
 import { createReportFingerprint } from "../utils/reportFingerprint.js";
@@ -140,6 +145,56 @@ function getReviewGateTone(level) {
   return "border-amber-200 bg-amber-50 text-amber-900";
 }
 
+function ActionButtonWithTooltip({
+  disabled = false,
+  disabledReason = "",
+  children,
+  ...props
+}) {
+  const button = (
+    <button {...props} disabled={disabled}>
+      {children}
+    </button>
+  );
+  if (!disabled || !disabledReason) {
+    return button;
+  }
+  return (
+    <span className="inline-flex" title={disabledReason}>
+      {button}
+    </span>
+  );
+}
+
+function buildDraftPostingDisabledReason({
+  itemType = "adjustment",
+  canPost = false,
+  saving = "",
+  rowId = "",
+  l,
+}) {
+  const normalizedItemType = String(itemType || "").trim().toLowerCase();
+  const savingKey =
+    normalizedItemType === "elimination"
+      ? `postElimination:${rowId}`
+      : `postAdjustment:${rowId}`;
+  if (saving === savingKey) {
+    return l("Posting is already in progress.", "Posting zaten isleniyor.");
+  }
+  if (canPost) {
+    return "";
+  }
+  return normalizedItemType === "elimination"
+    ? l(
+        "You do not have Consolidation / Post Eliminations authority at Group scope.",
+        "Grup kapsaminda Konsolidasyon / Eliminasyonlari Post Et yetkiniz yok."
+      )
+    : l(
+        "You do not have Consolidation / Post Adjustments authority at Group scope.",
+        "Grup kapsaminda Konsolidasyon / Duzeltmeleri Post Et yetkiniz yok."
+      );
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -214,7 +269,7 @@ function LocalBaseSupportValue({ amount, currencyContext, t }) {
  */
 export default function ConsolidationReportsPage() {
   const { hasPermission } = useAuth();
-  const { t } = useI18n();
+  const { t, l } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const canReadRun = hasPermission("consolidation.run.read");
   const canReadBalanceSheet = hasPermission(
@@ -234,6 +289,8 @@ export default function ConsolidationReportsPage() {
   const canReadBookLookups = hasPermission("gl.book.read");
   const canReadLocalSummary = hasPermission("gl.report.local.read");
   const canReadLocalStatements = hasPermission("gl.report.statement.read");
+  const canCreateRun = hasPermission("consolidation.run.create");
+  const canExecuteRun = hasPermission("consolidation.run.execute");
   const canPostAdjustment = hasPermission("consolidation.adjustment.post");
   const canPostElimination = hasPermission("consolidation.elimination.post");
   const canFinalizeRuns = hasPermission("consolidation.run.finalize");
@@ -329,6 +386,47 @@ export default function ConsolidationReportsPage() {
   );
   const selectedRunFiscalPeriodId = toInt(
     getRunField(selectedRun, "fiscalPeriodId", "fiscal_period_id"),
+  );
+  const finalizeActionDisabledReason = useMemo(
+    () =>
+      buildConsolidationFinalizeDisabledReason({
+        selectedRun,
+        reviewGateLoading: reviewGate.loading,
+        reviewGateData: reviewGate.data,
+        canFinalizeRuns,
+        saving,
+        l,
+      }),
+    [selectedRun, reviewGate.loading, reviewGate.data, canFinalizeRuns, saving, l],
+  );
+  const consolidationExplainabilityModel = useMemo(
+    () =>
+      buildConsolidationRuntimeExplainabilityModel({
+        selectedRun,
+        reviewGateData: reviewGate.data,
+        reviewGateLoading: reviewGate.loading,
+        reviewGateError: reviewGate.error,
+        canCreateRun,
+        canExecuteRun,
+        canPostAdjustment,
+        canPostElimination,
+        canFinalizeRuns,
+        finalizeDisabledReason: finalizeActionDisabledReason,
+        l,
+      }),
+    [
+      selectedRun,
+      reviewGate.data,
+      reviewGate.loading,
+      reviewGate.error,
+      canCreateRun,
+      canExecuteRun,
+      canPostAdjustment,
+      canPostElimination,
+      canFinalizeRuns,
+      finalizeActionDisabledReason,
+      l,
+    ],
   );
   const balanceSheetRows = useMemo(
     () =>
@@ -1761,6 +1859,12 @@ export default function ConsolidationReportsPage() {
                 status: selectedRun.status || "-",
               })}
             </div>
+            <GovernedRuntimeExplainabilityPanel
+              className="mt-2"
+              l={l}
+              model={consolidationExplainabilityModel}
+              title={l("Consolidation explainability", "Konsolidasyon aciklamasi")}
+            />
             <div className="rounded border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-900">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -1784,28 +1888,23 @@ export default function ConsolidationReportsPage() {
                   ) : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {canFinalizeRuns ? (
-                    <button
-                      type="button"
-                      onClick={() => void onFinalizeRun()}
-                      disabled={
-                        saving === "finalize" ||
-                        !reviewGate.data?.canFinalize ||
-                        !selectedRun
-                      }
-                      className="rounded border border-emerald-300 bg-white px-2 py-1 font-semibold text-emerald-900 disabled:opacity-60"
-                    >
-                      {saving === "finalize"
-                        ? t(
-                            "consolidationReports.finalize.loading",
-                            "Finalizing...",
-                          )
-                        : t(
-                            "consolidationReports.finalize.button",
-                            "Finalize run",
-                          )}
-                    </button>
-                  ) : null}
+                  <ActionButtonWithTooltip
+                    type="button"
+                    onClick={() => void onFinalizeRun()}
+                    disabled={Boolean(finalizeActionDisabledReason)}
+                    disabledReason={finalizeActionDisabledReason}
+                    className="rounded border border-emerald-300 bg-white px-2 py-1 font-semibold text-emerald-900 disabled:opacity-60"
+                  >
+                    {saving === "finalize"
+                      ? t(
+                          "consolidationReports.finalize.loading",
+                          "Finalizing...",
+                        )
+                      : t(
+                          "consolidationReports.finalize.button",
+                          "Finalize run",
+                        )}
+                  </ActionButtonWithTooltip>
                   <button
                     type="button"
                     onClick={() => setReviewGateVersion((prev) => prev + 1)}
@@ -3004,19 +3103,26 @@ export default function ConsolidationReportsPage() {
                     </td>
                     <td className="px-2 py-2">
                       {row.status === "DRAFT" ? (
-                        <button
+                        <ActionButtonWithTooltip
                           type="button"
                           onClick={() => onPostAdjustment(row.id)}
                           disabled={
                             saving === `postAdjustment:${row.id}` ||
                             !canPostAdjustment
                           }
+                          disabledReason={buildDraftPostingDisabledReason({
+                            itemType: "adjustment",
+                            canPost: canPostAdjustment,
+                            saving,
+                            rowId: row.id,
+                            l,
+                          })}
                           className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-60"
                         >
                           {saving === `postAdjustment:${row.id}`
                             ? t("consolidationReports.tables.posting")
                             : t("consolidationReports.tables.post")}
-                        </button>
+                        </ActionButtonWithTooltip>
                       ) : (
                         <span className="text-slate-500">
                           {t("consolidationReports.tables.none")}
@@ -3071,19 +3177,26 @@ export default function ConsolidationReportsPage() {
                     <td className="px-2 py-2">{Number(row.lineCount || 0)}</td>
                     <td className="px-2 py-2">
                       {row.status === "DRAFT" ? (
-                        <button
+                        <ActionButtonWithTooltip
                           type="button"
                           onClick={() => onPostElimination(row.id)}
                           disabled={
                             saving === `postElimination:${row.id}` ||
                             !canPostElimination
                           }
+                          disabledReason={buildDraftPostingDisabledReason({
+                            itemType: "elimination",
+                            canPost: canPostElimination,
+                            saving,
+                            rowId: row.id,
+                            l,
+                          })}
                           className="rounded bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-60"
                         >
                           {saving === `postElimination:${row.id}`
                             ? t("consolidationReports.tables.posting")
                             : t("consolidationReports.tables.post")}
-                        </button>
+                        </ActionButtonWithTooltip>
                       ) : (
                         <span className="text-slate-500">
                           {t("consolidationReports.tables.none")}

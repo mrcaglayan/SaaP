@@ -717,7 +717,7 @@ export const sidebarItems = [
         implemented: true,
       },
       {
-        label: "Erisim Hata Ayiklayici",
+        label: "Erisim Tanilari",
         to: "/app/ayarlar/rbac/access-debugger",
         requiredPermissions: ACCESS_DEBUGGER_PAGE_PERMISSIONS,
         implemented: true,

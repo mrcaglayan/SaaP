@@ -1024,8 +1024,8 @@ Support future period-close-specific reopen/admin packages if introduced later.
 19. UI-4B done
 20. UI-4C done
 21. UI-4D done
-22. UI-4E
-23. UI-5A
+22. UI-4E done
+23. UI-5A done
 24. UI-5B
 25. UI-5C
 26. UI-5D

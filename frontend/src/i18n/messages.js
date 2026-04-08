@@ -1355,12 +1355,12 @@ export const messages = {
           "Bu islem icin yetki, kapsam, gorunurluk ve diger yonetisim katmanlarini inceleyin.",
       },
       page: {
-        title: "Erisim Hata Ayiklayici",
+        title: "Erisim Tanilari",
         subtitle:
-          "Bir kullanicinin yetki zincirini katman katman inceleyin; capability, scope, gorunurluk, SoD ve workflow etkilerini ayni yerde gorun.",
+          "Bir kullanicinin secili workflow ailesi ve hedef kapsamdaki etkili yetkisini aciklayin; is-rolu etiketlerini, workflow paketlerini, kapsam uyumunu ve alttaki teknik erisim zincirini ayni yerde gorun.",
         noteTitle: "Yonetici gorunumu",
         noteBody:
-          "Bu panel diger kullanicilarin erisim zincirini aciklar. Diger kullanicilar icin kontrol backend tarafinda yalnizca SecurityAdmin kapsaminda acilir.",
+          "Bu panel diger kullanicilarin etkili yetki tanisini ve teknik erisim zincirini aciklar. Diger kullanicilar icin kontrol backend tarafinda yalnizca SecurityAdmin kapsaminda acilir.",
       },
       form: {
         userPlaceholder: "Kullanici secin",
@@ -3769,12 +3769,12 @@ export const messages = {
           "Review permission, scope, visibility, and governance layers for this action.",
       },
       page: {
-        title: "Access Debugger",
+        title: "Access Diagnostics",
         subtitle:
-          "Inspect one user's access chain across capability, scope, visibility, SoD, workflow, and field masking from one place.",
+          "Explain one user's effective authority at the selected workflow family and target scope, then drill into the lower-level access chain from the same page.",
         noteTitle: "Admin view",
         noteBody:
-          "This panel can inspect another user's access chain. Cross-user checks are still enforced by the backend SecurityAdmin gate.",
+          "This panel can inspect another user's effective authority and lower-level access chain. Cross-user checks are still enforced by the backend SecurityAdmin gate.",
       },
       form: {
         userPlaceholder: "Select user",
