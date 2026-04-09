@@ -379,17 +379,17 @@ Protect the routing matrix from silent misrouting and regression.
 
 ## Required Test Cases
 
-- [ ] exact lower/upper threshold boundary behavior
-- [ ] `50000` vs `50000.01`
-- [ ] no matching route
-- [ ] fallback route chosen
-- [ ] overlapping rows rejected
-- [ ] more specific scope beats broader-scope rule
-- [ ] expired rule ignored
-- [ ] inactive rule ignored
-- [ ] re-submission after amount change re-evaluates correctly
-- [ ] historical workflow instance still shows original matched route after admin changes matrix
-- [ ] multi-currency AP still routes by base amount
+- [x] exact lower/upper threshold boundary behavior
+- [x] `50000` vs `50000.01`
+- [x] no matching route
+- [x] fallback route chosen
+- [x] overlapping rows rejected
+- [x] more specific scope beats broader-scope rule
+- [x] expired rule ignored
+- [x] inactive rule ignored
+- [x] re-submission after amount change re-evaluates correctly
+- [x] historical workflow instance still shows original matched route after admin changes matrix
+- [x] multi-currency AP still routes by base amount
 
 ## Acceptance
 

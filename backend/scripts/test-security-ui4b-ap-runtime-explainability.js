@@ -50,6 +50,19 @@ async function main() {
         assignmentResolved: true,
         assignmentScopeType: "LEGAL_ENTITY",
         assignmentScopeLabel: "Legal Entity",
+        workflowDefinitionCode: "WF-AP-ENTITY-APPROVE",
+        workflowDefinitionName: "Entity Approval Route",
+        routingRuleSnapshot: {
+          scope_type: "LEGAL_ENTITY",
+          min_amount: 0,
+          max_amount: 50000,
+          workflow_definition_code: "WF-AP-ENTITY-APPROVE",
+          workflow_definition_name: "Entity Approval Route",
+        },
+        evaluatedAmount: 42000,
+        evaluatedAmountBasis: "BASE_AMOUNT",
+        routingMatchType: "BAND",
+        routingMatchedScopeLayer: "LEGAL_ENTITY",
         currentStepNo: 1,
         totalSteps: 2,
         currentStageScopeType: "LEGAL_ENTITY",
@@ -57,17 +70,26 @@ async function main() {
         effectiveApprovalPermissionCode: "approvals.requests.approve",
         effectiveApprovalPermissionLabel: "AP approval at Legal Entity scope",
         waitingForSummary: "Waiting for Legal Entity approval",
+        blockingReasonDetail: "Approval is pending at Legal Entity scope",
         workflowInstanceStatus: "PENDING",
       },
     },
     l
   );
   assert(
-    findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
-      "Waiting for AP Documents / Approve at LEGAL_ENTITY scope." &&
+    pendingDetailModel?.factSectionTitle === "Routing context" &&
+      findItemValue(pendingDetailModel?.factItems, "Matched route") ===
+        "WF-AP-ENTITY-APPROVE - Entity Approval Route" &&
+      String(findItemValue(pendingDetailModel?.factItems, "Matched rule")).includes(
+        "Legal Entity"
+      ) &&
+      findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
+        "Waiting for AP Documents / Approve at Legal Entity scope." &&
       pendingDetailModel?.eligibleRoleLabels?.includes("Entity Accountant") &&
-      pendingDetailModel?.eligibleRoleLabels?.includes("Entity Manager"),
-    "AP detail explainability should surface package+scope wait text and inferred eligible roles for in-scope approval"
+      pendingDetailModel?.eligibleRoleLabels?.includes("Entity Manager") &&
+      findItemValue(pendingDetailModel?.technicalItems, "Routing match type") ===
+        "Amount band",
+    "AP detail explainability should surface the AMX06 route facts and in-scope approval gate"
   );
 
   const approvedActionModel = buildCariWorkflowActionExplainabilityModel({
@@ -80,6 +102,18 @@ async function main() {
         assignmentResolved: true,
         assignmentScopeType: "LEGAL_ENTITY",
         assignmentScopeLabel: "Legal Entity",
+        workflowDefinitionCode: "WF-AP-ENTITY-POST",
+        workflowDefinitionName: "Entity Post Route",
+        routingRuleSnapshot: {
+          scope_type: "LEGAL_ENTITY",
+          is_fallback: true,
+          workflow_definition_code: "WF-AP-ENTITY-POST",
+          workflow_definition_name: "Entity Post Route",
+        },
+        evaluatedAmount: 120000,
+        evaluatedAmountBasis: "BASE_AMOUNT",
+        routingUsedFallback: true,
+        routingMatchType: "FALLBACK",
         currentStageScopeType: "LEGAL_ENTITY",
         currentStageScopeLabel: "Legal Entity",
         waitingForSummary: "Ready for Legal Entity posting",
@@ -95,15 +129,22 @@ async function main() {
     l,
   });
   assert(
-    findItemValue(approvedActionModel?.noteItems, "Current gate") ===
-      "Waiting for AP Documents / Post at LEGAL_ENTITY scope." &&
+    findItemValue(approvedActionModel?.factItems, "Matched route") ===
+      "WF-AP-ENTITY-POST - Entity Post Route" &&
+      findItemValue(approvedActionModel?.factItems, "Matched rule") ===
+        "Legal Entity fallback route" &&
+      findItemValue(approvedActionModel?.noteItems, "Current gate") ===
+        "Waiting for AP Documents / Post at Legal Entity scope." &&
+      findItemValue(approvedActionModel?.noteItems, "Fallback route used") ===
+        "No amount band matched in the selected scope, so the fallback route was used." &&
       approvedActionModel?.userCapabilityLines?.includes(
         "You can view this document but cannot post it."
       ) &&
       approvedActionModel?.userCapabilityLines?.includes(
-        "Posting requires AP Documents / Post at LEGAL_ENTITY scope."
-      ),
-    "AP action explainability should explain the posting gate and why a read-only user cannot post"
+        "Posting requires AP Documents / Post at Legal Entity scope."
+      ) &&
+      approvedActionModel?.eligibleRoleLabels?.includes("Entity CEO"),
+    "AP action explainability should explain fallback-post routing and why a read-only user cannot post"
   );
 
   assert(
@@ -112,14 +153,20 @@ async function main() {
       actionPanelSource.includes("submitActionDisabledReason") &&
       actionPanelSource.includes("postActionDisabledReason") &&
       actionPanelSource.includes("showApprovalActionsSection") &&
-      actionPanelSource.includes("showSubmitActionsSection"),
-    "AP action panel should keep disabled action sections visible with tooltip-backed disabled reasons"
+      actionPanelSource.includes("showSubmitActionsSection") &&
+      actionPanelSource.includes('title={l("Your workflow access", "Workflow erisiminiz")}'),
+    "AP action panel should keep disabled action sections visible with tooltip-backed disabled reasons and the AMX06 access title"
   );
   assert(
-    explainabilitySource.includes("You can view this document but cannot approve it.") &&
+    explainabilitySource.includes("Matched route") &&
+      explainabilitySource.includes("Matched rule") &&
+      explainabilitySource.includes("Fallback route used") &&
+      explainabilitySource.includes("You can view this document but cannot approve it.") &&
       explainabilitySource.includes("You can view this document but cannot post it.") &&
-      hookSource.includes("You can view this document but cannot submit it because `cari.doc.submit` is missing."),
-    "AP action-state hook should keep user-relative explainability for read-only viewers"
+      hookSource.includes(
+        "You can view this document but cannot submit it because `cari.doc.submit` is missing."
+      ),
+    "AP runtime explainability sources should keep route facts and user-relative disabled-state messaging"
   );
 
   console.log("Security UI-4B AP runtime explainability smoke passed.");

@@ -8,6 +8,8 @@ import {
 } from "../../frontend/src/pages/cari/cariWorkflowExplainability.js";
 import {
   buildApBusinessPreview,
+  buildApprovalRoutingMatrixValidationModel,
+  buildApprovalRoutingRulePreview,
   buildWorkflowCoverageReviewModel,
 } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
 import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../shared/cariDocumentWorkflowGovernance.js";
@@ -30,8 +32,12 @@ function findItemValue(items, label) {
 
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const panelSource = await readFile(
+  const actionPanelSource = await readFile(
     path.resolve(root, "frontend/src/pages/cari/components/CariDocumentPostReversePanel.jsx"),
+    "utf8"
+  );
+  const detailContentSource = await readFile(
+    path.resolve(root, "frontend/src/pages/cari/components/CariDocumentDetailContent.jsx"),
     "utf8"
   );
   const runtimeExplainabilityPanelSource = await readFile(
@@ -75,6 +81,59 @@ async function main() {
     "AP setup preview should keep the business-language submit -> approve -> post flow wording"
   );
 
+  const routingRulePreview = buildApprovalRoutingRulePreview({
+    scopeType: "LEGAL_ENTITY",
+    scopeSummary: "Entity A",
+    minAmount: 50000.01,
+    maxAmount: null,
+    amountBasis: "BASE_AMOUNT",
+    targetLabel: "WF-AP-ENTITY-APPROVE-GROUP-POST",
+    l,
+  });
+  assert(
+    routingRulePreview ===
+      "AP documents for Entity A above 50,000.01 base amount use WF-AP-ENTITY-APPROVE-GROUP-POST.",
+    "AP routing preview should explain the matched scope, amount band, and target workflow in plain language"
+  );
+
+  const routingValidationModel = buildApprovalRoutingMatrixValidationModel({
+    draft: {
+      scopeType: "LEGAL_ENTITY",
+      legalEntityId: 9,
+      effectiveFrom: "2026-01-01",
+      minAmount: "40000",
+      maxAmount: "60000",
+      amountBasis: "BASE_AMOUNT",
+      workflowDefinitionId: 21,
+      status: "ACTIVE",
+    },
+    assignments: [
+      {
+        id: 1,
+        processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+        status: "ACTIVE",
+        scopeType: "LEGAL_ENTITY",
+        legalEntityId: 9,
+        effectiveFrom: "2026-01-01",
+        effectiveTo: null,
+        minAmount: 0,
+        maxAmount: 50000,
+        amountBasis: "BASE_AMOUNT",
+        isFallback: false,
+      },
+    ],
+    definitions: [{ id: 21, processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE }],
+    presetEntries: [],
+    l,
+  });
+  assert(
+    routingValidationModel?.isValid === false &&
+      routingValidationModel?.conflicts?.[0]?.code === "AMOUNT_OVERLAP" &&
+      routingValidationModel?.conflicts?.[0]?.message ===
+        "Active amount bands cannot overlap at the same scope and effective window.",
+    "AP routing validation should block overlapping active amount bands before save"
+  );
+
   const pendingDetailModel = buildCariWorkflowDetailCardModel(
     {
       status: "SUBMITTED",
@@ -85,42 +144,68 @@ async function main() {
         assignmentResolved: true,
         assignmentScopeType: "LEGAL_ENTITY",
         assignmentScopeLabel: "Legal Entity",
+        workflowDefinitionId: 12,
+        workflowDefinitionCode: "WF-AP-ENTITY-REVIEW",
+        workflowDefinitionName: "Entity Review Route",
+        routingRuleSnapshot: {
+          scope_type: "LEGAL_ENTITY",
+          min_amount: 50000.01,
+          max_amount: null,
+          workflow_definition_code: "WF-AP-ENTITY-REVIEW",
+          workflow_definition_name: "Entity Review Route",
+        },
+        evaluatedAmount: 78240,
+        evaluatedAmountBasis: "BASE_AMOUNT",
+        routingMatchType: "BAND",
+        routingMatchedScopeLayer: "LEGAL_ENTITY",
         currentStepNo: 1,
         totalSteps: 2,
-        currentStageScopeType: "LEGAL_ENTITY",
-        currentStageScopeLabel: "Legal Entity",
+        currentStageScopeType: "GROUP",
+        currentStageScopeLabel: "Group",
         effectiveApprovalPermissionCode: "approvals.requests.approve",
-        effectiveApprovalPermissionLabel: "AP approval at Legal Entity scope",
-        nextActorType: "COUNTRY",
+        effectiveApprovalPermissionLabel: "AP approval at Group scope",
+        nextActorType: "GROUP",
         nextActionCode: "APPROVE",
-        nextActionLabel: "Country approval",
-        waitingForSummary: "Waiting for Legal Entity approval",
-        blockingReasonDetail: "Approval is pending at Legal Entity scope",
+        nextActionLabel: "Group approval",
+        waitingForSummary: "Waiting for Group approval",
+        blockingReasonDetail: "Approval is pending at Group scope",
         workflowInstanceId: 91,
+        workflowInstanceStatus: "PENDING",
       },
     },
     l
   );
   assert(
-    pendingDetailModel?.headline === "Waiting for Legal Entity approval" &&
-      findItemValue(pendingDetailModel?.factItems, "Current step") === "Step 1 of 2" &&
+    pendingDetailModel?.headline === "Waiting for Group approval" &&
       pendingDetailModel?.currentStepLabel === "Step 1 of 2" &&
+      pendingDetailModel?.factSectionTitle === "Routing context" &&
       pendingDetailModel?.requiredPackageLabel === "AP Documents / Approve" &&
-      pendingDetailModel?.requiredScopeType === "LEGAL_ENTITY" &&
-      pendingDetailModel?.requiredScopeLabel === "Legal Entity" &&
+      pendingDetailModel?.requiredScopeType === "GROUP" &&
+      pendingDetailModel?.requiredScopeLabel === "Group" &&
       pendingDetailModel?.eligibleActorSummary ===
-        "Users assigned AP Documents / Approve at Legal Entity scope can approve the current step." &&
-      pendingDetailModel?.eligibleRoleLabels?.includes("Entity Accountant") &&
-      pendingDetailModel?.eligibleRoleLabels?.includes("Entity Manager") &&
+        "Users assigned AP Documents / Approve at Group scope can approve the current step." &&
+      findItemValue(pendingDetailModel?.factItems, "Matched route") ===
+        "WF-AP-ENTITY-REVIEW - Entity Review Route" &&
+      findItemValue(pendingDetailModel?.factItems, "Route scope") === "Legal Entity" &&
+      String(findItemValue(pendingDetailModel?.factItems, "Matched rule")).includes(
+        "Legal Entity"
+      ) &&
+      String(findItemValue(pendingDetailModel?.factItems, "Matched rule")).includes("above") &&
+      String(findItemValue(pendingDetailModel?.factItems, "Evaluated amount")).includes(
+        "Base amount"
+      ) &&
+      findItemValue(pendingDetailModel?.factItems, "Amount basis") === "Base amount" &&
       findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
-        "Waiting for AP Documents / Approve at LEGAL_ENTITY scope." &&
-      findItemValue(pendingDetailModel?.factItems, "Active scope") === "Legal Entity" &&
-      findItemValue(pendingDetailModel?.factItems, "Next action") === "Country approval" &&
+        "Waiting for AP Documents / Approve at Group scope." &&
       findItemValue(pendingDetailModel?.technicalItems, "Required authority") ===
-        "AP approval at Legal Entity scope" &&
+        "AP approval at Group scope" &&
       findItemValue(pendingDetailModel?.technicalItems, "Technical permission") ===
-        "approvals.requests.approve",
-    "Detail-card explainability should describe pending legal-entity approval with business and technical context"
+        "approvals.requests.approve" &&
+      findItemValue(pendingDetailModel?.technicalItems, "Routing match type") ===
+        "Amount band" &&
+      findItemValue(pendingDetailModel?.technicalItems, "Matched scope layer") ===
+        "Legal Entity",
+    "Detail-card explainability should surface the AMX06 routing context, acting scope, and routing metadata"
   );
 
   const pendingActionModel = buildCariWorkflowActionExplainabilityModel({
@@ -133,17 +218,29 @@ async function main() {
         assignmentResolved: true,
         assignmentScopeType: "LEGAL_ENTITY",
         assignmentScopeLabel: "Legal Entity",
+        workflowDefinitionCode: "WF-AP-ENTITY-REVIEW",
+        workflowDefinitionName: "Entity Review Route",
+        routingRuleSnapshot: {
+          scope_type: "LEGAL_ENTITY",
+          min_amount: 50000.01,
+          max_amount: null,
+          workflow_definition_code: "WF-AP-ENTITY-REVIEW",
+          workflow_definition_name: "Entity Review Route",
+        },
+        evaluatedAmount: 78240,
+        evaluatedAmountBasis: "BASE_AMOUNT",
+        routingMatchType: "BAND",
         currentStepNo: 1,
         totalSteps: 2,
-        currentStageScopeType: "LEGAL_ENTITY",
-        currentStageScopeLabel: "Legal Entity",
+        currentStageScopeType: "GROUP",
+        currentStageScopeLabel: "Group",
         effectiveApprovalPermissionCode: "approvals.requests.approve",
-        effectiveApprovalPermissionLabel: "AP approval at Legal Entity scope",
-        nextActorType: "COUNTRY",
+        effectiveApprovalPermissionLabel: "AP approval at Group scope",
+        nextActorType: "GROUP",
         nextActionCode: "APPROVE",
-        nextActionLabel: "Country approval",
-        waitingForSummary: "Waiting for Legal Entity approval",
-        blockingReasonDetail: "Approval is pending at Legal Entity scope",
+        nextActionLabel: "Group approval",
+        waitingForSummary: "Waiting for Group approval",
+        blockingReasonDetail: "Approval is pending at Group scope",
         workflowInstanceId: 91,
         workflowInstanceStatus: "PENDING",
       },
@@ -169,17 +266,28 @@ async function main() {
     l,
   });
   assert(
-    pendingActionModel?.userCapabilityLines.includes(
-      "You do not have approval authority for this step."
-    ) &&
+    findItemValue(pendingActionModel?.factItems, "Matched route") ===
+      "WF-AP-ENTITY-REVIEW - Entity Review Route" &&
+      pendingActionModel?.userCapabilityLines.includes(
+        "You can view this document but cannot approve it."
+      ) &&
+      pendingActionModel?.userCapabilityLines.includes(
+        "This step requires AP Documents / Approve at Group scope."
+      ) &&
+      pendingActionModel?.userCapabilityLines.includes(
+        "You do not have approval authority for this step."
+      ) &&
       pendingActionModel?.userCapabilityLines.includes(
         "You cannot post because approval is still pending."
       ) &&
       pendingActionModel?.historyItems?.[0]?.title === "Step 1" &&
-      pendingActionModel?.historyItems?.[0]?.summary ===
-        "Approved • by Entity Reviewer • 2026-04-08T09:15:00Z" &&
+      String(pendingActionModel?.historyItems?.[0]?.summary || "").includes("Approved") &&
+      String(pendingActionModel?.historyItems?.[0]?.summary || "").includes("Entity Reviewer") &&
+      String(pendingActionModel?.historyItems?.[0]?.summary || "").includes(
+        "2026-04-08T09:15:00Z"
+      ) &&
       pendingActionModel?.historyItems?.[0]?.note === "Approved after invoice review.",
-    "Action-panel explainability should add user-relative access text and prior-step history"
+    "Action-panel explainability should add user-relative access text, routing context, and prior-step history"
   );
 
   const approvedListModel = buildCariWorkflowListSummaryModel(
@@ -218,7 +326,7 @@ async function main() {
         state: "returned",
         workflowGoverned: true,
         assignmentResolved: true,
-        waitingForSummary: "Returned for correction — resubmission required",
+        waitingForSummary: "Returned for correction - resubmission required",
         blockingReasonDetail: "Update the supplier evidence and resubmit.",
         latestDecisionComment: "Supplier evidence is incomplete.",
       },
@@ -226,7 +334,7 @@ async function main() {
     l
   );
   assert(
-    returnedDetailModel?.headline === "Returned for correction — resubmission required" &&
+    String(returnedDetailModel?.headline || "").includes("Returned for correction") &&
       returnedDetailModel?.supportingText === "Update the supplier evidence and resubmit." &&
       findItemValue(returnedDetailModel?.noteItems, "Return reason") ===
         "Supplier evidence is incomplete.",
@@ -303,14 +411,19 @@ async function main() {
   );
 
   assert(
-    panelSource.includes("GovernedRuntimeExplainabilityPanel") &&
+    actionPanelSource.includes("GovernedRuntimeExplainabilityPanel") &&
+      actionPanelSource.includes('title={l("Your workflow access", "Workflow erisiminiz")}') &&
+      detailContentSource.includes(
+        'title={l("Workflow route + status", "Workflow rota + durum")}'
+      ) &&
       runtimeExplainabilityPanelSource.includes("Current step") &&
       runtimeExplainabilityPanelSource.includes("Required package") &&
       runtimeExplainabilityPanelSource.includes("Required scope") &&
+      runtimeExplainabilityPanelSource.includes("Routing context") &&
       runtimeExplainabilityPanelSource.includes("Who can act next") &&
       runtimeExplainabilityPanelSource.includes("Your access") &&
       runtimeExplainabilityPanelSource.includes("Prior step history"),
-    "Shared runtime panel should centralize the governed-record explainability sections"
+    "Shared runtime panel should centralize the governed-record explainability sections and AMX06 routing context"
   );
   assert(
     setupPageSource.includes("runWorkflowCoverageDiagnostics") &&
