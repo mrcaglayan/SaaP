@@ -51,6 +51,7 @@ import {
   listWorkflowPackageCatalogEntries,
   resolveWorkflowPackagesForRuntimeRoles,
 } from "./roleCatalog.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 const EFFECT_OPTIONS = ["ALLOW", "DENY"];
 const USER_STATUS_FILTERS = ["ALL", "ACTIVE", "INVITED", "DISABLED"];
@@ -1005,25 +1006,6 @@ function buildPackageFilterOptions(bundles, workflowPackageAssignments) {
   }
   return Array.from(byPackageCode.values()).sort((left, right) =>
     left.label.localeCompare(right.label)
-  );
-}
-function WorkspaceStatCard({ title, value, subtitle, tone = "slate" }) {
-  const toneClasses =
-    tone === "blue"
-      ? "border-sky-200 bg-sky-50"
-      : tone === "green"
-        ? "border-emerald-200 bg-emerald-50"
-        : tone === "amber"
-          ? "border-amber-200 bg-amber-50"
-          : "border-slate-200 bg-white";
-  return (
-    <article className={`rounded-[24px] border px-5 py-4 shadow-sm ${toneClasses}`}>
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-        {title}
-      </div>
-      <div className="mt-3 text-3xl font-semibold text-slate-950">{value}</div>
-      <div className="mt-2 text-sm leading-6 text-slate-600">{subtitle}</div>
-    </article>
   );
 }
 function WorkspaceTabButton({ active, count, label, onClick }) {
@@ -3927,67 +3909,94 @@ export default function UserAssignmentsPage() {
     }
   }
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="max-w-4xl">
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
-            {l("User, Assignment & Delegation Management", "Kullanici, Atama ve Delegation Yonetimi")}
-          </h1>
-          <p className="mt-2 text-sm leading-7 text-slate-600">
-            {l(
-              "Merged admin workspace: keep the people directory, preset-based business assignments, and delegation operations in one calm shell instead of scattering them across unrelated settings screens.",
-              "Birlesik yonetim calisma alani: kisi dizinini, preset tabanli is atamalarini ve delegation operasyonlarini ilgisiz ayarlar ekranlarina dagitmak yerine tek bir sakin kabukta toplayin."
-            )}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <Link
-            to="/app/ayarlar/rbac/delegations"
-            className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
-          >
-            {l("Open approval delegations", "Approval delegation sayfasini ac")}
-          </Link>
-          <button
-            type="button"
-            onClick={openInviteModal}
-            className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
-          >
-            {l("Invite user", "Kullanici davet et")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("assignments")}
-            className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white"
-          >
-            {l("Assign setup owner", "Setup sahibi ata")}
-          </button>
-        </div>
-      </div>
-      <section className="grid gap-4 xl:grid-cols-4">
-        <WorkspaceStatCard
-          title={l("Total users", "Toplam kullanici")}
-          value={users.length}
-          subtitle={l("All active, invited, and disabled users inside this tenant.", "Bu tenant icindeki tum aktif, davetli ve devre disi kullanicilar.")}
-          tone="blue"
-        />
-        <WorkspaceStatCard
-          title={l("Business assignments", "Is atamalari")}
-          value={assignmentBundles.length}
-          subtitle={l("Grouped business-first bundles instead of one row per raw RBAC role.", "Ham RBAC rol basina bir satir yerine gruplanmis is-oncelikli paketler.")}
-          tone="green"
-        />
-        <WorkspaceStatCard
-          title={l("Pending invites", "Bekleyen davetler")}
-          value={pendingInviteRows.length}
-          subtitle={l("Invite flows that still need acceptance before the user becomes active.", "Kullanici aktif olmadan once hala kabul bekleyen davet akisleri.")}
-          tone="amber"
-        />
-        <WorkspaceStatCard
-          title={l("Delegation workflows", "Delegation akislari")}
-          value={totalDelegationCount}
-          subtitle={l("Approval delegation and temporary coverage items still in motion.", "Hareket halindeki approval delegation ve temporary coverage kayitlari.")}
-        />
-      </section>
+    <SecurityAdminWorkspaceShell
+      sectionKey="user-assignments"
+      eyebrow={l("Security / Assignment Workspace", "Guvenlik / atama calisma alani")}
+      title={l(
+        "User, Assignment & Delegation Management",
+        "Kullanici, Atama ve Delegation Yonetimi"
+      )}
+      description={l(
+        "Merged admin workspace: keep the people directory, preset-based business assignments, and delegation operations in one calm shell instead of scattering them across unrelated settings screens.",
+        "Birlesik yonetim calisma alani: kisi dizinini, preset tabanli is atamalarini ve delegation operasyonlarini ilgisiz ayarlar ekranlarina dagitmak yerine tek bir sakin kabukta toplayin."
+      )}
+      actions={[
+        {
+          to: "/app/ayarlar/rbac/delegations",
+          label: l("Open approval delegations", "Approval delegation sayfasini ac"),
+        },
+        {
+          onClick: openInviteModal,
+          label: l("Invite user", "Kullanici davet et"),
+        },
+        {
+          onClick: () => setActiveTab("assignments"),
+          label: l("Assign setup owner", "Setup sahibi ata"),
+          tone: "primary",
+        },
+      ]}
+      stats={[
+        {
+          title: l("Total users", "Toplam kullanici"),
+          value: users.length,
+          description: l(
+            "All active, invited, and disabled users inside this tenant.",
+            "Bu tenant icindeki tum aktif, davetli ve devre disi kullanicilar."
+          ),
+          tone: "blue",
+        },
+        {
+          title: l("Business assignments", "Is atamalari"),
+          value: assignmentBundles.length,
+          description: l(
+            "Grouped business-first bundles instead of one row per raw RBAC role.",
+            "Ham RBAC rol basina bir satir yerine gruplanmis is-oncelikli paketler."
+          ),
+          tone: "green",
+        },
+        {
+          title: l("Pending invites", "Bekleyen davetler"),
+          value: pendingInviteRows.length,
+          description: l(
+            "Invite flows that still need acceptance before the user becomes active.",
+            "Kullanici aktif olmadan once hala kabul bekleyen davet akisleri."
+          ),
+          tone: "amber",
+        },
+        {
+          title: l("Delegation workflows", "Delegation akislari"),
+          value: totalDelegationCount,
+          description: l(
+            "Approval delegation and temporary coverage items still in motion.",
+            "Hareket halindeki approval delegation ve temporary coverage kayitlari."
+          ),
+        },
+      ]}
+      toolbar={
+        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap gap-3">
+            <WorkspaceTabButton
+              active={activeTab === "users"}
+              count={userDirectoryRows.length}
+              label={l("Assignment Workbench", "Atama Calisma Alani")}
+              onClick={() => setActiveTab("users")}
+            />
+            <WorkspaceTabButton
+              active={activeTab === "assignments"}
+              count={assignmentBundles.length}
+              label={l("Business Assignments", "Is Atamalari")}
+              onClick={() => setActiveTab("assignments")}
+            />
+            <WorkspaceTabButton
+              active={activeTab === "delegations"}
+              count={totalDelegationCount}
+              label={l("Delegations", "Delegation")}
+              onClick={() => setActiveTab("delegations")}
+            />
+          </div>
+        </section>
+      }
+    >
       {showFreshTenantAdminNote ? (
         <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
           {l(
@@ -4028,28 +4037,6 @@ export default function UserAssignmentsPage() {
         </div>
       ) : null}
       <SecurityWarningList warnings={warningMessages} />
-      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap gap-3">
-          <WorkspaceTabButton
-            active={activeTab === "users"}
-            count={userDirectoryRows.length}
-            label={l("Assignment Workbench", "Atama Calisma Alani")}
-            onClick={() => setActiveTab("users")}
-          />
-          <WorkspaceTabButton
-            active={activeTab === "assignments"}
-            count={assignmentBundles.length}
-            label={l("Business Assignments", "Is Atamalari")}
-            onClick={() => setActiveTab("assignments")}
-          />
-          <WorkspaceTabButton
-            active={activeTab === "delegations"}
-            count={totalDelegationCount}
-            label={l("Delegations", "Delegation")}
-            onClick={() => setActiveTab("delegations")}
-          />
-        </div>
-      </section>
       {loading ? (
         <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-12 text-sm text-slate-500 shadow-sm">
           {l("Loading workspace...", "Calisma alani yukleniyor...")}
@@ -4786,6 +4773,6 @@ export default function UserAssignmentsPage() {
         missingRoleCodes={userModalMissingRoleCodes}
         inviteLink={lastInviteLink}
       />
-    </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

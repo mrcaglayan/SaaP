@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { listRoleAssignments } from "../../api/rbacAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { listAccessModelCatalogSections } from "./roleCatalog.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 
 const ACCESS_MODEL_TAB_ORDER = Object.freeze([
   "business_roles",
@@ -1189,7 +1190,6 @@ export default function AccessModelCatalogPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { hasPermission, securityAdminUiState, securityAdminUiStateLoaded } = useAuth();
   const [legacyAssignmentCountsByRoleCode, setLegacyAssignmentCountsByRoleCode] = useState({});
-  const [legacyAssignmentCountsLoading, setLegacyAssignmentCountsLoading] = useState(false);
   const [legacyAssignmentCountsLoaded, setLegacyAssignmentCountsLoaded] = useState(false);
   const [legacyAssignmentCountsError, setLegacyAssignmentCountsError] = useState("");
   const sections = listAccessModelCatalogSections();
@@ -1210,14 +1210,31 @@ export default function AccessModelCatalogPage() {
   const scopeFilter = normalizeText(searchParams.get("scope")).toUpperCase() || FILTER_ALL;
   const familyFilter = normalizeText(searchParams.get("family")) || FILTER_ALL;
   const selectedEntryCode = normalizeText(searchParams.get("item"));
+  const effectiveLegacyAssignmentCountsByRoleCode =
+    canReadRoleAssignments && !isFreshTenantSimplified
+      ? legacyAssignmentCountsByRoleCode
+      : {};
+  const effectiveLegacyAssignmentCountsLoaded = isFreshTenantSimplified
+    ? true
+    : canReadRoleAssignments
+      ? legacyAssignmentCountsLoaded
+      : false;
+  const effectiveLegacyAssignmentCountsError =
+    canReadRoleAssignments && !isFreshTenantSimplified ? legacyAssignmentCountsError : "";
+  const effectiveLegacyAssignmentCountsLoading =
+    isLegacyCatalogTab &&
+    canReadRoleAssignments &&
+    !isFreshTenantSimplified &&
+    !legacyAssignmentCountsLoaded &&
+    !legacyAssignmentCountsError;
   const currentEntries = (currentSection?.entries || []).map((entry) =>
     isLegacyCatalogTab
       ? buildLegacyCatalogViewEntry(entry, {
         canReadRoleAssignments,
-        assignmentCountsByRoleCode: legacyAssignmentCountsByRoleCode,
-        assignmentCountsLoaded: legacyAssignmentCountsLoaded,
-        assignmentCountsLoading: legacyAssignmentCountsLoading,
-        assignmentCountsError: legacyAssignmentCountsError,
+        assignmentCountsByRoleCode: effectiveLegacyAssignmentCountsByRoleCode,
+        assignmentCountsLoaded: effectiveLegacyAssignmentCountsLoaded,
+        assignmentCountsLoading: effectiveLegacyAssignmentCountsLoading,
+        assignmentCountsError: effectiveLegacyAssignmentCountsError,
       })
       : entry
   );
@@ -1251,27 +1268,11 @@ export default function AccessModelCatalogPage() {
         };
 
   useEffect(() => {
-    if (!isLegacyCatalogTab) {
-      return undefined;
-    }
-    if (!canReadRoleAssignments) {
-      setLegacyAssignmentCountsByRoleCode({});
-      setLegacyAssignmentCountsLoading(false);
-      setLegacyAssignmentCountsLoaded(false);
-      setLegacyAssignmentCountsError("");
-      return undefined;
-    }
-    if (isFreshTenantSimplified) {
-      setLegacyAssignmentCountsByRoleCode({});
-      setLegacyAssignmentCountsLoading(false);
-      setLegacyAssignmentCountsLoaded(true);
-      setLegacyAssignmentCountsError("");
+    if (!isLegacyCatalogTab || !canReadRoleAssignments || isFreshTenantSimplified) {
       return undefined;
     }
 
     let cancelled = false;
-    setLegacyAssignmentCountsLoading(true);
-    setLegacyAssignmentCountsError("");
 
     // UI-1E keeps Used By Count tied to live role assignments so the legacy
     // catalog stays read-only and does not depend on a migration preview run.
@@ -1295,12 +1296,6 @@ export default function AccessModelCatalogPage() {
           error?.response?.data?.message ||
           "Legacy role assignment counts could not be loaded."
         );
-      })
-      .finally(() => {
-        if (cancelled) {
-          return;
-        }
-        setLegacyAssignmentCountsLoading(false);
       });
 
     return () => {
@@ -1315,97 +1310,90 @@ export default function AccessModelCatalogPage() {
   const legacyHiddenCount = currentEntries.filter((entry) => entry.visibleInNewTenant === false).length;
   const legacyAssignedCount = currentEntries.filter((entry) => toCount(entry.usedByCount) > 0).length;
   const legacyMixLabel =
-    canReadRoleAssignments && (legacyAssignmentCountsLoaded || isFreshTenantSimplified)
+    canReadRoleAssignments && (effectiveLegacyAssignmentCountsLoaded || isFreshTenantSimplified)
       ? `${legacyHiddenCount} hidden / ${legacyAssignedCount} assigned`
       : `${legacyHiddenCount} hidden / live counts pending`;
   const legacyMixDescription = !canReadRoleAssignments
     ? "Used By Count requires role-assignment read permission."
-    : legacyAssignmentCountsError
+    : effectiveLegacyAssignmentCountsError
       ? "Live compatibility counts are temporarily unavailable from the role-assignment API."
       : isFreshTenantSimplified
         ? "This tenant currently has no live compatibility assignments."
         : "Used By Count reflects current live role assignments, not preset suggestions.";
 
   return (
-    <div className="space-y-6">
-      <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-        <div className="relative overflow-hidden border-b border-slate-200 bg-[radial-gradient(circle_at_top_left,#e0f2fe,transparent_45%),radial-gradient(circle_at_top_right,#fef3c7,transparent_35%),linear-gradient(135deg,#f8fafc,#ffffff)] px-6 py-6">
-          <div className="relative z-10 flex flex-wrap items-start justify-between gap-4">
-            <div className="max-w-3xl">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                Security / Access Model
-              </div>
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
-                Access Model
-              </h1>
-              <p className="mt-3 text-sm leading-7 text-slate-600">
-                Browse the separated catalog for business roles, workflow packages, workflow
-                presets, and legacy runtime items. This shell keeps fresh-tenant admin browsing
-                away from compatibility roles while the deeper editors land in the next slices.
-              </p>
+    <SecurityAdminWorkspaceShell
+      sectionKey="access-model"
+      eyebrow="Security / Access Model"
+      title="Access Model"
+      description="Browse the separated catalog for business roles, workflow packages, workflow presets, and legacy runtime items. This shell keeps fresh-tenant admin browsing away from compatibility roles while the deeper editors land in the next slices."
+      actions={[
+        {
+          to: currentActionLink.to,
+          label: currentActionLink.label,
+          tone: "primary",
+        },
+      ]}
+      stats={[
+        {
+          title: "Visible in tab",
+          value: filteredEntries.length,
+          description: "Filtered rows in the active catalog.",
+          tone: "blue",
+        },
+        {
+          title: "Current mix",
+          value: isBusinessRolesTab
+            ? `${activeCount} active / ${hiddenCount} hidden`
+            : isWorkflowPackagesTab
+              ? `${activeCount - extensionCount} active / ${extensionCount} extension`
+              : isWorkflowPresetsTab
+                ? `${activeCount - draftCount} active / ${draftCount} draft`
+                : legacyMixLabel,
+          description: isBusinessRolesTab
+            ? "Business roles stay human-friendly and separate from authority packages."
+            : isWorkflowPackagesTab
+              ? "Runtime mappings show how clean packages sit on top of current seeded roles."
+              : isWorkflowPresetsTab
+                ? "Presets stay readable as business flows before any tenant-specific workflow customization."
+                : legacyMixDescription,
+        },
+        {
+          title: "Detail drawer",
+          value: selectedEntry?.displayName || "No item selected",
+          description: "The right-side drawer follows the current catalog row selection.",
+        },
+      ]}
+      toolbar={
+        <>
+          <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {ACCESS_MODEL_TAB_ORDER.map((tabKey) => {
+                const section = sections.find((item) => item.key === tabKey);
+                if (!section) {
+                  return null;
+                }
+                return (
+                  <AccessModelTabButton
+                    key={section.key}
+                    active={section.key === currentTab}
+                    count={section.entries.length}
+                    label={section.label}
+                    onClick={() =>
+                      setSearchParams(
+                        updateSearchParams(searchParams, {
+                          tab: section.key,
+                          item: "",
+                        })
+                      )
+                    }
+                  />
+                );
+              })}
             </div>
-            <div className="grid min-w-60 gap-3 sm:grid-cols-2">
-              <div className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Visible in tab
-                </div>
-                <div className="mt-2 text-3xl font-semibold text-slate-950">{filteredEntries.length}</div>
-                <div className="mt-1 text-sm text-slate-600">Filtered rows in the active catalog.</div>
-              </div>
-              <div className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Current mix
-                </div>
-                <div className="mt-2 text-sm font-semibold text-slate-950">
-                  {isBusinessRolesTab
-                    ? `${activeCount} active / ${hiddenCount} hidden`
-                    : isWorkflowPackagesTab
-                      ? `${activeCount - extensionCount} active / ${extensionCount} extension`
-                      : isWorkflowPresetsTab
-                        ? `${activeCount - draftCount} active / ${draftCount} draft`
-                        : legacyMixLabel}
-                </div>
-                <div className="mt-2 text-sm text-slate-600">
-                  {isBusinessRolesTab
-                    ? "Business roles stay human-friendly and separate from authority packages."
-                    : isWorkflowPackagesTab
-                      ? "Runtime mappings show how clean packages sit on top of current seeded roles."
-                      : isWorkflowPresetsTab
-                        ? "Presets stay readable as business flows before any tenant-specific workflow customization."
-                        : legacyMixDescription}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+          </section>
 
-        <div className="space-y-5 px-6 py-6">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {ACCESS_MODEL_TAB_ORDER.map((tabKey) => {
-              const section = sections.find((item) => item.key === tabKey);
-              if (!section) {
-                return null;
-              }
-              return (
-                <AccessModelTabButton
-                  key={section.key}
-                  active={section.key === currentTab}
-                  count={section.entries.length}
-                  label={section.label}
-                  onClick={() =>
-                    setSearchParams(
-                      updateSearchParams(searchParams, {
-                        tab: section.key,
-                        item: "",
-                      })
-                    )
-                  }
-                />
-              );
-            })}
-          </div>
-
-          <section className="rounded-[28px] border border-slate-200 bg-slate-50 px-5 py-5">
+          <section className="rounded-[28px] border border-slate-200 bg-slate-50 px-5 py-5 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -1478,8 +1466,10 @@ export default function AccessModelCatalogPage() {
               </select>
             </div>
           </section>
-
-          {isBusinessRolesTab ? (
+        </>
+      }
+    >
+      {isBusinessRolesTab ? (
             <section className="rounded-[28px] border border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.95),rgba(255,255,255,0.98))] px-5 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
@@ -1611,80 +1601,78 @@ export default function AccessModelCatalogPage() {
                 {legacyMixDescription}
               </div>
             </section>
-          ) : null}
+      ) : null}
 
-          <section className="space-y-4">
-            {filteredEntries.length === 0 ? (
-              <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
-                No catalog rows match the current filters.
-              </div>
-            ) : isBusinessRolesTab ? (
-              <BusinessRoleCatalogTable
-                entries={filteredEntries}
-                selectedEntryCode={selectedEntryCode}
-                onOpen={(entryCode) =>
-                  setSearchParams(
-                    updateSearchParams(searchParams, {
-                      item: entryCode,
-                    })
-                  )
-                }
-              />
-            ) : isWorkflowPackagesTab ? (
-              <WorkflowPackageCatalogTable
-                entries={filteredEntries}
-                selectedEntryCode={selectedEntryCode}
-                onOpen={(entryCode) =>
-                  setSearchParams(
-                    updateSearchParams(searchParams, {
-                      item: entryCode,
-                    })
-                  )
-                }
-              />
-            ) : isWorkflowPresetsTab ? (
-              <WorkflowPresetCatalogTable
-                entries={filteredEntries}
-                selectedEntryCode={selectedEntryCode}
-                onOpen={(entryCode) =>
-                  setSearchParams(
-                    updateSearchParams(searchParams, {
-                      item: entryCode,
-                    })
-                  )
-                }
-              />
-            ) : isLegacyCatalogTab ? (
-              <LegacyCatalogTable
-                entries={filteredEntries}
-                selectedEntryCode={selectedEntryCode}
-                onOpen={(entryCode) =>
-                  setSearchParams(
-                    updateSearchParams(searchParams, {
-                      item: entryCode,
-                    })
-                  )
-                }
-              />
-            ) : (
-              filteredEntries.map((entry) => (
-                <AccessModelEntryCard
-                  key={`${currentTab}-${entry.code}`}
-                  active={selectedEntryCode === entry.code}
-                  entry={entry}
-                  highlights={getEntryHighlights(currentTab, entry)}
-                  onOpen={() =>
-                    setSearchParams(
-                      updateSearchParams(searchParams, {
-                        item: entry.code,
-                      })
-                    )
-                  }
-                />
-              ))
-            )}
-          </section>
-        </div>
+      <section className="space-y-4">
+        {filteredEntries.length === 0 ? (
+          <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
+            No catalog rows match the current filters.
+          </div>
+        ) : isBusinessRolesTab ? (
+          <BusinessRoleCatalogTable
+            entries={filteredEntries}
+            selectedEntryCode={selectedEntryCode}
+            onOpen={(entryCode) =>
+              setSearchParams(
+                updateSearchParams(searchParams, {
+                  item: entryCode,
+                })
+              )
+            }
+          />
+        ) : isWorkflowPackagesTab ? (
+          <WorkflowPackageCatalogTable
+            entries={filteredEntries}
+            selectedEntryCode={selectedEntryCode}
+            onOpen={(entryCode) =>
+              setSearchParams(
+                updateSearchParams(searchParams, {
+                  item: entryCode,
+                })
+              )
+            }
+          />
+        ) : isWorkflowPresetsTab ? (
+          <WorkflowPresetCatalogTable
+            entries={filteredEntries}
+            selectedEntryCode={selectedEntryCode}
+            onOpen={(entryCode) =>
+              setSearchParams(
+                updateSearchParams(searchParams, {
+                  item: entryCode,
+                })
+              )
+            }
+          />
+        ) : isLegacyCatalogTab ? (
+          <LegacyCatalogTable
+            entries={filteredEntries}
+            selectedEntryCode={selectedEntryCode}
+            onOpen={(entryCode) =>
+              setSearchParams(
+                updateSearchParams(searchParams, {
+                  item: entryCode,
+                })
+              )
+            }
+          />
+        ) : (
+          filteredEntries.map((entry) => (
+            <AccessModelEntryCard
+              key={`${currentTab}-${entry.code}`}
+              active={selectedEntryCode === entry.code}
+              entry={entry}
+              highlights={getEntryHighlights(currentTab, entry)}
+              onOpen={() =>
+                setSearchParams(
+                  updateSearchParams(searchParams, {
+                    item: entry.code,
+                  })
+                )
+              }
+            />
+          ))
+        )}
       </section>
 
       <AccessModelDetailDrawer
@@ -1698,6 +1686,6 @@ export default function AccessModelCatalogPage() {
           )
         }
       />
-    </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

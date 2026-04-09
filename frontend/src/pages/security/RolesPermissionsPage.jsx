@@ -8,6 +8,7 @@ import {
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import RoleSummaryCard from "./RoleSummaryCard.jsx";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 import SecurityWarningList from "./SecurityWarningList.jsx";
 import { getRoleCatalogEntry, groupRolesForManagement } from "./roleCatalog.js";
 
@@ -149,16 +150,38 @@ export default function RolesPermissionsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">
-          {t("rolesPermissions.title")}
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {t("rolesPermissions.subtitle")}
-        </p>
-      </div>
-
+    <SecurityAdminWorkspaceShell
+      sectionKey="roles-permissions"
+      eyebrow="Security / Roles & permissions"
+      title={t("rolesPermissions.title")}
+      description={t("rolesPermissions.subtitle")}
+      stats={[
+        {
+          title: "Managed roles",
+          value: roles.length,
+          description: "Runtime roles available in the current editor surface.",
+          tone: "blue",
+        },
+        {
+          title: "Permission catalog",
+          value: permissions.length,
+          description: "Permission codes that can be reviewed or assigned here.",
+        },
+        {
+          title: "Selected role",
+          value: selectedRoleEntry?.code || "No role selected",
+          description: selectedRoleLocksPermissions
+            ? "This selection is label-only and cannot receive direct permissions."
+            : "Use the detail panel below to review meaning before replacing permissions.",
+          tone: selectedRoleLocksPermissions ? "amber" : "green",
+        },
+        {
+          title: "Staged selection",
+          value: selectedPermissionCodes.length,
+          description: "Permission rows currently checked for the active role.",
+        },
+      ]}
+    >
       {showFreshTenantAdminNote ? (
         <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
           This tenant has no legacy runtime role assignments, so migration-only admin surfaces stay
@@ -363,6 +386,6 @@ export default function RolesPermissionsPage() {
           )}
         </section>
       </div>
-    </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

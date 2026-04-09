@@ -375,6 +375,15 @@ Keep matrix views available, but behind a clear tab or toggle rather than as the
 
 # UX-RBAC-01 - Shared Workspace Shell
 
+## Status
+
+- Completed on April 9, 2026
+- Shared shell implemented for:
+  - `AccessModelCatalogPage.jsx`
+  - `RolesPermissionsPage.jsx`
+  - `UserAssignmentsPage.jsx`
+- Companion security/admin routes remain reachable from both the sidebar and the new shell
+
 ## Goal
 
 Create the common shell that gives the whole security/admin area one organized frame.
