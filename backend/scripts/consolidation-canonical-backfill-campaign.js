@@ -318,7 +318,7 @@ async function resolveTenantOwner(tenantId, preferredOwnerUserId = null) {
     }
   }
 
-  const tenantAdmin = await query(
+  const bootstrapAdmin = await query(
     `SELECT
        u.id AS user_id,
        u.email,
@@ -331,10 +331,15 @@ async function resolveTenantOwner(tenantId, preferredOwnerUserId = null) {
      JOIN roles r
        ON r.tenant_id = urs.tenant_id
       AND r.id = urs.role_id
-      AND r.code = 'TenantAdmin'
+      AND r.code IN ('SecurityAdmin', 'SystemAdmin')
      WHERE u.tenant_id = ?
        AND u.status = 'ACTIVE'
      ORDER BY
+       CASE
+         WHEN r.code = 'SecurityAdmin' THEN 0
+         WHEN r.code = 'SystemAdmin' THEN 1
+         ELSE 2
+       END ASC,
        CASE
          WHEN urs.scope_type = 'TENANT' AND (urs.scope_id = ? OR urs.scope_id IS NULL) THEN 0
          ELSE 1
@@ -343,13 +348,13 @@ async function resolveTenantOwner(tenantId, preferredOwnerUserId = null) {
      LIMIT 1`,
     [parsedTenantId, parsedTenantId]
   );
-  const tenantAdminRow = tenantAdmin.rows?.[0] || null;
-  if (tenantAdminRow) {
+  const bootstrapAdminRow = bootstrapAdmin.rows?.[0] || null;
+  if (bootstrapAdminRow) {
     return {
-      userId: parsePositiveIntOrNull(tenantAdminRow.user_id),
-      email: tenantAdminRow.email || null,
-      name: tenantAdminRow.name || null,
-      strategy: "TENANT_ADMIN_ROLE",
+      userId: parsePositiveIntOrNull(bootstrapAdminRow.user_id),
+      email: bootstrapAdminRow.email || null,
+      name: bootstrapAdminRow.name || null,
+      strategy: "BOOTSTRAP_ADMIN_ROLE",
     };
   }
 

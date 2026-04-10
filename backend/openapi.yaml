@@ -28871,222 +28871,6 @@
         ]
       }
     },
-    "/api/v1/security/role-migrations": {
-      "get": {
-        "tags": [
-          "Security"
-        ],
-        "operationId": "getApiV1SecurityRoleMigrations",
-        "summary": "Auto-generated: GET /api/v1/security/role-migrations",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/security/role-migrations/preview": {
-      "post": {
-        "tags": [
-          "Security"
-        ],
-        "operationId": "postApiV1SecurityRoleMigrationsPreview",
-        "summary": "Auto-generated: POST /api/v1/security/role-migrations/preview",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/security/role-migrations/{runId}": {
-      "get": {
-        "tags": [
-          "Security"
-        ],
-        "operationId": "getApiV1SecurityRoleMigrationsRunid",
-        "summary": "Auto-generated: GET /api/v1/security/role-migrations/{runId}",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runId",
-            "required": true,
-            "description": "runId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
-      }
-    },
-    "/api/v1/security/role-migrations/{runId}/execute": {
-      "post": {
-        "tags": [
-          "Security"
-        ],
-        "operationId": "postApiV1SecurityRoleMigrationsRunidExecute",
-        "summary": "Auto-generated: POST /api/v1/security/role-migrations/{runId}/execute",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runId",
-            "required": true,
-            "description": "runId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/security/role-migrations/{runId}/rollback": {
-      "post": {
-        "tags": [
-          "Security"
-        ],
-        "operationId": "postApiV1SecurityRoleMigrationsRunidRollback",
-        "summary": "Auto-generated: POST /api/v1/security/role-migrations/{runId}/rollback",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runId",
-            "required": true,
-            "description": "runId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/security/sensitive-data-audit": {
       "get": {
         "tags": [
@@ -29745,6 +29529,46 @@
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/coverage-diagnostics": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "postApiV1WorkflowsCoverageDiagnostics",
+        "summary": "Auto-generated: POST /api/v1/workflows/coverage-diagnostics",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
         "requestBody": {
           "required": false,
           "content": {

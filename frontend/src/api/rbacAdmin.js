@@ -178,38 +178,8 @@ export async function listDataScopes(params = {}) {
   return response.data;
 }
 
-export async function listRoleMigrationRuns() {
-  const response = await api.get("/api/v1/security/role-migrations");
-  return response.data;
-}
-
 export async function getSecurityAdminUiState() {
   const response = await api.get("/api/v1/security/admin-ui-state");
-  return response.data;
-}
-
-export async function previewRoleMigration(payload = {}) {
-  const response = await api.post("/api/v1/security/role-migrations/preview", payload);
-  return response.data;
-}
-
-export async function getRoleMigrationRun(runId) {
-  const response = await api.get(`/api/v1/security/role-migrations/${runId}`);
-  return response.data;
-}
-
-export async function executeRoleMigration(runId, payload = {}) {
-  const response = await api.post(
-    `/api/v1/security/role-migrations/${runId}/execute`,
-    payload
-  );
-  return response.data;
-}
-
-export async function rollbackRoleMigration(runId) {
-  const response = await api.post(
-    `/api/v1/security/role-migrations/${runId}/rollback`
-  );
   return response.data;
 }
 

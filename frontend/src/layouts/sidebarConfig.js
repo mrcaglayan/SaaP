@@ -22,8 +22,7 @@ const SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS = [
   "security.data_scope.upsert",
   "security.role_assignment.read",
 ];
-const ROLE_MIGRATIONS_PAGE_PERMISSIONS = ["security.role.read"];
-const LEGACY_MIGRATION_VISIBILITY_PAGE_PERMISSIONS = ["security.role.read", "security.role_assignment.read"];
+const GROUP_AP_POST_EXTENSION_PAGE_PERMISSIONS = ["security.role.read"];
 const ACCESS_DEBUGGER_PAGE_PERMISSIONS = ["security.role_assignment.read"];
 const COMPLIANCE_REPORTS_PAGE_PERMISSIONS = [
   "security.audit.report.generate",
@@ -88,6 +87,502 @@ const WORKFLOW_SETUP_PAGE_PERMISSIONS = [
   "workflow.assignment.read",
   "workflow.assignment.write",
 ];
+
+function mergeRequiredPermissions(...groups) {
+  return Array.from(
+    new Set(
+      groups
+        .flat()
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+const SECURITY_ADMIN_USERS_WORKBENCH_PAGE_PERMISSIONS =
+  mergeRequiredPermissions(
+    USER_ASSIGNMENTS_PAGE_PERMISSIONS,
+    SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS,
+    APPROVAL_DELEGATIONS_PAGE_PERMISSIONS,
+    TEMPORARY_OPERATIONAL_COVERAGE_PAGE_PERMISSIONS
+  );
+const SECURITY_ADMIN_CATALOG_WORKBENCH_PAGE_PERMISSIONS =
+  mergeRequiredPermissions(
+    ACCESS_MODEL_PAGE_PERMISSIONS,
+    FIELD_VISIBILITY_POLICIES_PAGE_PERMISSIONS,
+    GROUP_AP_POST_EXTENSION_PAGE_PERMISSIONS
+  );
+const SECURITY_ADMIN_WORKFLOWS_WORKBENCH_PAGE_PERMISSIONS =
+  mergeRequiredPermissions(WORKFLOW_SETUP_PAGE_PERMISSIONS);
+const SECURITY_ADMIN_DIAGNOSTICS_WORKBENCH_PAGE_PERMISSIONS =
+  mergeRequiredPermissions(
+    ACCESS_DEBUGGER_PAGE_PERMISSIONS,
+    COMPLIANCE_REPORTS_PAGE_PERMISSIONS,
+    AUDIT_LOGS_PAGE_PERMISSIONS,
+    SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS
+  );
+const SECURITY_ADMIN_OVERVIEW_PAGE_PERMISSIONS = mergeRequiredPermissions(
+  SECURITY_ADMIN_USERS_WORKBENCH_PAGE_PERMISSIONS,
+  SECURITY_ADMIN_CATALOG_WORKBENCH_PAGE_PERMISSIONS,
+  SECURITY_ADMIN_WORKFLOWS_WORKBENCH_PAGE_PERMISSIONS,
+  SECURITY_ADMIN_DIAGNOSTICS_WORKBENCH_PAGE_PERMISSIONS
+);
+
+export const SECURITY_ADMIN_ROUTE_FAMILY = Object.freeze({
+  overview: "/app/ayarlar/security-admin",
+  users: "/app/ayarlar/security-admin/users",
+  catalog: "/app/ayarlar/security-admin/catalog",
+  workflows: "/app/ayarlar/security-admin/workflows",
+  diagnostics: "/app/ayarlar/security-admin/diagnostics",
+});
+export const SECURITY_ADMIN_DEEP_LINK_QUERY_KEYS = Object.freeze([
+  "tab",
+  "userId",
+  "roleCode",
+  "packageCode",
+  "definitionId",
+  "page",
+  "pageSize",
+  "sort",
+  "search",
+  "view",
+]);
+
+export const SECURITY_ADMIN_WORKSPACE_SECTIONS = Object.freeze([
+  Object.freeze({
+    key: "users",
+    currentSectionKeys: Object.freeze(["users", "assignments"]),
+    currentPath: "/app/ayarlar/rbac/user-assignments",
+    accessPath: SECURITY_ADMIN_ROUTE_FAMILY.users,
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
+    defaultSearch: "?tab=assignments",
+    label: Object.freeze({
+      en: "Users & Assignments",
+      tr: "Kullanicilar ve Atamalar",
+    }),
+    description: Object.freeze({
+      en: "Manage people, scope access, delegations, temporary coverage, and effective authority from one workbench family.",
+      tr: "Kisileri, scope erisimini, delegasyonlari, gecici kapsama kayitlarini ve etkili yetkiyi tek workbench ailesinden yonetin.",
+    }),
+  }),
+  Object.freeze({
+    key: "catalog",
+    currentSectionKeys: Object.freeze(["catalog"]),
+    currentPath: "/app/ayarlar/rbac/access-model",
+    accessPath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
+    defaultSearch: "?tab=access-model",
+    label: Object.freeze({
+      en: "Access Catalog",
+      tr: "Erisim Katalogu",
+    }),
+    description: Object.freeze({
+      en: "Browse business roles, runtime roles, workflow packages, presets, and companion catalog policies in one domain.",
+      tr: "Is rolleri, runtime roller, workflow paketleri, presetler ve kataloga bagli politikalarin tamamini tek alanda inceleyin.",
+    }),
+  }),
+  Object.freeze({
+    key: "workflows",
+    currentSectionKeys: Object.freeze(["workflows"]),
+    currentPath: "/app/ayarlar/workflow-kurulumu",
+    accessPath: SECURITY_ADMIN_ROUTE_FAMILY.workflows,
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.workflows,
+    defaultSearch: "?tab=definitions",
+    label: Object.freeze({
+      en: "Workflow Governance",
+      tr: "Workflow Governance",
+    }),
+    description: Object.freeze({
+      en: "Keep workflow definitions, assignments, coverage, records, and setup flows inside the same admin family.",
+      tr: "Workflow tanimlarini, atamalari, coverage gorunumlerini, kayitlari ve setup akislarini ayni yonetim ailesi icinde tutun.",
+    }),
+  }),
+  Object.freeze({
+    key: "diagnostics",
+    currentSectionKeys: Object.freeze(["diagnostics", "audit-sod"]),
+    currentPath: "/app/ayarlar/rbac/access-debugger",
+    accessPath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    defaultSearch: "?tab=access",
+    label: Object.freeze({
+      en: "Diagnostics & Audit",
+      tr: "Tanilama ve Denetim",
+    }),
+    description: Object.freeze({
+      en: "Investigate explainability, compliance, audit trails, and sensitive-data evidence from one investigation family.",
+      tr: "Aciklanabilirlik, uyum, denetim izleri ve hassas-veri kanitlarini tek investigation ailesinden inceleyin.",
+    }),
+  }),
+]);
+
+export const SECURITY_ADMIN_PRIMARY_SURFACES = Object.freeze([
+  Object.freeze({
+    key: "access-model",
+    workspaceSectionKey: "catalog",
+    to: "/app/ayarlar/security-admin/catalog?tab=access-model",
+    accessPath: "/app/ayarlar/rbac/access-model",
+    label: Object.freeze({
+      en: "Access model",
+      tr: "Erisim modeli",
+    }),
+  }),
+  Object.freeze({
+    key: "roles-permissions",
+    workspaceSectionKey: "catalog",
+    to: "/app/ayarlar/security-admin/catalog?tab=roles",
+    accessPath: "/app/ayarlar/rbac/roles-permissions",
+    label: Object.freeze({
+      en: "Roles & permissions",
+      tr: "Roller ve yetkiler",
+    }),
+  }),
+  Object.freeze({
+    key: "user-assignments",
+    workspaceSectionKey: "users",
+    to: "/app/ayarlar/security-admin/users?tab=assignments",
+    accessPath: "/app/ayarlar/rbac/user-assignments",
+    label: Object.freeze({
+      en: "User assignments",
+      tr: "Kullanici atamalari",
+    }),
+  }),
+]);
+
+export const SECURITY_ADMIN_COMPANION_LINKS = Object.freeze([
+  Object.freeze({
+    workspaceSectionKey: "users",
+    to: "/app/ayarlar/sube-operatorleri",
+    accessPath: "/app/ayarlar/sube-operatorleri",
+    label: Object.freeze({
+      en: "Local user management",
+      tr: "Yerel kullanici yonetimi",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "users",
+    to: "/app/ayarlar/security-admin/users?tab=scopes",
+    accessPath: "/app/ayarlar/rbac/scope-assignments",
+    label: Object.freeze({
+      en: "Scope assignments",
+      tr: "Scope atamalari",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "users",
+    to: "/app/ayarlar/security-admin/users?tab=delegations",
+    accessPath: "/app/ayarlar/rbac/delegations",
+    label: Object.freeze({
+      en: "Approval delegations",
+      tr: "Onay delegasyonlari",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "users",
+    to: "/app/ayarlar/security-admin/users?tab=coverage",
+    accessPath: "/app/ayarlar/rbac/temporary-coverage",
+    label: Object.freeze({
+      en: "Temporary coverage",
+      tr: "Gecici operasyonel kapsama",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "catalog",
+    to: "/app/ayarlar/security-admin/catalog?tab=field-visibility",
+    accessPath: "/app/ayarlar/rbac/field-visibility-policies",
+    label: Object.freeze({
+      en: "Field visibility policies",
+      tr: "Alan gorunurluk politikalari",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "catalog",
+    to: "/app/ayarlar/security-admin/catalog?tab=group-ap-post",
+    accessPath: "/app/ayarlar/rbac/group-ap-post-extension",
+    label: Object.freeze({
+      en: "Group AP post extension",
+      tr: "Grup AP kaydi uzantisi",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "diagnostics",
+    to: "/app/ayarlar/security-admin/diagnostics?tab=access",
+    accessPath: "/app/ayarlar/rbac/access-debugger",
+    label: Object.freeze({
+      en: "Access debugger",
+      tr: "Erisim tanilari",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "diagnostics",
+    to: "/app/ayarlar/security-admin/diagnostics?tab=compliance",
+    accessPath: "/app/ayarlar/rbac/compliance-reports",
+    label: Object.freeze({
+      en: "Compliance reports",
+      tr: "Uyum raporlari",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "diagnostics",
+    to: "/app/ayarlar/security-admin/diagnostics?tab=audit",
+    accessPath: "/app/ayarlar/rbac/audit-logs",
+    label: Object.freeze({
+      en: "RBAC audit logs",
+      tr: "RBAC denetim loglari",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "diagnostics",
+    to: "/app/ayarlar/security-admin/diagnostics?tab=raw-audit",
+    accessPath: "/app/ayarlar/rbac/raw-audit-logs",
+    label: Object.freeze({
+      en: "Raw audit logs",
+      tr: "Ham denetim loglari",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "diagnostics",
+    to: "/app/ayarlar/security-admin/diagnostics?tab=sensitive-data",
+    accessPath: "/app/ayarlar/rbac/sensitive-data-audit",
+    label: Object.freeze({
+      en: "Sensitive data audit",
+      tr: "Hassas veri denetimi",
+    }),
+  }),
+]);
+
+export const SECURITY_ADMIN_ROUTE_ADAPTERS = Object.freeze([
+  Object.freeze({
+    key: "users",
+    appPath: SECURITY_ADMIN_ROUTE_FAMILY.users,
+    childPath: "ayarlar/security-admin/users",
+    permissionPath: SECURITY_ADMIN_ROUTE_FAMILY.users,
+    defaultTab: "assignments",
+    tabs: Object.freeze([
+      Object.freeze({
+        key: "people",
+        permissionPath: "/app/ayarlar/rbac/user-assignments",
+        surfaceKey: "user-assignments",
+      }),
+      Object.freeze({
+        key: "assignments",
+        permissionPath: "/app/ayarlar/rbac/user-assignments",
+        surfaceKey: "user-assignments",
+      }),
+      Object.freeze({
+        key: "scopes",
+        permissionPath: "/app/ayarlar/rbac/scope-assignments",
+        surfaceKey: "scope-assignments",
+      }),
+      Object.freeze({
+        key: "delegations",
+        permissionPath: "/app/ayarlar/rbac/delegations",
+        surfaceKey: "delegations",
+      }),
+      Object.freeze({
+        key: "coverage",
+        permissionPath: "/app/ayarlar/rbac/temporary-coverage",
+        surfaceKey: "temporary-coverage",
+      }),
+      Object.freeze({
+        key: "authority",
+        permissionPath: "/app/ayarlar/rbac/user-assignments",
+        surfaceKey: "user-assignments",
+      }),
+    ]),
+  }),
+  Object.freeze({
+    key: "catalog",
+    appPath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
+    childPath: "ayarlar/security-admin/catalog",
+    permissionPath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
+    defaultTab: "access-model",
+    tabs: Object.freeze([
+      Object.freeze({
+        key: "access-model",
+        permissionPath: "/app/ayarlar/rbac/access-model",
+        surfaceKey: "access-model",
+      }),
+      Object.freeze({
+        key: "roles",
+        permissionPath: "/app/ayarlar/rbac/roles-permissions",
+        surfaceKey: "roles-permissions",
+      }),
+      Object.freeze({
+        key: "field-visibility",
+        permissionPath: "/app/ayarlar/rbac/field-visibility-policies",
+        surfaceKey: "field-visibility-policies",
+      }),
+      Object.freeze({
+        key: "group-ap-post",
+        permissionPath: "/app/ayarlar/rbac/group-ap-post-extension",
+        surfaceKey: "group-ap-post-extension",
+      }),
+    ]),
+  }),
+  Object.freeze({
+    key: "workflows",
+    appPath: SECURITY_ADMIN_ROUTE_FAMILY.workflows,
+    childPath: "ayarlar/security-admin/workflows",
+    permissionPath: SECURITY_ADMIN_ROUTE_FAMILY.workflows,
+    defaultTab: "definitions",
+    tabs: Object.freeze([
+      Object.freeze({
+        key: "definitions",
+        permissionPath: "/app/ayarlar/workflow-kurulumu",
+        surfaceKey: "workflow-setup",
+      }),
+      Object.freeze({
+        key: "assignments",
+        permissionPath: "/app/ayarlar/workflow-kurulumu",
+        surfaceKey: "workflow-setup",
+      }),
+      Object.freeze({
+        key: "coverage",
+        permissionPath: "/app/ayarlar/workflow-kurulumu",
+        surfaceKey: "workflow-setup",
+      }),
+      Object.freeze({
+        key: "records",
+        permissionPath: "/app/ayarlar/workflow-kurulumu",
+        surfaceKey: "workflow-setup",
+      }),
+      Object.freeze({
+        key: "setup",
+        permissionPath: "/app/ayarlar/workflow-kurulumu",
+        surfaceKey: "workflow-setup",
+      }),
+    ]),
+  }),
+  Object.freeze({
+    key: "diagnostics",
+    appPath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    childPath: "ayarlar/security-admin/diagnostics",
+    permissionPath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    defaultTab: "access",
+    tabs: Object.freeze([
+      Object.freeze({
+        key: "access",
+        permissionPath: "/app/ayarlar/rbac/access-debugger",
+        surfaceKey: "access-debugger",
+      }),
+      Object.freeze({
+        key: "compliance",
+        permissionPath: "/app/ayarlar/rbac/compliance-reports",
+        surfaceKey: "compliance-reports",
+      }),
+      Object.freeze({
+        key: "audit",
+        permissionPath: "/app/ayarlar/rbac/audit-logs",
+        surfaceKey: "audit-logs",
+      }),
+      Object.freeze({
+        key: "raw-audit",
+        permissionPath: "/app/ayarlar/rbac/raw-audit-logs",
+        surfaceKey: "raw-audit-logs",
+      }),
+      Object.freeze({
+        key: "sensitive-data",
+        permissionPath: "/app/ayarlar/rbac/sensitive-data-audit",
+        surfaceKey: "sensitive-data-audit",
+      }),
+    ]),
+  }),
+]);
+
+// Keep the future workbench map explicit in repo code before sidebar and page
+// migration starts so redirect rules and companion-route decisions stay stable.
+export const SECURITY_ADMIN_ROUTE_TRANSITION_PLAN = Object.freeze([
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/user-assignments",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
+    defaultSearch: "?tab=assignments",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/scope-assignments",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
+    defaultSearch: "?tab=scopes",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/delegations",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
+    defaultSearch: "?tab=delegations",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/temporary-coverage",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
+    defaultSearch: "?tab=coverage",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/sube-operatorleri",
+    futurePath: "/app/ayarlar/sube-operatorleri",
+    defaultSearch: "",
+    transitionType: "phase1-companion-route",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/access-model",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
+    defaultSearch: "?tab=access-model",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/roles-permissions",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
+    defaultSearch: "?tab=roles",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/field-visibility-policies",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
+    defaultSearch: "?tab=field-visibility",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/group-ap-post-extension",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
+    defaultSearch: "?tab=group-ap-post",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/workflow-kurulumu",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.workflows,
+    defaultSearch: "?tab=definitions",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/access-debugger",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    defaultSearch: "?tab=access",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/compliance-reports",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    defaultSearch: "?tab=compliance",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/audit-logs",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    defaultSearch: "?tab=audit",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/raw-audit-logs",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    defaultSearch: "?tab=raw-audit",
+    transitionType: "tabbed-workbench",
+  }),
+  Object.freeze({
+    currentPath: "/app/ayarlar/rbac/sensitive-data-audit",
+    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
+    defaultSearch: "?tab=sensitive-data",
+    transitionType: "tabbed-workbench",
+  }),
+]);
 const RECLASS_PAGE_PERMISSIONS = [
   "org.tree.read",
   "gl.book.read",
@@ -658,100 +1153,203 @@ export const sidebarItems = [
     matchPrefix: "/app/ayarlar",
     items: [
       {
-        label: "Delegasyonlarim",
-        to: "/app/ayarlar/delegasyonlarim",
-        implemented: true,
+        type: "section",
+        title: "Benim Ayarlarim",
+        items: [
+          {
+            label: "Delegasyonlarim",
+            to: "/app/ayarlar/delegasyonlarim",
+            implemented: true,
+          },
+        ],
+      },
+      {
+        type: "section",
+        title: "Kullanici ve Erisim Yonetimi",
+        matchPrefix: "/app/ayarlar/security-admin",
+        items: [
+          {
+            label: "Genel Bakis",
+            to: SECURITY_ADMIN_ROUTE_FAMILY.overview,
+            requiredPermissions: SECURITY_ADMIN_OVERVIEW_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Kullanicilar ve Atamalar",
+            to: "/app/ayarlar/security-admin/users?tab=assignments",
+            requiredPermissions: SECURITY_ADMIN_USERS_WORKBENCH_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Erisim Katalogu",
+            to: "/app/ayarlar/security-admin/catalog?tab=access-model",
+            requiredPermissions: SECURITY_ADMIN_CATALOG_WORKBENCH_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Workflow Governance",
+            to: "/app/ayarlar/security-admin/workflows?tab=definitions",
+            requiredPermissions: SECURITY_ADMIN_WORKFLOWS_WORKBENCH_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Tanilama ve Denetim",
+            to: "/app/ayarlar/security-admin/diagnostics?tab=access",
+            requiredPermissions:
+              SECURITY_ADMIN_DIAGNOSTICS_WORKBENCH_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+        ],
+      },
+      {
+        type: "section",
+        title: "Platform Kurulumu",
+        items: [
+          {
+            label: "Sirket Ayarlari",
+            to: "/app/ayarlar/sirket-ayarlari",
+            requiredPermissions: COMPANY_SETTINGS_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Organizasyon Yonetimi",
+            to: "/app/ayarlar/organizasyon-yonetimi",
+            requiredPermissions: ORG_SETTINGS_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Entity Aktivasyon Alani",
+            to: "/app/ayarlar/entity-aktivasyon-alani",
+            requiredPermissions: ENTITY_ACTIVATION_WORKSPACE_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Hesap Plani Olustur",
+            to: "/app/ayarlar/hesap-plani-olustur",
+            implemented: true,
+          },
+          {
+            label: "Hesap Plani Ayarlari",
+            to: "/app/ayarlar/hesap-plani-ayarlari",
+            requiredPermissions: GL_SETUP_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Hesap Yeniden Siniflandirma",
+            to: "/app/ayarlar/hesap-yeniden-siniflandirma",
+            requiredPermissions: RECLASS_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Kur Yonetimi",
+            to: "/app/ayarlar/kur-yonetimi",
+            requiredPermissions: FX_RATE_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Vergi Kurulumu",
+            to: "/app/ayarlar/vergi-kurulumu",
+            requiredPermissions: TAX_SETUP_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Konsolidasyon Kurulumu",
+            to: "/app/ayarlar/konsolidasyon-kurulumu",
+            requiredPermissions: CONSOLIDATION_SETUP_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+        ],
       },
       {
         label: "Yerel Kullanici Yonetimi",
         to: "/app/ayarlar/sube-operatorleri",
         requiredPermissions: BRANCH_OPERATOR_MANAGEMENT_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Erisim Modeli",
         to: "/app/ayarlar/rbac/access-model",
         requiredPermissions: ACCESS_MODEL_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Roller ve Yetkiler",
         to: "/app/ayarlar/rbac/roles-permissions",
         requiredPermissions: ROLE_PERMISSIONS_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Kullanici Rol Atamalari",
         to: "/app/ayarlar/rbac/user-assignments",
         requiredPermissions: USER_ASSIGNMENTS_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Scope Atamalari",
         to: "/app/ayarlar/rbac/scope-assignments",
         requiredPermissions: SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Alan Gorunurluk Politikalari",
         to: "/app/ayarlar/rbac/field-visibility-policies",
         requiredPermissions: FIELD_VISIBILITY_POLICIES_PAGE_PERMISSIONS,
         implemented: true,
-      },
-      {
-        label: "Rol Gecisleri",
-        to: "/app/ayarlar/rbac/role-migrations",
-        requiredPermissions: ROLE_MIGRATIONS_PAGE_PERMISSIONS,
-        adminUiStateKey: "roleMigrations",
-        implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Onay Delegasyonlari",
         to: "/app/ayarlar/rbac/delegations",
         requiredPermissions: APPROVAL_DELEGATIONS_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Gecici Operasyonel Kapsama",
         to: "/app/ayarlar/rbac/temporary-coverage",
         requiredPermissions: TEMPORARY_OPERATIONAL_COVERAGE_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Erisim Tanilari",
         to: "/app/ayarlar/rbac/access-debugger",
         requiredPermissions: ACCESS_DEBUGGER_PAGE_PERMISSIONS,
         implemented: true,
-      },
-      {
-        label: "Eski Rol Gecis Gorunumu",
-        to: "/app/ayarlar/rbac/legacy-migration-visibility",
-        requiredPermissions: LEGACY_MIGRATION_VISIBILITY_PAGE_PERMISSIONS,
-        implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Grup AP Kaydi Uzantisi",
         to: "/app/ayarlar/rbac/group-ap-post-extension",
-        requiredPermissions: ROLE_MIGRATIONS_PAGE_PERMISSIONS,
+        requiredPermissions: GROUP_AP_POST_EXTENSION_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Uyum Raporlari",
         to: "/app/ayarlar/rbac/compliance-reports",
         requiredPermissions: COMPLIANCE_REPORTS_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "RBAC Denetim Loglari",
         to: "/app/ayarlar/rbac/audit-logs",
         requiredPermissions: AUDIT_LOGS_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Ham Denetim Loglari",
         to: "/app/ayarlar/rbac/raw-audit-logs",
         requiredPermissions: AUDIT_LOGS_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Cari Denetim Izleri",
@@ -764,6 +1362,14 @@ export const sidebarItems = [
         to: "/app/ayarlar/rbac/sensitive-data-audit",
         requiredPermissions: SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS,
         implemented: true,
+        sidebarHidden: true,
+      },
+      {
+        label: "Workflow Yonetimi",
+        to: "/app/ayarlar/workflow-kurulumu",
+        requiredPermissions: WORKFLOW_SETUP_PAGE_PERMISSIONS,
+        implemented: true,
+        sidebarHidden: true,
       },
       {
         label: "Operasyon Dashboard",
@@ -781,65 +1387,6 @@ export const sidebarItems = [
         label: "Veri Saklama ve Snapshot",
         to: "/app/ayarlar/veri-saklama-snapshot",
         requiredPermissions: OPS_RETENTION_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Sirket Ayarlari",
-        to: "/app/ayarlar/sirket-ayarlari",
-        requiredPermissions: COMPANY_SETTINGS_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Organizasyon Yonetimi",
-        to: "/app/ayarlar/organizasyon-yonetimi",
-        requiredPermissions: ORG_SETTINGS_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Entity Aktivasyon Alani",
-        to: "/app/ayarlar/entity-aktivasyon-alani",
-        requiredPermissions: ENTITY_ACTIVATION_WORKSPACE_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Hesap Plani Olustur",
-        to: "/app/ayarlar/hesap-plani-olustur",
-        implemented: true,
-      },
-      {
-        label: "Hesap Plani Ayarlari",
-        to: "/app/ayarlar/hesap-plani-ayarlari",
-        requiredPermissions: GL_SETUP_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Workflow Yonetimi",
-        to: "/app/ayarlar/workflow-kurulumu",
-        requiredPermissions: WORKFLOW_SETUP_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Hesap Yeniden Siniflandirma",
-        to: "/app/ayarlar/hesap-yeniden-siniflandirma",
-        requiredPermissions: RECLASS_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Kur Yonetimi",
-        to: "/app/ayarlar/kur-yonetimi",
-        requiredPermissions: FX_RATE_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Vergi Kurulumu",
-        to: "/app/ayarlar/vergi-kurulumu",
-        requiredPermissions: TAX_SETUP_PAGE_PERMISSIONS,
-        implemented: true,
-      },
-      {
-        label: "Konsolidasyon Kurulumu",
-        to: "/app/ayarlar/konsolidasyon-kurulumu",
-        requiredPermissions: CONSOLIDATION_SETUP_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

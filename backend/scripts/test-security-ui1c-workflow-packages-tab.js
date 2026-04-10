@@ -55,21 +55,24 @@ async function main() {
   assert(
     accessModelPageSource.includes("Workflow package guidance") &&
       accessModelPageSource.includes("Packages are the authority layer") &&
+      accessModelPageSource.includes("Browse by workflow family") &&
       accessModelPageSource.includes("Package name") &&
-      accessModelPageSource.includes("Workflow family") &&
       accessModelPageSource.includes("Allowed scopes") &&
       accessModelPageSource.includes("Underlying permission codes") &&
       accessModelPageSource.includes("Current runtime mapping") &&
       accessModelPageSource.includes("Used in presets") &&
-      accessModelPageSource.includes("Exact permission codes") &&
+      accessModelPageSource.includes("Permission modules") &&
+      accessModelPageSource.includes("Permissions grouped by module") &&
+      accessModelPageSource.includes("Scope coverage") &&
       accessModelPageSource.includes("Legacy warnings") &&
       accessModelPageSource.includes("WorkflowPackageCatalogTable"),
-    "AccessModelCatalogPage should expose the dedicated UI-1C package table and drawer surfaces"
+    "AccessModelCatalogPage should expose the dedicated UI-1C package card list and richer drawer surface"
   );
 
   assert(
     accessModelPageSource.includes("Workflow steps bind to packages, not to job titles.") &&
       accessModelPageSource.includes("Current runtime mapping") &&
+      accessModelPageSource.includes("Module groups keep package meaning readable") &&
       accessModelPageSource.includes("Existing helper bundle mapping") &&
       accessModelPageSource.includes("Existing runtime role mapping"),
     "UI-1C should explain package authority and the compatibility mapping from current runtime roles"

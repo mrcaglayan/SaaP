@@ -364,6 +364,9 @@ export const messages = {
         "aylik-donem-sonu-islemler": "Aysonu İşlemler",
         "yillik-donem-sonu-islemleri": "Yılsonu İşlemler",
         raporlar: "Raporlar",
+        "benim-ayarlarim": "Benim Ayarlarim",
+        "platform-kurulumu": "Platform Kurulumu",
+        "kullanici-ve-erisim-yonetimi": "Kullanici ve Erisim Yonetimi",
         ayarlar: "Ayarlar",
       },
       byPath: {
@@ -480,6 +483,28 @@ export const messages = {
         "/app/demirbas-raporu": "Demirbas Raporu",
         "/app/mizan-raporu": "Mizan Raporu",
         "/app/ayarlar": "Ayarlar",
+        "/app/ayarlar/security-admin": "Genel Bakis",
+        "/app/ayarlar/security-admin?view=overview": "Genel Bakis",
+        "/app/ayarlar/security-admin/users": "Kullanicilar ve Atamalar",
+        "/app/ayarlar/security-admin/users?tab=people": "Kisiler",
+        "/app/ayarlar/security-admin/users?tab=assignments":
+          "Atamalar",
+        "/app/ayarlar/security-admin/users?tab=scopes": "Kapsam erisimi",
+        "/app/ayarlar/security-admin/users?tab=delegations":
+          "Delegasyonlar",
+        "/app/ayarlar/security-admin/users?tab=coverage":
+          "Gecici kapsama",
+        "/app/ayarlar/security-admin/users?tab=authority":
+          "Etkili yetki",
+        "/app/ayarlar/security-admin/catalog": "Erisim Katalogu",
+        "/app/ayarlar/security-admin/catalog?tab=access-model":
+          "Erisim Katalogu",
+        "/app/ayarlar/security-admin/workflows": "Workflow Governance",
+        "/app/ayarlar/security-admin/workflows?tab=definitions":
+          "Workflow Governance",
+        "/app/ayarlar/security-admin/diagnostics": "Tanilama ve Denetim",
+        "/app/ayarlar/security-admin/diagnostics?tab=access":
+          "Tanilama ve Denetim",
         "/app/ayarlar/delegasyonlarim": "Delegasyonlarim",
         "/app/ayarlar/sube-operatorleri": "Yerel Kullanici Yonetimi",
         "/app/ayarlar/rbac/roles-permissions": "Roller ve Yetkiler",
@@ -487,7 +512,6 @@ export const messages = {
         "/app/ayarlar/rbac/scope-assignments": "Scope Atamalari",
         "/app/ayarlar/rbac/field-visibility-policies":
           "Alan Gorunurluk Politikalari",
-        "/app/ayarlar/rbac/role-migrations": "Rol Gecisleri",
         "/app/ayarlar/rbac/delegations": "Onay Delegasyonlari",
         "/app/ayarlar/rbac/temporary-coverage": "Gecici Operasyonel Kapsama",
         "/app/ayarlar/rbac/access-debugger": "Erisim Hata Ayiklayici",
@@ -2778,6 +2802,9 @@ export const messages = {
         "aylik-donem-sonu-islemler": "Month-End Operations",
         "yillik-donem-sonu-islemleri": "Year-End Operations",
         raporlar: "Reports",
+        "benim-ayarlarim": "My Settings",
+        "platform-kurulumu": "Platform Setup",
+        "kullanici-ve-erisim-yonetimi": "Security Administration",
         ayarlar: "Settings",
       },
       byPath: {
@@ -2892,6 +2919,28 @@ export const messages = {
         "/app/demirbas-raporu": "Fixed Asset Report",
         "/app/mizan-raporu": "Trial Balance Report",
         "/app/ayarlar": "Settings",
+        "/app/ayarlar/security-admin": "Overview",
+        "/app/ayarlar/security-admin?view=overview": "Overview",
+        "/app/ayarlar/security-admin/users": "Users and Assignments",
+        "/app/ayarlar/security-admin/users?tab=people": "People",
+        "/app/ayarlar/security-admin/users?tab=assignments":
+          "Assignments",
+        "/app/ayarlar/security-admin/users?tab=scopes": "Scope Access",
+        "/app/ayarlar/security-admin/users?tab=delegations":
+          "Delegations",
+        "/app/ayarlar/security-admin/users?tab=coverage":
+          "Temporary Coverage",
+        "/app/ayarlar/security-admin/users?tab=authority":
+          "Effective Authority",
+        "/app/ayarlar/security-admin/catalog": "Access Catalog",
+        "/app/ayarlar/security-admin/catalog?tab=access-model":
+          "Access Catalog",
+        "/app/ayarlar/security-admin/workflows": "Workflow Governance",
+        "/app/ayarlar/security-admin/workflows?tab=definitions":
+          "Workflow Governance",
+        "/app/ayarlar/security-admin/diagnostics": "Diagnostics and Audit",
+        "/app/ayarlar/security-admin/diagnostics?tab=access":
+          "Diagnostics and Audit",
         "/app/ayarlar/delegasyonlarim": "My Delegations",
         "/app/ayarlar/sube-operatorleri": "Local User Administration",
         "/app/ayarlar/rbac/roles-permissions": "Roles and Permissions",
@@ -2899,7 +2948,6 @@ export const messages = {
         "/app/ayarlar/rbac/scope-assignments": "Scope Assignments",
         "/app/ayarlar/rbac/field-visibility-policies":
           "Field Visibility Policies",
-        "/app/ayarlar/rbac/role-migrations": "Role Migrations",
         "/app/ayarlar/rbac/delegations": "Approval Delegations",
         "/app/ayarlar/rbac/temporary-coverage":
           "Temporary Operational Coverage",

@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 import {
   clearApprovalExecutionResolversForTests,
   evaluateApprovalNeed,
@@ -349,13 +350,7 @@ async function main() {
   });
 
   for (const userId of [requesterUserId, tenantApproverAUserId, tenantApproverBUserId]) {
-    await assignRoleAtScope({
-      tenantId: fixture.tenantId,
-      userId,
-      roleCode: "TenantAdmin",
-      scopeType: "TENANT",
-      scopeId: fixture.tenantId,
-    });
+    await assignTestFullAccessRoleToUser(fixture.tenantId, userId);
   }
 
   const scopedRoleCode = await createScopedReviewRole(fixture.tenantId, stamp);

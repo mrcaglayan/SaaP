@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.POLICY_PACK_APPLY_TEST_PORT || 3137);
 const BASE_URL =
@@ -196,8 +197,9 @@ async function createUserWithRole({
   const userId = toNumber(userResult.rows?.[0]?.id);
   assert(userId > 0, `Failed to resolve user id for ${email}`);
 
-  const roleId = await resolveRoleId(tenantId, roleCode);
-  await query(
+  if (roleCode) {
+    const roleId = await resolveRoleId(tenantId, roleCode);
+    await query(
     `INSERT INTO user_role_scopes (
         tenant_id,
         user_id,
@@ -208,10 +210,28 @@ async function createUserWithRole({
      )
      VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
      ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
+      [tenantId, userId, roleId, tenantId]
+    );
+  }
 
   return { userId, email };
+}
+
+async function createUserWithFullAccess({
+  tenantId,
+  email,
+  passwordHash,
+  name,
+}) {
+  const user = await createUserWithRole({
+    tenantId,
+    roleCode: null,
+    email,
+    passwordHash,
+    name,
+  });
+  await assignTestFullAccessRoleToUser(tenantId, user.userId);
+  return user;
 }
 
 async function getCountryIdByIso2(iso2) {
@@ -537,9 +557,8 @@ async function main() {
   await seedCore({ ensureDefaultTenantIfMissing: true });
 
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
-  const adminUser = await createUserWithRole({
+  const adminUser = await createUserWithFullAccess({
     tenantId,
-    roleCode: "TenantAdmin",
     email: `pack_apply_admin_${stamp}@example.com`,
     passwordHash,
     name: "Policy Pack Apply Admin",

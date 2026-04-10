@@ -1,4 +1,5 @@
 import { closePool, query } from "../src/db.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 import { resolveOrPrepareSmokeContext } from "./_smoke-context.js";
 import {
   activateAsset,
@@ -185,29 +186,7 @@ async function createSmokeUser({ tenantId, uniqueSuffix }) {
   );
   const userId = Number(insertResult.rows?.insertId || 0);
   assert(userId > 0, "Failed to create smoke user");
-
-  const roleResult = await query(
-    `SELECT id
-       FROM roles
-      WHERE tenant_id = ?
-        AND code = 'TenantAdmin'
-      LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = Number(roleResult.rows?.[0]?.id || 0);
-  assert(roleId > 0, "TenantAdmin role not found");
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id,
-        user_id,
-        role_id,
-        scope_type,
-        scope_id,
-        effect
-     ) VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')`,
-    [tenantId, userId, roleId, tenantId]
-  );
+  await assignTestFullAccessRoleToUser(tenantId, userId);
 
   return userId;
 }

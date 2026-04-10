@@ -8,6 +8,9 @@ import {
   revokeOperationalCoverage,
 } from "../../api/approvalDelegations.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
+import SecurityUsersWorkbenchTabs from "./components/users/SecurityUsersWorkbenchTabs.jsx";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 
 const STATE_BADGE_CLASS_NAMES = {
   REQUESTED: "border-amber-200 bg-amber-50 text-amber-800",
@@ -71,6 +74,7 @@ function getBadgeClassName(map, value) {
  */
 export default function TemporaryOperationalCoveragePage() {
   const { getPermissionAccess } = useAuth();
+  const { l } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actingRowId, setActingRowId] = useState(0);
@@ -314,19 +318,38 @@ export default function TemporaryOperationalCoveragePage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">
-          Temporary Operational Coverage
-        </h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Request, review, and revoke time-bounded local role authority without
-          mixing it with approval delegation. Coverage grants temporary runtime
-          access through dated role assignments. Delegation remains only for
-          acting on approval requests.
-        </p>
-      </div>
-
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="users"
+      sectionKey="user-assignments"
+      eyebrow={l("Users & Assignments Workbench", "Kullanicilar ve Atamalar Workbench'i")}
+      title={l("Temporary Coverage", "Gecici kapsama")}
+      description={l(
+        "Request, review, and revoke time-bounded runtime authority without leaving the users workbench family.",
+        "Tarihle sinirli runtime yetkisini users workbench ailesinden cikmadan isteyin, inceleyin ve geri alin."
+      )}
+      stats={[
+        {
+          title: l("Coverage rows", "Kapsama satirlari"),
+          value: filteredRows.length,
+          description: l(
+            "Rows visible after the current state filter is applied.",
+            "Mevcut durum filtresi uygulandiktan sonra gorunen satirlar."
+          ),
+          tone: "blue",
+        },
+        {
+          title: l("Runtime roles", "Runtime roller"),
+          value: workspace.roles.length,
+          description: l(
+            "Local roles that can be granted temporarily through this workspace.",
+            "Bu workbench uzerinden gecici olarak verilebilen yerel roller."
+          ),
+          tone: "green",
+        },
+      ]}
+      toolbar={<SecurityUsersWorkbenchTabs activeTab="coverage" counts={{ coverage: filteredRows.length }} />}
+    >
+      <div className="space-y-4">
       <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
         <div className="font-semibold">Separate From Approval Delegation</div>
         <p className="mt-1">
@@ -334,7 +357,7 @@ export default function TemporaryOperationalCoveragePage() {
           coverage grants temporary runtime authority to another local operator.
         </p>
         <Link
-          to="/app/ayarlar/rbac/delegations"
+          to="/app/ayarlar/security-admin/users?tab=delegations"
           className="mt-3 inline-flex rounded-lg border border-sky-300 bg-white px-3 py-2 font-medium text-sky-800 hover:bg-sky-100"
         >
           Open Approval Delegations
@@ -646,6 +669,7 @@ export default function TemporaryOperationalCoveragePage() {
           </div>
         )}
       </section>
-    </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

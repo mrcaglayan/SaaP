@@ -1,7 +1,7 @@
 import bcrypt from "bcrypt";
 import { closePool, query } from "./db.js";
 import { seedCore } from "./seedCore.js";
-import { assignCompatibilityBootstrapRolesToUser } from "./services/systemRoles.service.js";
+import { assignBootstrapRolesToUser } from "./services/systemRoles.service.js";
 
 const email = "test@example.com";
 const password = "123456";
@@ -46,7 +46,7 @@ const run = async () => {
     throw new Error(`Unable to resolve user id for ${email}`);
   }
 
-  const roleIdsByCode = await assignCompatibilityBootstrapRolesToUser(tenantId, userId);
+  const roleIdsByCode = await assignBootstrapRolesToUser(tenantId, userId);
 
   console.log("Seeded:", {
     email,

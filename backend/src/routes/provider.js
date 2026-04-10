@@ -5,8 +5,8 @@ import { query, withTransaction } from "../db.js";
 import { invalidateRbacCache } from "../middleware/rbac.js";
 import { normalizeFeatureCode } from "../services/features.catalog.js";
 import {
-  assignCompatibilityBootstrapRolesToUser,
-  ensureCompatibilitySystemRolesForTenant,
+  assignBootstrapRolesToUser,
+  ensureSystemRolesForTenant,
   SECURITY_ADMIN_ROLE_CODE,
   SYSTEM_ADMIN_ROLE_CODE,
 } from "../services/systemRoles.service.js";
@@ -333,9 +333,9 @@ async function getProviderTenantRow(tenantId) {
   return result.rows[0] ? mapTenantRow(result.rows[0]) : null;
 }
 
-async function ensureCompatibilityBootstrapRoles(tx, tenantId) {
+async function ensureBootstrapRoles(tx, tenantId) {
   try {
-    return await ensureCompatibilitySystemRolesForTenant(tenantId, {
+    return await ensureSystemRolesForTenant(tenantId, {
       runQuery: (sql, params) => tx.query(sql, params),
     });
   } catch (error) {
@@ -413,11 +413,11 @@ async function createTenantWithAdmin(tx, input) {
     throw new Error("Failed to create tenant");
   }
 
-  const roleIdsByCode = await ensureCompatibilityBootstrapRoles(tx, tenantId);
+  const roleIdsByCode = await ensureBootstrapRoles(tx, tenantId);
   const securityAdminRoleId = roleIdsByCode.get(SECURITY_ADMIN_ROLE_CODE);
   const systemAdminRoleId = roleIdsByCode.get(SYSTEM_ADMIN_ROLE_CODE);
   if (!securityAdminRoleId || !systemAdminRoleId) {
-    throw new Error("Failed to initialize compatibility admin roles");
+    throw new Error("Failed to initialize admin roles");
   }
 
   const userInsertResult = await tx.query(
@@ -436,7 +436,7 @@ async function createTenantWithAdmin(tx, input) {
     throw new Error("Failed to create admin user");
   }
 
-  await assignCompatibilityBootstrapRolesToUser(tenantId, userId, {
+  await assignBootstrapRolesToUser(tenantId, userId, {
     runQuery: (sql, params) => tx.query(sql, params),
     roleIdsByCode,
   });

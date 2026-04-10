@@ -30,14 +30,13 @@ import TemporaryOperationalCoveragePage from "./pages/security/TemporaryOperatio
 import UserAssignmentsPage from "./pages/security/UserAssignmentsPage";
 import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
 import BranchOperatorManagementPage from "./pages/security/BranchOperatorManagementPage.jsx";
-import RoleMigrationsPage from "./pages/security/RoleMigrationsPage.jsx";
 import AccessDebuggerPage from "./pages/security/AccessDebuggerPage.jsx";
-import LegacyMigrationVisibilityPage from "./pages/security/LegacyMigrationVisibilityPage.jsx";
 import GroupApPostExtensionPage from "./pages/security/GroupApPostExtensionPage.jsx";
 import ComplianceReportsPage from "./pages/security/ComplianceReportsPage.jsx";
 import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
 import RawAuditLogsPage from "./pages/security/RawAuditLogsPage.jsx";
 import SensitiveDataAuditPage from "./pages/security/SensitiveDataAuditPage.jsx";
+import SecurityAdminOverviewPage from "./pages/security/SecurityAdminOverviewPage.jsx";
 import OpsDashboardPage from "./pages/OpsDashboardPage.jsx";
 import ExceptionsWorkbenchPage from "./pages/ExceptionsWorkbenchPage.jsx";
 import RetentionAdminPage from "./pages/settings/RetentionAdminPage.jsx";
@@ -91,7 +90,12 @@ import FixedAssetReportsPage from "./pages/fixedAssets/FixedAssetReportsPage.jsx
 import FixedAssetSettingsPage from "./pages/fixedAssets/FixedAssetSettingsPage.jsx";
 import FixedAssetCustodiansPage from "./pages/fixedAssets/FixedAssetCustodiansPage.jsx";
 import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
-import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
+import {
+  collectSidebarLinks,
+  SECURITY_ADMIN_ROUTE_ADAPTERS,
+  SECURITY_ADMIN_ROUTE_FAMILY,
+  sidebarItems,
+} from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
 import ModuleReadinessProvider from "./readiness/ModuleReadinessProvider.jsx";
@@ -171,6 +175,55 @@ const routeLoadingFallback = (
     <div className="text-sm text-slate-600">Loading module...</div>
   </div>
 );
+
+function buildMergedNavigationTarget(to, currentSearch = "", currentHash = "") {
+  const targetUrl = new URL(String(to || ""), "https://example.invalid");
+  const nextSearchParams = new URLSearchParams(targetUrl.search);
+  const incomingSearchParams = new URLSearchParams(String(currentSearch || ""));
+
+  for (const [key, value] of incomingSearchParams.entries()) {
+    nextSearchParams.set(key, value);
+  }
+
+  const nextSearch = nextSearchParams.toString();
+  const nextHash = targetUrl.hash || String(currentHash || "");
+  return `${targetUrl.pathname}${nextSearch ? `?${nextSearch}` : ""}${nextHash}`;
+}
+
+function renderSecurityAdminSurface(surfaceKey) {
+  switch (surfaceKey) {
+    case "access-model":
+      return <AccessModelCatalogPage />;
+    case "roles-permissions":
+      return <RolesPermissionsPage />;
+    case "user-assignments":
+      return <UserAssignmentsPage />;
+    case "scope-assignments":
+      return <ScopeAssignmentsPage />;
+    case "field-visibility-policies":
+      return <FieldVisibilityPoliciesPage />;
+    case "delegations":
+      return <ApprovalDelegationsPage />;
+    case "temporary-coverage":
+      return <TemporaryOperationalCoveragePage />;
+    case "access-debugger":
+      return <AccessDebuggerPage />;
+    case "group-ap-post-extension":
+      return <GroupApPostExtensionPage />;
+    case "compliance-reports":
+      return <ComplianceReportsPage />;
+    case "audit-logs":
+      return <RbacAuditLogsPage />;
+    case "raw-audit-logs":
+      return <RawAuditLogsPage />;
+    case "sensitive-data-audit":
+      return <SensitiveDataAuditPage />;
+    case "workflow-setup":
+      return <WorkflowSetupPage />;
+    default:
+      return <Navigate to="/app" replace />;
+  }
+}
 
 // Keep heavy route bundles behind RequirePermission so unauthorized users do not
 // fetch report chunks they cannot open.
@@ -633,8 +686,23 @@ const implementedRoutes = [
   {
     appPath: "/app/ayarlar/workflow-kurulumu",
     childPath: "ayarlar/workflow-kurulumu",
-    element: <WorkflowSetupPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/workflows?tab=definitions"
+      />
+    ),
   },
+  {
+    appPath: SECURITY_ADMIN_ROUTE_FAMILY.overview,
+    childPath: "ayarlar/security-admin",
+    element: <SecurityAdminOverviewPage />,
+  },
+  ...SECURITY_ADMIN_ROUTE_ADAPTERS.map((route) => ({
+    appPath: route.appPath,
+    childPath: route.childPath,
+    permissionPath: route.permissionPath,
+    element: <SecurityAdminWorkbenchAdapter routeKey={route.key} />,
+  })),
   {
     appPath: "/app/ayarlar/hesap-yeniden-siniflandirma",
     childPath: "ayarlar/hesap-yeniden-siniflandirma",
@@ -683,77 +751,115 @@ const implementedRoutes = [
   {
     appPath: "/app/ayarlar/rbac/access-model",
     childPath: "ayarlar/rbac/access-model",
-    element: <AccessModelCatalogPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/catalog?tab=access-model"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/roles-permissions",
     childPath: "ayarlar/rbac/roles-permissions",
-    element: <RolesPermissionsPage />,
+    element: (
+      <LegacyRouteRedirect to="/app/ayarlar/security-admin/catalog?tab=roles" />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/user-assignments",
     childPath: "ayarlar/rbac/user-assignments",
-    element: <UserAssignmentsPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/users?tab=assignments"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/scope-assignments",
     childPath: "ayarlar/rbac/scope-assignments",
-    element: <ScopeAssignmentsPage />,
+    element: (
+      <LegacyRouteRedirect to="/app/ayarlar/security-admin/users?tab=scopes" />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/field-visibility-policies",
     childPath: "ayarlar/rbac/field-visibility-policies",
-    element: <FieldVisibilityPoliciesPage />,
-  },
-  {
-    appPath: "/app/ayarlar/rbac/role-migrations",
-    childPath: "ayarlar/rbac/role-migrations",
-    element: <RoleMigrationsPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/catalog?tab=field-visibility"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/delegations",
     childPath: "ayarlar/rbac/delegations",
-    element: <ApprovalDelegationsPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/users?tab=delegations"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/temporary-coverage",
     childPath: "ayarlar/rbac/temporary-coverage",
-    element: <TemporaryOperationalCoveragePage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/users?tab=coverage"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/access-debugger",
     childPath: "ayarlar/rbac/access-debugger",
-    element: <AccessDebuggerPage />,
-  },
-  {
-    appPath: "/app/ayarlar/rbac/legacy-migration-visibility",
-    childPath: "ayarlar/rbac/legacy-migration-visibility",
-    element: <LegacyMigrationVisibilityPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/diagnostics?tab=access"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/group-ap-post-extension",
     childPath: "ayarlar/rbac/group-ap-post-extension",
-    element: <GroupApPostExtensionPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/catalog?tab=group-ap-post"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/compliance-reports",
     childPath: "ayarlar/rbac/compliance-reports",
-    element: <ComplianceReportsPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/diagnostics?tab=compliance"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/audit-logs",
     childPath: "ayarlar/rbac/audit-logs",
-    element: <RbacAuditLogsPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/diagnostics?tab=audit"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/raw-audit-logs",
     childPath: "ayarlar/rbac/raw-audit-logs",
-    element: <RawAuditLogsPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/diagnostics?tab=raw-audit"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/rbac/sensitive-data-audit",
     childPath: "ayarlar/rbac/sensitive-data-audit",
-    element: <SensitiveDataAuditPage />,
+    element: (
+      <LegacyRouteRedirect
+        to="/app/ayarlar/security-admin/diagnostics?tab=sensitive-data"
+      />
+    ),
   },
   {
     appPath: "/app/ayarlar/operasyon-dashboard",
@@ -874,9 +980,82 @@ function toChildPath(appPath) {
 
 function LegacyRouteRedirect({ to }) {
   const location = useLocation();
-  const search = String(location.search || "");
-  const hash = String(location.hash || "");
-  return <Navigate to={`${to}${search}${hash}`} replace />;
+  return (
+    <Navigate
+      to={buildMergedNavigationTarget(to, location.search, location.hash)}
+      replace
+    />
+  );
+}
+
+function resolveSidebarRouteAccess(path, hasAnyPermission, hasAnyFeature) {
+  const sidebarItem = sidebarLinkByPath.get(path);
+  if (!sidebarItem) {
+    return {
+      locked: false,
+      visible: true,
+    };
+  }
+
+  const requiredPermissions = Array.isArray(sidebarItem.requiredPermissions)
+    ? sidebarItem.requiredPermissions
+    : [];
+  const requiredFeatureCodes = Array.isArray(sidebarItem.requiredFeatureCodes)
+    ? sidebarItem.requiredFeatureCodes
+    : [];
+  const visible =
+    requiredFeatureCodes.length === 0 || hasAnyFeature(requiredFeatureCodes);
+
+  return {
+    locked:
+      requiredPermissions.length > 0 && !hasAnyPermission(requiredPermissions),
+    visible,
+  };
+}
+
+function SecurityAdminWorkbenchAdapter({ routeKey }) {
+  const location = useLocation();
+  const { hasAnyFeature, hasAnyPermission } = useAuth();
+  const route = SECURITY_ADMIN_ROUTE_ADAPTERS.find(
+    (entry) => entry.key === routeKey,
+  );
+
+  if (!route) {
+    return <Navigate to="/app" replace />;
+  }
+
+  const accessibleTabs = Array.isArray(route.tabs)
+    ? route.tabs.filter((tab) => {
+        const access = resolveSidebarRouteAccess(
+          tab.permissionPath || route.permissionPath,
+          hasAnyPermission,
+          hasAnyFeature,
+        );
+        return access.visible && !access.locked;
+      })
+    : [];
+
+  if (accessibleTabs.length === 0) {
+    return <Navigate to="/app" replace />;
+  }
+
+  const searchParams = new URLSearchParams(location.search);
+  const requestedTab = String(searchParams.get("tab") || route.defaultTab || "");
+  const activeTab =
+    accessibleTabs.find((tab) => tab.key === requestedTab) || accessibleTabs[0];
+
+  if (searchParams.get("tab") !== activeTab.key) {
+    searchParams.set("tab", activeTab.key);
+    const nextSearch = searchParams.toString();
+    return (
+      <Navigate
+        to={`${route.appPath}${nextSearch ? `?${nextSearch}` : ""}${location.hash || ""}`}
+        replace
+      />
+    );
+  }
+
+  return renderSecurityAdminSurface(activeTab.surfaceKey);
 }
 
 /**

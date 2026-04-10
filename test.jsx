@@ -1,1817 +1,1184 @@
 
-function freezeList(values) {
-  return Object.freeze(values);
-}
-function freezeStep(step) {
-  return Object.freeze(step);
-}
-const CATEGORY_LABELS = Object.freeze({
-  system: "System administration",
-  composable: "Composable duty-boundary",
-  scoped: "Scoped operations",
-  readonly: "Read-only",
-  legacy: "Legacy",
-  custom: "Custom tenant role",
-});
-const ACCESS_MODEL_TYPE_LABELS = Object.freeze({
-  runtime_role: "Runtime Role",
-  business_role: "Business Role",
-  workflow_package: "Workflow Package",
-  workflow_preset: "Workflow Preset",
-  assignment_preset: "Assignment Preset",
-});
-const WORKFLOW_FAMILY_LABELS = Object.freeze({
-  CROSS_WORKFLOW: "Cross-workflow",
-  AP_DOCUMENT_POSTING: "AP Document Posting",
-  LOCAL_CLOSE_PACK: "Local Close Pack",
-  PERIOD_CLOSE: "Period Close",
-  CONSOLIDATION_RUN: "Consolidation Run",
-});
-const BUSINESS_ROLE_CATEGORY_LABELS = Object.freeze({
-  operating_unit_scope: "Operating unit scope",
-  legal_entity_scope: "Legal entity scope",
-  group_scope: "Group scope",
-});
-const WORKFLOW_PACKAGE_CATEGORY_LABELS = Object.freeze({
-  shared_governance: "Shared governance",
-  core_action: "Core action package",
-  extension_package: "Extension package",
-});
-const WORKFLOW_PRESET_CATEGORY_LABELS = Object.freeze({
-  baseline_preset: "Baseline preset",
-  assisted_preset: "Assisted preset",
-  controlled_preset: "Controlled preset",
-  supervised_preset: "Supervised preset",
-  executive_preset: "Executive preset",
-  extension_preset: "Extension preset",
-});
-const ASSIGNMENT_PRESET_CATEGORY_LABELS = Object.freeze({
-  bootstrap_setup: "Bootstrap setup",
-});
-const ACCESS_MODEL_SECTION_LABELS = Object.freeze({
-  business_roles: "Business Roles",
-  workflow_packages: "Workflow Packages",
-  workflow_presets: "Workflow Presets",
-  legacy_catalog: "Legacy Catalog",
-});
-const ACCESS_MODEL_SECTION_ORDER = Object.freeze({
-  business_roles: 10,
-  workflow_packages: 20,
-  workflow_presets: 30,
-  legacy_catalog: 40,
-});
-const MODEL_CATEGORY_LABELS = Object.freeze({
-  runtime_role: CATEGORY_LABELS,
-  business_role: BUSINESS_ROLE_CATEGORY_LABELS,
-  workflow_package: WORKFLOW_PACKAGE_CATEGORY_LABELS,
-  workflow_preset: WORKFLOW_PRESET_CATEGORY_LABELS,
-  assignment_preset: ASSIGNMENT_PRESET_CATEGORY_LABELS,
-});
-const ROLE_CATALOG_CODE_ALIASES = Object.freeze({
-  CountryAPPoster: "CountryAPController",
-});
-const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
-  EntitySetupManager: "EntityAPController",
-  CountryFinanceSetupManager: "CountryAPApprover",
-});
-const ROLE_CATALOG = Object.freeze({
-  TenantAdmin: {
-    code: "Legacy Tenant Admin",
-    category: "legacy",
-    summary:
-      "Legacy tenant-wide admin role preserved only for migration rollback and historical review. Fresh tenants use SecurityAdmin plus SystemAdmin.",
-    capabilities: ["Security admin", "System operations", "Compatibility bootstrap"],
-    recommendedScopes: ["TENANT"],
-    replacementLabel: "SecurityAdmin + SystemAdmin",
-    sortOrder: 910,
-    legacy: true,
-  },
-  SecurityAdmin: {
-    category: "system",
-    summary:
-      "Manages roles, assignments, scopes, and security-facing audit surfaces.",
-    capabilities: ["Role governance", "Access administration", "Security audit"],
-    recommendedScopes: ["TENANT"],
-    sortOrder: 410,
-  },
-  SystemAdmin: {
-    category: "system",
-    summary:
-      "Manages tenant setup controls, workflow governance, jobs, retention, and broader operational controls.",
-    capabilities: [
-      "Ops jobs",
-      "Tenant setup controls",
-      "Workflow governance",
-      "Retention operations",
-    ],
-    recommendedScopes: ["TENANT"],
-    sortOrder: 420,
-  },
-  LocalUserAdmin: {
-    category: "composable",
-    summary:
-      "Invites and manages allow-listed local operational roles without opening tenant-wide security administration.",
-    capabilities: ["Scoped invites", "Allow-listed local roles", "Local assignment review"],
-    recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
-    sortOrder: 210,
-  },
-  MasterDataSteward: {
-    category: "composable",
-    summary:
-      "Owns organizational, accounting, and counterparty master data review without taking posting authority.",
-    capabilities: ["Org structure", "GL master data", "Counterparty request review"],
-    recommendedScopes: ["GROUP", "COUNTRY", "LEGAL_ENTITY"],
-    sortOrder: 220,
-  },
-  CounterpartyCardEditor: {
-    category: "composable",
-    summary:
-      "Maintains live customer/vendor cards and exceptional AP/AR control-account overrides without broad review or posting authority.",
-    capabilities: [
-      "Live card maintenance",
-      "Counterparty account overrides",
-      "Counterparty payment-term editing",
-    ],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    sortOrder: 230,
-  },
-  EntityAPController: {
-    code: "AP Submitter",
-    category: "composable",
-    summary:
-      "Prepares, corrects, and submits AP documents at legal-entity scope without inheriting review or final posting authority.",
-    capabilities: ["AP draft correction", "AP submit", "AP workflow handoff"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    replacementLabel: "AP Submitter",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 120,
-  },
-  CountryAPApprover: {
-    code: "AP Reviewer",
-    category: "composable",
-    summary:
-      "Country-scoped AP review role that reads governed AP documents while final posting stays separate.",
-    capabilities: ["Country AP visibility", "AP workflow review", "AP return/approve via workflow"],
-    recommendedScopes: ["COUNTRY"],
-    replacementLabel: "AP Reviewer",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 130,
-  },
-  CountryAPController: {
-    code: "AP Poster",
-    category: "composable",
-    summary:
-      "Country-scoped AP final-posting role for posting and reversal. Review authority stays separate from posting authority.",
-    capabilities: ["Country AP visibility", "AP final post", "AP reverse"],
-    recommendedScopes: ["COUNTRY"],
-    replacementLabel: "AP Poster",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 140,
-  },
-  APApprover: {
-    category: "composable",
-    summary:
-      "Platform-level approval engine access for AP workflows. Grants the ability to read and act on AP workflow approval requests. Assign alongside a domain role such as AP Submitter or AP Reviewer so the user can participate in approval decisions routed to their scope.",
-    capabilities: ["Approval request visibility", "Approve/reject workflow decisions", "Approval policy visibility"],
-    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY", "OPERATING_UNIT"],
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 150,
-  },
-  APDocumentPoster: {
-    code: "Legacy AP Poster",
-    category: "legacy",
-    summary:
-      "Legacy AP posting role preserved for brownfield migration and rollback while tenants move to AP Submitter plus AP Poster.",
-    capabilities: ["Compatibility AP submit", "Compatibility AP cancel", "Compatibility AP posting"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    replacementLabel: "AP Submitter + AP Poster",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 920,
-    legacy: true,
-  },
-  GLOperator: {
-    category: "composable",
-    summary:
-      "Runs GL operations and reporting without free-form manual posting authority.",
-    capabilities: ["Journal drafting", "Ledger visibility", "Period operations"],
-    recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
-    workflowFamily: "PERIOD_CLOSE",
-    sortOrder: 240,
-  },
-  GLPostingAuthority: {
-    category: "composable",
-    summary:
-      "Companion authority for manual journal post, reversal, and period close. Pair it with a read-bearing accounting role.",
-    capabilities: ["Manual posting", "Manual reversal", "Period close"],
-    recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
-    companionOnly: true,
-    companionNote:
-      "Pair with GLOperator or another read-bearing accounting role at the same or broader scope.",
-    workflowFamily: "PERIOD_CLOSE",
-    sortOrder: 250,
-  },
-  ShareholderCapitalOperator: {
-    category: "composable",
-    summary:
-      "Posts and reverses shareholder capital fulfillment without broader org master-data or treasury governance powers.",
-    capabilities: ["Equity funding", "Capital fulfillment", "Posting control"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    sortOrder: 260,
-  },
-  OUAccountant: {
-    category: "composable",
-    summary:
-      "Optional operating-unit accounting role for OUs that truly own local accounting adjustments.",
-    capabilities: ["OU accounting exceptions", "Operational GL work"],
-    recommendedScopes: ["OPERATING_UNIT"],
-    sortOrder: 270,
-  },
-  TreasuryOperator: {
-    category: "composable",
-    summary:
-      "Operates bank, cash, and settlement workflows without treasury approval power.",
-    capabilities: ["Cash operations", "Bank operations", "Settlement handling"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    sortOrder: 280,
-  },
-  TreasuryApprover: {
-    category: "composable",
-    summary:
-      "Approves bank and treasury governance flows without becoming the operational maker.",
-    capabilities: ["Bank governance", "Payment approval", "Cash variance approval"],
-    recommendedScopes: ["COUNTRY"],
-    sortOrder: 290,
-  },
-  PayrollOperator: {
-    category: "composable",
-    summary:
-      "Runs payroll preparation and operations without payroll governance approval power.",
-    capabilities: ["Payroll operations", "Payroll ownership", "Payroll preparation"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    sortOrder: 300,
-  },
-  PayrollApprover: {
-    category: "composable",
-    summary:
-      "Approves payroll governance actions while keeping review authority separate from payroll operations.",
-    capabilities: ["Payroll governance", "Run review", "Close approval"],
-    recommendedScopes: ["COUNTRY"],
-    sortOrder: 310,
-  },
-  LocalClosePreparer: {
-    category: "composable",
-    summary:
-      "Prepares local close work and reopen requests without reviewer authority.",
-    capabilities: ["Close preparation", "Close submission", "Reopen requests"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    sortOrder: 320,
-  },
-  LocalCloseReviewer: {
-    category: "composable",
-    summary:
-      "Reviews and approves local close governance steps without becoming the close preparer.",
-    capabilities: ["Close review", "Close approval", "Close locking"],
-    recommendedScopes: ["COUNTRY"],
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    sortOrder: 330,
-  },
-  GroupReportingController: {
-    category: "composable",
-    summary:
-      "Owns consolidation, intercompany, and group reporting responsibilities.",
-    capabilities: ["Consolidation", "Intercompany control", "Group reporting"],
-    recommendedScopes: ["GROUP"],
-    workflowFamily: "CONSOLIDATION_RUN",
-    sortOrder: 340,
-  },
-  AuditorReadOnly: {
-    category: "readonly",
-    summary:
-      "Read-only audit visibility across governed surfaces without operational authority.",
-    capabilities: ["Read-only visibility", "Audit review", "Reporting access"],
-    recommendedScopes: ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"],
-    sortOrder: 360,
-  },
-  BranchOperator: {
-    code: "Branch Accountant",
-    category: "scoped",
-    summary:
-      "Operating-unit AP draft and operational-document role for creation, editing, and cancellation. Review and final posting stay separate.",
-    capabilities: ["OU visibility", "Draft AP handling", "Operational documents"],
-    recommendedScopes: ["OPERATING_UNIT"],
-    replacementLabel: "Branch Accountant",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 110,
-  },
-  GroupController: {
-    code: "Legacy Group Controller",
-    category: "legacy",
-    summary:
-      "Legacy group-wide controller role preserved only for migration rollback and historical review.",
-    capabilities: ["Broad reporting", "Legacy close review", "Compatibility"],
-    recommendedScopes: ["GROUP"],
-    replacementLabel: "Group Checker / Group Approver / Group CEO",
-    sortOrder: 930,
-    legacy: true,
-  },
-  CountryController: {
-    code: "Legacy Country Controller",
-    category: "legacy",
-    summary:
-      "Legacy country-wide controller role preserved only for migration rollback and historical review.",
-    capabilities: ["Broad governance", "GL posting", "Treasury and payroll approval"],
-    recommendedScopes: ["COUNTRY"],
-    replacementLabel: "AP Reviewer / AP Poster / scoped governance packages",
-    sortOrder: 940,
-    legacy: true,
-  },
-  EntityAccountant: {
-    code: "Legacy Entity Accountant",
-    category: "legacy",
-    summary:
-      "Legacy entity-wide accountant role preserved only for migration rollback and historical review.",
-    capabilities: ["Broad entity operations", "Legacy GL operations", "Compatibility"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    replacementLabel: "Entity Accountant + workflow packages",
-    sortOrder: 950,
-    legacy: true,
-  },
-});
-// Business roles stay separate from runtime roles because the plan explicitly
-// requires human titles to remain non-authoritative helper labels.
-const BUSINESS_ROLE_CATALOG = Object.freeze({
-  BRANCH_ACCOUNTANT: Object.freeze({
-    displayName: "Branch Accountant",
+import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ChevronRight } from "lucide-react";
+import { Link } from "react-router-dom";
+import {
+  createOrUpdateRole,
+  listPermissions,
+  listRoles,
+  replaceRolePermissions,
+} from "../../api/rbacAdmin.js";
+import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
+import RoleSummaryCard from "./RoleSummaryCard.jsx";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityWarningList from "./SecurityWarningList.jsx";
+import { getRoleCatalogEntry, groupRolesForManagement } from "./roleCatalog.js";
+const FILTER_ALL = "ALL";const ROLE_MEANING_FILTERS = Object.freeze([
+  Object.freeze({
+    key: FILTER_ALL,
+    label: "All editor roles",
     description:
-      "Branch-level finance operator who usually drafts and submits AP work and can support branch-assisted close preparation.",
-    category: "operating_unit_scope",
-    defaultScope: "OPERATING_UNIT",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT"]),
-    optionalPackageCodes: freezeList(["PKG-PC-READINESS"]),
-    sortOrder: 110,
+      "Browse the whole role editor surface, then narrow by meaning before touching permission rows.",
   }),
-  BRANCH_MANAGER: Object.freeze({
-    displayName: "Branch Manager",
+  Object.freeze({
+    key: "COMPOSABLE_RUNTIME",
+    label: "Composable runtime roles",
     description:
-      "Optional operating-unit reviewer or manager used when the tenant wants a branch-level review checkpoint.",
-    category: "operating_unit_scope",
-    defaultScope: "OPERATING_UNIT",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList([]),
-    optionalPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-LC-REVIEW"]),
-    sortOrder: 120,
+      "Direct-authority runtime roles, including package-backed and companion patterns that drive real permission authority.",
   }),
-  ENTITY_ACCOUNTANT: Object.freeze({
-    displayName: "Entity Accountant",
+  Object.freeze({
+    key: "LABEL_ONLY_BUSINESS",
+    label: "Label-only business roles",
     description:
-      "Legal-entity accounting owner who usually reviews AP, prepares local close, and validates period-close readiness.",
-    category: "legal_entity_scope",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-LC-PREPARE", "PKG-PC-READINESS"]),
-    optionalPackageCodes: freezeList([]),
-    sortOrder: 210,
+      "Business-facing labels stay visible here but remain non-authoritative and locked to zero permissions.",
   }),
-  ENTITY_MANAGER: Object.freeze({
-    displayName: "Entity Manager",
+  Object.freeze({
+    key: "LEGACY_COMPATIBILITY",
+    label: "Legacy compatibility roles",
     description:
-      "Legal-entity managerial approver used for review and controlled close checkpoints above day-to-day accounting work.",
-    category: "legal_entity_scope",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-LC-REVIEW"]),
-    optionalPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-PC-CLOSE"]),
-    sortOrder: 220,
+      "Migration and rollback-facing runtime roles that should stay recognizable before anyone edits them.",
   }),
-  ENTITY_CEO: Object.freeze({
-    displayName: "Entity CEO",
-    description:
-      "Final legal-entity authority used for entity-level posting, close, and approval lock decisions.",
-    category: "legal_entity_scope",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-LC-APPROVE-LOCK", "PKG-PC-CLOSE"]),
-    optionalPackageCodes: freezeList(["PKG-AP-POST"]),
-    sortOrder: 230,
-  }),
-  GROUP_CHECKER: Object.freeze({
-    displayName: "Group Checker",
-    description:
-      "Group-level checker or reviewer who prepares consolidation work and can participate in controlled execution steps.",
-    category: "group_scope",
-    defaultScope: "GROUP",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-CON-PREPARE"]),
-    optionalPackageCodes: freezeList(["PKG-CON-EXECUTE"]),
-    sortOrder: 310,
-  }),
-  GROUP_APPROVER: Object.freeze({
-    displayName: "Group Approver",
-    description:
-      "Group-level approver or finalizer used for consolidation finalization and selected controlled package handoffs.",
-    category: "group_scope",
-    defaultScope: "GROUP",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-CON-FINALIZE"]),
-    optionalPackageCodes: freezeList(["PKG-CON-ADJUST", "PKG-CON-ELIM"]),
-    sortOrder: 320,
-  }),
-  GROUP_CEO: Object.freeze({
-    displayName: "Group CEO",
-    description:
-      "Executive group authority used when the tenant wants final consolidation signoff above the normal approver tier.",
-    category: "group_scope",
-    defaultScope: "GROUP",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList([]),
-    optionalPackageCodes: freezeList(["PKG-CON-FINALIZE"]),
-    sortOrder: 330,
-  }),
-});
-const WORKFLOW_PACKAGE_CATALOG = Object.freeze({
-  "PKG-WF-SETUP-ADMIN": Object.freeze({
-    displayName: "Workflow Governance / Setup Admin",
-    description:
-      "Cross-workflow package for reading and editing workflow definitions, assignments, and approval policy setup.",
-    category: "shared_governance",
-    defaultScope: "TENANT",
-    allowedScopes: freezeList(["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY"]),
-    permissionCodes: freezeList([
-      "workflow.definition.read",
-      "workflow.definition.write",
-      "workflow.assignment.read",
-      "workflow.assignment.write",
-      "approvals.policies.read",
-      "approvals.policies.write",
-    ]),
-    workflowFamily: "CROSS_WORKFLOW",
-    sortOrder: 10,
-  }),
-  "PKG-WF-QUEUE-VIEW": Object.freeze({
-    displayName: "Workflow Governance / Queue Visibility",
-    description:
-      "Cross-workflow package for reading workflow definitions, assignments, and governed approval queues without setup authority.",
-    category: "shared_governance",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY"]),
-    permissionCodes: freezeList([
-      "workflow.definition.read",
-      "workflow.assignment.read",
-      "approvals.requests.read",
-    ]),
-    workflowFamily: "CROSS_WORKFLOW",
-    sortOrder: 20,
-  }),
-  "PKG-AP-VIEW": Object.freeze({
-    displayName: "AP Documents / View",
-    description:
-      "Read package for governed AP documents, reporting, and audit surfaces without workflow action authority.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY", "GROUP"]),
-    permissionCodes: freezeList(["cari.doc.read", "cari.report.read", "cari.audit.read"]),
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 110,
-  }),
-  "PKG-AP-DRAFT-SUBMIT": Object.freeze({
-    displayName: "AP Documents / Draft & Submit",
-    description:
-      "Maker package for creating, editing, submitting, and cancelling AP drafts before review or posting.",
-    category: "core_action",
-    defaultScope: "OPERATING_UNIT",
-    allowedScopes: freezeList(["OPERATING_UNIT", "LEGAL_ENTITY"]),
-    permissionCodes: freezeList([
-      "cari.doc.read",
-      "cari.doc.create",
-      "cari.doc.update",
-      "cari.doc.submit",
-      "cari.doc.cancel",
-    ]),
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 120,
-  }),
-  "PKG-AP-APPROVE": Object.freeze({
-    displayName: "AP Documents / Approve",
-    description:
-      "Reviewer package for reading AP items and acting on approval requests without final posting rights.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["OPERATING_UNIT", "LEGAL_ENTITY", "COUNTRY"]),
-    permissionCodes: freezeList([
-      "cari.doc.read",
-      "approvals.policies.read",
-      "approvals.requests.read",
-      "approvals.requests.approve",
-      "approvals.requests.reject",
-    ]),
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 130,
-  }),
-  "PKG-AP-POST": Object.freeze({
-    displayName: "AP Documents / Post",
-    description:
-      "Final-posting package for governed AP document posting at entity or country authority boundaries.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
-    permissionCodes: freezeList(["cari.doc.read", "cari.doc.post"]),
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 140,
-  }),
-  "PKG-AP-REVERSE": Object.freeze({
-    displayName: "AP Documents / Reverse",
-    description:
-      "Companion AP package for reversing already-posted documents without reopening draft authority.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
-    permissionCodes: freezeList(["cari.doc.read", "cari.doc.reverse"]),
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 150,
-  }),
-  "PKG-AP-FX-OVERRIDE": Object.freeze({
-    displayName: "AP Documents / FX Override",
-    description:
-      "Exceptional AP package for foreign-currency override decisions at entity or country scope.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
-    permissionCodes: freezeList(["cari.doc.read", "cari.fx.override"]),
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 160,
-  }),
-  "PKG-AP-POST-GROUP": Object.freeze({
-    displayName: "AP Documents / Group Post",
-    description:
-      "Clean future extension for tenants that want AP posting resolved at group scope instead of reusing legacy broad controller roles.",
-    category: "extension_package",
-    defaultScope: "GROUP",
-    allowedScopes: freezeList(["GROUP"]),
-    permissionCodes: freezeList([]),
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 170,
-    plannedExtension: true,
-    extensionNote:
-      "Do not enable until the backend package and entitlement model supports group-scoped AP posting.",
-  }),
-  "PKG-LC-VIEW": Object.freeze({
-    displayName: "Local Close Pack / View",
-    description:
-      "Read package for local close pack visibility across entity, country, or group reporting layers.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
-    permissionCodes: freezeList(["ouclose.read"]),
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    sortOrder: 210,
-  }),
-  "PKG-LC-PREPARE": Object.freeze({
-    displayName: "Local Close Pack / Prepare & Submit",
-    description:
-      "Maker package for preparing local close work, submitting it, and requesting reopen when needed.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY"]),
-    permissionCodes: freezeList([
-      "ouclose.read",
-      "ouclose.prepare",
-      "ouclose.submit",
-      "ouclose.request_reopen",
-    ]),
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    sortOrder: 220,
-  }),
-  "PKG-LC-REVIEW": Object.freeze({
-    displayName: "Local Close Pack / Review",
-    description:
-      "Review package for local close checkpoints before final approval and lock decisions.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
-    permissionCodes: freezeList(["ouclose.read", "ouclose.review"]),
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    sortOrder: 230,
-  }),
-  "PKG-LC-APPROVE-LOCK": Object.freeze({
-    displayName: "Local Close Pack / Approve & Lock",
-    description:
-      "Final local close package for approval and locking at the supervising accounting boundary.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
-    permissionCodes: freezeList(["ouclose.read", "ouclose.approve", "ouclose.lock"]),
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    sortOrder: 240,
-  }),
-  "PKG-LC-REOPEN-ADMIN": Object.freeze({
-    displayName: "Local Close Pack / Reopen & Admin",
-    description:
-      "Administrative local close package for reopen, override, and exceptional governance intervention.",
-    category: "core_action",
-    defaultScope: "COUNTRY",
-    allowedScopes: freezeList(["COUNTRY", "GROUP"]),
-    permissionCodes: freezeList([
-      "ouclose.read",
-      "ouclose.reopen",
-      "ouclose.override_post_lock",
-      "ouclose.admin",
-    ]),
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    sortOrder: 250,
-  }),
-  "PKG-PC-READINESS": Object.freeze({
-    displayName: "Period Close / Readiness View",
-    description:
-      "Readiness package for reviewing fiscal periods, ledgers, journals, and reporting before close authority is used.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
-    permissionCodes: freezeList([
-      "org.fiscal_period.read",
-      "gl.book.read",
-      "gl.account.read",
-      "gl.journal.read",
-      "gl.trial_balance.read",
-      "gl.report.local.read",
-      "gl.report.ledger.read",
-      "gl.report.statement.read",
-    ]),
-    workflowFamily: "PERIOD_CLOSE",
-    sortOrder: 310,
-  }),
-  "PKG-PC-CLOSE": Object.freeze({
-    displayName: "Period Close / Approve & Close",
-    description:
-      "Close authority package for approving and closing periods once readiness review is complete.",
-    category: "core_action",
-    defaultScope: "LEGAL_ENTITY",
-    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY"]),
-    permissionCodes: freezeList([
-      "org.fiscal_period.read",
-      "gl.book.read",
-      "gl.account.read",
-      "gl.journal.read",
-      "gl.trial_balance.read",
-      "gl.report.local.read",
-      "gl.report.ledger.read",
-      "gl.report.statement.read",
-      "gl.period.close",
-    ]),
-    workflowFamily: "PERIOD_CLOSE",
-    sortOrder: 320,
-  }),
-  "PKG-CON-VIEW": Object.freeze({
-    displayName: "Consolidation / View",
-    description:
-      "Read package for group consolidation inputs, runs, and reporting without operational run authority.",
-    category: "core_action",
-    defaultScope: "GROUP",
-    allowedScopes: freezeList(["GROUP"]),
-    permissionCodes: freezeList([
-      "consolidation.group.read",
-      "consolidation.coa_mapping.read",
-      "consolidation.elimination_placeholder.read",
-      "consolidation.run.read",
-      "consolidation.report.trial_balance.read",
-      "consolidation.report.summary.read",
-      "consolidation.report.balance_sheet.read",
-      "consolidation.report.income_statement.read",
-    ]),
-    workflowFamily: "CONSOLIDATION_RUN",
-    sortOrder: 410,
-  }),
-  "PKG-CON-PREPARE": Object.freeze({
-    displayName: "Consolidation / Prepare Run",
-    description:
-      "Preparation package for opening consolidation runs and readying source inputs before execution.",
-    category: "core_action",
-    defaultScope: "GROUP",
-    allowedScopes: freezeList(["GROUP"]),
-    permissionCodes: freezeList([
-      "consolidation.group.read",
-      "consolidation.coa_mapping.read",
-      "consolidation.elimination_placeholder.read",
-      "consolidation.run.read",
-      "consolidation.run.create",
-    ]),
-    workflowFamily: "CONSOLIDATION_RUN",
-    sortOrder: 420,
-  }),
-  "PKG-CON-EXECUTE": Object.freeze({
-    displayName: "Consolidation / Execute Run",
-    description:
-      "Execution package for running consolidation once inputs and mappings are ready.",
-    category: "core_action",
-    defaultScope: "GROUP",
-    allowedScopes: freezeList(["GROUP"]),
-    permissionCodes: freezeList(["consolidation.run.read", "consolidation.run.execute"]),
-    workflowFamily: "CONSOLIDATION_RUN",
-    sortOrder: 430,
-  }),
-  "PKG-CON-ADJUST": Object.freeze({
-    displayName: "Consolidation / Post Adjustments",
-    description:
-      "Controlled consolidation package for posting group-level adjustment entries before finalization.",
-    category: "core_action",
-    defaultScope: "GROUP",
-    allowedScopes: freezeList(["GROUP"]),
-    permissionCodes: freezeList([
-      "consolidation.run.read",
-      "consolidation.adjustment.create",
-      "consolidation.adjustment.post",
-    ]),
-    workflowFamily: "CONSOLIDATION_RUN",
-    sortOrder: 440,
-  }),
-  "PKG-CON-ELIM": Object.freeze({
-    displayName: "Consolidation / Post Eliminations",
-    description:
-      "Controlled consolidation package for posting elimination entries before final group signoff.",
-    category: "core_action",
-    defaultScope: "GROUP",
-    allowedScopes: freezeList(["GROUP"]),
-    permissionCodes: freezeList([
-      "consolidation.run.read",
-      "consolidation.elimination.create",
-      "consolidation.elimination.post",
-    ]),
-    workflowFamily: "CONSOLIDATION_RUN",
-    sortOrder: 450,
-  }),
-  "PKG-CON-FINALIZE": Object.freeze({
-    displayName: "Consolidation / Finalize",
-    description:
-      "Final consolidation package for closing and finalizing the group run.",
-    category: "core_action",
-    defaultScope: "GROUP",
-    allowedScopes: freezeList(["GROUP"]),
-    permissionCodes: freezeList(["consolidation.run.read", "consolidation.run.finalize"]),
-    workflowFamily: "CONSOLIDATION_RUN",
-    sortOrder: 460,
-  }),
-  "PKG-CON-SETUP": Object.freeze({
-    displayName: "Consolidation / Setup Admin",
-    description:
-      "Administrative package for group structures, mappings, eliminations, and intercompany setup.",
-    category: "core_action",
-    defaultScope: "GROUP",
-    allowedScopes: freezeList(["GROUP"]),
-    permissionCodes: freezeList([
-      "consolidation.group.read",
-      "consolidation.group.upsert",
-      "consolidation.group_member.upsert",
-      "consolidation.coa_mapping.read",
-      "consolidation.coa_mapping.upsert",
-      "consolidation.elimination_placeholder.read",
-      "consolidation.elimination_placeholder.upsert",
-      "intercompany.flag.read",
-      "intercompany.flag.upsert",
-      "intercompany.pair.upsert",
-    ]),
-    workflowFamily: "CONSOLIDATION_RUN",
-    sortOrder: 470,
-  }),
-});
-const WORKFLOW_PRESET_CATALOG = Object.freeze({
-  AP_LEAN_ENTITY: Object.freeze({
-    displayName: "AP / Lean Entity",
-    description:
-      "Three-step AP flow with branch drafting, entity approval, and entity posting for lean entity teams.",
-    category: "baseline_preset",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT"]),
-    requiredPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT", "PKG-AP-APPROVE", "PKG-AP-POST"]),
-    usesExtension: false,
-    sortOrder: 110,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Create / Edit / Submit",
-        scopeType: "OPERATING_UNIT",
-        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Approve",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-AP-APPROVE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Post",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-AP-POST",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  AP_STANDARD_ENTITY: Object.freeze({
-    displayName: "AP / Standard Entity",
-    description:
-      "Three-step AP flow with branch drafting, entity review, and final entity-ceo posting authority.",
-    category: "baseline_preset",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
-    requiredPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT", "PKG-AP-APPROVE", "PKG-AP-POST"]),
-    usesExtension: false,
-    sortOrder: 120,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Create / Edit / Submit",
-        scopeType: "OPERATING_UNIT",
-        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Approve",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-AP-APPROVE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Post",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-AP-POST",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  AP_GROUP_CONTROLLED_POST: Object.freeze({
-    displayName: "AP / Group-Controlled Post",
-    description:
-      "AP flow that lifts the final posting action to group authority through a clean extension package instead of legacy controller reuse.",
-    category: "extension_preset",
-    defaultScope: "GROUP",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "GROUP_APPROVER"]),
-    requiredPackageCodes: freezeList([
-      "PKG-AP-DRAFT-SUBMIT",
-      "PKG-AP-APPROVE",
-      "PKG-AP-POST-GROUP",
-    ]),
-    usesExtension: true,
-    extensionNote:
-      "Requires the optional group-scoped AP posting package before the final step can be activated.",
-    sortOrder: 130,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Create / Edit / Submit",
-        scopeType: "OPERATING_UNIT",
-        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Approve",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-AP-APPROVE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Post",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-AP-POST-GROUP",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  LOCAL_CLOSE_STANDARD: Object.freeze({
-    displayName: "Local Close / Standard",
-    description:
-      "Entity-owned local close flow with preparation, review, and final approval-lock at legal-entity scope.",
-    category: "baseline_preset",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
-    requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
-    usesExtension: false,
-    sortOrder: 210,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Prepare & Submit",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Review",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-REVIEW",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Approve & Lock",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-APPROVE-LOCK",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  LOCAL_CLOSE_BRANCH_ASSISTED: Object.freeze({
-    displayName: "Local Close / Branch-Assisted",
-    description:
-      "Local close flow where branch accountants help prepare the working pack before entity review and final lock.",
-    category: "assisted_preset",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
-    requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
-    usesExtension: false,
-    sortOrder: 220,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Prepare working pack",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Review",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-REVIEW",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Approve & Lock",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-APPROVE-LOCK",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  LOCAL_CLOSE_GROUP_SUPERVISED: Object.freeze({
-    displayName: "Local Close / Group-Supervised",
-    description:
-      "Local close flow that lifts the final supervision layer above the legal entity when the tenant wants centralized oversight.",
-    category: "supervised_preset",
-    defaultScope: "GROUP",
-    workflowFamily: "LOCAL_CLOSE_PACK",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "GROUP_APPROVER"]),
-    requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
-    usesExtension: true,
-    extensionNote:
-      "Country supervision can reuse the shipped package scopes, but true group supervision needs a companion scope extension.",
-    sortOrder: 230,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Prepare & Submit",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Review",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-REVIEW",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Approve & Lock",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-LC-APPROVE-LOCK",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  PERIOD_CLOSE_STANDARD: Object.freeze({
-    displayName: "Period Close / Standard",
-    description:
-      "Two-step period close with readiness review followed by entity-managed close authority.",
-    category: "baseline_preset",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "PERIOD_CLOSE",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
-    requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
-    usesExtension: false,
-    sortOrder: 310,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Review readiness",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-PC-READINESS",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Close period",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-PC-CLOSE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER", "ENTITY_CEO"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  PERIOD_CLOSE_CONTROLLED: Object.freeze({
-    displayName: "Period Close / Controlled",
-    description:
-      "Three-step period close with an explicit internal-approval handoff before final entity close.",
-    category: "controlled_preset",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "PERIOD_CLOSE",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
-    requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
-    usesExtension: false,
-    sortOrder: 320,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Review readiness",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-PC-READINESS",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Internal approval",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-PC-CLOSE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Final close",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-PC-CLOSE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  PERIOD_CLOSE_GROUP_SUPERVISED: Object.freeze({
-    displayName: "Period Close / Group-Supervised",
-    description:
-      "Period close flow that centralizes the final close decision above the legal entity when a supervisory extension is enabled.",
-    category: "supervised_preset",
-    defaultScope: "GROUP",
-    workflowFamily: "PERIOD_CLOSE",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "GROUP_APPROVER"]),
-    requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
-    usesExtension: true,
-    extensionNote:
-      "The current family ships with legal-entity and country close scopes. Group-supervised final close needs a later extension.",
-    sortOrder: 330,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Review readiness",
-        scopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-PC-READINESS",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Final close",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-PC-CLOSE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  CONSOLIDATION_STANDARD: Object.freeze({
-    displayName: "Consolidation / Standard",
-    description:
-      "Three-step consolidation run with prepare, execute, and finalize actions at group scope.",
-    category: "baseline_preset",
-    defaultScope: "GROUP",
-    workflowFamily: "CONSOLIDATION_RUN",
-    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
-    requiredPackageCodes: freezeList(["PKG-CON-PREPARE", "PKG-CON-EXECUTE", "PKG-CON-FINALIZE"]),
-    usesExtension: false,
-    sortOrder: 410,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Prepare run",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Execute run",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-EXECUTE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Finalize",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-FINALIZE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  CONSOLIDATION_CONTROLLED: Object.freeze({
-    displayName: "Consolidation / Controlled",
-    description:
-      "Controlled consolidation flow that separates adjustments, eliminations, and finalization for tighter group governance.",
-    category: "controlled_preset",
-    defaultScope: "GROUP",
-    workflowFamily: "CONSOLIDATION_RUN",
-    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
-    requiredPackageCodes: freezeList([
-      "PKG-CON-PREPARE",
-      "PKG-CON-ADJUST",
-      "PKG-CON-ELIM",
-      "PKG-CON-FINALIZE",
-    ]),
-    usesExtension: false,
-    sortOrder: 420,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Prepare run",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Post adjustments",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-ADJUST",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Post eliminations",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-ELIM",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 4,
-        actionLabel: "Finalize",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-FINALIZE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-  CONSOLIDATION_EXECUTIVE: Object.freeze({
-    displayName: "Consolidation / Executive",
-    description:
-      "Consolidation flow that reserves final signoff for group-executive authority above the normal approver layer.",
-    category: "executive_preset",
-    defaultScope: "GROUP",
-    workflowFamily: "CONSOLIDATION_RUN",
-    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER", "GROUP_CEO"]),
-    requiredPackageCodes: freezeList(["PKG-CON-PREPARE", "PKG-CON-EXECUTE", "PKG-CON-FINALIZE"]),
-    usesExtension: false,
-    sortOrder: 430,
-    steps: freezeList([
-      freezeStep({
-        stepNo: 1,
-        actionLabel: "Prepare run",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 2,
-        actionLabel: "Execute run",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-EXECUTE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-      freezeStep({
-        stepNo: 3,
-        actionLabel: "Finalize",
-        scopeType: "GROUP",
-        requiredPackageCode: "PKG-CON-FINALIZE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CEO"]),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-      }),
-    ]),
-  }),
-});
-export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
-  EntityAPController: Object.freeze({
-    code: "EntityAPController",
-    displayName: "AP Submitter Setup Lead",
-    summary:
-      "Bootstrap preset for one legal-entity AP submitter setup lead using bounded composable operator roles.",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    category: "bootstrap_setup",
-    sortOrder: 10,
-    scopeType: "LEGAL_ENTITY",
-    roleCodes: freezeList([
-      "LocalUserAdmin",
-      "MasterDataSteward",
-      "CounterpartyCardEditor",
-      "EntityAPController",
-      "APApprover",
-      "GLOperator",
-      "TreasuryOperator",
-      "PayrollOperator",
-      "LocalClosePreparer",
-      "ShareholderCapitalOperator",
-    ]),
-    optionalRoleCodes: freezeList(["GLPostingAuthority"]),
-  }),
-  CountryAPApprover: Object.freeze({
-    code: "CountryAPApprover",
-    displayName: "AP Reviewer Setup Lead",
-    summary:
-      "Bootstrap preset for one country-level AP reviewer setup lead using bounded composable AP, treasury, payroll, and close-review roles.",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    category: "bootstrap_setup",
-    sortOrder: 20,
-    scopeType: "COUNTRY",
-    roleCodes: freezeList([
-      "CountryAPApprover",
-      "CountryAPPoster",
-      "APApprover",
-      "GLOperator",
-      "TreasuryApprover",
-      "PayrollApprover",
-      "LocalCloseReviewer",
-    ]),
-    optionalRoleCodes: freezeList(["GLPostingAuthority"]),
-  }),
-});
-const CATEGORY_ORDER = Object.freeze([
-  "composable",
-  "scoped",
-  "readonly",
-  "system",
-  "legacy",
-  "custom",
+]);const ROLE_SCOPE_LEVEL_ORDER = Object.freeze([
+  "TENANT",
+  "GROUP",
+  "COUNTRY",
+  "LEGAL_ENTITY",
+  "OPERATING_UNIT",
 ]);
-function normalizeText(value) {
++function normalizeText(value) {
   return String(value || "").trim();
 }
-function normalizeRoleCatalogCode(roleCode) {
-  const normalizedRoleCode = normalizeText(roleCode);
-  return ROLE_CATALOG_CODE_ALIASES[normalizedRoleCode] || normalizedRoleCode;
-}
-function normalizeBootstrapHandoffPresetCode(presetCode) {
-  const normalizedPresetCode = normalizeText(presetCode);
-  return BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES[normalizedPresetCode] || normalizedPresetCode;
-}
-function normalizeBusinessRoleCode(roleCode) {
-  return normalizeText(roleCode).toUpperCase();
-}
-function normalizeWorkflowPackageCode(packageCode) {
-  return normalizeText(packageCode).toUpperCase();
-}
-function normalizeWorkflowPresetCode(presetCode) {
-  return normalizeText(presetCode).toUpperCase();
-}
-function cloneList(values) {
-  return Array.isArray(values) ? [...values] : [];
-}
-function getCategoryLabel(modelType, category) {
-  const normalizedCategory = normalizeText(category);
-  const labelMap = MODEL_CATEGORY_LABELS[modelType] || {};
-  if (labelMap[normalizedCategory]) {
-    return labelMap[normalizedCategory];
+function getRoleMeaningKey(entry) {
+  if (entry?.legacy) {
+    return "LEGACY_COMPATIBILITY";
   }
-  if (!normalizedCategory) {
-    return "Unclassified";
+  if (entry?.businessLabelOnly) {
+    return "LABEL_ONLY_BUSINESS";
   }
-  return normalizedCategory === "unclassified" ? "Unclassified" : normalizedCategory;
+  return "COMPOSABLE_RUNTIME";
 }
-function sortCatalogEntries(left, right) {
-  const leftOrder = Number(left?.sortOrder || 9999);
-  const rightOrder = Number(right?.sortOrder || 9999);
-  if (leftOrder !== rightOrder) {
-    return leftOrder - rightOrder;
-  }
-  return normalizeText(left?.displayName || left?.code).localeCompare(
-    normalizeText(right?.displayName || right?.code)
-  );
-}
-function buildMetadataEntry({
-  modelType,
-  code,
-  displayName,
-  description,
-  category,
-  defaultScope = "",
-  legacy = false,
-  replacementLabel = "",
-  workflowFamily = "CROSS_WORKFLOW",
-  sortOrder = 9999,
-}) {
-  return {
-    modelType,
-    modelTypeLabel: getAccessModelTypeLabel(modelType),
-    code,
-    displayName,
-    description,
-    category,
-    categoryLabel: getCategoryLabel(modelType, category),
-    defaultScope,
-    legacy: Boolean(legacy),
-    replacementLabel,
-    workflowFamily,
-    workflowFamilyLabel: getWorkflowFamilyLabel(workflowFamily),
-    sortOrder: Number(sortOrder || 9999),
-  };
-}
-function getBusinessRoleDisplayName(roleCode) {
-  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
-  return BUSINESS_ROLE_CATALOG[normalizedRoleCode]?.displayName || normalizedRoleCode;
-}
-function getWorkflowPackageDisplayName(packageCode) {
-  const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
-  return WORKFLOW_PACKAGE_CATALOG[normalizedPackageCode]?.displayName || normalizedPackageCode;
-}
-function getWorkflowPresetDisplayName(presetCode) {
-  const normalizedPresetCode = normalizeWorkflowPresetCode(presetCode);
-  return WORKFLOW_PRESET_CATALOG[normalizedPresetCode]?.displayName || normalizedPresetCode;
-}
-function getPresetCodesUsingPackage(packageCode) {
-  const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
-  return Object.keys(WORKFLOW_PRESET_CATALOG).filter((presetCode) =>
-    cloneList(WORKFLOW_PRESET_CATALOG[presetCode]?.requiredPackageCodes).includes(normalizedPackageCode)
-  );
-}/**
-+ * Returns the display label for one access-model item type.
-+ */
-export function getAccessModelTypeLabel(modelType) {
-  const normalizedModelType = normalizeText(modelType);
-  return ACCESS_MODEL_TYPE_LABELS[normalizedModelType] || normalizedModelType || "Access Model Item";
-}/**
-+ * Returns the display label for one workflow family code.
-+ */
-export function getWorkflowFamilyLabel(workflowFamily) {
-  const normalizedWorkflowFamily = normalizeText(workflowFamily);
+function matchesRoleMeaningFilter(entry, filterKey) {
+  return filterKey === FILTER_ALL || getRoleMeaningKey(entry) === filterKey;
+}function getRoleMeaningLabel(entry) {
   return (
-    WORKFLOW_FAMILY_LABELS[normalizedWorkflowFamily] ||
-    WORKFLOW_FAMILY_LABELS.CROSS_WORKFLOW
+    ROLE_MEANING_FILTERS.find((item) => item.key === getRoleMeaningKey(entry))?.label ||
+    ROLE_MEANING_FILTERS[0].label
   );
-}/**
-+ * Returns the UX metadata for one bootstrap handoff preset.
-+ * Legacy preset aliases resolve to their canonical AP-facing preset codes.
-+ */
-export function getBootstrapHandoffPresetEntry(presetCode) {
-  const normalizedPresetCode = normalizeBootstrapHandoffPresetCode(presetCode);
-  const base = BOOTSTRAP_HANDOFF_PRESET_CATALOG[normalizedPresetCode] || null;
-  const metadata = buildMetadataEntry({
-    modelType: "assignment_preset",
-    code: normalizedPresetCode,
-    displayName: base?.displayName || normalizedPresetCode,
-    description:
-      base?.summary ||
-      "Bootstrap preset. Review included composable roles before assigning it broadly.",
-    category: base?.category || "bootstrap_setup",
-    defaultScope: base?.scopeType || "",
-    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
-    sortOrder: base?.sortOrder || 9999,
-  });
+}function getRoleTheme(entry) {
+  if (entry?.legacy) {
+    return {
+      panel: "border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,0.96),rgba(255,255,255,0.98))]",
+      softPanel: "border-amber-200 bg-amber-50/70",
+      chip: "border-amber-200 bg-amber-50 text-amber-900",
+      metricTone: "text-amber-900",
+    };
+  }
+  if (entry?.businessLabelOnly) {
+    return {
+      panel: "border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.96),rgba(255,255,255,0.98))]",
+      softPanel: "border-sky-200 bg-sky-50/70",
+      chip: "border-sky-200 bg-sky-50 text-sky-800",
+      metricTone: "text-sky-800",
+    };
+  }
+  if (entry?.companionOnly) {
+    return {
+      panel: "border-violet-200 bg-[linear-gradient(135deg,rgba(245,243,255,0.96),rgba(255,255,255,0.98))]",
+      softPanel: "border-violet-200 bg-violet-50/70",
+      chip: "border-violet-200 bg-violet-50 text-violet-800",
+      metricTone: "text-violet-800",
+    };
+  }
+  if (entry?.category === "system") {
+    return {
+      panel: "border-rose-200 bg-[linear-gradient(135deg,rgba(255,241,242,0.96),rgba(255,255,255,0.98))]",
+      softPanel: "border-rose-200 bg-rose-50/70",
+      chip: "border-rose-200 bg-rose-50 text-rose-800",
+      metricTone: "text-rose-800",
+    };
+  }
   return {
-    ...metadata,
-    summary: metadata.description,
-    scopeType: base?.scopeType || "",
-    roleCodes: cloneList(base?.roleCodes),
-    roleLabels: cloneList(base?.roleCodes).map((roleCode) => getRoleCatalogEntry(roleCode).displayName),
-    optionalRoleCodes: cloneList(base?.optionalRoleCodes),
-    optionalRoleLabels: cloneList(base?.optionalRoleCodes).map(
-      (roleCode) => getRoleCatalogEntry(roleCode).displayName
-    ),
+    panel: "border-slate-200 bg-white",
+    softPanel: "border-slate-200 bg-slate-50/80",
+    chip: "border-slate-200 bg-slate-50 text-slate-700",
+    metricTone: "text-slate-900",
   };
-}/**
-+ * Returns the UX metadata used to explain a role in admin surfaces.
-+ * `code` is the business-facing label while `technicalCode` is only surfaced
-+ * for legacy runtime roles where migration traceability still matters.
-+ */
-export function getRoleCatalogEntry(roleOrCode) {
-  const requestedRoleCode =
-    typeof roleOrCode === "string"
-      ? normalizeText(roleOrCode)
-      : normalizeText(roleOrCode?.code || roleOrCode?.roleCode);
-  const normalizedRoleCode = normalizeRoleCatalogCode(requestedRoleCode);
-  const base = ROLE_CATALOG[normalizedRoleCode] || null;
-  const displayCode =
-    base?.code || normalizedRoleCode || requestedRoleCode || normalizeText(roleOrCode?.roleCode);
-  const showTechnicalCode = Boolean(base?.legacy && requestedRoleCode && requestedRoleCode !== displayCode);
-  const metadata = buildMetadataEntry({
-    modelType: "runtime_role",
-    code: displayCode,
-    displayName: displayCode,
-    description:
-      base?.summary ||
-      "Tenant-local role. Review its permission set carefully before assigning it broadly.",
-    category: base?.category || "custom",
-    defaultScope: cloneList(base?.recommendedScopes)[0] || "",
-    legacy: Boolean(base?.legacy),
-    replacementLabel: base?.replacementLabel || "",
-    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
-    sortOrder:
-      typeof base?.sortOrder === "number"
-        ? base.sortOrder
-        : (Math.max(CATEGORY_ORDER.indexOf(base?.category || "custom"), 0) + 1) * 100,
-  });
-  return {
-    ...metadata,
-    technicalCode: showTechnicalCode ? requestedRoleCode : "",
-    summary: metadata.description,
-    capabilities: cloneList(base?.capabilities).length
-      ? cloneList(base?.capabilities)
-      : ["Tenant-specific permissions"],
-    recommendedScopes: cloneList(base?.recommendedScopes),
-    companionOnly: Boolean(base?.companionOnly),
-    companionNote: base?.companionNote || "",
-  };
-}/**
-+ * Returns one business-role catalog entry from the plan-defined admin model.
-+ */
-export function getBusinessRoleCatalogEntry(roleCode) {
-  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
-  const base = BUSINESS_ROLE_CATALOG[normalizedRoleCode] || null;
-  const metadata = buildMetadataEntry({
-    modelType: "business_role",
-    code: normalizedRoleCode,
-    displayName: base?.displayName || normalizedRoleCode,
-    description:
-      base?.description ||
-      "Business-facing title used only as an admin label. Assign workflow packages separately.",
-    category: base?.category || "unclassified",
-    defaultScope: base?.defaultScope || "",
-    legacy: false,
-    replacementLabel: "",
-    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
-    sortOrder: base?.sortOrder || 9999,
-  });
-  const starterPackageCodes = cloneList(base?.starterPackageCodes);
-  const optionalPackageCodes = cloneList(base?.optionalPackageCodes);
-  return {
-    ...metadata,
-    starterPackageCodes,
-    starterPackageLabels: starterPackageCodes.map(getWorkflowPackageDisplayName),
-    optionalPackageCodes,
-    optionalPackageLabels: optionalPackageCodes.map(getWorkflowPackageDisplayName),
-    active: Boolean(base),
-  };
-}/**
-+ * Returns all business-role metadata entries in stable admin sort order.
-+ */
-export function listBusinessRoleCatalogEntries() {
-  return Object.keys(BUSINESS_ROLE_CATALOG)
-    .map((roleCode) => getBusinessRoleCatalogEntry(roleCode))
-    .sort(sortCatalogEntries);
-}/**
-+ * Returns one workflow-package catalog entry from the plan-defined admin model.
-+ */
-export function getWorkflowPackageCatalogEntry(packageCode) {
-  const normalizedPackageCode = normalizeWorkflowPackageCode(packageCode);
-  const base = WORKFLOW_PACKAGE_CATALOG[normalizedPackageCode] || null;
-  const metadata = buildMetadataEntry({
-    modelType: "workflow_package",
-    code: normalizedPackageCode,
-    displayName: base?.displayName || normalizedPackageCode,
-    description:
-      base?.description ||
-      "Workflow package metadata is not defined yet for this code.",
-    category: base?.category || "unclassified",
-    defaultScope: base?.defaultScope || "",
-    legacy: false,
-    replacementLabel: "",
-    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
-    sortOrder: base?.sortOrder || 9999,
-  });
-  const usedInPresetCodes = getPresetCodesUsingPackage(normalizedPackageCode);
-  return {
-    ...metadata,
-    allowedScopes: cloneList(base?.allowedScopes),
-    permissionCodes: cloneList(base?.permissionCodes),
-    permissionCount: cloneList(base?.permissionCodes).length,
-    usedInPresetCodes,
-    usedInPresetLabels: usedInPresetCodes.map(getWorkflowPresetDisplayName),
-    plannedExtension: Boolean(base?.plannedExtension),
-    extensionNote: base?.extensionNote || "",
-  };
-}/**
-+ * Returns all workflow-package metadata entries in stable admin sort order.
-+ */
-export function listWorkflowPackageCatalogEntries() {
-  return Object.keys(WORKFLOW_PACKAGE_CATALOG)
-    .map((packageCode) => getWorkflowPackageCatalogEntry(packageCode))
-    .sort(sortCatalogEntries);
-}/**
-+ * Returns one workflow-preset catalog entry with step metadata ready for future catalog tabs.
-+ */
-export function getWorkflowPresetCatalogEntry(presetCode) {
-  const normalizedPresetCode = normalizeWorkflowPresetCode(presetCode);
-  const base = WORKFLOW_PRESET_CATALOG[normalizedPresetCode] || null;
-  const metadata = buildMetadataEntry({
-    modelType: "workflow_preset",
-    code: normalizedPresetCode,
-    displayName: base?.displayName || normalizedPresetCode,
-    description:
-      base?.description ||
-      "Workflow preset metadata is not defined yet for this code.",
-    category: base?.category || "unclassified",
-    defaultScope: base?.defaultScope || "",
-    legacy: false,
-    replacementLabel: "",
-    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
-    sortOrder: base?.sortOrder || 9999,
-  });
-  const requiredPackageCodes = cloneList(base?.requiredPackageCodes);
-  const typicalActorCodes = cloneList(base?.typicalActorCodes);
-  const steps = cloneList(base?.steps).map((step) => ({
-    stepNo: Number(step?.stepNo || 0),
-    actionLabel: step?.actionLabel || "",
-    scopeType: step?.scopeType || "",
-    requiredPackageCode: step?.requiredPackageCode || "",
-    requiredPackageLabel: getWorkflowPackageDisplayName(step?.requiredPackageCode),
-    eligibleBusinessRoleCodes: cloneList(step?.eligibleBusinessRoleCodes),
-    eligibleBusinessRoleLabels: cloneList(step?.eligibleBusinessRoleCodes).map(
-      getBusinessRoleDisplayName
-    ),
-    minApproverCount: Number(step?.minApproverCount || 1),
-    allowSelfApprove: Boolean(step?.allowSelfApprove),
-    escalationAfterHours:
-      typeof step?.escalationAfterHours === "number" ? step.escalationAfterHours : null,
-  }));
-  return {
-    ...metadata,
-    primaryScope: metadata.defaultScope,
-    stepCount: steps.length,
-    typicalActorCodes,
-    typicalActorLabels: typicalActorCodes.map(getBusinessRoleDisplayName),
-    requiredPackageCodes,
-    requiredPackageLabels: requiredPackageCodes.map(getWorkflowPackageDisplayName),
-    usesExtension: Boolean(base?.usesExtension),
-    extensionNote: base?.extensionNote || "",
-    steps,
-  };
-}/**
-+ * Returns all workflow-preset metadata entries in stable admin sort order.
-+ */
-export function listWorkflowPresetCatalogEntries() {
-  return Object.keys(WORKFLOW_PRESET_CATALOG)
-    .map((presetCode) => getWorkflowPresetCatalogEntry(presetCode))
-    .sort(sortCatalogEntries);
-}/**
-+ * Returns the legacy runtime-role entries that belong in the compatibility tab.
-+ */
-export function listLegacyRoleCatalogEntries() {
-  return Object.keys(ROLE_CATALOG)
-    .filter((roleCode) => Boolean(ROLE_CATALOG[roleCode]?.legacy))
-    .map((roleCode) => getRoleCatalogEntry(roleCode))
-    .sort(sortCatalogEntries);
-}/**
-+ * Returns the future access-model catalog sections so later tabs can render
-+ * business roles, packages, presets, and legacy items from one shared source.
-+ */
-export function listAccessModelCatalogSections() {
-  // The legacy section intentionally reuses runtime-role entries so migration
-  // views retain runtime traceability instead of flattening them into titles.
+}function getRoleAuthorityLabel(entry) {
+  if (entry?.businessLabelOnly) {
+    return "Label only";
+  }
+  if (entry?.legacy) {
+    return "Legacy compatibility";
+  }
+  if (entry?.managedPackageRole) {
+    return "Package-backed authority";
+  }
+  if (entry?.companionOnly) {
+    return "Companion authority";
+  }
+  if (entry?.category === "system") {
+    return "Broad administration";
+  }
+  return "Composable runtime";
+}function buildRoleSearchText(role, entry) {
   return [
-    {
-      key: "business_roles",
-      label: ACCESS_MODEL_SECTION_LABELS.business_roles,
-      modelType: "business_role",
-      modelTypeLabel: getAccessModelTypeLabel("business_role"),
-      description:
-        "Human-facing titles only. Workflow authority still comes from assigned packages.",
-      sortOrder: ACCESS_MODEL_SECTION_ORDER.business_roles,
-      entries: listBusinessRoleCatalogEntries(),
-    },
-    {
-      key: "workflow_packages",
-      label: ACCESS_MODEL_SECTION_LABELS.workflow_packages,
-      modelType: "workflow_package",
-      modelTypeLabel: getAccessModelTypeLabel("workflow_package"),
-      description:
-        "Reusable action packages that workflow steps bind to across AP, close, and consolidation.",
-      sortOrder: ACCESS_MODEL_SECTION_ORDER.workflow_packages,
-      entries: listWorkflowPackageCatalogEntries(),
-    },
-    {
-      key: "workflow_presets",
-      label: ACCESS_MODEL_SECTION_LABELS.workflow_presets,
-      modelType: "workflow_preset",
-      modelTypeLabel: getAccessModelTypeLabel("workflow_preset"),
-      description:
-        "Ready-made business flows admins can preview, clone, and later customize.",
-      sortOrder: ACCESS_MODEL_SECTION_ORDER.workflow_presets,
-      entries: listWorkflowPresetCatalogEntries(),
-    },
-    {
-      key: "legacy_catalog",
-      label: ACCESS_MODEL_SECTION_LABELS.legacy_catalog,
-      modelType: "runtime_role",
-      modelTypeLabel: getAccessModelTypeLabel("runtime_role"),
-      description:
-        "Compatibility runtime roles that stay visible for migration review but remain hidden from fresh-tenant pickers.",
-      sortOrder: ACCESS_MODEL_SECTION_ORDER.legacy_catalog,
-      entries: listLegacyRoleCatalogEntries(),
-    },
-  ].sort(sortCatalogEntries);
-}/**
-+ * Sorts roles into a stable management order with composable roles first and legacy roles last.
-+ */
-export function sortRolesForManagement(roles) {
-  const safeRoles = Array.isArray(roles) ? roles : [];
-  return [...safeRoles].sort((left, right) => {
-    const leftEntry = getRoleCatalogEntry(left);
-    const rightEntry = getRoleCatalogEntry(right);
-    const leftCategoryIndex = CATEGORY_ORDER.indexOf(leftEntry.category);
-    const rightCategoryIndex = CATEGORY_ORDER.indexOf(rightEntry.category);
-    if (leftCategoryIndex !== rightCategoryIndex) {
-      return leftCategoryIndex - rightCategoryIndex;
-    }
-    if (leftEntry.sortOrder !== rightEntry.sortOrder) {
-      return leftEntry.sortOrder - rightEntry.sortOrder;
-    }
-    return normalizeText(leftEntry.code).localeCompare(normalizeText(rightEntry.code));
-  });
-}/**
-+ * Returns the business-facing label for one bootstrap handoff preset while
-+ * preserving the stored preset code separately in forms and payloads.
-+ */
-export function getBootstrapHandoffPresetDisplayLabel(presetCode) {
-  const entry = getBootstrapHandoffPresetEntry(presetCode);
-  return entry.displayName || entry.code;
-}/**
-+ * Groups roles by the UI category used on admin role-management screens.
-+ */
-export function groupRolesForManagement(roles) {
-  const grouped = new Map();
-  for (const role of sortRolesForManagement(roles)) {
-    const entry = getRoleCatalogEntry(role);
-    const key = entry.category;
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        key,
-        label: entry.categoryLabel,
-        roles: [],
-      });
-    }
-    grouped.get(key).roles.push(role);
+    role?.code,
+    role?.name,
+    entry?.code,
+    entry?.displayName,
+    entry?.description,
+    entry?.categoryLabel,
+    entry?.workflowFamilyLabel,
+    entry?.technicalCode,
+    entry?.replacementLabel,
+    ...(entry?.capabilities || []),
+    ...(entry?.recommendedScopes || []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}function getRoleSecondaryText(role, entry, l) {
+  const runtimeRoleCode = normalizeText(role?.code);
+  const runtimeRoleName = normalizeText(role?.name);
+  if (entry?.technicalCode) {
+    return l(
+      "Runtime code: {{code}}",
+      "Runtime kodu: {{code}}",
+      { code: entry.technicalCode }
+    );
   }
-  return Array.from(grouped.values());
-}/**
-+ * Builds a human-readable scope label using lookup rows when available.
-+ */
-export function buildScopeLabel(scopeType, scopeId, lookups = {}, tenantScopeId = null) {
-  const normalizedScopeType = normalizeText(scopeType).toUpperCase();
-  const numericScopeId = Number(scopeId || 0);
-  if (!numericScopeId) {
-    return `${normalizedScopeType || "SCOPE"} #?`;
+  if (
+    runtimeRoleName &&
+    runtimeRoleName !== entry?.code &&
+    runtimeRoleName !== runtimeRoleCode
+  ) {
+    return runtimeRoleName;
   }
-  if (normalizedScopeType === "TENANT") {
-    return numericScopeId === Number(tenantScopeId || 0)
-      ? `Tenant #${numericScopeId}`
-      : `Tenant #${numericScopeId}`;
+  return "";
+}function buildRoleAttentionItems(entry, role, l) {
+  const items = [];
+  if (entry?.legacy && entry?.replacementLabel) {
+    items.push(
+      l(
+        "Legacy compatibility role. Prefer {{replacement}} for new assignments.",
+        "Legacy uyumluluk rolu. Yeni atamalarda {{replacement}} tercih edilmelidir.",
+        { replacement: entry.replacementLabel }
+      )
+    );
   }
-  const sourceRows =
-    normalizedScopeType === "GROUP"
-      ? lookups.groups
-      : normalizedScopeType === "COUNTRY"
-        ? lookups.countries
-        : normalizedScopeType === "LEGAL_ENTITY"
-          ? lookups.legalEntities
-          : normalizedScopeType === "OPERATING_UNIT"
-            ? lookups.operatingUnits
-            : [];
-  const matchedRow = (Array.isArray(sourceRows) ? sourceRows : []).find(
-    (row) => Number(row.id) === numericScopeId
+  if (role?.legacyDisabled) {
+    items.push(
+      l(
+        "Hidden for new assignments. Keep it only for migration, rollback, or historical review.",
+        "Yeni atamalarda gizlidir. Yalnizca gecis, rollback veya tarihsel inceleme icin saklayin."
+      )
+    );
+  }
+  if (entry?.businessLabelOnly) {
+    items.push(
+      l(
+        "Business role label only. It does not grant package or permission authority by itself.",
+        "Yalnizca is rol etiketi. Tek basina paket veya yetki otoritesi vermez."
+      )
+    );
+  }
+  if (entry?.managedPackageRole) {
+    items.push(
+      l(
+        "Managed through the workflow package UX so the runtime permission set stays aligned to the package definition.",
+        "Runtime yetki seti paket tanimiyla uyumlu kalsin diye workflow package UX uzerinden yonetilir."
+      )
+    );
+  }
+  if (entry?.companionOnly && entry?.companionNote) {
+    items.push(entry.companionNote);
+  }
+  if (entry?.category === "system") {
+    items.push(
+      l(
+        "Broad administrative authority. Review least-privilege impact before replacing permissions.",
+        "Genis yonetsel yetki. Yetkileri degistirmeden once en az yetki etkisini gozden gecirin."
+      )
+    );
+  }
+  return items;
+}function getRecommendedScopeSet(entry) {
+  return new Set(
+    [
+      ...(Array.isArray(entry?.recommendedScopes) ? entry.recommendedScopes : []),
+      entry?.defaultScope,
+    ]
+      .map((value) => normalizeText(value).toUpperCase())
+      .filter(Boolean)
   );
-  if (!matchedRow) {
-    return `${normalizedScopeType} #${numericScopeId}`;
+}function formatScopeLabel(scopeType) {
+  return normalizeText(scopeType).replaceAll("_", " ");
+}function getPermissionModuleKey(permissionCode) {
+  const parts = normalizeText(permissionCode).split(".").filter(Boolean);
+  if (parts.length <= 1) {
+    return normalizeText(permissionCode);
   }
-  if (normalizedScopeType === "COUNTRY") {
-    return `${matchedRow.iso2 || matchedRow.iso3 || numericScopeId} - ${matchedRow.name || ""}`.trim();
-  }
-  return `${matchedRow.code || numericScopeId} - ${matchedRow.name || ""}`.trim();
+  return parts.slice(0, -1).join(".");
+}function formatPermissionModuleLabel(moduleKey) {
+  return normalizeText(moduleKey)
+    .split(".")
+    .filter(Boolean)
+    .map((part) => part.replaceAll("_", " "))
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" / ");
+}function formatPermissionActionLabel(permissionCode) {
+  const action = normalizeText(permissionCode).split(".").filter(Boolean).pop() || "";
+  return action ? action.replaceAll("_", " ").toUpperCase() : permissionCode;
+}function buildPermissionModuleGroups(permissionRows, selectedPermissionCodes) {
+  const selectedCodeSet = new Set(
+    (Array.isArray(selectedPermissionCodes) ? selectedPermissionCodes : [])
+      .map((value) => normalizeText(value))
+      .filter(Boolean)
+  );
+  const byModule = new Map();
+  (Array.isArray(permissionRows) ? permissionRows : []).forEach((permission) => {
+    const code = normalizeText(permission?.code);
+    if (!code) {
+      return;
+    }
+    const moduleKey = getPermissionModuleKey(code);
+    if (!byModule.has(moduleKey)) {
+      byModule.set(moduleKey, []);
+    }
+    byModule.get(moduleKey).push({
+      id: permission?.id || code,
+      code,
+      description: normalizeText(permission?.description),
+      selected: selectedCodeSet.has(code),
+    });
+  });
+  return Array.from(byModule.entries())
+    .map(([moduleKey, permissions]) => {
+      const codeSet = new Set(permissions.map((permission) => permission.code));
+      return {
+        moduleKey,
+        moduleLabel: formatPermissionModuleLabel(moduleKey),
+        selectedCount: permissions.filter((permission) => permission.selected).length,
+        permissions: [...permissions]
+          .sort((left, right) => left.code.localeCompare(right.code))
+          .map((permission) => ({
+            ...permission,
+            actionLabel: formatPermissionActionLabel(permission.code),
+            requiresRead:
+              !permission.code.endsWith(".read") &&
+              codeSet.has(`${moduleKey}.read`),
+          })),
+      };
+    })
+    .sort((left, right) => left.moduleLabel.localeCompare(right.moduleLabel));
+}function RoleMetric({ label, value, note, valueTone = "text-slate-900" }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {label}
+      </div>
+      <div className={`mt-2 text-lg font-semibold ${valueTone}`}>{value}</div>
+      {note ? <div className="mt-1 text-xs leading-5 text-slate-500">{note}</div> : null}
+    </div>
+  );
+}function RoleScopeCoveragePills({ entry, compact = false }) {
+  const activeScopes = getRecommendedScopeSet(entry);
+  return (
+    <div className={`flex flex-wrap gap-2 ${compact ? "" : "mt-4"}`}>
+      {ROLE_SCOPE_LEVEL_ORDER.map((scopeType) => {
+        const active = activeScopes.has(scopeType);
+        return (
+          <span
+            key={`${entry?.code || "role"}-${scopeType}`}
+            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${
+              active
+                ? "border-slate-300 bg-slate-900 text-white"
+                : "border-slate-200 bg-slate-50 text-slate-300"
+            }`}
+          >
+            {formatScopeLabel(scopeType)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}function RoleMeaningFilterRail({ counts, selectedFilter, onSelect }) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+        Browse by role meaning
+      </div>
+      <div className="mt-2 text-sm leading-6 text-slate-600">
+        Separate composable runtime roles, label-only business roles, and legacy compatibility
+        roles before editing permission modules.
+      </div>
+      <div className="mt-4 space-y-2">
+        {ROLE_MEANING_FILTERS.map((filter) => {
+          const active = selectedFilter === filter.key;
+          return (
+            <button
+              key={filter.key}
+              type="button"
+              onClick={() => onSelect(filter.key)}
+              className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                active
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold">{filter.label}</div>
+                <span className="rounded-full bg-black/5 px-2 py-0.5 text-xs">
+                  {counts[filter.key] || 0}
+                </span>
+              </div>
+              <div className={`mt-2 text-xs leading-5 ${active ? "text-slate-200" : "text-slate-500"}`}>
+                {filter.description}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}function RoleSelectionCard({ active, entry, role, l, onSelect }) {
+  const theme = getRoleTheme(entry);
+  const secondaryText = getRoleSecondaryText(role, entry, l);
+  const attentionItems = buildRoleAttentionItems(entry, role, l);
+  const permissionCount = Array.isArray(role?.permissionCodes) ? role.permissionCodes.length : 0;
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`w-full rounded-[28px] border px-4 py-4 text-left transition ${
+        active
+          ? "border-slate-900 bg-slate-900 text-white shadow-lg shadow-slate-300/50"
+          : `${theme.panel} text-slate-900 hover:border-slate-300`
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className={`text-xs font-semibold uppercase tracking-[0.18em] ${active ? "text-slate-300" : "text-slate-500"}`}>
+            {entry.categoryLabel}
+          </div>
+          <div className="mt-2 text-base font-semibold leading-tight">{entry.displayName}</div>
+          {secondaryText ? (
+            <div className={`mt-1 text-xs leading-5 ${active ? "text-slate-300" : "text-slate-500"}`}>
+              {secondaryText}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <span
+            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+              active ? "border-white/20 bg-white/10 text-white" : theme.chip
+            }`}
+          >
+            {getRoleMeaningLabel(entry)}
+          </span>
+          {entry.businessLabelOnly ? (
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                active ? "border-white/20 bg-white/10 text-white" : "border-sky-200 bg-sky-50 text-sky-800"
+              }`}
+            >
+              Label only
+            </span>
+          ) : null}
+          {entry.companionOnly ? (
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                active ? "border-white/20 bg-white/10 text-white" : "border-violet-200 bg-violet-50 text-violet-800"
+              }`}
+            >
+              Companion role
+            </span>
+          ) : null}
+          {role?.legacyDisabled ? (
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                active ? "border-white/20 bg-white/10 text-white" : "border-rose-200 bg-rose-50 text-rose-800"
+              }`}
+            >
+              Hidden
+            </span>
+          ) : null}
+          {entry.legacy ? (
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                active ? "border-white/20 bg-white/10 text-white" : "border-amber-200 bg-amber-50 text-amber-900"
+              }`}
+            >
+              Legacy
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className={`mt-3 text-sm leading-6 ${active ? "text-slate-100" : "text-slate-600"}`}>
+        {entry.description}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <span
+          className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+            active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-white text-slate-700"
+          }`}
+        >
+          {entry.workflowFamilyLabel}
+        </span>
+        <span
+          className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+            active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-white text-slate-700"
+          }`}
+        >
+          {getRoleAuthorityLabel(entry)}
+        </span>
+      </div>
+      <RoleScopeCoveragePills entry={entry} compact />
+      <div className={`mt-4 grid gap-3 md:grid-cols-2 ${active ? "text-slate-100" : "text-slate-600"}`}>
+        <div>
+          <div className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${active ? "text-slate-300" : "text-slate-500"}`}>
+            Permission count
+          </div>
+          <div className="mt-1 text-sm font-semibold">{permissionCount}</div>
+        </div>
+        <div>
+          <div className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${active ? "text-slate-300" : "text-slate-500"}`}>
+            Recommended scope
+          </div>
+          <div className="mt-1 text-sm font-semibold">
+            {Array.isArray(entry.recommendedScopes) && entry.recommendedScopes.length > 0
+              ? entry.recommendedScopes.join(", ")
+              : entry.defaultScope || "-"}
+          </div>
+        </div>
+      </div>
+      {attentionItems.length > 0 ? (
+        <div
+          className={`mt-4 flex items-start gap-2 rounded-2xl border px-3 py-3 text-xs leading-5 ${
+            active
+              ? "border-white/20 bg-white/10 text-slate-100"
+              : "border-amber-200 bg-white/80 text-amber-900"
+          }`}
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{attentionItems[0]}</span>
+        </div>
+      ) : null}
+      <div
+        className={`mt-4 flex items-center justify-between text-xs ${
+          active ? "text-slate-300" : "text-slate-500"
+        }`}
+      >
+        <span>{entry.code}</span>
+        <span className="inline-flex items-center gap-1 font-semibold">
+          Inspect role
+          <ChevronRight className="h-3.5 w-3.5" />
+        </span>
+      </div>
+    </button>
+  );
+}function PermissionModuleEditor({
+  canReplaceRolePermissions,
+  groups,
+  l,
+  loading,
+  onTogglePermission,
+  onReplacePermissions,
+  saving,
+  selectedRole,
+  selectedRoleLocksPermissions,
+}) {
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="max-w-3xl">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Permission modules
+          </div>
+          <h3 className="mt-2 text-xl font-semibold text-slate-950">
+            Permission editing stays secondary to role meaning
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Review grouped modules, dependency badges, and role guidance before replacing the
+            saved permission set.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={
+            !selectedRole || saving || !canReplaceRolePermissions || selectedRoleLocksPermissions
+          }
+          onClick={onReplacePermissions}
+          className="rounded-2xl bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+        >
+          {saving ? l("Saving...", "Kaydediliyor...") : l("Replace permissions", "Yetkileri degistir")}
+        </button>
+      </div>
+      {selectedRoleLocksPermissions ? (
+        <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-4 text-sm leading-6 text-sky-900">
+          Business role label roles are locked to zero permissions. Assign workflow packages or
+          runtime roles separately from the user-assignment workbench.
+        </div>
+      ) : null}
+      {loading ? (
+        <div className="mt-5 text-sm text-slate-500">
+          {l("Loading permissions...", "Yetkiler yukleniyor...")}
+        </div>
+      ) : null}
+      {!loading && !selectedRole ? (
+        <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+          {l("Select a role to review grouped permission modules.", "Gruplanmis yetki modullerini incelemek icin bir rol secin.")}
+        </div>
+      ) : null}
+      {!loading && selectedRole && !selectedRoleLocksPermissions ? (
+        <div className="mt-5 grid gap-4 xl:grid-cols-2">
+          {groups.map((group) => (
+            <section
+              key={group.moduleKey}
+              className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50"
+            >
+              <div className="border-b border-slate-200 bg-white px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      {group.moduleLabel}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {group.selectedCount} / {group.permissions.length} selected
+                    </div>
+                  </div>
+                  {group.selectedCount > 0 ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                      Active module
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="divide-y divide-slate-200">
+                {group.permissions.map((permission) => (
+                  <label
+                    key={permission.id}
+                    className="flex items-start gap-3 bg-white px-4 py-3 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={permission.selected}
+                      onChange={() => onTogglePermission(permission.code)}
+                      disabled={!canReplaceRolePermissions}
+                      className="mt-1"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium text-slate-900">{permission.code}</span>
+                      <span className="mt-1 block text-xs leading-5 text-slate-500">
+                        {permission.description ||
+                          l(
+                            "{{action}} access for {{module}}.",
+                            "{{module}} icin {{action}} erisimi.",
+                            {
+                              action: permission.actionLabel,
+                              module: group.moduleLabel,
+                            }
+                          )}
+                      </span>
+                      <span className="mt-2 flex flex-wrap gap-2">
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                          {permission.actionLabel}
+                        </span>
+                        {permission.requiresRead ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                            Requires READ
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
 }/**
-+ * Returns whether the supplied scope type matches the role's recommended assignment shape.
++ * Lets security admins review composable-role intent, permission sets, and
++ * permission-rule warnings from one place.
 + */
-export function isRecommendedScopeForRole(roleOrCode, scopeType) {
-  const entry = getRoleCatalogEntry(roleOrCode);
-  const normalizedScopeType = normalizeText(scopeType).toUpperCase();
-  if (!normalizedScopeType || entry.recommendedScopes.length === 0) {
-    return true;
+export default function RolesPermissionsPage() {
+  const { hasPermission, securityAdminUiState, securityAdminUiStateLoaded } = useAuth();
+  const { l, t } = useI18n();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [validationWarnings, setValidationWarnings] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [permissions, setPermissions] = useState([]);
+  const [selectedRoleId, setSelectedRoleId] = useState(null);
+  const [selectedPermissionCodes, setSelectedPermissionCodes] = useState([]);
+  const [roleForm, setRoleForm] = useState({ code: "", name: "" });
+  const [roleSearchValue, setRoleSearchValue] = useState("");
+  const [roleMeaningFilter, setRoleMeaningFilter] = useState(FILTER_ALL);
+  async function loadData() {
+    setLoading(true);
+    setError("");
+    try {
+      const [rolesRes, permissionsRes] = await Promise.all([
+        listRoles({ includePermissions: true }),
+        listPermissions(),
+      ]);
+      const roleRows = rolesRes?.rows || [];
+      setRoles(roleRows);
+      setPermissions(permissionsRes?.rows || []);
+      const selected = selectedRoleId
+        ? roleRows.find((row) => Number(row.id) === Number(selectedRoleId))
+        : roleRows[0];
+      if (selected) {
+        setSelectedRoleId(selected.id);
+        setSelectedPermissionCodes(selected.permissionCodes || []);
+      } else {
+        setSelectedRoleId(null);
+        setSelectedPermissionCodes([]);
+      }
+    } catch (err) {
+      setError(err?.response?.data?.message || t("rolesPermissions.errors.loadFailed"));
+    } finally {
+      setLoading(false);
+    }
   }
-  return entry.recommendedScopes.includes(normalizedScopeType);
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const selectedRole = useMemo(
+    () => roles.find((row) => Number(row.id) === Number(selectedRoleId)) || null,
+    [roles, selectedRoleId]
+  );
+  const selectedRoleEntry = useMemo(
+    () => (selectedRole ? getRoleCatalogEntry(selectedRole) : null),
+    [selectedRole]
+  );
+  const groupedRoles = useMemo(() => groupRolesForManagement(roles), [roles]);
+  const filteredRoleGroups = useMemo(() => {
+    const normalizedQuery = normalizeText(roleSearchValue).toLowerCase();
+    return groupedRoles
+      .map((group) => ({
+        ...group,
+        roles: group.roles.filter((role) => {
+          const roleEntry = getRoleCatalogEntry(role);
+          const matchesMeaning = matchesRoleMeaningFilter(roleEntry, roleMeaningFilter);
+          const matchesQuery =
+            !normalizedQuery || buildRoleSearchText(role, roleEntry).includes(normalizedQuery);
+          return matchesMeaning && matchesQuery;
+        }),
+      }))
+      .filter((group) => group.roles.length > 0);
+  }, [groupedRoles, roleMeaningFilter, roleSearchValue]);
+  const roleMeaningCounts = useMemo(() => {
+    const counts = {
+      [FILTER_ALL]: roles.length,
+      COMPOSABLE_RUNTIME: 0,
+      LABEL_ONLY_BUSINESS: 0,
+      LEGACY_COMPATIBILITY: 0,
+    };
+    roles.forEach((role) => {
+      const roleEntry = getRoleCatalogEntry(role);
+      counts[getRoleMeaningKey(roleEntry)] += 1;
+    });
+    return counts;
+  }, [roles]);
+  const permissionModuleGroups = useMemo(
+    () => buildPermissionModuleGroups(permissions, selectedPermissionCodes),
+    [permissions, selectedPermissionCodes]
+  );
+  const selectedRoleDisplayCode = selectedRole
+    ? selectedRoleEntry?.code || selectedRole.code
+    : l("No role selected", "Rol secilmedi");
+  const selectedRoleAttentionItems = useMemo(
+    () => buildRoleAttentionItems(selectedRoleEntry, selectedRole, l),
+    [l, selectedRole, selectedRoleEntry]
+  );
+  const canUpsertRole = hasPermission("security.role.upsert");
+  const canReplaceRolePermissions = hasPermission("security.role_permissions.assign");
+  const selectedRoleLocksPermissions = Boolean(selectedRoleEntry?.businessLabelOnly);
+  const showFreshTenantAdminNote =
+    securityAdminUiStateLoaded &&
+    Boolean(securityAdminUiState?.roleMigrations?.simplifiedFreshTenantView);
+  const filteredRoleCount = filteredRoleGroups.reduce(
+    (total, group) => total + group.roles.length,
+    0
+  );
+  const runtimeRoleCount = roleMeaningCounts.COMPOSABLE_RUNTIME;
+  const businessLabelCount = roleMeaningCounts.LABEL_ONLY_BUSINESS;
+  const legacyRoleCount = roleMeaningCounts.LEGACY_COMPATIBILITY;
+  const currentActionLink = selectedRoleEntry?.legacy
+    ? {
+        to: "/app/ayarlar/rbac/role-migrations",
+        label: l("Open migration workspace", "Rol gecis alanini ac"),
+      }
+    : selectedRoleLocksPermissions
+      ? {
+          to: "/app/ayarlar/rbac/user-assignments",
+          label: l("Open user assignments", "Kullanici atamalarini ac"),
+        }
+      : {
+          to: "/app/ayarlar/rbac/access-model",
+          label: l("Open access model", "Erisim modelini ac"),
+        };
+  function togglePermission(permissionCode) {
+    setSelectedPermissionCodes((prev) => {
+      if (prev.includes(permissionCode)) {
+        return prev.filter((code) => code !== permissionCode);
+      }
+      return [...prev, permissionCode];
+    });
+  }
+  async function handleCreateRole(event) {
+    event.preventDefault();
+    if (!canUpsertRole) {
+      setError(t("rolesPermissions.errors.missingUpsertPermission"));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setValidationWarnings([]);
+    try {
+      await createOrUpdateRole({
+        code: roleForm.code.trim(),
+        name: roleForm.name.trim(),
+      });
+      setRoleForm({ code: "", name: "" });
+      setMessage(t("rolesPermissions.messages.roleSaved"));
+      await loadData();
+    } catch (err) {
+      setError(err?.response?.data?.message || t("rolesPermissions.errors.saveRoleFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function handleReplacePermissions() {
+    if (!selectedRoleId) {
+      return;
+    }
+    if (selectedRoleLocksPermissions) {
+      setError(
+        "Business role label roles stay non-authoritative and cannot receive permissions."
+      );
+      return;
+    }
+    if (!canReplaceRolePermissions) {
+      setError(t("rolesPermissions.errors.missingAssignPermission"));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setValidationWarnings([]);
+    try {
+      const response = await replaceRolePermissions(selectedRoleId, selectedPermissionCodes);
+      setValidationWarnings(response?.validationWarnings || []);
+      setMessage(t("rolesPermissions.messages.permissionsReplaced"));
+      await loadData();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message || t("rolesPermissions.errors.replacePermissionsFailed")
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="catalog"
+      sectionKey="roles-permissions"
+      eyebrow="Security / Roles & permissions"
+      title={t("rolesPermissions.title")}
+      description={t("rolesPermissions.subtitle")}
+      actions={[
+        {
+          to: currentActionLink.to,
+          label: currentActionLink.label,
+          tone: "primary",
+        },
+      ]}
+      stats={[
+        {
+          title: "Managed roles",
+          value: roles.length,
+          description: "Runtime roles available in the current editor surface.",
+          tone: "blue",
+        },
+        {
+          title: "Composable runtime roles",
+          value: runtimeRoleCount,
+          description: "Direct-authority runtime roles that can carry real permission authority.",
+          tone: "green",
+        },
+        {
+          title: "Label-only business roles",
+          value: businessLabelCount,
+          description: "Business labels remain visible but locked to zero permissions.",
+          tone: "blue",
+        },
+        {
+          title: "Legacy compatibility roles",
+          value: legacyRoleCount,
+          description: "Migration and rollback-facing runtime roles kept recognizable in the editor.",
+          tone: "amber",
+        },
+      ]}
+      toolbar={
+        <>
+          <section className="rounded-[28px] border border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.96),rgba(255,255,255,0.98))] px-5 py-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="max-w-3xl">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
+                  Role editor guidance
+                </div>
+                <h2 className="mt-2 text-xl font-semibold text-slate-950">
+                  Start from role meaning, not from raw permission rows
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Composable runtime roles carry authority. Label-only business roles stay
+                  non-authoritative, and legacy compatibility roles remain visible so brownfield
+                  cleanup and rollback review are still possible without hiding risk.
+                </p>
+              </div>
+              <div className="max-w-sm rounded-2xl border border-sky-200 bg-white/85 px-4 py-3 text-sm leading-6 text-sky-900">
+                Permission editing stays secondary to role meaning. Review the selected role&apos;s
+                workflow family, scope posture, and warnings before replacing the saved permission
+                set.
+              </div>
+            </div>
+          </section>
+          <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="max-w-3xl">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Create runtime role
+                </div>
+                <h2 className="mt-2 text-xl font-semibold text-slate-950">
+                  Keep new roles deliberate and composable
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Prefer bounded runtime roles with clear workflow-family intent. Business role
+                  labels stay separate from direct permission authority, and legacy compatibility
+                  roles should not be cloned forward into new tenant design.
+                </p>
+              </div>
+              <Link
+                to="/app/ayarlar/rbac/access-model"
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+              >
+                Open access model
+              </Link>
+            </div>
+            <form onSubmit={handleCreateRole} className="mt-5 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_auto]">
+              <input
+                value={roleForm.code}
+                onChange={(event) =>
+                  setRoleForm((prev) => ({ ...prev, code: event.target.value }))
+                }
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder={t("rolesPermissions.placeholders.roleCode")}
+                required
+              />
+              <input
+                value={roleForm.name}
+                onChange={(event) =>
+                  setRoleForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+                placeholder={t("rolesPermissions.placeholders.roleName")}
+                required
+              />
+              <button
+                type="submit"
+                disabled={saving || !canUpsertRole}
+                className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving ? t("rolesPermissions.actions.saving") : t("rolesPermissions.actions.saveRole")}
+              </button>
+            </form>
+          </section>
+        </>
+      }
+    >
+      {showFreshTenantAdminNote ? (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          This tenant has no legacy runtime role assignments, so migration-only admin surfaces stay
+          out of the normal navigation. Use the composable role catalog as the steady-state model.
+        </div>
+      ) : null}
+      {error ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      ) : null}
+      {message ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {message}
+        </div>
+      ) : null}
+      <div className="grid gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
+        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Role selection
+              </div>
+              <h2 className="mt-2 text-xl font-semibold text-slate-950">
+                Cleaner role selection surface
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Browse grouped roles before dropping into module-level editing. Dangerous or legacy
+                roles stay visible through tinted cards and attention badges before selection.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+              {filteredRoleCount} visible
+            </div>
+          </div>
+          <input
+            value={roleSearchValue}
+            onChange={(event) => setRoleSearchValue(event.target.value)}
+            placeholder={l(
+              "Search by label, runtime code, workflow family, capability, or replacement",
+              "Etiket, runtime kodu, workflow family, yetenek veya replacement ile ara"
+            )}
+            className="mt-5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900"
+          />
+          <div className="mt-4">
+            <RoleMeaningFilterRail
+              counts={roleMeaningCounts}
+              selectedFilter={roleMeaningFilter}
+              onSelect={setRoleMeaningFilter}
+            />
+          </div>
+          {loading ? (
+            <div className="mt-5 text-sm text-slate-500">
+              {t("rolesPermissions.sections.loadingRoles")}
+            </div>
+          ) : null}
+          {!loading && filteredRoleGroups.length === 0 ? (
+            <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+              {l("No roles match the current filters.", "Mevcut filtrelerle eslesen rol yok.")}
+            </div>
+          ) : null}
+          {!loading && filteredRoleGroups.length > 0 ? (
+            <div className="mt-5 space-y-5">
+              {filteredRoleGroups.map((group) => (
+                <div key={group.key}>
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      {group.label}
+                    </div>
+                    <div className="text-xs font-semibold text-slate-400">{group.roles.length}</div>
+                  </div>
+                  <div className="space-y-3">
+                    {group.roles.map((role) => {
+                      const roleEntry = getRoleCatalogEntry(role);
+                      return (
+                        <RoleSelectionCard
+                          key={role.id}
+                          active={Number(role.id) === Number(selectedRoleId)}
+                          entry={roleEntry}
+                          role={role}
+                          l={l}
+                          onSelect={() => {
+                            setSelectedRoleId(role.id);
+                            setSelectedPermissionCodes(role.permissionCodes || []);
+                            setValidationWarnings([]);
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </section>
+        <div className="space-y-5">
+          {selectedRole && selectedRoleEntry ? (
+            <>
+              <section
+                className={`rounded-[28px] border px-5 py-5 shadow-sm ${getRoleTheme(
+                  selectedRoleEntry
+                ).panel}`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="max-w-3xl">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Role meaning
+                    </div>
+                    <h2 className="mt-2 text-2xl font-semibold text-slate-950">
+                      {selectedRoleDisplayCode}
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      {selectedRoleEntry.description}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${getRoleTheme(selectedRoleEntry).chip}`}>
+                      {getRoleAuthorityLabel(selectedRoleEntry)}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                      {selectedRoleEntry.workflowFamilyLabel}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                      {selectedRoleEntry.categoryLabel}
+                    </span>
+                    {selectedRoleEntry.legacy ? (
+                      <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                        Legacy compatibility
+                      </span>
+                    ) : null}
+                    {selectedRoleEntry.businessLabelOnly ? (
+                      <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-800">
+                        Label only
+                      </span>
+                    ) : null}
+                    {selectedRole.legacyDisabled ? (
+                      <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-800">
+                        Hidden for new assignments
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <RoleMetric
+                    label="Authority model"
+                    value={getRoleAuthorityLabel(selectedRoleEntry)}
+                    note={getRoleMeaningLabel(selectedRoleEntry)}
+                    valueTone={getRoleTheme(selectedRoleEntry).metricTone}
+                  />
+                  <RoleMetric
+                    label="Saved permission count"
+                    value={Array.isArray(selectedRole.permissionCodes) ? selectedRole.permissionCodes.length : 0}
+                    note="Current saved permission set on the runtime role."
+                    valueTone={getRoleTheme(selectedRoleEntry).metricTone}
+                  />
+                  <RoleMetric
+                    label="Staged selection"
+                    value={selectedPermissionCodes.length}
+                    note="Checked permission rows in the editor below."
+                    valueTone={getRoleTheme(selectedRoleEntry).metricTone}
+                  />
+                  <RoleMetric
+                    label="Workflow family"
+                    value={selectedRoleEntry.workflowFamilyLabel}
+                    note={selectedRoleEntry.modelTypeLabel}
+                    valueTone={getRoleTheme(selectedRoleEntry).metricTone}
+                  />
+                </div>
+                <div className="mt-5 rounded-[24px] border border-white/80 bg-white/80 px-4 py-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Recommended scope coverage
+                  </div>
+                  <div className="mt-2 text-sm leading-6 text-slate-600">
+                    Scope level pills keep the intended assignment posture visible before any
+                    permission editing.
+                  </div>
+                  <RoleScopeCoveragePills entry={selectedRoleEntry} />
+                </div>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  {selectedRoleEntry.legacy ? (
+                    <Link
+                      to="/app/ayarlar/rbac/role-migrations"
+                      className="rounded-2xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-950"
+                    >
+                      Open migration workspace
+                    </Link>
+                  ) : null}
+                  {selectedRoleLocksPermissions ? (
+                    <Link
+                      to="/app/ayarlar/rbac/user-assignments"
+                      className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                    >
+                      Open user assignments
+                    </Link>
+                  ) : null}
+                  <Link
+                    to="/app/ayarlar/rbac/access-model"
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                  >
+                    Open access model
+                  </Link>
+                </div>
+              </section>
+              <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="max-w-3xl">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Role guidance
+                    </div>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-950">
+                      What to watch before editing
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Make role meaning and warnings explicit before switching into the secondary
+                      permission editor.
+                    </p>
+                  </div>
+                  {selectedRoleAttentionItems.length > 0 ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {selectedRoleAttentionItems.length} review points
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                      Standard runtime role
+                    </span>
+                  )}
+                </div>
+                <div className="mt-5 grid gap-3">
+                  {selectedRoleAttentionItems.length > 0 ? (
+                    selectedRoleAttentionItems.map((item) => (
+                      <div
+                        key={item}
+                        className={`rounded-2xl border px-4 py-3 text-sm leading-6 ${
+                          getRoleTheme(selectedRoleEntry).softPanel
+                        }`}
+                      >
+                        {item}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
+                      This role follows the composable runtime model without legacy or label-only
+                      constraints.
+                    </div>
+                  )}
+                </div>
+              </section>
+              <RoleSummaryCard role={selectedRole} className="rounded-[28px] shadow-sm" />
+              <SecurityWarningList
+                title="Permission rule warnings"
+                warnings={validationWarnings}
+                className="rounded-[28px] shadow-sm"
+              />
+              <PermissionModuleEditor
+                canReplaceRolePermissions={canReplaceRolePermissions}
+                groups={permissionModuleGroups}
+                l={l}
+                loading={loading}
+                onReplacePermissions={handleReplacePermissions}
+                onTogglePermission={togglePermission}
+                saving={saving}
+                selectedRole={selectedRole}
+                selectedRoleLocksPermissions={selectedRoleLocksPermissions}
+              />
+            </>
+          ) : (
+            <section className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center text-sm text-slate-500 shadow-sm">
+              Select a role to review role meaning, warnings, and grouped permission modules.
+            </section>
+          )}
+        </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
+  );
 }

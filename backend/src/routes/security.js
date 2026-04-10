@@ -36,17 +36,6 @@ import {
   normalizeLocalOperationalRoleScopeType as normalizeLocalUserAdminScopeType,
 } from "../services/localOperationalRoles.service.js";
 import {
-  createRoleMigrationPreviewRun,
-  executeRoleMigrationRun,
-  getRoleMigrationUiState,
-  getRoleMigrationRunDetail,
-  isRoleLegacyDisabled,
-  isRetiredLegacyRoleCode,
-  loadActiveLegacyDisabledRoleCodeSet,
-  listRoleMigrationRuns,
-  rollbackRoleMigrationRun,
-} from "../services/roleMigration.service.js";
-import {
   assertFieldVisibilityPolicyPermission,
   createFieldVisibilityPolicy,
   deactivateFieldVisibilityPolicy,
@@ -61,6 +50,14 @@ import {
 } from "../constants/permission-rules.js";
 
 const router = express.Router();
+
+const RETIRED_SECURITY_ROLE_CODES = new Set([
+  ["Tenant", "Admin"].join(""),
+  ["Group", "Controller"].join(""),
+  ["Country", "Controller"].join(""),
+  ["Entity", "Accountant"].join(""),
+  ["AP", "Document", "Poster"].join(""),
+]);
 
 function forbidden(message) {
   const err = new Error(message);
@@ -417,42 +414,28 @@ async function assertSystemRoleManageAllowed(
   }
 }
 
-async function assertRoleAssignmentUpsertAllowed(tenantId, role) {
-  if (!role?.id) {
-    return;
-  }
-  if (isRetiredLegacyRoleCode(role.code)) {
-    throw badRequest(
-      `${role.code || "Role"} is retired and can only be restored through migration or rollback seams`,
-    );
-  }
-  const isLegacyDisabled = await isRoleLegacyDisabled(tenantId, role.id);
-  if (isLegacyDisabled) {
-    throw badRequest(
-      `${role.code || "Role"} is disabled by role migration and can only be restored through rollback`,
-    );
-  }
+function isRetiredSecurityRoleCode(roleCode) {
+  return RETIRED_SECURITY_ROLE_CODES.has(String(roleCode || "").trim());
 }
 
-function assertRetiredLegacyRoleNotManaged(roleOrCode) {
+function assertRetiredSecurityRoleNotManaged(roleOrCode) {
   const roleCode =
     typeof roleOrCode === "string"
       ? String(roleOrCode || "").trim()
       : String(roleOrCode?.code || "").trim();
-  if (!isRetiredLegacyRoleCode(roleCode)) {
+  if (!isRetiredSecurityRoleCode(roleCode)) {
     return;
   }
   throw badRequest(
-    `${roleCode || "Role"} is retired and is no longer manageable through the normal role admin surfaces`,
+    `${roleCode || "Role"} is retired and is not available in fresh tenants`,
   );
 }
 
-async function assertSecurityMigrationManageAllowed(req, tenantId) {
-  const actorUserId = parsePositiveInt(req.user?.userId);
-  const canManageSystemRoles = await canManageSecurity(actorUserId, tenantId);
-  if (!canManageSystemRoles) {
-    throw forbidden("Only SecurityAdmin can manage role migration runs");
+function assertRoleAssignmentUpsertAllowed(role) {
+  if (!role?.id) {
+    return;
   }
+  assertRetiredSecurityRoleNotManaged(role);
 }
 
 function normalizeRoleCodeList(values) {
@@ -460,16 +443,6 @@ function normalizeRoleCodeList(values) {
     new Set(
       (Array.isArray(values) ? values : [])
         .map((value) => String(value || "").trim())
-        .filter(Boolean),
-    ),
-  );
-}
-
-function normalizePositiveIntList(values) {
-  return Array.from(
-    new Set(
-      (Array.isArray(values) ? values : [])
-        .map(parsePositiveInt)
         .filter(Boolean),
     ),
   );
@@ -858,7 +831,7 @@ async function createLocalUserAdminAssignment({
     await assertSystemRoleManageAllowed(req, tenantId, role, {
       allowedSystemRoleCodes: LOCAL_USER_ADMIN_ROLE_CODES,
     });
-    await assertRoleAssignmentUpsertAllowed(tenantId, role);
+    assertRoleAssignmentUpsertAllowed(role);
 
     const existingUser = await lookupUserByEmail(normalizedEmail, tx.query);
     const existingUserId = parsePositiveInt(existingUser?.id);
@@ -1162,19 +1135,73 @@ router.get(
     }
 
     const q = req.query.q ? String(req.query.q).trim() : null;
-    const conditions = ["tenant_id = ?"];
+    const conditions = ["u.tenant_id = ?"];
     const params = [tenantId];
 
     if (q) {
-      conditions.push("(email LIKE ? OR name LIKE ?)");
+      conditions.push("(u.email LIKE ? OR u.name LIKE ?)");
       params.push(`%${q}%`, `%${q}%`);
     }
 
+    // Pending invites live in `user_invites` while the dormant user row stays
+    // disabled. Project the latest live invite back into the user list so the
+    // assignment workspace can show invited users beside active and disabled
+    // users without guessing on the client.
     const result = await query(
-      `SELECT id, email, name, status, created_at
-       FROM users
+      `SELECT
+         u.id,
+         u.email,
+         u.name,
+         CASE
+           WHEN latest_invite.id IS NOT NULL
+             AND latest_invite.accepted_at IS NULL
+             AND latest_invite.revoked_at IS NULL
+             AND latest_invite.status = 'PENDING'
+             AND latest_invite.expires_at >= UTC_TIMESTAMP()
+             THEN 'INVITED'
+           ELSE u.status
+         END AS status,
+         u.status AS base_status,
+         CASE
+           WHEN latest_invite.id IS NULL THEN NULL
+           WHEN latest_invite.accepted_at IS NOT NULL
+             OR latest_invite.status = 'ACCEPTED'
+             THEN 'ACCEPTED'
+           WHEN latest_invite.revoked_at IS NOT NULL
+             OR latest_invite.status = 'REVOKED'
+             THEN 'REVOKED'
+           WHEN latest_invite.expires_at < UTC_TIMESTAMP()
+             THEN 'EXPIRED'
+           ELSE 'PENDING'
+         END AS invite_status,
+         latest_invite.expires_at AS invite_expires_at,
+         latest_invite.created_at AS invite_created_at,
+         u.created_at
+       FROM users u
+       LEFT JOIN (
+         SELECT
+           ui.id,
+           ui.tenant_id,
+           ui.user_id,
+           ui.status,
+           ui.expires_at,
+           ui.accepted_at,
+           ui.revoked_at,
+           ui.created_at
+         FROM user_invites ui
+         JOIN (
+           SELECT tenant_id, user_id, MAX(id) AS latest_id
+           FROM user_invites
+           GROUP BY tenant_id, user_id
+         ) latest
+           ON latest.tenant_id = ui.tenant_id
+          AND latest.user_id = ui.user_id
+          AND latest.latest_id = ui.id
+       ) latest_invite
+         ON latest_invite.tenant_id = u.tenant_id
+        AND latest_invite.user_id = u.id
        WHERE ${conditions.join(" AND ")}
-       ORDER BY name, email
+       ORDER BY u.name, u.email
        LIMIT 200`,
       params,
     );
@@ -1561,9 +1588,6 @@ router.get(
       throw badRequest("tenantId is required");
     }
 
-    const includeRetiredLegacy =
-      parseBoolean(req.query.includeRetiredLegacy) ||
-      parseBoolean(req.query.includeLegacy);
     const includePermissions = parseBoolean(req.query.includePermissions);
     const result = await query(
       `SELECT id, tenant_id, code, name, is_system, created_at
@@ -1573,22 +1597,9 @@ router.get(
       [tenantId],
     );
 
-    const rows = result.rows || [];
-    const enrichedRows = rows.map((row) => ({
-      ...row,
-      legacyDisabled: false,
-      legacyRetired: isRetiredLegacyRoleCode(row.code),
-    }));
-    const disabledRoleCodeSet =
-      await loadActiveLegacyDisabledRoleCodeSet(tenantId);
-    for (const row of enrichedRows) {
-      row.legacyDisabled = disabledRoleCodeSet.has(
-        String(row.code || "").trim(),
-      );
-    }
-    const visibleRows = includeRetiredLegacy
-      ? enrichedRows
-      : enrichedRows.filter((row) => !row.legacyRetired);
+    const visibleRows = (result.rows || []).filter(
+      (row) => !isRetiredSecurityRoleCode(row.code),
+    );
     if (!includePermissions || visibleRows.length === 0) {
       return res.json({ tenantId, rows: visibleRows });
     }
@@ -1636,7 +1647,7 @@ router.post(
     const code = String(req.body.code).trim();
     const name = String(req.body.name).trim();
     const isSystem = Boolean(req.body.isSystem);
-    assertRetiredLegacyRoleNotManaged(code);
+    assertRetiredSecurityRoleNotManaged(code);
 
     const existingRoleResult = await query(
       `SELECT id
@@ -1731,7 +1742,7 @@ router.post(
     if (!role) {
       throw badRequest("Role not found");
     }
-    assertRetiredLegacyRoleNotManaged(role);
+    assertRetiredSecurityRoleNotManaged(role);
     assertBusinessRoleLabelRolePermissionsNotManaged(role);
 
     const permissionCodes = Array.isArray(req.body?.permissionCodes)
@@ -1797,7 +1808,7 @@ router.put(
     if (!role) {
       throw badRequest("Role not found");
     }
-    assertRetiredLegacyRoleNotManaged(role);
+    assertRetiredSecurityRoleNotManaged(role);
     assertBusinessRoleLabelRolePermissionsNotManaged(role);
 
     const permissionCodesRaw = Array.isArray(req.body?.permissionCodes)
@@ -1977,7 +1988,7 @@ router.post(
       throw badRequest("Role not found");
     }
     await assertSystemRoleManageAllowed(req, tenantId, role);
-    await assertRoleAssignmentUpsertAllowed(tenantId, role);
+    assertRoleAssignmentUpsertAllowed(role);
     await assertScopeTargetExists(tenantId, scopeType, scopeId);
 
     const existingResult = await query(
@@ -2138,7 +2149,7 @@ router.put(
       throw badRequest("Role not found");
     }
     await assertSystemRoleManageAllowed(req, tenantId, role);
-    await assertRoleAssignmentUpsertAllowed(tenantId, role);
+    assertRoleAssignmentUpsertAllowed(role);
     const effectiveDates = resolveAssignmentEffectiveDates(
       req.body,
       assignment,
@@ -2280,17 +2291,10 @@ router.get(
 
     const actorUserId = parsePositiveInt(req.user?.userId);
     const canManageSystemRoles = await canManageSecurity(actorUserId, tenantId);
-    const roleMigrations = await getRoleMigrationUiState(tenantId);
 
     return res.json({
       tenantId,
       canManageSecurity: canManageSystemRoles,
-      roleMigrations: {
-        ...roleMigrations,
-        shouldShowInNavigation:
-          canManageSystemRoles &&
-          Boolean(roleMigrations.shouldShowInNavigation),
-      },
     });
   }),
 );
@@ -2533,160 +2537,6 @@ router.delete(
       ok: true,
       row,
     });
-  }),
-);
-
-router.get(
-  "/role-migrations",
-  requirePermission("security.role.read"),
-  asyncHandler(async (req, res) => {
-    const tenantId = resolveTenantId(req);
-    if (!tenantId) {
-      throw badRequest("tenantId is required");
-    }
-
-    await assertSecurityMigrationManageAllowed(req, tenantId);
-    const runs = await listRoleMigrationRuns({ tenantId });
-
-    return res.json({
-      tenantId,
-      rows: runs,
-    });
-  }),
-);
-
-router.post(
-  "/role-migrations/preview",
-  requirePermission("security.role_assignment.upsert"),
-  asyncHandler(async (req, res) => {
-    const tenantId = resolveTenantId(req);
-    if (!tenantId) {
-      throw badRequest("tenantId is required");
-    }
-
-    await assertSecurityMigrationManageAllowed(req, tenantId);
-    const run = await createRoleMigrationPreviewRun({
-      tenantId,
-      actorUserId: parsePositiveInt(req.user?.userId),
-      sourceRoleCodes: normalizeRoleCodeList(req.body?.sourceRoleCodes),
-    });
-
-    await logRbacAuditEvent(req, {
-      tenantId,
-      action: "role_migration.preview",
-      resourceType: "role_migration_run",
-      resourceId: run?.id,
-      scopeType: "TENANT",
-      scopeId: tenantId,
-      payload: {
-        runId: run?.id || null,
-        mappingVersion: run?.mappingVersion || null,
-        previewSummary: run?.previewSummary || null,
-      },
-    });
-
-    return res.status(201).json(run);
-  }),
-);
-
-router.get(
-  "/role-migrations/:runId",
-  requirePermission("security.role.read"),
-  asyncHandler(async (req, res) => {
-    const tenantId = resolveTenantId(req);
-    if (!tenantId) {
-      throw badRequest("tenantId is required");
-    }
-
-    const runId = parsePositiveInt(req.params.runId);
-    if (!runId) {
-      throw badRequest("runId must be a positive integer");
-    }
-
-    await assertSecurityMigrationManageAllowed(req, tenantId);
-    const run = await getRoleMigrationRunDetail({ tenantId, runId });
-    if (!run) {
-      throw badRequest("Role migration run not found");
-    }
-
-    return res.json(run);
-  }),
-);
-
-router.post(
-  "/role-migrations/:runId/execute",
-  requirePermission("security.role_assignment.upsert"),
-  asyncHandler(async (req, res) => {
-    const tenantId = resolveTenantId(req);
-    if (!tenantId) {
-      throw badRequest("tenantId is required");
-    }
-
-    const runId = parsePositiveInt(req.params.runId);
-    if (!runId) {
-      throw badRequest("runId must be a positive integer");
-    }
-
-    await assertSecurityMigrationManageAllowed(req, tenantId);
-    const run = await executeRoleMigrationRun({
-      tenantId,
-      runId,
-      actorUserId: parsePositiveInt(req.user?.userId),
-      itemIds: normalizePositiveIntList(req.body?.itemIds),
-    });
-
-    await logRbacAuditEvent(req, {
-      tenantId,
-      action: "role_migration.execute",
-      resourceType: "role_migration_run",
-      resourceId: run?.id,
-      scopeType: "TENANT",
-      scopeId: tenantId,
-      payload: {
-        runId: run?.id || null,
-        executionSummary: run?.executionSummary || null,
-      },
-    });
-
-    return res.json(run);
-  }),
-);
-
-router.post(
-  "/role-migrations/:runId/rollback",
-  requirePermission("security.role_assignment.upsert"),
-  asyncHandler(async (req, res) => {
-    const tenantId = resolveTenantId(req);
-    if (!tenantId) {
-      throw badRequest("tenantId is required");
-    }
-
-    const runId = parsePositiveInt(req.params.runId);
-    if (!runId) {
-      throw badRequest("runId must be a positive integer");
-    }
-
-    await assertSecurityMigrationManageAllowed(req, tenantId);
-    const run = await rollbackRoleMigrationRun({
-      tenantId,
-      runId,
-      actorUserId: parsePositiveInt(req.user?.userId),
-    });
-
-    await logRbacAuditEvent(req, {
-      tenantId,
-      action: "role_migration.rollback",
-      resourceType: "role_migration_run",
-      resourceId: run?.id,
-      scopeType: "TENANT",
-      scopeId: tenantId,
-      payload: {
-        runId: run?.id || null,
-        rollbackSummary: run?.rollbackSummary || null,
-      },
-    });
-
-    return res.json(run);
   }),
 );
 

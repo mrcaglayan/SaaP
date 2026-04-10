@@ -530,7 +530,38 @@ function getHashFragment(target) {
   return value.slice(hashIndex + 1);
 }
 
-function isSidebarEntryActive(entry, pathname, hash) {
+function getTargetSearchParams(target) {
+  const value = String(target || "");
+  const queryIndex = value.indexOf("?");
+  if (queryIndex < 0) {
+    return new URLSearchParams();
+  }
+
+  const hashIndex = value.indexOf("#", queryIndex);
+  const queryString =
+    hashIndex < 0
+      ? value.slice(queryIndex + 1)
+      : value.slice(queryIndex + 1, hashIndex);
+  return new URLSearchParams(queryString);
+}
+
+function matchesSidebarEntrySearch(target, search) {
+  const targetSearchParams = getTargetSearchParams(target);
+  if (Array.from(targetSearchParams.keys()).length === 0) {
+    return true;
+  }
+
+  const currentSearchParams = new URLSearchParams(String(search || ""));
+  for (const [key, value] of targetSearchParams.entries()) {
+    if (currentSearchParams.get(key) !== value) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isSidebarEntryActive(entry, pathname, search, hash) {
   const targetPath = getPathWithoutQueryOrHash(entry?.to);
   if (!targetPath) {
     return false;
@@ -543,6 +574,10 @@ function isSidebarEntryActive(entry, pathname, hash) {
     return false;
   }
 
+  if (!matchesSidebarEntrySearch(entry?.to, search)) {
+    return false;
+  }
+
   const targetHash = getHashFragment(entry.to);
   if (!targetHash) {
     return true;
@@ -551,7 +586,7 @@ function isSidebarEntryActive(entry, pathname, hash) {
   return hash === `#${targetHash}`;
 }
 
-function hasActiveChildPath(items, pathname, hash) {
+function hasActiveChildPath(items, pathname, search, hash) {
   if (!Array.isArray(items)) return false;
 
   return items.some((entry) => {
@@ -559,14 +594,14 @@ function hasActiveChildPath(items, pathname, hash) {
       if (entry.matchPrefix && pathname.startsWith(entry.matchPrefix)) {
         return true;
       }
-      return hasActiveChildPath(entry.items, pathname, hash);
+      return hasActiveChildPath(entry.items, pathname, search, hash);
     }
 
-    return isSidebarEntryActive(entry, pathname, hash);
+    return isSidebarEntryActive(entry, pathname, search, hash);
   });
 }
 
-function findActiveTopSectionKey(items, pathname, hash) {
+function findActiveTopSectionKey(items, pathname, search, hash) {
   if (!Array.isArray(items)) {
     return null;
   }
@@ -578,7 +613,7 @@ function findActiveTopSectionKey(items, pathname, hash) {
 
     const isActive =
       (item.matchPrefix && pathname.startsWith(item.matchPrefix)) ||
-      hasActiveChildPath(item.items, pathname, hash);
+      hasActiveChildPath(item.items, pathname, search, hash);
     if (isActive) {
       return item.matchPrefix || item.title || null;
     }
@@ -611,32 +646,12 @@ function hasRequiredFeatures(item, hasAnyFeature) {
   return hasAnyFeature(requiredFeatureCodes);
 }
 
-function isVisibleForSecurityAdminUiState(
-  item,
-  securityAdminUiState,
-  securityAdminUiStateLoaded
-) {
-  const adminUiStateKey = String(item?.adminUiStateKey || "").trim();
-  if (!adminUiStateKey) {
-    return true;
-  }
-  if (!securityAdminUiStateLoaded) {
-    return false;
-  }
-  if (adminUiStateKey === "roleMigrations") {
-    return Boolean(securityAdminUiState?.roleMigrations?.shouldShowInNavigation);
-  }
-  return true;
-}
-
 function annotateSidebarItemsWithAccess(
   items,
   hasAnyPermission,
   hasAnyFeature,
   includeUnimplemented,
-  t,
-  securityAdminUiState,
-  securityAdminUiStateLoaded
+  t
 ) {
   if (!Array.isArray(items)) {
     return [];
@@ -644,6 +659,10 @@ function annotateSidebarItemsWithAccess(
 
   const visible = [];
   for (const item of items) {
+    if (item?.sidebarHidden) {
+      continue;
+    }
+
     const requiredPermissions = Array.isArray(item?.requiredPermissions)
       ? item.requiredPermissions.map((value) => String(value || "").trim()).filter(Boolean)
       : [];
@@ -654,17 +673,12 @@ function annotateSidebarItemsWithAccess(
       : [];
     const hasAccess = hasRequiredPermissions(item, hasAnyPermission);
     const hasFeatureAccess = hasRequiredFeatures(item, hasAnyFeature);
-    const hasAdminUiAccess = isVisibleForSecurityAdminUiState(
-      item,
-      securityAdminUiState,
-      securityAdminUiStateLoaded
-    );
     const lockedReason =
       !hasAccess && requiredPermissions.length > 0
         ? `${t("layout.permissionRequired", "Permission required")}: ${requiredPermissions.join(", ")}`
         : "";
 
-    if (!hasFeatureAccess || !hasAdminUiAccess) {
+    if (!hasFeatureAccess) {
       continue;
     }
 
@@ -687,9 +701,7 @@ function annotateSidebarItemsWithAccess(
       hasAnyPermission,
       hasAnyFeature,
       includeUnimplemented,
-      t,
-      securityAdminUiState,
-      securityAdminUiStateLoaded
+      t
     );
     if (children.length === 0) {
       continue;
@@ -720,8 +732,6 @@ export default function AppLayout() {
     hasAnyPermission,
     hasAnyFeature,
     hasAllPermissions,
-    securityAdminUiState,
-    securityAdminUiStateLoaded,
   } = useAuth();
   const { workingContext } = useWorkingContext();
   const { t } = useI18n();
@@ -746,7 +756,12 @@ export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [readinessMenuPathname, setReadinessMenuPathname] = useState(null);
   const [openTopSectionKey, setOpenTopSectionKey] = useState(() =>
-    findActiveTopSectionKey(sidebarItems, location.pathname, location.hash)
+    findActiveTopSectionKey(
+      sidebarItems,
+      location.pathname,
+      location.search,
+      location.hash
+    )
   );
   const readinessMenuRef = useRef(null);
   const canViewUnimplementedModules = hasAllPermissions(
@@ -821,17 +836,13 @@ export default function AppLayout() {
         hasAnyPermission,
         hasAnyFeature,
         canViewUnimplementedModules,
-        t,
-        securityAdminUiState,
-        securityAdminUiStateLoaded
+        t
       ),
     [
       hasAnyFeature,
       hasAnyPermission,
       canViewUnimplementedModules,
       t,
-      securityAdminUiState,
-      securityAdminUiStateLoaded,
     ]
   );
   const readinessChip = useMemo(
@@ -931,6 +942,7 @@ export default function AppLayout() {
           hasActiveChildPath(
             nestedItems,
             location.pathname,
+            location.search,
             location.hash
           );
 
@@ -995,7 +1007,12 @@ export default function AppLayout() {
               end={subItem.end}
               className={() =>
                 subLinkClass(
-                  isSidebarEntryActive(subItem, location.pathname, location.hash),
+                  isSidebarEntryActive(
+                    subItem,
+                    location.pathname,
+                    location.search,
+                    location.hash
+                  ),
                   depth > 0
                 )
               }
@@ -1356,6 +1373,7 @@ export default function AppLayout() {
                 hasActiveChildPath(
                   item.items,
                   location.pathname,
+                  location.search,
                   location.hash
                 );
               const sectionKey = item.matchPrefix || item.title;

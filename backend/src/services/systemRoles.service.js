@@ -1,12 +1,9 @@
 import { query } from "../db.js";
 import { getUserRoleScopeEffectiveDateGuard } from "./authz.scope.service.js";
-import { loadActiveLegacyDisabledRoleCodeSet } from "./roleMigration.service.js";
 
-export const LEGACY_TENANT_ADMIN_ROLE_CODE = "TenantAdmin";
 export const SECURITY_ADMIN_ROLE_CODE = "SecurityAdmin";
 export const SYSTEM_ADMIN_ROLE_CODE = "SystemAdmin";
 
-export const LEGACY_TENANT_ADMIN_ROLE_NAME = "Tenant Administrator";
 export const SECURITY_ADMIN_ROLE_NAME = "Security Administrator";
 export const SYSTEM_ADMIN_ROLE_NAME = "System Administrator";
 
@@ -18,15 +15,10 @@ const SECURITY_ADMIN_EXCLUDED_PERMISSION_CODES = new Set([
 
 const SYSTEM_ADMIN_ADDITIONAL_PERMISSION_CODES = new Set([
   "security.admin.system",
-  // Fresh-tenant bootstrap relies on SystemAdmin to finish readiness-oriented
-  // workflow setup without falling back to the retired TenantAdmin role.
   "workflow.definition.read",
   "workflow.definition.write",
   "workflow.assignment.read",
   "workflow.assignment.write",
-  // Unified approval policy and delegation management — SystemAdmin owns
-  // tenant-wide approval configuration that was previously only on legacy
-  // controller roles (GroupController, CountryController, EntityAccountant).
   "approvals.policies.read",
   "approvals.policies.write",
   "approvals.requests.read",
@@ -50,8 +42,8 @@ function normalizeUniqueStrings(values) {
     new Set(
       (Array.isArray(values) ? values : [])
         .map((value) => String(value || "").trim())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
 }
 
@@ -85,7 +77,7 @@ async function loadPermissionIdsByCode(runQuery = query) {
   const result = await runQuery(
     `SELECT id, code
      FROM permissions
-     ORDER BY id`
+     ORDER BY id`,
   );
 
   const permissionIdByCode = new Map();
@@ -100,17 +92,12 @@ async function loadPermissionIdsByCode(runQuery = query) {
 }
 
 /**
- * Builds the system-role catalog from the live permission set.
- *
- * Fresh tenants now bootstrap with `SecurityAdmin` and `SystemAdmin` only. The
- * retired `TenantAdmin` role is included only when explicitly requested or when
- * an existing tenant still retains that role for rollback recoverability.
+ * Builds the fresh system-role catalog from the live permission set.
  */
-export function buildCompatibilitySystemRoleDefinitions(permissionCodes = [], options = {}) {
+export function buildSystemRoleDefinitions(permissionCodes = []) {
   const normalizedPermissionCodes = normalizeUniqueStrings(permissionCodes);
-  const includeLegacyTenantAdmin = options?.includeLegacyTenantAdmin === true;
 
-  const roleDefinitions = [
+  return [
     {
       code: SECURITY_ADMIN_ROLE_CODE,
       name: SECURITY_ADMIN_ROLE_NAME,
@@ -122,49 +109,13 @@ export function buildCompatibilitySystemRoleDefinitions(permissionCodes = [], op
       permissions: normalizedPermissionCodes.filter(isSystemAdminPermission),
     },
   ];
-
-  if (includeLegacyTenantAdmin) {
-    roleDefinitions.unshift({
-      code: LEGACY_TENANT_ADMIN_ROLE_CODE,
-      name: LEGACY_TENANT_ADMIN_ROLE_NAME,
-      permissions: normalizedPermissionCodes,
-    });
-  }
-
-  return roleDefinitions;
 }
 
 /**
- * Returns the steady-state role codes assigned to bootstrap admins.
+ * Returns the fresh role codes assigned to bootstrap admins.
  */
-export function getCompatibilityBootstrapRoleCodes() {
+export function getBootstrapRoleCodes() {
   return [...DEFAULT_BOOTSTRAP_ROLE_CODES];
-}
-
-async function shouldRetainLegacyTenantAdminRole(tenantId, runQuery = query) {
-  const normalizedTenantId = parsePositiveInt(tenantId);
-  if (!normalizedTenantId) {
-    return false;
-  }
-
-  const activeLegacyDisabledRoleCodes = await loadActiveLegacyDisabledRoleCodeSet(
-    normalizedTenantId,
-    runQuery
-  );
-  if (activeLegacyDisabledRoleCodes.has(LEGACY_TENANT_ADMIN_ROLE_CODE)) {
-    return true;
-  }
-
-  const existingRoleResult = await runQuery(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = ?
-     LIMIT 1`,
-    [normalizedTenantId, LEGACY_TENANT_ADMIN_ROLE_CODE]
-  );
-
-  return Boolean(existingRoleResult.rows?.[0]?.id);
 }
 
 /**
@@ -173,7 +124,7 @@ async function shouldRetainLegacyTenantAdminRole(tenantId, runQuery = query) {
 export async function getTenantRoleIdsByCode(
   tenantId,
   roleCodes,
-  runQuery = query
+  runQuery = query,
 ) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedRoleCodes = normalizeUniqueStrings(roleCodes);
@@ -186,7 +137,7 @@ export async function getTenantRoleIdsByCode(
      FROM roles
      WHERE tenant_id = ?
        AND code IN (${normalizedRoleCodes.map(() => "?").join(", ")})`,
-    [normalizedTenantId, ...normalizedRoleCodes]
+    [normalizedTenantId, ...normalizedRoleCodes],
   );
 
   const roleIdsByCode = new Map();
@@ -201,16 +152,12 @@ export async function getTenantRoleIdsByCode(
 }
 
 /**
- * Ensures the compatibility system roles exist for a tenant and have their
- * expected permission bindings.
+ * Ensures fresh system roles exist for a tenant and have their permission bindings.
  */
-export async function ensureCompatibilitySystemRolesForTenant(
-  tenantId,
-  options = {}
-) {
+export async function ensureSystemRolesForTenant(tenantId, options = {}) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   if (!normalizedTenantId) {
-    throw new Error("tenantId is required to initialize compatibility system roles");
+    throw new Error("tenantId is required to initialize system roles");
   }
 
   const runQuery = typeof options.runQuery === "function" ? options.runQuery : query;
@@ -221,64 +168,49 @@ export async function ensureCompatibilitySystemRolesForTenant(
 
   if (permissionIdByCode.size === 0) {
     throw new Error(
-      "Permissions catalog is empty. Run core seed before initializing compatibility system roles."
+      "Permissions catalog is empty. Run core seed before initializing system roles.",
     );
   }
 
-  const includeLegacyTenantAdmin =
-    options.includeLegacyTenantAdmin === true ||
-    (options.includeLegacyTenantAdmin !== false
-      && (await shouldRetainLegacyTenantAdminRole(normalizedTenantId, runQuery)));
-
-  const roleDefinitions = buildCompatibilitySystemRoleDefinitions(
+  const roleDefinitions = buildSystemRoleDefinitions(
     Array.from(permissionIdByCode.keys()),
-    { includeLegacyTenantAdmin }
-  );
-  const activeLegacyDisabledRoleCodes = await loadActiveLegacyDisabledRoleCodeSet(
-    normalizedTenantId,
-    runQuery
   );
 
   for (const roleDefinition of roleDefinitions) {
     await runQuery(
       `INSERT INTO roles (tenant_id, code, name, is_system)
-       VALUES (?, ?, ?, ?)
+       VALUES (?, ?, ?, TRUE)
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          is_system = VALUES(is_system)`,
-      [
-        normalizedTenantId,
-        roleDefinition.code,
-        roleDefinition.name,
-        !activeLegacyDisabledRoleCodes.has(roleDefinition.code),
-      ]
+      [normalizedTenantId, roleDefinition.code, roleDefinition.name],
     );
   }
 
   const roleIdsByCode = await getTenantRoleIdsByCode(
     normalizedTenantId,
     roleDefinitions.map((roleDefinition) => roleDefinition.code),
-    runQuery
+    runQuery,
   );
 
   for (const roleDefinition of roleDefinitions) {
     const roleId = roleIdsByCode.get(roleDefinition.code);
     if (!roleId) {
-      throw new Error(`Failed to initialize compatibility role ${roleDefinition.code}`);
+      throw new Error(`Failed to initialize system role ${roleDefinition.code}`);
     }
 
     for (const permissionCode of roleDefinition.permissions) {
       const permissionId = permissionIdByCode.get(permissionCode);
       if (!permissionId) {
         throw new Error(
-          `Permission ${permissionCode} is missing for compatibility role ${roleDefinition.code}`
+          `Permission ${permissionCode} is missing for system role ${roleDefinition.code}`,
         );
       }
 
       await runQuery(
         `INSERT IGNORE INTO role_permissions (role_id, permission_id)
          VALUES (?, ?)`,
-        [roleId, permissionId]
+        [roleId, permissionId],
       );
     }
   }
@@ -287,17 +219,17 @@ export async function ensureCompatibilitySystemRolesForTenant(
 }
 
 /**
- * Assigns the compatibility bootstrap roles to a tenant user at tenant scope.
+ * Assigns the fresh bootstrap roles to a tenant user at tenant scope.
  */
-export async function assignCompatibilityBootstrapRolesToUser(
+export async function assignBootstrapRolesToUser(
   tenantId,
   userId,
-  options = {}
+  options = {},
 ) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedUserId = parsePositiveInt(userId);
   if (!normalizedTenantId || !normalizedUserId) {
-    throw new Error("tenantId and userId are required to assign compatibility roles");
+    throw new Error("tenantId and userId are required to assign bootstrap roles");
   }
 
   const runQuery = typeof options.runQuery === "function" ? options.runQuery : query;
@@ -306,11 +238,11 @@ export async function assignCompatibilityBootstrapRolesToUser(
       ? options.roleIdsByCode
       : await getTenantRoleIdsByCode(
           normalizedTenantId,
-          getCompatibilityBootstrapRoleCodes(),
-          runQuery
+          getBootstrapRoleCodes(),
+          runQuery,
         );
 
-  for (const roleCode of getCompatibilityBootstrapRoleCodes()) {
+  for (const roleCode of getBootstrapRoleCodes()) {
     const roleId = roleIdsByCode.get(roleCode);
     if (!roleId) {
       throw new Error(`Role ${roleCode} is not configured for tenant ${normalizedTenantId}`);
@@ -328,19 +260,14 @@ export async function assignCompatibilityBootstrapRolesToUser(
        VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
        ON DUPLICATE KEY UPDATE
          effect = VALUES(effect)`,
-      [normalizedTenantId, normalizedUserId, roleId, normalizedTenantId]
+      [normalizedTenantId, normalizedUserId, roleId, normalizedTenantId],
     );
   }
 
   return roleIdsByCode;
 }
 
-async function userHasTenantCompatibleRole(
-  userId,
-  tenantId,
-  roleCodes,
-  runQuery = query
-) {
+async function userHasTenantRole(userId, tenantId, roleCodes, runQuery = query) {
   const normalizedUserId = parsePositiveInt(userId);
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedRoleCodes = normalizeUniqueStrings(roleCodes);
@@ -374,7 +301,7 @@ async function userHasTenantCompatibleRole(
       normalizedTenantId,
       ...normalizedRoleCodes,
       ...effectiveGuard.params,
-    ]
+    ],
   );
 
   return Boolean(result.rows?.[0]);
@@ -384,11 +311,11 @@ async function userHasTenantCompatibleRole(
  * Returns true when the user can manage security-admin seams for the tenant.
  */
 export async function canManageSecurity(userId, tenantId, runQuery = query) {
-  return userHasTenantCompatibleRole(
+  return userHasTenantRole(
     userId,
     tenantId,
-    [LEGACY_TENANT_ADMIN_ROLE_CODE, SECURITY_ADMIN_ROLE_CODE],
-    runQuery
+    [SECURITY_ADMIN_ROLE_CODE],
+    runQuery,
   );
 }
 
@@ -396,11 +323,11 @@ export async function canManageSecurity(userId, tenantId, runQuery = query) {
  * Returns true when the user can manage ops/admin seams for the tenant.
  */
 export async function canManageOps(userId, tenantId, runQuery = query) {
-  return userHasTenantCompatibleRole(
+  return userHasTenantRole(
     userId,
     tenantId,
-    [LEGACY_TENANT_ADMIN_ROLE_CODE, SYSTEM_ADMIN_ROLE_CODE],
-    runQuery
+    [SYSTEM_ADMIN_ROLE_CODE],
+    runQuery,
   );
 }
 
@@ -408,10 +335,10 @@ export async function canManageOps(userId, tenantId, runQuery = query) {
  * Returns true when the user can run tenant bootstrap/admin setup flows.
  */
 export async function canBootstrapTenant(userId, tenantId, runQuery = query) {
-  return userHasTenantCompatibleRole(
+  return userHasTenantRole(
     userId,
     tenantId,
-    [LEGACY_TENANT_ADMIN_ROLE_CODE, SYSTEM_ADMIN_ROLE_CODE],
-    runQuery
+    [SYSTEM_ADMIN_ROLE_CODE],
+    runQuery,
   );
 }

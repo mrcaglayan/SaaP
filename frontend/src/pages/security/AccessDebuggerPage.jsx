@@ -538,8 +538,8 @@ export default function AccessDebuggerPage() {
                   value={diagnosticsSummary.matchingWorkflowPackages.length}
                 />
                 <MiniStat
-                  label={l("Legacy mappings", "Legacy eslesmeler")}
-                  value={diagnosticsSummary.legacyMappings.length}
+                  label={l("Visible blockers", "Gorunur engeller")}
+                  value={diagnosticsSummary.blockerTexts.length}
                 />
               </div>
 
@@ -592,12 +592,12 @@ export default function AccessDebuggerPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h3 className="text-sm font-semibold text-slate-900">
-                        {l("Matching workflow packages", "Eslesen workflow paketleri")}
+                        {l("Workflow package coverage", "Workflow paket kapsami")}
                       </h3>
                       <p className="mt-1 text-sm text-slate-600">
                         {l(
-                          "Direct package grants and brownfield runtime-role mappings are shown together so scope mismatches stay explicit.",
-                          "Kapsam uyusmazliklari acik kalsin diye dogrudan paket atamalari ile brownfield runtime-rol eslesmeleri birlikte gosterilir."
+                          "Active package authority is explained from direct package assignments and runtime role sources so scope mismatches stay explicit.",
+                          "Kapsam uyusmazliklari acik kalsin diye etkin paket yetkisi dogrudan paket atamalari ve runtime rol kaynaklari uzerinden aciklanir."
                         )}
                       </p>
                     </div>
@@ -644,7 +644,7 @@ export default function AccessDebuggerPage() {
                           </div>
                           {item.sourceRoleLabels.length > 0 ? (
                             <div className="mt-2 text-xs text-slate-500">
-                              {l("Mapped from", "Eslestirilen roller")}: {item.sourceRoleLabels.join(", ")}
+                              {l("Source roles", "Kaynak roller")}: {item.sourceRoleLabels.join(", ")}
                             </div>
                           ) : null}
                         </div>
@@ -654,97 +654,53 @@ export default function AccessDebuggerPage() {
                 </section>
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-2">
-                <section className="rounded-xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    {l("Matching scopes and missing coverage", "Eslesen kapsamlar ve eksik kapsama")}
-                  </h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {l(
-                      "This is the plan-required answer for why the user can act, can only view, or misses the selected scope entirely.",
-                      "Bu, kullanicinin neden aksiyon alabildigi, yalnizca goruntuleyebildigi veya secili kapsami tamamen kacirdigi sorusuna planin bekledigi cevaptir."
-                    )}
-                  </p>
+              <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  {l("Matching scopes and blockers", "Eslesen kapsamlar ve engeller")}
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  {l(
+                    "This is the business-facing answer for why the user can act, can only view, or misses the selected scope entirely.",
+                    "Bu, kullanicinin neden aksiyon alabildigi, yalnizca goruntuleyebildigi veya secili kapsami tamamen kacirdigi sorusuna is-odakli cevaptir."
+                  )}
+                </p>
 
-                  <div className="mt-4 space-y-4">
-                    <div>
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                        {l("Matching scopes", "Eslesen kapsamlar")}
-                      </div>
-                      <ScopeList
-                        values={diagnosticsSummary.matchingScopeLabels}
-                        emptyLabel={l(
-                          "No role label or package currently covers the selected scope.",
-                          "Secili kapsami su anda kapsayan bir rol etiketi veya paket yok."
-                        )}
-                      />
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      {l("Matching scopes", "Eslesen kapsamlar")}
                     </div>
-
-                    {diagnosticsSummary.missingScopeText ? (
-                      <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
-                        {diagnosticsSummary.missingScopeText}
-                      </div>
-                    ) : null}
-
-                    {diagnosticsSummary.missingPackageText ? (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                        {diagnosticsSummary.missingPackageText}
-                      </div>
-                    ) : null}
-
-                    {!diagnosticsSummary.missingScopeText &&
-                    !diagnosticsSummary.missingPackageText ? (
-                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                        {l(
-                          "No package or scope blocker is currently visible in the business-facing diagnosis.",
-                          "Is-odakli tanida su anda gorunur bir paket veya kapsam engeli yok."
-                        )}
-                      </div>
-                    ) : null}
+                    <ScopeList
+                      values={diagnosticsSummary.matchingScopeLabels}
+                      emptyLabel={l(
+                        "No role label or package currently covers the selected scope.",
+                        "Secili kapsami su anda kapsayan bir rol etiketi veya paket yok."
+                      )}
+                    />
                   </div>
-                </section>
 
-                <section className="rounded-xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    {l("Legacy mapping used", "Kullanilan legacy eslesme")}
-                  </h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {l(
-                      "Keep compatibility-derived authority visible so migration cleanup can retire old runtime roles safely.",
-                      "Gecis temizliginin eski runtime rollerini guvenle emekli etmesi icin uyumluluk kaynakli yetkiyi gorunur tutun."
-                    )}
-                  </p>
+                  {diagnosticsSummary.missingScopeText ? (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+                      {diagnosticsSummary.missingScopeText}
+                    </div>
+                  ) : null}
 
-                  <div className="mt-4 space-y-3">
-                    {diagnosticsSummary.legacyMappings.length === 0 ? (
-                      <div className="text-sm text-slate-500">
-                        {l(
-                          "No legacy runtime mapping is currently contributing package authority for this selection.",
-                          "Bu secim icin paket yetkisine katkida bulunan bir legacy runtime eslesmesi yok."
-                        )}
-                      </div>
-                    ) : (
-                      diagnosticsSummary.legacyMappings.map((item) => (
-                        <div
-                          key={`legacy-${item.id}`}
-                          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"
-                        >
-                          <div className="font-medium text-amber-950">{item.packageLabel}</div>
-                          <div className="mt-1 text-sm text-amber-900">{item.scopeLabel}</div>
-                          {item.sourceRoleLabels.length > 0 ? (
-                            <div className="mt-2 text-sm text-amber-900">
-                              {l("Mapped from", "Eslestirilen roller")}: {item.sourceRoleLabels.join(", ")}
-                            </div>
-                          ) : null}
-                          {item.legacyReason ? (
-                            <div className="mt-2 text-sm text-amber-900">{item.legacyReason}</div>
-                          ) : null}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </section>
-              </div>
+                  {diagnosticsSummary.missingPackageText ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                      {diagnosticsSummary.missingPackageText}
+                    </div>
+                  ) : null}
+
+                  {diagnosticsSummary.blockerTexts.length === 0 ? (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                      {l(
+                        "No package or scope blocker is currently visible in the business-facing diagnosis.",
+                        "Is-odakli tanida su anda gorunur bir paket veya kapsam engeli yok."
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </section>
 
               {diagnosticsSummary.noteTexts.length > 0 ? (
                 <section className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">

@@ -13,6 +13,9 @@ function getToneClasses(tone) {
   if (tone === "amber") {
     return "border-amber-200 bg-amber-50 text-amber-800";
   }
+  if (tone === "rose") {
+    return "border-rose-200 bg-rose-50 text-rose-800";
+  }
   if (tone === "violet") {
     return "border-violet-200 bg-violet-50 text-violet-800";
   }
@@ -39,10 +42,13 @@ function getBundleStatusMeta(status) {
     return { label: "Active", tone: "green" };
   }
   if (normalized === "UPCOMING") {
-    return { label: "Scheduled", tone: "blue" };
+    return { label: "Upcoming", tone: "blue" };
   }
   if (normalized === "EXPIRED") {
     return { label: "Expired", tone: "slate" };
+  }
+  if (normalized === "REVOKED") {
+    return { label: "Revoked", tone: "rose" };
   }
   return { label: "Custom", tone: "amber" };
 }
@@ -73,6 +79,26 @@ function formatDateTime(value) {
     return "-";
   }
   return new Date(timestamp).toLocaleString();
+}
+
+function formatAssignmentWindowLabel(l, effectiveFrom, effectiveTo) {
+  return l(
+    "Assignment window: {{start}} -> {{end}}",
+    "Atama penceresi: {{start}} -> {{end}}",
+    {
+      start: formatDate(effectiveFrom),
+      end: formatDate(effectiveTo),
+    }
+  );
+}
+
+function getInviteExpiryLabel(l, row) {
+  if (!row?.invite_expires_at) {
+    return "";
+  }
+  return l("Invite expires {{date}}", "Davet suresi {{date}} tarihinde dolar", {
+    date: formatDateTime(row.invite_expires_at),
+  });
 }
 
 function Pill({ label, tone = "slate" }) {
@@ -265,7 +291,6 @@ function WorkbenchBundleCard({
             </div>
             <Pill label={statusMeta.label} tone={statusMeta.tone} />
             <Pill label={bundle.sourceTypeLabel} tone={bundle.isPresetBundle ? "blue" : "slate"} />
-            <Pill label={bundle.roleMixLabel} tone={bundle.hasLegacyRole ? "amber" : "green"} />
           </div>
           <div className="mt-2 text-sm text-slate-700">
             {bundle.userName} - {bundle.scopeLabel}
@@ -430,8 +455,8 @@ export default function UserAssignmentWorkbench(props) {
               </h2>
               <p className="mt-1 text-sm leading-6 text-slate-600">
                 {l(
-                  "Filter users by business-facing role labels, workflow-package coverage, scope target, and assignment source before drilling into one selected user.",
-                  "Kullanicilari is-odakli rol etiketleri, workflow-package kapsami, kapsam hedefi ve atama kaynagina gore filtreleyip tek bir secili kullaniciya inin."
+                  "Use the people directory to filter users by business-facing role labels, workflow-package coverage, scope target, and assignment source before drilling into one selected user.",
+                  "Kisi dizinini kullanarak kullanicilari is-odakli rol etiketleri, workflow-package kapsami, kapsam hedefi ve atama kaynagina gore filtreleyip tek bir secili kullaniciya inin."
                 )}
               </p>
             </div>
@@ -513,15 +538,6 @@ export default function UserAssignmentWorkbench(props) {
                 <option value="DERIVED">{l("Derived (starter/preset)", "Turevli (starter/preset)")}</option>
                 <option value="DIRECT">{l("Direct / custom", "Dogrudan / ozel")}</option>
               </select>
-              <select
-                value={userFilters.roleMix}
-                onChange={(event) => setUserFilters((prev) => ({ ...prev, roleMix: event.target.value }))}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-              >
-                <option value="">{l("Legacy or composable", "Legacy veya composable")}</option>
-                <option value="COMPOSABLE_ONLY">{l("Composable only", "Yalniz composable")}</option>
-                <option value="LEGACY_PRESENT">{l("Legacy present", "Legacy mevcut")}</option>
-              </select>
               <button
                 type="button"
                 onClick={onClearFilters}
@@ -574,14 +590,15 @@ export default function UserAssignmentWorkbench(props) {
                           <div className="min-w-0">
                             <div className="truncate text-sm font-semibold text-slate-950">{row.name}</div>
                             <div className="mt-1 truncate text-sm text-slate-500">{row.email}</div>
+                            {getInviteExpiryLabel(l, row) ? (
+                              <div className="mt-1 truncate text-xs font-medium text-amber-700">
+                                {getInviteExpiryLabel(l, row)}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <Pill label={statusMeta.label} tone={statusMeta.tone} />
-                          <Pill
-                            label={row.hasLegacyAssignments ? l("Legacy present", "Legacy mevcut") : l("Composable only", "Yalniz composable")}
-                            tone={row.hasLegacyAssignments ? "amber" : "green"}
-                          />
                         </div>
                       </div>
                       <div className="mt-4 flex flex-wrap gap-2">
@@ -653,10 +670,15 @@ export default function UserAssignmentWorkbench(props) {
                       {l("Selected user authority detail", "Secili kullanici yetki detayi")}
                     </div>
                     <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h2 className="text-xl font-semibold text-slate-950">{selectedUser.name}</h2>
-                        <div className="mt-1 text-sm text-slate-500">{selectedUser.email}</div>
-                      </div>
+                        <div>
+                          <h2 className="text-xl font-semibold text-slate-950">{selectedUser.name}</h2>
+                          <div className="mt-1 text-sm text-slate-500">{selectedUser.email}</div>
+                          {getInviteExpiryLabel(l, selectedUser) ? (
+                            <div className="mt-2 text-xs font-medium text-amber-700">
+                              {getInviteExpiryLabel(l, selectedUser)}
+                            </div>
+                          ) : null}
+                        </div>
                       <div className="flex flex-wrap gap-2">
                         <Pill
                           label={getUserStatusMeta(selectedUser.status).label}
@@ -704,14 +726,18 @@ export default function UserAssignmentWorkbench(props) {
                       value={`${selectedUser.derivedAssignmentCount} / ${selectedUser.directAssignmentCount}`}
                     />
                   </div>
-                  {selectedUser.hasLegacyAssignments ? (
-                    <div className="mx-5 mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                      {l(
-                        "This user still carries at least one legacy runtime role assignment. Keep cleanup visible, but prefer the composable package model for new work.",
-                        "Bu kullanicida hala en az bir legacy runtime rol atamasi var. Temizligi gorunur tutun; ancak yeni isler icin composable paket modelini tercih edin."
-                      )}
-                    </div>
-                  ) : null}
+                </div>
+                <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-5 py-4 shadow-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Pill label={l("Secondary / advanced", "Ikincil / gelismis")} tone="amber" />
+                    <Pill label={l("Raw role & package tools", "Ham rol ve paket araclari")} tone="slate" />
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-amber-950">
+                    {l(
+                      "Preset-based business bundles remain the normal admin path. Use direct labels, exact packages, and raw role rows only when you need deliberate exceptions or precise scope adjustments.",
+                      "Preset tabanli is paketleri normal yonetici yolu olarak kalir. Dogrudan etiketleri, tam paketleri ve ham rol satirlarini yalnizca bilincli istisnalar veya hassas kapsam duzeltmeleri gerektiginde kullanin."
+                    )}
+                  </p>
                 </div>
                 <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
                   <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
@@ -748,9 +774,23 @@ export default function UserAssignmentWorkbench(props) {
                                 <div className="flex flex-wrap gap-2">
                                   <Pill label={assignment.businessRoleLabel} tone="violet" />
                                   <Pill label={assignment.scopeType} tone="blue" />
+                                  <Pill
+                                    label={getBundleStatusMeta(assignment.status).label}
+                                    tone={getBundleStatusMeta(assignment.status).tone}
+                                  />
+                                  {assignment.effect !== "ALLOW" ? (
+                                    <Pill label={assignment.effect} tone="rose" />
+                                  ) : null}
                                 </div>
                                 <div className="mt-2 text-sm text-slate-700">
                                   {assignment.scopeLabel}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {formatAssignmentWindowLabel(
+                                    l,
+                                    assignment.effectiveFrom,
+                                    assignment.effectiveTo
+                                  )}
                                 </div>
                               </div>
                               <button
@@ -886,6 +926,10 @@ export default function UserAssignmentWorkbench(props) {
                                 <div className="flex flex-wrap gap-2">
                                   <Pill label={assignment.packageLabel} tone="green" />
                                   <Pill label={assignment.scopeType} tone="blue" />
+                                  <Pill
+                                    label={getBundleStatusMeta(assignment.status).label}
+                                    tone={getBundleStatusMeta(assignment.status).tone}
+                                  />
                                   {assignment.workflowFamilyLabel ? (
                                     <Pill label={assignment.workflowFamilyLabel} tone="violet" />
                                   ) : null}
@@ -893,9 +937,19 @@ export default function UserAssignmentWorkbench(props) {
                                     label={getWorkflowPackageSourceLabel(l, assignment.sourceType)}
                                     tone={getWorkflowPackageSourceTone(assignment.sourceType)}
                                   />
+                                  {assignment.effect !== "ALLOW" ? (
+                                    <Pill label={assignment.effect} tone="rose" />
+                                  ) : null}
                                 </div>
                                 <div className="mt-2 text-sm text-slate-700">
                                   {assignment.scopeLabel}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {formatAssignmentWindowLabel(
+                                    l,
+                                    assignment.effectiveFrom,
+                                    assignment.effectiveTo
+                                  )}
                                 </div>
                                 <div className="mt-1 text-xs text-slate-500">
                                   {getWorkflowPackageSourceDetail(l, assignment)}
@@ -1427,8 +1481,8 @@ export default function UserAssignmentWorkbench(props) {
                     effectiveAuthorityPreview.runtimeLines.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
                         {l(
-                          "No active effective authority could be summarized yet from workflow packages or mapped runtime roles. Use the runtime snapshot below for the raw role mix.",
-                          "Workflow paketlerinden veya eslenen runtime rollerinden henuz ozetlenebilir etkin bir yetki bulunamadi. Ham rol karisimini gormek icin asagidaki runtime ozetini kullanin."
+                          "No active effective authority could be summarized yet from workflow packages or direct runtime roles. Use the runtime snapshot below for the current role set.",
+                          "Workflow paketlerinden veya dogrudan runtime rollerinden henuz ozetlenebilir etkin bir yetki bulunamadi. Mevcut rol setini gormek icin asagidaki runtime ozetini kullanin."
                         )}
                       </div>
                     ) : null}
@@ -1495,16 +1549,13 @@ export default function UserAssignmentWorkbench(props) {
                               className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
                             >
                               <div className="flex flex-wrap gap-2">
-                                <Pill
-                                  label={line.roleLabel}
-                                  tone={line.legacy ? "amber" : "slate"}
-                                />
+                                <Pill label={line.roleLabel} tone="slate" />
                                 <Pill label={line.scopeType} tone="blue" />
                                 {line.sourceLabels.map((sourceLabel) => (
                                   <Pill
                                     key={`${line.id}-${sourceLabel}`}
                                     label={sourceLabel}
-                                    tone={line.legacy ? "amber" : "slate"}
+                                    tone="slate"
                                   />
                                 ))}
                               </div>
@@ -1596,8 +1647,8 @@ export default function UserAssignmentWorkbench(props) {
                         {assignmentAuditSummary.sodWarnings.length === 0 ? (
                           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
                             {l(
-                              "No obvious UI-level segregation-of-duties overlaps were detected from the current package and runtime-role mix.",
-                              "Mevcut paket ve runtime rol karisimindan belirgin bir UI-seviyesi gorev ayriligi cakismasi tespit edilmedi."
+                              "No obvious UI-level segregation-of-duties overlaps were detected from the current package and runtime-role set.",
+                              "Mevcut paket ve runtime rol setinden belirgin bir UI-seviyesi gorev ayriligi cakismasi tespit edilmedi."
                             )}
                           </div>
                         ) : (
@@ -1607,6 +1658,10 @@ export default function UserAssignmentWorkbench(props) {
                               className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4"
                             >
                               <div className="flex flex-wrap gap-2">
+                                <Pill
+                                  label={String(warning.severity || "WARN").toUpperCase()}
+                                  tone={warning.severity === "block" ? "rose" : "amber"}
+                                />
                                 <Pill label={warning.title} tone="amber" />
                                 {warning.scopeLabel ? (
                                   <Pill label={warning.scopeLabel} tone="blue" />
@@ -1622,6 +1677,38 @@ export default function UserAssignmentWorkbench(props) {
                               <p className="mt-3 text-sm leading-6 text-amber-900">
                                 {warning.description}
                               </p>
+                              {(warning.packageLabels || []).length > 0 ? (
+                                <div className="mt-3">
+                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
+                                    {l("Affected packages", "Etkilenen paketler")}
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {warning.packageLabels.map((packageLabel) => (
+                                      <Pill
+                                        key={`${warning.id}-${packageLabel}`}
+                                        label={packageLabel}
+                                        tone="green"
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+                              {(warning.roleLabels || []).length > 0 ? (
+                                <div className="mt-3">
+                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
+                                    {l("Affected roles", "Etkilenen roller")}
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {warning.roleLabels.map((roleLabel) => (
+                                      <Pill
+                                        key={`${warning.id}-${roleLabel}`}
+                                        label={roleLabel}
+                                        tone="violet"
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
                           ))
                         )}
@@ -1721,15 +1808,15 @@ export default function UserAssignmentWorkbench(props) {
                     </h3>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
                       {l(
-                        "This section explains the current permission-bearing runtime role mix and the workflow-package coverage visible from both direct package grants and older compatibility roles.",
-                        "Bu bolum hem dogrudan paket yetkilerinden hem de eski uyumluluk rollerinden gorunen mevcut yetki veren runtime rol karisimini ve workflow-package kapsamini aciklar."
+                        "This section explains the selected user's current permission-bearing runtime roles and the workflow-package coverage visible from those assignments.",
+                        "Bu bolum secili kullanicinin mevcut yetki veren runtime rollerini ve bu atamalardan gorunen workflow paket kapsamini aciklar."
                       )}
                     </p>
                   </div>
                   <div className="space-y-5 px-5 py-5">
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Current runtime role mix", "Mevcut runtime rol karisimi")}
+                        {l("Current runtime roles", "Mevcut runtime roller")}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {selectedUserRoleEntries.length > 0 ? (
@@ -1738,11 +1825,13 @@ export default function UserAssignmentWorkbench(props) {
                               key={`selected-role-${entry.runtimeCode || entry.code}`}
                               label={entry.code}
                               tone={
-                                entry.legacy
-                                  ? "amber"
-                                  : entry.category === "system"
-                                    ? "blue"
-                                    : "slate"
+                                entry.category === "system"
+                                  ? "blue"
+                                  : entry.category === "scoped"
+                                    ? "green"
+                                    : entry.category === "readonly"
+                                      ? "slate"
+                                      : "violet"
                               }
                             />
                           ))
@@ -1769,8 +1858,8 @@ export default function UserAssignmentWorkbench(props) {
                         ) : (
                           <span className="text-sm text-slate-500">
                             {l(
-                              "No workflow-package mapping is visible for the current role mix yet.",
-                              "Mevcut rol karisimi icin henuz gorunur bir workflow-package eslesmesi yok."
+                              "No workflow packages are visible for the current runtime roles yet.",
+                              "Mevcut runtime roller icin henuz gorunur workflow paketi yok."
                             )}
                           </span>
                         )}
@@ -1798,7 +1887,7 @@ export default function UserAssignmentWorkbench(props) {
                   <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
                     <div>
                       <h3 className="text-lg font-semibold text-slate-950">
-                        {l("Business assignments", "Is atamalari")}
+                        {l("Business assignment bundles", "Is atama paketleri")}
                       </h3>
                       <p className="mt-1 text-sm leading-6 text-slate-600">
                         {l(

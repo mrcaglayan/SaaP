@@ -1,126 +1,49 @@
 import { Link } from "react-router-dom";
+import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import {
+  collectSidebarLinks,
+  SECURITY_ADMIN_COMPANION_LINKS,
+  SECURITY_ADMIN_PRIMARY_SURFACES,
+  SECURITY_ADMIN_WORKSPACE_SECTIONS,
+} from "../../layouts/sidebarConfig.js";
 
-const PRIMARY_WORKSPACE_SECTIONS = Object.freeze([
-  Object.freeze({
-    key: "access-model",
-    to: "/app/ayarlar/rbac/access-model",
-    label: Object.freeze({
-      en: "Catalog",
-      tr: "Katalog",
-    }),
-  }),
-  Object.freeze({
-    key: "roles-permissions",
-    to: "/app/ayarlar/rbac/roles-permissions",
-    label: Object.freeze({
-      en: "Roles & permissions",
-      tr: "Roller ve yetkiler",
-    }),
-  }),
-  Object.freeze({
-    key: "user-assignments",
-    to: "/app/ayarlar/rbac/user-assignments",
-    label: Object.freeze({
-      en: "Assignments",
-      tr: "Atamalar",
-    }),
-  }),
-]);
+function toRoutePath(value) {
+  return String(value || "").replace(/[?#].*$/, "");
+}
 
-const COMPANION_WORKSPACE_LINKS = Object.freeze([
-  Object.freeze({
-    to: "/app/ayarlar/sube-operatorleri",
-    label: Object.freeze({
-      en: "Local user management",
-      tr: "Yerel kullanici yonetimi",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/scope-assignments",
-    label: Object.freeze({
-      en: "Scope assignments",
-      tr: "Scope atamalari",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/field-visibility-policies",
-    label: Object.freeze({
-      en: "Field visibility policies",
-      tr: "Alan gorunurluk politikalari",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/role-migrations",
-    label: Object.freeze({
-      en: "Role migrations",
-      tr: "Rol gecisleri",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/delegations",
-    label: Object.freeze({
-      en: "Approval delegations",
-      tr: "Onay delegasyonlari",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/temporary-coverage",
-    label: Object.freeze({
-      en: "Temporary coverage",
-      tr: "Gecici operasyonel kapsama",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/access-debugger",
-    label: Object.freeze({
-      en: "Access debugger",
-      tr: "Erisim tanilari",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/legacy-migration-visibility",
-    label: Object.freeze({
-      en: "Legacy migration visibility",
-      tr: "Eski rol gecis gorunumu",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/group-ap-post-extension",
-    label: Object.freeze({
-      en: "Group AP post extension",
-      tr: "Grup AP kaydi uzantisi",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/compliance-reports",
-    label: Object.freeze({
-      en: "Compliance reports",
-      tr: "Uyum raporlari",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/audit-logs",
-    label: Object.freeze({
-      en: "RBAC audit logs",
-      tr: "RBAC denetim loglari",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/raw-audit-logs",
-    label: Object.freeze({
-      en: "Raw audit logs",
-      tr: "Ham denetim loglari",
-    }),
-  }),
-  Object.freeze({
-    to: "/app/ayarlar/rbac/sensitive-data-audit",
-    label: Object.freeze({
-      en: "Sensitive data audit",
-      tr: "Hassas veri denetimi",
-    }),
-  }),
-]);
+const SIDEBAR_LINKS_BY_PATH = collectSidebarLinks().reduce((map, item) => {
+  const routePath = toRoutePath(item?.to);
+  if (!routePath) {
+    return map;
+  }
+
+  const current = map.get(routePath);
+  if (!current) {
+    map.set(routePath, { ...item, to: routePath });
+    return map;
+  }
+
+  current.requiredPermissions = Array.from(
+    new Set([
+      ...(Array.isArray(current.requiredPermissions)
+        ? current.requiredPermissions
+        : []),
+      ...(Array.isArray(item.requiredPermissions) ? item.requiredPermissions : []),
+    ])
+  );
+  current.requiredFeatureCodes = Array.from(
+    new Set([
+      ...(Array.isArray(current.requiredFeatureCodes)
+        ? current.requiredFeatureCodes
+        : []),
+      ...(Array.isArray(item.requiredFeatureCodes)
+        ? item.requiredFeatureCodes
+        : []),
+    ])
+  );
+  return map;
+}, new Map());
 
 function getActionClasses(tone) {
   if (tone === "primary") {
@@ -143,6 +66,54 @@ function getStatClasses(tone) {
     return "border-violet-200 bg-violet-50";
   }
   return "border-slate-200 bg-white";
+}
+
+function resolveWorkspaceLinkAccess(
+  item,
+  hasAnyPermission,
+  hasAnyFeature
+) {
+  const sidebarItem = SIDEBAR_LINKS_BY_PATH.get(item?.accessPath || item?.to);
+  if (!sidebarItem) {
+    return {
+      locked: false,
+      requiredPermissions: [],
+      visible: true,
+    };
+  }
+
+  const requiredPermissions = Array.isArray(sidebarItem.requiredPermissions)
+    ? sidebarItem.requiredPermissions
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    : [];
+  const requiredFeatureCodes = Array.isArray(sidebarItem.requiredFeatureCodes)
+    ? sidebarItem.requiredFeatureCodes
+        .map((value) => String(value || "").trim().toUpperCase())
+        .filter(Boolean)
+    : [];
+  const featureVisible =
+    requiredFeatureCodes.length === 0 || hasAnyFeature(requiredFeatureCodes);
+
+  return {
+    locked:
+      requiredPermissions.length > 0 && !hasAnyPermission(requiredPermissions),
+    requiredPermissions,
+    visible: featureVisible,
+  };
+}
+
+function matchesWorkspaceSection(section, workspaceSectionKey) {
+  const normalizedWorkspaceSectionKey = String(workspaceSectionKey || "").trim();
+  if (!normalizedWorkspaceSectionKey) {
+    return false;
+  }
+  if (section?.key === normalizedWorkspaceSectionKey) {
+    return true;
+  }
+  return Array.isArray(section?.currentSectionKeys)
+    ? section.currentSectionKeys.includes(normalizedWorkspaceSectionKey)
+    : false;
 }
 
 function WorkspaceAction({ action }) {
@@ -174,6 +145,58 @@ function WorkspaceAction({ action }) {
   return null;
 }
 
+function WorkspaceNavItem({ active, item, locked, l, title = "" }) {
+  const classes = `inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition ${
+    active
+      ? "border-slate-900 bg-slate-900 text-white"
+      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+  }`;
+
+  if (locked) {
+    return (
+      <span
+        title={title}
+        className={`${classes} cursor-not-allowed opacity-60 hover:border-slate-200 hover:bg-white`}
+      >
+        {l(item.label.en, item.label.tr)}
+      </span>
+    );
+  }
+
+  return (
+    <Link to={item.to} className={classes}>
+      {l(item.label.en, item.label.tr)}
+    </Link>
+  );
+}
+
+function CompanionLinkCard({ access, item, l }) {
+  const label = l(item.label.en, item.label.tr);
+  if (access.locked) {
+    return (
+      <div
+        className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm text-slate-500"
+        title={`${l("Permission required", "Izin gerekli")}: ${access.requiredPermissions.join(", ")}`}
+      >
+        <div className="font-medium text-slate-700">{label}</div>
+        <div className="mt-1 text-xs leading-5">
+          {l("Permission required", "Izin gerekli")}:{" "}
+          {access.requiredPermissions.join(", ")}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      to={item.to}
+      className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+    >
+      {label}
+    </Link>
+  );
+}
+
 function WorkspaceStatCard({ stat }) {
   return (
     <article
@@ -191,11 +214,12 @@ function WorkspaceStatCard({ stat }) {
 }
 
 /**
- * Provides one shared shell for the primary security-admin surfaces so the
- * catalog, role editor, and assignment workspace keep consistent navigation,
- * summary framing, and companion-tool reachability during the redesign.
+ * Provides the shared security-admin shell so the catalog, role editor, and
+ * assignment workspace keep the same framing, planned workbench map, and
+ * permission-aware reachability to companion routes during the redesign.
  */
 export default function SecurityAdminWorkspaceShell({
+  workspaceSectionKey = "",
   sectionKey = "",
   eyebrow = "",
   title = "",
@@ -206,6 +230,41 @@ export default function SecurityAdminWorkspaceShell({
   children,
 }) {
   const { l } = useI18n();
+  const { hasAnyFeature, hasAnyPermission } = useAuth();
+
+  const workspaceSections = SECURITY_ADMIN_WORKSPACE_SECTIONS.map((section) => ({
+    ...section,
+    access: resolveWorkspaceLinkAccess(
+      section,
+      hasAnyPermission,
+      hasAnyFeature
+    ),
+  })).filter((section) => section.access.visible);
+
+  const primarySurfaces = SECURITY_ADMIN_PRIMARY_SURFACES.map((surface) => ({
+    ...surface,
+    access: resolveWorkspaceLinkAccess(
+      surface,
+      hasAnyPermission,
+      hasAnyFeature
+    ),
+  })).filter((surface) => surface.access.visible);
+
+  const companionGroups = SECURITY_ADMIN_WORKSPACE_SECTIONS.map((workspaceSection) => ({
+    workspaceSection,
+    links: SECURITY_ADMIN_COMPANION_LINKS.filter(
+      (item) => item.workspaceSectionKey === workspaceSection.key
+    )
+      .map((item) => ({
+        ...item,
+        access: resolveWorkspaceLinkAccess(
+          item,
+          hasAnyPermission,
+          hasAnyFeature
+        ),
+      }))
+      .filter((item) => item.access.visible),
+  })).filter((group) => group.links.length > 0);
 
   return (
     <div className="space-y-6">
@@ -238,49 +297,95 @@ export default function SecurityAdminWorkspaceShell({
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                 {l("Workspace sections", "Calisma alani bolumleri")}
               </div>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                {l(
+                  "Use the canonical workbench routes while the page bodies are still landing in stages.",
+                  "Sayfa govdeleri asamali gelirken canonical workbench rotalarini kullanin."
+                )}
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                {PRIMARY_WORKSPACE_SECTIONS.map((section) => {
-                  const active = section.key === sectionKey;
-                  return (
-                    <Link
-                      key={section.key}
-                      to={section.to}
-                      className={`inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                        active
-                          ? "border-slate-900 bg-slate-900 text-white"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                      }`}
-                    >
-                      {l(section.label.en, section.label.tr)}
-                    </Link>
-                  );
-                })}
+                {workspaceSections.map((section) => (
+                  <WorkspaceNavItem
+                    key={section.key}
+                    active={matchesWorkspaceSection(section, workspaceSectionKey)}
+                    item={{
+                      ...section,
+                      to: `${section.futurePath}${section.defaultSearch || ""}`,
+                    }}
+                    locked={section.access.locked}
+                    l={l}
+                    title={
+                      section.access.locked
+                        ? `${l("Permission required", "Izin gerekli")}: ${section.access.requiredPermissions.join(", ")}`
+                        : ""
+                    }
+                  />
+                ))}
               </div>
             </section>
 
             <section className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur">
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {l("Companion tools", "Eslik eden araclar")}
+                {l("Primary surfaces", "Birincil yuzeyler")}
               </div>
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 {l(
-                  "Keep migration, audit, delegation, and diagnostics surfaces reachable while the primary shell is being cleaned up.",
-                  "Birincil kabuk sadeleştirilirken gecis, denetim, delegasyon ve tanilama yuzeyleri erisilebilir kalsin."
+                  "These quick links already use the canonical workbench routes even where the body still delegates to current pages.",
+                  "Govde halen mevcut sayfalara delegasyon yapsa bile bu hizli baglantilar canonical workbench rotalarini kullanir."
                 )}
               </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {COMPANION_WORKSPACE_LINKS.map((link) => (
-                  <Link
-                    key={link.to}
-                    to={link.to}
-                    className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                  >
-                    {l(link.label.en, link.label.tr)}
-                  </Link>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {primarySurfaces.map((surface) => (
+                  <WorkspaceNavItem
+                    key={surface.key}
+                    active={surface.key === sectionKey}
+                    item={surface}
+                    locked={surface.access.locked}
+                    l={l}
+                    title={
+                      surface.access.locked
+                        ? `${l("Permission required", "Izin gerekli")}: ${surface.access.requiredPermissions.join(", ")}`
+                        : ""
+                    }
+                  />
                 ))}
               </div>
             </section>
           </div>
+
+          {companionGroups.length > 0 ? (
+            <div className="relative z-10 mt-3 grid gap-3 xl:grid-cols-2">
+              {companionGroups.map((group) => (
+                <section
+                  key={group.workspaceSection.key}
+                  className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur"
+                >
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {l(
+                      group.workspaceSection.label.en,
+                      group.workspaceSection.label.tr
+                    )}
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    {l(
+                      group.workspaceSection.description.en,
+                      group.workspaceSection.description.tr
+                    )}
+                  </p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {group.links.map((link) => (
+                      <CompanionLinkCard
+                        key={link.to}
+                        access={link.access}
+                        item={link}
+                        l={l}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : null}
         </div>
       </section>
 

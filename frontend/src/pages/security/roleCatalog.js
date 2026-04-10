@@ -12,7 +12,6 @@ const CATEGORY_LABELS = Object.freeze({
   readonly: "Read-only",
   business_label: "Business role label",
   package_authority: "Workflow package role",
-  legacy: "Legacy",
   custom: "Custom tenant role",
 });
 const ACCESS_MODEL_TYPE_LABELS = Object.freeze({
@@ -54,13 +53,11 @@ const ACCESS_MODEL_SECTION_LABELS = Object.freeze({
   business_roles: "Business Roles",
   workflow_packages: "Workflow Packages",
   workflow_presets: "Workflow Presets",
-  legacy_catalog: "Legacy Catalog",
 });
 const ACCESS_MODEL_SECTION_ORDER = Object.freeze({
   business_roles: 10,
   workflow_packages: 20,
   workflow_presets: 30,
-  legacy_catalog: 40,
 });
 const MODEL_CATEGORY_LABELS = Object.freeze({
   runtime_role: CATEGORY_LABELS,
@@ -78,61 +75,7 @@ const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
 });
 export const BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX = "BUSINESS_ROLE__";
 export const WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX = "WORKFLOW_PACKAGE__";
-const LEGACY_LABEL_ALIAS_CATALOG = Object.freeze({
-  ENTITY_AP_CONTROLLER_LABEL: Object.freeze({
-    runtimeCode: "EntityAPController",
-    displayName: "EntityAPController label",
-    description:
-      "Older AP controller wording kept only as a compatibility reference while fresh-tenant admin UX uses stage-based submit/review/post labels.",
-    legacyReason:
-      "Old AP controller wording is retired from fresh-tenant UX. Use the stage-based AP Submitter label instead.",
-    replacementLabel: "AP Submitter",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    usageSourceRoleCodes: freezeList(["EntityAPController"]),
-    sortOrder: 960,
-  }),
-  COUNTRY_AP_APPROVER_LABEL: Object.freeze({
-    runtimeCode: "CountryAPApprover",
-    displayName: "CountryAPApprover label",
-    description:
-      "Older AP approver wording kept only as a compatibility reference while fresh-tenant admin UX uses AP Reviewer.",
-    legacyReason:
-      "The old AP approver label is retired from fresh-tenant UX. Use AP Reviewer for review-stage authority.",
-    replacementLabel: "AP Reviewer",
-    defaultScope: "COUNTRY",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    usageSourceRoleCodes: freezeList(["CountryAPApprover"]),
-    sortOrder: 970,
-  }),
-  COUNTRY_AP_CONTROLLER_POSTER_LABELS: Object.freeze({
-    runtimeCode: "CountryAPController / CountryAPPoster",
-    displayName: "CountryAPController / CountryAPPoster labels",
-    description:
-      "Older AP controller/poster wording kept only as a compatibility reference while fresh-tenant admin UX uses AP Poster.",
-    legacyReason:
-      "Old AP controller/poster wording is retired from fresh-tenant UX. Use AP Poster for final posting authority.",
-    replacementLabel: "AP Poster",
-    defaultScope: "COUNTRY",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    usageSourceRoleCodes: freezeList(["CountryAPController", "CountryAPPoster"]),
-    sortOrder: 980,
-  }),
-});
 const ROLE_CATALOG = Object.freeze({
-  TenantAdmin: {
-    code: "Legacy Tenant Admin",
-    category: "legacy",
-    summary:
-      "Legacy tenant-wide admin role preserved only for migration rollback and historical review. Fresh tenants use SecurityAdmin plus SystemAdmin.",
-    legacyReason:
-      "Broad tenant-wide compatibility role kept only for migration rollback and brownfield review.",
-    capabilities: ["Security admin", "System operations", "Compatibility bootstrap"],
-    recommendedScopes: ["TENANT"],
-    replacementLabel: "SecurityAdmin + SystemAdmin",
-    sortOrder: 910,
-    legacy: true,
-  },
   SecurityAdmin: {
     category: "system",
     summary:
@@ -223,20 +166,6 @@ const ROLE_CATALOG = Object.freeze({
     recommendedScopes: ["LEGAL_ENTITY", "COUNTRY", "OPERATING_UNIT"],
     workflowFamily: "AP_DOCUMENT_POSTING",
     sortOrder: 150,
-  },
-  APDocumentPoster: {
-    code: "Legacy AP Poster",
-    category: "legacy",
-    summary:
-      "Legacy AP posting role preserved for brownfield migration and rollback while tenants move to AP Submitter plus AP Poster.",
-    legacyReason:
-      "Old combined AP submit/post role kept only while tenants move to the separated AP Submitter and AP Poster model.",
-    capabilities: ["Compatibility AP submit", "Compatibility AP cancel", "Compatibility AP posting"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    replacementLabel: "AP Submitter + AP Poster",
-    workflowFamily: "AP_DOCUMENT_POSTING",
-    sortOrder: 920,
-    legacy: true,
   },
   GLOperator: {
     category: "composable",
@@ -352,45 +281,6 @@ const ROLE_CATALOG = Object.freeze({
     replacementLabel: "Branch Accountant",
     workflowFamily: "AP_DOCUMENT_POSTING",
     sortOrder: 110,
-  },
-  GroupController: {
-    code: "Legacy Group Controller",
-    category: "legacy",
-    summary:
-      "Legacy group-wide controller role preserved only for migration rollback and historical review.",
-    legacyReason:
-      "Old broad group controller role is retained only for rollback and brownfield review while clean group packages take over.",
-    capabilities: ["Broad reporting", "Legacy close review", "Compatibility"],
-    recommendedScopes: ["GROUP"],
-    replacementLabel: "Group Checker / Group Approver / Group CEO",
-    sortOrder: 930,
-    legacy: true,
-  },
-  CountryController: {
-    code: "Legacy Country Controller",
-    category: "legacy",
-    summary:
-      "Legacy country-wide controller role preserved only for migration rollback and historical review.",
-    legacyReason:
-      "Old broad country controller role is retained only for rollback and brownfield review while scoped AP and governance packages take over.",
-    capabilities: ["Broad governance", "GL posting", "Treasury and payroll approval"],
-    recommendedScopes: ["COUNTRY"],
-    replacementLabel: "AP Reviewer / AP Poster / scoped governance packages",
-    sortOrder: 940,
-    legacy: true,
-  },
-  EntityAccountant: {
-    code: "Legacy Entity Accountant",
-    category: "legacy",
-    summary:
-      "Legacy entity-wide accountant role preserved only for migration rollback and historical review.",
-    legacyReason:
-      "Old broad entity accountant role is retained only for rollback and brownfield review while business-role labels and workflow packages take over.",
-    capabilities: ["Broad entity operations", "Legacy GL operations", "Compatibility"],
-    recommendedScopes: ["LEGAL_ENTITY"],
-    replacementLabel: "Entity Accountant + workflow packages",
-    sortOrder: 950,
-    legacy: true,
   },
 });
 // Business roles stay separate from runtime roles because the plan explicitly
@@ -600,7 +490,7 @@ const WORKFLOW_PACKAGE_CATALOG = Object.freeze({
   "PKG-AP-POST-GROUP": Object.freeze({
     displayName: "AP Documents / Group Post",
     description:
-      "Clean future extension for tenants that want AP posting resolved at group scope instead of reusing legacy broad controller roles.",
+      "Clean future extension for tenants that want AP posting resolved at group scope without broad controller coverage.",
     category: "extension_package",
     defaultScope: "GROUP",
     allowedScopes: freezeList(["GROUP"]),
@@ -872,28 +762,26 @@ const HELPER_BUNDLE_LABELS = Object.freeze({
   "gl.readonly": "GL read-only bundle (gl.readonly)",
   "gl.posting": "GL posting bundle (gl.posting)",
 });
-// These runtime mappings are explainability-only. They document how the clean
-// package catalog sits on top of today's seeded roles and helper bundles
-// without turning those compatibility slices into the new source of authority.
+// These runtime mappings are explainability-only. They document how the
+// package catalog is sourced from today's seeded roles and helper bundles
+// without turning those source rows into the primary assignment model.
 const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
   "PKG-WF-SETUP-ADMIN": Object.freeze({
-    runtimeMappingLabel: "SystemAdmin compatibility role",
+    runtimeMappingLabel: "SystemAdmin setup authority",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["SystemAdmin"]),
-    legacyWarnings: freezeList([
-      "Fresh tenants no longer rely on TenantAdmin. SystemAdmin is the current broader compatibility role for this setup slice.",
-    ]),
+    runtimeNotes: freezeList([]),
   }),
   "PKG-WF-QUEUE-VIEW": Object.freeze({
-    runtimeMappingLabel: "No clean standalone queue-view role yet",
+    runtimeMappingLabel: "SystemAdmin + APApprover source roles",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["SystemAdmin", "APApprover"]),
-    legacyWarnings: freezeList([
-      "Current queue visibility is still broader or split across setup/admin roles and the AP approval-engine helper role.",
+    runtimeNotes: freezeList([
+      "Queue visibility is currently shared across setup/admin roles and the AP approval-engine helper role.",
     ]),
   }),
   "PKG-AP-VIEW": Object.freeze({
-    runtimeMappingLabel: "Shared AP read slice across operational roles",
+    runtimeMappingLabel: "Shared AP read source roles",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList([
       "BranchOperator",
@@ -901,92 +789,90 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
       "CountryAPApprover",
       "CountryAPPoster",
     ]),
-    legacyWarnings: freezeList([
-      "Compatibility role APDocumentPoster also carries this AP read slice during brownfield rollout.",
-    ]),
+    runtimeNotes: freezeList([]),
   }),
   "PKG-AP-DRAFT-SUBMIT": Object.freeze({
-    runtimeMappingLabel: "BranchOperator + EntityAPController compatibility split",
+    runtimeMappingLabel: "BranchOperator + AP Submitter source roles",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["BranchOperator", "EntityAPController"]),
-    legacyWarnings: freezeList([
-      "Current runtime roles split AP draft creation/edit and submit instead of shipping one clean package.",
+    runtimeNotes: freezeList([
+      "Current runtime roles split AP draft creation/edit and submit instead of shipping one standalone package role.",
     ]),
   }),
   "PKG-AP-APPROVE": Object.freeze({
-    runtimeMappingLabel: "CountryAPApprover + APApprover compatibility split",
+    runtimeMappingLabel: "AP Reviewer + APApprover source roles",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["CountryAPApprover", "APApprover"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Approval-engine request authority still rides on APApprover in the current runtime model.",
     ]),
   }),
   "PKG-AP-POST": Object.freeze({
-    runtimeMappingLabel: "CountryAPPoster direct runtime role",
+    runtimeMappingLabel: "AP Poster runtime role",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["CountryAPPoster"]),
-    legacyWarnings: freezeList([]),
+    runtimeNotes: freezeList([]),
   }),
   "PKG-AP-REVERSE": Object.freeze({
-    runtimeMappingLabel: "CountryAPPoster direct runtime role",
+    runtimeMappingLabel: "AP Poster runtime role",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["CountryAPPoster"]),
-    legacyWarnings: freezeList([]),
+    runtimeNotes: freezeList([]),
   }),
   "PKG-AP-FX-OVERRIDE": Object.freeze({
-    runtimeMappingLabel: "No clean standalone runtime role yet",
+    runtimeMappingLabel: "No standalone AP FX override role yet",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList([]),
-    legacyWarnings: freezeList([
-      "Fresh tenants do not ship a dedicated AP FX override runtime role yet. Keep this as a catalog slice until the entitlement model is narrowed cleanly.",
+    runtimeNotes: freezeList([
+      "Tenants do not ship a dedicated AP FX override runtime role yet. Keep this as a catalog slice until the entitlement model is narrowed cleanly.",
     ]),
   }),
   "PKG-AP-POST-GROUP": Object.freeze({
     runtimeMappingLabel: "Planned extension only",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList([]),
-    legacyWarnings: freezeList([
-      "Do not map this package to legacy GroupController. Enable it only when the backend group-post extension ships.",
+    runtimeNotes: freezeList([
+      "Enable this package only when the backend group-post extension ships.",
     ]),
   }),
   "PKG-LC-VIEW": Object.freeze({
-    runtimeMappingLabel: "Shared local-close read slice",
+    runtimeMappingLabel: "Shared local-close read source",
     helperBundleCodes: freezeList(["close.operator", "close.reviewer"]),
     runtimeRoleCodes: freezeList(["LocalClosePreparer", "LocalCloseReviewer"]),
-    legacyWarnings: freezeList([]),
+    runtimeNotes: freezeList([]),
   }),
   "PKG-LC-PREPARE": Object.freeze({
-    runtimeMappingLabel: "LocalClosePreparer direct runtime role",
+    runtimeMappingLabel: "LocalClosePreparer runtime role",
     helperBundleCodes: freezeList(["close.operator"]),
     runtimeRoleCodes: freezeList(["LocalClosePreparer"]),
-    legacyWarnings: freezeList([]),
+    runtimeNotes: freezeList([]),
   }),
   "PKG-LC-REVIEW": Object.freeze({
-    runtimeMappingLabel: "LocalCloseReviewer broader compatibility role",
+    runtimeMappingLabel: "LocalCloseReviewer runtime role",
     helperBundleCodes: freezeList(["close.reviewer"]),
     runtimeRoleCodes: freezeList(["LocalCloseReviewer"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current LocalCloseReviewer also carries approve, lock, reopen, and admin powers. The package model narrows that behavior for the new UI.",
     ]),
   }),
   "PKG-LC-APPROVE-LOCK": Object.freeze({
-    runtimeMappingLabel: "LocalCloseReviewer broader compatibility role",
+    runtimeMappingLabel: "LocalCloseReviewer runtime role",
     helperBundleCodes: freezeList(["close.reviewer"]),
     runtimeRoleCodes: freezeList(["LocalCloseReviewer"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current LocalCloseReviewer bundles review, approve, lock, and reopen/admin into one broader runtime role.",
     ]),
   }),
   "PKG-LC-REOPEN-ADMIN": Object.freeze({
-    runtimeMappingLabel: "LocalCloseReviewer broader compatibility role",
+    runtimeMappingLabel: "LocalCloseReviewer runtime role",
     helperBundleCodes: freezeList(["close.reviewer"]),
     runtimeRoleCodes: freezeList(["LocalCloseReviewer"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current LocalCloseReviewer is broader than this clean reopen/admin slice and still includes review plus final lock powers.",
     ]),
   }),
   "PKG-PC-READINESS": Object.freeze({
-    runtimeMappingLabel: "GL readability slice across accounting roles",
+    runtimeMappingLabel: "GL readiness source roles",
     helperBundleCodes: freezeList(["gl.readonly"]),
     runtimeRoleCodes: freezeList([
       "BranchOperator",
@@ -994,88 +880,88 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
       "GLPostingAuthority",
       "GroupReportingController",
     ]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "The current runtime model exposes readiness visibility through broader accounting roles rather than a dedicated period-close reviewer package.",
     ]),
   }),
   "PKG-PC-CLOSE": Object.freeze({
-    runtimeMappingLabel: "GLPostingAuthority compatibility companion",
+    runtimeMappingLabel: "GLPostingAuthority companion role",
     helperBundleCodes: freezeList(["gl.posting"]),
     runtimeRoleCodes: freezeList(["GLPostingAuthority"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "The current runtime role is a broad manual-posting companion, not a full period-close governance family yet.",
     ]),
   }),
   "PKG-PC-REOPEN": Object.freeze({
-    runtimeMappingLabel: "GLPostingAuthority + CountryController compatibility companion",
+    runtimeMappingLabel: "GLPostingAuthority period reopen authority",
     helperBundleCodes: freezeList(["gl.posting", "gl.period_governance"]),
-    runtimeRoleCodes: freezeList(["GLPostingAuthority", "CountryController"]),
-    legacyWarnings: freezeList([
+    runtimeRoleCodes: freezeList(["GLPostingAuthority"]),
+    runtimeNotes: freezeList([
       "Period reopen was previously guarded by the same gl.period.close permission. The new gl.period.reopen permission separates reopen authority from close authority.",
     ]),
   }),
   "PKG-PC-ADMIN": Object.freeze({
-    runtimeMappingLabel: "CountryController broad compatibility companion",
+    runtimeMappingLabel: "GLPostingAuthority period admin authority",
     helperBundleCodes: freezeList(["gl.period_governance"]),
-    runtimeRoleCodes: freezeList(["CountryController"]),
-    legacyWarnings: freezeList([
-      "Period admin authority was previously bundled into the broad CountryController role. The new gl.period.admin permission enables clean separation.",
+    runtimeRoleCodes: freezeList(["GLPostingAuthority"]),
+    runtimeNotes: freezeList([
+      "The gl.period.admin permission keeps period administration separate from close execution.",
     ]),
   }),
   "PKG-CON-VIEW": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController compatibility role",
+    runtimeMappingLabel: "GroupReportingController runtime role",
     helperBundleCodes: freezeList(["gl.readonly"]),
     runtimeRoleCodes: freezeList(["GroupReportingController"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current GroupReportingController is broader than the clean consolidation package split shown in the new catalog.",
     ]),
   }),
   "PKG-CON-PREPARE": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController compatibility role",
+    runtimeMappingLabel: "GroupReportingController runtime role",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["GroupReportingController"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current GroupReportingController still bundles prepare, execute, adjust, eliminate, and finalize-style authority together.",
     ]),
   }),
   "PKG-CON-EXECUTE": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController compatibility role",
+    runtimeMappingLabel: "GroupReportingController runtime role",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["GroupReportingController"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current GroupReportingController is broader than this clean execute-run package.",
     ]),
   }),
   "PKG-CON-ADJUST": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController compatibility role",
+    runtimeMappingLabel: "GroupReportingController runtime role",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["GroupReportingController"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current GroupReportingController is broader than this controlled adjustment package.",
     ]),
   }),
   "PKG-CON-ELIM": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController compatibility role",
+    runtimeMappingLabel: "GroupReportingController runtime role",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["GroupReportingController"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current GroupReportingController is broader than this controlled elimination package.",
     ]),
   }),
   "PKG-CON-FINALIZE": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController compatibility role",
+    runtimeMappingLabel: "GroupReportingController runtime role",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["GroupReportingController"]),
-    legacyWarnings: freezeList([
+    runtimeNotes: freezeList([
       "Current GroupReportingController remains broader than the clean finalize-only package target.",
     ]),
   }),
   "PKG-CON-SETUP": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController compatibility role",
+    runtimeMappingLabel: "GroupReportingController runtime role",
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList(["GroupReportingController"]),
-    legacyWarnings: freezeList([
-      "Current consolidation setup authority still rides on a broader compatibility role instead of a dedicated setup-only package.",
+    runtimeNotes: freezeList([
+      "Current consolidation setup authority still rides on a broader runtime role instead of a dedicated setup-only package.",
     ]),
   }),
 });
@@ -1171,7 +1057,7 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
   AP_GROUP_CONTROLLED_POST: Object.freeze({
     displayName: "AP / Group-Controlled Post",
     description:
-      "AP flow that lifts the final posting action to group authority through a clean extension package instead of legacy controller reuse.",
+      "AP flow that lifts the final posting action to group authority through a clean extension package instead of controller reuse.",
     category: "extension_preset",
     defaultScope: "GROUP",
     workflowFamily: "AP_DOCUMENT_POSTING",
@@ -1666,7 +1552,6 @@ const CATEGORY_ORDER = Object.freeze([
   "business_label",
   "package_authority",
   "system",
-  "legacy",
   "custom",
 ]);
 function normalizeText(value) {
@@ -1740,7 +1625,6 @@ function buildMetadataEntry({
   description,
   category,
   defaultScope = "",
-  legacy = false,
   replacementLabel = "",
   workflowFamily = "CROSS_WORKFLOW",
   sortOrder = 9999,
@@ -1754,7 +1638,6 @@ function buildMetadataEntry({
     category,
     categoryLabel: getCategoryLabel(modelType, category),
     defaultScope,
-    legacy: Boolean(legacy),
     replacementLabel,
     workflowFamily,
     workflowFamilyLabel: getWorkflowFamilyLabel(workflowFamily),
@@ -1781,7 +1664,6 @@ function buildBusinessRoleAssignmentRoleEntry(roleCode) {
       "Non-authoritative business role label. Assign workflow packages separately.",
     category: "business_label",
     defaultScope: businessRoleEntry?.defaultScope || "",
-    legacy: false,
     replacementLabel: "",
     workflowFamily: businessRoleEntry?.workflowFamily || "CROSS_WORKFLOW",
     sortOrder: (businessRoleEntry?.sortOrder || 9999) + 1,
@@ -1798,7 +1680,6 @@ function buildBusinessRoleAssignmentRoleEntry(roleCode) {
     companionOnly: false,
     companionNote:
       "Assign workflow packages separately. This label is non-authoritative by design.",
-    legacyReason: "",
     businessRoleCode,
     nonAuthoritative: true,
     businessLabelOnly: true,
@@ -1822,7 +1703,6 @@ function buildWorkflowPackageAssignmentRoleEntry(roleCode) {
       "Managed workflow package role. Keep its permissions aligned to the package definition.",
     category: "package_authority",
     defaultScope: workflowPackageEntry?.defaultScope || "",
-    legacy: false,
     replacementLabel: "",
     workflowFamily: workflowPackageEntry?.workflowFamily || "CROSS_WORKFLOW",
     sortOrder: (workflowPackageEntry?.sortOrder || 9999) + 2,
@@ -1842,7 +1722,6 @@ function buildWorkflowPackageAssignmentRoleEntry(roleCode) {
     companionOnly: false,
     companionNote:
       "Assign and remove this role through workflow package UX so the permission set stays aligned to the package definition.",
-    legacyReason: "",
     workflowPackageCode,
     packageAuthorityOnly: true,
     managedPackageRole: true,
@@ -1924,7 +1803,7 @@ export function getWorkflowFamilyLabel(workflowFamily) {
 
 /**
  * Returns the UX metadata for one bootstrap handoff preset.
- * Legacy preset aliases resolve to their canonical AP-facing preset codes.
+ * Preset aliases resolve to their canonical AP-facing preset codes.
  */
 export function getBootstrapHandoffPresetEntry(presetCode) {
   const normalizedPresetCode = normalizeBootstrapHandoffPresetCode(presetCode);
@@ -2048,8 +1927,8 @@ export function getWorkflowPackageAssignmentRoleDefinition(packageCode) {
 
 /**
  * Returns the UX metadata used to explain a role in admin surfaces.
- * `code` is the business-facing label while `technicalCode` is only surfaced
- * for legacy runtime roles where migration traceability still matters.
+ * `code` is the business-facing label while `technicalCode` keeps the runtime
+ * identifier visible when it differs from the display label.
  */
 export function getRoleCatalogEntry(roleOrCode) {
   const requestedRoleCode =
@@ -2066,7 +1945,7 @@ export function getRoleCatalogEntry(roleOrCode) {
   const base = ROLE_CATALOG[normalizedRoleCode] || null;
   const displayCode =
     base?.code || normalizedRoleCode || requestedRoleCode || normalizeText(roleOrCode?.roleCode);
-  const showTechnicalCode = Boolean(base?.legacy && requestedRoleCode && requestedRoleCode !== displayCode);
+  const showTechnicalCode = Boolean(requestedRoleCode && requestedRoleCode !== displayCode);
   const metadata = buildMetadataEntry({
     modelType: "runtime_role",
     code: displayCode,
@@ -2076,7 +1955,6 @@ export function getRoleCatalogEntry(roleOrCode) {
       "Tenant-local role. Review its permission set carefully before assigning it broadly.",
     category: base?.category || "custom",
     defaultScope: cloneList(base?.recommendedScopes)[0] || "",
-    legacy: Boolean(base?.legacy),
     replacementLabel: base?.replacementLabel || "",
     workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
     sortOrder:
@@ -2096,61 +1974,6 @@ export function getRoleCatalogEntry(roleOrCode) {
     recommendedScopes: cloneList(base?.recommendedScopes),
     companionOnly: Boolean(base?.companionOnly),
     companionNote: base?.companionNote || "",
-    legacyReason: base?.legacyReason || "",
-  };
-}
-
-function buildLegacyRuntimeRoleCatalogEntry(roleCode) {
-  const normalizedRoleCode = normalizeRoleCatalogCode(roleCode);
-  const base = ROLE_CATALOG[normalizedRoleCode] || null;
-  const roleEntry = getRoleCatalogEntry(normalizedRoleCode);
-  return {
-    ...roleEntry,
-    runtimeCode: normalizedRoleCode || roleEntry.runtimeCode || roleEntry.technicalCode || roleEntry.code,
-    legacyReason:
-      base?.legacyReason ||
-      "Compatibility runtime role retained only for brownfield review and rollback.",
-    visibleInNewTenant: false,
-    visibleInNewTenantLabel: "No",
-    usageSourceRoleCodes: normalizedRoleCode ? [normalizedRoleCode] : [],
-    legacyItemType: "runtime_role",
-  };
-}
-
-function buildLegacyLabelAliasCatalogEntry(aliasCode) {
-  const normalizedAliasCode = normalizeText(aliasCode);
-  const base = LEGACY_LABEL_ALIAS_CATALOG[normalizedAliasCode] || null;
-  const metadata = buildMetadataEntry({
-    modelType: "runtime_role",
-    code: base?.displayName || normalizedAliasCode,
-    displayName: base?.displayName || normalizedAliasCode,
-    description:
-      base?.description ||
-      "Legacy admin label kept only as a compatibility reference for migration-aware review.",
-    category: "legacy",
-    defaultScope: base?.defaultScope || "",
-    legacy: true,
-    replacementLabel: base?.replacementLabel || "",
-    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
-    sortOrder: base?.sortOrder || 9999,
-  });
-
-  return {
-    ...metadata,
-    runtimeCode: base?.runtimeCode || normalizedAliasCode,
-    technicalCode: base?.runtimeCode || normalizedAliasCode,
-    summary: metadata.description,
-    capabilities: [],
-    recommendedScopes: metadata.defaultScope ? [metadata.defaultScope] : [],
-    companionOnly: false,
-    companionNote: "",
-    legacyReason:
-      base?.legacyReason ||
-      "Legacy admin label kept only for compatibility review.",
-    visibleInNewTenant: false,
-    visibleInNewTenantLabel: "No",
-    usageSourceRoleCodes: cloneList(base?.usageSourceRoleCodes),
-    legacyItemType: "label_alias",
   };
 }
 
@@ -2169,7 +1992,6 @@ export function getBusinessRoleCatalogEntry(roleCode) {
       "Business-facing title used only as an admin label. Assign workflow packages separately.",
     category: base?.category || "unclassified",
     defaultScope: base?.defaultScope || "",
-    legacy: false,
     replacementLabel: "",
     workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
     sortOrder: base?.sortOrder || 9999,
@@ -2218,7 +2040,6 @@ export function getWorkflowPackageCatalogEntry(packageCode) {
       "Workflow package metadata is not defined yet for this code.",
     category: base?.category || "unclassified",
     defaultScope: base?.defaultScope || "",
-    legacy: false,
     replacementLabel: "",
     workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
     sortOrder: base?.sortOrder || 9999,
@@ -2227,7 +2048,7 @@ export function getWorkflowPackageCatalogEntry(packageCode) {
   const usedInPresetCodes = getPresetCodesUsingPackage(normalizedPackageCode);
   const helperBundleCodes = cloneList(runtimeMapping?.helperBundleCodes);
   const runtimeRoleCodes = cloneList(runtimeMapping?.runtimeRoleCodes);
-  const legacyWarnings = cloneList(runtimeMapping?.legacyWarnings);
+  const runtimeNotes = cloneList(runtimeMapping?.runtimeNotes);
   return {
     ...metadata,
     allowedScopes: cloneList(base?.allowedScopes),
@@ -2240,7 +2061,7 @@ export function getWorkflowPackageCatalogEntry(packageCode) {
     helperBundleLabels: helperBundleCodes.map(getHelperBundleLabel),
     runtimeRoleCodes,
     runtimeRoleLabels: runtimeRoleCodes.map(getRuntimeRoleMappingLabel),
-    legacyWarnings,
+    runtimeNotes,
     usedInPresetCodes,
     usedInPresetLabels: usedInPresetCodes.map(getWorkflowPresetDisplayName),
     plannedExtension: Boolean(base?.plannedExtension),
@@ -2259,8 +2080,8 @@ export function listWorkflowPackageCatalogEntries() {
 
 /**
  * Resolves the clean workflow-package catalog entries explained by the
- * supplied runtime-role codes. This is a compatibility-only UX helper for
- * brownfield admin screens while direct package assignment lands later.
+ * supplied runtime-role codes. This is a UI explainability helper for admin
+ * screens that need package coverage from current runtime-role sources.
  */
 export function resolveWorkflowPackagesForRuntimeRoles(roleCodes) {
   const requestedRoleCodes = Array.isArray(roleCodes) ? roleCodes : [];
@@ -2307,7 +2128,6 @@ export function getWorkflowPresetCatalogEntry(presetCode) {
       "Workflow preset metadata is not defined yet for this code.",
     category: base?.category || "unclassified",
     defaultScope: base?.defaultScope || "",
-    legacy: false,
     replacementLabel: "",
     workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
     sortOrder: base?.sortOrder || 9999,
@@ -2359,29 +2179,10 @@ export function listWorkflowPresetCatalogEntries() {
 }
 
 /**
- * Returns the legacy runtime-role entries that belong in the compatibility tab.
- */
-export function listLegacyRoleCatalogEntries() {
-  // The legacy tab keeps both retired runtime roles and retired admin labels in
-  // one compatibility-only surface so fresh-tenant pickers stay clean.
-  return [
-    ...Object.keys(ROLE_CATALOG)
-      .filter((roleCode) => Boolean(ROLE_CATALOG[roleCode]?.legacy))
-      .map((roleCode) => buildLegacyRuntimeRoleCatalogEntry(roleCode)),
-    ...Object.keys(LEGACY_LABEL_ALIAS_CATALOG).map((aliasCode) =>
-      buildLegacyLabelAliasCatalogEntry(aliasCode)
-    ),
-  ]
-    .sort(sortCatalogEntries);
-}
-
-/**
- * Returns the future access-model catalog sections so later tabs can render
- * business roles, packages, presets, and legacy items from one shared source.
+ * Returns the access-model catalog sections so tabs can render business roles,
+ * workflow packages, and workflow presets from one shared source.
  */
 export function listAccessModelCatalogSections() {
-  // The legacy section intentionally reuses runtime-role entries so migration
-  // views retain runtime traceability instead of flattening them into titles.
   return [
     {
       key: "business_roles",
@@ -2413,21 +2214,11 @@ export function listAccessModelCatalogSections() {
       sortOrder: ACCESS_MODEL_SECTION_ORDER.workflow_presets,
       entries: listWorkflowPresetCatalogEntries(),
     },
-    {
-      key: "legacy_catalog",
-      label: ACCESS_MODEL_SECTION_LABELS.legacy_catalog,
-      modelType: "runtime_role",
-      modelTypeLabel: getAccessModelTypeLabel("runtime_role"),
-      description:
-        "Compatibility runtime roles that stay visible for migration review but remain hidden from fresh-tenant pickers.",
-      sortOrder: ACCESS_MODEL_SECTION_ORDER.legacy_catalog,
-      entries: listLegacyRoleCatalogEntries(),
-    },
   ].sort(sortCatalogEntries);
 }
 
 /**
- * Sorts roles into a stable management order with composable roles first and legacy roles last.
+ * Sorts roles into a stable management order using category and sort-order metadata.
  */
 export function sortRolesForManagement(roles) {
   const safeRoles = Array.isArray(roles) ? roles : [];

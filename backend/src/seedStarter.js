@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "timers/promises";
 import { query } from "./db.js";
 import { runMigrations } from "./migrationRunner.js";
 import { seedCore } from "./seedCore.js";
-import { assignCompatibilityBootstrapRolesToUser } from "./services/systemRoles.service.js";
+import { assignBootstrapRolesToUser } from "./services/systemRoles.service.js";
 
 const REQUIRED_REQUEST_IDS = Array.from({ length: 84 }, (_, index) => index + 1);
 
@@ -481,7 +481,7 @@ async function ensureTenantAndAdmin(tenantPayload) {
     throw new Error(`Invalid user id for email: ${adminEmail}`);
   }
 
-  await assignCompatibilityBootstrapRolesToUser(tenantId, userId);
+  await assignBootstrapRolesToUser(tenantId, userId);
 
   return {
     tenantId,

@@ -322,16 +322,14 @@ function buildDirectWorkflowPackageAssignments(
         coverageStatus: coverage.status,
         coverageLabel: coverage.label,
         coversTarget: coverage.coversTarget,
-        sourceLabels: ["Direct package grant"],
+        sourceLabels: ["Direct package assignment"],
         sourceRoleLabels: [],
-        usesLegacyMapping: false,
-        directGrant: true,
       };
     })
     .filter(Boolean);
 }
 
-function buildCompatibilityWorkflowPackageAssignments(
+function buildRuntimeRoleWorkflowPackageAssignments(
   assignments,
   workflowFamily,
   targetScope,
@@ -385,16 +383,11 @@ function buildCompatibilityWorkflowPackageAssignments(
           coversTarget: coverage.coversTarget,
           sourceLabels: new Set(),
           sourceRoleLabels: new Set(),
-          usesLegacyMapping: false,
-          directGrant: false,
         });
       }
       const item = grouped.get(groupedKey);
-      item.sourceLabels.add(
-        roleEntry.legacy ? "Legacy runtime mapping" : "Runtime role mapping"
-      );
+      item.sourceLabels.add("Runtime role source");
       item.sourceRoleLabels.add(roleEntry.code || normalizeText(assignment.role_code));
-      item.usesLegacyMapping ||= Boolean(roleEntry.legacy);
     }
   }
 
@@ -418,8 +411,6 @@ function dedupeCoverageItems(items) {
         ...item,
         sourceLabels: new Set(item.sourceLabels || []),
         sourceRoleLabels: new Set(item.sourceRoleLabels || []),
-        usesLegacyMapping: Boolean(item.usesLegacyMapping),
-        directGrant: Boolean(item.directGrant),
       });
       continue;
     }
@@ -430,8 +421,6 @@ function dedupeCoverageItems(items) {
     for (const label of item.sourceRoleLabels || []) {
       existing.sourceRoleLabels.add(label);
     }
-    existing.usesLegacyMapping ||= Boolean(item.usesLegacyMapping);
-    existing.directGrant ||= Boolean(item.directGrant);
   }
   return Array.from(grouped.values())
     .map((item) => ({
@@ -439,54 +428,6 @@ function dedupeCoverageItems(items) {
       sourceLabels: Array.from(item.sourceLabels).sort(),
       sourceRoleLabels: Array.from(item.sourceRoleLabels).sort(),
     }))
-    .sort(sortCoverageItems);
-}
-
-function buildLegacyRuntimeMappings(
-  assignments,
-  workflowFamily,
-  targetScope,
-  lookups,
-  tenantScopeId
-) {
-  return (Array.isArray(assignments) ? assignments : [])
-    .filter((assignment) => isActiveAllowAssignment(assignment))
-    .filter(
-      (assignment) =>
-        !isBusinessRoleAssignmentRoleCode(assignment?.role_code) &&
-        !isWorkflowPackageAssignmentRoleCode(assignment?.role_code)
-    )
-    .map((assignment) => {
-      const roleEntry = getRoleCatalogEntry(assignment.role_code);
-      if (
-        !roleEntry.legacy ||
-        (normalizeText(workflowFamily) &&
-          normalizeText(roleEntry.workflowFamily) !== normalizeText(workflowFamily))
-      ) {
-        return null;
-      }
-      const coverage = evaluateScopeCoverage(
-        targetScope,
-        assignment.scope_type,
-        assignment.scope_id
-      );
-      return {
-        id: `legacy-role-${assignment.id}`,
-        packageLabel: roleEntry.code,
-        scopeLabel: buildScopeLabel(
-          assignment.scope_type,
-          assignment.scope_id,
-          lookups,
-          tenantScopeId
-        ),
-        sourceRoleLabels: [roleEntry.code],
-        coverageStatus: coverage.status,
-        coverageLabel: coverage.label,
-        coversTarget: coverage.coversTarget,
-        legacyReason: roleEntry.legacyReason || "",
-      };
-    })
-    .filter(Boolean)
     .sort(sortCoverageItems);
 }
 
@@ -654,8 +595,8 @@ function getViewOnlyPackageCodeSet(workflowFamily) {
 /**
  * Build the UI-5A business-facing diagnostics summary for one user, one
  * workflow family, and one target scope. This keeps title-only business roles,
- * direct workflow packages, and legacy runtime mappings readable without
- * pretending to be a full policy simulator.
+ * workflow package assignments, and runtime-role-derived package coverage
+ * readable without pretending to be a full policy simulator.
  */
 export function buildAccessDiagnosticsSummary({
   assignments,
@@ -686,7 +627,7 @@ export function buildAccessDiagnosticsSummary({
     lookups,
     tenantScopeId
   );
-  const compatibilityWorkflowPackages = buildCompatibilityWorkflowPackageAssignments(
+  const runtimeRoleWorkflowPackages = buildRuntimeRoleWorkflowPackageAssignments(
     assignments,
     normalizedWorkflowFamily,
     targetScope,
@@ -695,15 +636,8 @@ export function buildAccessDiagnosticsSummary({
   );
   const workflowPackages = dedupeCoverageItems([
     ...directWorkflowPackages,
-    ...compatibilityWorkflowPackages,
+    ...runtimeRoleWorkflowPackages,
   ]);
-  const legacyRuntimeMappings = buildLegacyRuntimeMappings(
-    assignments,
-    normalizedWorkflowFamily,
-    targetScope,
-    lookups,
-    tenantScopeId
-  );
 
   const matchingBusinessRoles = businessRoleAssignments.filter((item) => item.coversTarget);
   const otherBusinessRoles = businessRoleAssignments.filter((item) => !item.coversTarget);
@@ -716,10 +650,6 @@ export function buildAccessDiagnosticsSummary({
   const matchingActionPackages = matchingWorkflowPackages.filter(
     (item) => !viewOnlyPackageCodeSet.has(normalizeText(item.packageCode).toUpperCase())
   );
-  const legacyMappings = [
-    ...workflowPackages.filter((item) => item.usesLegacyMapping),
-    ...legacyRuntimeMappings,
-  ];
   const matchingScopeLabels = Array.from(
     new Set(
       [...matchingBusinessRoles, ...matchingWorkflowPackages]
@@ -749,17 +679,11 @@ export function buildAccessDiagnosticsSummary({
     otherWorkflowPackages,
     l,
   });
+  const blockerTexts = Array.from(
+    new Set([missingScopeText, missingPackageText].filter(Boolean))
+  );
 
   const noteTexts = [];
-  if (legacyMappings.length > 0) {
-    noteTexts.push(
-      translate(
-        l,
-        "Some package authority is still inferred from legacy runtime roles. Keep that visible during migration cleanup.",
-        "Bazi paket yetkileri hala legacy runtime rollerden cikartiliyor. Gecis temizligi sirasinda bunu gorunur tutun."
-      )
-    );
-  }
   if (matchingBusinessRoles.length === 0 && otherBusinessRoles.length > 0) {
     noteTexts.push(
       translate(
@@ -777,6 +701,7 @@ export function buildAccessDiagnosticsSummary({
     targetScope,
     finalResult,
     matchingScopeLabels,
+    blockerTexts,
     missingScopeText,
     missingPackageText,
     businessRoleAssignments,
@@ -787,7 +712,6 @@ export function buildAccessDiagnosticsSummary({
     otherWorkflowPackages,
     matchingActionPackages,
     matchingViewOnlyPackages,
-    legacyMappings,
     noteTexts: Array.from(new Set(noteTexts)),
   };
 }

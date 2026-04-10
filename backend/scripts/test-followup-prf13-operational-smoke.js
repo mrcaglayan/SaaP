@@ -1,4 +1,5 @@
 import { closePool, query } from "../src/db.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 import {
   approveWorkflowInstance,
   evaluateWorkflowApprovalGate,
@@ -877,32 +878,7 @@ async function ensureApproverUserForTenant(tenantId) {
     approverUserId !== requesterUserId,
     `Approver user must differ from requester user for maker-checker (tenant ${tenantId})`
   );
-
-  const roleRes = await query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = parsePositiveInt(roleRes.rows?.[0]?.id);
-  assert(roleId, `Missing TenantAdmin role for tenant ${tenantId}`);
-
-  await query(
-    `INSERT INTO user_role_scopes (
-       tenant_id,
-       user_id,
-       role_id,
-       scope_type,
-       scope_id,
-       effect
-     )
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-     ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect)`,
-    [tenantId, approverUserId, roleId, tenantId]
-  );
+  await assignTestFullAccessRoleToUser(tenantId, userId);
 
   return {
     requesterUserId,

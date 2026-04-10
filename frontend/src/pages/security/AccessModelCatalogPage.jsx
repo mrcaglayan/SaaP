@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
+import { Fragment } from "react";
+import {
+  ChevronRight,
+  Package,
+  Shield,
+  Workflow,
+} from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
-import { listRoleAssignments } from "../../api/rbacAdmin.js";
-import { useAuth } from "../../auth/useAuth.js";
 import { listAccessModelCatalogSections } from "./roleCatalog.js";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 
@@ -9,10 +13,25 @@ const ACCESS_MODEL_TAB_ORDER = Object.freeze([
   "business_roles",
   "workflow_packages",
   "workflow_presets",
-  "legacy_catalog",
 ]);
+const ACCESS_MODEL_VIEW_ORDER = Object.freeze(["browse", "matrix"]);
+const ACCESS_MODEL_MATRIX_COMPARE_LIMIT = 4;
 
 const FILTER_ALL = "ALL";
+const SCOPE_LEVEL_ORDER = Object.freeze([
+  "TENANT",
+  "GROUP",
+  "COUNTRY",
+  "LEGAL_ENTITY",
+  "OPERATING_UNIT",
+]);
+const WORKFLOW_FAMILY_ORDER = Object.freeze([
+  "AP_DOCUMENT_POSTING",
+  "LOCAL_CLOSE_PACK",
+  "PERIOD_CLOSE",
+  "CONSOLIDATION_RUN",
+  "CROSS_WORKFLOW",
+]);
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -47,7 +66,6 @@ function buildEntrySearchText(entry) {
     entry?.technicalCode,
     entry?.runtimeCode,
     entry?.replacementLabel,
-    entry?.legacyReason,
     entry?.visibleInNewTenantLabel,
     entry?.usedByCountLabel,
     entry?.usedByCount,
@@ -58,7 +76,7 @@ function buildEntrySearchText(entry) {
     ...(entry?.usedInPresetLabels || []),
     ...(entry?.helperBundleLabels || []),
     ...(entry?.runtimeRoleLabels || []),
-    ...(entry?.legacyWarnings || []),
+    ...(entry?.runtimeNotes || []),
     entry?.runtimeMappingLabel,
     ...(entry?.requiredPackageLabels || []),
     ...(entry?.typicalActorLabels || []),
@@ -108,18 +126,12 @@ function getSearchPlaceholder(tabKey) {
   if (tabKey === "workflow_presets") {
     return "Search by preset, workflow family, actor, package, step action, or scope";
   }
-  if (tabKey === "legacy_catalog") {
-    return "Search by runtime code, legacy reason, replacement, scope, or visibility";
-  }
   return "Search by label, description, scope, package, preset, or replacement";
 }
 
 function getStatusLabel(entry) {
   if (entry?.hiddenFromPicker) {
     return "Hidden";
-  }
-  if (entry?.legacy) {
-    return "Legacy";
   }
   if (entry?.draft) {
     return "Draft";
@@ -134,9 +146,6 @@ function getStatusClasses(entry) {
   if (entry?.hiddenFromPicker) {
     return "border-slate-300 bg-slate-100 text-slate-700";
   }
-  if (entry?.legacy) {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
   if (entry?.draft) {
     return "border-sky-200 bg-sky-50 text-sky-800";
   }
@@ -146,35 +155,107 @@ function getStatusClasses(entry) {
   return "border-emerald-200 bg-emerald-50 text-emerald-800";
 }
 
-function getEntryHighlights(sectionKey, entry) {
-  if (sectionKey === "business_roles") {
-    return [
-      `Default scope: ${entry.defaultScope || "-"}`,
-      `Starter packages: ${entry.starterPackageLabels.length || 0}`,
-      entry.optionalPackageLabels.length > 0
-        ? `Optional packages: ${entry.optionalPackageLabels.join(", ")}`
-        : "Optional packages: None",
-    ];
+function getWorkflowFamilyTheme(workflowFamily) {
+  const normalizedFamily = normalizeText(workflowFamily).toUpperCase();
+  if (normalizedFamily === "AP_DOCUMENT_POSTING") {
+    return {
+      chip: "border-sky-200 bg-sky-50 text-sky-800",
+      panel: "border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.92),rgba(255,255,255,0.98))]",
+      softPanel: "border-sky-100 bg-sky-50/70",
+      icon: "border-sky-200 bg-white text-sky-700",
+      metric: "text-sky-700",
+    };
   }
-  if (sectionKey === "workflow_packages") {
-    return [
-      `Allowed scopes: ${entry.allowedScopes.join(", ") || "-"}`,
-      `Permission codes: ${entry.permissionCount || 0}`,
-      `Used in presets: ${entry.usedInPresetLabels.length || 0}`,
-    ];
+  if (normalizedFamily === "LOCAL_CLOSE_PACK") {
+    return {
+      chip: "border-emerald-200 bg-emerald-50 text-emerald-800",
+      panel: "border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.92),rgba(255,255,255,0.98))]",
+      softPanel: "border-emerald-100 bg-emerald-50/70",
+      icon: "border-emerald-200 bg-white text-emerald-700",
+      metric: "text-emerald-700",
+    };
   }
-  if (sectionKey === "workflow_presets") {
-    return [
-      `Primary scope: ${entry.primaryScope || "-"}`,
-      `Step count: ${entry.stepCount || 0}`,
-      `Typical actors: ${entry.typicalActorLabels.join(", ") || "-"}`,
-    ];
+  if (normalizedFamily === "PERIOD_CLOSE") {
+    return {
+      chip: "border-amber-200 bg-amber-50 text-amber-900",
+      panel: "border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,0.92),rgba(255,255,255,0.98))]",
+      softPanel: "border-amber-100 bg-amber-50/70",
+      icon: "border-amber-200 bg-white text-amber-800",
+      metric: "text-amber-800",
+    };
   }
-  return [
-    `Recommended scope: ${entry.recommendedScopes.join(", ") || "-"}`,
-    entry.replacementLabel ? `Replacement: ${entry.replacementLabel}` : "Replacement: Review manually",
-    entry.technicalCode ? `Runtime code: ${entry.technicalCode}` : "Runtime code: preserved in catalog",
-  ];
+  if (normalizedFamily === "CONSOLIDATION_RUN") {
+    return {
+      chip: "border-violet-200 bg-violet-50 text-violet-800",
+      panel: "border-violet-200 bg-[linear-gradient(135deg,rgba(245,243,255,0.92),rgba(255,255,255,0.98))]",
+      softPanel: "border-violet-100 bg-violet-50/70",
+      icon: "border-violet-200 bg-white text-violet-700",
+      metric: "text-violet-700",
+    };
+  }
+  return {
+    chip: "border-slate-200 bg-slate-50 text-slate-700",
+    panel: "border-slate-200 bg-[linear-gradient(135deg,rgba(248,250,252,0.92),rgba(255,255,255,0.98))]",
+    softPanel: "border-slate-200 bg-slate-50/80",
+    icon: "border-slate-200 bg-white text-slate-700",
+    metric: "text-slate-700",
+  };
+}
+
+function getScopeCoverage(entry) {
+  return new Set(getEntryScopes(entry));
+}
+
+function formatScopeLabel(scopeType) {
+  return normalizeText(scopeType).replaceAll("_", " ");
+}
+
+function getPermissionModuleKey(permissionCode) {
+  const parts = normalizeText(permissionCode).split(".").filter(Boolean);
+  if (parts.length <= 1) {
+    return normalizeText(permissionCode);
+  }
+  return parts.slice(0, -1).join(".");
+}
+
+function formatPermissionModuleLabel(moduleKey) {
+  return normalizeText(moduleKey)
+    .split(".")
+    .filter(Boolean)
+    .map((part) => part.replaceAll("_", " "))
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" / ");
+}
+
+function formatPermissionActionLabel(permissionCode) {
+  const action = normalizeText(permissionCode).split(".").filter(Boolean).pop() || "";
+  return action ? action.replaceAll("_", " ").toUpperCase() : permissionCode;
+}
+
+function buildPermissionModuleGroups(permissionCodes) {
+  const rows = Array.isArray(permissionCodes) ? permissionCodes.filter(Boolean) : [];
+  const byModule = new Map();
+  rows.forEach((permissionCode) => {
+    const moduleKey = getPermissionModuleKey(permissionCode);
+    if (!byModule.has(moduleKey)) {
+      byModule.set(moduleKey, []);
+    }
+    byModule.get(moduleKey).push(permissionCode);
+  });
+
+  return Array.from(byModule.entries()).map(([moduleKey, codes]) => {
+    const codeSet = new Set(codes);
+    return {
+      moduleKey,
+      moduleLabel: formatPermissionModuleLabel(moduleKey),
+      permissions: codes.map((permissionCode) => ({
+        code: permissionCode,
+        actionLabel: formatPermissionActionLabel(permissionCode),
+        requiresRead:
+          !permissionCode.endsWith(".read") && codeSet.has(`${moduleKey}.read`),
+      })),
+    };
+  });
 }
 
 function updateSearchParams(searchParams, changes) {
@@ -198,61 +279,644 @@ function getPreviewValues(values, limit = 3) {
   return [...rows.slice(0, limit), `+${rows.length - limit} more`];
 }
 
-function buildLegacyRoleAssignmentCounts(assignments) {
-  const counts = {};
-  for (const assignment of Array.isArray(assignments) ? assignments : []) {
-    const roleCode = normalizeText(assignment?.roleCode || assignment?.role_code);
-    if (!roleCode) {
-      continue;
-    }
-    counts[roleCode] = toCount(counts[roleCode]) + 1;
-  }
-  return counts;
-}
-
-function getLegacyUsedByCount(entry, assignmentCountsByRoleCode) {
-  return (Array.isArray(entry?.usageSourceRoleCodes) ? entry.usageSourceRoleCodes : []).reduce(
-    (total, roleCode) => total + toCount(assignmentCountsByRoleCode?.[roleCode]),
-    0
+function parseMatrixCompareCodes(rawValue, entries) {
+  const validCodes = new Set(
+    (Array.isArray(entries) ? entries : [])
+      .map((entry) => normalizeText(entry.code))
+      .filter(Boolean)
   );
+  return Array.from(
+    new Set(
+      String(rawValue || "")
+        .split(",")
+        .map((value) => normalizeText(value))
+        .filter((value) => value && validCodes.has(value))
+    )
+  ).slice(0, ACCESS_MODEL_MATRIX_COMPARE_LIMIT);
 }
 
-function buildLegacyCatalogViewEntry(entry, {
-  canReadRoleAssignments,
-  assignmentCountsByRoleCode,
-  assignmentCountsLoaded,
-  assignmentCountsLoading,
-  assignmentCountsError,
-}) {
-  const usedByCount = getLegacyUsedByCount(entry, assignmentCountsByRoleCode);
-  let usedByCountLabel = String(usedByCount);
-  let usedByCountNote = usedByCount === 1
-    ? "1 live tenant role assignment."
-    : `${usedByCount} live tenant role assignments.`;
-
-  if (!canReadRoleAssignments) {
-    usedByCountLabel = "Requires assignment read";
-    usedByCountNote =
-      "Used By Count requires security.role_assignment.read before live tenant assignments can be summarized.";
-  } else if (assignmentCountsError) {
-    usedByCountLabel = "Unavailable";
-    usedByCountNote =
-      "Live assignment counts could not be loaded from the role-assignment API.";
-  } else if (assignmentCountsLoading && !assignmentCountsLoaded) {
-    usedByCountLabel = "Loading...";
-    usedByCountNote = "Loading live tenant role assignments for this compatibility row.";
-  } else if (!assignmentCountsLoaded) {
-    usedByCountLabel = "Pending";
-    usedByCountNote = "Live assignment counts have not been loaded yet.";
-  }
-
-  return {
-    ...entry,
-    usedByCount,
-    usedByCountLabel,
-    usedByCountNote,
-    visibleInNewTenantLabel: entry?.visibleInNewTenant ? "Yes" : "No",
+function buildDefaultCompareCodes(entries, preferredCode = "") {
+  const rows = Array.isArray(entries) ? entries : [];
+  const codes = [];
+  const seen = new Set();
+  const addCode = (value) => {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue || seen.has(normalizedValue)) {
+      return;
+    }
+    seen.add(normalizedValue);
+    codes.push(normalizedValue);
   };
+
+  addCode(preferredCode);
+  rows.forEach((entry) => addCode(entry.code));
+
+  return codes.slice(0, ACCESS_MODEL_MATRIX_COMPARE_LIMIT);
+}
+
+function joinMatrixCompareCodes(compareCodes) {
+  return (Array.isArray(compareCodes) ? compareCodes : [])
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
+    .join(",");
+}
+
+function buildNextMatrixCompareCodes(compareCodes, entryCode) {
+  const normalizedCode = normalizeText(entryCode);
+  const currentCodes = Array.isArray(compareCodes) ? compareCodes.filter(Boolean) : [];
+  if (!normalizedCode) {
+    return currentCodes;
+  }
+  if (currentCodes.includes(normalizedCode)) {
+    return currentCodes.filter((value) => value !== normalizedCode);
+  }
+  return [...currentCodes, normalizedCode].slice(0, ACCESS_MODEL_MATRIX_COMPARE_LIMIT);
+}
+
+function collectMatrixLabels(entries, getter) {
+  const labels = new Map();
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const values = Array.isArray(getter(entry)) ? getter(entry) : [];
+    values.forEach((value) => {
+      const label = normalizeText(value);
+      const key = label.toLowerCase();
+      if (!label || labels.has(key)) {
+        return;
+      }
+      labels.set(key, label);
+    });
+  });
+  return Array.from(labels.values()).sort((left, right) => left.localeCompare(right));
+}
+
+function collectMatrixItems(entries, getter, keyGetter, sortGetter = null) {
+  const values = new Map();
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const rows = Array.isArray(getter(entry)) ? getter(entry) : [];
+    rows.forEach((item) => {
+      const itemKey = normalizeText(keyGetter(item));
+      if (!itemKey || values.has(itemKey)) {
+        return;
+      }
+      values.set(itemKey, item);
+    });
+  });
+
+  return Array.from(values.values()).sort((left, right) => {
+    const leftLabel = normalizeText(sortGetter ? sortGetter(left) : keyGetter(left));
+    const rightLabel = normalizeText(sortGetter ? sortGetter(right) : keyGetter(right));
+    return leftLabel.localeCompare(rightLabel);
+  });
+}
+
+function getScopeCoverageHint(entry) {
+  const activeScopes = SCOPE_LEVEL_ORDER.filter((scopeType) =>
+    getScopeCoverage(entry).has(scopeType)
+  ).map(formatScopeLabel);
+  if (activeScopes.length === 0) {
+    return "No documented scope coverage.";
+  }
+  return `Coverage: ${activeScopes.join(", ")}`;
+}
+
+function getEntryStatusTone(entry) {
+  if (entry?.hiddenFromPicker) {
+    return "not_granted";
+  }
+  if (entry?.draft || entry?.plannedExtension) {
+    return "linked";
+  }
+  return "granted";
+}
+
+function getEntryStatusMatrixHint(entry) {
+  if (entry?.hiddenFromPicker) {
+    return "Hidden from fresh-tenant selection surfaces.";
+  }
+  if (entry?.draft) {
+    return "Draft definition. Review before broad rollout.";
+  }
+  if (entry?.plannedExtension) {
+    return "Extension-aware package. Review rollout notes before adoption.";
+  }
+  return "Primary catalog path for the current access-model slice.";
+}
+
+function getWorkflowPackageMatrixPosture(entry) {
+  const runtimeMappingLabel = normalizeText(entry?.runtimeMappingLabel).toLowerCase();
+  if (runtimeMappingLabel.includes("companion")) {
+    return {
+      tone: "companion_only",
+      label: "Companion-only",
+      hint: entry.runtimeMappingLabel,
+    };
+  }
+  if (entry?.plannedExtension) {
+    return {
+      tone: "linked",
+      label: "Extension package",
+      hint: entry.extensionNote || "Package is planned as an extension-aware rollout.",
+    };
+  }
+  return {
+    tone: "granted",
+    label: "Package authority",
+    hint: `${entry.permissionCount} mapped permission codes.`,
+  };
+}
+
+function getMatrixEntryPosture(entry, tabKey) {
+  if (tabKey === "business_roles") {
+    return {
+      tone: "linked",
+      label: "Label only",
+      hint: "Assign workflow packages separately. Business roles stay non-authoritative.",
+    };
+  }
+  if (tabKey === "workflow_packages") {
+    return getWorkflowPackageMatrixPosture(entry);
+  }
+  if (tabKey === "workflow_presets") {
+    return {
+      tone: entry?.draft ? "linked" : "granted",
+      label: entry?.draft ? "Draft preset" : "Preset flow",
+      hint: `${entry.stepCount} ordered steps with ${entry.requiredPackageLabels.length} required packages.`,
+    };
+  }
+  return {
+    tone: "neutral",
+    label: "Catalog item",
+    hint: entry?.description || "Access-model catalog item.",
+  };
+}
+
+function buildSummaryComparisonGroup(entries, tabKey) {
+  const scopeLabel = tabKey === "workflow_presets" ? "Primary scope" : "Default scope";
+  return {
+    key: "summary",
+    title: "Summary",
+    description:
+      "Use the matrix to compare meaning and coverage side by side. The detail drawer remains the primary explanation path.",
+    rows: [
+      {
+        key: "posture",
+        label: "Authority posture",
+        hint: "This keeps browse-first meaning separate from the raw editor.",
+        cells: entries.map((entry) => getMatrixEntryPosture(entry, tabKey)),
+      },
+      {
+        key: "family",
+        label: "Workflow family",
+        hint: "Routing and package questions usually start with the business family boundary.",
+        cells: entries.map((entry) => ({
+          tone: "neutral",
+          label: entry.workflowFamilyLabel,
+          hint: `${entry.modelTypeLabel} / ${entry.categoryLabel}`,
+        })),
+      },
+      {
+        key: "scope",
+        label: scopeLabel,
+        hint: "Scope-aware hint for where the compared item normally operates.",
+        cells: entries.map((entry) => ({
+          tone: "neutral",
+          label: entry.defaultScope || entry.primaryScope || "-",
+          hint: getScopeCoverageHint(entry),
+        })),
+      },
+      {
+        key: "status",
+        label: "Catalog status",
+        hint: "Active, hidden, extension, or draft posture.",
+        cells: entries.map((entry) => ({
+          tone: getEntryStatusTone(entry),
+          label: getStatusLabel(entry),
+          hint: getEntryStatusMatrixHint(entry),
+        })),
+      },
+    ],
+  };
+}
+
+function buildScopeComparisonGroup(entries) {
+  return {
+    key: "scope-coverage",
+    title: "Scope coverage",
+    description:
+      "Scope-aware hints stay visible in the matrix so admins do not have to jump straight into the current role editor.",
+    rows: SCOPE_LEVEL_ORDER.map((scopeType) => ({
+      key: `scope-${scopeType}`,
+      label: formatScopeLabel(scopeType),
+      hint: `Documented coverage for ${formatScopeLabel(scopeType)} scope.`,
+      cells: entries.map((entry) =>
+        getScopeCoverage(entry).has(scopeType)
+          ? {
+            tone: "granted",
+            label: "Granted",
+            hint:
+              entry.defaultScope === scopeType || entry.primaryScope === scopeType
+                ? "Primary / default scope."
+                : "Supported by this catalog row.",
+          }
+          : {
+            tone: "not_granted",
+            label: "Not granted",
+            hint: "No documented scope coverage.",
+          }
+      ),
+    })),
+  };
+}
+
+function buildBusinessRoleMatrixGroups(entries) {
+  const starterPackageLabels = collectMatrixLabels(entries, (entry) => entry.starterPackageLabels);
+  const optionalPackageLabels = collectMatrixLabels(entries, (entry) => entry.optionalPackageLabels);
+  const presetLabels = collectMatrixLabels(entries, (entry) => entry.usedInPresetLabels);
+
+  return [
+    buildSummaryComparisonGroup(entries, "business_roles"),
+    buildScopeComparisonGroup(entries),
+    {
+      key: "starter-packages",
+      title: "Suggested starter packages",
+      description:
+        "Starter suggestions help onboarding, but they do not grant workflow authority by themselves.",
+      rows: starterPackageLabels.map((label) => ({
+        key: `starter-${label}`,
+        label,
+        hint: "Starter bundle suggestion only.",
+        cells: entries.map((entry) =>
+          entry.starterPackageLabels.includes(label)
+            ? {
+              tone: "suggested",
+              label: "Suggested",
+              hint: "Starter package hint for guided onboarding.",
+            }
+            : {
+              tone: "not_granted",
+              label: "Not suggested",
+              hint: "No starter-package hint for this role.",
+            }
+        ),
+      })),
+    },
+    {
+      key: "optional-packages",
+      title: "Optional packages",
+      description:
+        "Optional packages surface useful companion coverage without collapsing the role into a raw authority set.",
+      rows: optionalPackageLabels.map((label) => ({
+        key: `optional-${label}`,
+        label,
+        hint: "Optional package pairing.",
+        cells: entries.map((entry) =>
+          entry.optionalPackageLabels.includes(label)
+            ? {
+              tone: "optional",
+              label: "Optional",
+              hint: "Useful companion package for some tenants.",
+            }
+            : {
+              tone: "not_granted",
+              label: "Not included",
+              hint: "No optional pairing documented.",
+            }
+        ),
+      })),
+    },
+    {
+      key: "preset-coverage",
+      title: "Workflow preset coverage",
+      description:
+        "Preset references keep business-role meaning visible before anyone drops into assignment tools.",
+      rows: presetLabels.map((label) => ({
+        key: `preset-${label}`,
+        label,
+        hint: "Shipped preset reference.",
+        cells: entries.map((entry) =>
+          entry.usedInPresetLabels.includes(label)
+            ? {
+              tone: "linked",
+              label: "Referenced",
+              hint: "Used by a shipped workflow preset.",
+            }
+            : {
+              tone: "not_granted",
+              label: "Not referenced",
+              hint: "No shipped preset reference.",
+            }
+        ),
+      })),
+    },
+  ].filter((group) => group.rows.length > 0);
+}
+
+function buildWorkflowPackageMatrixGroups(entries) {
+  const moduleGroups = collectMatrixItems(
+    entries,
+    (entry) => buildPermissionModuleGroups(entry.permissionCodes),
+    (group) => group.moduleKey,
+    (group) => group.moduleLabel
+  );
+  const runtimeRoleLabels = collectMatrixLabels(entries, (entry) => entry.runtimeRoleLabels);
+  const helperBundleLabels = collectMatrixLabels(entries, (entry) => entry.helperBundleLabels);
+  const presetLabels = collectMatrixLabels(entries, (entry) => entry.usedInPresetLabels);
+
+  return [
+    buildSummaryComparisonGroup(entries, "workflow_packages"),
+    buildScopeComparisonGroup(entries),
+    {
+      key: "permission-modules",
+      title: "Permission modules",
+      description:
+        "Module-family grouping makes package comparison readable without treating the matrix as the only explanation surface.",
+      rows: moduleGroups.map((group) => ({
+        key: `module-${group.moduleKey}`,
+        label: group.moduleLabel,
+        hint: `${group.permissions.length} mapped actions in this module family.`,
+        cells: entries.map((entry) => {
+          const entryGroup = buildPermissionModuleGroups(entry.permissionCodes).find(
+            (item) => item.moduleKey === group.moduleKey
+          );
+          return entryGroup
+            ? {
+              tone: "granted",
+              label: "Granted",
+              hint: `${entryGroup.permissions.length} mapped actions in ${group.moduleLabel}.`,
+            }
+            : {
+              tone: "not_granted",
+              label: "Not granted",
+              hint: "This package does not include the module family.",
+            };
+        }),
+      })),
+    },
+    {
+      key: "runtime-role-mapping",
+      title: "Runtime package sources",
+      description:
+        "Current runtime-role and helper-bundle links stay visible so package sources remain explainable.",
+      rows: [
+        {
+          key: "mapping-posture",
+          label: "Current runtime sources",
+          hint: "Companion-only source posture remains visible in comparison mode.",
+          cells: entries.map((entry) => {
+            const runtimeMappingLabel = normalizeText(entry.runtimeMappingLabel).toLowerCase();
+            if (runtimeMappingLabel.includes("companion")) {
+              return {
+                tone: "companion_only",
+                label: "Companion-only",
+                hint: entry.runtimeMappingLabel,
+              };
+            }
+            return {
+              tone: "linked",
+              label: "Mapped",
+              hint: entry.runtimeMappingLabel,
+            };
+          }),
+        },
+        ...runtimeRoleLabels.map((label) => ({
+          key: `runtime-role-${label}`,
+          label,
+          hint: "Current runtime-role source.",
+          cells: entries.map((entry) =>
+            entry.runtimeRoleLabels.includes(label)
+              ? {
+                tone: normalizeText(entry.runtimeMappingLabel).toLowerCase().includes("companion")
+                  ? "companion_only"
+                  : "linked",
+                label: normalizeText(entry.runtimeMappingLabel).toLowerCase().includes("companion")
+                  ? "Companion-only"
+                  : "Mapped",
+                hint: "Runtime role is part of the current package source map.",
+              }
+              : {
+                tone: "not_granted",
+                label: "Not mapped",
+                hint: "Runtime role is not part of this package source map.",
+              }
+          ),
+        })),
+        ...helperBundleLabels.map((label) => ({
+          key: `helper-bundle-${label}`,
+          label,
+          hint: "Current helper-bundle source.",
+          cells: entries.map((entry) =>
+            entry.helperBundleLabels.includes(label)
+              ? {
+                tone: "linked",
+                label: "Mapped",
+                hint: "Helper bundle is part of the current package source map.",
+              }
+              : {
+                tone: "not_granted",
+                label: "Not mapped",
+                hint: "Helper bundle is not part of this package source map.",
+              }
+          ),
+        })),
+      ],
+    },
+    {
+      key: "preset-coverage",
+      title: "Workflow preset coverage",
+      description:
+        "Compare which shipped presets depend on each package before changing assignment guidance.",
+      rows: presetLabels.map((label) => ({
+        key: `preset-${label}`,
+        label,
+        hint: "Preset dependency.",
+        cells: entries.map((entry) =>
+          entry.usedInPresetLabels.includes(label)
+            ? {
+              tone: "linked",
+              label: "Used",
+              hint: "This shipped preset depends on the package.",
+            }
+            : {
+              tone: "not_granted",
+              label: "Not used",
+              hint: "No shipped preset dependency.",
+            }
+        ),
+      })),
+    },
+  ].filter((group) => group.rows.length > 0);
+}
+
+function buildWorkflowPresetMatrixGroups(entries) {
+  const requiredPackageLabels = collectMatrixLabels(entries, (entry) => entry.requiredPackageLabels);
+  const typicalActorLabels = collectMatrixLabels(entries, (entry) => entry.typicalActorLabels);
+  const stepRows = collectMatrixItems(
+    entries,
+    (entry) =>
+      entry.steps.map((step) => ({
+        key: `${step.actionLabel}::${step.scopeType}::${step.requiredPackageCode}`,
+        label: step.actionLabel,
+        hint: `${step.scopeType} scope via ${step.requiredPackageLabel}`,
+      })),
+    (step) => step.key,
+    (step) => `${step.label} ${step.hint}`
+  );
+
+  return [
+    buildSummaryComparisonGroup(entries, "workflow_presets"),
+    buildScopeComparisonGroup(entries),
+    {
+      key: "required-packages",
+      title: "Required packages",
+      description:
+        "Package requirements stay explicit so preset comparison does not become a black box.",
+      rows: requiredPackageLabels.map((label) => ({
+        key: `required-package-${label}`,
+        label,
+        hint: "Required package in the preset design.",
+        cells: entries.map((entry) =>
+          entry.requiredPackageLabels.includes(label)
+            ? {
+              tone: "granted",
+              label: "Required",
+              hint: "Preset depends on this package.",
+            }
+            : {
+              tone: "not_granted",
+              label: "Not required",
+              hint: "Package is not part of this preset.",
+            }
+        ),
+      })),
+    },
+    {
+      key: "typical-actors",
+      title: "Typical actors",
+      description:
+        "Business-readable actors remain visible even when admins are comparing the underlying package flow.",
+      rows: typicalActorLabels.map((label) => ({
+        key: `typical-actor-${label}`,
+        label,
+        hint: "Business-facing actor guidance.",
+        cells: entries.map((entry) =>
+          entry.typicalActorLabels.includes(label)
+            ? {
+              tone: "linked",
+              label: "Actor",
+              hint: "Typical actor documented for this preset.",
+            }
+            : {
+              tone: "not_granted",
+              label: "Not listed",
+              hint: "Actor is not documented for this preset.",
+            }
+        ),
+      })),
+    },
+    {
+      key: "ordered-steps",
+      title: "Ordered steps",
+      description:
+        "Step-level comparison keeps the business flow readable without forcing admins into the workflow builder.",
+      rows: stepRows.map((stepRow) => ({
+        key: `step-${stepRow.key}`,
+        label: stepRow.label,
+        hint: stepRow.hint,
+        cells: entries.map((entry) => {
+          const matchingStep = entry.steps.find(
+            (step) =>
+              `${step.actionLabel}::${step.scopeType}::${step.requiredPackageCode}` === stepRow.key
+          );
+          return matchingStep
+            ? {
+              tone: "granted",
+              label: `Step ${matchingStep.stepNo}`,
+              hint: `${matchingStep.scopeType} / ${matchingStep.requiredPackageLabel}`,
+            }
+            : {
+              tone: "not_granted",
+              label: "Not included",
+              hint: "This preset does not include the step.",
+            };
+        }),
+      })),
+    },
+  ].filter((group) => group.rows.length > 0);
+}
+
+function buildComparisonGroups(entries, tabKey) {
+  if (tabKey === "business_roles") {
+    return buildBusinessRoleMatrixGroups(entries);
+  }
+  if (tabKey === "workflow_packages") {
+    return buildWorkflowPackageMatrixGroups(entries);
+  }
+  if (tabKey === "workflow_presets") {
+    return buildWorkflowPresetMatrixGroups(entries);
+  }
+  return [];
+}
+
+function getMatrixToneConfig(tone) {
+  if (tone === "granted") {
+    return {
+      badge: "border-emerald-200 bg-emerald-50 text-emerald-800",
+      panel: "border-emerald-100 bg-emerald-50/70",
+    };
+  }
+  if (tone === "not_granted") {
+    return {
+      badge: "border-slate-200 bg-slate-50 text-slate-600",
+      panel: "border-slate-200 bg-slate-50/80",
+    };
+  }
+  if (tone === "companion_only") {
+    return {
+      badge: "border-sky-200 bg-sky-50 text-sky-800",
+      panel: "border-sky-100 bg-sky-50/75",
+    };
+  }
+  if (tone === "linked") {
+    return {
+      badge: "border-indigo-200 bg-indigo-50 text-indigo-800",
+      panel: "border-indigo-100 bg-indigo-50/75",
+    };
+  }
+  if (tone === "suggested") {
+    return {
+      badge: "border-cyan-200 bg-cyan-50 text-cyan-800",
+      panel: "border-cyan-100 bg-cyan-50/70",
+    };
+  }
+  if (tone === "optional") {
+    return {
+      badge: "border-violet-200 bg-violet-50 text-violet-800",
+      panel: "border-violet-100 bg-violet-50/75",
+    };
+  }
+  return {
+    badge: "border-slate-200 bg-white text-slate-700",
+    panel: "border-slate-200 bg-white",
+  };
+}
+
+function AccessModelViewButton({ active, label, note, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-2xl border px-4 py-3 text-left transition ${
+        active
+          ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+      }`}
+    >
+      <div className="text-sm font-semibold">{label}</div>
+      <div className={`mt-1 text-xs leading-5 ${active ? "text-slate-300" : "text-slate-500"}`}>
+        {note}
+      </div>
+    </button>
+  );
 }
 
 function AccessModelTabButton({ active, count, label, onClick }) {
@@ -274,61 +938,6 @@ function AccessModelTabButton({ active, count, label, onClick }) {
         >
           {count}
         </span>
-      </div>
-    </button>
-  );
-}
-
-function AccessModelEntryCard({ active, entry, highlights, onOpen }) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className={`w-full rounded-3xl border px-5 py-5 text-left transition ${active
-        ? "border-slate-900 bg-slate-900 text-white shadow-lg shadow-slate-300/50"
-        : "border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50"
-        }`}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-lg font-semibold">{entry.displayName}</div>
-          <div className={`mt-1 text-sm ${active ? "text-slate-200" : "text-slate-600"}`}>
-            {entry.description}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span
-            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
-              }`}
-          >
-            {entry.modelTypeLabel}
-          </span>
-          <span
-            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${active ? "border-white/20 bg-white/10 text-white" : getStatusClasses(entry)
-              }`}
-          >
-            {getStatusLabel(entry)}
-          </span>
-        </div>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <span
-          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
-            }`}
-        >
-          {entry.categoryLabel}
-        </span>
-        <span
-          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${active ? "border-white/20 bg-white/10 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
-            }`}
-        >
-          {entry.workflowFamilyLabel}
-        </span>
-      </div>
-      <div className={`mt-4 grid gap-2 text-sm ${active ? "text-slate-100" : "text-slate-600"}`}>
-        {highlights.map((line) => (
-          <div key={`${entry.code}-${line}`}>{line}</div>
-        ))}
       </div>
     </button>
   );
@@ -367,355 +976,242 @@ function BusinessRoleActionStrip({ entry, disableWhereUsed = false, onOpen }) {
 
 function BusinessRoleCatalogTable({ entries, selectedEntryCode, onOpen }) {
   return (
-    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <th className="px-5 py-4">Business role name</th>
-              <th className="px-5 py-4">Default scope</th>
-              <th className="px-5 py-4">Description</th>
-              <th className="px-5 py-4">Suggested starter packages</th>
-              <th className="px-5 py-4">Active / Hidden</th>
-              <th className="px-5 py-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {entries.map((entry) => {
-              const isSelected = selectedEntryCode === entry.code;
-              return (
-                <tr
-                  key={entry.code}
-                  className={isSelected ? "bg-slate-950/5" : "bg-white"}
-                >
-                  <td className="px-5 py-4 align-top">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(entry.code)}
-                      className="text-left"
-                    >
-                      <div className="text-sm font-semibold text-slate-950">{entry.displayName}</div>
-                      <div className="mt-1 text-xs text-slate-500">{entry.categoryLabel}</div>
-                    </button>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                      {entry.defaultScope || "-"}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 align-top text-sm leading-6 text-slate-600">
-                    {entry.description}
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-3">
-                      <MetadataPillList
-                        values={entry.starterPackageLabels}
-                        emptyLabel="No starter packages are suggested for this role."
-                      />
-                      <div className="text-xs leading-5 text-slate-500">
-                        Suggestions only. Package assignment at scope is still what grants authority.
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-2">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getStatusClasses(
-                          entry
-                        )}`}
-                      >
-                        {getStatusLabel(entry)}
-                      </span>
-                      <div className="text-xs leading-5 text-slate-500">
-                        {entry.hiddenFromPicker
-                          ? "Hidden from fresh-tenant pickers."
-                          : "Shown in fresh-tenant pickers."}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <BusinessRoleActionStrip
-                      entry={entry}
-                      onOpen={() => onOpen(entry.code)}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+    <div className="grid gap-4 xl:grid-cols-2">
+      {entries.map((entry) => {
+        const isSelected = selectedEntryCode === entry.code;
+        return (
+          <CatalogCardShell
+            key={entry.code}
+            active={isSelected}
+            entry={entry}
+            icon={<Shield className="h-5 w-5" />}
+            onOpen={() => onOpen(entry.code)}
+            title={entry.displayName}
+            description={entry.description}
+            footerNote={`Business role name: ${entry.displayName}`}
+          >
+            <div className="grid gap-3 md:grid-cols-3">
+              <CatalogMetric
+                label="Default scope"
+                value={entry.defaultScope || "-"}
+                note="Business role name remains non-authoritative."
+              />
+              <CatalogMetric
+                label="Starter packages"
+                value={entry.starterPackageLabels.length}
+                note="Suggestions only."
+              />
+              <CatalogMetric
+                label="Active / Hidden"
+                value={getStatusLabel(entry)}
+                note={
+                  entry.hiddenFromPicker
+                    ? "Hidden from fresh-tenant pickers."
+                    : "Shown in fresh-tenant pickers."
+                }
+              />
+            </div>
+            <div
+              className={`rounded-2xl border px-4 py-4 ${
+                isSelected ? "border-white/20 bg-white/10" : "border-slate-200 bg-white/80"
+              }`}
+            >
+              <div
+                className={`text-xs font-semibold uppercase tracking-[0.18em] ${
+                  isSelected ? "text-slate-300" : "text-slate-500"
+                }`}
+              >
+                Suggested starter packages
+              </div>
+              <div className="mt-3">
+                <MetadataPillList
+                  values={getPreviewValues(entry.starterPackageLabels, 3)}
+                  emptyLabel="No starter packages are suggested for this role."
+                />
+              </div>
+              <div
+                className={`mt-3 text-xs leading-5 ${
+                  isSelected ? "text-slate-300" : "text-slate-500"
+                }`}
+              >
+                Suggestions only. Package assignment at scope is still what grants authority.
+              </div>
+            </div>
+          </CatalogCardShell>
+        );
+      })}
     </div>
   );
 }
 
 function WorkflowPackageCatalogTable({ entries, selectedEntryCode, onOpen }) {
   return (
-    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <th className="px-5 py-4">Package name</th>
-              <th className="px-5 py-4">Workflow family</th>
-              <th className="px-5 py-4">Allowed scopes</th>
-              <th className="px-5 py-4">Underlying permission codes</th>
-              <th className="px-5 py-4">Current runtime mapping</th>
-              <th className="px-5 py-4">Used in presets</th>
-              <th className="px-5 py-4">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {entries.map((entry) => {
-              const isSelected = selectedEntryCode === entry.code;
-              return (
-                <tr key={entry.code} className={isSelected ? "bg-slate-950/5" : "bg-white"}>
-                  <td className="px-5 py-4 align-top">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(entry.code)}
-                      className="text-left"
-                    >
-                      <div className="text-sm font-semibold text-slate-950">{entry.displayName}</div>
-                      <div className="mt-1 text-xs text-slate-500">{entry.categoryLabel}</div>
-                    </button>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-2">
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                        {entry.workflowFamilyLabel}
-                      </span>
-                      <div className="text-xs text-slate-500">{entry.defaultScope || "-"}</div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <MetadataPillList
-                      values={entry.allowedScopes}
-                      emptyLabel="No allowed scopes are defined."
-                    />
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-3">
-                      <MetadataPillList
-                        values={getPreviewValues(entry.permissionCodes, 3)}
-                        emptyLabel="No permission codes are mapped yet."
-                      />
-                      <div className="text-xs leading-5 text-slate-500">
-                        {entry.permissionCount} permission code{entry.permissionCount === 1 ? "" : "s"} in the package.
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-3">
-                      <div className="text-sm font-semibold text-slate-900">{entry.runtimeMappingLabel}</div>
-                      <MetadataPillList
-                        values={getPreviewValues(entry.runtimeRoleLabels, 2)}
-                        emptyLabel="No runtime role is mapped cleanly yet."
-                      />
-                      {entry.helperBundleLabels.length > 0 ? (
-                        <MetadataPillList values={entry.helperBundleLabels} emptyLabel="" />
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <MetadataPillList
-                      values={getPreviewValues(entry.usedInPresetLabels, 3)}
-                      emptyLabel="Not referenced by a shipped preset yet."
-                    />
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-2">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getStatusClasses(
-                          entry
-                        )}`}
-                      >
-                        {getStatusLabel(entry)}
-                      </span>
-                      <div className="text-xs leading-5 text-slate-500">
-                        {entry.plannedExtension
-                          ? "Enable only with the matching backend extension."
-                          : "Ready for the package-based governance model."}
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+    <div className="space-y-4">
+      {entries.map((entry) => {
+        const isSelected = selectedEntryCode === entry.code;
+        return (
+          <CatalogCardShell
+            key={entry.code}
+            active={isSelected}
+            entry={entry}
+            icon={<Package className="h-5 w-5" />}
+            onOpen={() => onOpen(entry.code)}
+            title={entry.displayName}
+            description={entry.description}
+            footerNote={`Package name: ${entry.displayName}`}
+          >
+            <div className="grid gap-3 md:grid-cols-4">
+              <CatalogMetric
+                label="Allowed scopes"
+                value={entry.allowedScopes.length}
+                note={entry.defaultScope || "No default scope"}
+              />
+              <CatalogMetric
+                label="Underlying permission codes"
+                value={entry.permissionCount}
+                note="Authority comes from package-backed permissions."
+              />
+              <CatalogMetric
+                label="Used in presets"
+                value={entry.usedInPresetLabels.length}
+                note={entry.plannedExtension ? "Extension-aware rollout." : "Shipped preset coverage."}
+              />
+              <CatalogMetric
+                label="Current runtime sources"
+                value={entry.runtimeRoleLabels.length + entry.helperBundleLabels.length}
+                note="Runtime roles + helper bundles"
+              />
+            </div>
+            <div
+              className={`grid gap-4 rounded-2xl border px-4 py-4 ${
+                isSelected ? "border-white/20 bg-white/10" : "border-slate-200 bg-white/80"
+              } lg:grid-cols-[minmax(0,1.3fr)_minmax(0,0.7fr)]`}
+            >
+              <div>
+                <div
+                  className={`text-xs font-semibold uppercase tracking-[0.18em] ${
+                    isSelected ? "text-slate-300" : "text-slate-500"
+                  }`}
+                >
+                  Current runtime sources
+                </div>
+                <div className={`mt-2 text-sm font-semibold ${isSelected ? "text-white" : "text-slate-900"}`}>
+                  {entry.runtimeMappingLabel}
+                </div>
+                <div className="mt-3">
+                  <MetadataPillList
+                    values={getPreviewValues([...entry.runtimeRoleLabels, ...entry.helperBundleLabels], 4)}
+                    emptyLabel="No runtime source is documented yet."
+                  />
+                </div>
+              </div>
+              <div>
+                <div
+                  className={`text-xs font-semibold uppercase tracking-[0.18em] ${
+                    isSelected ? "text-slate-300" : "text-slate-500"
+                  }`}
+                >
+                  Permission modules
+                </div>
+                <div className="mt-3">
+                  <MetadataPillList
+                    values={buildPermissionModuleGroups(entry.permissionCodes).map((group) => group.moduleLabel)}
+                    emptyLabel="No permission codes are mapped yet."
+                  />
+                </div>
+              </div>
+            </div>
+          </CatalogCardShell>
+        );
+      })}
     </div>
   );
 }
 
 function WorkflowPresetCatalogTable({ entries, selectedEntryCode, onOpen }) {
   return (
-    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <th className="px-5 py-4">Preset name</th>
-              <th className="px-5 py-4">Workflow family</th>
-              <th className="px-5 py-4">Primary scope</th>
-              <th className="px-5 py-4">Step count</th>
-              <th className="px-5 py-4">Typical actors</th>
-              <th className="px-5 py-4">Uses extension?</th>
-              <th className="px-5 py-4">Active / Draft</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {entries.map((entry) => {
-              const isSelected = selectedEntryCode === entry.code;
-              return (
-                <tr key={entry.code} className={isSelected ? "bg-slate-950/5" : "bg-white"}>
-                  <td className="px-5 py-4 align-top">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(entry.code)}
-                      className="text-left"
-                    >
-                      <div className="text-sm font-semibold text-slate-950">{entry.displayName}</div>
-                      <div className="mt-1 text-xs text-slate-500">{entry.categoryLabel}</div>
-                    </button>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                      {entry.workflowFamilyLabel}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                      {entry.primaryScope || "-"}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="text-sm font-semibold text-slate-900">{entry.stepCount}</div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {entry.stepCount === 1 ? "Single-step preset" : "Ordered business flow"}
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <MetadataPillList
-                      values={getPreviewValues(entry.typicalActorLabels, 3)}
-                      emptyLabel="No typical actors are documented."
-                    />
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-2">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${entry.usesExtension
-                          ? "border-violet-200 bg-violet-50 text-violet-800"
-                          : "border-emerald-200 bg-emerald-50 text-emerald-800"
-                          }`}
-                      >
-                        {entry.usesExtensionLabel}
-                      </span>
-                      <div className="text-xs leading-5 text-slate-500">
-                        {entry.usesExtension
-                          ? "Requires or anticipates an extension-aware rollout."
-                          : "Runs on the shipped package model."}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-2">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getStatusClasses(
-                          entry
-                        )}`}
-                      >
-                        {getStatusLabel(entry)}
-                      </span>
-                      <div className="text-xs leading-5 text-slate-500">
-                        {entry.draft
-                          ? "Draft-only preset definition."
-                          : "Ready-made business-readable preset."}
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function LegacyCatalogTable({ entries, selectedEntryCode, onOpen }) {
-  return (
-    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <th className="px-5 py-4">Runtime code</th>
-              <th className="px-5 py-4">Scope</th>
-              <th className="px-5 py-4">Legacy reason</th>
-              <th className="px-5 py-4">Replacement</th>
-              <th className="px-5 py-4">Used By Count</th>
-              <th className="px-5 py-4">Visible In New Tenant?</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {entries.map((entry) => {
-              const isSelected = selectedEntryCode === entry.code;
-              return (
-                <tr key={entry.code} className={isSelected ? "bg-slate-950/5" : "bg-white"}>
-                  <td className="px-5 py-4 align-top">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(entry.code)}
-                      className="text-left"
-                    >
-                      <div className="text-sm font-semibold text-slate-950">
-                        {entry.runtimeCode || entry.technicalCode || entry.code}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500">{entry.displayName}</div>
-                    </button>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-2">
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                        {entry.defaultScope || "-"}
-                      </span>
-                      <div className="text-xs text-slate-500">{entry.workflowFamilyLabel}</div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top text-sm leading-6 text-slate-600">
-                    {entry.legacyReason || entry.description}
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="text-sm font-semibold text-slate-900">
-                      {entry.replacementLabel || "Review manually"}
-                    </div>
-                    <div className="mt-1 text-xs leading-5 text-slate-500">
-                      Replacement guidance only. This tab does not execute migration.
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="text-sm font-semibold text-slate-900">{entry.usedByCountLabel}</div>
-                    <div className="mt-1 text-xs leading-5 text-slate-500">{entry.usedByCountNote}</div>
-                  </td>
-                  <td className="px-5 py-4 align-top">
-                    <div className="space-y-2">
-                      <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
-                        {entry.visibleInNewTenantLabel}
-                      </span>
-                      <div className="text-xs leading-5 text-slate-500">
-                        Compatibility-only. Fresh-tenant pickers should default to No.
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+    <div className="space-y-4">
+      {entries.map((entry) => {
+        const isSelected = selectedEntryCode === entry.code;
+        const stepPreview = Array.isArray(entry.steps)
+          ? entry.steps.map((step) => `Step ${step.stepNo}: ${step.actionLabel}`)
+          : [];
+        return (
+          <CatalogCardShell
+            key={entry.code}
+            active={isSelected}
+            entry={entry}
+            icon={<Workflow className="h-5 w-5" />}
+            onOpen={() => onOpen(entry.code)}
+            title={entry.displayName}
+            description={entry.description}
+            footerNote={`Preset name: ${entry.displayName}`}
+          >
+            <div className="grid gap-3 md:grid-cols-4">
+              <CatalogMetric
+                label="Primary scope"
+                value={entry.primaryScope || "-"}
+                note="Business-readable flow anchor."
+              />
+              <CatalogMetric
+                label="Step count"
+                value={entry.stepCount}
+                note={entry.stepCount === 1 ? "Single-step preset" : "Ordered business flow"}
+              />
+              <CatalogMetric
+                label="Typical actors"
+                value={entry.typicalActorLabels.length}
+                note="Business titles only."
+              />
+              <CatalogMetric
+                label="Uses extension?"
+                value={entry.usesExtensionLabel}
+                note={
+                  entry.draft
+                    ? "Draft-only preset definition."
+                    : "Ready-made business-readable preset."
+                }
+              />
+            </div>
+            <div
+              className={`grid gap-4 rounded-2xl border px-4 py-4 ${
+                isSelected ? "border-white/20 bg-white/10" : "border-slate-200 bg-white/80"
+              } lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]`}
+            >
+              <div>
+                <div
+                  className={`text-xs font-semibold uppercase tracking-[0.18em] ${
+                    isSelected ? "text-slate-300" : "text-slate-500"
+                  }`}
+                >
+                  Typical actors
+                </div>
+                <div className="mt-3">
+                  <MetadataPillList
+                    values={getPreviewValues(entry.typicalActorLabels, 4)}
+                    emptyLabel="No typical actors are documented."
+                  />
+                </div>
+              </div>
+              <div>
+                <div
+                  className={`text-xs font-semibold uppercase tracking-[0.18em] ${
+                    isSelected ? "text-slate-300" : "text-slate-500"
+                  }`}
+                >
+                  Step preview
+                </div>
+                <div className="mt-3">
+                  <MetadataPillList
+                    values={getPreviewValues(stepPreview, 3)}
+                    emptyLabel="No ordered steps are documented."
+                  />
+                </div>
+              </div>
+            </div>
+          </CatalogCardShell>
+        );
+      })}
     </div>
   );
 }
@@ -739,10 +1235,523 @@ function MetadataPillList({ values, emptyLabel }) {
   );
 }
 
+function CatalogMetric({ label, value, note, valueTone = "text-slate-900" }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {label}
+      </div>
+      <div className={`mt-2 text-lg font-semibold ${valueTone}`}>{value}</div>
+      {note ? <div className="mt-1 text-xs leading-5 text-slate-500">{note}</div> : null}
+    </div>
+  );
+}
+
+function CatalogScopeCoverage({ entry, compact = false }) {
+  const activeScopes = getScopeCoverage(entry);
+  return (
+    <div className={`flex flex-wrap gap-2 ${compact ? "" : "mt-4"}`}>
+      {SCOPE_LEVEL_ORDER.map((scopeType) => {
+        const active = activeScopes.has(scopeType);
+        return (
+          <span
+            key={`${entry.code}-${scopeType}`}
+            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${
+              active
+                ? "border-slate-300 bg-slate-900 text-white"
+                : "border-slate-200 bg-slate-50 text-slate-300"
+            }`}
+          >
+            {formatScopeLabel(scopeType)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function CatalogFamilyFilterRail({ entries, familyFilter, onSelect }) {
+  const familyCounts = new Map();
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const familyCode = normalizeText(entry.workflowFamily).toUpperCase() || "CROSS_WORKFLOW";
+    familyCounts.set(familyCode, toCount(familyCounts.get(familyCode)) + 1);
+  });
+  const visibleFamilyCodes = WORKFLOW_FAMILY_ORDER.filter(
+    (familyCode) => toCount(familyCounts.get(familyCode)) > 0
+  );
+
+  return (
+    <aside className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+        Browse by workflow family
+      </div>
+      <div className="mt-2 text-sm leading-6 text-slate-600">
+        Domain-colored sidebar filter for the catalog. Start with one family, then open the detail
+        drawer for the exact role, package, or preset meaning.
+      </div>
+      <div className="mt-4 space-y-2">
+        <button
+          type="button"
+          onClick={() => onSelect(FILTER_ALL)}
+          className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2.5 text-left text-sm font-semibold transition ${
+            familyFilter === FILTER_ALL
+              ? "border-slate-900 bg-slate-900 text-white"
+              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+          }`}
+        >
+          <span>All workflow families</span>
+          <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">
+            {entries.length}
+          </span>
+        </button>
+        {visibleFamilyCodes.map((familyCode) => {
+          const theme = getWorkflowFamilyTheme(familyCode);
+          const active = familyFilter === familyCode;
+          return (
+            <button
+              key={familyCode}
+              type="button"
+              onClick={() => onSelect(familyCode)}
+              className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2.5 text-left text-sm font-semibold transition ${
+                active
+                  ? `${theme.chip} shadow-sm`
+                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              <span>
+                {entries.find((entry) => entry.workflowFamily === familyCode)?.workflowFamilyLabel ||
+                  familyCode}
+              </span>
+              <span className="rounded-full bg-black/5 px-2 py-0.5 text-xs">
+                {toCount(familyCounts.get(familyCode))}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+function CatalogCardShell({
+  active,
+  entry,
+  icon,
+  onOpen,
+  title,
+  description,
+  children,
+  footerNote = "",
+}) {
+  const theme = getWorkflowFamilyTheme(entry.workflowFamily);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`w-full rounded-[28px] border px-5 py-5 text-left transition ${
+        active
+          ? "border-slate-900 bg-slate-900 text-white shadow-lg shadow-slate-300/50"
+          : `${theme.panel} text-slate-900 hover:border-slate-300`
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div
+            className={`rounded-2xl border p-3 ${
+              active
+                ? "border-white/20 bg-white/10 text-white"
+                : theme.icon
+            }`}
+          >
+            {icon}
+          </div>
+          <div className="min-w-0">
+            <div
+              className={`text-xs font-semibold uppercase tracking-[0.18em] ${
+                active ? "text-slate-300" : "text-slate-500"
+              }`}
+            >
+              {entry.categoryLabel}
+            </div>
+            <div className="mt-2 text-lg font-semibold leading-tight">{title}</div>
+            <div
+              className={`mt-2 text-sm leading-6 ${
+                active ? "text-slate-200" : "text-slate-600"
+              }`}
+            >
+              {description}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span
+            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+              active ? "border-white/20 bg-white/10 text-white" : theme.chip
+            }`}
+          >
+            {entry.workflowFamilyLabel}
+          </span>
+          <span
+            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+              active ? "border-white/20 bg-white/10 text-white" : getStatusClasses(entry)
+            }`}
+          >
+            {getStatusLabel(entry)}
+          </span>
+        </div>
+      </div>
+      <CatalogScopeCoverage entry={entry} />
+      <div className="mt-4 space-y-4">{children}</div>
+      <div
+        className={`mt-4 flex items-center justify-between text-xs ${
+          active ? "text-slate-300" : "text-slate-500"
+        }`}
+      >
+        <span>{footerNote || entry.code}</span>
+        <span className="inline-flex items-center gap-1 font-semibold">
+          Open detail
+          <ChevronRight className="h-3.5 w-3.5" />
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function MatrixLegend() {
+  const items = [
+    { tone: "granted", label: "Granted" },
+    { tone: "not_granted", label: "Not granted" },
+    { tone: "companion_only", label: "Companion-only" },
+    { tone: "linked", label: "Linked" },
+  ];
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((item) => {
+        const tone = getMatrixToneConfig(item.tone);
+        return (
+          <span
+            key={item.label}
+            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${tone.badge}`}
+          >
+            {item.label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function MatrixCandidatePicker({
+  entries,
+  compareEntryCodes,
+  onReset,
+  onToggle,
+  selectedEntryCode,
+}) {
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="max-w-3xl">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Compare matrix
+          </div>
+          <h3 className="mt-2 text-xl font-semibold text-slate-950">Select up to 4 items</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Matrix comparison is for side-by-side review only. The browse cards and detail drawer
+            remain the primary path for understanding one role, package, preset, or catalog row.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+            {compareEntryCodes.length} / {ACCESS_MODEL_MATRIX_COMPARE_LIMIT} selected
+          </span>
+          <button
+            type="button"
+            onClick={onReset}
+            className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+          >
+            Reset selection
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        {entries.map((entry) => {
+          const active = compareEntryCodes.includes(entry.code);
+          const atLimit =
+            !active && compareEntryCodes.length >= ACCESS_MODEL_MATRIX_COMPARE_LIMIT;
+          return (
+            <button
+              key={entry.code}
+              type="button"
+              disabled={atLimit}
+              onClick={() => onToggle(entry.code)}
+              className={`rounded-2xl border px-4 py-4 text-left transition ${
+                active
+                  ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+                  : atLimit
+                    ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                    : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className={`text-xs font-semibold uppercase tracking-[0.18em] ${active ? "text-slate-300" : "text-slate-500"}`}>
+                    {entry.categoryLabel}
+                  </div>
+                  <div className="mt-2 text-sm font-semibold">{entry.displayName}</div>
+                </div>
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                    active
+                      ? "border-white/20 bg-white/10 text-white"
+                      : "border-slate-200 bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  {active ? "Selected" : "Compare"}
+                </span>
+              </div>
+              <div className={`mt-2 text-xs leading-5 ${active ? "text-slate-300" : "text-slate-500"}`}>
+                {entry.workflowFamilyLabel} / {entry.defaultScope || entry.primaryScope || "-"} /{" "}
+                {getStatusLabel(entry)}
+              </div>
+              {selectedEntryCode === entry.code ? (
+                <div className={`mt-3 text-xs font-semibold ${active ? "text-slate-200" : "text-sky-700"}`}>
+                  Current drawer selection
+                </div>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function WorkflowRoutingMatrixCallout({ compareEntries, currentTab }) {
+  if (
+    (currentTab !== "workflow_packages" && currentTab !== "workflow_presets") ||
+    compareEntries.length === 0
+  ) {
+    return null;
+  }
+
+  const comparedFamilies = Array.from(
+    new Set(compareEntries.map((entry) => normalizeText(entry.workflowFamily)).filter(Boolean))
+  );
+  const includesApRouting = comparedFamilies.includes("AP_DOCUMENT_POSTING");
+
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="max-w-3xl">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Workflow assignment routing visibility
+          </div>
+          <h3 className="mt-2 text-xl font-semibold text-slate-950">
+            Amount-band routing stays reachable from matrix context
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {includesApRouting
+              ? "AP amount band routing rules live in workflow governance. Use the routing matrix to review min/max amount thresholds, priority, fallback, and which assignment resolves for a given scope plus amount combination."
+              : "Detailed workflow assignment resolution still lives in workflow governance and diagnostics. Use those surfaces when this comparison raises routing questions that the catalog should not answer by itself."}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {comparedFamilies.map((familyCode) => (
+              <span
+                key={familyCode}
+                className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${getWorkflowFamilyTheme(familyCode).chip}`}
+              >
+                {compareEntries.find((entry) => entry.workflowFamily === familyCode)?.workflowFamilyLabel ||
+                  familyCode}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            to="/app/ayarlar/workflow-kurulumu"
+            className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+          >
+            Open workflow routing matrix
+          </Link>
+          <Link
+            to="/app/ayarlar/rbac/access-debugger"
+            className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+          >
+            Open access debugger
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AccessModelComparisonMatrix({ compareEntries, currentTab, onOpenDetail }) {
+  const comparisonGroups = buildComparisonGroups(compareEntries, currentTab);
+
+  if (compareEntries.length === 0) {
+    return (
+      <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
+        No comparison rows are available for the current filters.
+      </div>
+    );
+  }
+
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="max-w-3xl">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Matrix comparison
+          </div>
+          <h3 className="mt-2 text-xl font-semibold text-slate-950">
+            Side-by-side comparison without replacing browse mode
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Compare cross-role or cross-package differences here, then open the detail drawer for
+            the full explanation of one selected item.
+          </p>
+        </div>
+        <MatrixLegend />
+      </div>
+
+      <div className="mt-5 overflow-x-auto">
+        <table className="min-w-[980px] w-full border-separate border-spacing-y-3">
+          <thead>
+            <tr>
+              <th className="w-[260px] px-3 pb-2 text-left align-bottom text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Signal
+              </th>
+              {compareEntries.map((entry) => (
+                <th key={`header-${entry.code}`} className="px-3 pb-2 align-bottom">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          {entry.categoryLabel}
+                        </div>
+                        <div className="mt-2 text-sm font-semibold text-slate-950">
+                          {entry.displayName}
+                        </div>
+                        <div className="mt-1 text-xs leading-5 text-slate-500">
+                          {entry.workflowFamilyLabel} / {entry.defaultScope || entry.primaryScope || "-"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onOpenDetail(entry.code)}
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                      >
+                        Open detail
+                      </button>
+                    </div>
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {comparisonGroups.map((group) => (
+              <Fragment key={group.key}>
+                <tr>
+                  <td colSpan={compareEntries.length + 1} className="px-3 pt-2">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        {group.title}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-600">{group.description}</div>
+                    </div>
+                  </td>
+                </tr>
+                {group.rows.map((row) => (
+                  <tr key={`${group.key}-${row.key}`}>
+                    <th className="px-3 align-top">
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left">
+                        <div className="text-sm font-semibold text-slate-900">{row.label}</div>
+                        <div className="mt-1 text-xs leading-5 text-slate-500">{row.hint}</div>
+                      </div>
+                    </th>
+                    {row.cells.map((cell, index) => {
+                      const tone = getMatrixToneConfig(cell.tone);
+                      return (
+                        <td key={`${group.key}-${row.key}-${compareEntries[index]?.code || index}`} className="px-3 align-top">
+                          <div className={`rounded-2xl border px-4 py-4 ${tone.panel}`}>
+                            <span
+                              className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${tone.badge}`}
+                            >
+                              {cell.label}
+                            </span>
+                            {cell.hint ? (
+                              <div className="mt-2 text-xs leading-5 text-slate-600">{cell.hint}</div>
+                            ) : null}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function PermissionModuleGroupList({ permissionCodes, emptyLabel }) {
+  const groups = buildPermissionModuleGroups(permissionCodes);
+  if (groups.length === 0) {
+    return <div className="text-sm text-slate-500">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {groups.map((group) => (
+        <div
+          key={group.moduleKey}
+          className="overflow-hidden rounded-2xl border border-slate-200 bg-white"
+        >
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              {group.moduleLabel}
+            </div>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {group.permissions.map((permission) => (
+              <div
+                key={permission.code}
+                className="flex items-start justify-between gap-3 px-4 py-3"
+              >
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">{permission.code}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">
+                    {permission.actionLabel} access for {group.moduleLabel}.
+                  </div>
+                </div>
+                {permission.requiresRead ? (
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                    Requires READ
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AccessModelDetailDrawer({ entry, open, onClose }) {
   if (!open || !entry) {
     return null;
   }
+
+  const theme = getWorkflowFamilyTheme(entry.workflowFamily);
 
   return (
     <div className="fixed inset-0 z-40">
@@ -771,14 +1780,14 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
             </button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
+            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${theme.chip}`}>
+              {entry.workflowFamilyLabel}
+            </span>
             <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
               {entry.modelTypeLabel}
             </span>
             <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
               {entry.categoryLabel}
-            </span>
-            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-              {entry.workflowFamilyLabel}
             </span>
             <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${getStatusClasses(entry)}`}>
               {getStatusLabel(entry)}
@@ -814,6 +1823,16 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
                 <div className="mt-2 text-sm font-semibold text-slate-900">{entry.replacementLabel}</div>
               </div>
             ) : null}
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-white p-5">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Scope coverage
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-600">
+              Scope level pills show where this business role, package, or preset is expected to operate.
+            </div>
+            <CatalogScopeCoverage entry={entry} />
           </section>
 
           {Array.isArray(entry.starterPackageLabels) ? (
@@ -879,12 +1898,12 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
           {entry.modelType === "workflow_package" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-5">
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Current runtime mapping
+                Current runtime sources
               </div>
               <div className="mt-2 text-sm font-semibold text-slate-900">{entry.runtimeMappingLabel}</div>
               <div className="mt-5">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Existing helper bundle mapping
+                  Helper bundle sources
                 </div>
                 <div className="mt-3">
                   <MetadataPillList
@@ -895,15 +1914,60 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
               </div>
               <div className="mt-5">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Existing runtime role mapping
+                  Runtime role sources
                 </div>
                 <div className="mt-3">
                   <MetadataPillList
                     values={entry.runtimeRoleLabels}
-                    emptyLabel="No current runtime role matches this package cleanly yet."
+                    emptyLabel="No runtime role source is documented for this package yet."
                   />
                 </div>
               </div>
+            </section>
+          ) : null}
+
+          {Array.isArray(entry.allowedScopes) ? (
+            <section className="rounded-3xl border border-slate-200 bg-white p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Allowed scopes
+              </div>
+              <div className="mt-4">
+                <MetadataPillList
+                  values={entry.allowedScopes}
+                  emptyLabel="No allowed scopes are defined for this package."
+                />
+              </div>
+              <div className="mt-5">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Permissions grouped by module
+                </div>
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  Module groups keep package meaning readable before anyone drops into the current
+                  role editor.
+                </div>
+                <div className="mt-4">
+                  <PermissionModuleGroupList
+                    permissionCodes={entry.permissionCodes}
+                    emptyLabel="This package is a planned extension and does not ship permission codes yet."
+                  />
+                </div>
+              </div>
+              <div className="mt-5">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Used in presets
+                </div>
+                <div className="mt-3">
+                  <MetadataPillList
+                    values={entry.usedInPresetLabels}
+                    emptyLabel="This package is not used by any shipped preset yet."
+                  />
+                </div>
+              </div>
+              {entry.extensionNote ? (
+                <div className="mt-5 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">
+                  {entry.extensionNote}
+                </div>
+              ) : null}
             </section>
           ) : null}
 
@@ -927,68 +1991,6 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
                   disableWhereUsed
                   onOpen={() => undefined}
                 />
-              </div>
-            </section>
-          ) : null}
-
-          {entry.legacy && entry.legacyReason ? (
-            <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
-                Compatibility status
-              </div>
-              <div className="mt-2 text-sm leading-6 text-amber-950">{entry.legacyReason}</div>
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
-                    Used By Count
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-amber-950">
-                    {entry.usedByCountLabel || "Pending"}
-                  </div>
-                  <div className="mt-1 text-xs leading-5 text-amber-900">
-                    {entry.usedByCountNote ||
-                      "Used By Count reflects live tenant role assignments when available."}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
-                    Visible In New Tenant?
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-amber-950">
-                    {entry.visibleInNewTenantLabel || "No"}
-                  </div>
-                  <div className="mt-1 text-xs leading-5 text-amber-900">
-                    Fresh-tenant admin pickers should stay on the cleaned business labels and
-                    package model.
-                  </div>
-                </div>
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <Link
-                  to="/app/ayarlar/rbac/role-migrations"
-                  className="rounded-2xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-950"
-                >
-                  Open migration workspace
-                </Link>
-                <Link
-                  to="/app/ayarlar/rbac/roles-permissions"
-                  className="rounded-2xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-950"
-                >
-                  Open current role editor
-                </Link>
-              </div>
-            </section>
-          ) : null}
-
-          {entry.modelType === "workflow_package" && Array.isArray(entry.legacyWarnings) && entry.legacyWarnings.length > 0 ? (
-            <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
-                Legacy warnings
-              </div>
-              <div className="mt-4 space-y-3 text-sm leading-6 text-amber-950">
-                {entry.legacyWarnings.map((warning) => (
-                  <div key={`${entry.code}-${warning}`}>{warning}</div>
-                ))}
               </div>
             </section>
           ) : null}
@@ -1043,47 +2045,6 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
             </section>
           ) : null}
 
-          {Array.isArray(entry.allowedScopes) ? (
-            <section className="rounded-3xl border border-slate-200 bg-white p-5">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Allowed scopes
-              </div>
-              <div className="mt-4">
-                <MetadataPillList
-                  values={entry.allowedScopes}
-                  emptyLabel="No allowed scopes are defined for this package."
-                />
-              </div>
-              <div className="mt-5">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Exact permission codes
-                </div>
-                <div className="mt-3">
-                  <MetadataPillList
-                    values={entry.permissionCodes}
-                    emptyLabel="This package is a planned extension and does not ship permission codes yet."
-                  />
-                </div>
-              </div>
-              <div className="mt-5">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Used in presets
-                </div>
-                <div className="mt-3">
-                  <MetadataPillList
-                    values={entry.usedInPresetLabels}
-                    emptyLabel="This package is not used by any shipped preset yet."
-                  />
-                </div>
-              </div>
-              {entry.extensionNote ? (
-                <div className="mt-5 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">
-                  {entry.extensionNote}
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-
           {Array.isArray(entry.steps) ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-5">
               <div className="flex items-center justify-between gap-3">
@@ -1096,7 +2057,7 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
                 {entry.steps.map((step) => (
                   <div
                     key={`${entry.code}-${step.stepNo}`}
-                    className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                    className={`rounded-2xl border px-4 py-4 ${theme.softPanel}`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="text-sm font-semibold text-slate-950">
@@ -1183,62 +2144,29 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
 }
 
 /**
- * Builds the first access-model shell so admins can browse business roles,
- * packages, presets, and legacy items from one tabbed catalog surface.
+ * Builds the access-model shell so admins can browse business roles,
+ * workflow packages, and workflow presets from one tabbed catalog surface.
  */
 export default function AccessModelCatalogPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { hasPermission, securityAdminUiState, securityAdminUiStateLoaded } = useAuth();
-  const [legacyAssignmentCountsByRoleCode, setLegacyAssignmentCountsByRoleCode] = useState({});
-  const [legacyAssignmentCountsLoaded, setLegacyAssignmentCountsLoaded] = useState(false);
-  const [legacyAssignmentCountsError, setLegacyAssignmentCountsError] = useState("");
   const sections = listAccessModelCatalogSections();
+  const currentView = ACCESS_MODEL_VIEW_ORDER.includes(searchParams.get("view"))
+    ? searchParams.get("view")
+    : ACCESS_MODEL_VIEW_ORDER[0];
+  const isMatrixView = currentView === "matrix";
   const currentTab = ACCESS_MODEL_TAB_ORDER.includes(searchParams.get("tab"))
     ? searchParams.get("tab")
     : ACCESS_MODEL_TAB_ORDER[0];
   const isBusinessRolesTab = currentTab === "business_roles";
   const isWorkflowPackagesTab = currentTab === "workflow_packages";
   const isWorkflowPresetsTab = currentTab === "workflow_presets";
-  const isLegacyCatalogTab = currentTab === "legacy_catalog";
-  const canReadRoleAssignments = hasPermission("security.role_assignment.read");
-  const isFreshTenantSimplified =
-    securityAdminUiStateLoaded &&
-    Boolean(securityAdminUiState?.roleMigrations?.simplifiedFreshTenantView);
   const currentSection =
     sections.find((section) => section.key === currentTab) || sections[0] || null;
   const searchValue = normalizeText(searchParams.get("q"));
   const scopeFilter = normalizeText(searchParams.get("scope")).toUpperCase() || FILTER_ALL;
-  const familyFilter = normalizeText(searchParams.get("family")) || FILTER_ALL;
+  const familyFilter = normalizeText(searchParams.get("family")).toUpperCase() || FILTER_ALL;
   const selectedEntryCode = normalizeText(searchParams.get("item"));
-  const effectiveLegacyAssignmentCountsByRoleCode =
-    canReadRoleAssignments && !isFreshTenantSimplified
-      ? legacyAssignmentCountsByRoleCode
-      : {};
-  const effectiveLegacyAssignmentCountsLoaded = isFreshTenantSimplified
-    ? true
-    : canReadRoleAssignments
-      ? legacyAssignmentCountsLoaded
-      : false;
-  const effectiveLegacyAssignmentCountsError =
-    canReadRoleAssignments && !isFreshTenantSimplified ? legacyAssignmentCountsError : "";
-  const effectiveLegacyAssignmentCountsLoading =
-    isLegacyCatalogTab &&
-    canReadRoleAssignments &&
-    !isFreshTenantSimplified &&
-    !legacyAssignmentCountsLoaded &&
-    !legacyAssignmentCountsError;
-  const currentEntries = (currentSection?.entries || []).map((entry) =>
-    isLegacyCatalogTab
-      ? buildLegacyCatalogViewEntry(entry, {
-        canReadRoleAssignments,
-        assignmentCountsByRoleCode: effectiveLegacyAssignmentCountsByRoleCode,
-        assignmentCountsLoaded: effectiveLegacyAssignmentCountsLoaded,
-        assignmentCountsLoading: effectiveLegacyAssignmentCountsLoading,
-        assignmentCountsError: effectiveLegacyAssignmentCountsError,
-      })
-      : entry
-  );
-  const familyOptions = buildFilterOptions(currentEntries, (entry) => [entry.workflowFamily]);
+  const currentEntries = currentSection?.entries || [];
   const scopeOptions = buildFilterOptions(currentEntries, (entry) => getEntryScopes(entry));
   const filteredEntries = currentEntries.filter((entry) => {
     const matchesSearch =
@@ -1249,6 +2177,15 @@ export default function AccessModelCatalogPage() {
       scopeFilter === FILTER_ALL || getEntryScopes(entry).includes(scopeFilter);
     return matchesSearch && matchesFamily && matchesScope;
   });
+  const defaultCompareEntryCodes = buildDefaultCompareCodes(filteredEntries, selectedEntryCode);
+  const rawCompareEntryCodes = parseMatrixCompareCodes(searchParams.get("compare"), filteredEntries);
+  const compareEntryCodes =
+    rawCompareEntryCodes.length > 0 ? rawCompareEntryCodes : defaultCompareEntryCodes;
+  const compareEntries = compareEntryCodes
+    .map((entryCode) =>
+      filteredEntries.find((entry) => normalizeText(entry.code) === entryCode) || null
+    )
+    .filter(Boolean);
   const selectedEntry =
     currentEntries.find((entry) => normalizeText(entry.code) === selectedEntryCode) || null;
   const currentActionLink =
@@ -1257,76 +2194,23 @@ export default function AccessModelCatalogPage() {
         to: "/app/ayarlar/workflow-kurulumu",
         label: "Open workflow governance",
       }
-      : currentTab === "legacy_catalog"
-        ? {
-          to: "/app/ayarlar/rbac/role-migrations",
-          label: "Open migration workspace",
-        }
-        : {
-          to: "/app/ayarlar/rbac/roles-permissions",
-          label: "Open current role editor",
-        };
+      : {
+        to: "/app/ayarlar/rbac/roles-permissions",
+        label: "Open current role editor",
+      };
 
-  useEffect(() => {
-    if (!isLegacyCatalogTab || !canReadRoleAssignments || isFreshTenantSimplified) {
-      return undefined;
-    }
-
-    let cancelled = false;
-
-    // UI-1E keeps Used By Count tied to live role assignments so the legacy
-    // catalog stays read-only and does not depend on a migration preview run.
-    listRoleAssignments()
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        setLegacyAssignmentCountsByRoleCode(
-          buildLegacyRoleAssignmentCounts(response?.rows || [])
-        );
-        setLegacyAssignmentCountsLoaded(true);
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setLegacyAssignmentCountsByRoleCode({});
-        setLegacyAssignmentCountsLoaded(false);
-        setLegacyAssignmentCountsError(
-          error?.response?.data?.message ||
-          "Legacy role assignment counts could not be loaded."
-        );
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [canReadRoleAssignments, isFreshTenantSimplified, isLegacyCatalogTab]);
-
-  const activeCount = currentEntries.filter((entry) => !entry.legacy && !entry.hiddenFromPicker).length;
+  const activeCount = currentEntries.filter((entry) => !entry.hiddenFromPicker).length;
   const hiddenCount = currentEntries.filter((entry) => entry.hiddenFromPicker).length;
   const extensionCount = currentEntries.filter((entry) => entry.plannedExtension).length;
   const draftCount = currentEntries.filter((entry) => entry.draft).length;
-  const legacyHiddenCount = currentEntries.filter((entry) => entry.visibleInNewTenant === false).length;
-  const legacyAssignedCount = currentEntries.filter((entry) => toCount(entry.usedByCount) > 0).length;
-  const legacyMixLabel =
-    canReadRoleAssignments && (effectiveLegacyAssignmentCountsLoaded || isFreshTenantSimplified)
-      ? `${legacyHiddenCount} hidden / ${legacyAssignedCount} assigned`
-      : `${legacyHiddenCount} hidden / live counts pending`;
-  const legacyMixDescription = !canReadRoleAssignments
-    ? "Used By Count requires role-assignment read permission."
-    : effectiveLegacyAssignmentCountsError
-      ? "Live compatibility counts are temporarily unavailable from the role-assignment API."
-      : isFreshTenantSimplified
-        ? "This tenant currently has no live compatibility assignments."
-        : "Used By Count reflects current live role assignments, not preset suggestions.";
 
   return (
     <SecurityAdminWorkspaceShell
+      workspaceSectionKey="catalog"
       sectionKey="access-model"
       eyebrow="Security / Access Model"
       title="Access Model"
-      description="Browse the separated catalog for business roles, workflow packages, workflow presets, and legacy runtime items. This shell keeps fresh-tenant admin browsing away from compatibility roles while the deeper editors land in the next slices."
+      description="Browse the separated catalog for business roles, workflow packages, and workflow presets. This shell keeps the fresh-tenant security model focused on steady-state assignment paths."
       actions={[
         {
           to: currentActionLink.to,
@@ -1347,21 +2231,19 @@ export default function AccessModelCatalogPage() {
             ? `${activeCount} active / ${hiddenCount} hidden`
             : isWorkflowPackagesTab
               ? `${activeCount - extensionCount} active / ${extensionCount} extension`
-              : isWorkflowPresetsTab
-                ? `${activeCount - draftCount} active / ${draftCount} draft`
-                : legacyMixLabel,
+              : `${activeCount - draftCount} active / ${draftCount} draft`,
           description: isBusinessRolesTab
             ? "Business roles stay human-friendly and separate from authority packages."
             : isWorkflowPackagesTab
               ? "Runtime mappings show how clean packages sit on top of current seeded roles."
-              : isWorkflowPresetsTab
-                ? "Presets stay readable as business flows before any tenant-specific workflow customization."
-                : legacyMixDescription,
+              : "Presets stay readable as business flows before any tenant-specific workflow customization.",
         },
         {
-          title: "Detail drawer",
-          value: selectedEntry?.displayName || "No item selected",
-          description: "The right-side drawer follows the current catalog row selection.",
+          title: isMatrixView ? "Matrix compare" : "Detail drawer",
+          value: isMatrixView ? `${compareEntries.length} selected` : selectedEntry?.displayName || "No item selected",
+          description: isMatrixView
+            ? "Matrix stays secondary to the browse cards and detail drawer."
+            : "The right-side drawer follows the current catalog row selection.",
         },
       ]}
       toolbar={
@@ -1384,6 +2266,9 @@ export default function AccessModelCatalogPage() {
                         updateSearchParams(searchParams, {
                           tab: section.key,
                           item: "",
+                          compare: isMatrixView
+                            ? joinMatrixCompareCodes(buildDefaultCompareCodes(section.entries))
+                            : "",
                         })
                       )
                     }
@@ -1414,6 +2299,39 @@ export default function AccessModelCatalogPage() {
               </Link>
             </div>
 
+            <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)]">
+              <AccessModelViewButton
+                active={!isMatrixView}
+                label="Browse mode"
+                note="Cards and the drawer stay primary for understanding one item."
+                onClick={() =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      view: "",
+                      compare: "",
+                    })
+                  )
+                }
+              />
+              <AccessModelViewButton
+                active={isMatrixView}
+                label="Compare matrix"
+                note="Side-by-side comparison for roles, packages, or presets."
+                onClick={() =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      view: "matrix",
+                      compare: joinMatrixCompareCodes(
+                        compareEntryCodes.length > 0
+                          ? compareEntryCodes
+                          : buildDefaultCompareCodes(filteredEntries, selectedEntryCode)
+                      ),
+                    })
+                  )
+                }
+              />
+            </div>
+
             <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_220px_220px]">
               <input
                 value={searchValue}
@@ -1425,28 +2343,8 @@ export default function AccessModelCatalogPage() {
                   )
                 }
                 placeholder={getSearchPlaceholder(currentTab)}
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900"
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 lg:col-span-2"
               />
-              <select
-                value={familyFilter}
-                onChange={(event) =>
-                  setSearchParams(
-                    updateSearchParams(searchParams, {
-                      family: event.target.value,
-                    })
-                  )
-                }
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900"
-              >
-                {familyOptions.map((familyCode) => (
-                  <option key={familyCode} value={familyCode}>
-                    {familyCode === FILTER_ALL
-                      ? "All workflow families"
-                      : currentEntries.find((entry) => entry.workflowFamily === familyCode)
-                        ?.workflowFamilyLabel || familyCode}
-                  </option>
-                ))}
-              </select>
               <select
                 value={scopeFilter}
                 onChange={(event) =>
@@ -1511,7 +2409,7 @@ export default function AccessModelCatalogPage() {
                   <p className="mt-2 text-sm leading-6 text-slate-600">
                     Workflow steps bind to packages, not to job titles. This tab shows the clean
                     package model, the scopes each package can run at, and how that model maps back
-                    to today&apos;s seeded runtime roles and helper bundles.
+                    to current runtime roles and helper bundles.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-3">
@@ -1566,113 +2464,102 @@ export default function AccessModelCatalogPage() {
             </section>
           ) : null}
 
-          {isLegacyCatalogTab ? (
-            <section className="rounded-[28px] border border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,0.96),rgba(255,255,255,0.98))] px-5 py-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="max-w-3xl">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
-                    Legacy catalog guidance
-                  </div>
-                  <h3 className="mt-2 text-xl font-semibold text-slate-950">
-                    Compatibility stays visible but out of fresh-tenant pickers
-                  </h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    This tab keeps retired runtime roles and retired admin labels visible for
-                    power-admin review while the normal tenant UX stays on the cleaned business
-                    labels and package model.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Link
-                    to="/app/ayarlar/rbac/role-migrations"
-                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                  >
-                    Open migration workspace
-                  </Link>
-                  <Link
-                    to="/app/ayarlar/rbac/roles-permissions"
-                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                  >
-                    Open current role editor
-                  </Link>
-                </div>
-              </div>
-              <div className="mt-5 rounded-2xl border border-amber-200 bg-white/80 px-4 py-3 text-sm text-slate-700">
-                {legacyMixDescription}
-              </div>
-            </section>
-      ) : null}
-
-      <section className="space-y-4">
-        {filteredEntries.length === 0 ? (
-          <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
-            No catalog rows match the current filters.
-          </div>
-        ) : isBusinessRolesTab ? (
-          <BusinessRoleCatalogTable
-            entries={filteredEntries}
-            selectedEntryCode={selectedEntryCode}
-            onOpen={(entryCode) =>
-              setSearchParams(
-                updateSearchParams(searchParams, {
-                  item: entryCode,
-                })
-              )
-            }
-          />
-        ) : isWorkflowPackagesTab ? (
-          <WorkflowPackageCatalogTable
-            entries={filteredEntries}
-            selectedEntryCode={selectedEntryCode}
-            onOpen={(entryCode) =>
-              setSearchParams(
-                updateSearchParams(searchParams, {
-                  item: entryCode,
-                })
-              )
-            }
-          />
-        ) : isWorkflowPresetsTab ? (
-          <WorkflowPresetCatalogTable
-            entries={filteredEntries}
-            selectedEntryCode={selectedEntryCode}
-            onOpen={(entryCode) =>
-              setSearchParams(
-                updateSearchParams(searchParams, {
-                  item: entryCode,
-                })
-              )
-            }
-          />
-        ) : isLegacyCatalogTab ? (
-          <LegacyCatalogTable
-            entries={filteredEntries}
-            selectedEntryCode={selectedEntryCode}
-            onOpen={(entryCode) =>
-              setSearchParams(
-                updateSearchParams(searchParams, {
-                  item: entryCode,
-                })
-              )
-            }
-          />
-        ) : (
-          filteredEntries.map((entry) => (
-            <AccessModelEntryCard
-              key={`${currentTab}-${entry.code}`}
-              active={selectedEntryCode === entry.code}
-              entry={entry}
-              highlights={getEntryHighlights(currentTab, entry)}
-              onOpen={() =>
+      <section className="grid gap-5 xl:grid-cols-[260px_minmax(0,1fr)]">
+        <CatalogFamilyFilterRail
+          entries={currentEntries}
+          familyFilter={familyFilter}
+          onSelect={(familyCode) =>
+            setSearchParams(
+              updateSearchParams(searchParams, {
+                family: familyCode,
+              })
+            )
+          }
+        />
+        <div className="space-y-4">
+          {filteredEntries.length === 0 ? (
+            <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
+              No catalog rows match the current filters.
+            </div>
+          ) : isMatrixView ? (
+            <>
+              <MatrixCandidatePicker
+                entries={filteredEntries}
+                compareEntryCodes={compareEntryCodes}
+                selectedEntryCode={selectedEntryCode}
+                onReset={() =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      compare: joinMatrixCompareCodes(
+                        buildDefaultCompareCodes(filteredEntries, selectedEntryCode)
+                      ),
+                    })
+                  )
+                }
+                onToggle={(entryCode) =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      compare: joinMatrixCompareCodes(
+                        buildNextMatrixCompareCodes(compareEntryCodes, entryCode)
+                      ),
+                    })
+                  )
+                }
+              />
+              <WorkflowRoutingMatrixCallout
+                compareEntries={compareEntries}
+                currentTab={currentTab}
+              />
+              <AccessModelComparisonMatrix
+                compareEntries={compareEntries}
+                currentTab={currentTab}
+                onOpenDetail={(entryCode) =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      item: entryCode,
+                    })
+                  )
+                }
+              />
+            </>
+          ) : isBusinessRolesTab ? (
+            <BusinessRoleCatalogTable
+              entries={filteredEntries}
+              selectedEntryCode={selectedEntryCode}
+              onOpen={(entryCode) =>
                 setSearchParams(
                   updateSearchParams(searchParams, {
-                    item: entry.code,
+                    item: entryCode,
                   })
                 )
               }
             />
-          ))
-        )}
+          ) : isWorkflowPackagesTab ? (
+            <WorkflowPackageCatalogTable
+              entries={filteredEntries}
+              selectedEntryCode={selectedEntryCode}
+              onOpen={(entryCode) =>
+                setSearchParams(
+                  updateSearchParams(searchParams, {
+                    item: entryCode,
+                  })
+                )
+              }
+            />
+          ) : isWorkflowPresetsTab ? (
+            <WorkflowPresetCatalogTable
+              entries={filteredEntries}
+              selectedEntryCode={selectedEntryCode}
+              onOpen={(entryCode) =>
+                setSearchParams(
+                  updateSearchParams(searchParams, {
+                    item: entryCode,
+                  })
+                )
+              }
+            />
+          ) : null}
+        </div>
       </section>
 
       <AccessModelDetailDrawer

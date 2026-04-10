@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 import {
   approveApprovalRequest,
   createApprovalPolicy,
@@ -171,27 +172,8 @@ async function createUser({ tenantId, email, name, passwordHash }) {
   return userId;
 }
 
-async function assignTenantAdminRole({ tenantId, userId }) {
-  const roleRows = await query(
-    `SELECT id
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'TenantAdmin'
-     LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = toNumber(roleRows.rows?.[0]?.id);
-  assert(roleId > 0, "TenantAdmin role not found for tenant");
-
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id, user_id, role_id, scope_type, scope_id, effect
-      )
-      VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
-      ON DUPLICATE KEY UPDATE
-        effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
+async function assignFullAccessRole({ tenantId, userId }) {
+  await assignTestFullAccessRoleToUser(tenantId, userId);
 }
 
 function buildProviderPayload({
@@ -364,9 +346,9 @@ async function main() {
     passwordHash,
   });
 
-  await assignTenantAdminRole({ tenantId: fixture.tenantId, userId: requesterUserId });
-  await assignTenantAdminRole({ tenantId: fixture.tenantId, userId: approver1UserId });
-  await assignTenantAdminRole({ tenantId: fixture.tenantId, userId: approver2UserId });
+  await assignFullAccessRole({ tenantId: fixture.tenantId, userId: requesterUserId });
+  await assignFullAccessRole({ tenantId: fixture.tenantId, userId: approver1UserId });
+  await assignFullAccessRole({ tenantId: fixture.tenantId, userId: approver2UserId });
 
   const providerFixture = await setupProviderConnectionAndRefs({
     tenantId: fixture.tenantId,

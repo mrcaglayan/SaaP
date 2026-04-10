@@ -154,7 +154,6 @@ import migration164CounterpartyRequestUnifiedApprovalBridge from "./m164_counter
 import migration165BankApprovalGenericBridge from "./m165_bank_approval_generic_bridge.js";
 import migration166WorkflowGenericBridge from "./m166_workflow_generic_bridge.js";
 import migration167RemainingAdHocApprovalBridges from "./m167_remaining_ad_hoc_approval_bridges.js";
-import migration168RoleMigrationTool from "./m168_role_migration_tool.js";
 import migration169FieldVisibilityPolicies from "./m169_field_visibility_policies.js";
 import migration170ApprovalEscalationEngine from "./m170_approval_escalation_engine.js";
 import migration171ApprovalDelegations from "./m171_approval_delegations.js";
@@ -323,7 +322,6 @@ const migrations = [
   migration165BankApprovalGenericBridge,
   migration166WorkflowGenericBridge,
   migration167RemainingAdHocApprovalBridges,
-  migration168RoleMigrationTool,
   migration169FieldVisibilityPolicies,
   migration170ApprovalEscalationEngine,
   migration171ApprovalDelegations,

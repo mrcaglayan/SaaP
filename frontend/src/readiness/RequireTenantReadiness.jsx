@@ -31,7 +31,10 @@ function isTenantSetupAllowedPath(pathname) {
 
 function isSecurityAdminAllowedPath(pathname) {
   const normalizedPath = String(pathname || "").trim();
-  return normalizedPath.startsWith("/app/ayarlar/rbac/");
+  return (
+    normalizedPath.startsWith("/app/ayarlar/rbac/") ||
+    normalizedPath.startsWith("/app/ayarlar/security-admin")
+  );
 }
 
 /**

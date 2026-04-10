@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closePool, query } from "../src/db.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 import { readCariDocumentsFeatureSource } from "./_cariDocumentsFeatureSource.js";
 import { resolveOrPrepareSmokeContext } from "./_smoke-context.js";
 import {
@@ -195,19 +196,9 @@ async function resolveLegalEntityCoaId(tenantId, legalEntityId, state) {
     return createdId;
   }
 
-async function resolveTenantAdminRoleId(tenantId) {
-    const result = await query(
-      `SELECT id
-       FROM roles
-      WHERE tenant_id = ?
-        AND code = 'TenantAdmin'
-      LIMIT 1`,
-      [tenantId]
-    );
-    const roleId = toPositiveInt(result.rows?.[0]?.id);
-    assert(roleId, `TenantAdmin role not found for tenant ${tenantId}`);
-    return roleId;
-  }
+async function assignFullAccessRoleToUser(tenantId, userId) {
+  await assignTestFullAccessRoleToUser(tenantId, userId);
+}
 
 async function createSmokeUser({ tenantId, stamp, state }) {
     const insert = await query(
@@ -228,19 +219,7 @@ async function createSmokeUser({ tenantId, stamp, state }) {
     const userId = toPositiveInt(insert.rows?.insertId);
     assert(userId, "Failed to create SL24 smoke user");
     state.createdUserIds.push(userId);
-
-    const roleId = await resolveTenantAdminRoleId(tenantId);
-    await query(
-      `INSERT INTO user_role_scopes (
-        tenant_id,
-        user_id,
-        role_id,
-        scope_type,
-        scope_id,
-        effect
-      ) VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')`,
-      [tenantId, userId, roleId, tenantId]
-    );
+    await assignFullAccessRoleToUser(tenantId, userId);
     state.createdUserRoleScopeUserIds.push(userId);
     return userId;
   }

@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   getOperationalCoverageWorkspace,
   listApprovalDelegations,
@@ -12,6 +12,7 @@ import {
   createRoleAssignment,
   createSecurityInvite,
   deleteRoleAssignment,
+  generateComplianceAuditReport,
   listAuditLogs,
   listCountries,
   listGroupCompanies,
@@ -51,11 +52,15 @@ import {
   listWorkflowPackageCatalogEntries,
   resolveWorkflowPackagesForRuntimeRoles,
 } from "./roleCatalog.js";
+import SecurityUsersWorkbenchTabs from "./components/users/SecurityUsersWorkbenchTabs.jsx";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 const EFFECT_OPTIONS = ["ALLOW", "DENY"];
 const USER_STATUS_FILTERS = ["ALL", "ACTIVE", "INVITED", "DISABLED"];
 const ASSIGNMENT_STATUS_FILTERS = ["ALL", "ACTIVE", "UPCOMING", "EXPIRED", "CUSTOM"];
+const USER_ASSIGNMENT_CANONICAL_TABS = ["people", "assignments", "authority"];
+const DELEGATION_TAB_ORDER = ["coverage", "approval"];
+const SOD_PREVIEW_LIMIT = 3;
 const ACCESS_MATRIX_ACTIONS = [
   { key: "view", label: "View", shortLabel: "V" },
   { key: "create", label: "Create", shortLabel: "C" },
@@ -197,6 +202,19 @@ const ACCESS_MATRIX_GROUPS = Object.freeze([
 function normalizeText(value) {
   return String(value || "").trim();
 }
+
+function updateSearchParams(searchParams, changes) {
+  const nextParams = new URLSearchParams(searchParams);
+  Object.entries(changes).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") {
+      nextParams.delete(key);
+      return;
+    }
+    nextParams.set(key, String(value));
+  });
+  return nextParams;
+}
+
 function getErrorMessage(error, fallback) {
   return (
     error?.response?.data?.message ||
@@ -223,6 +241,9 @@ function formatDateTime(value) {
     return String(value);
   }
   return parsed.toLocaleString();
+}
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
 }
 function hasExactPermissionCodes(currentCodes, expectedCodes) {
   const current = Array.from(
@@ -295,6 +316,30 @@ function getCoverageReviewMeta(reviewStatus) {
     return { label: "Returned", tone: "slate" };
   }
   return { label: normalized || "Not set", tone: "slate" };
+}
+
+function resolveCoverageTemporalState(row) {
+  const normalizedState = normalizeText(row?.state).toUpperCase();
+  if (normalizedState === "REVOKED") {
+    return "REVOKED";
+  }
+  if (normalizedState === "EXPIRED") {
+    return "EXPIRED";
+  }
+  if (normalizedState === "ACTIVE") {
+    return "ACTIVE";
+  }
+
+  const now = Date.now();
+  const startTimestamp = row?.startDate ? new Date(row.startDate).getTime() : Number.NaN;
+  if (!Number.isNaN(startTimestamp) && startTimestamp > now) {
+    return "UPCOMING";
+  }
+  const endTimestamp = row?.endDate ? new Date(row.endDate).getTime() : Number.NaN;
+  if (!Number.isNaN(endTimestamp) && endTimestamp < now) {
+    return "EXPIRED";
+  }
+  return "ACTIVE";
 }
 function buildScopeOptions(scopeType, lookups, tenantScopeId) {
   const normalizedScopeType = normalizeText(scopeType).toUpperCase();
@@ -701,8 +746,6 @@ function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) 
       const packageEntries = resolveWorkflowPackagesForRuntimeRoles(roleCodes);
       const presetMatch = findPresetMatch(roleCodes);
       const status = resolveAssignmentLifecycle(rows);
-      const hasLegacyRole = roleEntries.some((entry) => entry.legacy);
-      const hasComposableRole = roleEntries.some((entry) => !entry.legacy);
       return {
         id: key,
         assignmentIds: rows.map((row) => Number(row.id)).filter(Boolean),
@@ -730,9 +773,6 @@ function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) 
         isPresetBundle: Boolean(presetMatch),
         sourceType: presetMatch ? "PRESET_DERIVED" : "DIRECT",
         sourceTypeLabel: presetMatch ? "Preset-derived" : "Direct / custom",
-        hasLegacyRole,
-        hasComposableRole,
-        roleMixLabel: hasLegacyRole ? "Legacy present" : "Composable only",
         scopeKey: `${normalizeText(first.scope_type).toUpperCase()}:${Number(first.scope_id || 0)}`,
         rows,
       };
@@ -883,10 +923,6 @@ function buildUserDirectoryRows(
       currentPackageCodes: packageCodes,
       currentPackageLabels: packageLabels,
       scopeKeys: scopes,
-      hasLegacyAssignments: userBundles.some((bundle) => bundle.hasLegacyRole),
-      hasComposableAssignments:
-        userBundles.some((bundle) => bundle.hasComposableRole) ||
-        userPackageAssignments.length > 0,
     };
   });
 }
@@ -1039,6 +1075,600 @@ function StatusPill({ label, tone = "slate", className = "" }) {
     </span>
   );
 }
+function WorkspaceLaneCard({ badgeLabel, description, title, tone = "slate" }) {
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4 shadow-sm">
+      <StatusPill label={badgeLabel} tone={tone} />
+      <h3 className="mt-3 text-base font-semibold text-slate-950">{title}</h3>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+    </div>
+  );
+}
+function SummaryMetricCard({ description, title, tone = "slate", value }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+      <StatusPill label={title} tone={tone} />
+      <div className="mt-3 text-2xl font-semibold text-slate-950">{value}</div>
+      <div className="mt-2 text-sm leading-6 text-slate-600">{description}</div>
+    </div>
+  );
+}
+function getSodSeverityMeta(l, severity) {
+  const normalizedSeverity = normalizeText(severity).toLowerCase();
+  if (normalizedSeverity === "block") {
+    return {
+      label: l("BLOCK", "BLOCK"),
+      tone: "rose",
+      panelClassName: "border-rose-200 bg-rose-50/70",
+    };
+  }
+  return {
+    label: l("WARN", "WARN"),
+    tone: "amber",
+    panelClassName: "border-amber-200 bg-amber-50/70",
+  };
+}
+function SummaryRouteLink({ disabled = false, label, permissionNote = "", to }) {
+  if (disabled) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+        <div className="font-semibold text-slate-700">{label}</div>
+        <div className="mt-1 text-xs leading-5">{permissionNote}</div>
+      </div>
+    );
+  }
+  return (
+    <Link
+      to={to}
+      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+    >
+      {label}
+    </Link>
+  );
+}
+function TenantSodConflictCard({ conflict, l, selectedUserId }) {
+  const severityMeta = getSodSeverityMeta(l, conflict?.conflictRule?.severity);
+  const isSelectedUser = Number(conflict?.userId || 0) === Number(selectedUserId || 0);
+  return (
+    <div className={`rounded-2xl border px-4 py-4 ${severityMeta.panelClassName}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap gap-2">
+            <StatusPill label={severityMeta.label} tone={severityMeta.tone} />
+            {isSelectedUser ? (
+              <StatusPill label={l("Selected user", "Secili kullanici")} tone="blue" />
+            ) : null}
+          </div>
+          <div className="mt-3 text-sm font-semibold text-slate-950">
+            {conflict?.userName || l("Unknown user", "Bilinmeyen kullanici")}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">{conflict?.email || "-"}</div>
+        </div>
+        <div className="text-right text-xs text-slate-500">
+          <div>{conflict?.conflictRule?.code || "-"}</div>
+          <div className="mt-1">
+            {conflict?.conflictRule?.actionA || "-"} / {conflict?.conflictRule?.actionB || "-"}
+          </div>
+        </div>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-700">
+        {conflict?.conflictRule?.reason ||
+          l(
+            "Tenant-wide SoD overlap detected for the current scope mix.",
+            "Mevcut kapsam karisimi icin tenant-geneli SoD cakismasi tespit edildi."
+          )}
+      </p>
+      {(conflict?.overlappingScopes || []).length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {conflict.overlappingScopes.map((scope) => (
+            <StatusPill
+              key={`${conflict.userId}-${conflict.conflictRule?.code}-${scope.type}-${scope.id}`}
+              label={`${scope.type}:${scope.id}${scope.name ? ` (${scope.name})` : ""}`}
+              tone="blue"
+            />
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-3 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+            {l("Affected role set A", "Etkilenen rol kumesi A")}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(conflict?.roleCodesA || []).length > 0 ? (
+              conflict.roleCodesA.map((roleCode) => (
+                <StatusPill
+                  key={`${conflict.userId}-${conflict.conflictRule?.code}-role-a-${roleCode}`}
+                  label={roleCode}
+                  tone="slate"
+                />
+              ))
+            ) : (
+              <span className="text-xs text-slate-500">{l("Not returned", "Donmedi")}</span>
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+            {l("Affected role set B", "Etkilenen rol kumesi B")}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(conflict?.roleCodesB || []).length > 0 ? (
+              conflict.roleCodesB.map((roleCode) => (
+                <StatusPill
+                  key={`${conflict.userId}-${conflict.conflictRule?.code}-role-b-${roleCode}`}
+                  label={roleCode}
+                  tone="violet"
+                />
+              ))
+            ) : (
+              <span className="text-xs text-slate-500">{l("Not returned", "Donmedi")}</span>
+            )}
+          </div>
+        </div>
+      </div>
+      {(conflict?.mitigatingControls || []).length > 0 ? (
+        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-900">
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800">
+            {l("Mitigating controls", "Azaltici kontroller")}
+          </div>
+          <div className="mt-2 space-y-1">
+            {conflict.mitigatingControls.map((control) => (
+              <div key={`${conflict.userId}-${conflict.conflictRule?.code}-${control}`}>
+                {control}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+function SelectedUserWarningCard({ l, warning }) {
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+      <div className="flex flex-wrap gap-2">
+        <StatusPill
+          label={getSodSeverityMeta(l, warning?.severity).label}
+          tone={getSodSeverityMeta(l, warning?.severity).tone}
+        />
+        <StatusPill label={warning.title} tone="amber" />
+        {warning.scopeLabel ? <StatusPill label={warning.scopeLabel} tone="blue" /> : null}
+        {(warning.sourceLabels || []).map((sourceLabel) => (
+          <StatusPill
+            key={`${warning.id}-${sourceLabel}`}
+            label={sourceLabel}
+            tone="slate"
+          />
+        ))}
+      </div>
+      <p className="mt-3 text-sm leading-6 text-amber-900">{warning.description}</p>
+      {(warning.packageLabels || []).length > 0 ? (
+        <div className="mt-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
+            {l("Affected packages", "Etkilenen paketler")}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {warning.packageLabels.map((packageLabel) => (
+              <StatusPill key={`${warning.id}-${packageLabel}`} label={packageLabel} tone="green" />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {(warning.roleLabels || []).length > 0 ? (
+        <div className="mt-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
+            {l("Affected roles", "Etkilenen roller")}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {warning.roleLabels.map((roleLabel) => (
+              <StatusPill key={`${warning.id}-${roleLabel}`} label={roleLabel} tone="violet" />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+function AuditSodSummarySurface({
+  assignmentAuditSummary,
+  canOpenAccessDebugger,
+  canOpenAuditLogs,
+  canOpenComplianceReports,
+  canPreviewComplianceAudit,
+  l,
+  selectedUser,
+  selectedUserAssignmentAuditReadable,
+  selectedUserAuditError,
+  selectedUserAuditLoading,
+  tenantSodError,
+  tenantSodLoading,
+  tenantSodReport,
+}) {
+  const tenantConflicts = Array.isArray(tenantSodReport?.conflicts) ? tenantSodReport.conflicts : [];
+  const tenantSummary = tenantSodReport?.summary || {};
+  const blockConflicts = tenantConflicts.filter(
+    (conflict) => normalizeText(conflict?.conflictRule?.severity).toLowerCase() === "block"
+  );
+  const warnConflicts = tenantConflicts.filter(
+    (conflict) => normalizeText(conflict?.conflictRule?.severity).toLowerCase() !== "block"
+  );
+  const selectedUserTenantConflicts = selectedUser
+    ? tenantConflicts.filter(
+        (conflict) => Number(conflict.userId || 0) === Number(selectedUser.id || 0)
+      )
+    : [];
+  const selectedUserWarnings = Array.isArray(assignmentAuditSummary?.sodWarnings)
+    ? assignmentAuditSummary.sodWarnings
+    : [];
+  const auditItems = Array.isArray(assignmentAuditSummary?.auditItems)
+    ? assignmentAuditSummary.auditItems
+    : [];
+
+  return (
+    <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="max-w-3xl">
+            <h2 className="text-lg font-semibold text-slate-950">
+              {l("Audit & SoD summary", "Audit ve SoD ozeti")}
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              {l(
+                "Review tenant-wide BLOCK and WARN conflicts, then inspect the selected user's affected packages, roles, and recent assignment audit trail before changing authority.",
+                "Tenant-geneli BLOCK ve WARN cakismalarini gozden gecirin; sonra yetki degistirmeden once secili kullanicinin etkilenen paketlerini, rollerini ve son atama audit izini inceleyin."
+              )}
+            </p>
+          </div>
+          <StatusPill
+            label={
+              tenantSodLoading
+                ? l("Loading tenant SoD snapshot", "Tenant SoD ozeti yukleniyor")
+                : canPreviewComplianceAudit
+                  ? l("Tenant SoD snapshot ready", "Tenant SoD ozeti hazir")
+                  : l("Preview permission required", "Onizleme izni gerekli")
+            }
+            tone={tenantSodLoading ? "blue" : canPreviewComplianceAudit ? "green" : "amber"}
+          />
+        </div>
+      </div>
+      <div className="space-y-5 px-5 py-5">
+        <div className="grid gap-4 xl:grid-cols-4">
+          <SummaryMetricCard
+            title={l("Users with conflicts", "Cakismanin oldugu kullanicilar")}
+            value={Number(tenantSummary.usersWithConflicts || 0)}
+            description={l(
+              "Distinct users returned by the current tenant-wide SoD snapshot.",
+              "Mevcut tenant-geneli SoD ozetinde donen farkli kullanicilar."
+            )}
+            tone="violet"
+          />
+          <SummaryMetricCard
+            title={l("BLOCK conflicts", "BLOCK cakismalari")}
+            value={Number(tenantSummary.blockLevelConflicts || 0)}
+            description={l(
+              "Blocking maker-checker overlaps that should move quickly to action.",
+              "Hizla aksiyona donmesi gereken bloklayici maker-checker cakismalari."
+            )}
+            tone="rose"
+          />
+          <SummaryMetricCard
+            title={l("WARN conflicts", "WARN cakismalari")}
+            value={Number(tenantSummary.warnLevelConflicts || 0)}
+            description={l(
+              "Advisory conflicts that still need cleanup or compensating control review.",
+              "Hala temizlik veya telafi edici kontrol incelemesi gerektiren danismanlik seviyesindeki cakismalar."
+            )}
+            tone="amber"
+          />
+          <SummaryMetricCard
+            title={l("Current audit items", "Guncel audit ogeleri")}
+            value={auditItems.length}
+            description={
+              selectedUser
+                ? l(
+                    "{{user}} icin mevcut etiket, paket ve bundle audit satirlari.",
+                    "{{user}} icin mevcut etiket, paket ve bundle audit satirlari.",
+                    { user: selectedUser.name || selectedUser.email || "#" }
+                  )
+                : l(
+                    "Select one user to preview current assignment audit items.",
+                    "Guncel atama audit ogelerini onizlemek icin bir kullanici secin."
+                  )
+            }
+            tone="blue"
+          />
+        </div>
+
+        {tenantSodLoading ? (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            {l(
+              "Loading the tenant-wide SoD snapshot from compliance reports...",
+              "Uyum raporlarindan tenant-geneli SoD ozeti yukleniyor..."
+            )}
+          </div>
+        ) : null}
+        {!tenantSodLoading && tenantSodError ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+            {tenantSodError}
+          </div>
+        ) : null}
+        {!tenantSodLoading && !tenantSodError && !canPreviewComplianceAudit ? (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+            {l(
+              "Tenant-wide SoD preview needs security.audit.report.generate. The detailed compliance and audit routes remain linked below.",
+              "Tenant-geneli SoD onizlemesi icin security.audit.report.generate gerekir. Ayrintili uyum ve audit rotalari asagida bagli kalir."
+            )}
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="space-y-3 rounded-2xl border border-rose-200 bg-rose-50/50 px-4 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">
+                  {l("BLOCK conflicts", "BLOCK cakismalari")}
+                </div>
+                <p className="mt-1 text-sm leading-6 text-slate-700">
+                  {l(
+                    "Blocking conflicts should move from warning to action without hunting through the compliance page first.",
+                    "Bloklayici cakismalar, once uyum sayfasinda arastirma yapmadan uyaridan aksiyona gecmelidir."
+                  )}
+                </p>
+              </div>
+              <StatusPill label={String(blockConflicts.length)} tone="rose" />
+            </div>
+            {blockConflicts.length === 0 ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                {l(
+                  "No BLOCK conflicts are currently returned by the tenant-wide SoD snapshot.",
+                  "Tenant-geneli SoD ozetinde su anda BLOCK cakismasi donmuyor."
+                )}
+              </div>
+            ) : (
+              blockConflicts.slice(0, SOD_PREVIEW_LIMIT).map((conflict) => (
+                <TenantSodConflictCard
+                  key={`${conflict.userId}-${conflict.conflictRule?.code}`}
+                  conflict={conflict}
+                  l={l}
+                  selectedUserId={selectedUser?.id}
+                />
+              ))
+            )}
+            {blockConflicts.length > SOD_PREVIEW_LIMIT ? (
+              <div className="text-xs text-rose-700">
+                {l(
+                  "+{{count}} more BLOCK conflicts in compliance reports.",
+                  "Uyum raporlarinda +{{count}} BLOCK cakismasi daha var.",
+                  { count: blockConflicts.length - SOD_PREVIEW_LIMIT }
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/40 px-4 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
+                  {l("WARN conflicts", "WARN cakismalari")}
+                </div>
+                <p className="mt-1 text-sm leading-6 text-slate-700">
+                  {l(
+                    "Warnings stay visible here so package cleanup and delegated coverage review remain operational, not buried.",
+                    "Uyarilar burada gorunur kalir; boylece paket temizligi ve delegation kapsam incelemesi operasyonel kalir, gizlenmez."
+                  )}
+                </p>
+              </div>
+              <StatusPill label={String(warnConflicts.length)} tone="amber" />
+            </div>
+            {warnConflicts.length === 0 ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                {l(
+                  "No WARN-level conflicts are currently returned by the tenant-wide SoD snapshot.",
+                  "Tenant-geneli SoD ozetinde su anda WARN seviyesinde cakisma donmuyor."
+                )}
+              </div>
+            ) : (
+              warnConflicts.slice(0, SOD_PREVIEW_LIMIT).map((conflict) => (
+                <TenantSodConflictCard
+                  key={`${conflict.userId}-${conflict.conflictRule?.code}`}
+                  conflict={conflict}
+                  l={l}
+                  selectedUserId={selectedUser?.id}
+                />
+              ))
+            )}
+            {warnConflicts.length > SOD_PREVIEW_LIMIT ? (
+              <div className="text-xs text-amber-700">
+                {l(
+                  "+{{count}} more WARN conflicts in compliance reports.",
+                  "Uyum raporlarinda +{{count}} WARN cakismasi daha var.",
+                  { count: warnConflicts.length - SOD_PREVIEW_LIMIT }
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  {l("Selected user risk context", "Secili kullanici risk baglami")}
+                </div>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  {selectedUser
+                    ? l(
+                        "Combine tenant-wide SoD conflicts with the selected user's current package coverage and runtime roles before changing assignments.",
+                        "Atama degistirmeden once tenant-geneli SoD cakismalarini secili kullanicinin mevcut paket kapsami ve runtime rolleriyle birlestirin."
+                      )
+                    : l(
+                        "Select one user to see affected packages, roles, and conflict context here.",
+                        "Burada etkilenen paketleri, rolleri ve cakisma baglamini gormek icin bir kullanici secin."
+                      )}
+                </p>
+              </div>
+              {selectedUser ? (
+                <StatusPill
+                  label={selectedUser.name || selectedUser.email || `#${selectedUser.id}`}
+                  tone="blue"
+                />
+              ) : null}
+            </div>
+            {!selectedUser ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                {l(
+                  "Selected-user risk context appears here after you choose one assignee from the people directory.",
+                  "Kisi dizininden bir atanan secildikten sonra secili-kullanici risk baglami burada gorunur."
+                )}
+              </div>
+            ) : selectedUserTenantConflicts.length === 0 && selectedUserWarnings.length === 0 ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                {l(
+                  "No tenant-wide or local UI-level SoD warnings are currently visible for the selected user.",
+                  "Secili kullanici icin su anda tenant-geneli veya yerel UI-seviyesi SoD uyarisi gorunmuyor."
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {selectedUserTenantConflicts.map((conflict) => (
+                  <TenantSodConflictCard
+                    key={`selected-user-${conflict.userId}-${conflict.conflictRule?.code}`}
+                    conflict={conflict}
+                    l={l}
+                    selectedUserId={selectedUser?.id}
+                  />
+                ))}
+                {selectedUserWarnings.map((warning) => (
+                  <SelectedUserWarningCard key={warning.id} l={l} warning={warning} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  {l("Recent assignment audit", "Son atama auditi")}
+                </div>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  {l(
+                    "A compact audit summary keeps recent grants and scope changes visible before you drill into the full history below.",
+                    "Tam gecmise inmeden once son yetki verilislerini ve kapsam degisikliklerini gorunur tutan kompakt bir audit ozeti."
+                  )}
+                </p>
+              </div>
+              <StatusPill
+                label={
+                  selectedUserAssignmentAuditReadable
+                    ? l("Audit read enabled", "Audit okuma acik")
+                    : l("Audit read required", "Audit okuma gerekli")
+                }
+                tone={selectedUserAssignmentAuditReadable ? "blue" : "amber"}
+              />
+            </div>
+            {selectedUserAuditLoading ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                {l(
+                  "Loading recent assignment audit items for the selected user...",
+                  "Secili kullanici icin son atama audit ogeleri yukleniyor..."
+                )}
+              </div>
+            ) : null}
+            {!selectedUserAuditLoading && selectedUserAuditError ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                {selectedUserAuditError}
+              </div>
+            ) : null}
+            {!selectedUserAuditLoading && !selectedUserAssignmentAuditReadable ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+                {l(
+                  "Granted-by attribution uses RBAC audit logs and appears only when security.audit.read is available. Current assignment rows still provide granted-at and effective dates.",
+                  "Kim tarafindan verildigi bilgisi RBAC audit loglarini kullanir ve yalnizca security.audit.read mevcutsa gorunur. Verilis zamani ve yururluk tarihleri ise mevcut atama satirlarindan gelmeye devam eder."
+                )}
+              </div>
+            ) : null}
+            {auditItems.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                {l(
+                  "No current labels, package grants, or runtime bundles are available for the compact audit summary yet.",
+                  "Kompakt audit ozeti icin gosterilecek mevcut etiket, paket yetkisi veya runtime paketi henuz bulunmuyor."
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {auditItems.slice(0, SOD_PREVIEW_LIMIT).map((item) => (
+                  <div
+                    key={`audit-summary-${item.id}`}
+                    className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap gap-2">
+                          <StatusPill label={item.kindLabel} tone="violet" />
+                          <StatusPill label={item.statusLabel} tone={item.statusTone} />
+                        </div>
+                        <div className="mt-3 text-sm font-semibold text-slate-950">
+                          {item.title}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">{item.scopeLabel}</div>
+                      </div>
+                      <div className="text-right text-xs text-slate-500">
+                        <div>{formatDateTime(item.grantedAt)}</div>
+                        <div className="mt-1">{item.grantedByLabel}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {auditItems.length > SOD_PREVIEW_LIMIT ? (
+                  <div className="text-xs text-slate-500">
+                    {l(
+                      "+{{count}} more audit items remain in the detailed assignment history below.",
+                      "Ayrintili atama gecmisinde +{{count}} audit ogesi daha var.",
+                      { count: auditItems.length - SOD_PREVIEW_LIMIT }
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <SummaryRouteLink
+            disabled={!canOpenComplianceReports}
+            label={l("Open compliance reports", "Uyum raporlarini ac")}
+            permissionNote={l(
+              "Permission required: security.audit.report.generate or security.audit.report.export",
+              "Izin gerekli: security.audit.report.generate veya security.audit.report.export"
+            )}
+            to="/app/ayarlar/rbac/compliance-reports"
+          />
+          <SummaryRouteLink
+            disabled={!canOpenAuditLogs}
+            label={l("Open RBAC audit logs", "RBAC audit loglarini ac")}
+            permissionNote={l(
+              "Permission required: security.audit.read",
+              "Izin gerekli: security.audit.read"
+            )}
+            to="/app/ayarlar/rbac/audit-logs"
+          />
+          <SummaryRouteLink
+            disabled={!canOpenAccessDebugger}
+            label={l("Open access debugger", "Erisim tanilarini ac")}
+            permissionNote={l(
+              "Permission required: security.role_assignment.read",
+              "Izin gerekli: security.role_assignment.read"
+            )}
+            to="/app/ayarlar/rbac/access-debugger"
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
 function MatrixCell({ enabled }) {
   return (
     <span
@@ -1168,10 +1798,6 @@ function AssignmentBundleCard({
                 label={bundle.sourceTypeLabel}
                 tone={bundle.isPresetBundle ? "blue" : "slate"}
               />
-              <StatusPill
-                label={bundle.roleMixLabel}
-                tone={bundle.hasLegacyRole ? "amber" : "green"}
-              />
               {bundle.workflowFamilyLabels.map((familyLabel) => (
                 <StatusPill key={`${bundle.id}-${familyLabel}`} label={familyLabel} tone="violet" />
               ))}
@@ -1201,9 +1827,7 @@ function AssignmentBundleCard({
                           ? "green"
                           : roleEntry.category === "system"
                             ? "blue"
-                            : roleEntry.category === "legacy"
-                              ? "amber"
-                              : "violet"
+                            : "violet"
                     )}`}
                   >
                     {roleEntry.code}
@@ -1619,11 +2243,6 @@ function UserAccessModal({
   );
 }
 /**
- * Live merged workspace for user directory, business assignments, and
- * delegation operations. The backend still persists raw RBAC rows one at a
- * time, but this page groups them into calmer business-first admin flows.
- */
-/**
  * Combined security workspace for user access, business assignment bundles,
  * and delegation administration while the package-first admin model rolls out.
  */
@@ -1632,10 +2251,9 @@ export default function UserAssignmentsPage() {
     getPermissionAccess,
     hasPermission,
     user,
-    securityAdminUiState,
-    securityAdminUiStateLoaded,
   } = useAuth();
   const { l } = useI18n();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actingRowId, setActingRowId] = useState("");
@@ -1643,8 +2261,15 @@ export default function UserAssignmentsPage() {
   const [message, setMessage] = useState("");
   const [warningMessages, setWarningMessages] = useState([]);
   const [delegationLoadError, setDelegationLoadError] = useState("");
-  const [activeTab, setActiveTab] = useState("users");
-  const [delegationTab, setDelegationTab] = useState("coverage");
+  const workbenchTab = USER_ASSIGNMENT_CANONICAL_TABS.includes(searchParams.get("tab"))
+    ? searchParams.get("tab")
+    : searchParams.get("tab") === "users"
+      ? "people"
+      : USER_ASSIGNMENT_CANONICAL_TABS[0];
+  const activeTab = workbenchTab === "assignments" ? "assignments" : "users";
+  const delegationTab = DELEGATION_TAB_ORDER.includes(searchParams.get("delegationTab"))
+    ? searchParams.get("delegationTab")
+    : DELEGATION_TAB_ORDER[0];
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -1657,6 +2282,9 @@ export default function UserAssignmentsPage() {
   const [selectedWorkbenchAuditRows, setSelectedWorkbenchAuditRows] = useState([]);
   const [selectedWorkbenchAuditLoading, setSelectedWorkbenchAuditLoading] = useState(false);
   const [selectedWorkbenchAuditError, setSelectedWorkbenchAuditError] = useState("");
+  const [tenantSodReport, setTenantSodReport] = useState(null);
+  const [tenantSodLoading, setTenantSodLoading] = useState(false);
+  const [tenantSodError, setTenantSodError] = useState("");
   const [lastInviteLink, setLastInviteLink] = useState("");
   const [userFilters, setUserFilters] = useState({
     search: "",
@@ -1666,7 +2294,6 @@ export default function UserAssignmentsPage() {
     scopeType: "",
     scopeTarget: "",
     sourceType: "",
-    roleMix: "",
   });
   const [assignmentFilters, setAssignmentFilters] = useState({
     search: "",
@@ -1728,15 +2355,39 @@ export default function UserAssignmentsPage() {
     selectedPackageCodes: [],
     assignBusinessRoleLabel: true,
   });
+  const setWorkspaceTab = useCallback(
+    (nextTab) => {
+      setSearchParams(
+        updateSearchParams(searchParams, {
+          tab: nextTab,
+          delegationTab: nextTab === "delegations" ? delegationTab : "",
+        })
+      );
+    },
+    [delegationTab, searchParams, setSearchParams]
+  );
+  const setWorkspaceDelegationTab = useCallback(
+    (nextTab) => {
+      setSearchParams(
+        updateSearchParams(searchParams, {
+          tab: "delegations",
+          delegationTab: nextTab,
+        })
+      );
+    },
+    [searchParams, setSearchParams]
+  );
   const tenantScopeId = Number(user?.tenant_id || 0);
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadAudit = hasPermission("security.audit.read");
+  const canPreviewComplianceAudit = hasPermission("security.audit.report.generate");
+  const canOpenComplianceReports =
+    canPreviewComplianceAudit || hasPermission("security.audit.report.export");
   const canUpsertRole = hasPermission("security.role.upsert");
   const canAssignRolePermissions = hasPermission("security.role_permissions.assign");
   const roleAssignmentReadAccess = getPermissionAccess("security.role_assignment.read");
-  const showFreshTenantAdminNote =
-    securityAdminUiStateLoaded &&
-    Boolean(securityAdminUiState?.roleMigrations?.simplifiedFreshTenantView);
+  const canOpenAuditLogs = canReadAudit;
+  const canOpenAccessDebugger = roleAssignmentReadAccess.allowed;
   const lookups = useMemo(
     () => ({
       groups,
@@ -1787,16 +2438,7 @@ export default function UserAssignmentsPage() {
         .sort((left, right) => left.label.localeCompare(right.label)),
     [businessRoleCatalogEntries]
   );
-  const assignableRoleGroups = useMemo(
-    () =>
-      roleGroups
-        .map((group) => ({
-          ...group,
-          roles: group.roles.filter((role) => !getRoleCatalogEntry(role).legacy),
-        }))
-        .filter((group) => group.roles.length > 0),
-    [roleGroups]
-  );
+  const assignableRoleGroups = roleGroups;
   const assignmentBundles = useMemo(
     () => buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId),
     [assignments, lookups, tenantScopeId, usersById]
@@ -1897,15 +2539,6 @@ export default function UserAssignmentsPage() {
         return false;
       }
       if (userFilters.sourceType === "DIRECT" && row.directAssignmentCount === 0) {
-        return false;
-      }
-      if (userFilters.roleMix === "LEGACY_PRESENT" && !row.hasLegacyAssignments) {
-        return false;
-      }
-      if (
-        userFilters.roleMix === "COMPOSABLE_ONLY" &&
-        (!row.hasComposableAssignments || row.hasLegacyAssignments)
-      ) {
         return false;
       }
       return true;
@@ -2100,6 +2733,60 @@ export default function UserAssignmentsPage() {
       cancelled = true;
     };
   }, [activeTab, canReadAudit, l, selectedWorkbenchUser?.id]);
+  useEffect(() => {
+    if (activeTab !== "users" || !canPreviewComplianceAudit) {
+      setTenantSodReport(null);
+      setTenantSodLoading(false);
+      setTenantSodError("");
+      return;
+    }
+
+    let cancelled = false;
+    setTenantSodLoading(true);
+    setTenantSodError("");
+
+    generateComplianceAuditReport({
+      reportType: "SOD_ANALYSIS",
+      asOfDate: todayIsoDate(),
+      ...(tenantScopeId
+        ? {
+            scopeType: "TENANT",
+            scopeId: tenantScopeId,
+          }
+        : {}),
+    })
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setTenantSodReport(result?.report || null);
+      })
+      .catch((requestError) => {
+        if (cancelled) {
+          return;
+        }
+        setTenantSodReport(null);
+        setTenantSodError(
+          getErrorMessage(
+            requestError,
+            l(
+              "Tenant-wide SoD preview is not available right now.",
+              "Tenant-geneli SoD onizlemesi su anda kullanilamiyor."
+            )
+          )
+        );
+      })
+      .finally(() => {
+        if (cancelled) {
+          return;
+        }
+        setTenantSodLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, canPreviewComplianceAudit, l, tenantScopeId]);
   const selectedWorkbenchAssignmentAuditSummary = useMemo(
     () =>
       buildAssignmentAuditSummary({
@@ -2383,7 +3070,8 @@ export default function UserAssignmentsPage() {
     () =>
       users.filter((row) => {
         const normalizedStatus = normalizeText(row.status).toUpperCase();
-        return normalizedStatus === "INVITED" || normalizedStatus === "PENDING";
+        const normalizedInviteStatus = normalizeText(row.invite_status).toUpperCase();
+        return normalizedStatus === "INVITED" || normalizedInviteStatus === "PENDING";
       }),
     [users]
   );
@@ -3331,7 +4019,7 @@ export default function UserAssignmentsPage() {
     if (!runtimeRole) {
       // UI-2C persists direct package authority through one managed runtime
       // role per clean package so admins can remove a single package grant
-      // later without reusing the older broad compatibility roles.
+      // later without reopening broader package coverage.
       const createRoleResponse = await createOrUpdateRole({
         code: packageDefinition.roleCode,
         name: packageDefinition.roleName,
@@ -3910,27 +4598,28 @@ export default function UserAssignmentsPage() {
   }
   return (
     <SecurityAdminWorkspaceShell
+      workspaceSectionKey="users"
       sectionKey="user-assignments"
       eyebrow={l("Security / Assignment Workspace", "Guvenlik / atama calisma alani")}
       title={l(
-        "User, Assignment & Delegation Management",
-        "Kullanici, Atama ve Delegation Yonetimi"
+        "Users & Assignments Workbench",
+        "Kullanicilar ve Atamalar Workbench'i"
       )}
       description={l(
-        "Merged admin workspace: keep the people directory, preset-based business assignments, and delegation operations in one calm shell instead of scattering them across unrelated settings screens.",
-        "Birlesik yonetim calisma alani: kisi dizinini, preset tabanli is atamalarini ve delegation operasyonlarini ilgisiz ayarlar ekranlarina dagitmak yerine tek bir sakin kabukta toplayin."
+        "Keep people selection, business assignment bundles, and effective authority review inside one canonical users workbench while scope access, delegations, and temporary coverage live beside it as sibling tabs.",
+        "Kisi secimini, is atama paketlerini ve etkili yetki incelemesini tek bir canonical users workbench icinde tutarken kapsam erisimi, delegasyonlar ve gecici kapsama kayitlarini kardes sekmelerde yasatin."
       )}
       actions={[
         {
-          to: "/app/ayarlar/rbac/delegations",
-          label: l("Open approval delegations", "Approval delegation sayfasini ac"),
+          to: "/app/ayarlar/security-admin/users?tab=delegations",
+          label: l("Open delegations tab", "Delegasyon sekmesini ac"),
         },
         {
           onClick: openInviteModal,
           label: l("Invite user", "Kullanici davet et"),
         },
         {
-          onClick: () => setActiveTab("assignments"),
+          onClick: () => setWorkspaceTab("assignments"),
           label: l("Assign setup owner", "Setup sahibi ata"),
           tone: "primary",
         },
@@ -3973,38 +4662,17 @@ export default function UserAssignmentsPage() {
         },
       ]}
       toolbar={
-        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap gap-3">
-            <WorkspaceTabButton
-              active={activeTab === "users"}
-              count={userDirectoryRows.length}
-              label={l("Assignment Workbench", "Atama Calisma Alani")}
-              onClick={() => setActiveTab("users")}
-            />
-            <WorkspaceTabButton
-              active={activeTab === "assignments"}
-              count={assignmentBundles.length}
-              label={l("Business Assignments", "Is Atamalari")}
-              onClick={() => setActiveTab("assignments")}
-            />
-            <WorkspaceTabButton
-              active={activeTab === "delegations"}
-              count={totalDelegationCount}
-              label={l("Delegations", "Delegation")}
-              onClick={() => setActiveTab("delegations")}
-            />
-          </div>
-        </section>
+        <SecurityUsersWorkbenchTabs
+          activeTab={workbenchTab}
+          counts={{
+            people: userDirectoryRows.length,
+            assignments: assignmentBundles.length,
+            delegations: totalDelegationCount,
+            coverage: coverageRows.length,
+          }}
+        />
       }
     >
-      {showFreshTenantAdminNote ? (
-        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-          {l(
-            "Fresh-tenant role admin mode is active. Keep template assignment primary and use raw role rows only for deliberate exceptions.",
-            "Fresh-tenant rol yonetimi modu aktif. Template atamasini birincil tutun; ham rol satirlarini yalnizca bilincli istisnalar icin kullanin."
-          )}
-        </div>
-      ) : null}
       {!roleAssignmentReadAccess.allowed ? (
         <PermissionAccessNotice
           access={roleAssignmentReadAccess}
@@ -4037,106 +4705,176 @@ export default function UserAssignmentsPage() {
         </div>
       ) : null}
       <SecurityWarningList warnings={warningMessages} />
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <WorkspaceLaneCard
+          badgeLabel={l("People directory", "Kisi dizini")}
+          description={l(
+            "Filter one assignee list by role, package, source, and scope, then keep pending invite expiry and current authority visible without leaving the workspace.",
+            "Tek bir atanan kisi listesini rol, paket, kaynak ve kapsama gore filtreleyin; sonra bekleyen davet suresini ve mevcut yetkiyi calisma alanindan ayrilmadan gorunur tutun."
+          )}
+          title={l("People directory", "Kisi dizini")}
+          tone="blue"
+        />
+        <WorkspaceLaneCard
+          badgeLabel={l("Primary path", "Birincil yol")}
+          description={l(
+            "Use preset-based setup-owner bundles as the normal admin path. Business-first bundles stay grouped by assignee, scope, and effective window.",
+            "Normal yonetici yolu olarak preset tabanli setup owner paketlerini kullanin. Is-oncelikli paketler atanan kisi, kapsam ve yururluk penceresine gore gruplanmis kalir."
+          )}
+          title={l("Business assignment bundles", "Is atama paketleri")}
+          tone="green"
+        />
+        <WorkspaceLaneCard
+          badgeLabel={l("Secondary / advanced", "Ikincil / gelismis")}
+          description={l(
+            "Direct business labels, exact workflow packages, and raw role rows stay available for deliberate exceptions, but they no longer dominate the page.",
+            "Dogrudan is etiketleri, tam workflow paketleri ve ham rol satirlari bilincli istisnalar icin kullanilabilir kalir; ancak artik sayfaya hakim olmaz."
+          )}
+          title={l("Raw role & package tools", "Ham rol ve paket araclari")}
+          tone="amber"
+        />
+        <WorkspaceLaneCard
+          badgeLabel={l("Date-bounded controls", "Tarihle sinirli kontroller")}
+          description={l(
+            "Keep approval delegation and temporary coverage as explicit, revocable objects with lifecycle badges and date ranges instead of burying them in side screens.",
+            "Approval delegation ve temporary coverage kayitlarini yan ekranlara gommek yerine yasam dongusu etiketleri ve tarih araliklariyla acik, geri alinabilir nesneler olarak tutun."
+          )}
+          title={l(
+            "Delegation & temporary coverage",
+            "Delegation ve temporary coverage"
+          )}
+          tone="violet"
+        />
+      </section>
       {loading ? (
         <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-12 text-sm text-slate-500 shadow-sm">
           {l("Loading workspace...", "Calisma alani yukleniyor...")}
         </div>
       ) : null}
       {!loading && activeTab === "users" ? (
-        <UserAssignmentWorkbench
-          actingRowId={actingRowId}
-          businessRoleAssignmentForm={businessRoleAssignmentForm}
-          businessRoleAssignmentWriteAccess={businessRoleAssignmentWriteAccess}
-          businessRoleScopeOptions={businessRoleScopeOptions}
-          canAssignRolePermissions={canAssignRolePermissions}
-          canUpsertRole={canUpsertRole}
-          filteredUsers={filteredUsers}
-          l={l}
-          onAssignBusinessRoleLabel={handleAssignBusinessRoleLabel}
-          onApplyPackageSource={handleApplyPackageSource}
-          onAssignWorkflowPackage={handleAssignWorkflowPackage}
-          onClearFilters={() =>
-            setUserFilters({
-              search: "",
-              status: "ALL",
-              roleCode: "",
-              packageCode: "",
-              scopeType: "",
-              scopeTarget: "",
-              sourceType: "",
-              roleMix: "",
-            })
-          }
-          onOpenBulkAssignments={() => setActiveTab("assignments")}
-          onOpenUserEditor={(userOrId) => {
-            if (typeof userOrId === "object" && userOrId) {
-              openExistingUserModal(userOrId);
-              return;
+        <section className="space-y-5">
+          {workbenchTab === "authority" ? (
+            <div className="rounded-[28px] border border-sky-200 bg-sky-50 px-5 py-4 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
+                {l("Authority-first view", "Yetki odakli gorunum")}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-sky-900">
+                {l(
+                  "Effective authority stays in focus here: keep one user selected and review package sources, runtime roles, audit items, and scope-backed authority without leaving the users workbench.",
+                  "Etkili yetki burada odakta kalir: users workbench'ten cikmadan tek bir kullaniciyi secili tutup paket kaynaklarini, runtime rolleri, denetim ogelerini ve kapsama dayali yetkiyi inceleyin."
+                )}
+              </p>
+            </div>
+          ) : null}
+          <AuditSodSummarySurface
+            assignmentAuditSummary={selectedWorkbenchAssignmentAuditSummary}
+            canOpenAccessDebugger={canOpenAccessDebugger}
+            canOpenAuditLogs={canOpenAuditLogs}
+            canOpenComplianceReports={canOpenComplianceReports}
+            canPreviewComplianceAudit={canPreviewComplianceAudit}
+            l={l}
+            selectedUser={selectedWorkbenchUser}
+            selectedUserAssignmentAuditReadable={canReadAudit}
+            selectedUserAuditError={selectedWorkbenchAuditError}
+            selectedUserAuditLoading={selectedWorkbenchAuditLoading}
+            tenantSodError={tenantSodError}
+            tenantSodLoading={tenantSodLoading}
+            tenantSodReport={tenantSodReport}
+          />
+          <UserAssignmentWorkbench
+            actingRowId={actingRowId}
+            businessRoleAssignmentForm={businessRoleAssignmentForm}
+            businessRoleAssignmentWriteAccess={businessRoleAssignmentWriteAccess}
+            businessRoleScopeOptions={businessRoleScopeOptions}
+            canAssignRolePermissions={canAssignRolePermissions}
+            canUpsertRole={canUpsertRole}
+            filteredUsers={filteredUsers}
+            l={l}
+            onAssignBusinessRoleLabel={handleAssignBusinessRoleLabel}
+            onApplyPackageSource={handleApplyPackageSource}
+            onAssignWorkflowPackage={handleAssignWorkflowPackage}
+            onClearFilters={() =>
+              setUserFilters({
+                search: "",
+                status: "ALL",
+                roleCode: "",
+                packageCode: "",
+                scopeType: "",
+                scopeTarget: "",
+                sourceType: "",
+              })
             }
-            const userRow = usersById.get(Number(userOrId || 0));
-            if (userRow) {
-              openExistingUserModal(userRow);
+            onOpenBulkAssignments={() => setWorkspaceTab("assignments")}
+            onOpenUserEditor={(userOrId) => {
+              if (typeof userOrId === "object" && userOrId) {
+                openExistingUserModal(userOrId);
+                return;
+              }
+              const userRow = usersById.get(Number(userOrId || 0));
+              if (userRow) {
+                openExistingUserModal(userRow);
+              }
+            }}
+            onRemoveBusinessRoleLabel={handleRemoveBusinessRoleLabel}
+            onRemoveWorkflowPackage={handleRemoveWorkflowPackage}
+            onRevokeBundle={handleRevokeBundle}
+            onSelectBundle={setSelectedWorkbenchBundleId}
+            onSelectUser={setSelectedWorkbenchUserId}
+            onUpdateBusinessRoleAssignmentField={updateBusinessRoleAssignmentField}
+            onUpdatePackageSourceApplyField={updatePackageSourceApplyField}
+            onUpdateWorkflowPackageAssignmentField={updateWorkflowPackageAssignmentField}
+            onTogglePackageSourcePreviewPackage={togglePackageSourcePreviewPackage}
+            packageSourceApplyForm={packageSourceApplyForm}
+            packageSourceApplyWriteAccess={packageSourceApplyWriteAccess}
+            packageSourcePreviewEntries={packageSourcePreviewEntries}
+            packageSourceScopeOptions={packageSourceScopeOptions}
+            packageSourceScopeTypeOptions={packageSourceScopeTypeOptions}
+            packageFilterOptions={packageFilterOptions}
+            roleFilterOptions={roleFilterOptions}
+            saving={saving}
+            selectedBusinessRoleAssignments={selectedWorkbenchBusinessRoleAssignments}
+            selectedBusinessRoleCatalogEntry={selectedBusinessRoleCatalogEntry}
+            selectedBusinessRoleRuntimeRoleExists={selectedBusinessRoleRuntimeRoleExists}
+            selectedPackageSourceBusinessRoleAssigned={
+              selectedPackageSourceBusinessRoleAssigned
             }
-          }}
-          onRemoveBusinessRoleLabel={handleRemoveBusinessRoleLabel}
-          onRemoveWorkflowPackage={handleRemoveWorkflowPackage}
-          onRevokeBundle={handleRevokeBundle}
-          onSelectBundle={setSelectedWorkbenchBundleId}
-          onSelectUser={setSelectedWorkbenchUserId}
-          onUpdateBusinessRoleAssignmentField={updateBusinessRoleAssignmentField}
-          onUpdatePackageSourceApplyField={updatePackageSourceApplyField}
-          onUpdateWorkflowPackageAssignmentField={updateWorkflowPackageAssignmentField}
-          onTogglePackageSourcePreviewPackage={togglePackageSourcePreviewPackage}
-          packageSourceApplyForm={packageSourceApplyForm}
-          packageSourceApplyWriteAccess={packageSourceApplyWriteAccess}
-          packageSourcePreviewEntries={packageSourcePreviewEntries}
-          packageSourceScopeOptions={packageSourceScopeOptions}
-          packageSourceScopeTypeOptions={packageSourceScopeTypeOptions}
-          packageFilterOptions={packageFilterOptions}
-          roleFilterOptions={roleFilterOptions}
-          saving={saving}
-          selectedBusinessRoleAssignments={selectedWorkbenchBusinessRoleAssignments}
-          selectedBusinessRoleCatalogEntry={selectedBusinessRoleCatalogEntry}
-          selectedBusinessRoleRuntimeRoleExists={selectedBusinessRoleRuntimeRoleExists}
-          selectedPackageSourceBusinessRoleAssigned={
-            selectedPackageSourceBusinessRoleAssigned
-          }
-          selectedPackageSourceBusinessRoleEntry={
-            selectedPackageSourceBusinessRoleEntry
-          }
-          selectedUserAssignmentAuditReadable={canReadAudit}
-          selectedUserAssignmentAuditSummary={
-            selectedWorkbenchAssignmentAuditSummary
-          }
-          selectedUserAuditError={selectedWorkbenchAuditError}
-          selectedUserAuditLoading={selectedWorkbenchAuditLoading}
-          selectedPackageSourcePackageCodes={selectedPackageSourcePackageCodes}
-          selectedPackageSourcePresetEntry={selectedPackageSourcePresetEntry}
-          selectedUserEffectiveAuthorityPreview={
-            selectedWorkbenchEffectiveAuthorityPreview
-          }
-          selectedWorkflowPackageAssignmentRoleStatus={selectedWorkflowPackageRoleStatus}
-          selectedWorkflowPackageAssignments={selectedWorkbenchWorkflowPackageAssignments}
-          selectedWorkflowPackageCatalogEntry={selectedWorkflowPackageCatalogEntry}
-          selectedWorkflowPackageRuntimeRoleExists={Boolean(
-            selectedWorkflowPackageRuntimeRole
-          )}
-          workflowPackageAssignmentForm={workflowPackageAssignmentForm}
-          workflowPackageAssignmentWriteAccess={workflowPackageAssignmentWriteAccess}
-          workflowPackageCatalogEntries={workflowPackageCatalogEntries}
-          workflowPackageScopeOptions={workflowPackageScopeOptions}
-          workflowPackageScopeTypeOptions={workflowPackageScopeTypeOptions}
-          workflowPresetCatalogEntries={workflowPresetCatalogEntries}
-          scopeTargetOptions={scopeTargetOptions}
-          selectedBundle={selectedWorkbenchBundle}
-          selectedUser={selectedWorkbenchUser}
-          selectedUserBundles={selectedWorkbenchUserBundles}
-          selectedUserPackageLabels={selectedWorkbenchPackageLabels}
-          selectedUserRoleEntries={selectedWorkbenchRoleEntries}
-          selectedUserScopeLabels={selectedWorkbenchScopeLabels}
-          setUserFilters={setUserFilters}
-          userFilters={userFilters}
-        />
+            selectedPackageSourceBusinessRoleEntry={
+              selectedPackageSourceBusinessRoleEntry
+            }
+            selectedUserAssignmentAuditReadable={canReadAudit}
+            selectedUserAssignmentAuditSummary={
+              selectedWorkbenchAssignmentAuditSummary
+            }
+            selectedUserAuditError={selectedWorkbenchAuditError}
+            selectedUserAuditLoading={selectedWorkbenchAuditLoading}
+            selectedPackageSourcePackageCodes={selectedPackageSourcePackageCodes}
+            selectedPackageSourcePresetEntry={selectedPackageSourcePresetEntry}
+            selectedUserEffectiveAuthorityPreview={
+              selectedWorkbenchEffectiveAuthorityPreview
+            }
+            selectedWorkflowPackageAssignmentRoleStatus={selectedWorkflowPackageRoleStatus}
+            selectedWorkflowPackageAssignments={selectedWorkbenchWorkflowPackageAssignments}
+            selectedWorkflowPackageCatalogEntry={selectedWorkflowPackageCatalogEntry}
+            selectedWorkflowPackageRuntimeRoleExists={Boolean(
+              selectedWorkflowPackageRuntimeRole
+            )}
+            workflowPackageAssignmentForm={workflowPackageAssignmentForm}
+            workflowPackageAssignmentWriteAccess={workflowPackageAssignmentWriteAccess}
+            workflowPackageCatalogEntries={workflowPackageCatalogEntries}
+            workflowPackageScopeOptions={workflowPackageScopeOptions}
+            workflowPackageScopeTypeOptions={workflowPackageScopeTypeOptions}
+            workflowPresetCatalogEntries={workflowPresetCatalogEntries}
+            scopeTargetOptions={scopeTargetOptions}
+            selectedBundle={selectedWorkbenchBundle}
+            selectedUser={selectedWorkbenchUser}
+            selectedUserBundles={selectedWorkbenchUserBundles}
+            selectedUserPackageLabels={selectedWorkbenchPackageLabels}
+            selectedUserRoleEntries={selectedWorkbenchRoleEntries}
+            selectedUserScopeLabels={selectedWorkbenchScopeLabels}
+            setUserFilters={setUserFilters}
+            userFilters={userFilters}
+          />
+        </section>
       ) : null}
       {!loading && activeTab === "assignments" ? (
         <section className="space-y-5">
@@ -4449,8 +5187,8 @@ export default function UserAssignmentsPage() {
                       </select>
                       <p className="text-xs leading-5 text-slate-500">
                         {l(
-                          "Legacy runtime roles are hidden here for new assignments. Existing legacy assignments still remain visible for review and cleanup.",
-                          "Yeni atamalar icin legacy runtime rolleri burada gizlenir. Mevcut legacy atamalar ise inceleme ve temizlik icin gorunur kalir."
+                          "Use direct runtime roles here only when you need an exact exception at the selected scope.",
+                          "Burada dogrudan runtime rolleri yalnizca secili kapsamda tam bir istisna gerektiginde kullanin."
                         )}
                       </p>
                     </div>
@@ -4498,19 +5236,68 @@ export default function UserAssignmentsPage() {
                         ))}
                       </select>
                     </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700">
+                          {l("Effective from", "Baslangic tarihi")}
+                        </label>
+                        <input
+                          type="date"
+                          value={rawAssignmentForm.effectiveFrom}
+                          onChange={(event) =>
+                            updateRawAssignmentField("effectiveFrom", event.target.value)
+                          }
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700">
+                          {l("Effective to", "Bitis tarihi")}
+                        </label>
+                        <input
+                          type="date"
+                          value={rawAssignmentForm.effectiveTo}
+                          onChange={(event) =>
+                            updateRawAssignmentField("effectiveTo", event.target.value)
+                          }
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                      {l(
+                        "Set dates when this exception should stay temporary. Leave both blank for a standing exception row.",
+                        "Bu istisnanin gecici kalmasi gerekiyorsa tarih verin. Kalici istisna satiri icin ikisini de bos birakin."
+                      )}
+                    </div>
                     <PermissionAccessNotice
                       access={rawAssignmentWriteAccess}
                       permissionCode="security.role_assignment.upsert"
                     />
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {saving
-                        ? l("Saving...", "Kaydediliyor...")
-                        : l("Create raw role row", "Ham rol satiri olustur")}
-                    </button>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="submit"
+                        disabled={saving}
+                        className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {saving
+                          ? l("Saving...", "Kaydediliyor...")
+                          : l("Create raw role row", "Ham rol satiri olustur")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRawAssignmentForm((prev) => ({
+                            ...prev,
+                            effectiveFrom: "",
+                            effectiveTo: "",
+                          }))
+                        }
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
+                      >
+                        {l("Clear dates", "Tarihleri temizle")}
+                      </button>
+                    </div>
                   </form>
                 </details>
               </div>
@@ -4546,11 +5333,20 @@ export default function UserAssignmentsPage() {
                     className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
                   >
                     <div>
-                      <div className="text-sm font-semibold text-slate-900">{row.name}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-sm font-semibold text-slate-900">{row.name}</div>
+                        <StatusPill label={l("Pending invite", "Bekleyen davet")} tone="amber" />
+                      </div>
                       <div className="mt-1 text-xs text-slate-500">{row.email}</div>
                       <div className="mt-2 text-xs text-slate-600">
                         {l("Created", "Olusturuldu")} {formatDateTime(row.created_at)}
                       </div>
+                      {row.invite_expires_at ? (
+                        <div className="mt-1 text-xs font-medium text-amber-800">
+                          {l("Invite expires", "Davet suresi dolar")}{" "}
+                          {formatDateTime(row.invite_expires_at)}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -4599,13 +5395,13 @@ export default function UserAssignmentsPage() {
                 active={delegationTab === "coverage"}
                 count={coverageRows.length}
                 label={l("Temporary coverage", "Temporary coverage")}
-                onClick={() => setDelegationTab("coverage")}
+                onClick={() => setWorkspaceDelegationTab("coverage")}
               />
               <WorkspaceTabButton
                 active={delegationTab === "approval"}
                 count={approvalDelegations.length}
                 label={l("Approval delegation", "Approval delegation")}
-                onClick={() => setDelegationTab("approval")}
+                onClick={() => setWorkspaceDelegationTab("approval")}
               />
             </div>
             {delegationLoadError ? (
@@ -4642,18 +5438,7 @@ export default function UserAssignmentsPage() {
                               {row.roleCode || row.role_code || l("Coverage request", "Coverage talebi")}
                             </div>
                             <StatusPill label={reviewMeta.label} tone={reviewMeta.tone} />
-                            <StatusPill
-                              label={normalizeText(row.state) || l("Unknown", "Bilinmiyor")}
-                              tone={
-                                normalizeText(row.state).toUpperCase() === "ACTIVE"
-                                  ? "green"
-                                  : normalizeText(row.state).toUpperCase() === "REQUESTED"
-                                    ? "amber"
-                                    : normalizeText(row.state).toUpperCase() === "APPROVED"
-                                      ? "blue"
-                                      : "slate"
-                              }
-                            />
+                            <DelegationStateBadge state={resolveCoverageTemporalState(row)} />
                           </div>
                           <div className="text-sm text-slate-700">
                             {normalizeText(row.delegateUserName || row.delegateUserEmail || row.delegateEmail) ||
@@ -4664,7 +5449,10 @@ export default function UserAssignmentsPage() {
                             {normalizeText(row.requesterUserName || row.requesterUserEmail) || "-"}
                           </div>
                           <div className="text-xs text-slate-500">
-                            {formatDate(row.startDate)} to {formatDate(row.endDate)} -{" "}
+                            {l("Coverage window", "Coverage penceresi")}{" "}
+                            {formatDate(row.startDate)}
+                            {" -> "}
+                            {formatDate(row.endDate)} -{" "}
                             {row.scopeType === "OPERATING_UNIT"
                               ? `${row.legalEntityCode || "LE"} / ${row.operatingUnitCode || "OU"}`
                               : row.legalEntityCode || `LEGAL_ENTITY #${row.scopeId || "?"}`}

@@ -36,9 +36,14 @@ async function main() {
   assert(
     pageSource.includes("UserAssignmentWorkbench") &&
       pageSource.includes('label={l("Assignment Workbench", "Atama Calisma Alani")}') &&
+      pageSource.includes("useSearchParams") &&
+      pageSource.includes("USER_ASSIGNMENT_TAB_ORDER") &&
+      pageSource.includes("DELEGATION_TAB_ORDER") &&
+      pageSource.includes('workspaceSectionKey="assignments"') &&
+      pageSource.includes('tab: "delegations"') &&
       !pageSource.includes("userFilters.delegationState") &&
       !pageSource.includes("All delegation states"),
-    "UserAssignmentsPage should swap the old users table for the dedicated UI-2A workbench"
+    "UserAssignmentsPage should swap the old users table for the dedicated UI-2A workbench and keep its workspace state in the URL"
   );
 
   assert(

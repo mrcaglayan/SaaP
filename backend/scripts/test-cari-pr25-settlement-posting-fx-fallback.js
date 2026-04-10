@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 
 const PORT = Number(process.env.CARI_PR25_TEST_PORT || 3137);
 const BASE_URL = process.env.CARI_PR25_TEST_BASE_URL || `http://127.0.0.1:${PORT}`;
@@ -167,7 +168,8 @@ async function createUserWithRole({
   const userId = toNumber(userResult.rows?.[0]?.id);
   assert(userId > 0, `Failed to resolve user id for ${email}`);
 
-  const roleResult = await query(
+  if (roleCode) {
+    const roleResult = await query(
     `SELECT id
      FROM roles
      WHERE tenant_id = ?
@@ -175,10 +177,10 @@ async function createUserWithRole({
      LIMIT 1`,
     [tenantId, roleCode]
   );
-  const roleId = toNumber(roleResult.rows?.[0]?.id);
-  assert(roleId > 0, `Role not found: ${roleCode}`);
+    const roleId = toNumber(roleResult.rows?.[0]?.id);;
+    assert(roleId > 0, `Role not found: ${roleCode}`);
 
-  await query(
+    await query(
     `INSERT INTO user_role_scopes (
         tenant_id,
         user_id,
@@ -189,10 +191,28 @@ async function createUserWithRole({
      )
      VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')
      ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
-    [tenantId, userId, roleId, tenantId]
-  );
+      [tenantId, userId, roleId, tenantId]
+    );
+  }
 
   return { userId, email };
+}
+
+async function createUserWithFullAccess({
+  tenantId,
+  email,
+  passwordHash,
+  name,
+}) {
+  const user = await createUserWithRole({
+    tenantId,
+    roleCode: null,
+    email,
+    passwordHash,
+    name,
+  });
+  await assignTestFullAccessRoleToUser(tenantId, user.userId);
+  return user;
 }
 
 async function bootstrapOrgAndGlBase(token, stamp) {
@@ -656,9 +676,8 @@ async function main() {
   await seedCore({ ensureDefaultTenantIfMissing: true });
 
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
-  const user = await createUserWithRole({
+  const user = await createUserWithFullAccess({
     tenantId,
-    roleCode: "TenantAdmin",
     email: `pr25_admin_${stamp}@example.com`,
     passwordHash,
     name: "PR25 Admin",

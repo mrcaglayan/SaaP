@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { closePool, query } from "../src/db.js";
+import { assignTestFullAccessRoleToUser } from "./ex05-test-helpers.js";
 import {
   createCariDraftDocument,
   postCariDocumentById,
@@ -234,18 +235,8 @@ async function login(email, password) {
   return cookie;
 }
 
-async function resolveTenantAdminRoleId(tenantId) {
-  const result = await query(
-    `SELECT id
-       FROM roles
-      WHERE tenant_id = ?
-        AND code = 'TenantAdmin'
-      LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = Number(result.rows?.[0]?.id || 0);
-  assert(roleId > 0, `TenantAdmin role not found for tenant ${tenantId}`);
-  return roleId;
+async function assignFullAccessRoleToUser(tenantId, userId) {
+  await assignTestFullAccessRoleToUser(tenantId, userId);
 }
 
 async function resolvePermissionId(code) {
@@ -331,14 +322,7 @@ async function createSmokeUser({ tenantId, uniqueSuffix, state }) {
   );
   const userId = Number(insertResult.rows?.insertId || 0);
   assert(userId > 0, "Failed to create FA24 smoke user");
-
-  const roleId = await resolveTenantAdminRoleId(tenantId);
-  await query(
-    `INSERT INTO user_role_scopes (
-        tenant_id, user_id, role_id, scope_type, scope_id, effect
-     ) VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')`,
-    [tenantId, userId, roleId, tenantId]
-  );
+    await assignFullAccessRoleToUser(tenantId, userId);
 
   state.createdUserIds.push(userId);
   state.createdUserRoleScopeUserIds.push(userId);

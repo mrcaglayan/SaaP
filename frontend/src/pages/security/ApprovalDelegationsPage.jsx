@@ -14,10 +14,13 @@ import {
 } from "../../api/rbacAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import DelegationStateBadge from "../../components/security/DelegationStateBadge.jsx";
+import { useI18n } from "../../i18n/useI18n.js";
 import {
   formatDelegationScopeLabel,
   formatDelegationWindow,
 } from "../../utils/delegationUi.js";
+import SecurityUsersWorkbenchTabs from "./components/users/SecurityUsersWorkbenchTabs.jsx";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 
 const SCOPE_TYPES = [
   "TENANT",
@@ -48,6 +51,7 @@ function applyStateFilter(rows, stateFilter) {
  */
 export default function ApprovalDelegationsPage() {
   const { getPermissionAccess, user } = useAuth();
+  const { l } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -355,18 +359,38 @@ export default function ApprovalDelegationsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">
-          Approval Delegation Management
-        </h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Create, filter, and revoke scoped approval delegations. Delegated
-          authority only applies where the source reviewer actually holds
-          approval rights at the request scope.
-        </p>
-      </div>
-
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="users"
+      sectionKey="user-assignments"
+      eyebrow={l("Users & Assignments Workbench", "Kullanicilar ve Atamalar Workbench'i")}
+      title={l("Delegations", "Delegasyonlar")}
+      description={l(
+        "Create, filter, and revoke scoped approval delegations from the same users workbench family as assignments and coverage.",
+        "Atamalar ve kapsama kayitlariyla ayni users workbench ailesi icinde kapsamli approval delegasyonlari olusturun, filtreleyin ve geri alin."
+      )}
+      stats={[
+        {
+          title: l("Visible delegations", "Gorunen delegasyonlar"),
+          value: filteredRows.length,
+          description: l(
+            "Rows that match the current delegation filters.",
+            "Mevcut delegasyon filtrelerine uyan satirlar."
+          ),
+          tone: "blue",
+        },
+        {
+          title: l("Delegation directory", "Delegasyon dizini"),
+          value: rows.length,
+          description: l(
+            "Total delegation rows loaded in this workspace snapshot.",
+            "Bu calisma alani gorunumunde yuklenen toplam delegasyon satirlari."
+          ),
+          tone: "green",
+        },
+      ]}
+      toolbar={<SecurityUsersWorkbenchTabs activeTab="delegations" counts={{ delegations: filteredRows.length }} />}
+    >
+      <div className="space-y-4">
       <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
         <div className="font-semibold">
           Need Temporary Runtime Authority Instead?
@@ -377,7 +401,7 @@ export default function ApprovalDelegationsPage() {
           authority.
         </p>
         <Link
-          to="/app/ayarlar/rbac/temporary-coverage"
+          to="/app/ayarlar/security-admin/users?tab=coverage"
           className="mt-3 inline-flex rounded-lg border border-sky-300 bg-white px-3 py-2 font-medium text-sky-800 hover:bg-sky-100"
         >
           Open Temporary Operational Coverage
@@ -793,6 +817,7 @@ export default function ApprovalDelegationsPage() {
           )}
         </section>
       </div>
-    </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

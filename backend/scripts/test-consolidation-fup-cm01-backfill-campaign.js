@@ -26,9 +26,10 @@ async function main() {
     "FUP-CM01 campaign must scan ACTIVE tenants + ACTIVE consolidation groups"
   );
   assert(
-    campaignSource.includes("TenantAdmin") &&
+    campaignSource.includes("SecurityAdmin") &&
+      campaignSource.includes("SystemAdmin") &&
       campaignSource.includes("ownerByTenant"),
-    "FUP-CM01 campaign must assign owner per tenant (TenantAdmin fallback strategy)"
+    "FUP-CM01 campaign must assign owner per tenant from fresh bootstrap admin roles"
   );
   assert(
     campaignSource.includes("unresolvedBacklog") &&

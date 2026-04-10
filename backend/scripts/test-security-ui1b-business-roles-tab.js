@@ -56,16 +56,18 @@ async function main() {
   assert(
     accessModelPageSource.includes("Business role guidance") &&
       accessModelPageSource.includes("Labels stay separate from workflow authority") &&
+      accessModelPageSource.includes("Browse by workflow family") &&
       accessModelPageSource.includes("Business role name") &&
       accessModelPageSource.includes("Default scope") &&
       accessModelPageSource.includes("Suggested starter packages") &&
+      accessModelPageSource.includes("Scope coverage") &&
       accessModelPageSource.includes("Active / Hidden") &&
       accessModelPageSource.includes("Create role label") &&
       accessModelPageSource.includes("Edit label") &&
       accessModelPageSource.includes("Hide from picker") &&
       accessModelPageSource.includes("Duplicate") &&
       accessModelPageSource.includes("View where used"),
-    "AccessModelCatalogPage should expose the dedicated UI-1B business-role table and action surface"
+    "AccessModelCatalogPage should expose the dedicated UI-1B browse-first business-role card and action surface"
   );
 
   assert(
@@ -81,7 +83,7 @@ async function main() {
   assert(
     accessModelPageSource.includes('to="/app/ayarlar/rbac/user-assignments"') &&
       accessModelPageSource.includes('to="/app/ayarlar/workflow-kurulumu"'),
-    "UI-1B should provide handoff paths for where-used and assignment follow-up"
+    "UI-1B should provide handoff paths for assignment follow-up and workflow-governance where-used review"
   );
 
   console.log("test-security-ui1b-business-roles-tab passed");

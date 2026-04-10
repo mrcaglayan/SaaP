@@ -47,14 +47,16 @@ async function main() {
   assert(
     accessModelPageSource.includes("Workflow preset guidance") &&
       accessModelPageSource.includes("Presets should read like business flows") &&
+      accessModelPageSource.includes("Browse by workflow family") &&
       accessModelPageSource.includes("Preset name") &&
       accessModelPageSource.includes("Primary scope") &&
       accessModelPageSource.includes("Step count") &&
       accessModelPageSource.includes("Typical actors") &&
       accessModelPageSource.includes("Uses extension?") &&
-      accessModelPageSource.includes("Active / Draft") &&
+      accessModelPageSource.includes("Step preview") &&
+      accessModelPageSource.includes("Scope coverage") &&
       accessModelPageSource.includes("WorkflowPresetCatalogTable"),
-    "AccessModelCatalogPage should expose the dedicated UI-1D preset table surface"
+    "AccessModelCatalogPage should expose the dedicated UI-1D preset card list surface"
   );
 
   assert(

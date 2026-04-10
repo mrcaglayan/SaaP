@@ -68,14 +68,8 @@ function allowAllScopes() {}
 
 // ── Fixture resolution ────────────────────────────────────────────
 
-async function resolveTenantAdminRoleId(tenantId) {
-  const result = await query(
-    `SELECT id FROM roles WHERE tenant_id = ? AND code = 'TenantAdmin' LIMIT 1`,
-    [tenantId]
-  );
-  const roleId = Number(result.rows?.[0]?.id || 0);
-  assert(roleId > 0, `TenantAdmin role not found for tenant ${tenantId}`);
-  return roleId;
+async function assignFullAccessRoleToUser(tenantId, userId) {
+  await assignTestFullAccessRoleToUser(tenantId, userId);
 }
 
 async function resolveSmokeContext() {
@@ -163,13 +157,7 @@ async function createSmokeUser({ tenantId, uniqueSuffix, state }) {
   );
   const userId = Number(insertResult.rows?.insertId || 0);
   assert(userId > 0, "Failed to create smoke user");
-
-  const roleId = await resolveTenantAdminRoleId(tenantId);
-  await query(
-    `INSERT INTO user_role_scopes (tenant_id, user_id, role_id, scope_type, scope_id, effect)
-     VALUES (?, ?, ?, 'TENANT', ?, 'ALLOW')`,
-    [tenantId, userId, roleId, tenantId]
-  );
+    await assignFullAccessRoleToUser(tenantId, userId);
   state.createdUserIds.push(userId);
   state.createdUserRoleScopeUserIds.push(userId);
   return { userId, email, password };

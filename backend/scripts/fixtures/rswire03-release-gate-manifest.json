@@ -66,11 +66,6 @@
       "packageScriptName": "test:ux:field-visibility-policies"
     },
     {
-      "routePath": "/app/ayarlar/rbac/role-migrations",
-      "smokeScriptPath": "backend/scripts/test-security-pr4c-role-migration-tool.js",
-      "packageScriptName": "test:ux:role-migrations-smoke"
-    },
-    {
       "routePath": "/app/ayarlar/rbac/delegations",
       "smokeScriptPath": "backend/scripts/test-approvals-ui5d-delegation-ux.js",
       "packageScriptName": "test:ux:delegation-ux"

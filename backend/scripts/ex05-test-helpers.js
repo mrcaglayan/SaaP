@@ -6,8 +6,8 @@ import bcrypt from "bcrypt";
 import { query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
 import {
-  assignCompatibilityBootstrapRolesToUser,
-  ensureCompatibilitySystemRolesForTenant,
+  assignBootstrapRolesToUser,
+  ensureSystemRolesForTenant,
 } from "../src/services/systemRoles.service.js";
 
 export const TEST_FISCAL_YEAR = 2026;
@@ -122,10 +122,9 @@ export async function createTenant(code, name) {
 /**
  * Ensures a tenant-scoped test role exists with every permission bound.
  *
- * Fresh tenants no longer seed `TenantAdmin`, but a long tail of
- * characterization tests still needs one broad operator actor. This helper
- * provisions a test-only full-access role without reintroducing the retired
- * legacy role into the steady-state catalog.
+ * Characterization tests still need one broad operator actor. This helper
+ * provisions a test-only full-access role without reintroducing retired
+ * steady-state roles into the live catalog.
  */
 export async function ensureTestFullAccessRole(tenantId) {
   const normalizedTenantId = toNumber(tenantId);
@@ -258,8 +257,21 @@ export async function assignScopedTestFullAccessRoleToUser({
 }
 
 /**
- * Assigns the fresh-tenant bootstrap roles plus the test-only full-access role
- * to a user at tenant scope.
+ * Assigns the fresh bootstrap roles to a user at tenant scope.
+ */
+export async function assignSecurityAdminAndSystemAdmin(tenantId, userId) {
+  const normalizedTenantId = toNumber(tenantId);
+  const normalizedUserId = toNumber(userId);
+  assert(normalizedTenantId > 0, "tenantId is required to assign bootstrap access");
+  assert(normalizedUserId > 0, "userId is required to assign bootstrap access");
+
+  await ensureSystemRolesForTenant(normalizedTenantId);
+  return assignBootstrapRolesToUser(normalizedTenantId, normalizedUserId);
+}
+
+/**
+ * Assigns the fresh bootstrap roles plus the test-only full-access role to a
+ * user at tenant scope.
  */
 export async function assignTestFullAccessRoleToUser(tenantId, userId) {
   const normalizedTenantId = toNumber(tenantId);
@@ -267,8 +279,7 @@ export async function assignTestFullAccessRoleToUser(tenantId, userId) {
   assert(normalizedTenantId > 0, "tenantId is required to assign test full-access access");
   assert(normalizedUserId > 0, "userId is required to assign test full-access access");
 
-  await ensureCompatibilitySystemRolesForTenant(normalizedTenantId);
-  await assignCompatibilityBootstrapRolesToUser(normalizedTenantId, normalizedUserId);
+  await assignSecurityAdminAndSystemAdmin(normalizedTenantId, normalizedUserId);
   return assignScopedTestFullAccessRoleToUser({
     tenantId: normalizedTenantId,
     userId: normalizedUserId,
@@ -276,8 +287,8 @@ export async function assignTestFullAccessRoleToUser(tenantId, userId) {
 }
 
 /**
- * Creates a broad-access test admin for a tenant without relying on the
- * retired `TenantAdmin` compatibility role.
+ * Creates a broad-access test admin for a tenant without relying on retired
+ * bootstrap role compatibility paths.
  */
 export async function createBootstrapAdmin({
   tenantId,
@@ -305,24 +316,6 @@ export async function createBootstrapAdmin({
   await assignTestFullAccessRoleToUser(tenantId, userId);
 
   return { userId };
-}
-
-/**
- * Backward-compatible alias for older characterization tests that still import
- * the legacy helper name.
- */
-export async function createTenantAdmin({
-  tenantId,
-  email,
-  password,
-  name = "EX05 Admin",
-}) {
-  return createBootstrapAdmin({
-    tenantId,
-    email,
-    password,
-    name,
-  });
 }
 
 export async function login({ baseUrl, email, password }) {
@@ -594,7 +587,7 @@ export async function upsertRevaluationPurposeAccounts({
 
 /**
  * Seeds baseline tenant metadata, then creates a broad-access fresh-tenant
- * admin using the post-PR-6A bootstrap model.
+ * admin using the fresh bootstrap model.
  */
 export async function seedAndCreateBootstrapAdmin({
   tenantCode,
@@ -611,24 +604,6 @@ export async function seedAndCreateBootstrapAdmin({
     password: adminPassword,
   });
   return { tenantId, userId };
-}
-
-/**
- * Backward-compatible alias for older characterization tests that still import
- * the legacy helper name.
- */
-export async function seedAndCreateTenantAdmin({
-  tenantCode,
-  tenantName,
-  adminEmail,
-  adminPassword,
-}) {
-  return seedAndCreateBootstrapAdmin({
-    tenantCode,
-    tenantName,
-    adminEmail,
-    adminPassword,
-  });
 }
 
 export function findRegularPeriodByNo(periodRows, periodNo) {

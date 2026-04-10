@@ -5,9 +5,6 @@ import {
 } from "./roleCatalog.js";
 
 function getBadgeClasses(kind) {
-  if (kind === "legacy") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
   if (kind === "system") {
     return "border-sky-200 bg-sky-50 text-sky-800";
   }
@@ -45,9 +42,7 @@ export default function RoleSummaryCard({
     scopeType && scopeId
       ? buildScopeLabel(scopeType, scopeId, lookups, tenantScopeId)
       : "";
-  const roleDetailLabel = entry.technicalCode
-    ? "Legacy runtime role"
-    : runtimeRoleName && runtimeRoleName !== entry.code && runtimeRoleName !== runtimeRoleCode
+  const roleDetailLabel = runtimeRoleName && runtimeRoleName !== entry.code && runtimeRoleName !== runtimeRoleCode
       ? runtimeRoleName
       : "";
 
@@ -84,11 +79,6 @@ export default function RoleSummaryCard({
           {entry.companionOnly ? (
             <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800">
               Companion role
-            </span>
-          ) : null}
-          {role?.legacyDisabled ? (
-            <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-800">
-              Hidden for new assignments
             </span>
           ) : null}
         </div>
@@ -131,12 +121,6 @@ export default function RoleSummaryCard({
           </div>
         ) : null}
       </div>
-
-      {entry.legacy && entry.replacementLabel ? (
-        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <span className="font-semibold">Replacement path:</span> {entry.replacementLabel}
-        </div>
-      ) : null}
 
       {!recommendedScopeMatch && scopeType ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">

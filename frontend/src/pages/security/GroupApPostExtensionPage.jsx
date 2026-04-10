@@ -4,7 +4,6 @@ import { useAuth } from "../../auth/useAuth.js";
 import {
   getWorkflowPackageCatalogEntry,
   getWorkflowPresetCatalogEntry,
-  listLegacyRoleCatalogEntries,
 } from "./roleCatalog.js";
 
 const GROUP_AP_POST_PACKAGE_CODE = "PKG-AP-POST-GROUP";
@@ -20,8 +19,6 @@ function buildPackageDetail() {
     allowedScopes: Array.isArray(entry.allowedScopes) ? entry.allowedScopes : ["GROUP"],
     permissionCodes: Array.isArray(entry.permissionCodes) ? entry.permissionCodes : [],
     plannedExtension: Boolean(entry.plannedExtension),
-    legacyWarnings: Array.isArray(entry.legacyWarnings) ? entry.legacyWarnings : [],
-    runtimeMappingLabel: entry.runtimeMappingLabel || "",
   };
 }
 
@@ -81,10 +78,6 @@ function StatusBanner({ enabled }) {
           group-scoped posting authority. The AP / Group-Controlled Post preset
           cannot be applied to live workflows yet.
         </p>
-        <div className="mt-3 rounded-2xl border border-amber-200 bg-white/80 px-4 py-3 text-sm text-slate-700">
-          Do not use legacy GroupController as a workaround. Wait for the clean
-          extension package to avoid compatibility debt.
-        </div>
       </div>
     </section>
   );
@@ -165,18 +158,6 @@ function PackageDetailCard({ pkg }) {
         </div>
       )}
 
-      {pkg.legacyWarnings.length > 0 ? (
-        <div className="mt-4 space-y-2">
-          {pkg.legacyWarnings.map((warning) => (
-            <div
-              key={warning}
-              className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
-            >
-              {warning}
-            </div>
-          ))}
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -308,53 +289,6 @@ function PresetPreviewCard({ preset }) {
   );
 }
 
-function LegacyWarningSection() {
-  const legacyEntries = useMemo(() => listLegacyRoleCatalogEntries(), []);
-  const groupControllerEntry = legacyEntries.find(
-    (entry) =>
-      (entry.runtimeCode || entry.technicalCode || entry.code || "")
-        .toLowerCase()
-        .includes("groupcontroller")
-  );
-
-  if (!groupControllerEntry) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-[28px] border border-rose-200 bg-[linear-gradient(135deg,_rgba(255,241,242,0.96),_rgba(255,255,255,0.98))] px-5 py-5">
-      <div className="max-w-3xl">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">
-          Legacy avoidance
-        </div>
-        <h3 className="mt-2 text-xl font-semibold text-slate-950">
-          Do not use GroupController for group AP posting
-        </h3>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          The legacy <strong>GroupController</strong> role is a broad compatibility
-          role that bundles unrelated authorities. Group-scoped AP posting must
-          use the clean <strong>{GROUP_AP_POST_PACKAGE_CODE}</strong> extension
-          package instead, which carries only the specific AP posting permission
-          at GROUP scope.
-        </p>
-        <div className="mt-3 rounded-2xl border border-rose-200 bg-white/80 px-4 py-3 text-sm text-slate-700">
-          <div className="font-semibold text-slate-900">
-            {groupControllerEntry.runtimeCode || groupControllerEntry.code}
-          </div>
-          <div className="mt-1 text-xs text-slate-500">
-            {groupControllerEntry.legacyReason || groupControllerEntry.description}
-          </div>
-          {groupControllerEntry.replacementLabel ? (
-            <div className="mt-2 text-xs text-slate-600">
-              Replacement: <strong>{groupControllerEntry.replacementLabel}</strong>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export default function GroupApPostExtensionPage() {
   const { securityAdminUiState, securityAdminUiStateLoaded } = useAuth();
 
@@ -375,8 +309,8 @@ export default function GroupApPostExtensionPage() {
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
             Optional extension that allows AP document posting to be resolved at
             group scope instead of entity or country scope. This enables the
-            AP / Group-Controlled Post workflow preset without relying on legacy
-            broad controller roles.
+            AP / Group-Controlled Post workflow preset for tenants that centralize
+            final AP posting authority at group level.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -401,8 +335,6 @@ export default function GroupApPostExtensionPage() {
         <PackageDetailCard pkg={pkg} />
         <PresetPreviewCard preset={preset} />
       </div>
-
-      <LegacyWarningSection />
 
       <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -445,10 +377,10 @@ export default function GroupApPostExtensionPage() {
               Browse presets
             </Link>
             <Link
-              to="/app/ayarlar/rbac/legacy-migration-visibility"
+              to="/app/ayarlar/rbac/access-debugger"
               className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
             >
-              Legacy migration
+              Open access debugger
             </Link>
           </div>
         </div>

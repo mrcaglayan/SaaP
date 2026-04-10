@@ -1207,16 +1207,16 @@ export function buildWorkflowStepValidationModel({
         );
       }
 
-      const legacyWarnings = Array.isArray(packageEntry.legacyWarnings)
-        ? packageEntry.legacyWarnings
+      const runtimeNotes = Array.isArray(packageEntry.runtimeNotes)
+        ? packageEntry.runtimeNotes
         : [];
-      if (legacyWarnings.length > 0) {
+      if (runtimeNotes.length > 0) {
         warningIssues.push(
           buildWorkflowStepIssue(
             "warning",
-            "legacy_runtime_mapping",
-            l("Compatibility runtime mapping", "Uyumluluk runtime eslemesi"),
-            legacyWarnings[0]
+            "runtime_source_note",
+            l("Runtime source note", "Runtime kaynak notu"),
+            runtimeNotes[0]
           )
         );
       }

@@ -21,10 +21,6 @@ const WORKFLOW_FAMILY_ORDER = Object.freeze({
 });
 
 const RUNTIME_ROLE_PREVIEW_SUMMARIES = Object.freeze({
-  TenantAdmin: {
-    en: "manage broad tenant administration through the legacy tenant-wide role",
-    tr: "legacy tenant-geneli rol ile genis tenant yonetimi yapabilir",
-  },
   SecurityAdmin: {
     en: "manage roles, assignments, and security administration",
     tr: "rolleri, atamalari ve guvenlik yonetimini idare edebilir",
@@ -72,22 +68,6 @@ const RUNTIME_ROLE_PREVIEW_SUMMARIES = Object.freeze({
   AuditorReadOnly: {
     en: "review governed areas in read-only mode",
     tr: "yonetilen alanlari salt-okunur modda inceleyebilir",
-  },
-  APDocumentPoster: {
-    en: "submit and post AP through the legacy combined role",
-    tr: "legacy birlesik rol uzerinden AP gonderip post edebilir",
-  },
-  GroupController: {
-    en: "use broad group-controller authority through the legacy role",
-    tr: "legacy rol uzerinden genis grup denetleyici yetkisini kullanabilir",
-  },
-  CountryController: {
-    en: "use broad country-controller authority through the legacy role",
-    tr: "legacy rol uzerinden genis ulke denetleyici yetkisini kullanabilir",
-  },
-  EntityAccountant: {
-    en: "use broad entity-accountant authority through the legacy role",
-    tr: "legacy rol uzerinden genis entity accountant yetkisini kullanabilir",
   },
 });
 
@@ -171,22 +151,19 @@ function buildScopeKey(scopeType, scopeId) {
 function getManagedPackageSourceLabel(sourceType, l) {
   const normalizedSourceType = normalizeText(sourceType).toUpperCase();
   if (normalizedSourceType === "STARTER_DERIVED") {
-    return translate(l, "Starter-derived", "Starterdan tureyen");
+    return translate(l, "Business role label", "Is rol etiketi");
   }
   if (normalizedSourceType === "PRESET_DERIVED") {
-    return translate(l, "Preset-derived", "Presetten tureyen");
+    return translate(l, "Preset-derived package", "Presetten tureyen paket");
   }
-  return translate(l, "Direct / custom", "Dogrudan / ozel");
+  return translate(l, "Workflow package", "Workflow paketi");
 }
 
 function getBundleSourceLabel(bundle, l) {
-  if (bundle?.hasLegacyRole) {
-    return translate(l, "Legacy runtime mapping", "Legacy runtime eslemesi");
-  }
   if (bundle?.isPresetBundle) {
-    return translate(l, "Preset-derived bundle", "Presetten tureyen paket");
+    return translate(l, "Preset-derived package", "Presetten tureyen paket");
   }
-  return translate(l, "Runtime role mapping", "Runtime rol eslemesi");
+  return translate(l, "Direct runtime role", "Dogrudan runtime rol");
 }
 
 function pushWorkflowGrant(grantsByKey, grant) {
@@ -199,15 +176,15 @@ function pushWorkflowGrant(grantsByKey, grant) {
   const existingGrant = grantsByKey.get(grantKey);
   if (existingGrant) {
     existingGrant.sourceLabels.add(grant.sourceLabel);
-    existingGrant.hasDirectSource ||= Boolean(grant.hasDirectSource);
-    existingGrant.hasCompatibilitySource ||= Boolean(grant.hasCompatibilitySource);
+    existingGrant.hasManagedPackageSource ||= Boolean(grant.hasManagedPackageSource);
+    existingGrant.hasRuntimeRoleSource ||= Boolean(grant.hasRuntimeRoleSource);
     return;
   }
   grantsByKey.set(grantKey, {
     ...grant,
     sourceLabels: new Set([grant.sourceLabel].filter(Boolean)),
-    hasDirectSource: Boolean(grant.hasDirectSource),
-    hasCompatibilitySource: Boolean(grant.hasCompatibilitySource),
+    hasManagedPackageSource: Boolean(grant.hasManagedPackageSource),
+    hasRuntimeRoleSource: Boolean(grant.hasRuntimeRoleSource),
   });
 }
 
@@ -506,8 +483,8 @@ export function buildEffectiveAuthorityPreview({
       scopeId: assignment.scopeId,
       scopeLabel: assignment.scopeLabel,
       sourceLabel: getManagedPackageSourceLabel(assignment.sourceType, l),
-      hasDirectSource: true,
-      hasCompatibilitySource: false,
+      hasManagedPackageSource: true,
+      hasRuntimeRoleSource: false,
     });
   }
 
@@ -517,9 +494,6 @@ export function buildEffectiveAuthorityPreview({
       if (!workflowPackageEntry.code) {
         continue;
       }
-      // Bundle-derived package coverage is compatibility-only explainability.
-      // Keep surfacing it so brownfield tenants can still read effective
-      // authority while the cleaner package assignment model rolls out.
       pushWorkflowGrant(workflowGrantsByKey, {
         workflowFamily: workflowPackageEntry.workflowFamily,
         workflowFamilyLabel: workflowPackageEntry.workflowFamilyLabel,
@@ -529,8 +503,8 @@ export function buildEffectiveAuthorityPreview({
         scopeId: bundle.scopeId,
         scopeLabel: bundle.scopeLabel,
         sourceLabel: getBundleSourceLabel(bundle, l),
-        hasDirectSource: false,
-        hasCompatibilitySource: true,
+        hasManagedPackageSource: false,
+        hasRuntimeRoleSource: true,
       });
     }
   }
@@ -552,8 +526,8 @@ export function buildEffectiveAuthorityPreview({
         scopeLabel: grant.scopeLabel,
         packageCodes: new Set(),
         sourceLabels: new Set(),
-        hasDirectSource: false,
-        hasCompatibilitySource: false,
+        hasManagedPackageSource: false,
+        hasRuntimeRoleSource: false,
       });
     }
     const group = workflowGroupsByScope.get(groupKey);
@@ -561,8 +535,8 @@ export function buildEffectiveAuthorityPreview({
     for (const sourceLabel of grant.sourceLabels) {
       group.sourceLabels.add(sourceLabel);
     }
-    group.hasDirectSource ||= Boolean(grant.hasDirectSource);
-    group.hasCompatibilitySource ||= Boolean(grant.hasCompatibilitySource);
+    group.hasManagedPackageSource ||= Boolean(grant.hasManagedPackageSource);
+    group.hasRuntimeRoleSource ||= Boolean(grant.hasRuntimeRoleSource);
   }
 
   const workflowLines = Array.from(workflowGroupsByScope.values())
@@ -586,17 +560,17 @@ export function buildEffectiveAuthorityPreview({
         missingText: summary.missingText,
         sourceLabels: Array.from(group.sourceLabels).sort(),
         noteText:
-          !group.hasDirectSource && group.hasCompatibilitySource
+          !group.hasManagedPackageSource && group.hasRuntimeRoleSource
             ? translate(
                 l,
-                "Preview inferred from current runtime-role mapping.",
-                "Onizleme mevcut runtime rol eslesmesinden cikartildi."
+                "Summarized from the current direct runtime roles at this scope.",
+                "Bu kapsamda mevcut dogrudan runtime rollerinden ozetlendi."
               )
-            : group.hasDirectSource && group.hasCompatibilitySource
+            : group.hasManagedPackageSource && group.hasRuntimeRoleSource
               ? translate(
                   l,
-                  "Combines direct package grants and current runtime-role mapping.",
-                  "Dogrudan paket atamalari ile mevcut runtime rol eslesmesini birlikte gosterir."
+                  "Combines workflow packages and direct runtime roles at this scope.",
+                  "Bu kapsamda workflow paketleri ile dogrudan runtime rollerini birlikte gosterir."
                 )
               : "",
       };
@@ -629,12 +603,7 @@ export function buildEffectiveAuthorityPreview({
         scopeId: Number(bundle.scopeId || 0),
         scopeLabel: bundle.scopeLabel,
         summaryText: getRuntimeRoleSummary(roleCode, roleEntry, l),
-        legacy: Boolean(roleEntry.legacy),
-        sourceLabels: [
-          roleEntry.legacy
-            ? translate(l, "Legacy runtime role", "Legacy runtime rol")
-            : translate(l, "Runtime role", "Runtime rol"),
-        ],
+        sourceLabels: [translate(l, "Direct runtime role", "Dogrudan runtime rol")],
       });
     }
   }

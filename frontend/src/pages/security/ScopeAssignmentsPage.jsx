@@ -13,7 +13,9 @@ import {
 import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import SecurityUsersWorkbenchTabs from "./components/users/SecurityUsersWorkbenchTabs.jsx";
 import RoleSummaryCard from "./RoleSummaryCard.jsx";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 import SecurityWarningList from "./SecurityWarningList.jsx";
 import { buildScopeLabel, getRoleCatalogEntry } from "./roleCatalog.js";
 
@@ -67,7 +69,7 @@ function getScopeOptions(scopeType, lookups, tenantScopeId) {
  */
 export default function ScopeAssignmentsPage() {
   const { getPermissionAccess, hasPermission, user } = useAuth();
-  const { t } = useI18n();
+  const { l, t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -295,14 +297,47 @@ export default function ScopeAssignmentsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">
-          {t("scopeAssignments.title")}
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">{t("scopeAssignments.subtitle")}</p>
-      </div>
-
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="users"
+      sectionKey="user-assignments"
+      eyebrow={l("Users & Assignments Workbench", "Kullanicilar ve Atamalar Workbench'i")}
+      title={l("Scope Access", "Kapsam erisimi")}
+      description={l(
+        "Adjust user-level data scopes and assignment scope targets without leaving the users workbench family.",
+        "Kullanici seviyesindeki veri kapsamlarini ve atama kapsam hedeflerini users workbench ailesinden cikmadan duzenleyin."
+      )}
+      stats={[
+        {
+          title: l("Users in scope", "Kapsamdaki kullanicilar"),
+          value: users.length,
+          description: l(
+            "Available assignees visible in this scope-management surface.",
+            "Bu kapsam yonetimi yuzeyinde gorunen atanabilir kisiler."
+          ),
+          tone: "blue",
+        },
+        {
+          title: l("Data scopes", "Veri kapsamlari"),
+          value: dataScopes.length,
+          description: l(
+            "Current visibility rules for the selected user.",
+            "Secili kullanici icin mevcut gorunurluk kurallari."
+          ),
+          tone: "green",
+        },
+        {
+          title: l("Scoped assignments", "Kapsamli atamalar"),
+          value: assignments.length,
+          description: l(
+            "Role-assignment rows whose scope can be reviewed or updated here.",
+            "Burada incelenebilen veya guncellenebilen rol atama satirlari."
+          ),
+          tone: "amber",
+        },
+      ]}
+      toolbar={<SecurityUsersWorkbenchTabs activeTab="scopes" />}
+    >
+      <div className="space-y-4">
       {error && (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error}
@@ -646,6 +681,7 @@ export default function ScopeAssignmentsPage() {
       </div>
 
       {loading && <p className="text-sm text-slate-500">{t("scopeAssignments.loading")}</p>}
-    </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

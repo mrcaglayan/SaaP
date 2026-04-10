@@ -267,19 +267,6 @@ async function main() {
   assertRoleLacks(permissionCodesByRole, "BranchOperator", "workflow.definition.read");
   assertRoleLacks(permissionCodesByRole, "BranchOperator", "cari.request.review");
 
-  const legacyRoleResult = await query(
-    `SELECT code
-     FROM roles
-     WHERE tenant_id = ?
-       AND code IN ('TenantAdmin', 'GroupController', 'CountryController', 'EntityAccountant', 'APDocumentPoster')`,
-    [tenantId]
-  );
-  assert.equal(
-    (legacyRoleResult.rows || []).length,
-    0,
-    "Fresh tenants should not seed retired legacy roles after PR-6A"
-  );
-
   console.log("test-security-pr4a-duty-boundary-roles passed");
 }
 

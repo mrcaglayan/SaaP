@@ -1,3 +1,5 @@
+import { getRoleCatalogEntry } from "./roleCatalog.js";
+
 const SOD_PACKAGE_RULES = Object.freeze([
   Object.freeze({
     id: "ap-maker-reviewer",
@@ -68,40 +70,7 @@ const SOD_PACKAGE_RULES = Object.freeze([
   }),
 ]);
 
-const RISKY_RUNTIME_ROLE_RULES = Object.freeze({
-  APDocumentPoster: Object.freeze({
-    titleEn: "Legacy AP poster role still combines duties",
-    titleTr: "Legacy AP poster rolu gorevleri hala birlestiriyor",
-    descriptionEn:
-      "Legacy APDocumentPoster keeps AP submit and posting style authority together at {{scope}}. Prefer separate AP Submitter and AP Poster package grants.",
-    descriptionTr:
-      "Legacy APDocumentPoster, {{scope}} kapsaminda AP gonderim ve post etme benzeri yetkileri birlikte tutuyor. Bunun yerine ayri AP Submitter ve AP Poster paketlerini tercih edin.",
-  }),
-  GroupController: Object.freeze({
-    titleEn: "Legacy group controller remains broad",
-    titleTr: "Legacy grup controller rolu genis kalmaya devam ediyor",
-    descriptionEn:
-      "Legacy GroupController keeps broad cross-process authority at {{scope}}. Prefer separated group packages and business-role labels.",
-    descriptionTr:
-      "Legacy GroupController, {{scope}} kapsaminda genis surecler arasi yetkileri birlikte tutuyor. Bunun yerine ayrik grup paketlerini ve is rol etiketlerini tercih edin.",
-  }),
-  CountryController: Object.freeze({
-    titleEn: "Legacy country controller remains broad",
-    titleTr: "Legacy country controller rolu genis kalmaya devam ediyor",
-    descriptionEn:
-      "Legacy CountryController keeps broad country-wide control authority at {{scope}}. Prefer separated review, posting, and governance packages.",
-    descriptionTr:
-      "Legacy CountryController, {{scope}} kapsaminda genis ulke-geneli kontrol yetkilerini birlikte tutuyor. Bunun yerine ayrik inceleme, post etme ve yonetim paketlerini tercih edin.",
-  }),
-  EntityAccountant: Object.freeze({
-    titleEn: "Legacy entity accountant remains broad",
-    titleTr: "Legacy entity accountant rolu genis kalmaya devam ediyor",
-    descriptionEn:
-      "Legacy EntityAccountant keeps broad entity authority at {{scope}}. Prefer cleaner business-role labels plus scoped package grants.",
-    descriptionTr:
-      "Legacy EntityAccountant, {{scope}} kapsaminda genis entity yetkilerini birlikte tutuyor. Bunun yerine daha temiz is rol etiketleri ve kapsamli paket atamalarini tercih edin.",
-  }),
-});
+const RISKY_RUNTIME_ROLE_RULES = Object.freeze({});
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -377,9 +346,7 @@ function buildBundleAuditItem(bundle, auditRows, auditReadable, l) {
     scopeLabel: bundle?.scopeLabel || "",
     sourceLabel: bundle?.isPresetBundle
       ? translate(l, "Preset-derived bundle", "Presetten tureyen paket")
-      : bundle?.hasLegacyRole
-        ? translate(l, "Legacy runtime mapping", "Legacy runtime eslemesi")
-        : translate(l, "Runtime role mapping", "Runtime rol eslemesi"),
+      : translate(l, "Direct runtime role", "Dogrudan runtime rol"),
     sourceDetail: bundle?.presetSummary
       ? bundle.presetSummary
       : translate(
@@ -428,6 +395,7 @@ function addPackageGrant(grantsByScope, scopeType, scopeId, scopeLabel, packageC
       scopeId: Number(scopeId || 0),
       scopeLabel: scopeLabel || "",
       packageCodes: new Set(),
+      packageLabels: new Set(),
       sourceLabels: new Set(),
     });
   }
@@ -455,6 +423,10 @@ function buildPackageScopeEntries(workflowPackageAssignments, userBundles) {
       assignment.packageCode,
       assignment.sourceTypeLabel
     );
+    const scopeEntry = grantsByScope.get(buildScopeKey(assignment.scopeType, assignment.scopeId));
+    if (scopeEntry && assignment.packageLabel) {
+      scopeEntry.packageLabels.add(String(assignment.packageLabel));
+    }
   }
   for (const bundle of Array.isArray(userBundles) ? userBundles : []) {
     if (toUpperText(bundle?.effect) === "DENY") {
@@ -465,9 +437,7 @@ function buildPackageScopeEntries(workflowPackageAssignments, userBundles) {
     }
     const sourceLabel = bundle?.isPresetBundle
       ? "Preset-derived bundle"
-      : bundle?.hasLegacyRole
-        ? "Legacy runtime mapping"
-        : "Runtime role mapping";
+      : "Direct runtime role";
     for (const packageCode of Array.isArray(bundle?.packageCodes) ? bundle.packageCodes : []) {
       addPackageGrant(
         grantsByScope,
@@ -477,6 +447,15 @@ function buildPackageScopeEntries(workflowPackageAssignments, userBundles) {
         packageCode,
         sourceLabel
       );
+    }
+    const scopeEntry = grantsByScope.get(buildScopeKey(bundle.scopeType, bundle.scopeId));
+    if (scopeEntry) {
+      for (const packageLabel of Array.isArray(bundle?.packageLabels) ? bundle.packageLabels : []) {
+        if (!normalizeText(packageLabel)) {
+          continue;
+        }
+        scopeEntry.packageLabels.add(String(packageLabel));
+      }
     }
   }
   return Array.from(grantsByScope.values());
@@ -501,11 +480,15 @@ function buildPackageRuleWarnings(scopeEntries, l) {
       }
       warnings.push({
         id: `${rule.id}-${scopeEntry.scopeKey}`,
+        severity: "warn",
         title: translate(l, rule.titleEn, rule.titleTr),
         description: translate(l, rule.descriptionEn, rule.descriptionTr, {
           scope: scopeEntry.scopeLabel,
         }),
         scopeLabel: scopeEntry.scopeLabel,
+        packageLabels: Array.from(
+          scopeEntry.packageLabels.size > 0 ? scopeEntry.packageLabels : scopeEntry.packageCodes
+        ).sort(),
         sourceLabels: Array.from(scopeEntry.sourceLabels),
       });
     }
@@ -526,12 +509,20 @@ function buildRuntimeRoleWarnings(userBundles, l) {
       }
       warnings.push({
         id: `${normalizeText(roleCode)}-${buildScopeKey(bundle.scopeType, bundle.scopeId)}`,
+        severity: "warn",
         title: translate(l, roleRule.titleEn, roleRule.titleTr),
         description: translate(l, roleRule.descriptionEn, roleRule.descriptionTr, {
           scope: bundle.scopeLabel,
         }),
         scopeLabel: bundle.scopeLabel,
-        sourceLabels: [translate(l, "Legacy runtime mapping", "Legacy runtime eslemesi")],
+        roleLabels: Array.from(
+          new Set(
+            (Array.isArray(bundle?.roleCodes) ? bundle.roleCodes : [])
+              .map((code) => getRoleCatalogEntry(code)?.displayName || normalizeText(code))
+              .filter(Boolean)
+          )
+        ).sort(),
+        sourceLabels: [translate(l, "Direct runtime role", "Dogrudan runtime rol")],
       });
     }
   }
