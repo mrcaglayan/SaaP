@@ -1,46 +1,33 @@
+import { Search, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle } from "lucide-react";
-import { Link } from "react-router-dom";
-import {
-  createOrUpdateRole,
-  listPermissions,
-  listRoles,
-  replaceRolePermissions,
-} from "../../api/rbacAdmin.js";
+import { useNavigate } from "react-router-dom";
+import { createOrUpdateRole, listRoles } from "../../api/rbacAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
-import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
-import SecurityWarningList from "./SecurityWarningList.jsx";
-import SecurityCatalogWorkbenchTabs from "./components/catalog/SecurityCatalogWorkbenchTabs.jsx";
+import RoleListTable from "./RoleListTable.jsx";
+import { buildRoleDetailPath } from "./rolesPermissions.helpers.js";
 import { getRoleCatalogEntry, groupRolesForManagement } from "./roleCatalog.js";
 
 const FILTER_ALL = "ALL";
 const ROLE_MEANING_FILTERS = Object.freeze([
   Object.freeze({
     key: FILTER_ALL,
-    label: "All editor roles",
+    label: "All role list entries",
     description:
-      "Browse the whole role editor surface, then narrow by meaning before touching permission rows.",
+      "Browse the full role list, then narrow it to the runtime authority model you need.",
   }),
   Object.freeze({
     key: "COMPOSABLE_RUNTIME",
     label: "Composable runtime roles",
     description:
-      "Direct-authority runtime roles, including package-backed and companion patterns that drive real permission authority.",
+      "Runtime roles that carry direct permission authority, including package-backed and companion patterns.",
   }),
   Object.freeze({
     key: "LABEL_ONLY_BUSINESS",
     label: "Label-only business roles",
     description:
-      "Business-facing labels stay visible here but remain non-authoritative and locked to zero permissions.",
+      "Business-facing labels stay visible in the role list but remain read-only and locked to zero permissions.",
   }),
-]);
-const ROLE_SCOPE_LEVEL_ORDER = Object.freeze([
-  "TENANT",
-  "GROUP",
-  "COUNTRY",
-  "LEGAL_ENTITY",
-  "OPERATING_UNIT",
 ]);
 
 function normalizeText(value) {
@@ -56,62 +43,6 @@ function getRoleMeaningKey(entry) {
 
 function matchesRoleMeaningFilter(entry, filterKey) {
   return filterKey === FILTER_ALL || getRoleMeaningKey(entry) === filterKey;
-}
-
-function getRoleMeaningLabel(entry) {
-  return (
-    ROLE_MEANING_FILTERS.find((item) => item.key === getRoleMeaningKey(entry))?.label ||
-    ROLE_MEANING_FILTERS[0].label
-  );
-}
-
-function getRoleTheme(entry) {
-  if (entry?.businessLabelOnly) {
-    return {
-      panel: "border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.96),rgba(255,255,255,0.98))]",
-      softPanel: "border-sky-200 bg-sky-50/70",
-      chip: "border-sky-200 bg-sky-50 text-sky-800",
-      metricTone: "text-sky-800",
-    };
-  }
-  if (entry?.companionOnly) {
-    return {
-      panel: "border-violet-200 bg-[linear-gradient(135deg,rgba(245,243,255,0.96),rgba(255,255,255,0.98))]",
-      softPanel: "border-violet-200 bg-violet-50/70",
-      chip: "border-violet-200 bg-violet-50 text-violet-800",
-      metricTone: "text-violet-800",
-    };
-  }
-  if (entry?.category === "system") {
-    return {
-      panel: "border-rose-200 bg-[linear-gradient(135deg,rgba(255,241,242,0.96),rgba(255,255,255,0.98))]",
-      softPanel: "border-rose-200 bg-rose-50/70",
-      chip: "border-rose-200 bg-rose-50 text-rose-800",
-      metricTone: "text-rose-800",
-    };
-  }
-  return {
-    panel: "border-slate-200 bg-white",
-    softPanel: "border-slate-200 bg-slate-50/80",
-    chip: "border-slate-200 bg-slate-50 text-slate-700",
-    metricTone: "text-slate-900",
-  };
-}
-
-function getRoleAuthorityLabel(entry) {
-  if (entry?.businessLabelOnly) {
-    return "Label only";
-  }
-  if (entry?.managedPackageRole) {
-    return "Package-backed authority";
-  }
-  if (entry?.companionOnly) {
-    return "Companion authority";
-  }
-  if (entry?.category === "system") {
-    return "Broad administration";
-  }
-  return "Composable runtime";
 }
 
 function buildRoleSearchText(role, entry) {
@@ -133,195 +64,13 @@ function buildRoleSearchText(role, entry) {
     .toLowerCase();
 }
 
-function getRoleSecondaryText(role, entry, l) {
-  const runtimeRoleCode = normalizeText(role?.code);
-  const runtimeRoleName = normalizeText(role?.name);
-  if (entry?.technicalCode) {
-    return l("Runtime code: {{code}}", "Runtime kodu: {{code}}", {
-      code: entry.technicalCode,
-    });
-  }
-  if (
-    runtimeRoleName &&
-    runtimeRoleName !== entry?.code &&
-    runtimeRoleName !== runtimeRoleCode
-  ) {
-    return runtimeRoleName;
-  }
-  return "";
-}
-
-function buildRoleAttentionItems(entry, l) {
-  const items = [];
-  if (entry?.businessLabelOnly) {
-    items.push(
-      l(
-        "Business role label only. It does not grant package or permission authority by itself.",
-        "Yalnizca is rol etiketi. Tek basina paket veya yetki otoritesi vermez."
-      )
-    );
-  }
-  if (entry?.managedPackageRole) {
-    items.push(
-      l(
-        "Managed through the workflow package UX so the runtime permission set stays aligned to the package definition.",
-        "Runtime yetki seti paket tanimiyla uyumlu kalsin diye workflow package UX uzerinden yonetilir."
-      )
-    );
-  }
-  if (entry?.companionOnly && entry?.companionNote) {
-    items.push(entry.companionNote);
-  }
-  if (entry?.category === "system") {
-    items.push(
-      l(
-        "Broad administrative authority. Review least-privilege impact before replacing permissions.",
-        "Genis yonetsel yetki. Yetkileri degistirmeden once en az yetki etkisini gozden gecirin."
-      )
-    );
-  }
-  return items;
-}
-
-function getRecommendedScopeSet(entry) {
-  return new Set(
-    [
-      ...(Array.isArray(entry?.recommendedScopes) ? entry.recommendedScopes : []),
-      entry?.defaultScope,
-    ]
-      .map((value) => normalizeText(value).toUpperCase())
-      .filter(Boolean)
-  );
-}
-
-function formatScopeLabel(scopeType) {
-  return normalizeText(scopeType).replaceAll("_", " ");
-}
-
-function getPermissionModuleKey(permissionCode) {
-  const parts = normalizeText(permissionCode).split(".").filter(Boolean);
-  if (parts.length <= 1) {
-    return normalizeText(permissionCode);
-  }
-  return parts.slice(0, -1).join(".");
-}
-
-function formatPermissionModuleLabel(moduleKey) {
-  return normalizeText(moduleKey)
-    .split(".")
-    .filter(Boolean)
-    .map((part) => part.replaceAll("_", " "))
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" / ");
-}
-
-function formatPermissionActionLabel(permissionCode) {
-  const action = normalizeText(permissionCode).split(".").filter(Boolean).pop() || "";
-  return action ? action.replaceAll("_", " ").toUpperCase() : permissionCode;
-}
-
-function buildPermissionModuleGroups(permissionRows, selectedPermissionCodes) {
-  const selectedCodeSet = new Set(
-    (Array.isArray(selectedPermissionCodes) ? selectedPermissionCodes : [])
-      .map((value) => normalizeText(value))
-      .filter(Boolean)
-  );
-  const byModule = new Map();
-
-  (Array.isArray(permissionRows) ? permissionRows : []).forEach((permission) => {
-    const code = normalizeText(permission?.code);
-    if (!code) {
-      return;
-    }
-    const moduleKey = getPermissionModuleKey(code);
-    if (!byModule.has(moduleKey)) {
-      byModule.set(moduleKey, []);
-    }
-    byModule.get(moduleKey).push({
-      id: permission?.id || code,
-      code,
-      description: normalizeText(permission?.description),
-      selected: selectedCodeSet.has(code),
-    });
-  });
-
-  return Array.from(byModule.entries())
-    .map(([moduleKey, permissions]) => {
-      const codeSet = new Set(permissions.map((permission) => permission.code));
-      return {
-        moduleKey,
-        moduleLabel: formatPermissionModuleLabel(moduleKey),
-        selectedCount: permissions.filter((permission) => permission.selected).length,
-        permissions: [...permissions]
-          .sort((left, right) => left.code.localeCompare(right.code))
-          .map((permission) => ({
-            ...permission,
-            actionLabel: formatPermissionActionLabel(permission.code),
-            requiresRead:
-              !permission.code.endsWith(".read") &&
-              codeSet.has(`${moduleKey}.read`),
-          })),
-      };
-    })
-    .sort((left, right) => left.moduleLabel.localeCompare(right.moduleLabel));
-}
-
-function RoleMetric({ label, value, note, valueTone = "text-slate-900" }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-        {label}
-      </div>
-      <div className={`mt-2 text-lg font-semibold ${valueTone}`}>{value}</div>
-      {note ? <div className="mt-1 text-xs leading-5 text-slate-500">{note}</div> : null}
-    </div>
-  );
-}
-
-function RoleScopeCoveragePills({ entry, compact = false }) {
-  const activeScopes = getRecommendedScopeSet(entry);
-  return (
-    <div className={`flex flex-wrap gap-2 ${compact ? "" : "mt-4"}`}>
-      {ROLE_SCOPE_LEVEL_ORDER.map((scopeType) => {
-        const active = activeScopes.has(scopeType);
-        return (
-          <span
-            key={`${entry?.code || "role"}-${scopeType}`}
-            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${
-              active
-                ? "border-slate-300 bg-slate-900 text-white"
-                : "border-slate-200 bg-slate-50 text-slate-300"
-            }`}
-          >
-            {formatScopeLabel(scopeType)}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 function RoleMeaningFilterRail({ counts, selectedFilter, onSelect }) {
   const activeFilter =
     ROLE_MEANING_FILTERS.find((item) => item.key === selectedFilter) ||
     ROLE_MEANING_FILTERS[0];
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Browse by role meaning
-          </div>
-          <div className="mt-2 text-sm leading-6 text-slate-600">
-            Separate composable runtime roles and label-only business roles before editing
-            permission modules.
-          </div>
-        </div>
-        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-          {counts[FILTER_ALL] || 0} roles
-        </span>
-      </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-wrap gap-2">
         {ROLE_MEANING_FILTERS.map((filter) => {
           const active = selectedFilter === filter.key;
           return (
@@ -329,480 +78,56 @@ function RoleMeaningFilterRail({ counts, selectedFilter, onSelect }) {
               key={filter.key}
               type="button"
               onClick={() => onSelect(filter.key)}
-              className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
-                active
-                  ? "border-slate-900 bg-white text-slate-950 shadow-sm"
-                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-100"
-              }`}
+              className={`rounded-md border px-3 py-1.5 text-xs font-medium transition ${active
+                ? "border-slate-900 bg-slate-900 text-white"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
             >
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold">{filter.label}</div>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs ${
-                    active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-                  }`}
-                >
-                  {counts[filter.key] || 0}
-                </span>
-              </div>
+              {filter.label} ({counts[filter.key] || 0})
             </button>
           );
         })}
       </div>
-      <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-          {activeFilter.label}
-        </div>
-        <div className="mt-1 text-sm leading-6 text-slate-600">{activeFilter.description}</div>
-      </div>
+      <div className="text-sm leading-6 text-slate-500">{activeFilter.description}</div>
     </div>
   );
 }
 
-function RoleSelectionCard({ active, entry, role, l, onSelect }) {
-  const theme = getRoleTheme(entry);
-  const secondaryText = getRoleSecondaryText(role, entry, l);
-  const attentionItems = buildRoleAttentionItems(entry, l);
-  const permissionCount = Array.isArray(role?.permissionCodes) ? role.permissionCodes.length : 0;
-  const recommendedScope =
-    Array.isArray(entry?.recommendedScopes) && entry.recommendedScopes.length > 0
-      ? entry.recommendedScopes.join(", ")
-      : entry?.defaultScope || "-";
-
+function PageMetric({ label, value }) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`w-full rounded-[24px] border px-4 py-4 text-left transition ${
-        active
-          ? `${theme.softPanel} border-slate-400 shadow-sm ring-1 ring-slate-200`
-          : "border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50"
-      }`}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap gap-2">
-            <span
-              className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
-                active ? "border-slate-300 bg-white text-slate-900" : theme.chip
-              }`}
-            >
-              {getRoleMeaningLabel(entry)}
-            </span>
-            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-              {entry.workflowFamilyLabel}
-            </span>
-            {entry.businessLabelOnly ? (
-              <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
-                Label only
-              </span>
-            ) : null}
-            {entry.companionOnly ? (
-              <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-800">
-                Companion role
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-3 text-base font-semibold leading-tight text-slate-950">
-            {entry.displayName}
-          </div>
-          {secondaryText ? (
-            <div className="mt-1 text-xs leading-5 text-slate-500">
-              {secondaryText}
-            </div>
-          ) : null}
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-right">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-            Permission count
-          </div>
-          <div className="mt-1 text-sm font-semibold text-slate-950">{permissionCount}</div>
-        </div>
+    <div className="border-r border-slate-200 px-4 py-3 last:border-r-0">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+        {label}
       </div>
-
-      <div className="mt-3 text-sm leading-6 text-slate-600">{entry.description}</div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-          {getRoleAuthorityLabel(entry)}
-        </span>
-        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-          {l("Recommended scope: {{scope}}", "Onerilen kapsam: {{scope}}", {
-            scope: recommendedScope,
-          })}
-        </span>
-      </div>
-
-      {attentionItems.length > 0 ? (
-        <div
-          className={`mt-3 flex items-start gap-2 rounded-2xl border px-3 py-2 text-xs leading-5 ${
-            entry.businessLabelOnly
-              ? "border-sky-200 bg-sky-50 text-sky-900"
-              : "border-slate-200 bg-slate-50 text-slate-700"
-          }`}
-        >
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>{attentionItems[0]}</span>
-        </div>
-      ) : null}
-    </button>
-  );
-}
-
-function SelectedRoleOverviewPanel({
-  entry,
-  l,
-  selectedPermissionCodes,
-  selectedRole,
-  selectedRoleAttentionItems,
-  selectedRoleDisplayCode,
-  selectedRoleLocksPermissions,
-}) {
-  const theme = getRoleTheme(entry);
-  const recommendedScope =
-    Array.isArray(entry?.recommendedScopes) && entry.recommendedScopes.length > 0
-      ? entry.recommendedScopes.join(", ")
-      : entry?.defaultScope || "-";
-  const capabilities = Array.isArray(entry?.capabilities) ? entry.capabilities : [];
-
-  return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="max-w-3xl">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Role meaning
-          </div>
-          <h2 className="mt-2 text-2xl font-semibold text-slate-950">
-            {selectedRoleDisplayCode}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">{entry.description}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${theme.chip}`}>
-            {getRoleAuthorityLabel(entry)}
-          </span>
-          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-            {entry.workflowFamilyLabel}
-          </span>
-          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-            {entry.categoryLabel}
-          </span>
-          {entry.businessLabelOnly ? (
-            <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-800">
-              Label only
-            </span>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-        <div className={`rounded-[24px] border px-4 py-4 ${theme.softPanel}`}>
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Authority model
-          </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <RoleMetric
-              label="Authority model"
-              value={getRoleAuthorityLabel(entry)}
-              note={getRoleMeaningLabel(entry)}
-              valueTone={theme.metricTone}
-            />
-            <RoleMetric
-              label="Saved permission count"
-              value={Array.isArray(selectedRole?.permissionCodes) ? selectedRole.permissionCodes.length : 0}
-              note="Current saved permission set on the runtime role."
-              valueTone={theme.metricTone}
-            />
-            <RoleMetric
-              label="Staged selection"
-              value={selectedPermissionCodes.length}
-              note="Checked permission rows in the editor below."
-              valueTone={theme.metricTone}
-            />
-            <RoleMetric
-              label="Workflow family"
-              value={entry.workflowFamilyLabel}
-              note={entry.modelTypeLabel}
-              valueTone={theme.metricTone}
-            />
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-white/80 bg-white/80 px-4 py-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Recommended scope coverage
-            </div>
-            <div className="mt-2 text-sm leading-6 text-slate-600">
-              {l(
-                "Keep the intended assignment posture visible before editing permission rows. Recommended scope: {{scope}}.",
-                "Yetki satirlarini duzenlemeden once hedeflenen atama durusunu gorunur tutun. Onerilen kapsam: {{scope}}.",
-                { scope: recommendedScope }
-              )}
-            </div>
-            <RoleScopeCoveragePills entry={entry} />
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="max-w-3xl">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Role guidance
-                </div>
-                <h3 className="mt-2 text-lg font-semibold text-slate-950">
-                  What to watch before editing
-                </h3>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Make role meaning and warnings explicit before switching into the secondary
-                  permission editor.
-                </p>
-              </div>
-              {selectedRoleAttentionItems.length > 0 ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  {selectedRoleAttentionItems.length} review points
-                </span>
-              ) : (
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                  Standard runtime role
-                </span>
-              )}
-            </div>
-
-            <div className="mt-4 space-y-2">
-              {selectedRoleAttentionItems.length > 0 ? (
-                selectedRoleAttentionItems.map((item) => (
-                  <div
-                    key={item}
-                    className={`rounded-2xl border px-4 py-3 text-sm leading-6 ${theme.softPanel}`}
-                  >
-                    {item}
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
-                  This role follows the composable runtime model without label-only constraints.
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Operational view
-            </div>
-            <div className="mt-2 text-sm leading-6 text-slate-600">
-              Keep the next admin action close to the selected role instead of forcing a context
-              switch back into the catalog.
-            </div>
-            {capabilities.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {capabilities.slice(0, 6).map((capability) => (
-                  <span
-                    key={capability}
-                    className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700"
-                  >
-                    {capability}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <div className="mt-4 flex flex-wrap gap-3">
-              {selectedRoleLocksPermissions ? (
-                <Link
-                  to="/app/ayarlar/security-admin/users?tab=assignments"
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                >
-                  Open user assignments
-                </Link>
-              ) : null}
-              <Link
-                to="/app/ayarlar/security-admin/catalog?tab=access-model"
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-              >
-                Open access model
-              </Link>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function PermissionModuleEditor({
-  canReplaceRolePermissions,
-  groups,
-  l,
-  loading,
-  onTogglePermission,
-  onReplacePermissions,
-  saving,
-  selectedRole,
-  selectedRoleLocksPermissions,
-}) {
-  return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="max-w-3xl">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Permission modules
-          </div>
-          <h3 className="mt-2 text-xl font-semibold text-slate-950">
-            Permission editing stays secondary to role meaning
-          </h3>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Review grouped modules, dependency badges, and role guidance before replacing the
-            saved permission set.
-          </p>
-        </div>
-        <button
-          type="button"
-          disabled={
-            !selectedRole || saving || !canReplaceRolePermissions || selectedRoleLocksPermissions
-          }
-          onClick={onReplacePermissions}
-          className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-        >
-          {saving
-            ? l("Saving...", "Kaydediliyor...")
-            : l("Replace permissions", "Yetkileri degistir")}
-        </button>
-      </div>
-
-      {selectedRoleLocksPermissions ? (
-        <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-4 text-sm leading-6 text-sky-900">
-          Business role label roles are locked to zero permissions. Assign workflow packages or
-          runtime roles separately from the user-assignment workbench.
-        </div>
-      ) : null}
-
-      {loading ? (
-        <div className="mt-5 text-sm text-slate-500">
-          {l("Loading permissions...", "Yetkiler yukleniyor...")}
-        </div>
-      ) : null}
-
-      {!loading && !selectedRole ? (
-        <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-          {l(
-            "Select a role to review grouped permission modules.",
-            "Gruplanmis yetki modullerini incelemek icin bir rol secin."
-          )}
-        </div>
-      ) : null}
-
-      {!loading && selectedRole && !selectedRoleLocksPermissions ? (
-        <div className="mt-5 grid gap-4 2xl:grid-cols-2">
-          {groups.map((group) => (
-            <section
-              key={group.moduleKey}
-              className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
-            >
-              <div className="border-b border-slate-200 bg-white px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      {group.moduleLabel}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      {group.selectedCount} / {group.permissions.length} selected
-                    </div>
-                  </div>
-                  {group.selectedCount > 0 ? (
-                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                      Active module
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-              <div className="divide-y divide-slate-200">
-                {group.permissions.map((permission) => (
-                  <label
-                    key={permission.id}
-                    className="flex items-start gap-3 bg-white px-4 py-3 text-sm"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={permission.selected}
-                      onChange={() => onTogglePermission(permission.code)}
-                      disabled={!canReplaceRolePermissions}
-                      className="mt-1"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="font-medium text-slate-900">{permission.code}</span>
-                      <span className="mt-1 block text-xs leading-5 text-slate-500">
-                        {permission.description ||
-                          l("{{action}} access for {{module}}.", "{{module}} icin {{action}} erisimi.", {
-                            action: permission.actionLabel,
-                            module: group.moduleLabel,
-                          })}
-                      </span>
-                      <span className="mt-2 flex flex-wrap gap-2">
-                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
-                          {permission.actionLabel}
-                        </span>
-                        {permission.requiresRead ? (
-                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
-                            Requires READ
-                          </span>
-                        ) : null}
-                      </span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      ) : null}
-    </section>
+      <div className="mt-1 text-xl font-semibold text-slate-950">{value}</div>
+    </div>
   );
 }
 
 /**
- * Lets security admins review composable-role intent, permission sets, and
- * permission-rule warnings from one place.
+ * Lists roles in a plain ERP-style catalog view so the sidebar remains the
+ * primary navigation and each role opens into a separate permission page.
  */
 export default function RolesPermissionsPage() {
+  const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const { l, t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [validationWarnings, setValidationWarnings] = useState([]);
   const [roles, setRoles] = useState([]);
-  const [permissions, setPermissions] = useState([]);
-  const [selectedRoleId, setSelectedRoleId] = useState(null);
-  const [selectedPermissionCodes, setSelectedPermissionCodes] = useState([]);
   const [roleForm, setRoleForm] = useState({ code: "", name: "" });
   const [roleSearchValue, setRoleSearchValue] = useState("");
   const [roleMeaningFilter, setRoleMeaningFilter] = useState(FILTER_ALL);
+  const [showCreateRoleForm, setShowCreateRoleForm] = useState(false);
 
-  async function loadData() {
+  async function loadRolesData() {
     setLoading(true);
     setError("");
     try {
-      const [rolesRes, permissionsRes] = await Promise.all([
-        listRoles({ includePermissions: true }),
-        listPermissions(),
-      ]);
-      const roleRows = rolesRes?.rows || [];
-      setRoles(roleRows);
-      setPermissions(permissionsRes?.rows || []);
-
-      const selected = selectedRoleId
-        ? roleRows.find((row) => Number(row.id) === Number(selectedRoleId))
-        : roleRows[0];
-
-      if (selected) {
-        setSelectedRoleId(selected.id);
-        setSelectedPermissionCodes(selected.permissionCodes || []);
-      } else {
-        setSelectedRoleId(null);
-        setSelectedPermissionCodes([]);
-      }
+      const rolesRes = await listRoles({ includePermissions: true });
+      setRoles(rolesRes?.rows || []);
     } catch (err) {
       setError(err?.response?.data?.message || t("rolesPermissions.errors.loadFailed"));
     } finally {
@@ -811,18 +136,10 @@ export default function RolesPermissionsPage() {
   }
 
   useEffect(() => {
-    loadData();
+    loadRolesData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const selectedRole = useMemo(
-    () => roles.find((row) => Number(row.id) === Number(selectedRoleId)) || null,
-    [roles, selectedRoleId]
-  );
-  const selectedRoleEntry = useMemo(
-    () => (selectedRole ? getRoleCatalogEntry(selectedRole) : null),
-    [selectedRole]
-  );
   const groupedRoles = useMemo(() => groupRolesForManagement(roles), [roles]);
   const filteredRoleGroups = useMemo(() => {
     const normalizedQuery = normalizeText(roleSearchValue).toLowerCase();
@@ -851,46 +168,14 @@ export default function RolesPermissionsPage() {
     });
     return counts;
   }, [roles]);
-  const permissionModuleGroups = useMemo(
-    () => buildPermissionModuleGroups(permissions, selectedPermissionCodes),
-    [permissions, selectedPermissionCodes]
-  );
+
   const canUpsertRole = hasPermission("security.role.upsert");
-  const canReplaceRolePermissions = hasPermission(
-    "security.role_permissions.assign"
-  );
-  const selectedRoleLocksPermissions = Boolean(selectedRoleEntry?.businessLabelOnly);
-  const selectedRoleDisplayCode = selectedRole
-    ? selectedRoleEntry?.code || selectedRole.code
-    : l("No role selected", "Rol secilmedi");
-  const selectedRoleAttentionItems = useMemo(
-    () => buildRoleAttentionItems(selectedRoleEntry, l),
-    [l, selectedRoleEntry]
-  );
   const filteredRoleCount = filteredRoleGroups.reduce(
     (total, group) => total + group.roles.length,
     0
   );
   const runtimeRoleCount = roleMeaningCounts.COMPOSABLE_RUNTIME;
   const businessLabelCount = roleMeaningCounts.LABEL_ONLY_BUSINESS;
-  const currentActionLink = selectedRoleLocksPermissions
-    ? {
-        to: "/app/ayarlar/security-admin/users?tab=assignments",
-        label: l("Open user assignments", "Kullanici atamalarini ac"),
-      }
-    : {
-        to: "/app/ayarlar/security-admin/catalog?tab=access-model",
-        label: l("Open access model", "Erisim modelini ac"),
-      };
-
-  function togglePermission(permissionCode) {
-    setSelectedPermissionCodes((prev) => {
-      if (prev.includes(permissionCode)) {
-        return prev.filter((code) => code !== permissionCode);
-      }
-      return [...prev, permissionCode];
-    });
-  }
 
   async function handleCreateRole(event) {
     event.preventDefault();
@@ -901,15 +186,15 @@ export default function RolesPermissionsPage() {
     setSaving(true);
     setError("");
     setMessage("");
-    setValidationWarnings([]);
     try {
       await createOrUpdateRole({
         code: roleForm.code.trim(),
         name: roleForm.name.trim(),
       });
       setRoleForm({ code: "", name: "" });
+      setShowCreateRoleForm(false);
       setMessage(t("rolesPermissions.messages.roleSaved"));
-      await loadData();
+      await loadRolesData();
     } catch (err) {
       setError(err?.response?.data?.message || t("rolesPermissions.errors.saveRoleFailed"));
     } finally {
@@ -917,303 +202,156 @@ export default function RolesPermissionsPage() {
     }
   }
 
-  async function handleReplacePermissions() {
-    if (!selectedRoleId) {
-      return;
-    }
-    if (selectedRoleLocksPermissions) {
-      setError(
-        "Business role label roles stay non-authoritative and cannot receive permissions."
-      );
-      return;
-    }
-    if (!canReplaceRolePermissions) {
-      setError(t("rolesPermissions.errors.missingAssignPermission"));
-      return;
-    }
-    setSaving(true);
-    setError("");
-    setMessage("");
-    setValidationWarnings([]);
-    try {
-      const response = await replaceRolePermissions(selectedRoleId, selectedPermissionCodes);
-      setValidationWarnings(response?.validationWarnings || []);
-      setMessage(t("rolesPermissions.messages.permissionsReplaced"));
-      await loadData();
-    } catch (err) {
-      setError(
-        err?.response?.data?.message || t("rolesPermissions.errors.replacePermissionsFailed")
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
-    <SecurityAdminWorkspaceShell
-      workspaceSectionKey="catalog"
-      sectionKey="roles-permissions"
-      eyebrow="Security / Roles & permissions"
-      title={t("rolesPermissions.title")}
-      description={t("rolesPermissions.subtitle")}
-      actions={[
-        {
-          to: currentActionLink.to,
-          label: currentActionLink.label,
-          tone: "primary",
-        },
-      ]}
-      stats={[
-        {
-          title: "Managed roles",
-          value: roles.length,
-          description: "Runtime roles available in the current editor surface.",
-          tone: "blue",
-        },
-        {
-          title: "Composable runtime roles",
-          value: runtimeRoleCount,
-          description: "Direct-authority runtime roles that can carry real permission authority.",
-          tone: "green",
-        },
-        {
-          title: "Label-only business roles",
-          value: businessLabelCount,
-          description: "Business labels remain visible but locked to zero permissions.",
-          tone: "blue",
-        },
-      ]}
-      toolbar={
-        <>
-          <SecurityCatalogWorkbenchTabs
-            activeTab="roles"
-            counts={{ roles: roles.length }}
+    <div className="space-y-4">
+      <section className="rounded-md border border-slate-300 bg-white shadow-sm">
+        <div className="flex flex-col gap-4 border-b border-slate-200 px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <h1 className="mt-1 text-2xl font-semibold text-slate-950">
+              {l("Roles & permissions", "Roller ve yetkiler")}
+            </h1>
+          </div>
+          {canUpsertRole ? (
+            <button
+              type="button"
+              onClick={() => setShowCreateRoleForm((prev) => !prev)}
+              className="inline-flex items-center gap-2 rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white"
+            >
+              <Plus className="h-4 w-4" />
+              {showCreateRoleForm
+                ? l("Close role form", "Rol formunu kapat")
+                : l("Create role", "Rol olustur")}
+            </button>
+          ) : null}
+        </div>
+
+        <div className="grid gap-0 md:grid-cols-3">
+          <PageMetric label={l("Managed roles", "Yonetilen roller")} value={roles.length} />
+          <PageMetric
+            label={l("Runtime roles", "Runtime roller")}
+            value={runtimeRoleCount}
           />
-          <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-            <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Role editor guidance
-                </div>
-                <h2 className="mt-2 text-xl font-semibold text-slate-950">
-                  Start from role meaning, not from raw permission rows
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Composable runtime roles carry authority. Label-only business roles stay
-                  non-authoritative, so fresh-tenant role editing stays aligned with the
-                  workflow package model.
-                </p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <div className="text-sm font-semibold text-slate-900">Composable runtime roles</div>
-                    <div className="mt-1 text-xs leading-5 text-slate-500">
-                      Direct-authority roles that can carry real permission authority.
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <div className="text-sm font-semibold text-slate-900">Label-only business roles</div>
-                    <div className="mt-1 text-xs leading-5 text-slate-500">
-                      Business-facing labels stay visible but locked to zero permissions.
-                    </div>
-                  </div>
-                </div>
-              </div>
+          <PageMetric
+            label={l("Label-only roles", "Yalnizca etiket roller")}
+            value={businessLabelCount}
+          />
+        </div>
 
-              <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="max-w-xl">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Create runtime role
-                    </div>
-                    <h2 className="mt-2 text-lg font-semibold text-slate-950">
-                      Keep new roles deliberate and composable
-                    </h2>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      Permission editing stays secondary to role meaning. Review the selected role&apos;s
-                      workflow family, scope posture, and warnings before replacing the saved permission
-                      set.
-                    </p>
-                  </div>
-                  <Link
-                    to="/app/ayarlar/security-admin/catalog?tab=access-model"
-                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                  >
-                    Open access model
-                  </Link>
-                </div>
+        {showCreateRoleForm ? (
+          <div className="border-t border-slate-200 px-4 py-4">
+            <form
+              onSubmit={handleCreateRole}
+              className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_auto]"
+            >
+              <input
+                value={roleForm.code}
+                onChange={(event) =>
+                  setRoleForm((prev) => ({ ...prev, code: event.target.value }))
+                }
+                className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm"
+                placeholder={t("rolesPermissions.placeholders.roleCode")}
+                required
+              />
+              <input
+                value={roleForm.name}
+                onChange={(event) =>
+                  setRoleForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+                className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm"
+                placeholder={t("rolesPermissions.placeholders.roleName")}
+                required
+              />
+              <button
+                type="submit"
+                disabled={saving || !canUpsertRole}
+                className="rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving
+                  ? t("rolesPermissions.actions.saving")
+                  : t("rolesPermissions.actions.saveRole")}
+              </button>
+            </form>
+          </div>
+        ) : null}
+      </section>
 
-                <form
-                  onSubmit={handleCreateRole}
-                  className="mt-5 grid gap-3 lg:grid-cols-[200px_minmax(0,1fr)_auto]"
-                >
-                <input
-                  value={roleForm.code}
-                  onChange={(event) =>
-                    setRoleForm((prev) => ({ ...prev, code: event.target.value }))
-                  }
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm"
-                  placeholder={t("rolesPermissions.placeholders.roleCode")}
-                  required
-                />
-                <input
-                  value={roleForm.name}
-                  onChange={(event) =>
-                    setRoleForm((prev) => ({ ...prev, name: event.target.value }))
-                  }
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm"
-                  placeholder={t("rolesPermissions.placeholders.roleName")}
-                  required
-                />
-                <button
-                  type="submit"
-                  disabled={saving || !canUpsertRole}
-                  className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-                >
-                  {saving
-                    ? t("rolesPermissions.actions.saving")
-                    : t("rolesPermissions.actions.saveRole")}
-                </button>
-                </form>
-              </div>
-            </div>
-          </section>
-        </>
-      }
-    >
-      {error && (
+      {error ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
         </div>
-      )}
-      {message && (
+      ) : null}
+      {message ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
           {message}
         </div>
-      )}
+      ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Role selection
+      <section className="rounded-md border border-slate-300 bg-white shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="px-4 py-4">
+            <h2 className="mt-1 text-lg font-semibold text-slate-950">
+              {l("Role list", "Rol listesi")}
+            </h2>
+          </div>
+          <div className="m-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+            {filteredRoleCount} visible roles
+          </div>
+        </div>
+
+        <div className="border-y border-slate-200 px-4 py-3">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              <div className="relative xl:w-105">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={roleSearchValue}
+                  onChange={(event) => setRoleSearchValue(event.target.value)}
+                  placeholder={l(
+                    "Search role, code, workflow family, or scope",
+                    "Rol, kod, workflow ailesi veya kapsam ara"
+                  )}
+                  className="w-full rounded-md border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900"
+                />
               </div>
-              <h2 className="mt-2 text-xl font-semibold text-slate-950">
-                Cleaner role selection surface
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                Browse grouped roles before dropping into module-level editing. Broad authority
-                and label-only states stay visible through tinted cards and attention badges.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
-              {filteredRoleCount} visible
+              <RoleMeaningFilterRail
+                counts={roleMeaningCounts}
+                selectedFilter={roleMeaningFilter}
+                onSelect={setRoleMeaningFilter}
+              />
             </div>
           </div>
+        </div>
 
-          <input
-            value={roleSearchValue}
-            onChange={(event) => setRoleSearchValue(event.target.value)}
-            placeholder={l(
-              "Search by label, runtime code, workflow family, capability, or replacement",
-              "Etiket, runtime kodu, workflow family, yetenek veya replacement ile ara"
+        {loading ? (
+          <div className="px-4 py-6 text-sm text-slate-500">
+            {t("rolesPermissions.sections.loadingRoles")}
+          </div>
+        ) : null}
+
+        {!loading && filteredRoleGroups.length === 0 ? (
+          <div className="px-4 py-10 text-center text-sm text-slate-500">
+            {l(
+              "No roles match the current role list filters.",
+              "Mevcut rol listesi filtreleriyle eslesen rol yok."
             )}
-            className="mt-5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900"
-          />
-
-          <div className="mt-4">
-            <RoleMeaningFilterRail
-              counts={roleMeaningCounts}
-              selectedFilter={roleMeaningFilter}
-              onSelect={setRoleMeaningFilter}
-            />
           </div>
+        ) : null}
 
-          {loading ? (
-            <div className="mt-5 text-sm text-slate-500">
-              {t("rolesPermissions.sections.loadingRoles")}
-            </div>
-          ) : null}
-
-          {!loading && filteredRoleGroups.length === 0 ? (
-            <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-              {l("No roles match the current filters.", "Mevcut filtrelerle eslesen rol yok.")}
-            </div>
-          ) : null}
-
-          {!loading && filteredRoleGroups.length > 0 ? (
-            <div className="mt-5 space-y-5">
+        {!loading && filteredRoleGroups.length > 0 ? (
+          <div className="overflow-x-auto px-4 py-4">
+            <div className="min-w-280 max-h-190 space-y-5 overflow-auto pr-1">
               {filteredRoleGroups.map((group) => (
-                <div key={group.key}>
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      {group.label}
-                    </div>
-                    <div className="text-xs font-semibold text-slate-400">{group.roles.length}</div>
-                  </div>
-                  <div className="space-y-3">
-                    {group.roles.map((role) => {
-                      const roleEntry = getRoleCatalogEntry(role);
-                      return (
-                        <RoleSelectionCard
-                          key={role.id}
-                          active={Number(role.id) === Number(selectedRoleId)}
-                          entry={roleEntry}
-                          role={role}
-                          l={l}
-                          onSelect={() => {
-                            setSelectedRoleId(role.id);
-                            setSelectedPermissionCodes(role.permissionCodes || []);
-                            setValidationWarnings([]);
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
+                <RoleListTable
+                  key={group.key}
+                  group={group}
+                  l={l}
+                  onOpenRole={(roleId) => navigate(buildRoleDetailPath(roleId))}
+                />
               ))}
             </div>
-          ) : null}
-        </section>
-
-        <div className="space-y-5">
-          {selectedRole && selectedRoleEntry ? (
-            <>
-              <SelectedRoleOverviewPanel
-                entry={selectedRoleEntry}
-                l={l}
-                selectedPermissionCodes={selectedPermissionCodes}
-                selectedRole={selectedRole}
-                selectedRoleAttentionItems={selectedRoleAttentionItems}
-                selectedRoleDisplayCode={selectedRoleDisplayCode}
-                selectedRoleLocksPermissions={selectedRoleLocksPermissions}
-              />
-
-              <SecurityWarningList
-                title="Permission rule warnings"
-                warnings={validationWarnings}
-                className="rounded-[28px] shadow-sm"
-              />
-
-              <PermissionModuleEditor
-                canReplaceRolePermissions={canReplaceRolePermissions}
-                groups={permissionModuleGroups}
-                l={l}
-                loading={loading}
-                onReplacePermissions={handleReplacePermissions}
-                onTogglePermission={togglePermission}
-                saving={saving}
-                selectedRole={selectedRole}
-                selectedRoleLocksPermissions={selectedRoleLocksPermissions}
-              />
-            </>
-          ) : (
-            <section className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center text-sm text-slate-500 shadow-sm">
-              Select a role to review role meaning, warnings, and grouped permission modules.
-            </section>
-          )}
-        </div>
-      </div>
-    </SecurityAdminWorkspaceShell>
+          </div>
+        ) : null}
+      </section>
+    </div>
   );
 }

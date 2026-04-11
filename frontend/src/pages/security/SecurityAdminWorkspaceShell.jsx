@@ -263,7 +263,13 @@ function resolveLocalizedValue(value, l) {
 }
 
 function resolveGuidanceConfig(guidance, workspaceSectionKey, l) {
-  const config = guidance || DEFAULT_WORKSPACE_GUIDANCE[workspaceSectionKey] || null;
+  // Record-detail pages can suppress the default guidance rail when the
+  // object-level header already carries enough context on its own.
+  if (guidance === false) {
+    return null;
+  }
+  const config =
+    (guidance ?? DEFAULT_WORKSPACE_GUIDANCE[workspaceSectionKey]) || null;
   if (!config) {
     return null;
   }
@@ -355,8 +361,10 @@ function WorkspaceStatCard({ stat }) {
 
 /**
  * Provides the shared security-admin shell so workbench pages keep the same
- * framing, summary strip, tab rail, guidance panel, and permission-aware
- * navigation grammar throughout the redesign track.
+ * framing, summary strip, guidance panel, and permission-aware navigation
+ * grammar throughout the redesign track. Pages that already rely on the main
+ * sidebar for their primary navigation can suppress the duplicate in-page
+ * workbench rails.
  */
 export default function SecurityAdminWorkspaceShell({
   workspaceSectionKey = "",
@@ -368,6 +376,7 @@ export default function SecurityAdminWorkspaceShell({
   stats = [],
   toolbar = null,
   guidance = null,
+  showWorkbenchNavigation = true,
   children,
 }) {
   const { l } = useI18n();
@@ -448,66 +457,68 @@ export default function SecurityAdminWorkspaceShell({
             ) : null}
           </div>
 
-          <div className="relative z-10 mt-6 grid gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-            <section className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {l("Workspace sections", "Calisma alani bolumleri")}
-              </div>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {l(
-                  "Use the canonical workbench routes while the page bodies are still landing in stages.",
-                  "Sayfa govdeleri asamali gelirken canonical workbench rotalarini kullanin."
-                )}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {workspaceSections.map((section) => (
-                  <WorkspaceNavItem
-                    key={section.key}
-                    active={matchesWorkspaceSection(section, workspaceSectionKey)}
-                    item={{
-                      ...section,
-                      to: `${section.futurePath}${section.defaultSearch || ""}`,
-                    }}
-                    locked={section.access.locked}
-                    l={l}
-                    title={
-                      section.access.locked
-                        ? `${l("Permission required", "Izin gerekli")}: ${section.access.requiredPermissions.join(", ")}`
-                        : ""
-                    }
-                  />
-                ))}
-              </div>
-            </section>
+          {showWorkbenchNavigation ? (
+            <div className="relative z-10 mt-6 grid gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+              <section className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  {l("Workspace sections", "Calisma alani bolumleri")}
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  {l(
+                    "Use the canonical workbench routes while the page bodies are still landing in stages.",
+                    "Sayfa govdeleri asamali gelirken canonical workbench rotalarini kullanin."
+                  )}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {workspaceSections.map((section) => (
+                    <WorkspaceNavItem
+                      key={section.key}
+                      active={matchesWorkspaceSection(section, workspaceSectionKey)}
+                      item={{
+                        ...section,
+                        to: `${section.futurePath}${section.defaultSearch || ""}`,
+                      }}
+                      locked={section.access.locked}
+                      l={l}
+                      title={
+                        section.access.locked
+                          ? `${l("Permission required", "Izin gerekli")}: ${section.access.requiredPermissions.join(", ")}`
+                          : ""
+                      }
+                    />
+                  ))}
+                </div>
+              </section>
 
-            <section className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {l("Primary surfaces", "Birincil yuzeyler")}
-              </div>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {l(
-                  "These quick links already use the canonical workbench routes even where the body still delegates to current pages.",
-                  "Govde halen mevcut sayfalara delegasyon yapsa bile bu hizli baglantilar canonical workbench rotalarini kullanir."
-                )}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {primarySurfaces.map((surface) => (
-                  <WorkspaceNavItem
-                    key={surface.key}
-                    active={surface.key === sectionKey}
-                    item={surface}
-                    locked={surface.access.locked}
-                    l={l}
-                    title={
-                      surface.access.locked
-                        ? `${l("Permission required", "Izin gerekli")}: ${surface.access.requiredPermissions.join(", ")}`
-                        : ""
-                    }
-                  />
-                ))}
-              </div>
-            </section>
-          </div>
+              <section className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  {l("Primary surfaces", "Birincil yuzeyler")}
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  {l(
+                    "These quick links already use the canonical workbench routes even where the body still delegates to current pages.",
+                    "Govde halen mevcut sayfalara delegasyon yapsa bile bu hizli baglantilar canonical workbench rotalarini kullanir."
+                  )}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {primarySurfaces.map((surface) => (
+                    <WorkspaceNavItem
+                      key={surface.key}
+                      active={surface.key === sectionKey}
+                      item={surface}
+                      locked={surface.access.locked}
+                      l={l}
+                      title={
+                        surface.access.locked
+                          ? `${l("Permission required", "Izin gerekli")}: ${surface.access.requiredPermissions.join(", ")}`
+                          : ""
+                      }
+                    />
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : null}
         </div>
       </section>
 

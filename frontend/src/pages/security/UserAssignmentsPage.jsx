@@ -4662,6 +4662,7 @@ export default function UserAssignmentsPage() {
           ),
         },
       ]}
+      showWorkbenchNavigation={false}
       toolbar={
         <SecurityUsersWorkbenchTabs
           activeTab={workbenchTab}

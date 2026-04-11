@@ -1217,9 +1217,9 @@ export const sidebarItems = [
         matchPrefix: "/app/ayarlar/security-admin",
         items: [
           {
-            label: "Genel Bakis",
-            to: SECURITY_ADMIN_ROUTE_FAMILY.overview,
-            requiredPermissions: SECURITY_ADMIN_OVERVIEW_PAGE_PERMISSIONS,
+            label: "Roller ve Yetkiler",
+            to: "/app/ayarlar/security-admin/catalog?tab=roles",
+            requiredPermissions: ROLE_PERMISSIONS_PAGE_PERMISSIONS,
             implemented: true,
           },
           {

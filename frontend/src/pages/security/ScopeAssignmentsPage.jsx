@@ -335,6 +335,7 @@ export default function ScopeAssignmentsPage() {
           tone: "amber",
         },
       ]}
+      showWorkbenchNavigation={false}
       toolbar={<SecurityUsersWorkbenchTabs activeTab="scopes" />}
     >
       <div className="space-y-4">

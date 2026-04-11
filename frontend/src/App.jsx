@@ -23,6 +23,7 @@ import FxRatesPage from "./pages/settings/FxRatesPage";
 import ConsolidationSetupPage from "./pages/settings/ConsolidationSetupPage";
 import TaxSetupPage from "./pages/settings/TaxSetupPage.jsx";
 import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
+import RolePermissionsDetailPage from "./pages/security/RolePermissionsDetailPage.jsx";
 import AccessModelCatalogPage from "./pages/security/AccessModelCatalogPage.jsx";
 import FieldVisibilityPoliciesPage from "./pages/security/FieldVisibilityPoliciesPage.jsx";
 import ApprovalDelegationsPage from "./pages/security/ApprovalDelegationsPage.jsx";
@@ -240,6 +241,24 @@ function withLazyRoute(Component, props = {}) {
     </Suspense>
   );
 }
+
+// Keep old security URLs alive only as compatibility shims. The canonical
+// architecture is the security-admin workbench family plus the phase-1
+// companion route for local user management.
+const securityAdminLegacyRedirectRoutes =
+  SECURITY_ADMIN_ROUTE_TRANSITION_PLAN.filter(
+    (entry) =>
+      entry.transitionType === "redirect-only-compatibility-route" &&
+      entry.currentPath !== entry.futurePath,
+  ).map((entry) => ({
+    appPath: entry.currentPath,
+    childPath: toChildPath(entry.currentPath),
+    element: (
+      <LegacyRouteRedirect
+        to={`${entry.futurePath}${entry.defaultSearch || ""}`}
+      />
+    ),
+  }));
 
 const implementedRoutes = [
   {
@@ -694,6 +713,12 @@ const implementedRoutes = [
     childPath: "ayarlar/security-admin",
     element: <SecurityAdminOverviewPage />,
   },
+  {
+    appPath: "/app/ayarlar/security-admin/catalog/roles/:roleId",
+    childPath: "ayarlar/security-admin/catalog/roles/:roleId",
+    permissionPath: "/app/ayarlar/rbac/roles-permissions",
+    element: <RolePermissionsDetailPage />,
+  },
   ...SECURITY_ADMIN_ROUTE_ADAPTERS.map((route) => ({
     appPath: route.appPath,
     childPath: route.childPath,
@@ -862,24 +887,6 @@ function withPermissionGuard(pathForPermissions, element, hasAnyFeature) {
 function toChildPath(appPath) {
   return toRoutePath(appPath).replace(/^\/app\//, "");
 }
-
-// Keep old security URLs alive only as compatibility shims. The canonical
-// architecture is the security-admin workbench family plus the phase-1
-// companion route for local user management.
-const securityAdminLegacyRedirectRoutes =
-  SECURITY_ADMIN_ROUTE_TRANSITION_PLAN.filter(
-    (entry) =>
-      entry.transitionType === "redirect-only-compatibility-route" &&
-      entry.currentPath !== entry.futurePath,
-  ).map((entry) => ({
-    appPath: entry.currentPath,
-    childPath: toChildPath(entry.currentPath),
-    element: (
-      <LegacyRouteRedirect
-        to={`${entry.futurePath}${entry.defaultSearch || ""}`}
-      />
-    ),
-  }));
 
 function LegacyRouteRedirect({ to }) {
   const location = useLocation();

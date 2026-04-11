@@ -1,6 +1,4 @@
-import { createElement, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Boxes, ShieldCheck, Users, Workflow } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import {
   getOperationalCoverageWorkspace,
   listApprovalDelegations,
@@ -16,54 +14,12 @@ import {
 } from "../../api/workflows.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
-import {
-  collectSidebarLinks,
-  SECURITY_ADMIN_ROUTE_FAMILY,
-  SECURITY_ADMIN_WORKSPACE_SECTIONS,
-} from "../../layouts/sidebarConfig.js";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 import {
   SecurityWorkbenchLoadingState,
   SecurityWorkbenchNoticeState,
 } from "./components/SecurityWorkbenchStates.jsx";
 import { buildSecurityAdminOverviewSummary } from "./securityAdminOverviewSummary.js";
-
-function toRoutePath(value) {
-  return String(value || "").replace(/[?#].*$/, "");
-}
-
-const SIDEBAR_LINKS_BY_PATH = collectSidebarLinks().reduce((map, item) => {
-  const routePath = toRoutePath(item?.to);
-  if (!routePath) {
-    return map;
-  }
-
-  const current = map.get(routePath);
-  if (!current) {
-    map.set(routePath, { ...item, to: routePath });
-    return map;
-  }
-
-  current.requiredPermissions = Array.from(
-    new Set([
-      ...(Array.isArray(current.requiredPermissions)
-        ? current.requiredPermissions
-        : []),
-      ...(Array.isArray(item.requiredPermissions) ? item.requiredPermissions : []),
-    ])
-  );
-  current.requiredFeatureCodes = Array.from(
-    new Set([
-      ...(Array.isArray(current.requiredFeatureCodes)
-        ? current.requiredFeatureCodes
-        : []),
-      ...(Array.isArray(item.requiredFeatureCodes)
-        ? item.requiredFeatureCodes
-        : []),
-    ])
-  );
-  return map;
-}, new Map());
 
 function getSignalToneClasses(tone) {
   if (tone === "emerald") {
@@ -105,54 +61,6 @@ function hasTenantWidePermission(entitlements, permissionCode) {
   );
 }
 
-function resolveWorkbenchAccess(section, hasAnyPermission, hasAnyFeature) {
-  const sidebarItem = SIDEBAR_LINKS_BY_PATH.get(section?.accessPath || section?.futurePath);
-  if (!sidebarItem) {
-    return {
-      locked: false,
-      visible: true,
-    };
-  }
-
-  const requiredPermissions = Array.isArray(sidebarItem.requiredPermissions)
-    ? sidebarItem.requiredPermissions
-    : [];
-  const requiredFeatureCodes = Array.isArray(sidebarItem.requiredFeatureCodes)
-    ? sidebarItem.requiredFeatureCodes
-    : [];
-  const visible =
-    requiredFeatureCodes.length === 0 || hasAnyFeature(requiredFeatureCodes);
-
-  return {
-    locked:
-      requiredPermissions.length > 0 && !hasAnyPermission(requiredPermissions),
-    visible,
-  };
-}
-
-function WorkbenchCard({ description, icon: Icon, statsLine, title, to }) {
-  return (
-    <Link
-      to={to}
-      className="group rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
-          {Icon ? createElement(Icon, { className: "h-5 w-5" }) : null}
-        </div>
-        <ArrowRight className="mt-1 h-5 w-5 text-slate-400 transition group-hover:text-slate-700" />
-      </div>
-      <h2 className="mt-5 text-lg font-semibold text-slate-950">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
-      {statsLine ? (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-700">
-          {statsLine}
-        </div>
-      ) : null}
-    </Link>
-  );
-}
-
 function SignalCard({ signal }) {
   return (
     <article
@@ -168,67 +76,13 @@ function SignalCard({ signal }) {
   );
 }
 
-function buildWorkbenchStatsLine(sectionKey, metrics, l) {
-  if (sectionKey === "users") {
-    const activeUsers = metrics.activeUsers;
-    const directAssignments = metrics.directAssignments;
-    if (activeUsers === null && directAssignments === null) {
-      return "";
-    }
-    if (activeUsers !== null && directAssignments !== null) {
-      return l(
-        "{{users}} active users, {{assignments}} direct assignments",
-        "{{users}} aktif kullanici, {{assignments}} dogrudan atama",
-        {
-          users: formatMetricValue(activeUsers),
-          assignments: formatMetricValue(directAssignments),
-        }
-      );
-    }
-    return activeUsers !== null
-      ? l("{{users}} active users", "{{users}} aktif kullanici", {
-          users: formatMetricValue(activeUsers),
-        })
-      : l("{{assignments}} direct assignments", "{{assignments}} dogrudan atama", {
-          assignments: formatMetricValue(directAssignments),
-        });
-  }
-
-  if (sectionKey === "workflows") {
-    const definitions = metrics.workflowDefinitions;
-    const assignments = metrics.workflowAssignments;
-    if (definitions === null && assignments === null) {
-      return "";
-    }
-    if (definitions !== null && assignments !== null) {
-      return l(
-        "{{definitions}} definitions, {{assignments}} assignments",
-        "{{definitions}} tanim, {{assignments}} atama",
-        {
-          definitions: formatMetricValue(definitions),
-          assignments: formatMetricValue(assignments),
-        }
-      );
-    }
-    return definitions !== null
-      ? l("{{definitions}} visible definitions", "{{definitions}} gorunur tanim", {
-          definitions: formatMetricValue(definitions),
-        })
-      : l("{{assignments}} workflow assignments", "{{assignments}} workflow atamasi", {
-          assignments: formatMetricValue(assignments),
-        });
-  }
-
-  return "";
-}
-
 /**
  * Canonical landing page for the new security-admin route family. It reuses
  * current APIs to show operational signals before the deeper workbench
  * refactors land in later redesign PRs.
  */
 export default function SecurityAdminOverviewPage() {
-  const { entitlements, hasAnyFeature, hasAnyPermission, hasPermission } = useAuth();
+  const { entitlements, hasAnyPermission, hasPermission } = useAuth();
   const { l, language } = useI18n();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -539,33 +393,16 @@ export default function SecurityAdminOverviewPage() {
     return nextStats;
   }, [l, overviewSummary]);
 
-  const accessibleSections = useMemo(() => {
-    const sectionIcons = {
-      users: Users,
-      catalog: Boxes,
-      workflows: Workflow,
-      diagnostics: ShieldCheck,
-    };
-
-    return SECURITY_ADMIN_WORKSPACE_SECTIONS.map((section) => ({
-      ...section,
-      access: resolveWorkbenchAccess(section, hasAnyPermission, hasAnyFeature),
-      icon: sectionIcons[section.key] || Boxes,
-    })).filter((section) => section.access.visible && !section.access.locked);
-  }, [hasAnyFeature, hasAnyPermission]);
-
   return (
     <SecurityAdminWorkspaceShell
       eyebrow={l("Security Administration", "Kullanici ve erisim yonetimi")}
-      title={l(
-        "Security administration overview",
-        "Guvenlik yonetimi genel bakis"
-      )}
+      title={l("User management", "Kullanici yonetimi")}
       description={l(
-        "Start from a live snapshot of users, assignments, workflow governance, and investigation signals before drilling into the workbenches.",
-        "Workbenchlere inmeden once kullanicilar, atamalar, workflow governance ve inceleme sinyallerinin canli ozetinden baslayin."
+        "Use the sidebar to open users, roles, workflow governance, and audit pages. This landing page keeps only the live summary signals.",
+        "Kullanicilar, roller, workflow governance ve denetim sayfalarini acmak icin kenar cubugunu kullanin. Bu acilis sayfasi yalnizca canli ozet sinyallerini tutar."
       )}
       stats={stats}
+      showWorkbenchNavigation={false}
     >
       {loading ? (
         <SecurityWorkbenchLoadingState
@@ -622,52 +459,13 @@ export default function SecurityAdminOverviewPage() {
         </section>
       ) : null}
 
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-950">
-            {l("Open a workbench", "Bir workbench ac")}
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            {l(
-              "Use the canonical security-admin routes. Old RBAC paths now redirect back into these workbench entry points.",
-              "Canonical security-admin rotalarini kullanin. Eski RBAC rotalari artik bu workbench giris noktalarina geri yonlenir."
-            )}
-          </p>
-        </div>
-        <div className="grid gap-4 xl:grid-cols-2">
-          {accessibleSections.map((section) => (
-            <WorkbenchCard
-              key={section.key}
-              description={l(section.description.en, section.description.tr)}
-              icon={section.icon}
-              statsLine={buildWorkbenchStatsLine(
-                section.key,
-                overviewSummary.metrics,
-                l
-              )}
-              title={l(section.label.en, section.label.tr)}
-              to={`${section.futurePath}${section.defaultSearch || ""}`}
-            />
-          ))}
-        </div>
-      </section>
-
       {!loading && stats.length === 0 ? (
         <SecurityWorkbenchNoticeState
           title={l("Limited overview metrics", "Sinirli genel bakis metrikleri")}
           description={l(
-            "Your current access can open the security-admin area, but live overview counts only appear for the domains you can read directly. Use the workbench links above for the domains already in scope.",
-            "Mevcut yetkiniz guvenlik yonetimi alanini acabilir, ancak canli genel bakis sayilari yalnizca dogrudan okuyabildiginiz alanlarda gosterilir. Halihazirda kapsaminizda olan alanlar icin yukaridaki workbench baglantilarini kullanin."
+            "Your current access can open the security-admin area, but live overview counts only appear for the domains you can read directly. Use the sidebar for the domains already in scope.",
+            "Mevcut yetkiniz guvenlik yonetimi alanini acabilir, ancak canli genel bakis sayilari yalnizca dogrudan okuyabildiginiz alanlarda gosterilir. Halihazirda kapsaminizda olan alanlar icin kenar cubugunu kullanin."
           )}
-          action={{
-            label: (
-              <>
-                {l("Open access catalog", "Erisim katalogunu ac")}
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </>
-            ),
-            to: `${SECURITY_ADMIN_ROUTE_FAMILY.catalog}?tab=access-model`,
-          }}
         />
       ) : null}
     </SecurityAdminWorkspaceShell>
