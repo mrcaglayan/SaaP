@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { createElement, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Boxes, ShieldCheck, Users, Workflow } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -138,7 +138,7 @@ function WorkbenchCard({ description, icon: Icon, statsLine, title, to }) {
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
-          <Icon className="h-5 w-5" />
+          {Icon ? createElement(Icon, { className: "h-5 w-5" }) : null}
         </div>
         <ArrowRight className="mt-1 h-5 w-5 text-slate-400 transition group-hover:text-slate-700" />
       </div>

@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useState } from "react";
 import {
   findOrgScopeTreeNodeByScopeSelection,
   filterOrgScopeTreeByAllowedScopeTypes,
@@ -21,6 +21,17 @@ function normalizeKeyList(values = []) {
   return (Array.isArray(values) ? values : [])
     .map((value) => normalizeText(value))
     .filter(Boolean);
+}
+
+function buildExpandedKeysSeed(keys = []) {
+  return JSON.stringify(normalizeKeyList(keys));
+}
+
+function resolveExpandedKeys(expandedState, initialExpandedKeys, initialExpandedKeysSeed) {
+  if (expandedState?.seed === initialExpandedKeysSeed) {
+    return expandedState.keys;
+  }
+  return new Set(initialExpandedKeys);
 }
 
 function areSameScopeSelection(left, right) {
@@ -223,48 +234,38 @@ export function useOrgScopeTree({
   isNodeDisabled = null,
   getNodeDisabledReason = null,
 } = {}) {
+  const normalizedAllowedScopeTypes = normalizeKeyList(allowedScopeTypes);
   const normalizedDefaultExpandedKeys = normalizeKeyList(defaultExpandedKeys);
-  const defaultExpandedKeyToken = JSON.stringify(normalizedDefaultExpandedKeys);
-  const scopedRoot = useMemo(
-    () => filterOrgScopeTreeByAllowedScopeTypes(root, allowedScopeTypes),
-    [root, allowedScopeTypes]
+  const scopedRoot = filterOrgScopeTreeByAllowedScopeTypes(root, normalizedAllowedScopeTypes);
+  const initialExpandedKeys = buildOrgScopeTreeInitialExpandedKeys(
+    scopedRoot,
+    normalizedDefaultExpandedKeys
   );
-  const initialExpandedKeys = useMemo(
-    () => buildOrgScopeTreeInitialExpandedKeys(scopedRoot, normalizedDefaultExpandedKeys),
-    [scopedRoot, defaultExpandedKeyToken]
-  );
+  const initialExpandedKeysSeed = buildExpandedKeysSeed(initialExpandedKeys);
   const [searchValue, setSearchValue] = useState(() => String(initialSearchValue || ""));
-  const [expandedKeys, setExpandedKeys] = useState(() => new Set(initialExpandedKeys));
+  const [expandedState, setExpandedState] = useState(() => ({
+    seed: initialExpandedKeysSeed,
+    keys: new Set(initialExpandedKeys),
+  }));
   const deferredSearchValue = useDeferredValue(searchValue);
-
-  useEffect(() => {
-    setExpandedKeys(new Set(initialExpandedKeys));
-  }, [initialExpandedKeys]);
-  const visibleRoot = useMemo(
-    () => filterOrgScopeTreeBySearchTerm(scopedRoot, deferredSearchValue),
-    [scopedRoot, deferredSearchValue]
-  );
-  const allExpandableKeys = useMemo(
-    () => collectOrgScopeTreeExpandableKeys(scopedRoot),
-    [scopedRoot]
-  );
-  const searchExpandedKeys = useMemo(
-    () => new Set(collectOrgScopeTreeExpandableKeys(visibleRoot)),
-    [visibleRoot]
-  );
+  const visibleRoot = filterOrgScopeTreeBySearchTerm(scopedRoot, deferredSearchValue);
+  const allExpandableKeys = collectOrgScopeTreeExpandableKeys(scopedRoot);
+  const searchExpandedKeys = new Set(collectOrgScopeTreeExpandableKeys(visibleRoot));
   const isSearchActive = Boolean(normalizeSearchTerm(deferredSearchValue));
+  const expandedKeys = resolveExpandedKeys(
+    expandedState,
+    initialExpandedKeys,
+    initialExpandedKeysSeed
+  );
   // Search always opens matching branches so filtering never hides the path to
   // an otherwise valid scope selection.
   const effectiveExpandedKeys = isSearchActive ? searchExpandedKeys : expandedKeys;
-  const visibleNodeCount = useMemo(() => countTreeNodes(visibleRoot), [visibleRoot]);
-  const selectedNode = useMemo(
-    () => findOrgScopeTreeNodeByScopeSelection(scopedRoot, value, valueNodeKey),
-    [scopedRoot, value, valueNodeKey]
-  );
+  const visibleNodeCount = countTreeNodes(visibleRoot);
+  const selectedNode = findOrgScopeTreeNodeByScopeSelection(scopedRoot, value, valueNodeKey);
   const selectedPathLabels = Array.isArray(selectedNode?.pathLabels)
     ? selectedNode.pathLabels
     : [];
-  const hasSearchResults = useMemo(() => {
+  const hasSearchResults = (() => {
     if (!isOrgScopeTreeNode(visibleRoot)) {
       return false;
     }
@@ -280,18 +281,30 @@ export function useOrgScopeTree({
       }
     });
     return matched;
-  }, [deferredSearchValue, isSearchActive, visibleNodeCount, visibleRoot]);
+  })();
 
   function toggleExpanded(key) {
-    setExpandedKeys((currentKeys) => toggleOrgScopeTreeExpandedKey(currentKeys, key));
+    setExpandedState((currentState) => ({
+      seed: initialExpandedKeysSeed,
+      keys: toggleOrgScopeTreeExpandedKey(
+        resolveExpandedKeys(currentState, initialExpandedKeys, initialExpandedKeysSeed),
+        key
+      ),
+    }));
   }
 
   function expandAll() {
-    setExpandedKeys(new Set(allExpandableKeys));
+    setExpandedState({
+      seed: initialExpandedKeysSeed,
+      keys: new Set(allExpandableKeys),
+    });
   }
 
   function collapseAll() {
-    setExpandedKeys(new Set(initialExpandedKeys));
+    setExpandedState({
+      seed: initialExpandedKeysSeed,
+      keys: new Set(initialExpandedKeys),
+    });
   }
 
   function getNodeState(node) {

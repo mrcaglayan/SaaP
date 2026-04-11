@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -24,6 +24,15 @@ import { useOrgScopeTree } from "./useOrgScopeTree.js";
 function normalizeText(value, fallback = "") {
   const normalized = String(value || "").trim();
   return normalized || fallback;
+}
+
+function buildScopeSelectionToken(selection) {
+  const scopeType = normalizeText(selection?.scopeType).toUpperCase();
+  const scopeId = normalizeText(selection?.scopeId);
+  if (!scopeType || !scopeId) {
+    return "";
+  }
+  return `${scopeType}:${scopeId}`;
 }
 
 function OrgScopeTreeBranch({
@@ -147,8 +156,16 @@ export default function OrgScopeTreePicker({
   showBreadcrumbs = true,
 }) {
   const treeId = useId();
-  const [internalValueNodeKey, setInternalValueNodeKey] = useState("");
-  const effectiveValueNodeKey = normalizeText(valueNodeKey || internalValueNodeKey);
+  const [internalSelectionState, setInternalSelectionState] = useState(() => ({
+    nodeKey: "",
+    selectionToken: "",
+  }));
+  const valueSelectionToken = buildScopeSelectionToken(value);
+  const fallbackValueNodeKey =
+    valueSelectionToken && internalSelectionState.selectionToken === valueSelectionToken
+      ? internalSelectionState.nodeKey
+      : "";
+  const effectiveValueNodeKey = normalizeText(valueNodeKey || fallbackValueNodeKey);
   const controller = useOrgScopeTree({
     root,
     value,
@@ -160,18 +177,15 @@ export default function OrgScopeTreePicker({
   });
   const selectedBreadcrumbText = buildOrgScopeTreePathLabelText(controller.selectedPathLabels);
 
-  useEffect(() => {
-    if (!value) {
-      setInternalValueNodeKey("");
-    }
-  }, [value]);
-
   function handleSelect(node) {
     const nodeState = controller.getNodeState(node);
     if (nodeState.isDisabled || !nodeState.selection) {
       return;
     }
-    setInternalValueNodeKey(node.key);
+    setInternalSelectionState({
+      nodeKey: node.key,
+      selectionToken: buildScopeSelectionToken(nodeState.selection),
+    });
     if (typeof onChange === "function") {
       onChange(nodeState.selection, node);
     }
