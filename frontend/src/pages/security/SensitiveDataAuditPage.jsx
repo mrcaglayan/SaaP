@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { listSensitiveDataAudit } from "../../api/sensitiveDataAudit.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityDiagnosticsWorkbenchTabs from "./components/diagnostics/SecurityDiagnosticsWorkbenchTabs.jsx";
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -9,8 +12,17 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
+function countActiveFilters(filters) {
+  return Object.values(filters).filter((value) => String(value || "").trim()).length;
+}
+
+/**
+ * Surfaces sensitive-data access evidence in the canonical diagnostics
+ * workbench so data-protection traces stay adjacent to other audit layers.
+ */
 export default function SensitiveDataAuditPage() {
   const { hasPermission } = useAuth();
+  const { l } = useI18n();
   const canRead = hasPermission("security.sensitive_data.audit.read");
 
   const [filters, setFilters] = useState({
@@ -63,8 +75,71 @@ export default function SensitiveDataAuditPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canRead]);
 
+  const workspaceStats = [
+    {
+      title: l("Visible rows", "Gorunen satirlar"),
+      value: rows.length,
+      description: l(
+        "Sensitive-data audit entries visible in the current investigation result set.",
+        "Mevcut inceleme sonucunda gorunen hassas-veri denetim satirlari."
+      ),
+      tone: "blue",
+    },
+    {
+      title: l("Total evidence", "Toplam kanit"),
+      value: total,
+      description: l(
+        "Total sensitive-data traces matching the active filters.",
+        "Etkin filtrelerle eslesen toplam hassas-veri izleri."
+      ),
+      tone: "violet",
+    },
+    {
+      title: l("Active filters", "Etkin filtreler"),
+      value: countActiveFilters(filters),
+      description: l(
+        "Module, object, actor, legal-entity, and date filters currently narrowing the evidence set.",
+        "Kanit setini daraltan mevcut modul, nesne, aktor, legal-entity ve tarih filtreleri."
+      ),
+      tone: "amber",
+    },
+    {
+      title: l("Read access", "Okuma erisimi"),
+      value: canRead ? l("Available", "Var") : l("Missing", "Eksik"),
+      description: l(
+        "Permission gate for opening sensitive-data evidence in this workbench.",
+        "Bu workbench icinde hassas-veri kanitini acmak icin gereken izin kapisi."
+      ),
+      tone: canRead ? "green" : "amber",
+    },
+  ];
+  const workspaceActions = [
+    {
+      label: l("Raw audit logs", "Ham denetim loglari"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=raw-audit",
+    },
+    {
+      label: l("RBAC audit logs", "RBAC denetim loglari"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=audit",
+      tone: "primary",
+    },
+  ];
+
   return (
-    <div className="space-y-4">
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="diagnostics"
+      sectionKey="diagnostics-audit"
+      eyebrow={l("Diagnostics & Audit", "Tanilama ve Denetim")}
+      title={l("Sensitive data audit", "Hassas veri denetimi")}
+      description={l(
+        "Inspect encryption, masking, purge, and access traces for sensitive data without leaving the canonical security-admin investigation family.",
+        "Hassas veriye ait sifreleme, maskeleme, purge ve erisim izlerini canonical security-admin inceleme ailesinden cikmadan inceleyin."
+      )}
+      actions={workspaceActions}
+      stats={workspaceStats}
+      toolbar={<SecurityDiagnosticsWorkbenchTabs activeTab="sensitive-data" />}
+    >
+      <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">Sensitive Data Audit</h1>
         <p className="mt-1 text-sm text-slate-600">
@@ -194,7 +269,7 @@ export default function SensitiveDataAuditPage() {
           </div>
         )}
       </section>
-    </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
   );
 }
-

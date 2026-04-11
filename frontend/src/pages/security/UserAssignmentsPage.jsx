@@ -34,6 +34,7 @@ import {
 import SecurityWarningList from "./SecurityWarningList.jsx";
 import { buildAssignmentAuditSummary } from "./userAssignmentAuditSummary.js";
 import UserAssignmentWorkbench from "./UserAssignmentWorkbench.jsx";
+import { SecurityWorkbenchLoadingState } from "./components/SecurityWorkbenchStates.jsx";
 import { buildEffectiveAuthorityPreview } from "./userAssignmentAuthorityPreview.js";
 import {
   BOOTSTRAP_HANDOFF_PRESET_CATALOG,
@@ -4747,9 +4748,10 @@ export default function UserAssignmentsPage() {
         />
       </section>
       {loading ? (
-        <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-12 text-sm text-slate-500 shadow-sm">
-          {l("Loading workspace...", "Calisma alani yukleniyor...")}
-        </div>
+        <SecurityWorkbenchLoadingState
+          title={l("Users workspace", "Kullanici calisma alani")}
+          description={l("Loading workspace...", "Calisma alani yukleniyor...")}
+        />
       ) : null}
       {!loading && activeTab === "users" ? (
         <section className="space-y-5">

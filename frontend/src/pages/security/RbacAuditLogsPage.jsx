@@ -1,11 +1,21 @@
 import { useEffect, useState } from "react";
 import { listAuditLogs } from "../../api/rbacAdmin.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityDiagnosticsWorkbenchTabs from "./components/diagnostics/SecurityDiagnosticsWorkbenchTabs.jsx";
 
 const SCOPE_TYPES = ["", "TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 
+function countActiveFilters(filters) {
+  return Object.values(filters).filter((value) => String(value || "").trim()).length;
+}
+
+/**
+ * Shows paginated RBAC audit evidence inside the shared diagnostics workbench
+ * so explainability and audit trails stay in the same investigation family.
+ */
 export default function RbacAuditLogsPage() {
-  const { t } = useI18n();
+  const { t, l } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState([]);
@@ -59,8 +69,71 @@ export default function RbacAuditLogsPage() {
     loadLogs(nextPage);
   }
 
+  const workspaceStats = [
+    {
+      title: l("Visible rows", "Gorunen satirlar"),
+      value: rows.length,
+      description: l(
+        "The current page of RBAC audit entries visible after the active filters.",
+        "Etkin filtrelerden sonra gorunen mevcut RBAC denetim satirlari."
+      ),
+      tone: "blue",
+    },
+    {
+      title: l("Total evidence", "Toplam kanit"),
+      value: pagination.total,
+      description: l(
+        "Total RBAC audit records matching the current investigation query.",
+        "Mevcut inceleme sorgusuyla eslesen toplam RBAC denetim kayitlari."
+      ),
+      tone: "violet",
+    },
+    {
+      title: l("Active filters", "Etkin filtreler"),
+      value: countActiveFilters(filters),
+      description: l(
+        "Scope, action, and resource filters currently narrowing the evidence set.",
+        "Kanit setini daraltan mevcut kapsam, aksiyon ve kaynak filtreleri."
+      ),
+      tone: "amber",
+    },
+    {
+      title: l("Current page", "Mevcut sayfa"),
+      value: pagination.page,
+      description: l(
+        "Pagination position inside the RBAC evidence trail.",
+        "RBAC kanit izi icindeki sayfalama konumu."
+      ),
+      tone: "green",
+    },
+  ];
+  const workspaceActions = [
+    {
+      label: l("Access explainability", "Erisim aciklanabilirligi"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=access",
+    },
+    {
+      label: l("Raw audit logs", "Ham denetim loglari"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=raw-audit",
+      tone: "primary",
+    },
+  ];
+
   return (
-    <div className="space-y-4">
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="diagnostics"
+      sectionKey="diagnostics-audit"
+      eyebrow={l("Diagnostics & Audit", "Tanilama ve Denetim")}
+      title={l("RBAC audit logs", "RBAC denetim loglari")}
+      description={l(
+        "Review structured RBAC evidence for actor, target, scope, and payload changes without leaving the canonical diagnostics workbench.",
+        "Aktor, hedef, kapsam ve payload degisimlerine ait yapilandirilmis RBAC kanitlarini canonical diagnostics workbench icinden inceleyin."
+      )}
+      actions={workspaceActions}
+      stats={workspaceStats}
+      toolbar={<SecurityDiagnosticsWorkbenchTabs activeTab="audit" />}
+    >
+      <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">{t("rbacAuditLogs.title")}</h1>
         <p className="mt-1 text-sm text-slate-600">
@@ -212,6 +285,7 @@ export default function RbacAuditLogsPage() {
           </button>
         </div>
       </div>
-    </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

@@ -15,6 +15,7 @@ export default function WorkflowRecordsSection({
   onSelectDefinition,
   onToggleAssignmentStatus,
   getWorkflowTypeLabel,
+  defaultTab = "workflows",
 }) {
   return (
     <Card className="rounded-3xl">
@@ -31,7 +32,7 @@ export default function WorkflowRecordsSection({
       </CardHeader>
 
       <CardContent>
-        <Tabs defaultValue="workflows" className="gap-4">
+        <Tabs defaultValue={defaultTab} className="gap-4">
           <TabsList>
             <TabsTrigger value="workflows">{l("Workflows", "Workflow'lar")}</TabsTrigger>
             <TabsTrigger value="assignments">{l("Assignments", "Atamalar")}</TabsTrigger>

@@ -11,6 +11,7 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 import SecurityWarningList from "./SecurityWarningList.jsx";
+import SecurityCatalogWorkbenchTabs from "./components/catalog/SecurityCatalogWorkbenchTabs.jsx";
 import { getRoleCatalogEntry, groupRolesForManagement } from "./roleCatalog.js";
 
 const FILTER_ALL = "ALL";
@@ -609,14 +610,14 @@ function SelectedRoleOverviewPanel({
             <div className="mt-4 flex flex-wrap gap-3">
               {selectedRoleLocksPermissions ? (
                 <Link
-                  to="/app/ayarlar/rbac/user-assignments"
+                  to="/app/ayarlar/security-admin/users?tab=assignments"
                   className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                 >
                   Open user assignments
                 </Link>
               ) : null}
               <Link
-                to="/app/ayarlar/rbac/access-model"
+                to="/app/ayarlar/security-admin/catalog?tab=access-model"
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
               >
                 Open access model
@@ -874,11 +875,11 @@ export default function RolesPermissionsPage() {
   const businessLabelCount = roleMeaningCounts.LABEL_ONLY_BUSINESS;
   const currentActionLink = selectedRoleLocksPermissions
     ? {
-        to: "/app/ayarlar/rbac/user-assignments",
+        to: "/app/ayarlar/security-admin/users?tab=assignments",
         label: l("Open user assignments", "Kullanici atamalarini ac"),
       }
     : {
-        to: "/app/ayarlar/rbac/access-model",
+        to: "/app/ayarlar/security-admin/catalog?tab=access-model",
         label: l("Open access model", "Erisim modelini ac"),
       };
 
@@ -983,63 +984,68 @@ export default function RolesPermissionsPage() {
         },
       ]}
       toolbar={
-        <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Role editor guidance
-              </div>
-              <h2 className="mt-2 text-xl font-semibold text-slate-950">
-                Start from role meaning, not from raw permission rows
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                Composable runtime roles carry authority. Label-only business roles stay
-                non-authoritative, so fresh-tenant role editing stays aligned with the
-                workflow package model.
-              </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="text-sm font-semibold text-slate-900">Composable runtime roles</div>
-                  <div className="mt-1 text-xs leading-5 text-slate-500">
-                    Direct-authority roles that can carry real permission authority.
+        <>
+          <SecurityCatalogWorkbenchTabs
+            activeTab="roles"
+            counts={{ roles: roles.length }}
+          />
+          <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Role editor guidance
+                </div>
+                <h2 className="mt-2 text-xl font-semibold text-slate-950">
+                  Start from role meaning, not from raw permission rows
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Composable runtime roles carry authority. Label-only business roles stay
+                  non-authoritative, so fresh-tenant role editing stays aligned with the
+                  workflow package model.
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="text-sm font-semibold text-slate-900">Composable runtime roles</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">
+                      Direct-authority roles that can carry real permission authority.
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="text-sm font-semibold text-slate-900">Label-only business roles</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">
+                      Business-facing labels stay visible but locked to zero permissions.
+                    </div>
                   </div>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="text-sm font-semibold text-slate-900">Label-only business roles</div>
-                  <div className="mt-1 text-xs leading-5 text-slate-500">
-                    Business-facing labels stay visible but locked to zero permissions.
-                  </div>
-                </div>
               </div>
-            </div>
 
-            <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="max-w-xl">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Create runtime role
+              <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="max-w-xl">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Create runtime role
+                    </div>
+                    <h2 className="mt-2 text-lg font-semibold text-slate-950">
+                      Keep new roles deliberate and composable
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Permission editing stays secondary to role meaning. Review the selected role&apos;s
+                      workflow family, scope posture, and warnings before replacing the saved permission
+                      set.
+                    </p>
                   </div>
-                  <h2 className="mt-2 text-lg font-semibold text-slate-950">
-                    Keep new roles deliberate and composable
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Permission editing stays secondary to role meaning. Review the selected role&apos;s
-                    workflow family, scope posture, and warnings before replacing the saved permission
-                    set.
-                  </p>
+                  <Link
+                    to="/app/ayarlar/security-admin/catalog?tab=access-model"
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                  >
+                    Open access model
+                  </Link>
                 </div>
-                <Link
-                  to="/app/ayarlar/rbac/access-model"
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+
+                <form
+                  onSubmit={handleCreateRole}
+                  className="mt-5 grid gap-3 lg:grid-cols-[200px_minmax(0,1fr)_auto]"
                 >
-                  Open access model
-                </Link>
-              </div>
-
-              <form
-                onSubmit={handleCreateRole}
-                className="mt-5 grid gap-3 lg:grid-cols-[200px_minmax(0,1fr)_auto]"
-              >
                 <input
                   value={roleForm.code}
                   onChange={(event) =>
@@ -1067,10 +1073,11 @@ export default function RolesPermissionsPage() {
                     ? t("rolesPermissions.actions.saving")
                     : t("rolesPermissions.actions.saveRole")}
                 </button>
-              </form>
+                </form>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </>
       }
     >
       {error && (

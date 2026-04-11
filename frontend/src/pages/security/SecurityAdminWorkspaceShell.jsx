@@ -2,48 +2,12 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import {
-  collectSidebarLinks,
   SECURITY_ADMIN_COMPANION_LINKS,
   SECURITY_ADMIN_PRIMARY_SURFACES,
   SECURITY_ADMIN_WORKSPACE_SECTIONS,
 } from "../../layouts/sidebarConfig.js";
-
-function toRoutePath(value) {
-  return String(value || "").replace(/[?#].*$/, "");
-}
-
-const SIDEBAR_LINKS_BY_PATH = collectSidebarLinks().reduce((map, item) => {
-  const routePath = toRoutePath(item?.to);
-  if (!routePath) {
-    return map;
-  }
-
-  const current = map.get(routePath);
-  if (!current) {
-    map.set(routePath, { ...item, to: routePath });
-    return map;
-  }
-
-  current.requiredPermissions = Array.from(
-    new Set([
-      ...(Array.isArray(current.requiredPermissions)
-        ? current.requiredPermissions
-        : []),
-      ...(Array.isArray(item.requiredPermissions) ? item.requiredPermissions : []),
-    ])
-  );
-  current.requiredFeatureCodes = Array.from(
-    new Set([
-      ...(Array.isArray(current.requiredFeatureCodes)
-        ? current.requiredFeatureCodes
-        : []),
-      ...(Array.isArray(item.requiredFeatureCodes)
-        ? item.requiredFeatureCodes
-        : []),
-    ])
-  );
-  return map;
-}, new Map());
+import SecurityWorkbenchGuidancePanel from "./components/SecurityWorkbenchGuidancePanel.jsx";
+import { resolveSecurityWorkbenchAccess } from "./components/workbenchNavigation.js";
 
 function getActionClasses(tone) {
   if (tone === "primary") {
@@ -68,40 +32,212 @@ function getStatClasses(tone) {
   return "border-slate-200 bg-white";
 }
 
-function resolveWorkspaceLinkAccess(
-  item,
-  hasAnyPermission,
-  hasAnyFeature
-) {
-  const sidebarItem = SIDEBAR_LINKS_BY_PATH.get(item?.accessPath || item?.to);
-  if (!sidebarItem) {
-    return {
-      locked: false,
-      requiredPermissions: [],
-      visible: true,
-    };
-  }
-
-  const requiredPermissions = Array.isArray(sidebarItem.requiredPermissions)
-    ? sidebarItem.requiredPermissions
-        .map((value) => String(value || "").trim())
-        .filter(Boolean)
-    : [];
-  const requiredFeatureCodes = Array.isArray(sidebarItem.requiredFeatureCodes)
-    ? sidebarItem.requiredFeatureCodes
-        .map((value) => String(value || "").trim().toUpperCase())
-        .filter(Boolean)
-    : [];
-  const featureVisible =
-    requiredFeatureCodes.length === 0 || hasAnyFeature(requiredFeatureCodes);
-
-  return {
-    locked:
-      requiredPermissions.length > 0 && !hasAnyPermission(requiredPermissions),
-    requiredPermissions,
-    visible: featureVisible,
-  };
-}
+const DEFAULT_WORKSPACE_GUIDANCE = Object.freeze({
+  users: Object.freeze({
+    eyebrow: Object.freeze({
+      en: "Operating pattern",
+      tr: "Calisma sekli",
+    }),
+    title: Object.freeze({
+      en: "Keep one authority story in focus",
+      tr: "Tek bir yetki hikayesini odakta tutun",
+    }),
+    description: Object.freeze({
+      en: "Choose the person first, then move across sibling tabs to change the specific source behind that same effective authority.",
+      tr: "Once kisiyi secin, sonra ayni etkili yetkinin arkasindaki belirli kaynagi degistirmek icin kardes sekmeler arasinda gecin.",
+    }),
+    items: Object.freeze([
+      Object.freeze({
+        title: Object.freeze({
+          en: "Select the assignee first",
+          tr: "Once atanani secin",
+        }),
+        description: Object.freeze({
+          en: "People selection should stay stable while you compare assignments, scopes, delegations, and effective authority.",
+          tr: "Atamalar, kapsamlar, delegasyonlar ve etkili yetkiyi karsilastirirken kisi secimi sabit kalmalidir.",
+        }),
+      }),
+      Object.freeze({
+        title: Object.freeze({
+          en: "Change the source, not only the symptom",
+          tr: "Yalnizca semptomu degil, kaynagi degistirin",
+        }),
+        description: Object.freeze({
+          en: "Use sibling tabs to reach the exact source of access instead of reopening separate products.",
+          tr: "Ayrica urunler acmak yerine erisimin tam kaynagina ulasmak icin kardes sekmeleri kullanin.",
+        }),
+      }),
+      Object.freeze({
+        title: Object.freeze({
+          en: "Keep local user admin separate",
+          tr: "Yerel kullanici yonetimini ayri tutun",
+        }),
+        description: Object.freeze({
+          en: "Branch-operator administration remains a companion route in phase 1 and should not be confused with the workbench tabs.",
+          tr: "Sube operatoru yonetimi faz 1'de companion rota olarak kalir ve workbench sekmeleriyle karistirilmamalidir.",
+        }),
+      }),
+    ]),
+    tone: "sky",
+    footer: Object.freeze({
+      en: "Use the companion links for adjacent tools that still stay outside the users workbench in this phase.",
+      tr: "Bu fazda users workbench disinda kalan bitisik araclar icin companion baglantilarini kullanin.",
+    }),
+  }),
+  catalog: Object.freeze({
+    eyebrow: Object.freeze({
+      en: "Catalog reading guide",
+      tr: "Katalog okuma rehberi",
+    }),
+    title: Object.freeze({
+      en: "Browse objects before editing them",
+      tr: "Nesneleri duzenlemeden once inceleyin",
+    }),
+    description: Object.freeze({
+      en: "Stay in business-language catalog views first, then use details or compare mode only when you need finer policy inspection.",
+      tr: "Once is diliyle katalog gorunumlerinde kalin; daha ince politika incelemesi gerektiginde ayrinti veya karsilastirma moduna gecin.",
+    }),
+    items: Object.freeze([
+      Object.freeze({
+        title: Object.freeze({
+          en: "Start with object hierarchy",
+          tr: "Nesne hiyerarsisi ile baslayin",
+        }),
+        description: Object.freeze({
+          en: "Business roles, workflow packages, and presets should remain readable as distinct catalog objects.",
+          tr: "Is rolleri, workflow paketleri ve presetler ayri katalog nesneleri olarak okunabilir kalmalidir.",
+        }),
+      }),
+      Object.freeze({
+        title: Object.freeze({
+          en: "Use compare mode sparingly",
+          tr: "Karsilastirma modunu olculu kullanin",
+        }),
+        description: Object.freeze({
+          en: "The matrix is for side-by-side inspection, not the default reading flow.",
+          tr: "Matris yan yana inceleme icindir; varsayilan okuma akisi degildir.",
+        }),
+      }),
+      Object.freeze({
+        title: Object.freeze({
+          en: "Follow the usage path",
+          tr: "Kullanim yolunu takip edin",
+        }),
+        description: Object.freeze({
+          en: "When you need to answer where something is used, jump from catalog definition into workflow or user workbenches.",
+          tr: "Bir seyin nerede kullanildigini cevaplamak gerektiginde katalog tanimindan workflow veya kullanici workbench'lerine atlayin.",
+        }),
+      }),
+    ]),
+    tone: "violet",
+    footer: Object.freeze({
+      en: "Companion routes stay available for adjacent policies and extensions while the long-term workbench split settles.",
+      tr: "Uzun vadeli workbench ayirimi netlesirken bitisik politikalar ve uzantilar icin companion rotalar kullanilmaya devam eder.",
+    }),
+  }),
+  workflows: Object.freeze({
+    eyebrow: Object.freeze({
+      en: "Governance pattern",
+      tr: "Yonetisim deseni",
+    }),
+    title: Object.freeze({
+      en: "Inspect before you edit",
+      tr: "Duzenlemeden once inceleyin",
+    }),
+    description: Object.freeze({
+      en: "Definitions, assignments, coverage, and records should be inspectable first, with the setup wizard kept as a deliberate edit path.",
+      tr: "Tanimlar, atamalar, coverage ve kayitlar once incelenebilir olmali; setup sihirbazi ise bilincli bir duzenleme yolu olarak kalmalidir.",
+    }),
+    items: Object.freeze([
+      Object.freeze({
+        title: Object.freeze({
+          en: "Land on steady-state surfaces",
+          tr: "Kalici yuzeylerde acilis yapin",
+        }),
+        description: Object.freeze({
+          en: "Use definitions, assignments, and records as the default operating tabs for admins.",
+          tr: "Yoneticiler icin varsayilan isletim sekmeleri olarak tanimlar, atamalar ve kayitlari kullanin.",
+        }),
+      }),
+      Object.freeze({
+        title: Object.freeze({
+          en: "Treat coverage as evidence",
+          tr: "Coverage'i kanit gibi ele alin",
+        }),
+        description: Object.freeze({
+          en: "Coverage diagnostics explain who is still missing authority and which scope gaps remain.",
+          tr: "Coverage tanilari kimin halen yetkisiz oldugunu ve hangi kapsam bosluklarinin kaldigini aciklar.",
+        }),
+      }),
+      Object.freeze({
+        title: Object.freeze({
+          en: "Use setup for intentional change",
+          tr: "Setup'i bilincli degisim icin kullanin",
+        }),
+        description: Object.freeze({
+          en: "Drop into the wizard only when you are creating or editing a specific workflow package.",
+          tr: "Sihirbaza yalnizca belirli bir workflow paketini olustururken veya duzenlerken girin.",
+        }),
+      }),
+    ]),
+    tone: "emerald",
+    footer: Object.freeze({
+      en: "Use the companion routes to jump into users or catalog context when governance changes require those adjacent domains.",
+      tr: "Yonetisim degisiklikleri bitisik alanlari gerektirdiginde companion rotalari kullanarak kullanici veya katalog baglamina atlayin.",
+    }),
+  }),
+  diagnostics: Object.freeze({
+    eyebrow: Object.freeze({
+      en: "Investigation pattern",
+      tr: "Inceleme deseni",
+    }),
+    title: Object.freeze({
+      en: "Explain first, prove second",
+      tr: "Once aciklayin, sonra kanitlayin",
+    }),
+    description: Object.freeze({
+      en: "Start from access explainability, then move into audit evidence only as deep as the question requires.",
+      tr: "Once erisim aciklanabilirliginden baslayin; sonra soru gerektirdigi kadar derine inerek denetim kanitlarina gecin.",
+    }),
+    items: Object.freeze([
+      Object.freeze({
+        title: Object.freeze({
+          en: "Narrow the actor and scope",
+          tr: "Aktoru ve kapsami daraltin",
+        }),
+        description: Object.freeze({
+          en: "Keep the same user and scope story in mind as you move from explainability into audit tabs.",
+          tr: "Aciklanabilirlikten denetim sekmelerine gecerken ayni kullanici ve kapsam hikayesini akilda tutun.",
+        }),
+      }),
+      Object.freeze({
+        title: Object.freeze({
+          en: "Use RBAC audit for structured evidence",
+          tr: "Yapilandirilmis kanit icin RBAC denetimini kullanin",
+        }),
+        description: Object.freeze({
+          en: "RBAC audit logs answer who changed what with actor, target, and scope context already shaped for review.",
+          tr: "RBAC denetim loglari inceleme icin hazir aktor, hedef ve kapsam baglamiyla kimin neyi degistirdigini aciklar.",
+        }),
+      }),
+      Object.freeze({
+        title: Object.freeze({
+          en: "Use raw and sensitive-data tabs for proof",
+          tr: "Kanit icin ham ve hassas-veri sekmelerini kullanin",
+        }),
+        description: Object.freeze({
+          en: "Drop into raw payloads or sensitive-data traces only when you need technical evidence beyond the summarized explanation.",
+          tr: "Ozetlenmis aciklamanin otesinde teknik kanita ihtiyac oldugunda ham payload veya hassas-veri izlerine inin.",
+        }),
+      }),
+    ]),
+    tone: "amber",
+    footer: Object.freeze({
+      en: "Companion links keep adjacent evidence surfaces reachable while filters and deep-link state stabilize across the investigation family.",
+      tr: "Filtreler ve derin-baglanti durumu inceleme ailesi genelinde otururken companion baglantilari bitisik kanit yuzeylerini ulasilabilir tutar.",
+    }),
+  }),
+});
 
 function matchesWorkspaceSection(section, workspaceSectionKey) {
   const normalizedWorkspaceSectionKey = String(workspaceSectionKey || "").trim();
@@ -114,6 +250,37 @@ function matchesWorkspaceSection(section, workspaceSectionKey) {
   return Array.isArray(section?.currentSectionKeys)
     ? section.currentSectionKeys.includes(normalizedWorkspaceSectionKey)
     : false;
+}
+
+function resolveLocalizedValue(value, l) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value && typeof value === "object") {
+    return l(value.en, value.tr);
+  }
+  return "";
+}
+
+function resolveGuidanceConfig(guidance, workspaceSectionKey, l) {
+  const config = guidance || DEFAULT_WORKSPACE_GUIDANCE[workspaceSectionKey] || null;
+  if (!config) {
+    return null;
+  }
+
+  return {
+    eyebrow: resolveLocalizedValue(config.eyebrow, l),
+    title: resolveLocalizedValue(config.title, l),
+    description: resolveLocalizedValue(config.description, l),
+    items: Array.isArray(config.items)
+      ? config.items.map((item) => ({
+          title: resolveLocalizedValue(item.title, l),
+          description: resolveLocalizedValue(item.description, l),
+        }))
+      : [],
+    footer: resolveLocalizedValue(config.footer, l),
+    tone: config.tone || "slate",
+  };
 }
 
 function WorkspaceAction({ action }) {
@@ -170,33 +337,6 @@ function WorkspaceNavItem({ active, item, locked, l, title = "" }) {
   );
 }
 
-function CompanionLinkCard({ access, item, l }) {
-  const label = l(item.label.en, item.label.tr);
-  if (access.locked) {
-    return (
-      <div
-        className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm text-slate-500"
-        title={`${l("Permission required", "Izin gerekli")}: ${access.requiredPermissions.join(", ")}`}
-      >
-        <div className="font-medium text-slate-700">{label}</div>
-        <div className="mt-1 text-xs leading-5">
-          {l("Permission required", "Izin gerekli")}:{" "}
-          {access.requiredPermissions.join(", ")}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <Link
-      to={item.to}
-      className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-    >
-      {label}
-    </Link>
-  );
-}
-
 function WorkspaceStatCard({ stat }) {
   return (
     <article
@@ -214,9 +354,9 @@ function WorkspaceStatCard({ stat }) {
 }
 
 /**
- * Provides the shared security-admin shell so the catalog, role editor, and
- * assignment workspace keep the same framing, planned workbench map, and
- * permission-aware reachability to companion routes during the redesign.
+ * Provides the shared security-admin shell so workbench pages keep the same
+ * framing, summary strip, tab rail, guidance panel, and permission-aware
+ * navigation grammar throughout the redesign track.
  */
 export default function SecurityAdminWorkspaceShell({
   workspaceSectionKey = "",
@@ -227,6 +367,7 @@ export default function SecurityAdminWorkspaceShell({
   actions = [],
   stats = [],
   toolbar = null,
+  guidance = null,
   children,
 }) {
   const { l } = useI18n();
@@ -234,7 +375,7 @@ export default function SecurityAdminWorkspaceShell({
 
   const workspaceSections = SECURITY_ADMIN_WORKSPACE_SECTIONS.map((section) => ({
     ...section,
-    access: resolveWorkspaceLinkAccess(
+    access: resolveSecurityWorkbenchAccess(
       section,
       hasAnyPermission,
       hasAnyFeature
@@ -243,28 +384,43 @@ export default function SecurityAdminWorkspaceShell({
 
   const primarySurfaces = SECURITY_ADMIN_PRIMARY_SURFACES.map((surface) => ({
     ...surface,
-    access: resolveWorkspaceLinkAccess(
+    access: resolveSecurityWorkbenchAccess(
       surface,
       hasAnyPermission,
       hasAnyFeature
     ),
   })).filter((surface) => surface.access.visible);
 
-  const companionGroups = SECURITY_ADMIN_WORKSPACE_SECTIONS.map((workspaceSection) => ({
-    workspaceSection,
-    links: SECURITY_ADMIN_COMPANION_LINKS.filter(
-      (item) => item.workspaceSectionKey === workspaceSection.key
-    )
-      .map((item) => ({
-        ...item,
-        access: resolveWorkspaceLinkAccess(
-          item,
-          hasAnyPermission,
-          hasAnyFeature
-        ),
-      }))
-      .filter((item) => item.access.visible),
-  })).filter((group) => group.links.length > 0);
+  const currentWorkspaceSection = workspaceSections.find((section) =>
+    matchesWorkspaceSection(section, workspaceSectionKey)
+  ) || null;
+
+  const currentCompanionLinks = currentWorkspaceSection
+    ? SECURITY_ADMIN_COMPANION_LINKS.filter(
+        (item) => item.workspaceSectionKey === currentWorkspaceSection.key
+      )
+        .map((item) => ({
+          ...item,
+          access: resolveSecurityWorkbenchAccess(
+            item,
+            hasAnyPermission,
+            hasAnyFeature
+          ),
+        }))
+        .filter((item) => item.access.visible)
+        .map((item) => ({
+          label: l(item.label.en, item.label.tr),
+          to: item.to,
+          locked: item.access.locked,
+          title: item.access.locked
+            ? `${l("Permission required", "Izin gerekli")}: ${item.access.requiredPermissions.join(", ")}`
+            : "",
+        }))
+    : [];
+
+  const resolvedGuidance = resolveGuidanceConfig(guidance, workspaceSectionKey, l);
+  const hasGuidancePanel =
+    Boolean(resolvedGuidance) || currentCompanionLinks.length > 0;
 
   return (
     <div className="space-y-6">
@@ -352,40 +508,6 @@ export default function SecurityAdminWorkspaceShell({
               </div>
             </section>
           </div>
-
-          {companionGroups.length > 0 ? (
-            <div className="relative z-10 mt-3 grid gap-3 xl:grid-cols-2">
-              {companionGroups.map((group) => (
-                <section
-                  key={group.workspaceSection.key}
-                  className="rounded-3xl border border-white/80 bg-white/80 px-4 py-4 backdrop-blur"
-                >
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    {l(
-                      group.workspaceSection.label.en,
-                      group.workspaceSection.label.tr
-                    )}
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    {l(
-                      group.workspaceSection.description.en,
-                      group.workspaceSection.description.tr
-                    )}
-                  </p>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {group.links.map((link) => (
-                      <CompanionLinkCard
-                        key={link.to}
-                        access={link.access}
-                        item={link}
-                        l={l}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          ) : null}
         </div>
       </section>
 
@@ -408,7 +530,35 @@ export default function SecurityAdminWorkspaceShell({
         </section>
       ) : null}
 
-      {toolbar ? <section className="space-y-4">{toolbar}</section> : null}
+      {toolbar || hasGuidancePanel ? (
+        <section
+          className={
+            toolbar && hasGuidancePanel
+              ? "grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_360px]"
+              : "space-y-4"
+          }
+        >
+          {toolbar ? <div className="space-y-4">{toolbar}</div> : null}
+          {hasGuidancePanel ? (
+            <SecurityWorkbenchGuidancePanel
+              eyebrow={
+                resolvedGuidance?.eyebrow ||
+                l("Workbench guidance", "Workbench rehberi")
+              }
+              title={
+                resolvedGuidance?.title ||
+                l("Companion routes", "Companion rotalari")
+              }
+              description={resolvedGuidance?.description || ""}
+              items={resolvedGuidance?.items || []}
+              linksTitle={l("Companion routes", "Companion rotalari")}
+              links={currentCompanionLinks}
+              footer={resolvedGuidance?.footer || ""}
+              tone={resolvedGuidance?.tone || "slate"}
+            />
+          ) : null}
+        </section>
+      ) : null}
 
       <div className="space-y-6">{children}</div>
     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   listCountries,
   listGroupCompanies,
@@ -29,6 +30,11 @@ import {
   getOrgScopeTreeRoot,
 } from "../../shared/orgScopeTree.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import SecurityAdminWorkspaceShell from "../security/SecurityAdminWorkspaceShell.jsx";
+import SecurityWorkflowWorkbenchTabs from "../security/components/workflows/SecurityWorkflowWorkbenchTabs.jsx";
 import WorkflowAssignmentStep from "./workflows/components/WorkflowAssignmentStep.jsx";
 import ApprovalRoutingMatrixSection from "./workflows/components/ApprovalRoutingMatrixSection.jsx";
 import WorkflowDefinitionStep from "./workflows/components/WorkflowDefinitionStep.jsx";
@@ -45,6 +51,7 @@ import {
   buildWorkflowPresetBaselineStepDrafts,
   buildDefaultSteps,
   buildWorkflowExplainabilityPreviewModel,
+  buildWorkflowCoverageReviewModel,
   buildWorkflowPresetComparisonModel,
   buildWorkflowPresetPreviewModel,
   buildStepDrafts,
@@ -62,6 +69,28 @@ import {
 } from "./workflows/utils/workflowSetupHelpers.js";
 import { getWorkflowSetupText } from "./workflows/utils/workflowSetupText.js";
 import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../../../shared/cariDocumentWorkflowGovernance.js";
+
+const WORKFLOW_WORKBENCH_TABS = Object.freeze([
+  "definitions",
+  "assignments",
+  "coverage",
+  "records",
+  "setup",
+]);
+
+function updateWorkbenchSearchParams(searchParams, changes) {
+  const nextSearchParams = new URLSearchParams(searchParams);
+
+  Object.entries(changes).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") {
+      nextSearchParams.delete(key);
+      return;
+    }
+    nextSearchParams.set(key, String(value));
+  });
+
+  return nextSearchParams;
+}
 
 function resolveAssignmentScopeId(form, tenantScopeId) {
   if (form.scopeType === "TENANT") {
@@ -154,16 +183,25 @@ function resolveAssignmentRowScope(row, tenantScopeId) {
 }
 
 /**
- * Manages workflow definitions, review steps, and scope assignments in a guided setup flow.
+ * Renders workflow governance either as the canonical security-admin workbench
+ * or as the underlying guided setup flow, while reusing the existing
+ * definition, assignment, routing-matrix, and records components.
  */
-export default function WorkflowSetupPage() {
+export default function WorkflowSetupPage({ workspaceMode = "" }) {
   const { getPermissionAccess, hasPermission, user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { language } = useI18n();
   const { refresh: refreshModuleReadiness } = useModuleReadiness();
 
   const l = useMemo(() => (en, tr) => (language === "tr" ? tr : en), [language]);
   const text = useMemo(() => getWorkflowSetupText(l), [l]);
   const tenantScopeId = toPositiveInt(user?.tenant_id);
+  const isSecurityAdminWorkbench = workspaceMode === "security-admin";
+  const activeWorkbenchTab = WORKFLOW_WORKBENCH_TABS.includes(
+    String(searchParams.get("tab") || "")
+  )
+    ? String(searchParams.get("tab") || "")
+    : WORKFLOW_WORKBENCH_TABS[0];
 
   const canReadDefinitions = hasPermission("workflow.definition.read");
   const definitionWriteAccess = getPermissionAccess("workflow.definition.write");
@@ -236,6 +274,19 @@ export default function WorkflowSetupPage() {
     "-";
   const selectedRecommendation =
     text.processRecommendations[String(selectedProcessType || "").toUpperCase()] || null;
+
+  function navigateToWorkbenchTab(nextTab, extraChanges = {}) {
+    if (!isSecurityAdminWorkbench) {
+      return;
+    }
+
+    setSearchParams(
+      updateWorkbenchSearchParams(searchParams, {
+        tab: nextTab,
+        ...extraChanges,
+      })
+    );
+  }
 
   const filteredDefinitionOptions = useMemo(
     () =>
@@ -413,6 +464,56 @@ export default function WorkflowSetupPage() {
       }),
     [assignments, getPermissionAccess, l, saving, tenantScopeId]
   );
+  const coverageReviewModel = useMemo(
+    () =>
+      buildWorkflowCoverageReviewModel({
+        diagnostics: coverageDiagnostics,
+        workflowType: selectedProcessType,
+        lookups: {
+          countries,
+          groupCompanies,
+          legalEntities,
+          operatingUnits,
+        },
+        tenantScopeId,
+        l,
+      }),
+    [
+      countries,
+      coverageDiagnostics,
+      groupCompanies,
+      l,
+      legalEntities,
+      operatingUnits,
+      selectedProcessType,
+      tenantScopeId,
+    ]
+  );
+  const activeAssignmentCount = assignmentRows.filter(
+    (row) => String(row?.status || "").toUpperCase() === "ACTIVE"
+  ).length;
+  const inactiveAssignmentCount = Math.max(
+    assignmentRows.length - activeAssignmentCount,
+    0
+  );
+  const apRoutingRuleCount = assignmentRows.filter(
+    (row) =>
+      String(row?.processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+  ).length;
+  const assignedWorkflowTypeCount = new Set(
+    assignmentRows
+      .map((row) => String(row?.processType || "").trim().toUpperCase())
+      .filter(Boolean)
+  ).size;
+  const assignmentScopeCount = new Set(
+    assignmentRows.map((row) => String(row?.scopeLabel || "").trim()).filter(Boolean)
+  ).size;
+  const coverageGapCount = Array.isArray(coverageReviewModel?.warningCards)
+    ? coverageReviewModel.warningCards.length
+    : 0;
+  const checkedActorCount = Array.isArray(coverageReviewModel?.summaryCards)
+    ? coverageReviewModel.summaryCards.length
+    : 0;
 
   function handleAssignmentScopeSelect(nextSelection, node = null) {
     setAssignmentScopeNodeKey(String(node?.key || ""));
@@ -450,7 +551,7 @@ export default function WorkflowSetupPage() {
     setStepsJsonError("");
   }
 
-  function selectDefinitionForEditing(definitionId, targetStep = 3) {
+  function syncDefinitionSelection(definitionId) {
     const nextId = String(definitionId || "");
     const definition =
       definitions.find((row) => toPositiveInt(row?.id) === toPositiveInt(nextId)) || null;
@@ -467,11 +568,19 @@ export default function WorkflowSetupPage() {
         processType: definition.processType,
         workflowDefinitionId: nextId,
       }));
-      setCurrentStep(targetStep);
-      return;
+      return definition;
     }
 
-    setCurrentStep(3);
+    return null;
+  }
+
+  function selectDefinitionForEditing(definitionId, targetStep = 3) {
+    const definition = syncDefinitionSelection(definitionId);
+    setCurrentStep(definition ? targetStep : 3);
+  }
+
+  function selectDefinitionForWorkbench(definitionId) {
+    syncDefinitionSelection(definitionId);
   }
 
   function continueSelectedDefinition() {
@@ -740,7 +849,11 @@ export default function WorkflowSetupPage() {
   ]);
 
   useEffect(() => {
-    if (currentStep < 4 || !canReadAssignments) {
+    if (
+      !canReadAssignments ||
+      (currentStep < 4 &&
+        (!isSecurityAdminWorkbench || activeWorkbenchTab !== "coverage"))
+    ) {
       setCoverageDiagnostics(null);
       setCoverageDiagnosticsLoading(false);
       setCoverageDiagnosticsError("");
@@ -800,8 +913,10 @@ export default function WorkflowSetupPage() {
     assignmentForm.legalEntityId,
     assignmentForm.operatingUnitId,
     assignmentForm.scopeType,
+    activeWorkbenchTab,
     canReadAssignments,
     currentStep,
+    isSecurityAdminWorkbench,
     l,
     selectedProcessType,
     stepDrafts,
@@ -1322,15 +1437,42 @@ export default function WorkflowSetupPage() {
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <WorkflowSetupProgress
-        currentStep={currentStep}
-        steps={text.progressSteps}
-        canReachStep={canReachStep}
-        onSelectStep={goToStep}
-      />
+  function openSetupWizardAtStep(stepNumber) {
+    setCurrentStep(stepNumber);
+    navigateToWorkbenchTab("setup");
+  }
 
+  function openSelectedDefinitionInSetup(targetStep = 4) {
+    if (selectedDefinitionId) {
+      selectDefinitionForEditing(selectedDefinitionId, targetStep);
+      navigateToWorkbenchTab("setup");
+      return;
+    }
+
+    openSetupWizardAtStep(1);
+  }
+
+  function renderRecordsSection(defaultTab = "workflows", onSelectDefinition = selectDefinitionForEditing) {
+    return (
+      <WorkflowRecordsSection
+        key={`${defaultTab}:${String(selectedDefinitionId || "")}`}
+        l={l}
+        definitions={definitions}
+        assignments={assignmentRows}
+        loading={loading}
+        selectedDefinitionId={selectedDefinitionId}
+        onSelectDefinition={onSelectDefinition}
+        onToggleAssignmentStatus={onToggleAssignmentStatus}
+        getWorkflowTypeLabel={(value) =>
+          text.workflowTypeLabels[String(value || "").toUpperCase()] || value || "-"
+        }
+        defaultTab={defaultTab}
+      />
+    );
+  }
+
+  const sharedAlerts = (
+    <>
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>{l("Workflow setup error", "Workflow kurulum hatasi")}</AlertTitle>
@@ -1368,6 +1510,19 @@ export default function WorkflowSetupPage() {
           </AlertDescription>
         </Alert>
       ) : null}
+    </>
+  );
+
+  const legacySurface = (
+    <div className="space-y-6">
+      <WorkflowSetupProgress
+        currentStep={currentStep}
+        steps={text.progressSteps}
+        canReachStep={canReachStep}
+        onSelectStep={goToStep}
+      />
+
+      {sharedAlerts}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0">
@@ -1542,18 +1697,502 @@ export default function WorkflowSetupPage() {
         />
       ) : null}
 
-      <WorkflowRecordsSection
-        l={l}
-        definitions={definitions}
-        assignments={assignmentRows}
-        loading={loading}
-        selectedDefinitionId={selectedDefinitionId}
-        onSelectDefinition={selectDefinitionForEditing}
-        onToggleAssignmentStatus={onToggleAssignmentStatus}
-        getWorkflowTypeLabel={(value) =>
-          text.workflowTypeLabels[String(value || "").toUpperCase()] || value || "-"
-        }
-      />
+      {renderRecordsSection()}
     </div>
+  );
+
+  if (!isSecurityAdminWorkbench) {
+    return legacySurface;
+  }
+
+  const workflowWorkbenchStats = [
+    {
+      title: "Definitions",
+      value: definitions.length,
+      description: "Saved workflow definitions currently visible in governance records.",
+      tone: "blue",
+    },
+    {
+      title: "Assignments",
+      value: `${activeAssignmentCount} active / ${inactiveAssignmentCount} inactive`,
+      description: "Workflow assignments stay inspectable before you reopen the setup flow.",
+      tone: "green",
+    },
+    {
+      title: "AP routing rules",
+      value: apRoutingRuleCount,
+      description: "AP document-posting routes currently surfaced in the routing matrix.",
+      tone: "violet",
+    },
+    {
+      title: "Coverage",
+      value: coverageGapCount > 0 ? `${coverageGapCount} warnings` : `${checkedActorCount} checks`,
+      description:
+        coverageGapCount > 0
+          ? "Coverage diagnostics found unresolved workflow-actor gaps in the current preview."
+          : checkedActorCount > 0
+            ? "Coverage diagnostics are available directly from the workflow workbench."
+            : "Open the coverage tab or the setup builder to run coverage diagnostics.",
+      tone: coverageGapCount > 0 ? "amber" : "blue",
+    },
+  ];
+
+  const workbenchActions =
+    activeWorkbenchTab === "setup"
+      ? [
+          {
+            to: "/app/ayarlar/security-admin/workflows?tab=records",
+            label: "Open records",
+            tone: "primary",
+          },
+          {
+            to: "/app/ayarlar/security-admin/workflows?tab=coverage",
+            label: "Open coverage",
+          },
+        ]
+      : [
+          {
+            label: "Open setup wizard",
+            tone: "primary",
+            onClick: () =>
+              openSetupWizardAtStep(
+                activeWorkbenchTab === "assignments"
+                  ? 2
+                  : activeWorkbenchTab === "coverage"
+                    ? 4
+                    : 1
+              ),
+          },
+          {
+            to: "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages",
+            label: "Open workflow packages",
+          },
+        ];
+
+  const workbenchContext = (() => {
+    switch (activeWorkbenchTab) {
+      case "assignments":
+        return {
+          title: "Assignments first show where rules apply",
+          description:
+            "Review saved workflow assignments and scope spread before you change status or reopen the setup flow.",
+          badges: [
+            `${activeAssignmentCount} active`,
+            `${assignmentScopeCount} scopes`,
+            `${assignedWorkflowTypeCount} workflow types`,
+          ],
+        };
+      case "coverage":
+        return {
+          title: "Coverage is a first-class governance surface",
+          description:
+            "The routing matrix and diagnostics stay reachable without dropping straight into the create/edit wizard.",
+          badges: [
+            `${apRoutingRuleCount} AP routes`,
+            `${coverageGapCount} warnings`,
+            `${checkedActorCount} checks`,
+          ],
+        };
+      case "records":
+        return {
+          title: "Records keep governance inspectable",
+          description:
+            "Use the records tab to review saved workflow definitions and assignments without mixing them into the setup flow.",
+          badges: [
+            `${definitions.length} definitions`,
+            `${assignmentRows.length} assignments`,
+          ],
+        };
+      case "setup":
+        return {
+          title: "The wizard remains available, but secondary",
+          description:
+            "Create and edit still use the existing guided steps, while the workbench keeps inspection and coverage outside the wizard.",
+          badges: [
+            `Step ${currentStep}/${text.progressSteps.length}`,
+            `${stepDrafts.length} drafted steps`,
+          ],
+        };
+      case "definitions":
+      default:
+        return {
+          title: "Definitions are the landing surface",
+          description:
+            "Admins land on saved workflow definitions first so governance is inspectable before it becomes editable.",
+          badges: [
+            `${definitions.length} definitions`,
+            `${activeAssignmentCount} active assignments`,
+          ],
+        };
+    }
+  })();
+
+  const workflowWorkbenchContent = (() => {
+    if (activeWorkbenchTab === "setup") {
+      return legacySurface;
+    }
+
+    if (activeWorkbenchTab === "definitions") {
+      return (
+        <div className="space-y-6">
+          {sharedAlerts}
+
+          <Card className="rounded-3xl border-border/80">
+            <CardHeader className="space-y-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <CardTitle>{l("Workflow definitions", "Workflow tanimlari")}</CardTitle>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {l(
+                      "Inspect saved workflow definitions before editing steps or opening create flows.",
+                      "Adimlari duzenlemeden veya yeni akis olusturmadan once kayitli workflow tanimlarini inceleyin."
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">
+                    {selectedDefinition
+                      ? selectedDefinition.name || selectedDefinition.code
+                      : l("No definition selected", "Tanim secilmedi")}
+                  </Badge>
+                  <Badge variant="outline">
+                    {selectedDefinition
+                      ? `${Number(selectedDefinition.stepCount || stepDrafts.length || 0)} ${l("steps", "adim")}`
+                      : l("Select a row to inspect", "Incelemek icin satir secin")}
+                  </Badge>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => openSetupWizardAtStep(1)}>
+                {l("Create workflow", "Workflow olustur")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => openSelectedDefinitionInSetup(4)}
+                disabled={!selectedDefinitionId}
+              >
+                {l("Edit selected workflow", "Secili workflow'u duzenle")}
+              </Button>
+              <Button asChild type="button" variant="outline">
+                <Link to="/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_presets">
+                  {l("Browse workflow presets", "Workflow presetlerini incele")}
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          {renderRecordsSection("workflows", selectDefinitionForWorkbench)}
+        </div>
+      );
+    }
+
+    if (activeWorkbenchTab === "assignments") {
+      return (
+        <div className="space-y-6">
+          {sharedAlerts}
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <Card className="rounded-3xl border-border/80">
+              <CardHeader className="pb-2">
+                <CardTitle>{l("Active assignments", "Aktif atamalar")}</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                <div className="text-3xl font-semibold text-foreground">{activeAssignmentCount}</div>
+                <p className="mt-2 leading-6">
+                  {l(
+                    "Assignments currently applying live workflow definitions at scope.",
+                    "Kapsamda canli workflow tanimlarini uygulayan atamalar."
+                  )}
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-3xl border-border/80">
+              <CardHeader className="pb-2">
+                <CardTitle>{l("Covered scopes", "Kapsanan kapsamlar")}</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                <div className="text-3xl font-semibold text-foreground">{assignmentScopeCount}</div>
+                <p className="mt-2 leading-6">
+                  {l(
+                    "Distinct scopes currently represented across saved workflow assignments.",
+                    "Kayitli workflow atamalarinda temsil edilen farkli kapsamlar."
+                  )}
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-3xl border-border/80">
+              <CardHeader className="pb-2">
+                <CardTitle>{l("Workflow types", "Workflow tipleri")}</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                <div className="text-3xl font-semibold text-foreground">{assignedWorkflowTypeCount}</div>
+                <p className="mt-2 leading-6">
+                  {l(
+                    "Process families currently covered by saved workflow assignments.",
+                    "Kayitli workflow atamalarinin kapsadigi surec aileleri."
+                  )}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="rounded-3xl border-border/80">
+            <CardHeader className="space-y-3">
+              <CardTitle>{l("Assignment workbench", "Atama workbench'i")}</CardTitle>
+              <p className="text-sm leading-6 text-muted-foreground">
+                {l(
+                  "Review current assignment posture first, then reopen the wizard only when you need to change scope or status.",
+                  "Mevcut atama durusunu once inceleyin; kapsam veya durum degistirmeniz gerektiginde sihirbazi yeniden acin."
+                )}
+              </p>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => openSetupWizardAtStep(2)}>
+                {l("Create assignment", "Atama olustur")}
+              </Button>
+              <Button asChild type="button" variant="outline">
+                <Link to="/app/ayarlar/security-admin/users?tab=assignments">
+                  {l("Open user assignments", "Kullanici atamalarini ac")}
+                </Link>
+              </Button>
+              <Button type="button" variant="outline" onClick={() => navigateToWorkbenchTab("coverage")}>
+                {l("Review coverage", "Coverage gorunumunu ac")}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {renderRecordsSection("assignments", selectDefinitionForWorkbench)}
+        </div>
+      );
+    }
+
+    if (activeWorkbenchTab === "coverage") {
+      return (
+        <div className="space-y-6">
+          {sharedAlerts}
+
+          <Card className="rounded-3xl border-border/80">
+            <CardHeader className="space-y-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <CardTitle>{l("Coverage diagnostics", "Coverage tanilari")}</CardTitle>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {l(
+                      "Coverage now has its own tab so routing and actor gaps are inspectable before you change saved workflow records.",
+                      "Coverage artik kendi sekmesine sahip; boylece yonlendirme ve aktor bosluklari kayitlari degistirmeden once incelenebilir."
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">{selectedProcessTypeLabel}</Badge>
+                  <Badge variant="outline">{assignmentLabel}</Badge>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => openSetupWizardAtStep(4)}>
+                {l("Open step builder", "Adim kurucusunu ac")}
+              </Button>
+              <Button asChild type="button" variant="outline">
+                <Link to="/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages">
+                  {l("Review workflow packages", "Workflow paketlerini incele")}
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+            <div className="grid gap-4 md:grid-cols-2">
+              {coverageDiagnosticsLoading ? (
+                <Card className="rounded-3xl border-border/80">
+                  <CardContent className="py-8 text-sm text-muted-foreground">
+                    {l("Coverage diagnostics are loading...", "Coverage tanilari yukleniyor...")}
+                  </CardContent>
+                </Card>
+              ) : Array.isArray(coverageReviewModel?.summaryCards) &&
+                coverageReviewModel.summaryCards.length > 0 ? (
+                coverageReviewModel.summaryCards.map((card) => (
+                  <div
+                    key={card.key}
+                    className={`rounded-3xl border px-5 py-5 shadow-sm ${card.toneClass}`}
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] opacity-80">
+                      {card.statusLabel}
+                    </div>
+                    <div className="mt-2 text-lg font-semibold">{card.actorLabel}</div>
+                    <p className="mt-2 text-sm leading-6">{card.detailText}</p>
+                    {card.uncoveredScopeLabels.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {card.uncoveredScopeLabels.map((scopeLabel) => (
+                          <Badge key={`${card.key}:${scopeLabel}`} variant="outline">
+                            {scopeLabel}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))
+              ) : (
+                <Card className="rounded-3xl border-border/80">
+                  <CardContent className="py-8 text-sm leading-6 text-muted-foreground">
+                    {l(
+                      "Coverage follows the current workflow setup state. Open the setup tab to change scope, type, or steps, then return here to inspect diagnostics.",
+                      "Coverage mevcut workflow kurulum durumunu izler. Kapsami, tipi veya adimlari degistirmek icin kurulum sekmesini acin; sonra tanilari incelemek icin buraya donun."
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            <Card className="rounded-3xl border-border/80">
+              <CardHeader className="pb-2">
+                <CardTitle>{l("Coverage outcome", "Coverage sonucu")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-muted-foreground">
+                {coverageDiagnosticsError ? (
+                  <Alert variant="destructive">
+                    <AlertTitle>{l("Coverage diagnostics failed", "Coverage tanilari basarisiz")}</AlertTitle>
+                    <AlertDescription>{coverageDiagnosticsError}</AlertDescription>
+                  </Alert>
+                ) : null}
+
+                {coverageReviewModel?.checkedOnLabel ? (
+                  <p className="font-medium text-foreground">{coverageReviewModel.checkedOnLabel}</p>
+                ) : null}
+
+                {coverageReviewModel?.successText ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-emerald-900">
+                    {coverageReviewModel.successText}
+                  </div>
+                ) : null}
+
+                {Array.isArray(coverageReviewModel?.warningCards) &&
+                coverageReviewModel.warningCards.length > 0 ? (
+                  coverageReviewModel.warningCards.map((warning) => (
+                    <div
+                      key={warning.key}
+                      className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-amber-950"
+                    >
+                      <div className="font-semibold">{warning.title}</div>
+                      <p className="mt-1 leading-6">{warning.description}</p>
+                      {warning.technicalHint ? (
+                        <p className="mt-2 text-xs text-amber-900">{warning.technicalHint}</p>
+                      ) : null}
+                    </div>
+                  ))
+                ) : !coverageDiagnosticsLoading && !coverageDiagnosticsError ? (
+                  <p>
+                    {l(
+                      "No workflow-actor warnings are currently visible for the selected preview state.",
+                      "Secili onizleme durumu icin su anda workflow-aktor uyarisi gorunmuyor."
+                    )}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
+
+          {canReadAssignments ? (
+            <ApprovalRoutingMatrixSection
+              l={l}
+              assignments={assignmentRows}
+              definitions={definitions}
+              presetEntries={workflowPresetEntries}
+              orgTreeRoot={orgTreeRoot}
+              tenantScopeId={tenantScopeId}
+              scopeTypeLabels={text.scopeTypeLabels}
+              getNodeDisabledReason={getAssignmentNodeDisabledReason}
+              canWriteAny={hasPermission("workflow.assignment.write")}
+              canWriteScopeSelection={canWriteAssignmentAtScope}
+              saving={saving}
+              onSaveRule={onSaveApprovalRoutingRule}
+              onRetireRule={onRetireApprovalRoutingRule}
+            />
+          ) : null}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {sharedAlerts}
+
+        <Card className="rounded-3xl border-border/80">
+          <CardHeader className="space-y-3">
+            <CardTitle>{l("Workflow records", "Workflow kayitlari")}</CardTitle>
+            <p className="text-sm leading-6 text-muted-foreground">
+              {l(
+                "Keep saved definitions and assignments inspectable from one records surface before deciding whether a wizard flow is needed.",
+                "Kayitli tanimlari ve atamalari, bir sihirbaz akisina ihtiyac olup olmadigina karar vermeden once tek kayit yuzeyinden inceleyin."
+              )}
+            </p>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            <Button type="button" onClick={() => openSelectedDefinitionInSetup(4)}>
+              {selectedDefinitionId
+                ? l("Edit selected definition", "Secili tanimi duzenle")
+                : l("Open setup wizard", "Kurulum sihirbazini ac")}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => navigateToWorkbenchTab("assignments")}>
+              {l("Open assignments tab", "Atamalar sekmesini ac")}
+            </Button>
+          </CardContent>
+        </Card>
+
+        {renderRecordsSection("workflows", selectDefinitionForWorkbench)}
+      </div>
+    );
+  })();
+
+  return (
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="workflows"
+      sectionKey="workflow-governance"
+      eyebrow="Security / Workflow governance"
+      title="Workflow Governance"
+      description="Inspect workflow definitions, assignments, coverage, and records before opening the guided setup wizard. The security-admin workbench keeps the workflow domain inspectable first and editable second."
+      actions={workbenchActions}
+      stats={workflowWorkbenchStats}
+      toolbar={
+        <>
+          <SecurityWorkflowWorkbenchTabs
+            activeTab={activeWorkbenchTab}
+            counts={{
+              definitions: definitions.length,
+              assignments: assignmentRows.length,
+              coverage: coverageGapCount > 0 ? coverageGapCount : apRoutingRuleCount,
+              records: definitions.length + assignmentRows.length,
+              setup: `${currentStep}/${text.progressSteps.length}`,
+            }}
+          />
+
+          <Card className="rounded-3xl border-border/80">
+            <CardHeader className="space-y-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <CardTitle>{workbenchContext.title}</CardTitle>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {workbenchContext.description}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {workbenchContext.badges.map((badgeLabel) => (
+                    <Badge key={badgeLabel} variant="outline">
+                      {badgeLabel}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </CardHeader>
+          </Card>
+        </>
+      }
+    >
+      {workflowWorkbenchContent}
+    </SecurityAdminWorkspaceShell>
   );
 }

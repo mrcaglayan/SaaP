@@ -499,33 +499,41 @@ export const messages = {
         "/app/ayarlar/security-admin/catalog": "Erisim Katalogu",
         "/app/ayarlar/security-admin/catalog?tab=access-model":
           "Erisim Katalogu",
+        "/app/ayarlar/security-admin/catalog?tab=roles":
+          "Roller ve Yetkiler",
+        "/app/ayarlar/security-admin/catalog?tab=field-visibility":
+          "Alan Gorunurlugu",
+        "/app/ayarlar/security-admin/catalog?tab=group-ap-post":
+          "Grup AP Posting",
         "/app/ayarlar/security-admin/workflows": "Workflow Governance",
         "/app/ayarlar/security-admin/workflows?tab=definitions":
           "Workflow Governance",
+        "/app/ayarlar/security-admin/workflows?tab=assignments":
+          "Workflow Atamalari",
+        "/app/ayarlar/security-admin/workflows?tab=coverage":
+          "Coverage",
+        "/app/ayarlar/security-admin/workflows?tab=records":
+          "Workflow Kayitlari",
+        "/app/ayarlar/security-admin/workflows?tab=setup":
+          "Workflow Kurulumu",
         "/app/ayarlar/security-admin/diagnostics": "Tanilama ve Denetim",
         "/app/ayarlar/security-admin/diagnostics?tab=access":
-          "Tanilama ve Denetim",
+          "Erisim Aciklanabilirligi",
+        "/app/ayarlar/security-admin/diagnostics?tab=compliance":
+          "Uyum Raporlari",
+        "/app/ayarlar/security-admin/diagnostics?tab=audit":
+          "RBAC Denetim Loglari",
+        "/app/ayarlar/security-admin/diagnostics?tab=raw-audit":
+          "Ham Denetim Loglari",
+        "/app/ayarlar/security-admin/diagnostics?tab=sensitive-data":
+          "Hassas Veri Denetimi",
         "/app/ayarlar/delegasyonlarim": "Delegasyonlarim",
         "/app/ayarlar/sube-operatorleri": "Yerel Kullanici Yonetimi",
-        "/app/ayarlar/rbac/roles-permissions": "Roller ve Yetkiler",
-        "/app/ayarlar/rbac/user-assignments": "Kullanici Rol Atamalari",
-        "/app/ayarlar/rbac/scope-assignments": "Scope Atamalari",
-        "/app/ayarlar/rbac/field-visibility-policies":
-          "Alan Gorunurluk Politikalari",
-        "/app/ayarlar/rbac/delegations": "Onay Delegasyonlari",
-        "/app/ayarlar/rbac/temporary-coverage": "Gecici Operasyonel Kapsama",
-        "/app/ayarlar/rbac/access-debugger": "Erisim Hata Ayiklayici",
-        "/app/ayarlar/rbac/compliance-reports": "Uyum Raporlari",
-        "/app/ayarlar/rbac/audit-logs": "RBAC Denetim Loglari",
-        "/app/ayarlar/rbac/raw-audit-logs": "Ham Denetim Loglari",
-        "/app/ayarlar/rbac/sensitive-data-audit":
-          "Hassas Veri Denetim Kayitlari",
         "/app/ayarlar/sirket-ayarlari": "Sirket Ayarlari",
         "/app/ayarlar/organizasyon-yonetimi": "Organizasyon Yonetimi",
         "/app/ayarlar/entity-aktivasyon-alani": "Entity Aktivasyon Alani",
         "/app/ayarlar/hesap-plani-olustur": "Hesap Plani Olustur",
         "/app/ayarlar/hesap-plani-ayarlari": "Hesap Plani Ayarlari",
-        "/app/ayarlar/workflow-kurulumu": "Workflow Yonetimi",
         "/app/ayarlar/hesap-yeniden-siniflandirma":
           "Hesap Yeniden Siniflandirma",
         "/app/ayarlar/kur-yonetimi": "Kur Yonetimi",
@@ -2935,33 +2943,41 @@ export const messages = {
         "/app/ayarlar/security-admin/catalog": "Access Catalog",
         "/app/ayarlar/security-admin/catalog?tab=access-model":
           "Access Catalog",
+        "/app/ayarlar/security-admin/catalog?tab=roles":
+          "Roles and Permissions",
+        "/app/ayarlar/security-admin/catalog?tab=field-visibility":
+          "Field Visibility",
+        "/app/ayarlar/security-admin/catalog?tab=group-ap-post":
+          "Group AP Posting",
         "/app/ayarlar/security-admin/workflows": "Workflow Governance",
         "/app/ayarlar/security-admin/workflows?tab=definitions":
           "Workflow Governance",
+        "/app/ayarlar/security-admin/workflows?tab=assignments":
+          "Workflow Assignments",
+        "/app/ayarlar/security-admin/workflows?tab=coverage":
+          "Coverage",
+        "/app/ayarlar/security-admin/workflows?tab=records":
+          "Workflow Records",
+        "/app/ayarlar/security-admin/workflows?tab=setup":
+          "Workflow Setup",
         "/app/ayarlar/security-admin/diagnostics": "Diagnostics and Audit",
         "/app/ayarlar/security-admin/diagnostics?tab=access":
-          "Diagnostics and Audit",
+          "Access Explainability",
+        "/app/ayarlar/security-admin/diagnostics?tab=compliance":
+          "Compliance Reports",
+        "/app/ayarlar/security-admin/diagnostics?tab=audit":
+          "RBAC Audit Logs",
+        "/app/ayarlar/security-admin/diagnostics?tab=raw-audit":
+          "Raw Audit Logs",
+        "/app/ayarlar/security-admin/diagnostics?tab=sensitive-data":
+          "Sensitive Data Audit",
         "/app/ayarlar/delegasyonlarim": "My Delegations",
         "/app/ayarlar/sube-operatorleri": "Local User Administration",
-        "/app/ayarlar/rbac/roles-permissions": "Roles and Permissions",
-        "/app/ayarlar/rbac/user-assignments": "User Role Assignments",
-        "/app/ayarlar/rbac/scope-assignments": "Scope Assignments",
-        "/app/ayarlar/rbac/field-visibility-policies":
-          "Field Visibility Policies",
-        "/app/ayarlar/rbac/delegations": "Approval Delegations",
-        "/app/ayarlar/rbac/temporary-coverage":
-          "Temporary Operational Coverage",
-        "/app/ayarlar/rbac/access-debugger": "Access Debugger",
-        "/app/ayarlar/rbac/compliance-reports": "Compliance Reports",
-        "/app/ayarlar/rbac/audit-logs": "RBAC Audit Logs",
-        "/app/ayarlar/rbac/raw-audit-logs": "Raw Audit Logs",
-        "/app/ayarlar/rbac/sensitive-data-audit": "Sensitive Data Audit",
         "/app/ayarlar/sirket-ayarlari": "Company Settings",
         "/app/ayarlar/organizasyon-yonetimi": "Organization Management",
         "/app/ayarlar/entity-aktivasyon-alani": "Entity Activation Workspace",
         "/app/ayarlar/hesap-plani-olustur": "Create Chart of Accounts",
         "/app/ayarlar/hesap-plani-ayarlari": "Chart of Accounts Settings",
-        "/app/ayarlar/workflow-kurulumu": "Workflow Governance",
         "/app/ayarlar/hesap-yeniden-siniflandirma":
           "GL Reclassification Workbench",
         "/app/ayarlar/kur-yonetimi": "FX Rate Management",

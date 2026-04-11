@@ -8,6 +8,7 @@ import {
 import { Link, useSearchParams } from "react-router-dom";
 import { listAccessModelCatalogSections } from "./roleCatalog.js";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityCatalogWorkbenchTabs from "./components/catalog/SecurityCatalogWorkbenchTabs.jsx";
 
 const ACCESS_MODEL_TAB_ORDER = Object.freeze([
   "business_roles",
@@ -1572,13 +1573,13 @@ function WorkflowRoutingMatrixCallout({ compareEntries, currentTab }) {
         </div>
         <div className="flex flex-wrap gap-3">
           <Link
-            to="/app/ayarlar/workflow-kurulumu"
+            to="/app/ayarlar/security-admin/workflows?tab=definitions"
             className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
           >
             Open workflow routing matrix
           </Link>
           <Link
-            to="/app/ayarlar/rbac/access-debugger"
+            to="/app/ayarlar/security-admin/diagnostics?tab=access"
             className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
           >
             Open access debugger
@@ -1880,13 +1881,13 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
               </div>
               <div className="mt-5 flex flex-wrap gap-3">
                 <Link
-                  to="/app/ayarlar/workflow-kurulumu"
+                  to="/app/ayarlar/security-admin/workflows?tab=definitions"
                   className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                 >
                   Open workflow governance
                 </Link>
                 <Link
-                  to="/app/ayarlar/rbac/user-assignments"
+                  to="/app/ayarlar/security-admin/users?tab=assignments"
                   className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                 >
                   Open user assignments
@@ -2154,14 +2155,14 @@ export default function AccessModelCatalogPage() {
     ? searchParams.get("view")
     : ACCESS_MODEL_VIEW_ORDER[0];
   const isMatrixView = currentView === "matrix";
-  const currentTab = ACCESS_MODEL_TAB_ORDER.includes(searchParams.get("tab"))
-    ? searchParams.get("tab")
+  const currentModelTab = ACCESS_MODEL_TAB_ORDER.includes(searchParams.get("modelTab"))
+    ? searchParams.get("modelTab")
     : ACCESS_MODEL_TAB_ORDER[0];
-  const isBusinessRolesTab = currentTab === "business_roles";
-  const isWorkflowPackagesTab = currentTab === "workflow_packages";
-  const isWorkflowPresetsTab = currentTab === "workflow_presets";
+  const isBusinessRolesTab = currentModelTab === "business_roles";
+  const isWorkflowPackagesTab = currentModelTab === "workflow_packages";
+  const isWorkflowPresetsTab = currentModelTab === "workflow_presets";
   const currentSection =
-    sections.find((section) => section.key === currentTab) || sections[0] || null;
+    sections.find((section) => section.key === currentModelTab) || sections[0] || null;
   const searchValue = normalizeText(searchParams.get("q"));
   const scopeFilter = normalizeText(searchParams.get("scope")).toUpperCase() || FILTER_ALL;
   const familyFilter = normalizeText(searchParams.get("family")).toUpperCase() || FILTER_ALL;
@@ -2189,20 +2190,24 @@ export default function AccessModelCatalogPage() {
   const selectedEntry =
     currentEntries.find((entry) => normalizeText(entry.code) === selectedEntryCode) || null;
   const currentActionLink =
-    currentTab === "workflow_packages" || currentTab === "workflow_presets"
+    currentModelTab === "workflow_packages" || currentModelTab === "workflow_presets"
       ? {
-        to: "/app/ayarlar/workflow-kurulumu",
+        to: "/app/ayarlar/security-admin/workflows?tab=definitions",
         label: "Open workflow governance",
       }
       : {
-        to: "/app/ayarlar/rbac/roles-permissions",
-        label: "Open current role editor",
+        to: "/app/ayarlar/security-admin/catalog?tab=roles",
+        label: "Open roles & permissions",
       };
 
   const activeCount = currentEntries.filter((entry) => !entry.hiddenFromPicker).length;
   const hiddenCount = currentEntries.filter((entry) => entry.hiddenFromPicker).length;
   const extensionCount = currentEntries.filter((entry) => entry.plannedExtension).length;
   const draftCount = currentEntries.filter((entry) => entry.draft).length;
+  const accessModelEntryCount = sections.reduce(
+    (total, section) => total + section.entries.length,
+    0
+  );
 
   return (
     <SecurityAdminWorkspaceShell
@@ -2248,6 +2253,10 @@ export default function AccessModelCatalogPage() {
       ]}
       toolbar={
         <>
+          <SecurityCatalogWorkbenchTabs
+            activeTab="access-model"
+            counts={{ "access-model": accessModelEntryCount }}
+          />
           <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {ACCESS_MODEL_TAB_ORDER.map((tabKey) => {
@@ -2258,13 +2267,13 @@ export default function AccessModelCatalogPage() {
                 return (
                   <AccessModelTabButton
                     key={section.key}
-                    active={section.key === currentTab}
+                    active={section.key === currentModelTab}
                     count={section.entries.length}
                     label={section.label}
                     onClick={() =>
                       setSearchParams(
                         updateSearchParams(searchParams, {
-                          tab: section.key,
+                          modelTab: section.key,
                           item: "",
                           compare: isMatrixView
                             ? joinMatrixCompareCodes(buildDefaultCompareCodes(section.entries))
@@ -2342,7 +2351,7 @@ export default function AccessModelCatalogPage() {
                     })
                   )
                 }
-                placeholder={getSearchPlaceholder(currentTab)}
+                placeholder={getSearchPlaceholder(currentModelTab)}
                 className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 lg:col-span-2"
               />
               <select
@@ -2386,7 +2395,7 @@ export default function AccessModelCatalogPage() {
                 <div className="flex flex-wrap gap-3">
                   <BusinessRoleActionButton disabled>Create role label</BusinessRoleActionButton>
                   <Link
-                    to="/app/ayarlar/rbac/user-assignments"
+                    to="/app/ayarlar/security-admin/users?tab=assignments"
                     className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                   >
                     Open user assignments
@@ -2414,16 +2423,16 @@ export default function AccessModelCatalogPage() {
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <Link
-                    to="/app/ayarlar/workflow-kurulumu"
+                    to="/app/ayarlar/security-admin/workflows?tab=definitions"
                     className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                   >
                     Open workflow governance
                   </Link>
                   <Link
-                    to="/app/ayarlar/rbac/roles-permissions"
+                    to="/app/ayarlar/security-admin/catalog?tab=roles"
                     className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                   >
-                    Open current role editor
+                    Open roles & permissions
                   </Link>
                 </div>
               </div>
@@ -2448,13 +2457,13 @@ export default function AccessModelCatalogPage() {
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <Link
-                    to="/app/ayarlar/workflow-kurulumu"
+                    to="/app/ayarlar/security-admin/workflows?tab=definitions"
                     className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                   >
                     Open workflow governance
                   </Link>
                   <Link
-                    to="/app/ayarlar/rbac/access-model?tab=workflow_packages"
+                    to="/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages"
                     className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                   >
                     Open workflow packages
@@ -2508,11 +2517,11 @@ export default function AccessModelCatalogPage() {
               />
               <WorkflowRoutingMatrixCallout
                 compareEntries={compareEntries}
-                currentTab={currentTab}
+                currentTab={currentModelTab}
               />
               <AccessModelComparisonMatrix
                 compareEntries={compareEntries}
-                currentTab={currentTab}
+                currentTab={currentModelTab}
                 onOpenDetail={(entryCode) =>
                   setSearchParams(
                     updateSearchParams(searchParams, {

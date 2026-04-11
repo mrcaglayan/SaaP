@@ -217,6 +217,26 @@ export const SECURITY_ADMIN_WORKSPACE_SECTIONS = Object.freeze([
 
 export const SECURITY_ADMIN_PRIMARY_SURFACES = Object.freeze([
   Object.freeze({
+    key: "diagnostics-audit",
+    workspaceSectionKey: "diagnostics",
+    to: "/app/ayarlar/security-admin/diagnostics?tab=access",
+    accessPath: "/app/ayarlar/rbac/access-debugger",
+    label: Object.freeze({
+      en: "Diagnostics & audit",
+      tr: "Tanilama ve denetim",
+    }),
+  }),
+  Object.freeze({
+    key: "workflow-governance",
+    workspaceSectionKey: "workflows",
+    to: "/app/ayarlar/security-admin/workflows?tab=definitions",
+    accessPath: "/app/ayarlar/workflow-kurulumu",
+    label: Object.freeze({
+      en: "Workflow governance",
+      tr: "Workflow governance",
+    }),
+  }),
+  Object.freeze({
     key: "access-model",
     workspaceSectionKey: "catalog",
     to: "/app/ayarlar/security-admin/catalog?tab=access-model",
@@ -304,12 +324,39 @@ export const SECURITY_ADMIN_COMPANION_LINKS = Object.freeze([
     }),
   }),
   Object.freeze({
+    workspaceSectionKey: "workflows",
+    to: "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages",
+    accessPath: "/app/ayarlar/rbac/access-model",
+    label: Object.freeze({
+      en: "Workflow packages",
+      tr: "Workflow paketleri",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "workflows",
+    to: "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_presets",
+    accessPath: "/app/ayarlar/rbac/access-model",
+    label: Object.freeze({
+      en: "Workflow presets",
+      tr: "Workflow presetleri",
+    }),
+  }),
+  Object.freeze({
+    workspaceSectionKey: "workflows",
+    to: "/app/ayarlar/security-admin/users?tab=assignments",
+    accessPath: "/app/ayarlar/rbac/user-assignments",
+    label: Object.freeze({
+      en: "User assignments",
+      tr: "Kullanici atamalari",
+    }),
+  }),
+  Object.freeze({
     workspaceSectionKey: "diagnostics",
     to: "/app/ayarlar/security-admin/diagnostics?tab=access",
     accessPath: "/app/ayarlar/rbac/access-debugger",
     label: Object.freeze({
-      en: "Access debugger",
-      tr: "Erisim tanilari",
+      en: "Access explainability",
+      tr: "Erisim aciklanabilirligi",
     }),
   }),
   Object.freeze({
@@ -489,32 +536,33 @@ export const SECURITY_ADMIN_ROUTE_ADAPTERS = Object.freeze([
   }),
 ]);
 
-// Keep the future workbench map explicit in repo code before sidebar and page
-// migration starts so redirect rules and companion-route decisions stay stable.
+// Keep the canonical workbench map plus redirect-only compatibility shims
+// explicit in repo code so old deep links stay safe while the new route family
+// remains the only first-class architecture.
 export const SECURITY_ADMIN_ROUTE_TRANSITION_PLAN = Object.freeze([
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/user-assignments",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
     defaultSearch: "?tab=assignments",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/scope-assignments",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
     defaultSearch: "?tab=scopes",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/delegations",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
     defaultSearch: "?tab=delegations",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/temporary-coverage",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
     defaultSearch: "?tab=coverage",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/sube-operatorleri",
@@ -526,61 +574,61 @@ export const SECURITY_ADMIN_ROUTE_TRANSITION_PLAN = Object.freeze([
     currentPath: "/app/ayarlar/rbac/access-model",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
     defaultSearch: "?tab=access-model",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/roles-permissions",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
     defaultSearch: "?tab=roles",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/field-visibility-policies",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
     defaultSearch: "?tab=field-visibility",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/group-ap-post-extension",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
     defaultSearch: "?tab=group-ap-post",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/workflow-kurulumu",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.workflows,
     defaultSearch: "?tab=definitions",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/access-debugger",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
     defaultSearch: "?tab=access",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/compliance-reports",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
     defaultSearch: "?tab=compliance",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/audit-logs",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
     defaultSearch: "?tab=audit",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/raw-audit-logs",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
     defaultSearch: "?tab=raw-audit",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/sensitive-data-audit",
     futurePath: SECURITY_ADMIN_ROUTE_FAMILY.diagnostics,
     defaultSearch: "?tab=sensitive-data",
-    transitionType: "tabbed-workbench",
+    transitionType: "redirect-only-compatibility-route",
   }),
 ]);
 const RECLASS_PAGE_PERMISSIONS = [
@@ -1267,6 +1315,9 @@ export const sidebarItems = [
         implemented: true,
         sidebarHidden: true,
       },
+      // Redirect-only compatibility paths stay hidden in the sidebar, but
+      // their per-surface permission metadata still drives workbench tabs and
+      // legacy deep-link shims during the transition.
       {
         label: "Erisim Modeli",
         to: "/app/ayarlar/rbac/access-model",

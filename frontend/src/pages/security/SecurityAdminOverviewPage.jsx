@@ -22,6 +22,10 @@ import {
   SECURITY_ADMIN_WORKSPACE_SECTIONS,
 } from "../../layouts/sidebarConfig.js";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import {
+  SecurityWorkbenchLoadingState,
+  SecurityWorkbenchNoticeState,
+} from "./components/SecurityWorkbenchStates.jsx";
 import { buildSecurityAdminOverviewSummary } from "./securityAdminOverviewSummary.js";
 
 function toRoutePath(value) {
@@ -564,36 +568,37 @@ export default function SecurityAdminOverviewPage() {
       stats={stats}
     >
       {loading ? (
-        <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-6 shadow-sm">
-          <div className="text-sm font-medium text-slate-700">
-            {l(
-              "Loading live security administration signals...",
-              "Canli guvenlik yonetimi sinyalleri yukleniyor..."
-            )}
-          </div>
-        </section>
+        <SecurityWorkbenchLoadingState
+          title={l("Overview signals", "Genel bakis sinyalleri")}
+          description={l(
+            "Loading live security administration signals...",
+            "Canli guvenlik yonetimi sinyalleri yukleniyor..."
+          )}
+        />
       ) : null}
 
       {!loading && loadError ? (
-        <section className="rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-5 text-sm text-rose-700 shadow-sm">
-          {loadError}
-        </section>
+        <SecurityWorkbenchNoticeState
+          title={l("Overview load failed", "Genel bakis yuklenemedi")}
+          description={loadError}
+          tone="danger"
+        />
       ) : null}
 
       {!loading && partialNotes.length > 0 ? (
-        <section className="rounded-[28px] border border-amber-200 bg-amber-50 px-5 py-5 shadow-sm">
-          <div className="text-sm font-semibold text-amber-900">
-            {l(
-              "Some overview signals are intentionally partial.",
-              "Bazi genel bakis sinyalleri bilerek kisitli tutuldu."
-            )}
-          </div>
-          <div className="mt-2 space-y-2 text-sm leading-6 text-amber-800">
+        <SecurityWorkbenchNoticeState
+          title={l(
+            "Some overview signals are intentionally partial.",
+            "Bazi genel bakis sinyalleri bilerek kisitli tutuldu."
+          )}
+          tone="warning"
+        >
+          <div className="space-y-2">
             {partialNotes.map((note, index) => (
               <p key={`${note}:${index}`}>{note}</p>
             ))}
           </div>
-        </section>
+        </SecurityWorkbenchNoticeState>
       ) : null}
 
       {!loading && overviewSummary.signals.length > 0 ? (
@@ -648,26 +653,22 @@ export default function SecurityAdminOverviewPage() {
       </section>
 
       {!loading && stats.length === 0 ? (
-        <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-950">
-            {l("Limited overview metrics", "Sinirli genel bakis metrikleri")}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            {l(
-              "Your current access can open the security-admin area, but live overview counts only appear for the domains you can read directly. Use the workbench links above for the domains already in scope.",
-              "Mevcut yetkiniz guvenlik yonetimi alanini acabilir, ancak canli genel bakis sayilari yalnizca dogrudan okuyabildiginiz alanlarda gosterilir. Halihazirda kapsaminizda olan alanlar icin yukaridaki workbench baglantilarini kullanin."
-            )}
-          </p>
-          <div className="mt-4">
-            <Link
-              to={`${SECURITY_ADMIN_ROUTE_FAMILY.catalog}?tab=access-model`}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
-            >
-              {l("Open access catalog", "Erisim katalogunu ac")}
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-        </section>
+        <SecurityWorkbenchNoticeState
+          title={l("Limited overview metrics", "Sinirli genel bakis metrikleri")}
+          description={l(
+            "Your current access can open the security-admin area, but live overview counts only appear for the domains you can read directly. Use the workbench links above for the domains already in scope.",
+            "Mevcut yetkiniz guvenlik yonetimi alanini acabilir, ancak canli genel bakis sayilari yalnizca dogrudan okuyabildiginiz alanlarda gosterilir. Halihazirda kapsaminizda olan alanlar icin yukaridaki workbench baglantilarini kullanin."
+          )}
+          action={{
+            label: (
+              <>
+                {l("Open access catalog", "Erisim katalogunu ac")}
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </>
+            ),
+            to: `${SECURITY_ADMIN_ROUTE_FAMILY.catalog}?tab=access-model`,
+          }}
+        />
       ) : null}
     </SecurityAdminWorkspaceShell>
   );

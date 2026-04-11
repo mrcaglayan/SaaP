@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { listRawAuditLogs } from "../../api/rbacAdmin.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityDiagnosticsWorkbenchTabs from "./components/diagnostics/SecurityDiagnosticsWorkbenchTabs.jsx";
 
 const SCOPE_TYPES = ["", "TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 
@@ -57,8 +59,16 @@ function buildResourceLabel(row) {
   return id ? `${type}:${id}` : type;
 }
 
+function countActiveFilters(filters) {
+  return Object.values(filters).filter((value) => String(value || "").trim()).length;
+}
+
+/**
+ * Exposes low-level audit evidence inside the shared diagnostics workbench so
+ * request-level payloads remain one click away from explainability and RBAC logs.
+ */
 export default function RawAuditLogsPage() {
-  const { t } = useI18n();
+  const { t, l } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState([]);
@@ -117,8 +127,71 @@ export default function RawAuditLogsPage() {
     loadLogs(1, EMPTY_FILTERS);
   }
 
+  const workspaceStats = [
+    {
+      title: l("Visible rows", "Gorunen satirlar"),
+      value: rows.length,
+      description: l(
+        "Raw audit entries visible on the current page after the active filters.",
+        "Etkin filtrelerden sonra mevcut sayfada gorunen ham denetim satirlari."
+      ),
+      tone: "blue",
+    },
+    {
+      title: l("Total evidence", "Toplam kanit"),
+      value: pagination.total,
+      description: l(
+        "Total raw audit records matching the current evidence query.",
+        "Mevcut kanit sorgusuyla eslesen toplam ham denetim kayitlari."
+      ),
+      tone: "violet",
+    },
+    {
+      title: l("Active filters", "Etkin filtreler"),
+      value: countActiveFilters(filters),
+      description: l(
+        "User, scope, resource, request, and date filters currently narrowing the evidence trail.",
+        "Kanit izini daraltan mevcut kullanici, kapsam, kaynak, istek ve tarih filtreleri."
+      ),
+      tone: "amber",
+    },
+    {
+      title: l("Current page", "Mevcut sayfa"),
+      value: pagination.page,
+      description: l(
+        "Pagination position inside the raw evidence stream.",
+        "Ham kanit akisindaki sayfalama konumu."
+      ),
+      tone: "green",
+    },
+  ];
+  const workspaceActions = [
+    {
+      label: l("RBAC audit logs", "RBAC denetim loglari"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=audit",
+    },
+    {
+      label: l("Sensitive data audit", "Hassas veri denetimi"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=sensitive-data",
+      tone: "primary",
+    },
+  ];
+
   return (
-    <div className="space-y-4">
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="diagnostics"
+      sectionKey="diagnostics-audit"
+      eyebrow={l("Diagnostics & Audit", "Tanilama ve Denetim")}
+      title={l("Raw audit logs", "Ham denetim loglari")}
+      description={l(
+        "Use the raw evidence stream when explainability or structured RBAC logs are not enough and you need request-level payloads, IPs, or user agents.",
+        "Aciklanabilirlik veya yapilandirilmis RBAC loglari yeterli olmadiginda; istek seviyesinde payload, IP veya user-agent ayrintilarina inmek icin ham kanit akisini kullanin."
+      )}
+      actions={workspaceActions}
+      stats={workspaceStats}
+      toolbar={<SecurityDiagnosticsWorkbenchTabs activeTab="raw-audit" />}
+    >
+      <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">
           {t("rawAuditLogs.title")}
@@ -358,6 +431,7 @@ export default function RawAuditLogsPage() {
           </button>
         </div>
       </div>
-    </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

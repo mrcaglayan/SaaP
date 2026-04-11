@@ -13,6 +13,12 @@ import AccessDebuggerResults from "../../components/security/AccessDebuggerResul
 import { useI18n } from "../../i18n/useI18n.js";
 import { getWorkflowFamilyLabel } from "./roleCatalog.js";
 import { buildAccessDiagnosticsSummary } from "./accessDiagnosticsSummary.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityDiagnosticsWorkbenchTabs from "./components/diagnostics/SecurityDiagnosticsWorkbenchTabs.jsx";
+import {
+  SecurityWorkbenchEmptyState,
+  SecurityWorkbenchLoadingState,
+} from "./components/SecurityWorkbenchStates.jsx";
 
 const SCOPE_TYPES = ["", "TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 const WORKFLOW_FAMILY_CODES = [
@@ -209,6 +215,55 @@ export default function AccessDebuggerPage() {
       tenantScopeId,
     ]
   );
+  const workspaceStats = [
+    {
+      title: l("Matching scopes", "Eslesen kapsamlar"),
+      value: diagnosticsSummary.matchingScopeLabels.length,
+      description: l(
+        "Scope labels or packages that currently cover the selected investigation target.",
+        "Secili inceleme hedefini su anda kapsayan scope etiketleri veya paketleri."
+      ),
+      tone: "blue",
+    },
+    {
+      title: l("Business roles", "Is rolleri"),
+      value: diagnosticsSummary.matchingBusinessRoles.length,
+      description: l(
+        "Business-facing role labels contributing to the current posture.",
+        "Mevcut yetki durusuna katkida bulunan is-odakli rol etiketleri."
+      ),
+      tone: "violet",
+    },
+    {
+      title: l("Workflow packages", "Workflow paketleri"),
+      value: diagnosticsSummary.matchingWorkflowPackages.length,
+      description: l(
+        "Workflow governance packages visible in the selected user's effective authority.",
+        "Secili kullanicinin etkili yetkisinde gorunen workflow governance paketleri."
+      ),
+      tone: "green",
+    },
+    {
+      title: l("Visible blockers", "Gorunur engeller"),
+      value: diagnosticsSummary.blockerTexts.length,
+      description: l(
+        "Business-facing blockers that still stop the user from acting at the selected scope.",
+        "Kullanicinin secili kapsamda aksiyon almasini halen durduran is-odakli engeller."
+      ),
+      tone: diagnosticsSummary.blockerTexts.length > 0 ? "amber" : "green",
+    },
+  ];
+  const workspaceActions = [
+    {
+      label: l("RBAC audit logs", "RBAC denetim loglari"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=audit",
+    },
+    {
+      label: l("Raw audit evidence", "Ham denetim kanitlari"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=raw-audit",
+      tone: "primary",
+    },
+  ];
 
   async function loadLookups() {
     setLoading(true);
@@ -369,7 +424,20 @@ export default function AccessDebuggerPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="diagnostics"
+      sectionKey="diagnostics-audit"
+      eyebrow={l("Diagnostics & Audit", "Tanilama ve Denetim")}
+      title={l("Access explainability", "Erisim aciklanabilirligi")}
+      description={l(
+        "Start the investigation with business-facing scope and package coverage, then move into the exact permission, workflow, and audit evidence when needed.",
+        "Incelemeye once is-odakli kapsam ve paket kapsamasi ile baslayin, sonra gerektiginde tam yetki, workflow ve denetim kanitlarina inin."
+      )}
+      actions={workspaceActions}
+      stats={workspaceStats}
+      toolbar={<SecurityDiagnosticsWorkbenchTabs activeTab="access" />}
+    >
+      <div className="space-y-5">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">
           {t("accessDebugger.page.title")}
@@ -864,9 +932,10 @@ export default function AccessDebuggerPage() {
       </section>
 
       {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-          {t("accessDebugger.loading")}
-        </div>
+        <SecurityWorkbenchLoadingState
+          title={l("Technical access chain", "Teknik erisim zinciri")}
+          description={t("accessDebugger.loading")}
+        />
       ) : result ? (
         <AccessDebuggerResults
           result={result}
@@ -875,13 +944,15 @@ export default function AccessDebuggerPage() {
           }
         />
       ) : (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-          {l(
+        <SecurityWorkbenchEmptyState
+          title={l("Technical access chain is ready", "Teknik erisim zinciri hazir")}
+          description={l(
             "Run the technical access check if you need the lower-level permission and workflow layers behind this diagnosis.",
             "Bu taninin arkasindaki alt seviyedeki yetki ve workflow katmanlarini gormek icin teknik erisim kontrolunu calistirin."
           )}
-        </div>
+        />
       )}
-    </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

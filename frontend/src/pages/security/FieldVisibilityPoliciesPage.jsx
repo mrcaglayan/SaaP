@@ -11,6 +11,8 @@ import {
 } from "../../api/rbacAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { buildScopeLabel } from "./roleCatalog.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityCatalogWorkbenchTabs from "./components/catalog/SecurityCatalogWorkbenchTabs.jsx";
 
 const VISIBILITY_RULE_OPTIONS = ["FULL", "MASKED", "HIDDEN", "LAST_4"];
 const POLICY_SCOPE_OPTIONS = [
@@ -184,6 +186,18 @@ export default function FieldVisibilityPoliciesPage() {
         }
       : undefined
   );
+  const activePolicyCount = useMemo(
+    () => rows.filter((row) => Boolean(row?.isActive)).length,
+    [rows]
+  );
+  const scopedPolicyCount = useMemo(
+    () =>
+      rows.filter((row) => {
+        const scopeType = String(row?.appliesToScopeType || "").trim().toUpperCase();
+        return scopeType && !["GLOBAL", "TENANT"].includes(scopeType);
+      }).length,
+    [rows]
+  );
 
   useEffect(() => {
     if (form.appliesToScopeType === "TENANT") {
@@ -346,16 +360,50 @@ export default function FieldVisibilityPoliciesPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">Field Visibility Policies</h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Manage row-scope-aware masking and hiding rules for sensitive fields without touching
-          the runtime masking code. These policies continue to use the shared masking engine and
-          still write `FIELD_MASKED_ACCESS` events into the sensitive-data audit trail.
-        </p>
-      </div>
-
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="catalog"
+      sectionKey="access-model"
+      eyebrow="Security / Field visibility"
+      title="Field Visibility"
+      description="Manage scope-aware masking and hiding rules without changing the runtime masking engine. These policies stay tied to the shared sensitive-data audit seam while the catalog workbench becomes the canonical admin surface."
+      actions={[
+        {
+          to: "/app/ayarlar/security-admin/diagnostics?tab=sensitive-data",
+          label: "Open sensitive-data audit",
+          tone: "primary",
+        },
+        {
+          to: "/app/ayarlar/security-admin/catalog?tab=access-model",
+          label: "Open access model",
+        },
+      ]}
+      stats={[
+        {
+          title: "Policies",
+          value: rows.length,
+          description: "Field visibility policy rows currently loaded from the masking catalog.",
+          tone: "blue",
+        },
+        {
+          title: "Active posture",
+          value: `${activePolicyCount} active / ${Math.max(rows.length - activePolicyCount, 0)} inactive`,
+          description: "Inactive rows stay visible here so masking rollback and audit context remain reviewable.",
+          tone: "green",
+        },
+        {
+          title: "Scoped overrides",
+          value: scopedPolicyCount,
+          description: "Policies pinned below tenant scope where masking posture diverges by group, country, entity, or OU.",
+          tone: "amber",
+        },
+      ]}
+      toolbar={
+        <SecurityCatalogWorkbenchTabs
+          activeTab="field-visibility"
+          counts={{ "field-visibility": rows.length }}
+        />
+      }
+    >
       {error ? (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error}
@@ -715,6 +763,6 @@ export default function FieldVisibilityPoliciesPage() {
           </form>
         </section>
       </div>
-    </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

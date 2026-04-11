@@ -5,6 +5,8 @@ import {
   getWorkflowPackageCatalogEntry,
   getWorkflowPresetCatalogEntry,
 } from "./roleCatalog.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityCatalogWorkbenchTabs from "./components/catalog/SecurityCatalogWorkbenchTabs.jsx";
 
 const GROUP_AP_POST_PACKAGE_CODE = "PKG-AP-POST-GROUP";
 const GROUP_CONTROLLED_POST_PRESET_CODE = "AP_GROUP_CONTROLLED_POST";
@@ -289,6 +291,10 @@ function PresetPreviewCard({ preset }) {
   );
 }
 
+/**
+ * Shows how the group-scoped AP posting extension fits into the catalog
+ * workbench before workflow-governance implementation owns the live flows.
+ */
 export default function GroupApPostExtensionPage() {
   const { securityAdminUiState, securityAdminUiStateLoaded } = useAuth();
 
@@ -300,35 +306,52 @@ export default function GroupApPostExtensionPage() {
   const preset = useMemo(() => buildPresetDetail(), []);
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">
-            Group AP Posting Extension
-          </h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Optional extension that allows AP document posting to be resolved at
-            group scope instead of entity or country scope. This enables the
-            AP / Group-Controlled Post workflow preset for tenants that centralize
-            final AP posting authority at group level.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            to="/app/ayarlar/workflow-kurulumu"
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-          >
-            Open Workflow Governance
-          </Link>
-          <Link
-            to="/app/ayarlar/rbac/access-model?tab=workflow_packages"
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-          >
-            Workflow Packages
-          </Link>
-        </div>
-      </div>
-
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="catalog"
+      sectionKey="access-model"
+      eyebrow="Security / Group AP posting"
+      title="Group AP Posting"
+      description="Position the group-scoped AP posting extension as a governed catalog capability, not as an isolated utility page. The package, preset, and diagnostics links now live inside the canonical access catalog workbench."
+      actions={[
+        {
+          to: "/app/ayarlar/security-admin/workflows?tab=definitions",
+          label: "Open workflow governance",
+          tone: "primary",
+        },
+        {
+          to: "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages",
+          label: "Browse workflow packages",
+        },
+      ]}
+      stats={[
+        {
+          title: "Extension status",
+          value: groupApPostEnabled ? "Enabled" : "Preview only",
+          description: groupApPostEnabled
+            ? "Group-scoped AP posting authority is available to workflow governance for this tenant."
+            : "The catalog surface exists, but live group-scoped AP posting still depends on backend entitlement rollout.",
+          tone: groupApPostEnabled ? "green" : "amber",
+        },
+        {
+          title: "Package permissions",
+          value: pkg.permissionCodes.length,
+          description: "Permission codes currently exposed on the group-post package detail.",
+          tone: "blue",
+        },
+        {
+          title: "Preset steps",
+          value: preset.stepCount,
+          description: "Ordered workflow steps defined in the group-controlled AP posting preset.",
+          tone: "violet",
+        },
+      ]}
+      toolbar={
+        <SecurityCatalogWorkbenchTabs
+          activeTab="group-ap-post"
+          counts={{ "group-ap-post": preset.stepCount }}
+        />
+      }
+    >
       <StatusBanner enabled={groupApPostEnabled} />
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -371,13 +394,13 @@ export default function GroupApPostExtensionPage() {
           </div>
           <div className="flex flex-wrap gap-3">
             <Link
-              to="/app/ayarlar/rbac/access-model?tab=workflow_presets"
+              to="/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_presets"
               className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
             >
               Browse presets
             </Link>
             <Link
-              to="/app/ayarlar/rbac/access-debugger"
+              to="/app/ayarlar/security-admin/diagnostics?tab=access"
               className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
             >
               Open access debugger
@@ -385,6 +408,6 @@ export default function GroupApPostExtensionPage() {
           </div>
         </div>
       </section>
-    </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

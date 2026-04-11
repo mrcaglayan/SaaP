@@ -9,7 +9,11 @@ import {
 } from "../../api/rbacAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import DelegationStateBadge from "../../components/security/DelegationStateBadge.jsx";
+import { useI18n } from "../../i18n/useI18n.js";
 import { triggerBlobDownload } from "../../utils/csvExport.js";
+import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
+import SecurityDiagnosticsWorkbenchTabs from "./components/diagnostics/SecurityDiagnosticsWorkbenchTabs.jsx";
+import { SecurityWorkbenchEmptyState } from "./components/SecurityWorkbenchStates.jsx";
 
 const PREVIEW_LIMIT = 50;
 const SCOPE_TYPES = ["", "TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
@@ -666,6 +670,7 @@ function ReportPreview({ reportType, report }) {
  */
 export default function ComplianceReportsPage() {
   const { hasPermission, user } = useAuth();
+  const { l } = useI18n();
   const [loadingLookups, setLoadingLookups] = useState(true);
   const [loadingReport, setLoadingReport] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -712,6 +717,59 @@ export default function ComplianceReportsPage() {
     () => getPreviewRowCount(filters.reportType, reportEnvelope?.report),
     [filters.reportType, reportEnvelope]
   );
+  const workspaceStats = [
+    {
+      title: l("Report family", "Rapor ailesi"),
+      value: selectedFamily.title,
+      description: l(
+        "The current point-in-time compliance lens selected for preview and export.",
+        "Onizleme ve disa aktarma icin secili olan mevcut nokta-zamanli uyum mercegi."
+      ),
+      tone: "blue",
+    },
+    {
+      title: l("As of date", "Referans tarihi"),
+      value: formatDate(filters.asOfDate),
+      description: l(
+        "All report families are generated against this effective date.",
+        "Tum rapor aileleri bu etkin tarih uzerinden uretilir."
+      ),
+      tone: "violet",
+    },
+    {
+      title: l("Preview rows", "Onizleme satirlari"),
+      value: previewCount,
+      description: l(
+        "Rows currently visible in the on-screen compliance preview.",
+        "Ekrandaki uyum onizlemesinde su anda gorunen satirlar."
+      ),
+      tone: "green",
+    },
+    {
+      title: l("Preview state", "Onizleme durumu"),
+      value: !reportEnvelope
+        ? l("Pending", "Bekliyor")
+        : isPreviewStale
+          ? l("Stale", "Eski")
+          : l("Ready", "Hazir"),
+      description: l(
+        "Shows whether the exported filter state still matches the current on-screen preview.",
+        "Disa aktarim filtre durumunun mevcut ekran onizlemesiyle halen eslesip eslesmedigini gosterir."
+      ),
+      tone: !reportEnvelope ? "amber" : isPreviewStale ? "amber" : "green",
+    },
+  ];
+  const workspaceActions = [
+    {
+      label: l("Access explainability", "Erisim aciklanabilirligi"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=access",
+    },
+    {
+      label: l("Raw audit logs", "Ham denetim loglari"),
+      to: "/app/ayarlar/security-admin/diagnostics?tab=raw-audit",
+      tone: "primary",
+    },
+  ];
 
   useEffect(() => {
     if (filters.scopeType !== "TENANT") {
@@ -813,7 +871,20 @@ export default function ComplianceReportsPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <SecurityAdminWorkspaceShell
+      workspaceSectionKey="diagnostics"
+      sectionKey="diagnostics-audit"
+      eyebrow={l("Diagnostics & Audit", "Tanilama ve Denetim")}
+      title={l("Compliance reports", "Uyum raporlari")}
+      description={l(
+        "Generate point-in-time access matrix, SoD, approval coverage, and delegation reporting without leaving the security-admin investigation family.",
+        "Access matrix, SoD, approval coverage ve delegasyon raporlarini security-admin investigation ailesinden cikmadan nokta-zamanli olarak uretin."
+      )}
+      actions={workspaceActions}
+      stats={workspaceStats}
+      toolbar={<SecurityDiagnosticsWorkbenchTabs activeTab="compliance" />}
+    >
+      <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Uyum Raporlari</h1>
@@ -958,12 +1029,13 @@ export default function ComplianceReportsPage() {
       </section>
 
       {!reportEnvelope ? (
-        <section className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
-          <div className="text-base font-semibold text-slate-800">{selectedFamily.title}</div>
-          <p className="mt-2 text-sm text-slate-600">
-            Generate a preview to inspect the point-in-time audit output before exporting.
-          </p>
-        </section>
+        <SecurityWorkbenchEmptyState
+          title={selectedFamily.title}
+          description={l(
+            "Generate a preview to inspect the point-in-time audit output before exporting.",
+            "Disa aktarmadan once nokta-zamanli denetim cikisini incelemek icin bir onizleme olusturun."
+          )}
+        />
       ) : (
         <div className="space-y-4">
           <section className="rounded-xl border border-slate-200 bg-white p-4">
@@ -996,6 +1068,7 @@ export default function ComplianceReportsPage() {
           <ReportPreview reportType={filters.reportType} report={reportEnvelope.report} />
         </div>
       )}
-    </div>
+      </div>
+    </SecurityAdminWorkspaceShell>
   );
 }

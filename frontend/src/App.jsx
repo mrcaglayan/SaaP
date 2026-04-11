@@ -94,6 +94,7 @@ import {
   collectSidebarLinks,
   SECURITY_ADMIN_ROUTE_ADAPTERS,
   SECURITY_ADMIN_ROUTE_FAMILY,
+  SECURITY_ADMIN_ROUTE_TRANSITION_PLAN,
   sidebarItems,
 } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
@@ -169,6 +170,11 @@ const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role.upsert",
   "security.role_permissions.assign",
 ];
+const LEGACY_CATALOG_MODEL_TABS = new Set([
+  "business_roles",
+  "workflow_packages",
+  "workflow_presets",
+]);
 const PERIODIZATION_REVENUE_CANONICAL_PATH = "/app/gelecek-yillar-gelirleri";
 const routeLoadingFallback = (
   <div className="grid min-h-[32vh] place-items-center">
@@ -219,7 +225,7 @@ function renderSecurityAdminSurface(surfaceKey) {
     case "sensitive-data-audit":
       return <SensitiveDataAuditPage />;
     case "workflow-setup":
-      return <WorkflowSetupPage />;
+      return <WorkflowSetupPage workspaceMode="security-admin" />;
     default:
       return <Navigate to="/app" replace />;
   }
@@ -684,15 +690,6 @@ const implementedRoutes = [
     element: <GlSetupPage />,
   },
   {
-    appPath: "/app/ayarlar/workflow-kurulumu",
-    childPath: "ayarlar/workflow-kurulumu",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/workflows?tab=definitions"
-      />
-    ),
-  },
-  {
     appPath: SECURITY_ADMIN_ROUTE_FAMILY.overview,
     childPath: "ayarlar/security-admin",
     element: <SecurityAdminOverviewPage />,
@@ -748,119 +745,7 @@ const implementedRoutes = [
     childPath: "ayarlar/sube-operatorleri",
     element: <BranchOperatorManagementPage />,
   },
-  {
-    appPath: "/app/ayarlar/rbac/access-model",
-    childPath: "ayarlar/rbac/access-model",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/catalog?tab=access-model"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/roles-permissions",
-    childPath: "ayarlar/rbac/roles-permissions",
-    element: (
-      <LegacyRouteRedirect to="/app/ayarlar/security-admin/catalog?tab=roles" />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/user-assignments",
-    childPath: "ayarlar/rbac/user-assignments",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/users?tab=assignments"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/scope-assignments",
-    childPath: "ayarlar/rbac/scope-assignments",
-    element: (
-      <LegacyRouteRedirect to="/app/ayarlar/security-admin/users?tab=scopes" />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/field-visibility-policies",
-    childPath: "ayarlar/rbac/field-visibility-policies",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/catalog?tab=field-visibility"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/delegations",
-    childPath: "ayarlar/rbac/delegations",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/users?tab=delegations"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/temporary-coverage",
-    childPath: "ayarlar/rbac/temporary-coverage",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/users?tab=coverage"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/access-debugger",
-    childPath: "ayarlar/rbac/access-debugger",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/diagnostics?tab=access"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/group-ap-post-extension",
-    childPath: "ayarlar/rbac/group-ap-post-extension",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/catalog?tab=group-ap-post"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/compliance-reports",
-    childPath: "ayarlar/rbac/compliance-reports",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/diagnostics?tab=compliance"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/audit-logs",
-    childPath: "ayarlar/rbac/audit-logs",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/diagnostics?tab=audit"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/raw-audit-logs",
-    childPath: "ayarlar/rbac/raw-audit-logs",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/diagnostics?tab=raw-audit"
-      />
-    ),
-  },
-  {
-    appPath: "/app/ayarlar/rbac/sensitive-data-audit",
-    childPath: "ayarlar/rbac/sensitive-data-audit",
-    element: (
-      <LegacyRouteRedirect
-        to="/app/ayarlar/security-admin/diagnostics?tab=sensitive-data"
-      />
-    ),
-  },
+  ...securityAdminLegacyRedirectRoutes,
   {
     appPath: "/app/ayarlar/operasyon-dashboard",
     childPath: "ayarlar/operasyon-dashboard",
@@ -978,6 +863,24 @@ function toChildPath(appPath) {
   return toRoutePath(appPath).replace(/^\/app\//, "");
 }
 
+// Keep old security URLs alive only as compatibility shims. The canonical
+// architecture is the security-admin workbench family plus the phase-1
+// companion route for local user management.
+const securityAdminLegacyRedirectRoutes =
+  SECURITY_ADMIN_ROUTE_TRANSITION_PLAN.filter(
+    (entry) =>
+      entry.transitionType === "redirect-only-compatibility-route" &&
+      entry.currentPath !== entry.futurePath,
+  ).map((entry) => ({
+    appPath: entry.currentPath,
+    childPath: toChildPath(entry.currentPath),
+    element: (
+      <LegacyRouteRedirect
+        to={`${entry.futurePath}${entry.defaultSearch || ""}`}
+      />
+    ),
+  }));
+
 function LegacyRouteRedirect({ to }) {
   const location = useLocation();
   return (
@@ -1041,6 +944,24 @@ function SecurityAdminWorkbenchAdapter({ routeKey }) {
 
   const searchParams = new URLSearchParams(location.search);
   const requestedTab = String(searchParams.get("tab") || route.defaultTab || "");
+
+  if (
+    route.key === "catalog" &&
+    LEGACY_CATALOG_MODEL_TABS.has(requestedTab)
+  ) {
+    searchParams.set("tab", "access-model");
+    if (searchParams.get("modelTab") !== requestedTab) {
+      searchParams.set("modelTab", requestedTab);
+    }
+    const nextSearch = searchParams.toString();
+    return (
+      <Navigate
+        to={`${route.appPath}${nextSearch ? `?${nextSearch}` : ""}${location.hash || ""}`}
+        replace
+      />
+    );
+  }
+
   const activeTab =
     accessibleTabs.find((tab) => tab.key === requestedTab) || accessibleTabs[0];
 
