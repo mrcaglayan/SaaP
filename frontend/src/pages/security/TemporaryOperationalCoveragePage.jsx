@@ -347,6 +347,7 @@ export default function TemporaryOperationalCoveragePage() {
           tone: "green",
         },
       ]}
+      hiddenPrimarySurfaceKeys={["roles-permissions"]}
       toolbar={<SecurityUsersWorkbenchTabs activeTab="coverage" counts={{ coverage: filteredRows.length }} />}
     >
       <div className="space-y-4">

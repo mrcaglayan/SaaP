@@ -388,6 +388,7 @@ export default function ApprovalDelegationsPage() {
           tone: "green",
         },
       ]}
+      hiddenPrimarySurfaceKeys={["roles-permissions"]}
       toolbar={<SecurityUsersWorkbenchTabs activeTab="delegations" counts={{ delegations: filteredRows.length }} />}
     >
       <div className="space-y-4">

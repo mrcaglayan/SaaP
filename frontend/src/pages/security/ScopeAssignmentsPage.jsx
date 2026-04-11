@@ -335,7 +335,7 @@ export default function ScopeAssignmentsPage() {
           tone: "amber",
         },
       ]}
-      showWorkbenchNavigation={false}
+      hiddenPrimarySurfaceKeys={["roles-permissions"]}
       toolbar={<SecurityUsersWorkbenchTabs activeTab="scopes" />}
     >
       <div className="space-y-4">

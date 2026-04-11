@@ -362,9 +362,9 @@ function WorkspaceStatCard({ stat }) {
 /**
  * Provides the shared security-admin shell so workbench pages keep the same
  * framing, summary strip, guidance panel, and permission-aware navigation
- * grammar throughout the redesign track. Pages that already rely on the main
- * sidebar for their primary navigation can suppress the duplicate in-page
- * workbench rails.
+ * grammar throughout the redesign track. Pages can either suppress the
+ * duplicate in-page workbench rails entirely or hide specific primary surfaces
+ * when a sibling route should stay sidebar-only.
  */
 export default function SecurityAdminWorkspaceShell({
   workspaceSectionKey = "",
@@ -376,6 +376,7 @@ export default function SecurityAdminWorkspaceShell({
   stats = [],
   toolbar = null,
   guidance = null,
+  hiddenPrimarySurfaceKeys = [],
   showWorkbenchNavigation = true,
   children,
 }) {
@@ -391,6 +392,12 @@ export default function SecurityAdminWorkspaceShell({
     ),
   })).filter((section) => section.access.visible);
 
+  const hiddenPrimarySurfaceKeySet = new Set(
+    (Array.isArray(hiddenPrimarySurfaceKeys) ? hiddenPrimarySurfaceKeys : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+
   const primarySurfaces = SECURITY_ADMIN_PRIMARY_SURFACES.map((surface) => ({
     ...surface,
     access: resolveSecurityWorkbenchAccess(
@@ -398,7 +405,10 @@ export default function SecurityAdminWorkspaceShell({
       hasAnyPermission,
       hasAnyFeature
     ),
-  })).filter((surface) => surface.access.visible);
+  })).filter(
+    (surface) =>
+      surface.access.visible && !hiddenPrimarySurfaceKeySet.has(surface.key)
+  );
 
   const currentWorkspaceSection = workspaceSections.find((section) =>
     matchesWorkspaceSection(section, workspaceSectionKey)

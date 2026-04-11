@@ -4662,7 +4662,7 @@ export default function UserAssignmentsPage() {
           ),
         },
       ]}
-      showWorkbenchNavigation={false}
+      hiddenPrimarySurfaceKeys={["roles-permissions"]}
       toolbar={
         <SecurityUsersWorkbenchTabs
           activeTab={workbenchTab}
