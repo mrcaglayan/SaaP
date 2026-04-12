@@ -2567,20 +2567,72 @@ export default function UserAssignmentsPage() {
       workflowPackageAssignments,
     ]
   );
-  const selectedWorkbenchRoleEntries = useMemo(
-    () =>
-      Array.from(
+  const selectedWorkbenchActiveRoleEntries = useMemo(
+    () => {
+      const activeRoleCodes = [
+        ...selectedWorkbenchUserBundles
+          .filter(
+            (bundle) =>
+              normalizeText(bundle.status).toUpperCase() === "ACTIVE" &&
+              normalizeText(bundle.effect).toUpperCase() !== "DENY"
+          )
+          .flatMap((bundle) => bundle.roleCodes),
+        ...selectedWorkbenchWorkflowPackageAssignments
+          .filter(
+            (assignment) =>
+              normalizeText(assignment.status).toUpperCase() === "ACTIVE" &&
+              normalizeText(assignment.effect).toUpperCase() !== "DENY"
+          )
+          .map((assignment) => assignment.roleCode),
+      ];
+
+      return Array.from(
         new Map(
-          [
-            ...selectedWorkbenchUserBundles.flatMap((bundle) => bundle.roleCodes),
-            ...selectedWorkbenchWorkflowPackageAssignments.map(
-              (assignment) => assignment.roleCode
-            ),
-          ]
-            .map((roleCode) => [roleCode, getRoleCatalogEntry(roleCode)])
+          activeRoleCodes
+            .map((roleCode) => normalizeText(roleCode))
+            .filter(Boolean)
+            .map((roleCode) => {
+              const liveRole = rolesByCode.get(roleCode) || null;
+              const catalogRole = getRoleCatalogEntry(roleCode);
+              const permissionCodes = Array.isArray(liveRole?.permissionCodes)
+                ? liveRole.permissionCodes
+                : Array.isArray(catalogRole?.permissionCodes)
+                  ? catalogRole.permissionCodes
+                  : [];
+
+              return [
+                roleCode,
+                {
+                  ...catalogRole,
+                  ...(liveRole || {}),
+                  code:
+                    normalizeText(liveRole?.code || catalogRole?.code || roleCode) ||
+                    roleCode,
+                  displayName:
+                    normalizeText(
+                      liveRole?.displayName ||
+                        catalogRole?.displayName ||
+                        catalogRole?.code ||
+                        roleCode
+                    ) || roleCode,
+                  permissionCodes: Array.from(
+                    new Set(
+                      permissionCodes
+                        .map((permissionCode) => normalizeText(permissionCode))
+                        .filter(Boolean)
+                    )
+                  ).sort(),
+                },
+              ];
+            })
         ).values()
-      ),
-    [selectedWorkbenchUserBundles, selectedWorkbenchWorkflowPackageAssignments]
+      );
+    },
+    [
+      rolesByCode,
+      selectedWorkbenchUserBundles,
+      selectedWorkbenchWorkflowPackageAssignments,
+    ]
   );
   const selectedWorkbenchPackageLabels = useMemo(
     () =>
@@ -4739,7 +4791,7 @@ export default function UserAssignmentsPage() {
             selectedUser={selectedWorkbenchUser}
             selectedUserBundles={selectedWorkbenchUserBundles}
             selectedUserPackageLabels={selectedWorkbenchPackageLabels}
-            selectedUserRoleEntries={selectedWorkbenchRoleEntries}
+            selectedUserRoleEntries={selectedWorkbenchActiveRoleEntries}
             selectedUserScopeLabels={selectedWorkbenchScopeLabels}
             setUserFilters={setUserFilters}
             userFilters={userFilters}

@@ -331,6 +331,7 @@ export default function UserAssignmentWorkbench(props) {
     selectedUser,
     selectedUserBundles,
     selectedUserPackageLabels,
+    selectedUserRoleEntries,
     setUserFilters,
     saving,
     actingRowId,
@@ -490,6 +491,16 @@ export default function UserAssignmentWorkbench(props) {
     runtimeLines: [],
     warnings: [],
   };
+  const activeRoleEntries = Array.isArray(selectedUserRoleEntries)
+    ? selectedUserRoleEntries
+    : [];
+  const grantedPermissionCodes = Array.from(
+    new Set(
+      activeRoleEntries.flatMap((roleEntry) =>
+        Array.isArray(roleEntry?.permissionCodes) ? roleEntry.permissionCodes : []
+      )
+    )
+  ).sort();
   const assignmentAuditSummary = selectedUserAssignmentAuditSummary || {
     auditItems: [],
     sodWarnings: [],
@@ -767,6 +778,112 @@ export default function UserAssignmentWorkbench(props) {
                     </div>
                   </div>
 
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">
+                        {l(
+                          "Permissions granted by active role assignments",
+                          "Etkin rol atamalarinin verdigi yetkiler"
+                        )}
+                      </h3>
+                      <Pill
+                        label={l(
+                          "{{roles}} roles / {{permissions}} permissions",
+                          "{{roles}} rol / {{permissions}} yetki",
+                          {
+                            roles: activeRoleEntries.length,
+                            permissions: grantedPermissionCodes.length,
+                          }
+                        )}
+                        tone="blue"
+                      />
+                    </div>
+                    <div className="space-y-5 px-5 py-5">
+                      {activeRoleEntries.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                          {l(
+                            "No active role-backed permissions found.",
+                            "Etkin rol kaynakli yetki bulunamadi."
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              {l("Granted permission codes", "Verilen yetki kodlari")}
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {grantedPermissionCodes.map((permissionCode) => (
+                                <code
+                                  key={permissionCode}
+                                  className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+                                >
+                                  {permissionCode}
+                                </code>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              {l("Source roles", "Kaynak roller")}
+                            </div>
+                            <div className="mt-3 space-y-3">
+                              {activeRoleEntries.map((roleEntry) => (
+                                <div
+                                  key={String(roleEntry?.code || roleEntry?.id || "")}
+                                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                      <div className="text-sm font-semibold text-slate-950">
+                                        {roleEntry?.displayName || roleEntry?.code || "-"}
+                                      </div>
+                                      <div className="mt-0.5 text-xs text-slate-500">
+                                        {roleEntry?.code || "-"}
+                                      </div>
+                                    </div>
+                                    <Pill
+                                      label={l(
+                                        "{{count}} permissions",
+                                        "{{count}} yetki",
+                                        {
+                                          count: Array.isArray(roleEntry?.permissionCodes)
+                                            ? roleEntry.permissionCodes.length
+                                            : 0,
+                                        }
+                                      )}
+                                      tone="slate"
+                                    />
+                                  </div>
+                                  {Array.isArray(roleEntry?.permissionCodes) &&
+                                  roleEntry.permissionCodes.length > 0 ? (
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {roleEntry.permissionCodes.map((permissionCode) => (
+                                        <code
+                                          key={`${String(roleEntry?.code || "role")}:${permissionCode}`}
+                                          className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+                                        >
+                                          {permissionCode}
+                                        </code>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="mt-3 text-xs text-slate-500">
+                                      {l(
+                                        "No permission codes are attached to this role.",
+                                        "Bu role bagli yetki kodu yok."
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Effective authority preview */}
                   <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
                     <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
@@ -799,6 +916,56 @@ export default function UserAssignmentWorkbench(props) {
                                     {l("Still missing: {{missing}}.", "Hala eksik: {{missing}}.", { missing: line.missingText })}
                                   </div>
                                 ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {effectiveAuthorityPreview.runtimeLines.length > 0 ? (
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            {l("Direct runtime authority", "Dogrudan runtime yetkisi")}
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            {effectiveAuthorityPreview.runtimeLines.map((line) => (
+                              <div
+                                key={line.id}
+                                className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                              >
+                                <div className="flex flex-wrap gap-2">
+                                  <Pill label={line.roleLabel || line.roleCode} tone="violet" />
+                                  <Pill label={line.scopeType} tone="blue" />
+                                  {line.sourceLabels.map((src) => (
+                                    <Pill key={src} label={src} tone="slate" />
+                                  ))}
+                                </div>
+                                <p className="mt-2 text-sm font-medium text-slate-900">
+                                  {l(
+                                    "Can {{summary}} in {{scope}}.",
+                                    "{{scope}} kapsaminda {{summary}}.",
+                                    {
+                                      summary: line.summaryText,
+                                      scope: line.scopeLabel,
+                                    }
+                                  )}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {effectiveAuthorityPreview.warnings.length > 0 ? (
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
+                            {l("Authority warnings", "Yetki uyarilari")}
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            {effectiveAuthorityPreview.warnings.map((warning) => (
+                              <div
+                                key={warning.id}
+                                className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                              >
+                                {warning.text}
                               </div>
                             ))}
                           </div>
