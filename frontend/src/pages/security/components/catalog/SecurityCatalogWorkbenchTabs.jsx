@@ -1,5 +1,6 @@
 import { useAuth } from "../../../../auth/useAuth.js";
 import { useI18n } from "../../../../i18n/useI18n.js";
+import { ROLES_PERMISSIONS_CANONICAL_PATH } from "../../../../layouts/sidebarConfig.js";
 import SecurityWorkbenchTabsCard from "../SecurityWorkbenchTabsCard.jsx";
 import { resolveSecurityWorkbenchAccess } from "../workbenchNavigation.js";
 
@@ -15,7 +16,7 @@ export const SECURITY_CATALOG_WORKBENCH_TABS = Object.freeze([
   }),
   Object.freeze({
     key: "roles",
-    to: "/app/ayarlar/security-admin/catalog?tab=roles",
+    to: ROLES_PERMISSIONS_CANONICAL_PATH,
     permissionPath: "/app/ayarlar/rbac/roles-permissions",
     label: Object.freeze({
       en: "Roles & permissions",

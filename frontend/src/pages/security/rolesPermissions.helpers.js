@@ -1,4 +1,6 @@
-export const ROLE_LIST_PATH = "/app/ayarlar/security-admin/catalog?tab=roles";
+import { ROLES_PERMISSIONS_CANONICAL_PATH } from "../../layouts/sidebarConfig.js";
+
+export const ROLE_LIST_PATH = ROLES_PERMISSIONS_CANONICAL_PATH;
 
 function normalizeText(value) {
   return String(value || "").trim();

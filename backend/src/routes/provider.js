@@ -174,16 +174,16 @@ function normalizeName(value, label, maxLength = 255) {
   return normalized;
 }
 
-function normalizeEmail(value) {
+function normalizeEmail(value, label = "adminEmail") {
   const email = String(value || "").trim().toLowerCase();
   if (!email) {
-    throw badRequest("adminEmail is required");
+    throw badRequest(`${label} is required`);
   }
   if (email.length > 255) {
-    throw badRequest("adminEmail cannot exceed 255 characters");
+    throw badRequest(`${label} cannot exceed 255 characters`);
   }
   if (!email.includes("@") || !email.includes(".")) {
-    throw badRequest("adminEmail is invalid");
+    throw badRequest(`${label} is invalid`);
   }
   return email;
 }
@@ -463,6 +463,37 @@ async function createTenantWithAdmin(tx, input) {
   };
 }
 
+async function getTenantUserByEmail(runQuery, tenantId, email) {
+  const result = await runQuery(
+    `SELECT id, tenant_id, email, name, status
+     FROM users
+     WHERE tenant_id = ?
+       AND email = ?
+     LIMIT 1`,
+    [tenantId, email]
+  );
+  return result.rows[0] || null;
+}
+
+async function getTenantBootstrapRecoveryUser(runQuery, tenantId) {
+  const result = await runQuery(
+    `SELECT id, tenant_id, email, name, status
+     FROM users
+     WHERE tenant_id = ?
+     ORDER BY
+       CASE UPPER(COALESCE(status, ''))
+         WHEN 'ACTIVE' THEN 0
+         WHEN 'INVITED' THEN 1
+         WHEN 'PENDING' THEN 2
+         ELSE 3
+       END,
+       id ASC
+     LIMIT 1`,
+    [tenantId]
+  );
+  return result.rows[0] || null;
+}
+
 async function requireProviderAdminRecord(providerAdminId) {
   const result = await query(
     `SELECT id, email, name, status, created_at, updated_at, last_login_at
@@ -710,6 +741,68 @@ router.patch(
     return res.json({
       ok: true,
       row,
+    });
+  })
+);
+
+router.post(
+  "/tenants/:tenantId/bootstrap-roles",
+  requireProviderAuth,
+  asyncHandler(async (req, res) => {
+    await requireProviderAdminRecord(req.providerAdmin.providerAdminId);
+    const tenantId = parsePositiveInt(req.params.tenantId);
+    if (!tenantId) {
+      throw badRequest("tenantId must be a positive integer");
+    }
+
+    const rawEmail = String(req.body?.email || "").trim();
+    const email = rawEmail ? normalizeEmail(rawEmail, "email") : "";
+
+    const tenant = await getProviderTenantRow(tenantId);
+    if (!tenant) {
+      throw badRequest("tenantId not found");
+    }
+
+    const restoredUser = await withTransaction(async (tx) => {
+      const runQuery = (sql, params) => tx.query(sql, params);
+      const targetUser = email
+        ? await getTenantUserByEmail(runQuery, tenantId, email)
+        : await getTenantBootstrapRecoveryUser(runQuery, tenantId);
+      if (!targetUser) {
+        throw badRequest(
+          email
+            ? "Tenant user not found for the supplied email"
+            : "No tenant user is available for bootstrap-role recovery"
+        );
+      }
+
+      // One-click provider recovery restores bootstrap roles to the tenant's
+      // earliest viable user so the control plane can repair lockouts without
+      // opening a broader user-management workflow here.
+      const roleIdsByCode = await ensureSystemRolesForTenant(tenantId, {
+        runQuery,
+      });
+      await assignBootstrapRolesToUser(tenantId, targetUser.id, {
+        runQuery,
+        roleIdsByCode,
+      });
+
+      return targetUser;
+    });
+
+    await invalidateRbacCache(tenantId);
+
+    return res.json({
+      ok: true,
+      tenantId,
+      bootstrapRoleCodes: [SECURITY_ADMIN_ROLE_CODE, SYSTEM_ADMIN_ROLE_CODE],
+      user: {
+        id: parsePositiveInt(restoredUser.id),
+        email: String(restoredUser.email || "").trim().toLowerCase(),
+        name: restoredUser.name || null,
+        status: String(restoredUser.status || "").toUpperCase(),
+      },
+      updatedByProviderAdminId: req.providerAdmin.providerAdminId,
     });
   })
 );

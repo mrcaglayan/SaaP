@@ -93,9 +93,11 @@ import FixedAssetCustodiansPage from "./pages/fixedAssets/FixedAssetCustodiansPa
 import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
 import {
   collectSidebarLinks,
+  ROLES_PERMISSIONS_CANONICAL_PATH,
   SECURITY_ADMIN_ROUTE_ADAPTERS,
   SECURITY_ADMIN_ROUTE_FAMILY,
   SECURITY_ADMIN_ROUTE_TRANSITION_PLAN,
+  USER_MANAGEMENT_CANONICAL_PATH,
   sidebarItems,
 } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
@@ -714,6 +716,26 @@ const implementedRoutes = [
     element: <SecurityAdminOverviewPage />,
   },
   {
+    appPath: USER_MANAGEMENT_CANONICAL_PATH,
+    childPath: "ayarlar/kullanicilar",
+    element: <UserAssignmentsPage />,
+  },
+  {
+    appPath: ROLES_PERMISSIONS_CANONICAL_PATH,
+    childPath: "ayarlar/roller-ve-yetkiler",
+    element: <RolesPermissionsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/delegations",
+    childPath: "ayarlar/rbac/delegations",
+    element: <ApprovalDelegationsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/temporary-coverage",
+    childPath: "ayarlar/rbac/temporary-coverage",
+    element: <TemporaryOperationalCoveragePage />,
+  },
+  {
     appPath: "/app/ayarlar/security-admin/catalog/roles/:roleId",
     childPath: "ayarlar/security-admin/catalog/roles/:roleId",
     permissionPath: "/app/ayarlar/rbac/roles-permissions",
@@ -951,6 +973,36 @@ function SecurityAdminWorkbenchAdapter({ routeKey }) {
 
   const searchParams = new URLSearchParams(location.search);
   const requestedTab = String(searchParams.get("tab") || route.defaultTab || "");
+
+  if (
+    route.key === "users" &&
+    (requestedTab === "users" || requestedTab === "people")
+  ) {
+    searchParams.delete("tab");
+    searchParams.delete("delegationTab");
+    const nextSearch = searchParams.toString();
+    return (
+      <Navigate
+        to={`${USER_MANAGEMENT_CANONICAL_PATH}${nextSearch ? `?${nextSearch}` : ""}${location.hash || ""}`}
+        replace
+      />
+    );
+  }
+
+  if (
+    route.key === "catalog" &&
+    requestedTab === "roles"
+  ) {
+    searchParams.delete("tab");
+    searchParams.delete("modelTab");
+    const nextSearch = searchParams.toString();
+    return (
+      <Navigate
+        to={`${ROLES_PERMISSIONS_CANONICAL_PATH}${nextSearch ? `?${nextSearch}` : ""}${location.hash || ""}`}
+        replace
+      />
+    );
+  }
 
   if (
     route.key === "catalog" &&

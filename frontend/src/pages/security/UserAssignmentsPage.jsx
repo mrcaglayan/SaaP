@@ -53,13 +53,12 @@ import {
   listWorkflowPackageCatalogEntries,
   resolveWorkflowPackagesForRuntimeRoles,
 } from "./roleCatalog.js";
-import SecurityUsersWorkbenchTabs from "./components/users/SecurityUsersWorkbenchTabs.jsx";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 const SCOPE_TYPES = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 const EFFECT_OPTIONS = ["ALLOW", "DENY"];
 const USER_STATUS_FILTERS = ["ALL", "ACTIVE", "INVITED", "DISABLED"];
 const ASSIGNMENT_STATUS_FILTERS = ["ALL", "ACTIVE", "UPCOMING", "EXPIRED", "CUSTOM"];
-const USER_ASSIGNMENT_CANONICAL_TABS = ["people", "assignments", "authority"];
+const USER_ASSIGNMENT_CANONICAL_TABS = ["users", "assignments"];
 const DELEGATION_TAB_ORDER = ["coverage", "approval"];
 const SOD_PREVIEW_LIMIT = 3;
 const ACCESS_MATRIX_ACTIONS = [
@@ -1076,15 +1075,6 @@ function StatusPill({ label, tone = "slate", className = "" }) {
     </span>
   );
 }
-function WorkspaceLaneCard({ badgeLabel, description, title, tone = "slate" }) {
-  return (
-    <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4 shadow-sm">
-      <StatusPill label={badgeLabel} tone={tone} />
-      <h3 className="mt-3 text-base font-semibold text-slate-950">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
-    </div>
-  );
-}
 function SummaryMetricCard({ description, title, tone = "slate", value }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
@@ -1311,15 +1301,9 @@ function AuditSodSummarySurface({
       <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="max-w-3xl">
-            <h2 className="text-lg font-semibold text-slate-950">
+            <h2 className="text-sm font-semibold text-slate-950">
               {l("Audit & SoD summary", "Audit ve SoD ozeti")}
             </h2>
-            <p className="mt-1 text-sm leading-6 text-slate-600">
-              {l(
-                "Review tenant-wide BLOCK and WARN conflicts, then inspect the selected user's affected packages, roles, and recent assignment audit trail before changing authority.",
-                "Tenant-geneli BLOCK ve WARN cakismalarini gozden gecirin; sonra yetki degistirmeden once secili kullanicinin etkilenen paketlerini, rollerini ve son atama audit izini inceleyin."
-              )}
-            </p>
           </div>
           <StatusPill
             label={
@@ -1410,12 +1394,6 @@ function AuditSodSummarySurface({
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">
                   {l("BLOCK conflicts", "BLOCK cakismalari")}
                 </div>
-                <p className="mt-1 text-sm leading-6 text-slate-700">
-                  {l(
-                    "Blocking conflicts should move from warning to action without hunting through the compliance page first.",
-                    "Bloklayici cakismalar, once uyum sayfasinda arastirma yapmadan uyaridan aksiyona gecmelidir."
-                  )}
-                </p>
               </div>
               <StatusPill label={String(blockConflicts.length)} tone="rose" />
             </div>
@@ -1453,12 +1431,6 @@ function AuditSodSummarySurface({
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
                   {l("WARN conflicts", "WARN cakismalari")}
                 </div>
-                <p className="mt-1 text-sm leading-6 text-slate-700">
-                  {l(
-                    "Warnings stay visible here so package cleanup and delegated coverage review remain operational, not buried.",
-                    "Uyarilar burada gorunur kalir; boylece paket temizligi ve delegation kapsam incelemesi operasyonel kalir, gizlenmez."
-                  )}
-                </p>
               </div>
               <StatusPill label={String(warnConflicts.length)} tone="amber" />
             </div>
@@ -1493,22 +1465,9 @@ function AuditSodSummarySurface({
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
           <div className="space-y-3 rounded-2xl border border-slate-200 bg-white px-4 py-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  {l("Selected user risk context", "Secili kullanici risk baglami")}
-                </div>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  {selectedUser
-                    ? l(
-                        "Combine tenant-wide SoD conflicts with the selected user's current package coverage and runtime roles before changing assignments.",
-                        "Atama degistirmeden once tenant-geneli SoD cakismalarini secili kullanicinin mevcut paket kapsami ve runtime rolleriyle birlestirin."
-                      )
-                    : l(
-                        "Select one user to see affected packages, roles, and conflict context here.",
-                        "Burada etkilenen paketleri, rolleri ve cakisma baglamini gormek icin bir kullanici secin."
-                      )}
-                </p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                {l("Selected user risk context", "Secili kullanici risk baglami")}
               </div>
               {selectedUser ? (
                 <StatusPill
@@ -1520,8 +1479,8 @@ function AuditSodSummarySurface({
             {!selectedUser ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
                 {l(
-                  "Selected-user risk context appears here after you choose one assignee from the people directory.",
-                  "Kisi dizininden bir atanan secildikten sonra secili-kullanici risk baglami burada gorunur."
+                  "Selected-user risk context appears here after you choose one user from the user list.",
+                  "Kullanici listesinden bir kullanici secildikten sonra secili-kullanici risk baglami burada gorunur."
                 )}
               </div>
             ) : selectedUserTenantConflicts.length === 0 && selectedUserWarnings.length === 0 ? (
@@ -2262,10 +2221,11 @@ export default function UserAssignmentsPage() {
   const [message, setMessage] = useState("");
   const [warningMessages, setWarningMessages] = useState([]);
   const [delegationLoadError, setDelegationLoadError] = useState("");
-  const workbenchTab = USER_ASSIGNMENT_CANONICAL_TABS.includes(searchParams.get("tab"))
-    ? searchParams.get("tab")
-    : searchParams.get("tab") === "users"
-      ? "people"
+  const requestedWorkbenchTab = String(searchParams.get("tab") || "").trim();
+  const workbenchTab = USER_ASSIGNMENT_CANONICAL_TABS.includes(requestedWorkbenchTab)
+    ? requestedWorkbenchTab
+    : requestedWorkbenchTab === "people" || requestedWorkbenchTab === "authority"
+      ? "users"
       : USER_ASSIGNMENT_CANONICAL_TABS[0];
   const activeTab = workbenchTab === "assignments" ? "assignments" : "users";
   const delegationTab = DELEGATION_TAB_ORDER.includes(searchParams.get("delegationTab"))
@@ -2317,14 +2277,6 @@ export default function UserAssignmentsPage() {
     effectiveTo: "",
     includePostingAuthority: true,
   });
-  const [assignmentForm, setAssignmentForm] = useState({
-    userId: "",
-    presetCode: "EntityAPController",
-    scopeId: "",
-    effectiveFrom: "",
-    effectiveTo: "",
-    includePostingAuthority: true,
-  });
   const [rawAssignmentForm, setRawAssignmentForm] = useState({
     userId: "",
     roleId: "",
@@ -2356,17 +2308,6 @@ export default function UserAssignmentsPage() {
     selectedPackageCodes: [],
     assignBusinessRoleLabel: true,
   });
-  const setWorkspaceTab = useCallback(
-    (nextTab) => {
-      setSearchParams(
-        updateSearchParams(searchParams, {
-          tab: nextTab,
-          delegationTab: nextTab === "delegations" ? delegationTab : "",
-        })
-      );
-    },
-    [delegationTab, searchParams, setSearchParams]
-  );
   const setWorkspaceDelegationTab = useCallback(
     (nextTab) => {
       setSearchParams(
@@ -2571,10 +2512,15 @@ export default function UserAssignmentsPage() {
     filteredBundles.find((bundle) => bundle.id === selectedBundleId) ||
     filteredBundles[0] ||
     null;
-  const selectedWorkbenchUser =
-    filteredUsers.find((row) => Number(row.id) === Number(selectedWorkbenchUserId)) ||
-    filteredUsers[0] ||
-    null;
+  const selectedWorkbenchUser = useMemo(() => {
+    const normalizedSelectedUserId = Number(selectedWorkbenchUserId || 0);
+    if (normalizedSelectedUserId) {
+      return (
+        userDirectoryRows.find((row) => Number(row.id) === normalizedSelectedUserId) || null
+      );
+    }
+    return filteredUsers[0] || userDirectoryRows[0] || null;
+  }, [filteredUsers, selectedWorkbenchUserId, userDirectoryRows]);
   const selectedWorkbenchUserBundles = useMemo(
     () =>
       assignmentBundles.filter(
@@ -3141,38 +3087,6 @@ export default function UserAssignmentsPage() {
     const userId = Number(userModalForm.userId || 0);
     return assignmentBundles.filter((bundle) => Number(bundle.userId) === userId);
   }, [assignmentBundles, userModalForm.userId]);
-  const assignmentPreset = useMemo(
-    () => getBootstrapHandoffPresetEntry(assignmentForm.presetCode),
-    [assignmentForm.presetCode]
-  );
-  const assignmentScopeOptions = useMemo(
-    () => buildScopeOptions(assignmentPreset.scopeType, lookups, tenantScopeId),
-    [assignmentPreset.scopeType, lookups, tenantScopeId]
-  );
-  const assignmentRoleCodes = useMemo(
-    () =>
-      buildTemplateRoleCodes(
-        assignmentForm.presetCode,
-        Boolean(assignmentForm.includePostingAuthority)
-      ),
-    [assignmentForm.includePostingAuthority, assignmentForm.presetCode]
-  );
-  const assignmentRoleEntries = useMemo(
-    () => assignmentRoleCodes.map((roleCode) => getRoleCatalogEntry(roleCode)),
-    [assignmentRoleCodes]
-  );
-  const selectedAssignmentScopeId = Number(assignmentForm.scopeId || 0);
-  const assignmentWriteAccess = getPermissionAccess(
-    "security.role_assignment.upsert",
-    selectedAssignmentScopeId && assignmentPreset.scopeType
-      ? {
-          scope: {
-            scopeType: assignmentPreset.scopeType,
-            scopeId: selectedAssignmentScopeId,
-          },
-        }
-      : undefined
-  );
   const rawScopeOptions = useMemo(
     () => buildScopeOptions(rawAssignmentForm.scopeType, lookups, tenantScopeId),
     [lookups, rawAssignmentForm.scopeType, tenantScopeId]
@@ -3232,14 +3146,24 @@ export default function UserAssignmentsPage() {
     }
   }, [filteredBundles, selectedBundleId]);
   useEffect(() => {
-    if (filteredUsers.length === 0) {
+    if (userDirectoryRows.length === 0) {
       setSelectedWorkbenchUserId("");
       return;
     }
-    if (!filteredUsers.some((row) => Number(row.id) === Number(selectedWorkbenchUserId))) {
-      setSelectedWorkbenchUserId(String(filteredUsers[0].id));
+    if (!selectedWorkbenchUserId) {
+      const fallbackUser = filteredUsers[0] || userDirectoryRows[0] || null;
+      setSelectedWorkbenchUserId(fallbackUser ? String(fallbackUser.id) : "");
+      return;
     }
-  }, [filteredUsers, selectedWorkbenchUserId]);
+    if (
+      !userDirectoryRows.some(
+        (row) => Number(row.id) === Number(selectedWorkbenchUserId)
+      )
+    ) {
+      const fallbackUser = filteredUsers[0] || userDirectoryRows[0] || null;
+      setSelectedWorkbenchUserId(fallbackUser ? String(fallbackUser.id) : "");
+    }
+  }, [filteredUsers, selectedWorkbenchUserId, userDirectoryRows]);
   useEffect(() => {
     if (selectedWorkbenchUserBundles.length === 0) {
       setSelectedWorkbenchBundleId("");
@@ -3249,11 +3173,6 @@ export default function UserAssignmentsPage() {
       setSelectedWorkbenchBundleId(selectedWorkbenchUserBundles[0].id);
     }
   }, [selectedWorkbenchBundleId, selectedWorkbenchUserBundles]);
-  useEffect(() => {
-    if (!assignmentForm.userId && users.length > 0) {
-      setAssignmentForm((prev) => ({ ...prev, userId: String(users[0].id) }));
-    }
-  }, [assignmentForm.userId, users]);
   useEffect(() => {
     if (!rawAssignmentForm.userId && users.length > 0) {
       setRawAssignmentForm((prev) => ({ ...prev, userId: String(users[0].id) }));
@@ -3288,9 +3207,6 @@ export default function UserAssignmentsPage() {
     if (!selectedUserId) {
       return;
     }
-    setAssignmentForm((prev) =>
-      prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
-    );
     setRawAssignmentForm((prev) =>
       prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
     );
@@ -3422,21 +3338,6 @@ export default function UserAssignmentsPage() {
     workflowPackageScopeTypeOptions,
   ]);
   useEffect(() => {
-    setAssignmentForm((prev) => {
-      const currentScopeId = Number(prev.scopeId || 0);
-      if (
-        currentScopeId &&
-        assignmentScopeOptions.some((option) => Number(option.id) === currentScopeId)
-      ) {
-        return prev;
-      }
-      return {
-        ...prev,
-        scopeId: String(assignmentScopeOptions[0]?.id || ""),
-      };
-    });
-  }, [assignmentScopeOptions]);
-  useEffect(() => {
     setUserModalForm((prev) => {
       if (!userModalOpen) {
         return prev;
@@ -3478,8 +3379,11 @@ export default function UserAssignmentsPage() {
       };
     });
   }, [rawScopeOptions, tenantScopeId]);
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (options = {}) => {
+    const showLoadingState = options.showLoadingState !== false;
+    if (showLoadingState) {
+      setLoading(true);
+    }
     setError("");
     try {
       const [
@@ -3551,7 +3455,9 @@ export default function UserAssignmentsPage() {
         )
       );
     } finally {
-      setLoading(false);
+      if (showLoadingState) {
+        setLoading(false);
+      }
     }
   }, [canReadOrgTree, l]);
 
@@ -3592,9 +3498,6 @@ export default function UserAssignmentsPage() {
   }
   function updateUserModalField(field, value) {
     setUserModalForm((prev) => ({ ...prev, [field]: value }));
-  }
-  function updateAssignmentField(field, value) {
-    setAssignmentForm((prev) => ({ ...prev, [field]: value }));
   }
   function updateRawAssignmentField(field, value) {
     setRawAssignmentForm((prev) => ({ ...prev, [field]: value }));
@@ -3828,7 +3731,7 @@ export default function UserAssignmentsPage() {
           : l("Access template applied.", "Erisim template'i uygulandi.")
       );
       setUserModalOpen(false);
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       if (inviteUrl) {
         setLastInviteLink(inviteUrl);
@@ -3843,7 +3746,7 @@ export default function UserAssignmentsPage() {
       setSaving(false);
     }
   }
-  async function handleCreatePresetAssignment(event) {
+  async function handleCreatePresetAssignment() {
     event.preventDefault();
     if (!normalizeText(assignmentForm.userId)) {
       setError(l("Choose an assignee first.", "Once bir atanan kisi secin."));
@@ -3876,7 +3779,7 @@ export default function UserAssignmentsPage() {
       });
       setWarningMessages(warnings);
       setMessage(l("Business assignment created.", "Is atamasi olusturuldu."));
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -3918,7 +3821,7 @@ export default function UserAssignmentsPage() {
       });
       setWarningMessages(response?.assignmentWarnings || []);
       setMessage(l("Raw role row created.", "Ham rol satiri olusturuldu."));
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4134,7 +4037,7 @@ export default function UserAssignmentsPage() {
           "Is rol etiketi atandi. Workflow paketleri icin ayri atama hala gerekir."
         )
       );
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4195,7 +4098,7 @@ export default function UserAssignmentsPage() {
           "Is rol etiketi kaldirildi. Workflow paket yetkisi degismeden kaldi."
         )
       );
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4297,7 +4200,7 @@ export default function UserAssignmentsPage() {
           "Workflow paketi secilen kapsamda atandi."
         )
       );
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4401,7 +4304,7 @@ export default function UserAssignmentsPage() {
           }
         )
       );
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4462,7 +4365,7 @@ export default function UserAssignmentsPage() {
           "Workflow paket atamasi kaldirildi."
         )
       );
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4516,7 +4419,7 @@ export default function UserAssignmentsPage() {
         await deleteRoleAssignment(assignmentId);
       }
       setMessage(l("Business assignment revoked.", "Is atamasi geri alindi."));
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4550,7 +4453,7 @@ export default function UserAssignmentsPage() {
     try {
       await revokeApprovalDelegation(delegationId);
       setMessage(l("Approval delegation revoked.", "Approval delegation geri alindi."));
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4584,7 +4487,7 @@ export default function UserAssignmentsPage() {
     try {
       await revokeOperationalCoverage(coverageId);
       setMessage(l("Temporary coverage revoked.", "Temporary coverage geri alindi."));
-      await loadData();
+      await loadData({ showLoadingState: false });
     } catch (requestError) {
       setError(
         getErrorMessage(
@@ -4607,22 +4510,17 @@ export default function UserAssignmentsPage() {
         "Kullanicilar ve Atamalar Workbench'i"
       )}
       description={l(
-        "Keep people selection, business assignment bundles, and effective authority review inside one canonical users workbench while scope access, delegations, and temporary coverage live beside it as sibling tabs.",
-        "Kisi secimini, is atama paketlerini ve etkili yetki incelemesini tek bir canonical users workbench icinde tutarken kapsam erisimi, delegasyonlar ve gecici kapsama kayitlarini kardes sekmelerde yasatin."
+        "Keep user selection, business assignment bundles, and authority review inside one canonical users workbench while scope access, delegations, and temporary coverage live beside it as sibling surfaces.",
+        "Kullanici secimini, is atama paketlerini ve yetki incelemesini tek bir canonical users workbench icinde tutarken kapsam erisimi, delegasyonlar ve gecici kapsama kayitlarini kardes yuzeylerde yasatin."
       )}
       actions={[
         {
-          to: "/app/ayarlar/security-admin/users?tab=delegations",
-          label: l("Open delegations tab", "Delegasyon sekmesini ac"),
+          to: "/app/ayarlar/rbac/delegations",
+          label: l("Open delegations page", "Delegasyon sayfasini ac"),
         },
         {
           onClick: openInviteModal,
           label: l("Invite user", "Kullanici davet et"),
-        },
-        {
-          onClick: () => setWorkspaceTab("assignments"),
-          label: l("Assign setup owner", "Setup sahibi ata"),
-          tone: "primary",
         },
       ]}
       stats={[
@@ -4662,18 +4560,10 @@ export default function UserAssignmentsPage() {
           ),
         },
       ]}
+      showHeader={false}
+      showStats={false}
+      showGuidancePanel={false}
       hiddenPrimarySurfaceKeys={["roles-permissions"]}
-      toolbar={
-        <SecurityUsersWorkbenchTabs
-          activeTab={workbenchTab}
-          counts={{
-            people: userDirectoryRows.length,
-            assignments: assignmentBundles.length,
-            delegations: totalDelegationCount,
-            coverage: coverageRows.length,
-          }}
-        />
-      }
     >
       {!roleAssignmentReadAccess.allowed ? (
         <PermissionAccessNotice
@@ -4707,47 +4597,6 @@ export default function UserAssignmentsPage() {
         </div>
       ) : null}
       <SecurityWarningList warnings={warningMessages} />
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <WorkspaceLaneCard
-          badgeLabel={l("People directory", "Kisi dizini")}
-          description={l(
-            "Filter one assignee list by role, package, source, and scope, then keep pending invite expiry and current authority visible without leaving the workspace.",
-            "Tek bir atanan kisi listesini rol, paket, kaynak ve kapsama gore filtreleyin; sonra bekleyen davet suresini ve mevcut yetkiyi calisma alanindan ayrilmadan gorunur tutun."
-          )}
-          title={l("People directory", "Kisi dizini")}
-          tone="blue"
-        />
-        <WorkspaceLaneCard
-          badgeLabel={l("Primary path", "Birincil yol")}
-          description={l(
-            "Use preset-based setup-owner bundles as the normal admin path. Business-first bundles stay grouped by assignee, scope, and effective window.",
-            "Normal yonetici yolu olarak preset tabanli setup owner paketlerini kullanin. Is-oncelikli paketler atanan kisi, kapsam ve yururluk penceresine gore gruplanmis kalir."
-          )}
-          title={l("Business assignment bundles", "Is atama paketleri")}
-          tone="green"
-        />
-        <WorkspaceLaneCard
-          badgeLabel={l("Secondary / advanced", "Ikincil / gelismis")}
-          description={l(
-            "Direct business labels, exact workflow packages, and raw role rows stay available for deliberate exceptions, but they no longer dominate the page.",
-            "Dogrudan is etiketleri, tam workflow paketleri ve ham rol satirlari bilincli istisnalar icin kullanilabilir kalir; ancak artik sayfaya hakim olmaz."
-          )}
-          title={l("Raw role & package tools", "Ham rol ve paket araclari")}
-          tone="amber"
-        />
-        <WorkspaceLaneCard
-          badgeLabel={l("Date-bounded controls", "Tarihle sinirli kontroller")}
-          description={l(
-            "Keep approval delegation and temporary coverage as explicit, revocable objects with lifecycle badges and date ranges instead of burying them in side screens.",
-            "Approval delegation ve temporary coverage kayitlarini yan ekranlara gommek yerine yasam dongusu etiketleri ve tarih araliklariyla acik, geri alinabilir nesneler olarak tutun."
-          )}
-          title={l(
-            "Delegation & temporary coverage",
-            "Delegation ve temporary coverage"
-          )}
-          tone="violet"
-        />
-      </section>
       {loading ? (
         <SecurityWorkbenchLoadingState
           title={l("Users workspace", "Kullanici calisma alani")}
@@ -4756,38 +4605,49 @@ export default function UserAssignmentsPage() {
       ) : null}
       {!loading && activeTab === "users" ? (
         <section className="space-y-5">
-          {workbenchTab === "authority" ? (
-            <div className="rounded-[28px] border border-sky-200 bg-sky-50 px-5 py-4 shadow-sm">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
-                {l("Authority-first view", "Yetki odakli gorunum")}
+          {(() => {
+            const blockCount = Array.isArray(tenantSodReport?.conflicts)
+              ? tenantSodReport.conflicts.filter(
+                  (c) => String(c?.conflictRule?.severity || "").toLowerCase() === "block"
+                ).length
+              : 0;
+            if (blockCount === 0) return null;
+            return (
+              <div className="flex items-center justify-between gap-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-rose-100">
+                    <svg className="h-4 w-4 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <span className="text-sm font-semibold text-rose-900">
+                      {l(
+                        "{{count}} active BLOCK-level SoD conflict{{s}} detected",
+                        "{{count}} aktif BLOCK seviyeli SoD catismasi tespit edildi",
+                        { count: blockCount, s: blockCount === 1 ? "" : "s" }
+                      )}
+                    </span>
+                    <span className="ml-2 text-xs text-rose-700">
+                      {l("These conflicts prevent affected users from acting.", "Bu catismalar etkilenen kullanicilarin islem yapmasini engelliyor.")}
+                    </span>
+                  </div>
+                </div>
+                <a
+                  href="/app/ayarlar/security-admin/diagnostics?tab=compliance"
+                  className="shrink-0 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                >
+                  {l("View conflicts", "Catismalari goster")}
+                </a>
               </div>
-              <p className="mt-2 text-sm leading-6 text-sky-900">
-                {l(
-                  "Effective authority stays in focus here: keep one user selected and review package sources, runtime roles, audit items, and scope-backed authority without leaving the users workbench.",
-                  "Etkili yetki burada odakta kalir: users workbench'ten cikmadan tek bir kullaniciyi secili tutup paket kaynaklarini, runtime rolleri, denetim ogelerini ve kapsama dayali yetkiyi inceleyin."
-                )}
-              </p>
-            </div>
-          ) : null}
-          <AuditSodSummarySurface
-            assignmentAuditSummary={selectedWorkbenchAssignmentAuditSummary}
-            canOpenAccessDebugger={canOpenAccessDebugger}
-            canOpenAuditLogs={canOpenAuditLogs}
-            canOpenComplianceReports={canOpenComplianceReports}
-            canPreviewComplianceAudit={canPreviewComplianceAudit}
-            l={l}
-            selectedUser={selectedWorkbenchUser}
-            selectedUserAssignmentAuditReadable={canReadAudit}
-            selectedUserAuditError={selectedWorkbenchAuditError}
-            selectedUserAuditLoading={selectedWorkbenchAuditLoading}
-            tenantSodError={tenantSodError}
-            tenantSodLoading={tenantSodLoading}
-            tenantSodReport={tenantSodReport}
-          />
+            );
+          })()}
           <UserAssignmentWorkbench
+            onInviteUser={openInviteModal}
             actingRowId={actingRowId}
             businessRoleAssignmentForm={businessRoleAssignmentForm}
             businessRoleAssignmentWriteAccess={businessRoleAssignmentWriteAccess}
+            businessRoleCatalogEntries={businessRoleCatalogEntries}
             businessRoleScopeOptions={businessRoleScopeOptions}
             canAssignRolePermissions={canAssignRolePermissions}
             canUpsertRole={canUpsertRole}
@@ -4807,7 +4667,6 @@ export default function UserAssignmentsPage() {
                 sourceType: "",
               })
             }
-            onOpenBulkAssignments={() => setWorkspaceTab("assignments")}
             onOpenUserEditor={(userOrId) => {
               if (typeof userOrId === "object" && userOrId) {
                 openExistingUserModal(userOrId);
@@ -4867,6 +4726,14 @@ export default function UserAssignmentsPage() {
             workflowPackageScopeOptions={workflowPackageScopeOptions}
             workflowPackageScopeTypeOptions={workflowPackageScopeTypeOptions}
             workflowPresetCatalogEntries={workflowPresetCatalogEntries}
+            rawAssignmentForm={rawAssignmentForm}
+            onUpdateRawAssignmentField={updateRawAssignmentField}
+            onCreateRawAssignment={handleCreateRawAssignment}
+            rawAssignmentWriteAccess={rawAssignmentWriteAccess}
+            rawScopeOptions={rawScopeOptions}
+            assignableRoleGroups={assignableRoleGroups}
+            lookups={lookups}
+            tenantScopeId={tenantScopeId}
             scopeTargetOptions={scopeTargetOptions}
             selectedBundle={selectedWorkbenchBundle}
             selectedUser={selectedWorkbenchUser}
@@ -4881,20 +4748,12 @@ export default function UserAssignmentsPage() {
       ) : null}
       {!loading && activeTab === "assignments" ? (
         <section className="space-y-5">
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_400px]">
+          <div className="space-y-5">
             <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-950">
-                    {l("Business assignments", "Is atamalari")}
-                  </h2>
-                  <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
-                    {l(
-                      "Review one row per business responsibility, not one row per underlying RBAC role. Drill into the row only when you need the raw role detail.",
-                      "Alttaki her RBAC rol satiri yerine her is sorumlulugu icin tek satir inceleyin. Ham rol detayina sadece ihtiyaciniz oldugunda derine inin."
-                    )}
-                  </p>
-                </div>
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+                <h2 className="text-sm font-semibold text-slate-950">
+                  {l("Business assignments", "Is atamalari")}
+                </h2>
                 <StatusPill label={l("Preset-based", "Preset tabanli")} tone="blue" />
               </div>
               <div className="grid gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 md:grid-cols-[minmax(0,1fr)_180px_180px]">
@@ -4968,7 +4827,7 @@ export default function UserAssignmentsPage() {
                 )}
               </div>
             </div>
-            <aside className="xl:sticky xl:top-20 xl:self-start">
+            {false ? <aside className="xl:sticky xl:top-20 xl:self-start">
               <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
                 <div className="border-b border-slate-200 px-5 py-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -5304,7 +5163,7 @@ export default function UserAssignmentsPage() {
                   </form>
                 </details>
               </div>
-            </aside>
+            </aside> : null}
           </div>
           <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
@@ -5314,8 +5173,8 @@ export default function UserAssignmentsPage() {
                 </h2>
                 <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
                   {l(
-                    "Invites stay separate from live assignments, but still point to the same user onboarding and setup-owner flows.",
-                    "Davetler canli atamalardan ayri kalir; ancak yine de ayni kullanici onboarding ve setup sahibi akislerine isaret eder."
+                    "Invites stay separate from live assignments, but still point to the same user onboarding and access-grant flows.",
+                    "Davetler canli atamalardan ayri kalir; ancak yine de ayni kullanici onboarding ve erisim verme akislerine isaret eder."
                   )}
                 </p>
               </div>

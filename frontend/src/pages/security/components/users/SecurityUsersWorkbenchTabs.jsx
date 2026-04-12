@@ -5,35 +5,8 @@ import { resolveSecurityWorkbenchAccess } from "../workbenchNavigation.js";
 
 export const SECURITY_USERS_WORKBENCH_TABS = Object.freeze([
   Object.freeze({
-    key: "people",
-    to: "/app/ayarlar/security-admin/users?tab=people",
-    permissionPath: "/app/ayarlar/rbac/user-assignments",
-    label: Object.freeze({
-      en: "People",
-      tr: "Kisiler",
-    }),
-  }),
-  Object.freeze({
-    key: "assignments",
-    to: "/app/ayarlar/security-admin/users?tab=assignments",
-    permissionPath: "/app/ayarlar/rbac/user-assignments",
-    label: Object.freeze({
-      en: "Assignments",
-      tr: "Atamalar",
-    }),
-  }),
-  Object.freeze({
-    key: "scopes",
-    to: "/app/ayarlar/security-admin/users?tab=scopes",
-    permissionPath: "/app/ayarlar/rbac/scope-assignments",
-    label: Object.freeze({
-      en: "Scope access",
-      tr: "Kapsam erisimi",
-    }),
-  }),
-  Object.freeze({
     key: "delegations",
-    to: "/app/ayarlar/security-admin/users?tab=delegations",
+    to: "/app/ayarlar/rbac/delegations",
     permissionPath: "/app/ayarlar/rbac/delegations",
     label: Object.freeze({
       en: "Delegations",
@@ -42,20 +15,11 @@ export const SECURITY_USERS_WORKBENCH_TABS = Object.freeze([
   }),
   Object.freeze({
     key: "coverage",
-    to: "/app/ayarlar/security-admin/users?tab=coverage",
+    to: "/app/ayarlar/rbac/temporary-coverage",
     permissionPath: "/app/ayarlar/rbac/temporary-coverage",
     label: Object.freeze({
       en: "Temporary coverage",
       tr: "Gecici kapsama",
-    }),
-  }),
-  Object.freeze({
-    key: "authority",
-    to: "/app/ayarlar/security-admin/users?tab=authority",
-    permissionPath: "/app/ayarlar/rbac/user-assignments",
-    label: Object.freeze({
-      en: "Effective authority",
-      tr: "Etkili yetki",
     }),
   }),
 ]);
@@ -65,7 +29,7 @@ export const SECURITY_USERS_WORKBENCH_TABS = Object.freeze([
  * visibility so all absorbed user-access pages share one navigation grammar.
  */
 export default function SecurityUsersWorkbenchTabs({
-  activeTab = "people",
+  activeTab = "",
   counts = {},
 }) {
   const { hasAnyFeature, hasAnyPermission } = useAuth();
@@ -90,11 +54,6 @@ export default function SecurityUsersWorkbenchTabs({
 
   return (
     <SecurityWorkbenchTabsCard
-      title={l("Users workbench tabs", "Kullanici workbench sekmeleri")}
-      description={l(
-        "Keep people, assignments, scope changes, delegations, temporary coverage, and effective authority inside one canonical route family.",
-        "Kisileri, atamalari, kapsam degisikliklerini, delegasyonlari, gecici kapsama kayitlarini ve etkili yetkiyi tek bir canonical rota ailesinde tutun."
-      )}
       tabs={tabs}
     />
   );

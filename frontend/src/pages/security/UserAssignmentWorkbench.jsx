@@ -1,4 +1,11 @@
+import { useEffect, useState } from "react";
 import {
+  listDataScopes,
+  listRoleAssignments,
+  replaceUserDataScopes,
+} from "../../api/rbacAdmin.js";
+import {
+  buildScopeLabel,
   getBootstrapHandoffPresetDisplayLabel,
   getRoleCatalogEntry,
 } from "./roleCatalog.js";
@@ -65,14 +72,6 @@ function getInitials(name) {
   return parts.map((part) => part[0].toUpperCase()).join("");
 }
 
-function formatDate(value) {
-  const timestamp = value ? new Date(value).getTime() : Number.NaN;
-  if (Number.isNaN(timestamp)) {
-    return "-";
-  }
-  return new Date(timestamp).toLocaleDateString();
-}
-
 function formatDateTime(value) {
   const timestamp = value ? new Date(value).getTime() : Number.NaN;
   if (Number.isNaN(timestamp)) {
@@ -81,16 +80,6 @@ function formatDateTime(value) {
   return new Date(timestamp).toLocaleString();
 }
 
-function formatAssignmentWindowLabel(l, effectiveFrom, effectiveTo) {
-  return l(
-    "Assignment window: {{start}} -> {{end}}",
-    "Atama penceresi: {{start}} -> {{end}}",
-    {
-      start: formatDate(effectiveFrom),
-      end: formatDate(effectiveTo),
-    }
-  );
-}
 
 function getInviteExpiryLabel(l, row) {
   if (!row?.invite_expires_at) {
@@ -106,68 +95,6 @@ function Pill({ label, tone = "slate" }) {
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getToneClasses(tone)}`}>
       {label}
     </span>
-  );
-}
-
-function WorkbenchMetric({ label, value }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-        {label}
-      </div>
-      <div className="mt-2 text-2xl font-semibold text-slate-950">{value}</div>
-    </div>
-  );
-}
-
-function getWorkflowPackageSourceTone(sourceType) {
-  if (sourceType === "STARTER_DERIVED") {
-    return "blue";
-  }
-  if (sourceType === "PRESET_DERIVED") {
-    return "violet";
-  }
-  return "slate";
-}
-
-function getWorkflowPackageSourceLabel(l, sourceType) {
-  if (sourceType === "STARTER_DERIVED") {
-    return l("Starter-derived", "Starter-turevli");
-  }
-  if (sourceType === "PRESET_DERIVED") {
-    return l("Preset-derived", "Preset-turevli");
-  }
-  return l("Direct / custom", "Dogrudan / ozel");
-}
-
-function getWorkflowPackageSourceDetail(l, assignment) {
-  if (
-    assignment?.sourceType === "STARTER_DERIVED" &&
-    assignment?.sourceBusinessRoleLabel
-  ) {
-    return l(
-      "Derived from {{label}} starter bundle.",
-      "{{label}} starter paketinden turedi.",
-      { label: assignment.sourceBusinessRoleLabel }
-    );
-  }
-  if (assignment?.sourceType === "PRESET_DERIVED") {
-    const labels = Array.isArray(assignment?.sourcePresetLabels)
-      ? assignment.sourcePresetLabels.filter(Boolean)
-      : [];
-    if (labels.length > 0) {
-      const previewLabels = labels.slice(0, 2).join(", ");
-      const suffix = labels.length > 2 ? ` +${labels.length - 2}` : "";
-      return l(
-        "Derived from workflow preset {{label}}.",
-        "{{label}} workflow presetinden turedi.",
-        { label: `${previewLabels}${suffix}` }
-      );
-    }
-  }
-  return l(
-    "Direct workflow package grant.",
-    "Dogrudan workflow paketi yetkisi."
   );
 }
 
@@ -370,16 +297,15 @@ export default function UserAssignmentWorkbench(props) {
   const {
     businessRoleAssignmentForm,
     businessRoleAssignmentWriteAccess,
+    businessRoleCatalogEntries,
     businessRoleScopeOptions,
-    canAssignRolePermissions,
-    canUpsertRole,
     filteredUsers,
     l,
     onAssignBusinessRoleLabel,
     onApplyPackageSource,
     onAssignWorkflowPackage,
     onClearFilters,
-    onOpenBulkAssignments,
+    onInviteUser,
     onOpenUserEditor,
     onSelectBundle,
     onSelectUser,
@@ -397,28 +323,14 @@ export default function UserAssignmentWorkbench(props) {
     packageFilterOptions,
     roleFilterOptions,
     selectedBusinessRoleAssignments,
-    selectedBusinessRoleCatalogEntry,
-    selectedBusinessRoleRuntimeRoleExists,
-    selectedPackageSourceBusinessRoleAssigned,
-    selectedPackageSourceBusinessRoleEntry,
     selectedPackageSourcePackageCodes,
-    selectedUserAssignmentAuditReadable,
     selectedUserAssignmentAuditSummary,
-    selectedUserAuditError,
-    selectedUserAuditLoading,
-    selectedPackageSourcePresetEntry,
     selectedUserEffectiveAuthorityPreview,
-    selectedWorkflowPackageAssignmentRoleStatus,
     selectedWorkflowPackageAssignments,
-    selectedWorkflowPackageCatalogEntry,
-    selectedWorkflowPackageRuntimeRoleExists,
-    scopeTargetOptions,
     selectedBundle,
     selectedUser,
     selectedUserBundles,
     selectedUserPackageLabels,
-    selectedUserRoleEntries,
-    selectedUserScopeLabels,
     setUserFilters,
     saving,
     actingRowId,
@@ -430,7 +342,149 @@ export default function UserAssignmentWorkbench(props) {
     workflowPackageScopeOptions,
     workflowPackageScopeTypeOptions,
     workflowPresetCatalogEntries,
+    // Setup owner — raw role row
+    rawAssignmentForm,
+    onUpdateRawAssignmentField,
+    onCreateRawAssignment,
+    rawScopeOptions,
+    assignableRoleGroups,
+    // Scope lookups
+    lookups,
+    tenantScopeId,
   } = props;
+  const [manageModalOpen, setManageModalOpen] = useState(false);
+  const [manageModalTab, setManageModalTab] = useState("access");
+  // Scope tab — lazy loaded when tab is first opened
+  const [scopeRows, setScopeRows] = useState([]);
+  const [scopeRoleRows, setScopeRoleRows] = useState([]);
+  const [scopeLoading, setScopeLoading] = useState(false);
+  const [scopeSaving, setScopeSaving] = useState(false);
+  const [scopeError, setScopeError] = useState("");
+  const [scopeMessage, setScopeMessage] = useState("");
+  const [draftScope, setDraftScope] = useState({ scopeType: "LEGAL_ENTITY", scopeId: "", effect: "ALLOW" });
+
+  useEffect(() => {
+    if (!manageModalOpen || manageModalTab !== "scopes" || !selectedUser?.id) return;
+    let cancelled = false;
+    setScopeLoading(true);
+    setScopeError("");
+    setScopeMessage("");
+    setScopeRows([]);
+    setScopeRoleRows([]);
+    Promise.all([
+      listDataScopes({ userId: selectedUser.id }),
+      listRoleAssignments({ userId: selectedUser.id }),
+    ])
+      .then(([ds, ra]) => {
+        if (cancelled) return;
+        setScopeRows(
+          (ds?.rows || []).map((row) => ({
+            scopeType: String(row.scope_type || "").toUpperCase(),
+            scopeId: Number(row.scope_id || 0),
+            effect: String(row.effect || "ALLOW").toUpperCase(),
+          }))
+        );
+        setScopeRoleRows(Array.isArray(ra?.rows) ? ra.rows : []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setScopeError(
+          err?.response?.data?.message ||
+            l("Failed to load scope access.", "Kapsam erisimi yuklenemedi.")
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setScopeLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [l, manageModalOpen, manageModalTab, selectedUser?.id]);
+
+  function getScopeOptions(scopeType, lkp, tScopeId) {
+    const l_ = lkp || {};
+    if (scopeType === "TENANT") return tScopeId ? [{ id: tScopeId, label: `Tenant #${tScopeId}` }] : [];
+    if (scopeType === "GROUP") return (l_.groups || []).map((r) => ({ id: Number(r.id), label: `${r.code} - ${r.name}` }));
+    if (scopeType === "COUNTRY") return (l_.countries || []).map((r) => ({ id: Number(r.id), label: `${r.iso2} - ${r.name}` }));
+    if (scopeType === "LEGAL_ENTITY") return (l_.legalEntities || []).map((r) => ({ id: Number(r.id), label: `${r.code} - ${r.name}` }));
+    if (scopeType === "OPERATING_UNIT") return (l_.operatingUnits || []).map((r) => ({ id: Number(r.id), label: `${r.code} - ${r.name}` }));
+    return [];
+  }
+
+  async function handleSaveScopes() {
+    if (!selectedUser?.id) return;
+    setScopeSaving(true);
+    setScopeError("");
+    setScopeMessage("");
+    try {
+      await replaceUserDataScopes(Number(selectedUser.id), scopeRows);
+      setScopeMessage(l("Scopes saved.", "Kapsamlar kaydedildi."));
+      try {
+        const [ds, ra] = await Promise.all([
+          listDataScopes({ userId: selectedUser.id }),
+          listRoleAssignments({ userId: selectedUser.id }),
+        ]);
+        setScopeRows(
+          (ds?.rows || []).map((row) => ({
+            scopeType: String(row.scope_type || "").toUpperCase(),
+            scopeId: Number(row.scope_id || 0),
+            effect: String(row.effect || "ALLOW").toUpperCase(),
+          }))
+        );
+        setScopeRoleRows(Array.isArray(ra?.rows) ? ra.rows : []);
+      } catch (reloadError) {
+        setScopeError(
+          reloadError?.response?.data?.message ||
+            l(
+              "Scopes saved, but the latest scope data could not be refreshed.",
+              "Kapsamlar kaydedildi ancak en guncel kapsam verisi yenilenemedi."
+            )
+        );
+      }
+    } catch (err) {
+      setScopeError(err?.response?.data?.message || l("Failed to save scopes.", "Kapsamlar kaydedilemedi."));
+    } finally {
+      setScopeSaving(false);
+    }
+  }
+
+  function addDraftScope() {
+    const scopeId = draftScope.scopeType === "TENANT" && tenantScopeId
+      ? tenantScopeId
+      : Number(draftScope.scopeId);
+    if (!scopeId) {
+      setScopeError(l("Select a scope target first.", "Once bir kapsam hedefi secin."));
+      setScopeMessage("");
+      return;
+    }
+    setScopeRows((prev) => {
+      const without = prev.filter((r) => !(r.scopeType === draftScope.scopeType && r.scopeId === scopeId));
+      return [...without, { scopeType: draftScope.scopeType, scopeId, effect: draftScope.effect }];
+    });
+    setScopeMessage("");
+    setScopeError("");
+  }
+
+  function removeScopeRow(scopeType, scopeId) {
+    setScopeRows((prev) => prev.filter((r) => !(r.scopeType === scopeType && r.scopeId === scopeId)));
+    setScopeMessage("");
+    setScopeError("");
+  }
+
+  function closeManageModal() {
+    setManageModalOpen(false);
+    setManageModalTab("access");
+    setScopeRows([]);
+    setScopeRoleRows([]);
+    setScopeLoading(false);
+    setScopeSaving(false);
+    setScopeError("");
+    setScopeMessage("");
+    setDraftScope({ scopeType: "LEGAL_ENTITY", scopeId: "", effect: "ALLOW" });
+  }
+
   const effectiveAuthorityPreview = selectedUserEffectiveAuthorityPreview || {
     workflowLines: [],
     runtimeLines: [],
@@ -442,1496 +496,884 @@ export default function UserAssignmentWorkbench(props) {
   };
 
   return (
-    <section className="space-y-5">
-      <div className="grid gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <div className="space-y-4">
-          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {l("Assignment workbench", "Atama calisma alani")}
-              </div>
-              <h2 className="mt-2 text-lg font-semibold text-slate-950">
-                {l("People list", "Kisi listesi")}
-              </h2>
-              <p className="mt-1 text-sm leading-6 text-slate-600">
-                {l(
-                  "Use the people directory to filter users by business-facing role labels, workflow-package coverage, scope target, and assignment source before drilling into one selected user.",
-                  "Kisi dizinini kullanarak kullanicilari is-odakli rol etiketleri, workflow-package kapsami, kapsam hedefi ve atama kaynagina gore filtreleyip tek bir secili kullaniciya inin."
-                )}
-              </p>
-            </div>
-            <div className="grid gap-3 px-5 py-5 md:grid-cols-2">
-              <input
-                type="text"
-                value={userFilters.search}
-                onChange={(event) => setUserFilters((prev) => ({ ...prev, search: event.target.value }))}
-                placeholder={l(
-                  "Search by name, email, role, package, or scope",
-                  "Ad, e-posta, rol, paket veya kapsama gore ara"
-                )}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm md:col-span-2"
-              />
-              <select
-                value={userFilters.status}
-                onChange={(event) => setUserFilters((prev) => ({ ...prev, status: event.target.value }))}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-              >
-                <option value="ALL">{l("All statuses", "Tum durumlar")}</option>
-                <option value="ACTIVE">ACTIVE</option>
-                <option value="INVITED">{l("Pending invite", "Bekleyen davet")}</option>
-                <option value="DISABLED">DISABLED</option>
-              </select>
-              <select
-                value={userFilters.roleCode}
-                onChange={(event) => setUserFilters((prev) => ({ ...prev, roleCode: event.target.value }))}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-              >
-                <option value="">{l("All business roles", "Tum is rolleri")}</option>
-                {roleFilterOptions.map((option) => (
-                  <option key={`workbench-role-${option.value}`} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={userFilters.packageCode}
-                onChange={(event) => setUserFilters((prev) => ({ ...prev, packageCode: event.target.value }))}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-              >
-                <option value="">{l("All workflow packages", "Tum workflow paketleri")}</option>
-                {packageFilterOptions.map((option) => (
-                  <option key={`workbench-package-${option.value}`} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={userFilters.scopeType}
-                onChange={(event) => setUserFilters((prev) => ({ ...prev, scopeType: event.target.value }))}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-              >
-                <option value="">{l("All scope types", "Tum kapsam tipleri")}</option>
-                {["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"].map((scopeType) => (
-                  <option key={`workbench-scope-type-${scopeType}`} value={scopeType}>
-                    {scopeType}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={userFilters.scopeTarget}
-                onChange={(event) => setUserFilters((prev) => ({ ...prev, scopeTarget: event.target.value }))}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-              >
-                <option value="">{l("All scope targets", "Tum kapsam hedefleri")}</option>
-                {scopeTargetOptions.map((option) => (
-                  <option key={`workbench-scope-target-${option.value}`} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={userFilters.sourceType}
-                onChange={(event) => setUserFilters((prev) => ({ ...prev, sourceType: event.target.value }))}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-              >
-                <option value="">{l("All sources", "Tum kaynaklar")}</option>
-                <option value="DERIVED">{l("Derived (starter/preset)", "Turevli (starter/preset)")}</option>
-                <option value="DIRECT">{l("Direct / custom", "Dogrudan / ozel")}</option>
-              </select>
+    <section className="space-y-4">
+      {/* ── Filter toolbar ── */}
+      <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 px-5 py-3 border-b border-slate-200 bg-slate-50">
+          <input
+            type="text"
+            value={userFilters.search}
+            onChange={(event) => setUserFilters((prev) => ({ ...prev, search: event.target.value }))}
+            placeholder={l("Search name, email, role, package…", "Ad, e-posta, rol, paket ara…")}
+            className="min-w-[220px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm focus:border-slate-400 focus:outline-none"
+          />
+          <select
+            value={userFilters.status}
+            onChange={(event) => setUserFilters((prev) => ({ ...prev, status: event.target.value }))}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="ALL">{l("All statuses", "Tum durumlar")}</option>
+            <option value="ACTIVE">Active</option>
+            <option value="INVITED">{l("Pending invite", "Bekleyen davet")}</option>
+            <option value="DISABLED">Disabled</option>
+          </select>
+          <select
+            value={userFilters.roleCode}
+            onChange={(event) => setUserFilters((prev) => ({ ...prev, roleCode: event.target.value }))}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="">{l("All roles", "Tum roller")}</option>
+            {roleFilterOptions.map((option) => (
+              <option key={`workbench-role-${option.value}`} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <select
+            value={userFilters.packageCode}
+            onChange={(event) => setUserFilters((prev) => ({ ...prev, packageCode: event.target.value }))}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="">{l("All packages", "Tum paketler")}</option>
+            {packageFilterOptions.map((option) => (
+              <option key={`workbench-package-${option.value}`} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <select
+            value={userFilters.scopeType}
+            onChange={(event) => setUserFilters((prev) => ({ ...prev, scopeType: event.target.value }))}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="">{l("All scope types", "Tum kapsam tipleri")}</option>
+            {["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"].map((scopeType) => (
+              <option key={`workbench-scope-type-${scopeType}`} value={scopeType}>{scopeType}</option>
+            ))}
+          </select>
+          <select
+            value={userFilters.sourceType}
+            onChange={(event) => setUserFilters((prev) => ({ ...prev, sourceType: event.target.value }))}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="">{l("All sources", "Tum kaynaklar")}</option>
+            <option value="DERIVED">{l("Derived", "Turevli")}</option>
+            <option value="DIRECT">{l("Direct", "Dogrudan")}</option>
+          </select>
+          {(userFilters.search || userFilters.status !== "ALL" || userFilters.roleCode || userFilters.packageCode || userFilters.scopeType || userFilters.sourceType) ? (
+            <button
+              type="button"
+              onClick={onClearFilters}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            >
+              {l("Clear", "Temizle")}
+            </button>
+          ) : null}
+          <div className="ml-auto flex items-center gap-3">
+            <span className="text-xs text-slate-500">{filteredUsers.length} {l("users", "kullanici")}</span>
+            {typeof onInviteUser === "function" ? (
               <button
                 type="button"
-                onClick={onClearFilters}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700"
+                onClick={onInviteUser}
+                className="rounded-lg border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
               >
-                {l("Clear filters", "Filtreleri temizle")}
+                {l("+ Invite user", "+ Kullanici davet et")}
               </button>
-            </div>
+            ) : null}
           </div>
-          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-950">
-                  {l("Filtered users", "Filtrelenmis kullanicilar")}
-                </h2>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  {l("Select one user to inspect current authority on the right.", "Mevcut yetkiyi sagda incelemek icin bir kullanici secin.")}
-                </p>
-              </div>
-              <Pill
-                label={l("{{count}} users", "{{count}} kullanici", { count: filteredUsers.length })}
-                tone="blue"
-              />
-            </div>
-            <div className="space-y-3 px-5 py-5">
-              {filteredUsers.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                  {l("No users match the current workbench filters.", "Calisma alani filtrelerine uyan kullanici yok.")}
-                </div>
-              ) : (
-                filteredUsers.map((row) => {
+        </div>
+
+        {/* ── User table ── */}
+        {filteredUsers.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-slate-500">
+            {l("No users match the current filters.", "Mevcut filtrelere uyan kullanici yok.")}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[700px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/60">
+                  <th className="px-5 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("User", "Kullanici")}</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Status", "Durum")}</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Roles & packages", "Roller ve paketler")}</th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Bundles", "Paketler")}</th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Organizational scope", "Organizasyon kapsami")}</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-[0.12em] text-slate-500"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredUsers.map((row) => {
                   const statusMeta = getUserStatusMeta(row.status);
                   const selected = Number(row.id) === Number(selectedUser?.id || 0);
                   return (
-                    <button
+                    <tr
                       key={`workbench-user-${row.id}`}
-                      type="button"
                       onClick={() => onSelectUser(String(row.id))}
-                      className={`w-full rounded-[22px] border px-4 py-4 text-left transition ${
+                      className={`cursor-pointer transition-colors ${
                         selected
-                          ? "border-sky-300 bg-sky-50 shadow-sm"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                          ? "bg-sky-50"
+                          : "hover:bg-slate-50"
                       }`}
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sm font-bold text-sky-800">
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${selected ? "bg-sky-200 text-sky-900" : "bg-slate-100 text-slate-700"}`}>
                             {getInitials(row.name)}
                           </div>
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-950">{row.name}</div>
-                            <div className="mt-1 truncate text-sm text-slate-500">{row.email}</div>
+                            <div className="truncate font-semibold text-slate-950">{row.name}</div>
+                            <div className="truncate text-xs text-slate-500">{row.email}</div>
                             {getInviteExpiryLabel(l, row) ? (
-                              <div className="mt-1 truncate text-xs font-medium text-amber-700">
-                                {getInviteExpiryLabel(l, row)}
-                              </div>
+                              <div className="text-xs font-medium text-amber-700">{getInviteExpiryLabel(l, row)}</div>
                             ) : null}
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Pill label={statusMeta.label} tone={statusMeta.tone} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <Pill label={statusMeta.label} tone={statusMeta.tone} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1.5">
+                          {row.businessRoleLabels.slice(0, 2).map((label) => (
+                            <Pill key={`${row.id}-br-${label}`} label={label} tone="violet" />
+                          ))}
+                          {row.currentPresetCodes.slice(0, 1).map((code) => (
+                            <Pill key={`${row.id}-pr-${code}`} label={getBootstrapHandoffPresetDisplayLabel(code)} tone="blue" />
+                          ))}
+                          {row.topPackageLabels.slice(0, 1).map((label) => (
+                            <Pill key={`${row.id}-pk-${label}`} label={label} tone="green" />
+                          ))}
                         </div>
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {row.businessRoleLabels.slice(0, 2).map((businessRoleLabel) => (
-                          <Pill
-                            key={`workbench-user-business-role-${row.id}-${businessRoleLabel}`}
-                            label={businessRoleLabel}
-                            tone="violet"
-                          />
-                        ))}
-                        {row.currentPresetCodes.slice(0, 2).map((presetCode) => (
-                          <Pill
-                            key={`workbench-user-preset-${row.id}-${presetCode}`}
-                            label={getBootstrapHandoffPresetDisplayLabel(presetCode)}
-                            tone="blue"
-                          />
-                        ))}
-                        {row.topRoleCodes.slice(0, 2).map((roleCode) => (
-                          <Pill
-                            key={`workbench-user-role-${row.id}-${roleCode}`}
-                            label={getRoleCatalogEntry(roleCode).code}
-                          />
-                        ))}
-                        {row.topPackageLabels.slice(0, 2).map((packageLabel) => (
-                          <Pill key={`workbench-user-package-${row.id}-${packageLabel}`} label={packageLabel} tone="green" />
-                        ))}
-                      </div>
-                      <div className="mt-4 grid gap-3 text-xs text-slate-600 sm:grid-cols-4">
-                        <div>
-                          <div className="font-semibold text-slate-900">{row.assignmentCount}</div>
-                          <div>{l("Bundles", "Paketler")}</div>
-                        </div>
-                        <div>
-                          <div className="font-semibold text-slate-900">{row.currentPackageCodes.length}</div>
-                          <div>{l("Packages", "Paketler")}</div>
-                        </div>
-                        <div>
-                          <div className="font-semibold text-slate-900">{row.scopeCount}</div>
-                          <div>{l("Scopes", "Kapsamlar")}</div>
-                        </div>
-                        <div>
-                          <div className="font-semibold text-slate-900">
-                            {row.derivedAssignmentCount} / {row.directAssignmentCount}
-                          </div>
-                          <div>{l("Derived / direct", "Turevli / dogrudan")}</div>
-                        </div>
-                      </div>
-                    </button>
+                      </td>
+                      <td className="px-4 py-3 text-center text-sm text-slate-700">{row.assignmentCount}</td>
+                      <td className="px-4 py-3 text-center text-sm text-slate-700">{row.scopeCount}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectUser(String(row.id));
+                            setManageModalTab("access");
+                            setManageModalOpen(true);
+                          }}
+                          className="rounded-lg border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                        >
+                          {l("Manage", "Yonet")}
+                        </button>
+                      </td>
+                    </tr>
                   );
-                })
-              )}
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Manage modal ── */}
+      {manageModalOpen && selectedUser ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/50 px-4 py-8 backdrop-blur-sm">
+          <div className="flex h-[82vh] max-h-[calc(100vh-4rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+
+            {/* Modal header */}
+            <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-6 py-4 rounded-t-[28px]">
+              <div className="flex items-center gap-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sm font-bold text-sky-800">
+                  {getInitials(selectedUser.name)}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-semibold text-slate-950">{selectedUser.name}</span>
+                    <Pill label={getUserStatusMeta(selectedUser.status).label} tone={getUserStatusMeta(selectedUser.status).tone} />
+                    {selectedUser.activeDelegationCount > 0 ? (
+                      <Pill label={l("{{count}} delegation", "{{count}} delegation", { count: selectedUser.activeDelegationCount })} tone="violet" />
+                    ) : null}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-3 text-xs text-slate-500">
+                    <span>{selectedUser.email}</span>
+                    <span>·</span>
+                    <span>{selectedUser.assignmentCount} {l("bundles", "paket")}</span>
+                    <span>·</span>
+                    <span>{selectedUserPackageLabels.length} {l("packages", "paket")}</span>
+                    <span>·</span>
+                    <span>{selectedUser.scopeCount} {l("scopes", "kapsam")}</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeManageModal}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {l("Close", "Kapat")}
+              </button>
+            </div>
+
+            {/* Tab bar */}
+            <div className="flex gap-1 border-b border-slate-200 bg-white px-6 pt-3">
+              {[
+                { key: "access",   label: l("Permissions", "Yetkiler") },
+                { key: "assign",   label: l("Role assignment", "Rol atamasi") },
+                { key: "workflow", label: l("Workflow packages", "Workflow paketleri") },
+                { key: "starter",  label: l("Starter bundles", "Starter paketler") },
+                { key: "scopes",   label: l("Organizational scope", "Organizasyon kapsami") },
+                { key: "audit",    label: l("Audit", "Denetim") },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setManageModalTab(tab.key)}
+                  className={`rounded-t-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
+                    manageModalTab === tab.key
+                      ? "border-b-2 border-slate-900 text-slate-950"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab content */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+
+              {/* ── ACCESS TAB ── */}
+              {manageModalTab === "access" ? (
+                <div className="space-y-5">
+                  {/* Business assignment bundles */}
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">
+                        {l("Business assignment bundles", "Is atama paketleri")}
+                      </h3>
+                      <Pill label={l("{{count}} bundles", "{{count}} paket", { count: selectedUserBundles.length })} />
+                    </div>
+                    <div className="space-y-3 px-5 py-5">
+                      {selectedUserBundles.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                          {l("No grouped business assignments yet.", "Henuz gruplanmis is atamasi yok.")}
+                        </div>
+                      ) : (
+                        selectedUserBundles.map((bundle) => (
+                          <WorkbenchBundleCard
+                            key={`modal-bundle-${bundle.id}`}
+                            actingRowId={actingRowId}
+                            bundle={bundle}
+                            expanded={selectedBundle?.id === bundle.id}
+                            l={l}
+                            onOpenUserEditor={onOpenUserEditor}
+                            onRevokeBundle={onRevokeBundle}
+                            onSelectBundle={onSelectBundle}
+                            saving={saving}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Effective authority preview */}
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">
+                        {l("Effective authority preview", "Etkin yetki onizlemesi")}
+                      </h3>
+                    </div>
+                    <div className="space-y-5 px-5 py-5">
+                      {effectiveAuthorityPreview.workflowLines.length === 0 && effectiveAuthorityPreview.runtimeLines.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                          {l("No active effective authority found.", "Etkin yetki bulunamadi.")}
+                        </div>
+                      ) : null}
+                      {effectiveAuthorityPreview.workflowLines.length > 0 ? (
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{l("Workflow & package authority", "Workflow ve paket yetkisi")}</div>
+                          <div className="mt-3 space-y-3">
+                            {effectiveAuthorityPreview.workflowLines.map((line) => (
+                              <div key={line.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                <div className="flex flex-wrap gap-2">
+                                  <Pill label={line.workflowFamilyLabel} tone="violet" />
+                                  <Pill label={line.scopeType} tone="blue" />
+                                  {line.sourceLabels.map((src) => <Pill key={src} label={src} tone="green" />)}
+                                </div>
+                                <p className="mt-2 text-sm font-medium text-slate-900">
+                                  {l("Can {{summary}} in {{scope}}.", "{{scope}} kapsaminda {{summary}}.", { summary: line.summaryText, scope: line.scopeLabel })}
+                                </p>
+                                {line.missingText ? (
+                                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                    {l("Still missing: {{missing}}.", "Hala eksik: {{missing}}.", { missing: line.missingText })}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                </div>
+              ) : null}
+
+              {/* ── ASSIGN TAB ── */}
+              {manageModalTab === "assign" ? (
+                <div className="space-y-5">
+
+                  {/* Business role labels */}
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <div className="flex flex-wrap items-end justify-between gap-3">
+                        <form onSubmit={onAssignBusinessRoleLabel} className="flex min-w-[280px] flex-1 flex-wrap items-center justify-end gap-2">
+                          <div className="flex min-w-[280px] flex-1 items-center gap-2">
+                            <label className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{l("Business role", "Is rolu")}</label>
+                            <select value={businessRoleAssignmentForm.businessRoleCode} onChange={(e) => onUpdateBusinessRoleAssignmentField("businessRoleCode", e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                              {roleFilterOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                          </div>
+                          <div className="flex min-w-[280px] flex-1 items-center gap-2">
+                            <label className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{l("Scope target", "Kapsam hedefi")}</label>
+                            <select value={businessRoleAssignmentForm.scopeId} onChange={(e) => onUpdateBusinessRoleAssignmentField("scopeId", e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                              {businessRoleScopeOptions.map((o) => <option key={o.id} value={String(o.id)}>{o.label}</option>)}
+                            </select>
+                          </div>
+                          <button type="submit" disabled={saving || !businessRoleAssignmentWriteAccess.allowed} className="h-10 rounded-lg border border-slate-900 bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-60">
+                            {saving ? l("Saving...", "Kaydediliyor...") : l("Add label", "Etiket ekle")}
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                    <div className="space-y-3 px-5 py-4">
+                      <div className="space-y-3">
+                        {selectedBusinessRoleAssignments.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                            {l("No business role labels assigned yet.", "Henuz is rol etiketi atanmamis.")}
+                          </div>
+                        ) : (
+                          selectedBusinessRoleAssignments.map((assignment) => (
+                            <div key={`brl-${assignment.assignmentId}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    <Pill label={assignment.businessRoleLabel} tone="violet" />
+                                    <Pill label={assignment.scopeType} tone="blue" />
+                                    <Pill label={getBundleStatusMeta(assignment.status).label} tone={getBundleStatusMeta(assignment.status).tone} />
+                                  </div>
+                                  <div className="mt-1.5 text-xs text-slate-600">{assignment.scopeLabel}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => onRemoveBusinessRoleLabel(assignment)}
+                                  disabled={saving && actingRowId === `business-role-${assignment.assignmentId}`}
+                                  className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
+                                >
+                                  {saving && actingRowId === `business-role-${assignment.assignmentId}` ? l("Removing…", "Kaldiriliyor…") : l("Remove", "Kaldir")}
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <form onSubmit={onAssignBusinessRoleLabel} className="hidden">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{l("Assign label", "Etiket ata")}</div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Business role", "Is rolu")}</label>
+                          <select value={businessRoleAssignmentForm.businessRoleCode} onChange={(e) => onUpdateBusinessRoleAssignmentField("businessRoleCode", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            {roleFilterOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Scope target", "Kapsam hedefi")}</label>
+                          <select value={businessRoleAssignmentForm.scopeId} onChange={(e) => onUpdateBusinessRoleAssignmentField("scopeId", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            {businessRoleScopeOptions.map((o) => <option key={o.id} value={String(o.id)}>{o.label}</option>)}
+                          </select>
+                        </div>
+                        <button type="submit" disabled={saving || !businessRoleAssignmentWriteAccess.allowed} className="w-full rounded-lg border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                          {saving ? l("Saving…", "Kaydediliyor…") : l("Assign role label", "Rol etiketi ata")}
+                        </button>
+                        <p className="text-xs leading-5 text-slate-500">
+                          {l(
+                            "Business role labels do not assign starter workflow packages by themselves. Use Starter bundles to apply the recommended packages for that role.",
+                            "Is rolu etiketleri tek basina starter workflow paketlerini vermez. Bu rol icin onerilen paketleri uygulamak uzere Starter paketler sekmesini kullanin."
+                          )}
+                        </p>
+                      </form>
+                    </div>
+                  </div>
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">{l("Advanced raw role row", "Gelismis ham rol satiri")}</h3>
+                    </div>
+                    <form onSubmit={onCreateRawAssignment} className="space-y-4 px-5 py-5">
+                      <p className="text-sm leading-6 text-slate-600">
+                        {l(
+                          "Use this only for deliberate exceptions. Setup owner presets and package/starter flows should remain the normal admin paths.",
+                          "Bunu yalnizca bilincli istisnalar icin kullanin. Setup sahibi presetleri ile paket/starter akisleri normal yonetici yolu olarak kalmalidir."
+                        )}
+                      </p>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-slate-700">{l("Role", "Rol")}</label>
+                        <select
+                          value={rawAssignmentForm?.roleId || ""}
+                          onChange={(e) => onUpdateRawAssignmentField("roleId", e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                        >
+                          <option value="">{l("Choose role", "Rol secin")}</option>
+                          {(Array.isArray(assignableRoleGroups) ? assignableRoleGroups : []).map((group) => (
+                            <optgroup key={`raw-rg-${group.key}`} label={group.label}>
+                              {group.roles.map((role) => (
+                                <option key={`raw-r-${role.id}`} value={String(role.id)}>
+                                  {getRoleCatalogEntry(role.code || "")?.code || role.code || role.id}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Scope type", "Kapsam tipi")}</label>
+                          <select
+                            value={rawAssignmentForm?.scopeType || "TENANT"}
+                            onChange={(e) => onUpdateRawAssignmentField("scopeType", e.target.value)}
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {["TENANT","GROUP","COUNTRY","LEGAL_ENTITY","OPERATING_UNIT"].map((st) => (
+                              <option key={st} value={st}>{st}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Effect", "Etki")}</label>
+                          <select
+                            value={rawAssignmentForm?.effect || "ALLOW"}
+                            onChange={(e) => onUpdateRawAssignmentField("effect", e.target.value)}
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                          >
+                            {["ALLOW","DENY"].map((ef) => <option key={ef} value={ef}>{ef}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-slate-700">{l("Scope", "Kapsam")}</label>
+                        <select
+                          value={rawAssignmentForm?.scopeId || ""}
+                          onChange={(e) => onUpdateRawAssignmentField("scopeId", e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                        >
+                          {(Array.isArray(rawScopeOptions) ? rawScopeOptions : []).map((opt) => (
+                            <option key={opt.id} value={String(opt.id)}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Effective from", "Baslangic tarihi")}</label>
+                          <input type="date" value={rawAssignmentForm?.effectiveFrom || ""} onChange={(e) => onUpdateRawAssignmentField("effectiveFrom", e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Effective to", "Bitis tarihi")}</label>
+                          <input type="date" value={rawAssignmentForm?.effectiveTo || ""} onChange={(e) => onUpdateRawAssignmentField("effectiveTo", e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" />
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={saving}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-60"
+                      >
+                        {saving ? l("Saving...", "Kaydediliyor...") : l("Create raw role row", "Ham rol satiri olustur")}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── WORKFLOW PACKAGES TAB ── */}
+              {manageModalTab === "workflow" ? (
+                <div className="space-y-5">
+
+                  {/* Direct workflow packages */}
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">{l("Direct workflow packages", "Dogrudan workflow paketleri")}</h3>
+                    </div>
+                    <div className="grid gap-5 px-5 py-5 lg:grid-cols-[300px_minmax(0,1fr)]">
+                      <div className="space-y-3 lg:order-2">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{l("Assigned packages", "Atanmis paketler")}</div>
+                        {selectedWorkflowPackageAssignments.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                            {l("No direct workflow packages assigned yet.", "Henuz dogrudan workflow paketi atanmamis.")}
+                          </div>
+                        ) : (
+                          selectedWorkflowPackageAssignments.map((assignment) => (
+                            <div key={`wpa-${assignment.assignmentId}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    <Pill label={assignment.packageLabel} tone="green" />
+                                    <Pill label={assignment.scopeType} tone="blue" />
+                                    <Pill label={getBundleStatusMeta(assignment.status).label} tone={getBundleStatusMeta(assignment.status).tone} />
+                                  </div>
+                                  <div className="mt-1.5 text-xs text-slate-600">{assignment.scopeLabel}</div>
+                                  <div className="mt-0.5 text-xs text-slate-500">{assignment.permissionCount} {l("permissions", "yetki")}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => onRemoveWorkflowPackage(assignment)}
+                                  disabled={saving && actingRowId === `workflow-package-${assignment.assignmentId}`}
+                                  className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
+                                >
+                                  {saving && actingRowId === `workflow-package-${assignment.assignmentId}` ? l("Removing…", "Kaldiriliyor…") : l("Remove", "Kaldir")}
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <form onSubmit={onAssignWorkflowPackage} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 space-y-3 lg:order-1">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{l("Assign package", "Paket ata")}</div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Workflow package", "Workflow paketi")}</label>
+                          <select value={workflowPackageAssignmentForm.packageCode} onChange={(e) => onUpdateWorkflowPackageAssignmentField("packageCode", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            {workflowPackageCatalogEntries.map((e) => <option key={e.code} value={e.code}>{e.displayName}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Scope type", "Kapsam tipi")}</label>
+                          <select value={workflowPackageAssignmentForm.scopeType} onChange={(e) => onUpdateWorkflowPackageAssignmentField("scopeType", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            {workflowPackageScopeTypeOptions.map((st) => <option key={st} value={st}>{st}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Scope target", "Kapsam hedefi")}</label>
+                          <select value={workflowPackageAssignmentForm.scopeId} onChange={(e) => onUpdateWorkflowPackageAssignmentField("scopeId", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            {workflowPackageScopeOptions.map((o) => <option key={o.id} value={String(o.id)}>{o.label}</option>)}
+                          </select>
+                        </div>
+                        <button type="submit" disabled={saving || !workflowPackageAssignmentWriteAccess.allowed} className="w-full rounded-lg border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                          {saving ? l("Saving…", "Kaydediliyor…") : l("Assign package", "Paket ata")}
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── STARTER BUNDLES TAB ── */}
+              {manageModalTab === "starter" ? (
+                <div className="space-y-5">
+
+                  {/* Starter bundles & presets */}
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">{l("Starter bundles & presets", "Starter paketler ve presetler")}</h3>
+                    </div>
+                    <div className="grid gap-5 px-5 py-5 lg:grid-cols-[300px_minmax(0,1fr)]">
+                      <form onSubmit={onApplyPackageSource} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 space-y-3">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{l("Quick apply", "Hizli uygula")}</div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Source", "Kaynak")}</label>
+                          <select value={packageSourceApplyForm.sourceKind} onChange={(e) => onUpdatePackageSourceApplyField("sourceKind", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            <option value="STARTER">{l("Business role starter", "Is rolu starter")}</option>
+                            <option value="PRESET">{l("Workflow preset", "Workflow preset")}</option>
+                          </select>
+                        </div>
+                        {packageSourceApplyForm.sourceKind === "STARTER" ? (
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700">{l("Business role", "Is rolu")}</label>
+                            <select value={packageSourceApplyForm.businessRoleCode} onChange={(e) => onUpdatePackageSourceApplyField("businessRoleCode", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                              {(Array.isArray(businessRoleCatalogEntries) ? businessRoleCatalogEntries : []).map((entry) => (
+                                <option key={entry.code} value={entry.code}>{entry.displayName}</option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700">{l("Workflow preset", "Workflow preset")}</label>
+                            <select value={packageSourceApplyForm.presetCode} onChange={(e) => onUpdatePackageSourceApplyField("presetCode", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                              {workflowPresetCatalogEntries.map((entry) => (
+                                <option key={entry.code} value={entry.code}>{entry.displayName}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Scope type", "Kapsam tipi")}</label>
+                          <select value={packageSourceApplyForm.scopeType} onChange={(e) => onUpdatePackageSourceApplyField("scopeType", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            {packageSourceScopeTypeOptions.map((st) => <option key={st} value={st}>{st}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-700">{l("Scope target", "Kapsam hedefi")}</label>
+                          <select value={packageSourceApplyForm.scopeId} onChange={(e) => onUpdatePackageSourceApplyField("scopeId", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            {packageSourceScopeOptions.map((o) => <option key={o.id} value={String(o.id)}>{o.label}</option>)}
+                          </select>
+                        </div>
+                        <button type="submit" disabled={saving || !packageSourceApplyWriteAccess.allowed || selectedPackageSourcePackageCodes.length === 0} className="w-full rounded-lg border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                          {saving ? l("Applying…", "Uygulaniyor…") : l("Apply {{count}} packages", "{{count}} paketi uygula", { count: selectedPackageSourcePackageCodes.length })}
+                        </button>
+                        <p className="text-xs leading-5 text-slate-500">
+                          {l(
+                            "Starter source previews the workflow packages recommended for the selected business role at the chosen scope.",
+                            "Starter kaynagi, secilen is rolu icin secilen kapsamda onerilen workflow paketlerini onizler."
+                          )}
+                        </p>
+                      </form>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{l("Preview packages", "Onizleme paketleri")}</div>
+                          <Pill label={l("{{count}} selected", "{{count}} secili", { count: selectedPackageSourcePackageCodes.length })} tone="blue" />
+                        </div>
+                        {packageSourcePreviewEntries.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                            {l("Select a source to preview packages.", "Paketleri onizlemek icin bir kaynak secin.")}
+                          </div>
+                        ) : (
+                          packageSourcePreviewEntries.map((entry) => {
+                            const state = getPackageSourcePreviewState(l, entry, packageSourceApplyForm.scopeType);
+                            const recommendationTone = getPackageSourceRecommendationTone(entry.recommendationType);
+                            return (
+                              <label key={entry.code} className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-3 ${entry.assignable ? "border-slate-200 bg-white" : "cursor-not-allowed border-slate-200 bg-slate-50 opacity-60"}`}>
+                                <input type="checkbox" checked={selectedPackageSourcePackageCodes.includes(entry.code)} onChange={() => onTogglePackageSourcePreviewPackage(entry.code)} disabled={!entry.assignable} className="mt-0.5 h-4 w-4" />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-sm font-semibold text-slate-950">{entry.displayName}</span>
+                                    <Pill label={getPackageSourceRecommendationLabel(l, entry.recommendationType)} tone={recommendationTone} />
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-500">{getPackageSourcePreviewNote(l, entry)}</div>
+                                  <div className={`mt-1 text-xs font-medium ${state.tone === "green" ? "text-emerald-700" : "text-amber-700"}`}>{state.text}</div>
+                                </div>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── ASSIGNMENTS (BUNDLES) TAB ── */}
+
+              {/* ── SCOPES TAB ── */}
+              {manageModalTab === "scopes" ? (
+                <div className="space-y-5">
+
+                  {/* Feedback */}
+                  {scopeError ? (
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{scopeError}</div>
+                  ) : null}
+                  {scopeMessage ? (
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{scopeMessage}</div>
+                  ) : null}
+
+                  {/* Data scope access */}
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">{l("Data scope access", "Veri kapsami erisimi")}</h3>
+                      <Pill label={l("{{count}} rules", "{{count}} kural", { count: scopeRows.length })} />
+                    </div>
+
+                    {/* Add row form */}
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-600">{l("Scope type", "Kapsam tipi")}</label>
+                          <select
+                            value={draftScope.scopeType}
+                            onChange={(e) => {
+                              const scopeType = e.target.value;
+                              const opts = getScopeOptions(scopeType, lookups, tenantScopeId);
+                              setDraftScope({ scopeType, scopeId: String(opts[0]?.id || ""), effect: draftScope.effect });
+                            }}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                          >
+                            {["TENANT","GROUP","COUNTRY","LEGAL_ENTITY","OPERATING_UNIT"].map((st) => (
+                              <option key={st} value={st}>{st}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="min-w-[200px] flex-1 space-y-1">
+                          <label className="text-xs font-semibold text-slate-600">{l("Target", "Hedef")}</label>
+                          <select
+                            value={draftScope.scopeId}
+                            onChange={(e) => setDraftScope((prev) => ({ ...prev, scopeId: e.target.value }))}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                          >
+                            <option value="">{l("Select…", "Secin…")}</option>
+                            {getScopeOptions(draftScope.scopeType, lookups, tenantScopeId).map((opt) => (
+                              <option key={opt.id} value={String(opt.id)}>{opt.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-600">{l("Effect", "Etki")}</label>
+                          <select
+                            value={draftScope.effect}
+                            onChange={(e) => setDraftScope((prev) => ({ ...prev, effect: e.target.value }))}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                          >
+                            <option value="ALLOW">ALLOW</option>
+                            <option value="DENY">DENY</option>
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={addDraftScope}
+                          disabled={!draftScope.scopeId && draftScope.scopeType !== "TENANT"}
+                          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {l("Add", "Ekle")}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Scope rows */}
+                    <div className="px-5 py-4">
+                      {scopeLoading ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                          {l("Loading…", "Yukleniyor…")}
+                        </div>
+                      ) : scopeRows.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                          {l("No data scopes assigned yet. Add one above.", "Henuz veri kapsami atanmamis. Yukaridan ekleyin.")}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {scopeRows.map((row) => (
+                            <div key={`${row.scopeType}-${row.scopeId}`} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Pill label={row.scopeType} tone="blue" />
+                                <Pill label={row.effect} tone={row.effect === "DENY" ? "rose" : "green"} />
+                                <span className="text-sm text-slate-700">
+                                  {buildScopeLabel(row.scopeType, row.scopeId, lookups || {}, tenantScopeId || null)}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeScopeRow(row.scopeType, row.scopeId)}
+                                className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                              >
+                                {l("Remove", "Kaldir")}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Save button */}
+                    <div className="border-t border-slate-200 px-5 py-4">
+                      <button
+                        type="button"
+                        onClick={handleSaveScopes}
+                        disabled={scopeSaving || scopeLoading}
+                        className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                      >
+                        {scopeSaving ? l("Saving…", "Kaydediliyor…") : l("Save scope rules", "Kapsam kurallarini kaydet")}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Role assignments (read-only) */}
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">{l("Role assignments", "Rol atamalari")}</h3>
+                      <Pill label={l("{{count}} rows", "{{count}} satir", { count: scopeRoleRows.length })} />
+                    </div>
+                    <div className="px-5 py-5">
+                      {scopeLoading ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                          {l("Loading…", "Yukleniyor…")}
+                        </div>
+                      ) : scopeRoleRows.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                          {l("No role assignments found.", "Rol atamasi bulunamadi.")}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {scopeRoleRows.map((row) => (
+                            <div key={Number(row.id || 0) || `${row.role_code}-${row.scope_type}-${row.scope_id}`} className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                              <Pill label={String(row.role_code || "")} tone="violet" />
+                              <Pill label={String(row.scope_type || "").toUpperCase()} tone="blue" />
+                              <span className="text-sm text-slate-700">
+                                {buildScopeLabel(
+                                  String(row.scope_type || "").toUpperCase(),
+                                  Number(row.scope_id || 0),
+                                  lookups || {},
+                                  tenantScopeId || null
+                                )}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {/* ── AUDIT TAB ── */}
+              {manageModalTab === "audit" ? (
+                <div className="space-y-5">
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">{l("Assignment audit & SoD warnings", "Atama audit ve SoD uyarilari")}</h3>
+                    </div>
+                    <div className="space-y-5 px-5 py-5">
+                      {assignmentAuditSummary.sodWarnings.length > 0 ? (
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">{l("SoD warnings", "SoD uyarilari")}</div>
+                          <div className="mt-3 space-y-3">
+                            {assignmentAuditSummary.sodWarnings.map((warning) => (
+                              <div key={warning.id} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                                <div className="flex flex-wrap gap-1.5">
+                                  <Pill label={warning.title} tone="amber" />
+                                  {warning.scopeLabel ? <Pill label={warning.scopeLabel} tone="blue" /> : null}
+                                </div>
+                                <p className="mt-2 text-sm text-amber-900">{warning.description}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                          {l("No SoD warnings for this user.", "Bu kullanici icin SoD uyarisi yok.")}
+                        </div>
+                      )}
+                      {assignmentAuditSummary.auditItems.length > 0 ? (
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{l("Audit items", "Audit kayitlari")}</div>
+                          <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-slate-200 bg-slate-50">
+                                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Type", "Tip")}</th>
+                                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Label", "Etiket")}</th>
+                                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Scope", "Kapsam")}</th>
+                                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Status", "Durum")}</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {assignmentAuditSummary.auditItems.map((item, i) => (
+                                  <tr key={i} className="hover:bg-slate-50">
+                                    <td className="px-4 py-2.5"><Pill label={item.type} tone="slate" /></td>
+                                    <td className="px-4 py-2.5 text-slate-900">{item.label}</td>
+                                    <td className="px-4 py-2.5 text-slate-600">{item.scopeLabel || "-"}</td>
+                                    <td className="px-4 py-2.5"><Pill label={item.status} tone={item.status === "ACTIVE" ? "green" : "slate"} /></td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                          {l("No audit items available.", "Audit kaydi bulunamadi.")}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
             </div>
           </div>
         </div>
-        <aside className="xl:sticky xl:top-20 xl:self-start">
-          <div className="space-y-4">
-            {!selectedUser ? (
-              <div className="rounded-[28px] border border-dashed border-slate-300 bg-white px-5 py-12 text-sm text-slate-500 shadow-sm">
-                {l(
-                  "Choose a user from the left panel to inspect authority detail.",
-                  "Yetki detayini incelemek icin sol panelden bir kullanici secin."
-                )}
-              </div>
-            ) : (
-              <>
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      {l("Selected user authority detail", "Secili kullanici yetki detayi")}
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <h2 className="text-xl font-semibold text-slate-950">{selectedUser.name}</h2>
-                          <div className="mt-1 text-sm text-slate-500">{selectedUser.email}</div>
-                          {getInviteExpiryLabel(l, selectedUser) ? (
-                            <div className="mt-2 text-xs font-medium text-amber-700">
-                              {getInviteExpiryLabel(l, selectedUser)}
-                            </div>
-                          ) : null}
-                        </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Pill
-                          label={getUserStatusMeta(selectedUser.status).label}
-                          tone={getUserStatusMeta(selectedUser.status).tone}
-                        />
-                        {selectedUser.activeDelegationCount > 0 ? (
-                          <Pill
-                            label={l("{{count}} active delegation", "{{count}} aktif delegation", {
-                              count: selectedUser.activeDelegationCount,
-                            })}
-                            tone="violet"
-                          />
-                        ) : null}
-                      </div>
-                    </div>
-                    <p className="mt-3 text-sm leading-6 text-slate-600">
-                      {l(
-                        "The workbench keeps one user in focus so scope, package, and source filters stay visible while deeper audit and diagnostics tools land in later slices.",
-                        "Daha derin denetim ve teshis araclari sonraki dilimlerde gelirken kapsam, paket ve kaynak filtreleri gorunur kalsin diye bu calisma alani bir kullaniciyi odakta tutar."
-                      )}
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onOpenUserEditor(selectedUser)}
-                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
-                      >
-                        {l("Edit access", "Erisimi duzenle")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={onOpenBulkAssignments}
-                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
-                      >
-                        {l("Open bulk assignment view", "Toplu atama gorunumunu ac")}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="grid gap-3 px-5 py-5 sm:grid-cols-4">
-                    <WorkbenchMetric label={l("Bundles", "Paketler")} value={selectedUser.assignmentCount} />
-                    <WorkbenchMetric label={l("Packages", "Paketler")} value={selectedUserPackageLabels.length} />
-                    <WorkbenchMetric label={l("Scopes", "Kapsamlar")} value={selectedUser.scopeCount} />
-                    <WorkbenchMetric
-                      label={l("Derived / direct", "Turevli / dogrudan")}
-                      value={`${selectedUser.derivedAssignmentCount} / ${selectedUser.directAssignmentCount}`}
-                    />
-                  </div>
-                </div>
-                <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-5 py-4 shadow-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Pill label={l("Secondary / advanced", "Ikincil / gelismis")} tone="amber" />
-                    <Pill label={l("Raw role & package tools", "Ham rol ve paket araclari")} tone="slate" />
-                  </div>
-                  <p className="mt-3 text-sm leading-6 text-amber-950">
-                    {l(
-                      "Preset-based business bundles remain the normal admin path. Use direct labels, exact packages, and raw role rows only when you need deliberate exceptions or precise scope adjustments.",
-                      "Preset tabanli is paketleri normal yonetici yolu olarak kalir. Dogrudan etiketleri, tam paketleri ve ham rol satirlarini yalnizca bilincli istisnalar veya hassas kapsam duzeltmeleri gerektiginde kullanin."
-                    )}
-                  </p>
-                </div>
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                    <h3 className="text-lg font-semibold text-slate-950">
-                      {l("Business role labels", "Is rol etiketleri")}
-                    </h3>
-                    <p className="mt-1 text-sm leading-6 text-slate-600">
-                      {l(
-                        "Assign non-authoritative business role labels separately from package authority. These labels improve workflow readability and assignee discovery, but they do not grant action permissions on their own.",
-                        "Yetki paketlerinden ayri olarak otorite vermeyen is rol etiketleri atayin. Bu etiketler workflow okunabilirligini ve atanan kisi bulunurlugunu iyilestirir; ancak tek basina aksiyon yetkisi vermez."
-                      )}
-                    </p>
-                  </div>
-                  <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1.1fr)_320px]">
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Assigned labels", "Atanmis etiketler")}
-                      </div>
-                      {selectedBusinessRoleAssignments.length === 0 ? (
-                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                          {l(
-                            "No business role labels are assigned yet.",
-                            "Henuz is rol etiketi atanmis degil."
-                          )}
-                        </div>
-                      ) : (
-                        selectedBusinessRoleAssignments.map((assignment) => (
-                          <div
-                            key={`business-role-assignment-${assignment.assignmentId}`}
-                            className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <div className="flex flex-wrap gap-2">
-                                  <Pill label={assignment.businessRoleLabel} tone="violet" />
-                                  <Pill label={assignment.scopeType} tone="blue" />
-                                  <Pill
-                                    label={getBundleStatusMeta(assignment.status).label}
-                                    tone={getBundleStatusMeta(assignment.status).tone}
-                                  />
-                                  {assignment.effect !== "ALLOW" ? (
-                                    <Pill label={assignment.effect} tone="rose" />
-                                  ) : null}
-                                </div>
-                                <div className="mt-2 text-sm text-slate-700">
-                                  {assignment.scopeLabel}
-                                </div>
-                                <div className="mt-1 text-xs text-slate-500">
-                                  {formatAssignmentWindowLabel(
-                                    l,
-                                    assignment.effectiveFrom,
-                                    assignment.effectiveTo
-                                  )}
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => onRemoveBusinessRoleLabel(assignment)}
-                                disabled={saving && actingRowId === `business-role-${assignment.assignmentId}`}
-                                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {saving && actingRowId === `business-role-${assignment.assignmentId}`
-                                  ? l("Removing...", "Kaldiriliyor...")
-                                  : l("Remove label", "Etiketi kaldir")}
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    <form
-                      onSubmit={onAssignBusinessRoleLabel}
-                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
-                    >
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Assign label", "Etiket ata")}
-                      </div>
-                      <div className="mt-4 space-y-3">
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700">
-                            {l("Business role", "Is rolu")}
-                          </label>
-                          <select
-                            value={businessRoleAssignmentForm.businessRoleCode}
-                            onChange={(event) =>
-                              onUpdateBusinessRoleAssignmentField(
-                                "businessRoleCode",
-                                event.target.value
-                              )
-                            }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                          >
-                            {roleFilterOptions.map((option) => (
-                              <option key={`business-role-form-${option.value}`} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-900">
-                          <div className="font-semibold">
-                            {l("Suggested scope", "Onerilen kapsam")}:{" "}
-                            {selectedBusinessRoleCatalogEntry?.defaultScope || "-"}
-                          </div>
-                          <div className="mt-1 text-sky-800">
-                            {l(
-                              "This label stays non-authoritative. Package or runtime-role assignments still decide what the user can actually do.",
-                              "Bu etiket otorite vermez. Kullanicinin gercekte ne yapabilecegini hala paket veya runtime rol atamalari belirler."
-                            )}
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700">
-                            {l("Scope target", "Kapsam hedefi")}
-                          </label>
-                          <select
-                            value={businessRoleAssignmentForm.scopeId}
-                            onChange={(event) =>
-                              onUpdateBusinessRoleAssignmentField("scopeId", event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                          >
-                            {businessRoleScopeOptions.map((option) => (
-                              <option key={`business-role-scope-${option.id}`} value={String(option.id)}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        {!selectedBusinessRoleRuntimeRoleExists ? (
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                            {canUpsertRole
-                              ? l(
-                                  "This role has not been assigned to anyone in your organisation yet. It will be set up automatically when you save this assignment.",
-                                  "Bu rol henuz kurulusunuzda kimseye atanmamis. Bu atamayi kaydettiginizde otomatik olarak olusturulacaktir."
-                                )
-                              : l(
-                                  "This role has not been set up in your organisation yet. You need additional permissions to make the first assignment — please contact your administrator.",
-                                  "Bu rol henuz kurulusunuzda olusturulmamis. Ilk atamayi yapabilmek icin ek yetkilere ihtiyaciniz var — lutfen yoneticinize basvurun."
-                                )}
-                          </div>
-                        ) : null}
-                        <button
-                          type="submit"
-                          disabled={saving || !businessRoleAssignmentWriteAccess.allowed}
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {saving ? l("Saving...", "Kaydediliyor...") : l("Assign business role", "Is rolu ata")}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                    <h3 className="text-lg font-semibold text-slate-950">
-                      {l("Direct workflow packages", "Dogrudan workflow paketleri")}
-                    </h3>
-                    <p className="mt-1 text-sm leading-6 text-slate-600">
-                      {l(
-                        "Assign exact package authority by scope without bundling unrelated review or posting powers. Each package grant stays removable on its own, even when it started from a starter bundle or preset preview.",
-                        "Ilgisiz inceleme veya posting yetkilerini paketlemeden, tam paket otoritesini kapsama gore atayin. Her paket yetkisi, starter paket veya preset onizlemesinden baslamis olsa bile tek basina kaldirilabilir."
-                      )}
-                    </p>
-                  </div>
-                  <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1.1fr)_360px]">
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Assigned packages", "Atanmis paketler")}
-                      </div>
-                      {selectedWorkflowPackageAssignments.length === 0 ? (
-                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                          {l(
-                            "No direct workflow packages are assigned yet.",
-                            "Henuz dogrudan workflow paketi atanmis degil."
-                          )}
-                        </div>
-                      ) : (
-                        selectedWorkflowPackageAssignments.map((assignment) => (
-                          <div
-                            key={`workflow-package-assignment-${assignment.assignmentId}`}
-                            className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <div className="flex flex-wrap gap-2">
-                                  <Pill label={assignment.packageLabel} tone="green" />
-                                  <Pill label={assignment.scopeType} tone="blue" />
-                                  <Pill
-                                    label={getBundleStatusMeta(assignment.status).label}
-                                    tone={getBundleStatusMeta(assignment.status).tone}
-                                  />
-                                  {assignment.workflowFamilyLabel ? (
-                                    <Pill label={assignment.workflowFamilyLabel} tone="violet" />
-                                  ) : null}
-                                  <Pill
-                                    label={getWorkflowPackageSourceLabel(l, assignment.sourceType)}
-                                    tone={getWorkflowPackageSourceTone(assignment.sourceType)}
-                                  />
-                                  {assignment.effect !== "ALLOW" ? (
-                                    <Pill label={assignment.effect} tone="rose" />
-                                  ) : null}
-                                </div>
-                                <div className="mt-2 text-sm text-slate-700">
-                                  {assignment.scopeLabel}
-                                </div>
-                                <div className="mt-1 text-xs text-slate-500">
-                                  {formatAssignmentWindowLabel(
-                                    l,
-                                    assignment.effectiveFrom,
-                                    assignment.effectiveTo
-                                  )}
-                                </div>
-                                <div className="mt-1 text-xs text-slate-500">
-                                  {getWorkflowPackageSourceDetail(l, assignment)}
-                                </div>
-                                <div className="mt-1 text-xs text-slate-500">
-                                  {l(
-                                    "{{count}} permission codes",
-                                    "{{count}} yetki kodu",
-                                    { count: assignment.permissionCount }
-                                  )}
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => onRemoveWorkflowPackage(assignment)}
-                                disabled={saving && actingRowId === `workflow-package-${assignment.assignmentId}`}
-                                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {saving && actingRowId === `workflow-package-${assignment.assignmentId}`
-                                  ? l("Removing...", "Kaldiriliyor...")
-                                  : l("Remove package", "Paketi kaldir")}
-                              </button>
-                            </div>
-                            <p className="mt-3 text-sm leading-6 text-slate-600">
-                              {assignment.packageSummary}
-                            </p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    <form
-                      onSubmit={onAssignWorkflowPackage}
-                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
-                    >
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Assign package", "Paket ata")}
-                      </div>
-                      <div className="mt-4 space-y-3">
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700">
-                            {l("Workflow package", "Workflow paketi")}
-                          </label>
-                          <select
-                            value={workflowPackageAssignmentForm.packageCode}
-                            onChange={(event) =>
-                              onUpdateWorkflowPackageAssignmentField("packageCode", event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                          >
-                            {workflowPackageCatalogEntries.map((entry) => (
-                              <option key={`workflow-package-form-${entry.code}`} value={entry.code}>
-                                {entry.displayName}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-900">
-                          <div className="font-semibold">
-                            {selectedWorkflowPackageCatalogEntry?.displayName || "-"}
-                          </div>
-                          <div className="mt-1 text-emerald-800">
-                            {selectedWorkflowPackageCatalogEntry?.description || ""}
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <Pill
-                              label={l(
-                                "{{count}} permission codes",
-                                "{{count}} yetki kodu",
-                                { count: selectedWorkflowPackageCatalogEntry?.permissionCount || 0 }
-                              )}
-                              tone="green"
-                            />
-                            {workflowPackageScopeTypeOptions.map((scopeType) => (
-                              <Pill key={`workflow-package-scope-type-${scopeType}`} label={scopeType} tone="blue" />
-                            ))}
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700">
-                            {l("Scope type", "Kapsam tipi")}
-                          </label>
-                          <select
-                            value={workflowPackageAssignmentForm.scopeType}
-                            onChange={(event) =>
-                              onUpdateWorkflowPackageAssignmentField("scopeType", event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                          >
-                            {workflowPackageScopeTypeOptions.map((scopeType) => (
-                              <option key={`workflow-package-scope-type-option-${scopeType}`} value={scopeType}>
-                                {scopeType}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700">
-                            {l("Scope target", "Kapsam hedefi")}
-                          </label>
-                          <select
-                            value={workflowPackageAssignmentForm.scopeId}
-                            onChange={(event) =>
-                              onUpdateWorkflowPackageAssignmentField("scopeId", event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                          >
-                            {workflowPackageScopeOptions.map((option) => (
-                              <option key={`workflow-package-scope-${option.id}`} value={String(option.id)}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        {selectedWorkflowPackageAssignmentRoleStatus !== "aligned" ? (
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                            {selectedWorkflowPackageAssignmentRoleStatus === "missing"
-                              ? canUpsertRole && canAssignRolePermissions
-                                ? l(
-                                    "The managed package role does not exist in this tenant yet. First assignment will create it and align the exact package permissions automatically.",
-                                    "Yonetilen paket rolu bu tenant'ta henuz yok. Ilk atama onu olusturup tam paket yetkilerini otomatik hizalar."
-                                  )
-                                : l(
-                                    "First assignment needs both security.role.upsert and security.role_permissions.assign so the managed package role can be created and aligned.",
-                                    "Ilk atama icin security.role.upsert ve security.role_permissions.assign birlikte gerekir; boylece yonetilen paket rolu olusturulup hizalanabilir."
-                                  )
-                              : selectedWorkflowPackageRuntimeRoleExists
-                                ? canAssignRolePermissions
-                                  ? l(
-                                      "This managed package role exists but its permissions drifted. Saving will realign it to the package definition first.",
-                                      "Bu yonetilen paket rolu mevcut; ancak yetkileri sapmis. Kaydetme once onu paket tanimina geri hizalar."
-                                    )
-                                  : l(
-                                      "This managed package role exists but its permissions drifted. security.role_permissions.assign is required before it can be used safely.",
-                                      "Bu yonetilen paket rolu mevcut; ancak yetkileri sapmis. Guvenli kullanilabilmesi icin once security.role_permissions.assign gerekir."
-                                    )
-                                : null}
-                          </div>
-                        ) : (
-                          <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-600">
-                            {l(
-                              "This package role is already aligned. Saving will only add the scoped assignment row.",
-                              "Bu paket rolu zaten hizali. Kaydetme yalnizca kapsama bagli atama satirini ekler."
-                            )}
-                          </div>
-                        )}
-                        <button
-                          type="submit"
-                          disabled={saving || !workflowPackageAssignmentWriteAccess.allowed}
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {saving ? l("Saving...", "Kaydediliyor...") : l("Assign workflow package", "Workflow paketini ata")}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                    <h3 className="text-lg font-semibold text-slate-950">
-                      {l("Starter bundles & presets", "Starter paketler ve presetler")}
-                    </h3>
-                    <p className="mt-1 text-sm leading-6 text-slate-600">
-                      {l(
-                        "Start from a recommended business-role bundle or workflow preset, preview the exact packages, then apply only what you want. The resulting authority still lands as direct package grants, so nothing is hidden or all-or-nothing.",
-                        "Onerilen bir is rolu paketi veya workflow presetinden baslayin, tam paketleri onizleyin ve sadece istediklerinizi uygulayin. Ortaya cikan yetki yine dogrudan paket yetkileri olarak yazilir; boylece hicbir sey gizli ya da ya-hep-ya-hic kalmaz."
-                      )}
-                    </p>
-                  </div>
-                  <div className="grid gap-5 px-5 py-5 lg:grid-cols-[340px_minmax(0,1fr)]">
-                    <form
-                      onSubmit={onApplyPackageSource}
-                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
-                    >
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Quick apply", "Hizli uygula")}
-                      </div>
-                      <div className="mt-4 space-y-3">
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700">
-                            {l("Source", "Kaynak")}
-                          </label>
-                          <select
-                            value={packageSourceApplyForm.sourceKind}
-                            onChange={(event) =>
-                              onUpdatePackageSourceApplyField("sourceKind", event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                          >
-                            <option value="STARTER">
-                              {l("Business role starter", "Is rolu starter")}
-                            </option>
-                            <option value="PRESET">
-                              {l("Workflow preset", "Workflow preset")}
-                            </option>
-                          </select>
-                        </div>
-                        {packageSourceApplyForm.sourceKind === "STARTER" ? (
-                          <div className="space-y-2">
-                            <label className="text-sm font-semibold text-slate-700">
-                              {l("Business role", "Is rolu")}
-                            </label>
-                            <select
-                              value={packageSourceApplyForm.businessRoleCode}
-                              onChange={(event) =>
-                                onUpdatePackageSourceApplyField(
-                                  "businessRoleCode",
-                                  event.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                            >
-                              {roleFilterOptions.map((option) => (
-                                <option
-                                  key={`starter-business-role-${option.value}`}
-                                  value={option.value}
-                                >
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            <label className="text-sm font-semibold text-slate-700">
-                              {l("Workflow preset", "Workflow preset")}
-                            </label>
-                            <select
-                              value={packageSourceApplyForm.presetCode}
-                              onChange={(event) =>
-                                onUpdatePackageSourceApplyField("presetCode", event.target.value)
-                              }
-                              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                            >
-                              {workflowPresetCatalogEntries.map((entry) => (
-                                <option key={`starter-preset-${entry.code}`} value={entry.code}>
-                                  {entry.displayName}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
-                        <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-900">
-                          {packageSourceApplyForm.sourceKind === "STARTER" ? (
-                            <>
-                              <div className="font-semibold">
-                                {selectedPackageSourceBusinessRoleEntry?.displayName || "-"}
-                              </div>
-                              <div className="mt-1 text-sky-800">
-                                {selectedPackageSourceBusinessRoleEntry?.description || ""}
-                              </div>
-                              <div className="mt-2 text-xs text-sky-700">
-                                {l("Default scope", "Varsayilan kapsam")}:{" "}
-                                {selectedPackageSourceBusinessRoleEntry?.defaultScope || "-"}
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="font-semibold">
-                                {selectedPackageSourcePresetEntry?.displayName || "-"}
-                              </div>
-                              <div className="mt-1 text-sky-800">
-                                {selectedPackageSourcePresetEntry?.description || ""}
-                              </div>
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                {selectedPackageSourcePresetEntry?.workflowFamilyLabel ? (
-                                  <Pill
-                                    label={selectedPackageSourcePresetEntry.workflowFamilyLabel}
-                                    tone="violet"
-                                  />
-                                ) : null}
-                                <Pill
-                                  label={l(
-                                    "{{count}} steps",
-                                    "{{count}} adim",
-                                    {
-                                      count:
-                                        selectedPackageSourcePresetEntry?.stepCount || 0,
-                                    }
-                                  )}
-                                  tone="blue"
-                                />
-                              </div>
-                            </>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700">
-                            {l("Scope type", "Kapsam tipi")}
-                          </label>
-                          <select
-                            value={packageSourceApplyForm.scopeType}
-                            onChange={(event) =>
-                              onUpdatePackageSourceApplyField("scopeType", event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                          >
-                            {packageSourceScopeTypeOptions.map((scopeType) => (
-                              <option
-                                key={`package-source-scope-type-${scopeType}`}
-                                value={scopeType}
-                              >
-                                {scopeType}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700">
-                            {l("Scope target", "Kapsam hedefi")}
-                          </label>
-                          <select
-                            value={packageSourceApplyForm.scopeId}
-                            onChange={(event) =>
-                              onUpdatePackageSourceApplyField("scopeId", event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
-                          >
-                            {packageSourceScopeOptions.map((option) => (
-                              <option
-                                key={`package-source-scope-${option.id}`}
-                                value={String(option.id)}
-                              >
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        {packageSourceApplyForm.sourceKind === "STARTER" ? (
-                          <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={
-                                selectedPackageSourceBusinessRoleAssigned ||
-                                packageSourceApplyForm.assignBusinessRoleLabel
-                              }
-                              disabled={selectedPackageSourceBusinessRoleAssigned}
-                              onChange={(event) =>
-                                onUpdatePackageSourceApplyField(
-                                  "assignBusinessRoleLabel",
-                                  event.target.checked
-                                )
-                              }
-                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900"
-                            />
-                            <span>
-                              <span className="block font-semibold text-slate-900">
-                                {l(
-                                  "Also assign the business role label",
-                                  "Is rol etiketini de ata"
-                                )}
-                              </span>
-                              <span className="mt-1 block text-slate-600">
-                                {selectedPackageSourceBusinessRoleAssigned
-                                  ? l(
-                                      "This non-authoritative label already exists at the selected scope.",
-                                      "Bu otorite vermeyen etiket secilen kapsamda zaten var."
-                                    )
-                                  : l(
-                                      "Recommended when you want the resulting package mix to remain explainable as a starter-derived setup instead of plain direct grants.",
-                                      "Ortaya cikan paket karisiminin siradan dogrudan yetkiler yerine starter-turevli bir kurulum olarak gorunmesini istiyorsaniz onerilir."
-                                    )}
-                              </span>
-                            </span>
-                          </label>
-                        ) : null}
-                        {!packageSourceApplyWriteAccess.allowed ? (
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                            {l(
-                              "You do not have permission to apply starter or preset suggestions at the selected scope.",
-                              "Secilen kapsamda starter veya preset onerilerini uygulama yetkiniz yok."
-                            )}
-                          </div>
-                        ) : null}
-                        <button
-                          type="submit"
-                          disabled={
-                            saving ||
-                            !packageSourceApplyWriteAccess.allowed ||
-                            selectedPackageSourcePackageCodes.length === 0
-                          }
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {saving
-                            ? l("Applying...", "Uygulaniyor...")
-                            : l(
-                                "Apply {{count}} selected packages",
-                                "{{count}} secili paketi uygula",
-                                { count: selectedPackageSourcePackageCodes.length }
-                              )}
-                        </button>
-                      </div>
-                    </form>
-                    <div className="space-y-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            {l("Preview packages", "Onizleme paketleri")}
-                          </div>
-                          <p className="mt-1 text-sm leading-6 text-slate-600">
-                            {l(
-                              "Preview the exact packages that will be written as direct grants. Uncheck any package you do not want to apply.",
-                              "Dogrudan yetki olarak yazilacak tam paketleri onizleyin. Uygulamak istemediginiz paketlerin isaretini kaldirin."
-                            )}
-                          </p>
-                        </div>
-                        <Pill
-                          label={l(
-                            "{{count}} selected",
-                            "{{count}} secili",
-                            { count: selectedPackageSourcePackageCodes.length }
-                          )}
-                          tone="blue"
-                        />
-                      </div>
-                      {packageSourcePreviewEntries.length === 0 ? (
-                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                          {l(
-                            "This source does not currently expose any workflow packages.",
-                            "Bu kaynak su anda hic workflow paketi sunmuyor."
-                          )}
-                        </div>
-                      ) : (
-                        packageSourcePreviewEntries.map((entry) => {
-                          const previewState = getPackageSourcePreviewState(
-                            l,
-                            entry,
-                            packageSourceApplyForm.scopeType
-                          );
-                          return (
-                            <label
-                              key={`package-source-preview-${entry.code}`}
-                              className={`block rounded-2xl border px-4 py-4 ${
-                                entry.assignable
-                                  ? "border-slate-200 bg-white"
-                                  : "border-slate-200 bg-slate-50"
-                              }`}
-                            >
-                              <div className="flex items-start gap-3">
-                                <input
-                                  type="checkbox"
-                                  checked={entry.selected && entry.assignable}
-                                  disabled={!entry.assignable}
-                                  onChange={() =>
-                                    onTogglePackageSourcePreviewPackage(entry.code)
-                                  }
-                                  className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900"
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex flex-wrap gap-2">
-                                    <Pill label={entry.displayName} tone="green" />
-                                    <Pill
-                                      label={getPackageSourceRecommendationLabel(
-                                        l,
-                                        entry.recommendationType
-                                      )}
-                                      tone={getPackageSourceRecommendationTone(
-                                        entry.recommendationType
-                                      )}
-                                    />
-                                    {entry.workflowFamilyLabel ? (
-                                      <Pill
-                                        label={entry.workflowFamilyLabel}
-                                        tone="violet"
-                                      />
-                                    ) : null}
-                                    {entry.assignmentBlockedByExtension ? (
-                                      <Pill
-                                        label={l(
-                                          "Extension placeholder",
-                                          "Extension taslagi"
-                                        )}
-                                        tone="amber"
-                                      />
-                                    ) : null}
-                                  </div>
-                                  <p className="mt-3 text-sm leading-6 text-slate-600">
-                                    {entry.description}
-                                  </p>
-                                  <div className="mt-2 text-xs text-slate-500">
-                                    {getPackageSourcePreviewNote(l, entry)}
-                                  </div>
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    <Pill
-                                      label={l(
-                                        "{{count}} permission codes",
-                                        "{{count}} yetki kodu",
-                                        { count: entry.permissionCount || 0 }
-                                      )}
-                                      tone="green"
-                                    />
-                                    {(entry.allowedScopes || []).map((scopeType) => (
-                                      <Pill
-                                        key={`package-source-preview-scope-${entry.code}-${scopeType}`}
-                                        label={scopeType}
-                                        tone="blue"
-                                      />
-                                    ))}
-                                  </div>
-                                  <div
-                                    className={`mt-3 rounded-xl border px-3 py-2 text-xs ${getToneClasses(
-                                      previewState.tone
-                                    )}`}
-                                  >
-                                    {previewState.text}
-                                  </div>
-                                </div>
-                              </div>
-                            </label>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                    <h3 className="text-lg font-semibold text-slate-950">
-                      {l("Effective authority preview", "Etkin yetki onizlemesi")}
-                    </h3>
-                    <p className="mt-1 text-sm leading-6 text-slate-600">
-                      {l(
-                        "Read the selected user's current allow-side authority in business language before drilling into raw roles. Scope gaps between business labels and package authority stay visible here.",
-                        "Ham rollere inmeden once secili kullanicinin mevcut allow-tarafi yetkisini is dilinde okuyun. Is rol etiketleri ile paket yetkisi arasindaki kapsam bosluklari burada gorunur kalir."
-                      )}
-                    </p>
-                  </div>
-                  <div className="space-y-5 px-5 py-5">
-                    {effectiveAuthorityPreview.workflowLines.length === 0 &&
-                    effectiveAuthorityPreview.runtimeLines.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                        {l(
-                          "No active effective authority could be summarized yet from workflow packages or direct runtime roles. Use the runtime snapshot below for the current role set.",
-                          "Workflow paketlerinden veya dogrudan runtime rollerinden henuz ozetlenebilir etkin bir yetki bulunamadi. Mevcut rol setini gormek icin asagidaki runtime ozetini kullanin."
-                        )}
-                      </div>
-                    ) : null}
-                    {effectiveAuthorityPreview.workflowLines.length > 0 ? (
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          {l("Workflow & package authority", "Workflow ve paket yetkisi")}
-                        </div>
-                        <div className="mt-3 space-y-3">
-                          {effectiveAuthorityPreview.workflowLines.map((line) => (
-                            <div
-                              key={line.id}
-                              className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
-                            >
-                              <div className="flex flex-wrap gap-2">
-                                <Pill label={line.workflowFamilyLabel} tone="violet" />
-                                <Pill label={line.scopeType} tone="blue" />
-                                {line.sourceLabels.map((sourceLabel) => (
-                                  <Pill
-                                    key={`${line.id}-${sourceLabel}`}
-                                    label={sourceLabel}
-                                    tone="green"
-                                  />
-                                ))}
-                              </div>
-                              <p className="mt-3 text-sm font-medium leading-6 text-slate-900">
-                                {l(
-                                  "Can {{summary}} in {{scope}}.",
-                                  "{{scope}} kapsaminda {{summary}}.",
-                                  {
-                                    summary: line.summaryText,
-                                    scope: line.scopeLabel,
-                                  }
-                                )}
-                              </p>
-                              {line.missingText ? (
-                                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                                  {l(
-                                    "Still missing: {{missing}}.",
-                                    "Hala eksik olan: {{missing}}.",
-                                    {
-                                      missing: line.missingText,
-                                    }
-                                  )}
-                                </div>
-                              ) : null}
-                              {line.noteText ? (
-                                <div className="mt-3 text-xs text-slate-500">{line.noteText}</div>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    {effectiveAuthorityPreview.runtimeLines.length > 0 ? (
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          {l("Additional runtime authority", "Ek runtime yetkisi")}
-                        </div>
-                        <div className="mt-3 space-y-3">
-                          {effectiveAuthorityPreview.runtimeLines.map((line) => (
-                            <div
-                              key={line.id}
-                              className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
-                            >
-                              <div className="flex flex-wrap gap-2">
-                                <Pill label={line.roleLabel} tone="slate" />
-                                <Pill label={line.scopeType} tone="blue" />
-                                {line.sourceLabels.map((sourceLabel) => (
-                                  <Pill
-                                    key={`${line.id}-${sourceLabel}`}
-                                    label={sourceLabel}
-                                    tone="slate"
-                                  />
-                                ))}
-                              </div>
-                              <p className="mt-3 text-sm font-medium leading-6 text-slate-900">
-                                {l(
-                                  "Can {{summary}} in {{scope}}.",
-                                  "{{scope}} kapsaminda {{summary}}.",
-                                  {
-                                    summary: line.summaryText,
-                                    scope: line.scopeLabel,
-                                  }
-                                )}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    {effectiveAuthorityPreview.warnings.length > 0 ? (
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          {l("Scope alignment warnings", "Kapsam uyum uyarilari")}
-                        </div>
-                        <div className="mt-3 space-y-3">
-                          {effectiveAuthorityPreview.warnings.map((warning) => (
-                            <div
-                              key={warning.id}
-                              className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900"
-                            >
-                              {warning.text}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-semibold text-slate-950">
-                          {l("Assignment audit & SoD warnings", "Atama audit ve SoD uyarilari")}
-                        </h3>
-                        <p className="mt-1 text-sm leading-6 text-slate-600">
-                          {l(
-                            "Review who granted the current labels, packages, and runtime bundles, then check for UI-level segregation-of-duties overlaps before making more changes.",
-                            "Mevcut etiketleri, paketleri ve runtime paketlerini kimin verdigini gozden gecirin; sonra daha fazla degisiklik yapmadan once UI-seviyesi gorev ayriligi cakismalarini kontrol edin."
-                          )}
-                        </p>
-                      </div>
-                      <Pill
-                        label={
-                          selectedUserAssignmentAuditReadable
-                            ? l("Audit read enabled", "Audit okuma acik")
-                            : l("Audit read required", "Audit okuma gerekli")
-                        }
-                        tone={selectedUserAssignmentAuditReadable ? "blue" : "amber"}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-5 px-5 py-5">
-                    {selectedUserAuditLoading ? (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                        {l(
-                          "Loading assignment audit history for the selected user...",
-                          "Secili kullanici icin atama audit gecmisi yukleniyor..."
-                        )}
-                      </div>
-                    ) : null}
-                    {!selectedUserAuditLoading && selectedUserAuditError ? (
-                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-                        {selectedUserAuditError}
-                      </div>
-                    ) : null}
-                    {!selectedUserAuditLoading && !selectedUserAssignmentAuditReadable ? (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
-                        {l(
-                          "Granted-by attribution uses RBAC audit logs and appears only when security.audit.read is available. Granted-at and effective dates still come from the current assignment rows.",
-                          "Kim tarafindan verildigi bilgisi RBAC audit kayitlarini kullanir ve yalnizca security.audit.read mevcutsa gorunur. Verilis zamani ve etkinlik tarihleri ise mevcut atama satirlarindan gelmeye devam eder."
-                        )}
-                      </div>
-                    ) : null}
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("SoD warning summary", "SoD uyari ozeti")}
-                      </div>
-                      <div className="mt-3 space-y-3">
-                        {assignmentAuditSummary.sodWarnings.length === 0 ? (
-                          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
-                            {l(
-                              "No obvious UI-level segregation-of-duties overlaps were detected from the current package and runtime-role set.",
-                              "Mevcut paket ve runtime rol setinden belirgin bir UI-seviyesi gorev ayriligi cakismasi tespit edilmedi."
-                            )}
-                          </div>
-                        ) : (
-                          assignmentAuditSummary.sodWarnings.map((warning) => (
-                            <div
-                              key={warning.id}
-                              className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4"
-                            >
-                              <div className="flex flex-wrap gap-2">
-                                <Pill
-                                  label={String(warning.severity || "WARN").toUpperCase()}
-                                  tone={warning.severity === "block" ? "rose" : "amber"}
-                                />
-                                <Pill label={warning.title} tone="amber" />
-                                {warning.scopeLabel ? (
-                                  <Pill label={warning.scopeLabel} tone="blue" />
-                                ) : null}
-                                {(warning.sourceLabels || []).map((sourceLabel) => (
-                                  <Pill
-                                    key={`${warning.id}-${sourceLabel}`}
-                                    label={sourceLabel}
-                                    tone="slate"
-                                  />
-                                ))}
-                              </div>
-                              <p className="mt-3 text-sm leading-6 text-amber-900">
-                                {warning.description}
-                              </p>
-                              {(warning.packageLabels || []).length > 0 ? (
-                                <div className="mt-3">
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
-                                    {l("Affected packages", "Etkilenen paketler")}
-                                  </div>
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {warning.packageLabels.map((packageLabel) => (
-                                      <Pill
-                                        key={`${warning.id}-${packageLabel}`}
-                                        label={packageLabel}
-                                        tone="green"
-                                      />
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
-                              {(warning.roleLabels || []).length > 0 ? (
-                                <div className="mt-3">
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
-                                    {l("Affected roles", "Etkilenen roller")}
-                                  </div>
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {warning.roleLabels.map((roleLabel) => (
-                                      <Pill
-                                        key={`${warning.id}-${roleLabel}`}
-                                        label={roleLabel}
-                                        tone="violet"
-                                      />
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          {l("Assignment history", "Atama gecmisi")}
-                        </div>
-                        <Pill
-                          label={l(
-                            "{{count}} current items",
-                            "{{count}} guncel oge",
-                            { count: assignmentAuditSummary.auditItems.length }
-                          )}
-                          tone="blue"
-                        />
-                      </div>
-                      <div className="mt-3 space-y-3">
-                        {assignmentAuditSummary.auditItems.length === 0 ? (
-                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                            {l(
-                              "No current labels, package grants, or runtime bundles are available for audit display yet.",
-                              "Audit ekraninda gosterilecek mevcut etiket, paket yetkisi veya runtime paketi henuz bulunmuyor."
-                            )}
-                          </div>
-                        ) : (
-                          assignmentAuditSummary.auditItems.map((item) => (
-                            <div
-                              key={item.id}
-                              className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
-                            >
-                              <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div>
-                                  <div className="flex flex-wrap gap-2">
-                                    <Pill label={item.kindLabel} tone="violet" />
-                                    <Pill label={item.sourceLabel} tone="blue" />
-                                    <Pill label={item.statusLabel} tone={item.statusTone} />
-                                  </div>
-                                  <div className="mt-3 text-sm font-semibold text-slate-950">
-                                    {item.title}
-                                  </div>
-                                  <div className="mt-1 text-sm text-slate-600">{item.scopeLabel}</div>
-                                </div>
-                                <div className="text-right text-xs text-slate-500">
-                                  <div>
-                                    {l("Granted at", "Verilis zamani")}: {formatDateTime(item.grantedAt)}
-                                  </div>
-                                  <div className="mt-1">
-                                    {l("Effective", "Yururluk")}: {formatDate(item.effectiveFrom)} -{" "}
-                                    {formatDate(item.effectiveTo)}
-                                  </div>
-                                </div>
-                              </div>
-                              {item.sourceDetail ? (
-                                <p className="mt-3 text-sm leading-6 text-slate-600">
-                                  {item.sourceDetail}
-                                </p>
-                              ) : null}
-                              <div className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
-                                <div>
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-                                    {l("Granted by", "Kim verdi")}
-                                  </div>
-                                  <div className="mt-1">{item.grantedByLabel}</div>
-                                </div>
-                                <div>
-                                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-                                    {l("Last scope change", "Son kapsam degisikligi")}
-                                  </div>
-                                  <div className="mt-1">
-                                    {item.lastChangedByLabel && item.lastChangedAt
-                                      ? l(
-                                          "{{actor}} at {{time}}",
-                                          "{{actor}} tarafindan {{time}} aninda",
-                                          {
-                                            actor: item.lastChangedByLabel,
-                                            time: formatDateTime(item.lastChangedAt),
-                                          }
-                                        )
-                                      : l("No scope replacement recorded", "Kayitli kapsam degisikligi yok")}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                    <h3 className="text-lg font-semibold text-slate-950">
-                      {l("Runtime authority snapshot", "Runtime yetki ozeti")}
-                    </h3>
-                    <p className="mt-1 text-sm leading-6 text-slate-600">
-                      {l(
-                        "This section explains the selected user's current permission-bearing runtime roles and the workflow-package coverage visible from those assignments.",
-                        "Bu bolum secili kullanicinin mevcut yetki veren runtime rollerini ve bu atamalardan gorunen workflow paket kapsamini aciklar."
-                      )}
-                    </p>
-                  </div>
-                  <div className="space-y-5 px-5 py-5">
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Current runtime roles", "Mevcut runtime roller")}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {selectedUserRoleEntries.length > 0 ? (
-                          selectedUserRoleEntries.map((entry) => (
-                            <Pill
-                              key={`selected-role-${entry.runtimeCode || entry.code}`}
-                              label={entry.code}
-                              tone={
-                                entry.category === "system"
-                                  ? "blue"
-                                  : entry.category === "scoped"
-                                    ? "green"
-                                    : entry.category === "readonly"
-                                      ? "slate"
-                                      : "violet"
-                              }
-                            />
-                          ))
-                        ) : (
-                          <span className="text-sm text-slate-500">
-                            {l("No runtime roles are assigned yet.", "Henuz runtime rol atanmis degil.")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Workflow package coverage", "Workflow paket kapsami")}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {selectedUserPackageLabels.length > 0 ? (
-                          selectedUserPackageLabels.map((packageLabel) => (
-                            <Pill
-                              key={`selected-package-${packageLabel}`}
-                              label={packageLabel}
-                              tone="green"
-                            />
-                          ))
-                        ) : (
-                          <span className="text-sm text-slate-500">
-                            {l(
-                              "No workflow packages are visible for the current runtime roles yet.",
-                              "Mevcut runtime roller icin henuz gorunur workflow paketi yok."
-                            )}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Scope targets", "Kapsam hedefleri")}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {selectedUserScopeLabels.length > 0 ? (
-                          selectedUserScopeLabels.map((scopeLabel) => (
-                            <Pill key={`selected-scope-${scopeLabel}`} label={scopeLabel} tone="blue" />
-                          ))
-                        ) : (
-                          <span className="text-sm text-slate-500">
-                            {l("No scope targets are assigned yet.", "Henuz kapsam hedefi atanmis degil.")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-950">
-                        {l("Business assignment bundles", "Is atama paketleri")}
-                      </h3>
-                      <p className="mt-1 text-sm leading-6 text-slate-600">
-                        {l(
-                          "Grouped business assignment bundles for the selected user. Revoke here when needed, and use the bulk assignment tab for broader edit flows.",
-                          "Secili kullanici icin gruplanmis is atama paketleri. Gerektiginde burada geri alin; daha genis duzenleme akislari icin toplu atama sekmesini kullanin."
-                        )}
-                      </p>
-                    </div>
-                    <Pill
-                      label={l("{{count}} bundles", "{{count}} paket", {
-                        count: selectedUserBundles.length,
-                      })}
-                    />
-                  </div>
-                  <div className="space-y-3 px-5 py-5">
-                    {selectedUserBundles.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                        {l(
-                          "This user has no grouped business assignments yet.",
-                          "Bu kullanicinin henuz gruplanmis is atamasi yok."
-                        )}
-                      </div>
-                    ) : (
-                      selectedUserBundles.map((bundle) => (
-                        <WorkbenchBundleCard
-                          key={`workbench-bundle-${bundle.id}`}
-                          actingRowId={actingRowId}
-                          bundle={bundle}
-                          expanded={selectedBundle?.id === bundle.id}
-                          l={l}
-                          onOpenUserEditor={onOpenUserEditor}
-                          onRevokeBundle={onRevokeBundle}
-                          onSelectBundle={onSelectBundle}
-                          saving={saving}
-                        />
-                      ))
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </aside>
-      </div>
+      ) : null}
     </section>
   );
 }

@@ -138,12 +138,11 @@ Create a new route family:
 Use query tabs inside them:
 
 ```text
-/app/ayarlar/security-admin/users?tab=people
+/app/ayarlar/security-admin/users?tab=users
 /app/ayarlar/security-admin/users?tab=assignments
 /app/ayarlar/security-admin/users?tab=scopes
 /app/ayarlar/security-admin/users?tab=delegations
 /app/ayarlar/security-admin/users?tab=coverage
-/app/ayarlar/security-admin/users?tab=authority
 
 /app/ayarlar/security-admin/catalog?tab=access-model
 /app/ayarlar/security-admin/catalog?tab=roles
@@ -312,12 +311,11 @@ Turn the current assignment-related sprawl into one coherent workbench.
 
 ### Target tabs
 
-- `People`
+- `Users`
 - `Assignments`
 - `Scope Access`
 - `Delegations`
 - `Temporary Coverage`
-- `Effective Authority`
 
 ### Structural goal
 
@@ -327,7 +325,7 @@ Turn the current assignment-related sprawl into one coherent workbench.
 - user list panel
 - selected user summary panel
 - tabbed content sections
-- effective-authority panel that is always visible or one click away
+- authority review that stays inside the selected-user surface without needing a duplicate tab
 
 ### What to preserve
 
@@ -347,13 +345,13 @@ Turn the current assignment-related sprawl into one coherent workbench.
 - Users and related assignment tools live in one workbench
 - Delegations and temporary coverage no longer feel like separate products
 - The page is materially smaller and easier to reason about
-- Effective authority preview stays easy to reach
+- Authority review stays easy to reach without a duplicate tab
 
 ## PR-SECUX-04 - Access Catalog workbench
 
 ### Goal
 
-Separate catalog definition from people assignment and make the access model readable.
+Separate catalog definition from user assignment and make the access model readable.
 
 ### Files
 

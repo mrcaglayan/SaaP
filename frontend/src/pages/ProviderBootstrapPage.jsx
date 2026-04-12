@@ -6,6 +6,7 @@ import {
   listProviderCountries,
   listProviderCurrencies,
   listProviderTenants,
+  restoreProviderTenantBootstrapRoles,
   updateProviderTenantTaxEngine,
   updateProviderCurrency,
   updateProviderCountry,
@@ -49,6 +50,10 @@ function toTenantStatusLabel(t, status) {
   );
 }
 
+/**
+ * Provider control-plane workspace for tenant provisioning and lightweight
+ * tenant recovery operations.
+ */
 export default function ProviderBootstrapPage() {
   const { token, providerAdmin, logout, clearSession } = useProviderAuth();
   const { t } = useI18n();
@@ -66,6 +71,7 @@ export default function ProviderBootstrapPage() {
   const [savingCountry, setSavingCountry] = useState(false);
   const [updatingTenantId, setUpdatingTenantId] = useState(null);
   const [updatingTenantTaxEngineId, setUpdatingTenantTaxEngineId] = useState(null);
+  const [restoringTenantRolesId, setRestoringTenantRolesId] = useState(null);
   const [updatingCurrencyCode, setUpdatingCurrencyCode] = useState(null);
   const [updatingCountryId, setUpdatingCountryId] = useState(null);
   const [editingCurrencyCode, setEditingCurrencyCode] = useState(null);
@@ -258,6 +264,36 @@ export default function ProviderBootstrapPage() {
       );
     } finally {
       setUpdatingTenantTaxEngineId(null);
+    }
+  }
+
+  async function handleRestoreTenantBootstrapRoles(tenant) {
+    if (!token || !tenant?.id) {
+      return;
+    }
+
+    setRestoringTenantRolesId(tenant.id);
+    setError("");
+    setMessage("");
+    try {
+      const response = await restoreProviderTenantBootstrapRoles(token, tenant.id);
+      setMessage(
+        t("providerBootstrap.messages.bootstrapRolesRestored", {
+          id: tenant.id,
+          email: response?.user?.email || "-",
+        })
+      );
+      await loadTenants();
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        clearSession();
+      }
+      setError(
+        err?.response?.data?.message ||
+          t("providerBootstrap.errors.restoreBootstrapRoles")
+      );
+    } finally {
+      setRestoringTenantRolesId(null);
     }
   }
 
@@ -666,6 +702,16 @@ export default function ProviderBootstrapPage() {
                             className="rounded border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-700 disabled:opacity-60"
                           >
                             {t("providerBootstrap.directory.actions.suspend")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRestoreTenantBootstrapRoles(tenant)}
+                            disabled={restoringTenantRolesId === tenant.id}
+                            className="rounded border border-sky-300 px-2 py-1 text-xs font-semibold text-sky-700 disabled:opacity-60"
+                          >
+                            {restoringTenantRolesId === tenant.id
+                              ? t("providerBootstrap.directory.actions.restoringBootstrap")
+                              : t("providerBootstrap.directory.actions.restoreBootstrap")}
                           </button>
                         </div>
                       </td>

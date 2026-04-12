@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { listAccessModelCatalogSections } from "./roleCatalog.js";
+import { ROLES_PERMISSIONS_CANONICAL_PATH } from "../../layouts/sidebarConfig.js";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 import SecurityCatalogWorkbenchTabs from "./components/catalog/SecurityCatalogWorkbenchTabs.jsx";
 
@@ -2196,7 +2197,7 @@ export default function AccessModelCatalogPage() {
         label: "Open workflow governance",
       }
       : {
-        to: "/app/ayarlar/security-admin/catalog?tab=roles",
+        to: ROLES_PERMISSIONS_CANONICAL_PATH,
         label: "Open roles & permissions",
       };
 
@@ -2429,7 +2430,7 @@ export default function AccessModelCatalogPage() {
                     Open workflow governance
                   </Link>
                   <Link
-                    to="/app/ayarlar/security-admin/catalog?tab=roles"
+                    to={ROLES_PERMISSIONS_CANONICAL_PATH}
                     className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
                   >
                     Open roles & permissions

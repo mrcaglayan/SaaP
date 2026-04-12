@@ -75,6 +75,20 @@ export async function updateProviderTenantTaxEngine(token, tenantId, enabled) {
   return response.data;
 }
 
+/**
+ * Reassigns the shipped bootstrap admin roles from the provider control plane.
+ * When no email is supplied, the backend restores them to the tenant's
+ * earliest viable user automatically.
+ */
+export async function restoreProviderTenantBootstrapRoles(token, tenantId, email) {
+  const response = await providerApi.post(
+    `/api/v1/provider/tenants/${tenantId}/bootstrap-roles`,
+    email ? { email } : {},
+    withAuth(token)
+  );
+  return response.data;
+}
+
 export async function listProviderCurrencies(token) {
   const response = await providerApi.get("/api/v1/provider/currencies", withAuth(token));
   return response.data;

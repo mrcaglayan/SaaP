@@ -19,7 +19,6 @@ import {
   formatDelegationScopeLabel,
   formatDelegationWindow,
 } from "../../utils/delegationUi.js";
-import SecurityUsersWorkbenchTabs from "./components/users/SecurityUsersWorkbenchTabs.jsx";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 
 const SCOPE_TYPES = [
@@ -389,7 +388,6 @@ export default function ApprovalDelegationsPage() {
         },
       ]}
       hiddenPrimarySurfaceKeys={["roles-permissions"]}
-      toolbar={<SecurityUsersWorkbenchTabs activeTab="delegations" counts={{ delegations: filteredRows.length }} />}
     >
       <div className="space-y-4">
       <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
@@ -402,7 +400,7 @@ export default function ApprovalDelegationsPage() {
           authority.
         </p>
         <Link
-          to="/app/ayarlar/security-admin/users?tab=coverage"
+          to="/app/ayarlar/rbac/temporary-coverage"
           className="mt-3 inline-flex rounded-lg border border-sky-300 bg-white px-3 py-2 font-medium text-sky-800 hover:bg-sky-100"
         >
           Open Temporary Operational Coverage

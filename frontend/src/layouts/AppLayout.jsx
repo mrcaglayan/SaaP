@@ -1048,7 +1048,7 @@ export default function AppLayout() {
       />
 
       <aside
-        className={`absolute inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white text-slate-900 shadow-xl transition-all duration-300 md:static md:translate-x-0 lg:rounded-br-3xl ${collapsed ? "w-13" : "w-57.25"
+        className={`absolute inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white text-slate-900 shadow-xl transition-all duration-300 md:static md:translate-x-0 lg:rounded-br-3xl ${collapsed ? "w-13" : "w-[14.75rem]"
           } ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
         <div

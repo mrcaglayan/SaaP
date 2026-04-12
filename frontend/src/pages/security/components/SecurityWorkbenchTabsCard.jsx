@@ -47,15 +47,22 @@ export default function SecurityWorkbenchTabsCard({
   description = "",
   tabs = [],
 }) {
+  const hasHeader = Boolean(title) || Boolean(description);
   return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div>
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-          {title}
+    <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-4 shadow-sm">
+      {hasHeader ? (
+        <div className="mb-4">
+          {title ? (
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              {title}
+            </div>
+          ) : null}
+          {description ? (
+            <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+          ) : null}
         </div>
-        <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
+      ) : null}
+      <div className="flex flex-wrap gap-2">
         {tabs.map((tab) => (
           <TabPill
             key={tab.key}

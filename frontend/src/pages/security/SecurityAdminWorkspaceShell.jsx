@@ -43,18 +43,18 @@ const DEFAULT_WORKSPACE_GUIDANCE = Object.freeze({
       tr: "Tek bir yetki hikayesini odakta tutun",
     }),
     description: Object.freeze({
-      en: "Choose the person first, then move across sibling tabs to change the specific source behind that same effective authority.",
-      tr: "Once kisiyi secin, sonra ayni etkili yetkinin arkasindaki belirli kaynagi degistirmek icin kardes sekmeler arasinda gecin.",
+      en: "Choose the user first, then move across sibling tabs to change the specific source behind that same effective authority.",
+      tr: "Once kullaniciyi secin, sonra ayni etkili yetkinin arkasindaki belirli kaynagi degistirmek icin kardes sekmeler arasinda gecin.",
     }),
     items: Object.freeze([
       Object.freeze({
         title: Object.freeze({
-          en: "Select the assignee first",
-          tr: "Once atanani secin",
+          en: "Select the user first",
+          tr: "Once kullaniciyi secin",
         }),
         description: Object.freeze({
-          en: "People selection should stay stable while you compare assignments, scopes, delegations, and effective authority.",
-          tr: "Atamalar, kapsamlar, delegasyonlar ve etkili yetkiyi karsilastirirken kisi secimi sabit kalmalidir.",
+          en: "User selection should stay stable while you compare assignments, scopes, delegations, and effective authority.",
+          tr: "Atamalar, kapsamlar, delegasyonlar ve etkili yetkiyi karsilastirirken kullanici secimi sabit kalmalidir.",
         }),
       }),
       Object.freeze({
@@ -378,6 +378,9 @@ export default function SecurityAdminWorkspaceShell({
   guidance = null,
   hiddenPrimarySurfaceKeys = [],
   showWorkbenchNavigation = true,
+  showHeader = true,
+  showStats = true,
+  showGuidancePanel = true,
   children,
 }) {
   const { l } = useI18n();
@@ -443,7 +446,7 @@ export default function SecurityAdminWorkspaceShell({
 
   return (
     <div className="space-y-6">
-      <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+      {showHeader ? <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
         <div className="relative overflow-hidden border-b border-slate-200 bg-[radial-gradient(circle_at_top_left,#e0f2fe,transparent_45%),radial-gradient(circle_at_top_right,#dcfce7,transparent_35%),linear-gradient(135deg,#f8fafc,#ffffff)] px-6 py-6">
           <div className="relative z-10 flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-3xl">
@@ -473,12 +476,6 @@ export default function SecurityAdminWorkspaceShell({
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                   {l("Workspace sections", "Calisma alani bolumleri")}
                 </div>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  {l(
-                    "Use the canonical workbench routes while the page bodies are still landing in stages.",
-                    "Sayfa govdeleri asamali gelirken canonical workbench rotalarini kullanin."
-                  )}
-                </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {workspaceSections.map((section) => (
                     <WorkspaceNavItem
@@ -504,12 +501,6 @@ export default function SecurityAdminWorkspaceShell({
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                   {l("Primary surfaces", "Birincil yuzeyler")}
                 </div>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  {l(
-                    "These quick links already use the canonical workbench routes even where the body still delegates to current pages.",
-                    "Govde halen mevcut sayfalara delegasyon yapsa bile bu hizli baglantilar canonical workbench rotalarini kullanir."
-                  )}
-                </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {primarySurfaces.map((surface) => (
                     <WorkspaceNavItem
@@ -530,9 +521,9 @@ export default function SecurityAdminWorkspaceShell({
             </div>
           ) : null}
         </div>
-      </section>
+      </section> : null}
 
-      {Array.isArray(stats) && stats.length > 0 ? (
+      {showStats && Array.isArray(stats) && stats.length > 0 ? (
         <section
           className={`grid gap-4 ${
             stats.length >= 4
@@ -551,16 +542,16 @@ export default function SecurityAdminWorkspaceShell({
         </section>
       ) : null}
 
-      {toolbar || hasGuidancePanel ? (
+      {toolbar || (showGuidancePanel && hasGuidancePanel) ? (
         <section
           className={
-            toolbar && hasGuidancePanel
+            toolbar && showGuidancePanel && hasGuidancePanel
               ? "grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_360px]"
               : "space-y-4"
           }
         >
           {toolbar ? <div className="space-y-4">{toolbar}</div> : null}
-          {hasGuidancePanel ? (
+          {showGuidancePanel && hasGuidancePanel ? (
             <SecurityWorkbenchGuidancePanel
               eyebrow={
                 resolvedGuidance?.eyebrow ||

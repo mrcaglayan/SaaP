@@ -135,6 +135,9 @@ export const SECURITY_ADMIN_ROUTE_FAMILY = Object.freeze({
   workflows: "/app/ayarlar/security-admin/workflows",
   diagnostics: "/app/ayarlar/security-admin/diagnostics",
 });
+export const USER_MANAGEMENT_CANONICAL_PATH = "/app/ayarlar/kullanicilar";
+export const ROLES_PERMISSIONS_CANONICAL_PATH =
+  "/app/ayarlar/roller-ve-yetkiler";
 export const SECURITY_ADMIN_DEEP_LINK_QUERY_KEYS = Object.freeze([
   "tab",
   "userId",
@@ -161,8 +164,8 @@ export const SECURITY_ADMIN_WORKSPACE_SECTIONS = Object.freeze([
       tr: "Kullanicilar ve Atamalar",
     }),
     description: Object.freeze({
-      en: "Manage people, scope access, delegations, temporary coverage, and effective authority from one workbench family.",
-      tr: "Kisileri, scope erisimini, delegasyonlari, gecici kapsama kayitlarini ve etkili yetkiyi tek workbench ailesinden yonetin.",
+      en: "Manage users, scope access, delegations, temporary coverage, and authority review from one workbench family.",
+      tr: "Kullanicilari, scope erisimini, delegasyonlari, gecici kapsama kayitlarini ve yetki incelemesini tek workbench ailesinden yonetin.",
     }),
   }),
   Object.freeze({
@@ -249,7 +252,7 @@ export const SECURITY_ADMIN_PRIMARY_SURFACES = Object.freeze([
   Object.freeze({
     key: "roles-permissions",
     workspaceSectionKey: "catalog",
-    to: "/app/ayarlar/security-admin/catalog?tab=roles",
+    to: ROLES_PERMISSIONS_CANONICAL_PATH,
     accessPath: "/app/ayarlar/rbac/roles-permissions",
     label: Object.freeze({
       en: "Roles & permissions",
@@ -289,7 +292,7 @@ export const SECURITY_ADMIN_COMPANION_LINKS = Object.freeze([
   }),
   Object.freeze({
     workspaceSectionKey: "users",
-    to: "/app/ayarlar/security-admin/users?tab=delegations",
+    to: "/app/ayarlar/rbac/delegations",
     accessPath: "/app/ayarlar/rbac/delegations",
     label: Object.freeze({
       en: "Approval delegations",
@@ -298,7 +301,7 @@ export const SECURITY_ADMIN_COMPANION_LINKS = Object.freeze([
   }),
   Object.freeze({
     workspaceSectionKey: "users",
-    to: "/app/ayarlar/security-admin/users?tab=coverage",
+    to: "/app/ayarlar/rbac/temporary-coverage",
     accessPath: "/app/ayarlar/rbac/temporary-coverage",
     label: Object.freeze({
       en: "Temporary coverage",
@@ -406,7 +409,7 @@ export const SECURITY_ADMIN_ROUTE_ADAPTERS = Object.freeze([
     defaultTab: "assignments",
     tabs: Object.freeze([
       Object.freeze({
-        key: "people",
+        key: "users",
         permissionPath: "/app/ayarlar/rbac/user-assignments",
         surfaceKey: "user-assignments",
       }),
@@ -429,11 +432,6 @@ export const SECURITY_ADMIN_ROUTE_ADAPTERS = Object.freeze([
         key: "coverage",
         permissionPath: "/app/ayarlar/rbac/temporary-coverage",
         surfaceKey: "temporary-coverage",
-      }),
-      Object.freeze({
-        key: "authority",
-        permissionPath: "/app/ayarlar/rbac/user-assignments",
-        surfaceKey: "user-assignments",
       }),
     ]),
   }),
@@ -554,15 +552,15 @@ export const SECURITY_ADMIN_ROUTE_TRANSITION_PLAN = Object.freeze([
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/delegations",
-    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
-    defaultSearch: "?tab=delegations",
-    transitionType: "redirect-only-compatibility-route",
+    futurePath: "/app/ayarlar/rbac/delegations",
+    defaultSearch: "",
+    transitionType: "phase1-companion-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/temporary-coverage",
-    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.users,
-    defaultSearch: "?tab=coverage",
-    transitionType: "redirect-only-compatibility-route",
+    futurePath: "/app/ayarlar/rbac/temporary-coverage",
+    defaultSearch: "",
+    transitionType: "phase1-companion-route",
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/sube-operatorleri",
@@ -578,8 +576,8 @@ export const SECURITY_ADMIN_ROUTE_TRANSITION_PLAN = Object.freeze([
   }),
   Object.freeze({
     currentPath: "/app/ayarlar/rbac/roles-permissions",
-    futurePath: SECURITY_ADMIN_ROUTE_FAMILY.catalog,
-    defaultSearch: "?tab=roles",
+    futurePath: ROLES_PERMISSIONS_CANONICAL_PATH,
+    defaultSearch: "",
     transitionType: "redirect-only-compatibility-route",
   }),
   Object.freeze({
@@ -1218,14 +1216,32 @@ export const sidebarItems = [
         items: [
           {
             label: "Roller ve Yetkiler",
-            to: "/app/ayarlar/security-admin/catalog?tab=roles",
+            to: ROLES_PERMISSIONS_CANONICAL_PATH,
             requiredPermissions: ROLE_PERMISSIONS_PAGE_PERMISSIONS,
             implemented: true,
           },
           {
-            label: "Kullanicilar ve Atamalar",
-            to: "/app/ayarlar/security-admin/users?tab=assignments",
+            label: "Kullanicilar",
+            to: USER_MANAGEMENT_CANONICAL_PATH,
             requiredPermissions: SECURITY_ADMIN_USERS_WORKBENCH_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Onay Delegasyonlari",
+            to: "/app/ayarlar/rbac/delegations",
+            requiredPermissions: APPROVAL_DELEGATIONS_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Gecici Kapsama",
+            to: "/app/ayarlar/rbac/temporary-coverage",
+            requiredPermissions: TEMPORARY_OPERATIONAL_COVERAGE_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "Yerel Kullanici Yonetimi",
+            to: "/app/ayarlar/sube-operatorleri",
+            requiredPermissions: BRANCH_OPERATOR_MANAGEMENT_PAGE_PERMISSIONS,
             implemented: true,
           },
           {
@@ -1238,6 +1254,12 @@ export const sidebarItems = [
             label: "Workflow Governance",
             to: "/app/ayarlar/security-admin/workflows?tab=definitions",
             requiredPermissions: SECURITY_ADMIN_WORKFLOWS_WORKBENCH_PAGE_PERMISSIONS,
+            implemented: true,
+          },
+          {
+            label: "SoD Uyumluluğu",
+            to: "/app/ayarlar/security-admin/diagnostics?tab=compliance",
+            requiredPermissions: COMPLIANCE_REPORTS_PAGE_PERMISSIONS,
             implemented: true,
           },
           {

@@ -179,6 +179,8 @@ export const messages = {
         provisionFailed: "Tenant olusturma islemi basarisiz.",
         updateStatus: "Tenant durumu guncellenemedi.",
         updateTaxEngine: "Tenant vergi motoru ayari guncellenemedi.",
+        restoreBootstrapRoles:
+          "Bootstrap rollerini geri yukleme islemi basarisiz.",
         loadCountries: "Ulke listesi yuklenemedi.",
         loadCurrencies: "Para birimi listesi yuklenemedi.",
         createCurrency: "Para birimi olusturma islemi basarisiz.",
@@ -191,6 +193,8 @@ export const messages = {
         statusUpdated: "Tenant #{{id}} durumu {{status}} olarak guncellendi.",
         taxEngineUpdated:
           "Tenant #{{id}} vergi motoru {{status}} olarak guncellendi.",
+        bootstrapRolesRestored:
+          "Tenant #{{id}} icin SecurityAdmin + SystemAdmin rolleri {{email}} kullanicisina yeniden atandi.",
         currencyCreated: "Para birimi kaydi olusturuldu.",
         currencyUpdated: "Para birimi {{code}} guncellendi.",
         countryCreated: "Ulke kaydi olusturuldu.",
@@ -241,6 +245,10 @@ export const messages = {
         actions: {
           activate: "Aktif Et",
           suspend: "Askida Al",
+          restoreBootstrap: "Bootstrap rollerini geri yukle",
+          restoringBootstrap: "Geri yukleniyor...",
+          restoreBootstrapPrompt:
+            "{{code}} tenant'i icin SecurityAdmin + SystemAdmin rollerinin yeniden atanacagi kullanici e-postasini girin.",
         },
         taxEngine: {
           label: "Ulke vergi motoru",
@@ -483,10 +491,12 @@ export const messages = {
         "/app/demirbas-raporu": "Demirbas Raporu",
         "/app/mizan-raporu": "Mizan Raporu",
         "/app/ayarlar": "Ayarlar",
-        "/app/ayarlar/security-admin": "Genel Bakis",
+        "/app/ayarlar/security-admin": "Kullanıcı Yönetimi",
         "/app/ayarlar/security-admin?view=overview": "Genel Bakis",
+        "/app/ayarlar/kullanicilar": "Kullanicilar",
         "/app/ayarlar/security-admin/users": "Kullanicilar ve Atamalar",
-        "/app/ayarlar/security-admin/users?tab=people": "Kisiler",
+        "/app/ayarlar/security-admin/users?tab=users": "Kullanicilar",
+        "/app/ayarlar/security-admin/users?tab=people": "Kullanicilar",
         "/app/ayarlar/security-admin/users?tab=assignments":
           "Atamalar",
         "/app/ayarlar/security-admin/users?tab=scopes": "Kapsam erisimi",
@@ -494,8 +504,11 @@ export const messages = {
           "Delegasyonlar",
         "/app/ayarlar/security-admin/users?tab=coverage":
           "Gecici kapsama",
+        "/app/ayarlar/rbac/delegations": "Delegasyonlar",
+        "/app/ayarlar/rbac/temporary-coverage": "Gecici kapsama",
         "/app/ayarlar/security-admin/users?tab=authority":
-          "Etkili yetki",
+          "Kullanicilar",
+        "/app/ayarlar/roller-ve-yetkiler": "Roller ve Yetkiler",
         "/app/ayarlar/security-admin/catalog": "Erisim Katalogu",
         "/app/ayarlar/security-admin/catalog?tab=access-model":
           "Erisim Katalogu",
@@ -2626,6 +2639,7 @@ export const messages = {
         provisionFailed: "Tenant provisioning failed.",
         updateStatus: "Failed to update tenant status.",
         updateTaxEngine: "Failed to update tenant tax engine setting.",
+        restoreBootstrapRoles: "Failed to restore bootstrap roles.",
         loadCountries: "Failed to load countries.",
         loadCurrencies: "Failed to load currencies.",
         createCurrency: "Currency creation failed.",
@@ -2637,6 +2651,8 @@ export const messages = {
         created: "Tenant and first admin were created successfully.",
         statusUpdated: "Tenant #{{id}} status updated to {{status}}.",
         taxEngineUpdated: "Tenant #{{id}} tax engine updated to {{status}}.",
+        bootstrapRolesRestored:
+          "SecurityAdmin + SystemAdmin were restored for {{email}} in tenant #{{id}}.",
         currencyCreated: "Currency record created.",
         currencyUpdated: "Currency {{code}} updated.",
         countryCreated: "Country record created.",
@@ -2687,6 +2703,10 @@ export const messages = {
         actions: {
           activate: "Activate",
           suspend: "Suspend",
+          restoreBootstrap: "Restore bootstrap roles",
+          restoringBootstrap: "Restoring...",
+          restoreBootstrapPrompt:
+            "Enter the tenant user email that should receive SecurityAdmin + SystemAdmin again for tenant {{code}}.",
         },
         taxEngine: {
           label: "Country tax engine",
@@ -2927,10 +2947,12 @@ export const messages = {
         "/app/demirbas-raporu": "Fixed Asset Report",
         "/app/mizan-raporu": "Trial Balance Report",
         "/app/ayarlar": "Settings",
-        "/app/ayarlar/security-admin": "Overview",
+        "/app/ayarlar/security-admin": "User Management",
         "/app/ayarlar/security-admin?view=overview": "Overview",
+        "/app/ayarlar/kullanicilar": "Users",
         "/app/ayarlar/security-admin/users": "Users and Assignments",
-        "/app/ayarlar/security-admin/users?tab=people": "People",
+        "/app/ayarlar/security-admin/users?tab=users": "Users",
+        "/app/ayarlar/security-admin/users?tab=people": "Users",
         "/app/ayarlar/security-admin/users?tab=assignments":
           "Assignments",
         "/app/ayarlar/security-admin/users?tab=scopes": "Scope Access",
@@ -2938,8 +2960,11 @@ export const messages = {
           "Delegations",
         "/app/ayarlar/security-admin/users?tab=coverage":
           "Temporary Coverage",
+        "/app/ayarlar/rbac/delegations": "Delegations",
+        "/app/ayarlar/rbac/temporary-coverage": "Temporary Coverage",
         "/app/ayarlar/security-admin/users?tab=authority":
-          "Effective Authority",
+          "Users",
+        "/app/ayarlar/roller-ve-yetkiler": "Roles and Permissions",
         "/app/ayarlar/security-admin/catalog": "Access Catalog",
         "/app/ayarlar/security-admin/catalog?tab=access-model":
           "Access Catalog",

@@ -13,7 +13,6 @@ import {
 import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
-import SecurityUsersWorkbenchTabs from "./components/users/SecurityUsersWorkbenchTabs.jsx";
 import RoleSummaryCard from "./RoleSummaryCard.jsx";
 import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 import SecurityWarningList from "./SecurityWarningList.jsx";
@@ -336,7 +335,6 @@ export default function ScopeAssignmentsPage() {
         },
       ]}
       hiddenPrimarySurfaceKeys={["roles-permissions"]}
-      toolbar={<SecurityUsersWorkbenchTabs activeTab="scopes" />}
     >
       <div className="space-y-4">
       {error && (
