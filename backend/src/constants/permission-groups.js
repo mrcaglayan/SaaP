@@ -32,6 +32,7 @@ export const PERMISSION_GROUPS = {
   },
   "gl.masterdata": {
     permissions: [
+      "gl.coa.read",
       "gl.book.upsert",
       "gl.coa.upsert",
       "gl.account.upsert",

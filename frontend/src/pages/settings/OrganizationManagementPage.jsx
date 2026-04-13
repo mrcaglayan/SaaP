@@ -2586,9 +2586,14 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
           {
             key: "books",
             title: l("Books and ledgers", "Defterler ve ledger yapisi"),
-            ready: workspaceBooks.length > 0,
+            ready: canReadBooks && workspaceBooks.length > 0,
             detail:
-              workspaceBooks.length > 0
+              !canReadBooks
+                ? l(
+                    "Book readiness is hidden because gl.book.read is missing.",
+                    "gl.book.read olmadigi icin defter hazirligi gosterilemiyor."
+                  )
+                : workspaceBooks.length > 0
                 ? l(
                     `${workspaceBooks.length} book(s) are linked to this legal entity.`,
                     `Bu legal entity'ye bagli ${workspaceBooks.length} defter var.`
@@ -2602,9 +2607,14 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
           {
             key: "coas",
             title: l("Chart of accounts usage", "Hesap plani kullanim/mapping"),
-            ready: workspaceCoas.length > 0,
+            ready: canReadCoas && workspaceCoas.length > 0,
             detail:
-              workspaceCoas.length > 0
+              !canReadCoas
+                ? l(
+                    "Chart-of-accounts readiness is hidden because gl.coa.read is missing.",
+                    "gl.coa.read olmadigi icin hesap plani hazirligi gosterilemiyor."
+                  )
+                : workspaceCoas.length > 0
                 ? l(
                     `${workspaceCoas.length} chart-of-accounts row(s) are visible for this scope.`,
                     `Bu kapsam icin ${workspaceCoas.length} hesap plani satiri gorunur.`
@@ -2618,9 +2628,28 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
           {
             key: "fiscal",
             title: l("Fiscal configuration", "Mali konfigurasyon"),
-            ready: workspaceCalendarOptions.length > 0 && periods.length > 0,
-            detail: activationBaseAccountingReadiness
-              ? formatBaseAccountingActivationDetail(activationBaseAccountingReadiness, l)
+            ready:
+              canReadFiscalCalendars &&
+              canReadFiscalPeriods &&
+              workspaceCalendarOptions.length > 0 &&
+              periods.length > 0,
+            detail: !canReadFiscalCalendars
+              ? !canReadFiscalPeriods
+                ? l(
+                    "Fiscal readiness is hidden because org.fiscal_calendar.read and org.fiscal_period.read are missing.",
+                    "org.fiscal_calendar.read ve org.fiscal_period.read olmadigi icin mali hazirlik gosterilemiyor."
+                  )
+                : l(
+                    "Fiscal readiness is hidden because org.fiscal_calendar.read is missing.",
+                    "org.fiscal_calendar.read olmadigi icin mali hazirlik gosterilemiyor."
+                  )
+              : !canReadFiscalPeriods
+                ? l(
+                    "Fiscal readiness is hidden because org.fiscal_period.read is missing.",
+                    "org.fiscal_period.read olmadigi icin mali hazirlik gosterilemiyor."
+                  )
+              : activationBaseAccountingReadiness
+                ? formatBaseAccountingActivationDetail(activationBaseAccountingReadiness, l)
               : workspaceCalendarOptions.length > 0 && periods.length > 0
                 ? l(
                     `${workspaceCalendarOptions.length} calendar option(s) and ${periods.length} fiscal period row(s) are available in this view.`,
@@ -2884,8 +2913,12 @@ export default function OrganizationManagementPage({ workspaceMode = "full" }) {
     activationWorkflowReadiness,
     activationCashRegistersError,
     activationCashRegistersLoading,
+    canReadBooks,
     canReadBanks,
     canReadCashRegisters,
+    canReadCoas,
+    canReadFiscalCalendars,
+    canReadFiscalPeriods,
     l,
     periods.length,
     workspaceBooks.length,

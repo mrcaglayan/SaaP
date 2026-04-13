@@ -2291,6 +2291,8 @@ export default function UserAssignmentsPage() {
     businessRoleCode: "BRANCH_ACCOUNTANT",
     scopeType: "OPERATING_UNIT",
     scopeId: "",
+    selectedPackageCodes: [],
+    autoSelectStarterPackages: true,
   });
   const [workflowPackageAssignmentForm, setWorkflowPackageAssignmentForm] = useState({
     userId: "",
@@ -3173,6 +3175,97 @@ export default function UserAssignmentsPage() {
         }
       : undefined
   );
+  const selectedUserWorkflowPackagesAtBusinessRoleScope = useMemo(
+    () =>
+      workflowPackageAssignments.filter(
+        (assignment) =>
+          Number(assignment.userId) === Number(businessRoleAssignmentForm.userId || 0) &&
+          assignment.scopeType === businessRoleAssignmentForm.scopeType &&
+          Number(assignment.scopeId) === Number(selectedBusinessRoleScopeId || 0)
+      ),
+    [
+      businessRoleAssignmentForm.scopeType,
+      businessRoleAssignmentForm.userId,
+      selectedBusinessRoleScopeId,
+      workflowPackageAssignments,
+    ]
+  );
+  const businessRolePackageCatalogEntries = useMemo(() => {
+    const starterCodes = selectedBusinessRoleCatalogEntry?.starterPackageCodes || [];
+    const optionalCodes = selectedBusinessRoleCatalogEntry?.optionalPackageCodes || [];
+    const orderedCodes = [
+      ...starterCodes.map((packageCode) => ({
+        packageCode,
+        recommendationType: "starter",
+      })),
+      ...optionalCodes.map((packageCode) => ({
+        packageCode,
+        recommendationType: "optional",
+      })),
+    ];
+
+    return Array.from(
+      new Map(
+        orderedCodes
+          .map(({ packageCode, recommendationType }) => {
+            const packageEntry = workflowPackageCatalogByCode.get(
+              normalizeText(packageCode)
+            );
+            if (!packageEntry) {
+              return null;
+            }
+            return [
+              packageCode,
+              {
+                ...packageEntry,
+                recommendationType,
+                previewStepLabels: [],
+                recommendationSourceName:
+                  selectedBusinessRoleCatalogEntry?.displayName || "",
+              },
+            ];
+          })
+          .filter(Boolean)
+      ).values()
+    );
+  }, [selectedBusinessRoleCatalogEntry, workflowPackageCatalogByCode]);
+  const businessRolePackagePreviewEntries = useMemo(
+    () =>
+      businessRolePackageCatalogEntries.map((entry) => {
+        const alreadyAssigned = selectedUserWorkflowPackagesAtBusinessRoleScope.some(
+          (assignment) => assignment.packageCode === entry.code
+        );
+        const allowedAtScope = (entry.allowedScopes || []).includes(
+          businessRoleAssignmentForm.scopeType
+        );
+        const assignmentBlockedByExtension =
+          Boolean(entry.plannedExtension) || Number(entry.permissionCount || 0) === 0;
+        return {
+          ...entry,
+          allowedAtScope,
+          alreadyAssigned,
+          assignmentBlockedByExtension,
+          assignable:
+            allowedAtScope &&
+            !alreadyAssigned &&
+            !assignmentBlockedByExtension,
+          selected: businessRoleAssignmentForm.selectedPackageCodes.includes(entry.code),
+        };
+      }),
+    [
+      businessRoleAssignmentForm.scopeType,
+      businessRoleAssignmentForm.selectedPackageCodes,
+      businessRolePackageCatalogEntries,
+      selectedUserWorkflowPackagesAtBusinessRoleScope,
+    ]
+  );
+  const selectedBusinessRolePackageCodes = useMemo(
+    () =>
+      businessRolePackagePreviewEntries
+        .filter((entry) => entry.selected && entry.assignable)
+        .map((entry) => entry.code),
+    [businessRolePackagePreviewEntries]
+  );
   const selectedWorkflowPackageScopeId =
     workflowPackageAssignmentForm.scopeType === "TENANT"
       ? tenantScopeId
@@ -3291,6 +3384,46 @@ export default function UserAssignmentsPage() {
       return { ...prev, scopeId: nextScopeId };
     });
   }, [businessRoleScopeOptions, tenantScopeId]);
+  useEffect(() => {
+    setBusinessRoleAssignmentForm((prev) => {
+      const selectablePackageCodes = businessRolePackagePreviewEntries
+        .filter((entry) => entry.assignable)
+        .map((entry) => entry.code);
+      const starterPackageCodes = businessRolePackagePreviewEntries
+        .filter(
+          (entry) => entry.assignable && entry.recommendationType === "starter"
+        )
+        .map((entry) => entry.code);
+      const filteredSelectedCodes = prev.selectedPackageCodes.filter((packageCode) =>
+        selectablePackageCodes.includes(packageCode)
+      );
+
+      if (
+        prev.autoSelectStarterPackages &&
+        filteredSelectedCodes.length === 0 &&
+        starterPackageCodes.length > 0
+      ) {
+        return {
+          ...prev,
+          selectedPackageCodes: starterPackageCodes,
+          autoSelectStarterPackages: false,
+        };
+      }
+      if (filteredSelectedCodes.length !== prev.selectedPackageCodes.length) {
+        return {
+          ...prev,
+          selectedPackageCodes: filteredSelectedCodes,
+        };
+      }
+      if (prev.autoSelectStarterPackages && starterPackageCodes.length === 0) {
+        return {
+          ...prev,
+          autoSelectStarterPackages: false,
+        };
+      }
+      return prev;
+    });
+  }, [businessRolePackagePreviewEntries]);
   useEffect(() => {
     setPackageSourceApplyForm((prev) => {
       const nextScopeType = packageSourceScopeTypeOptions.includes(prev.scopeType)
@@ -3563,6 +3696,8 @@ export default function UserAssignmentsPage() {
           businessRoleCode: value,
           scopeType: nextRoleDefinition?.defaultScope || prev.scopeType,
           scopeId: "",
+          selectedPackageCodes: [],
+          autoSelectStarterPackages: true,
         };
       }
       if (field === "scopeType") {
@@ -3570,9 +3705,38 @@ export default function UserAssignmentsPage() {
           ...prev,
           scopeType: value,
           scopeId: "",
+          selectedPackageCodes: [],
+          autoSelectStarterPackages: true,
+        };
+      }
+      if (field === "scopeId") {
+        return {
+          ...prev,
+          scopeId: value,
+          selectedPackageCodes: [],
+          autoSelectStarterPackages: true,
+        };
+      }
+      if (field === "selectedPackageCodes") {
+        return {
+          ...prev,
+          selectedPackageCodes: Array.isArray(value) ? value : [],
+          autoSelectStarterPackages: false,
         };
       }
       return { ...prev, [field]: value };
+    });
+  }
+  function toggleBusinessRolePreviewPackage(packageCode) {
+    setBusinessRoleAssignmentForm((prev) => {
+      const nextSelected = prev.selectedPackageCodes.includes(packageCode)
+        ? prev.selectedPackageCodes.filter((code) => code !== packageCode)
+        : [...prev.selectedPackageCodes, packageCode];
+      return {
+        ...prev,
+        selectedPackageCodes: Array.from(new Set(nextSelected)),
+        autoSelectStarterPackages: false,
+      };
     });
   }
   function updateWorkflowPackageAssignmentField(field, value) {
@@ -4062,11 +4226,11 @@ export default function UserAssignmentsPage() {
         assignment.scopeType === businessRoleAssignmentForm.scopeType &&
         Number(assignment.scopeId) === Number(selectedBusinessRoleScopeId)
     );
-    if (duplicateAssignment) {
+    if (duplicateAssignment && selectedBusinessRolePackageCodes.length === 0) {
       setError(
         l(
-          "This business role label is already assigned at the selected scope.",
-          "Bu is rol etiketi secilen kapsamda zaten atanmis."
+          "This business role label is already assigned at the selected scope, and no new default packages are selected.",
+          "Bu is rol etiketi secilen kapsamda zaten atanmis ve secili yeni varsayilan paket yok."
         )
       );
       return;
@@ -4077,17 +4241,67 @@ export default function UserAssignmentsPage() {
     setMessage("");
     setWarningMessages([]);
     try {
-      await ensureBusinessRoleLabelAssignment({
-        userId: Number(businessRoleAssignmentForm.userId),
-        businessRoleCode: businessRoleAssignmentForm.businessRoleCode,
-        scopeType: businessRoleAssignmentForm.scopeType,
-        scopeId: selectedBusinessRoleScopeId,
-      });
+      const collectedWarnings = [];
+
+      if (!duplicateAssignment) {
+        await ensureBusinessRoleLabelAssignment({
+          userId: Number(businessRoleAssignmentForm.userId),
+          businessRoleCode: businessRoleAssignmentForm.businessRoleCode,
+          scopeType: businessRoleAssignmentForm.scopeType,
+          scopeId: selectedBusinessRoleScopeId,
+        });
+      }
+
+      for (const packageCode of selectedBusinessRolePackageCodes) {
+        const { response } = await assignWorkflowPackageByCode({
+          userId: Number(businessRoleAssignmentForm.userId),
+          packageCode,
+          scopeType: businessRoleAssignmentForm.scopeType,
+          scopeId: selectedBusinessRoleScopeId,
+        });
+        for (const warning of response?.assignmentWarnings || []) {
+          const text =
+            typeof warning === "string"
+              ? warning
+              : normalizeText(warning?.message || warning?.reason);
+          if (text) {
+            collectedWarnings.push(text);
+          }
+        }
+      }
+
+      setWarningMessages(Array.from(new Set(collectedWarnings)));
       setMessage(
-        l(
-          "Business role label assigned. Workflow packages still need their own assignment.",
-          "Is rol etiketi atandi. Workflow paketleri icin ayri atama hala gerekir."
-        )
+        !duplicateAssignment && selectedBusinessRolePackageCodes.length > 0
+          ? selectedBusinessRolePackageCodes.length === 1
+            ? l(
+                "Business role label assigned and 1 default workflow package applied.",
+                "Is rol etiketi atandi ve 1 varsayilan workflow paketi uygulandi."
+              )
+            : l(
+                "Business role label assigned and {{count}} default workflow packages applied.",
+                "Is rol etiketi atandi ve {{count}} varsayilan workflow paketleri uygulandi.",
+                {
+                  count: selectedBusinessRolePackageCodes.length,
+                }
+              )
+          : duplicateAssignment && selectedBusinessRolePackageCodes.length > 0
+            ? selectedBusinessRolePackageCodes.length === 1
+              ? l(
+                  "1 default workflow package applied for the existing business role label.",
+                  "Mevcut is rol etiketi icin 1 varsayilan workflow paketi uygulandi."
+                )
+              : l(
+                  "{{count}} default workflow packages applied for the existing business role label.",
+                  "Mevcut is rol etiketi icin {{count}} varsayilan workflow paketleri uygulandi.",
+                  {
+                    count: selectedBusinessRolePackageCodes.length,
+                  }
+                )
+            : l(
+                "Business role label assigned.",
+                "Is rol etiketi atandi."
+              )
       );
       await loadData({ showLoadingState: false });
     } catch (requestError) {
@@ -4700,6 +4914,7 @@ export default function UserAssignmentsPage() {
             businessRoleAssignmentForm={businessRoleAssignmentForm}
             businessRoleAssignmentWriteAccess={businessRoleAssignmentWriteAccess}
             businessRoleCatalogEntries={businessRoleCatalogEntries}
+            businessRolePackagePreviewEntries={businessRolePackagePreviewEntries}
             businessRoleScopeOptions={businessRoleScopeOptions}
             canAssignRolePermissions={canAssignRolePermissions}
             canUpsertRole={canUpsertRole}
@@ -4734,6 +4949,7 @@ export default function UserAssignmentsPage() {
             onRevokeBundle={handleRevokeBundle}
             onSelectBundle={setSelectedWorkbenchBundleId}
             onSelectUser={setSelectedWorkbenchUserId}
+            onToggleBusinessRolePreviewPackage={toggleBusinessRolePreviewPackage}
             onUpdateBusinessRoleAssignmentField={updateBusinessRoleAssignmentField}
             onUpdatePackageSourceApplyField={updatePackageSourceApplyField}
             onUpdateWorkflowPackageAssignmentField={updateWorkflowPackageAssignmentField}
@@ -4790,6 +5006,7 @@ export default function UserAssignmentsPage() {
             selectedBundle={selectedWorkbenchBundle}
             selectedUser={selectedWorkbenchUser}
             selectedUserBundles={selectedWorkbenchUserBundles}
+            selectedBusinessRolePackageCodes={selectedBusinessRolePackageCodes}
             selectedUserPackageLabels={selectedWorkbenchPackageLabels}
             selectedUserRoleEntries={selectedWorkbenchActiveRoleEntries}
             selectedUserScopeLabels={selectedWorkbenchScopeLabels}

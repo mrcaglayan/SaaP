@@ -82,7 +82,13 @@ function formatDateTime(value) {
 
 
 function getInviteExpiryLabel(l, row) {
-  if (!row?.invite_expires_at) {
+  const normalizedStatus = String(row?.status || "").trim().toUpperCase();
+  const normalizedInviteStatus = String(row?.invite_status || "")
+    .trim()
+    .toUpperCase();
+  const hasPendingInvite =
+    normalizedStatus === "INVITED" || normalizedInviteStatus === "PENDING";
+  if (!row?.invite_expires_at || !hasPendingInvite) {
     return "";
   }
   return l("Invite expires {{date}}", "Davet suresi {{date}} tarihinde dolar", {
@@ -298,6 +304,7 @@ export default function UserAssignmentWorkbench(props) {
     businessRoleAssignmentForm,
     businessRoleAssignmentWriteAccess,
     businessRoleCatalogEntries,
+    businessRolePackagePreviewEntries,
     businessRoleScopeOptions,
     filteredUsers,
     l,
@@ -309,6 +316,7 @@ export default function UserAssignmentWorkbench(props) {
     onOpenUserEditor,
     onSelectBundle,
     onSelectUser,
+    onToggleBusinessRolePreviewPackage,
     onRemoveBusinessRoleLabel,
     onRemoveWorkflowPackage,
     onUpdateBusinessRoleAssignmentField,
@@ -323,6 +331,7 @@ export default function UserAssignmentWorkbench(props) {
     packageFilterOptions,
     roleFilterOptions,
     selectedBusinessRoleAssignments,
+    selectedBusinessRolePackageCodes,
     selectedPackageSourcePackageCodes,
     selectedUserAssignmentAuditSummary,
     selectedUserEffectiveAuthorityPreview,
@@ -984,27 +993,181 @@ export default function UserAssignmentWorkbench(props) {
                   {/* Business role labels */}
                   <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
                     <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
-                      <div className="flex flex-wrap items-end justify-between gap-3">
-                        <form onSubmit={onAssignBusinessRoleLabel} className="flex min-w-[280px] flex-1 flex-wrap items-center justify-end gap-2">
-                          <div className="flex min-w-[280px] flex-1 items-center gap-2">
-                            <label className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{l("Business role", "Is rolu")}</label>
-                            <select value={businessRoleAssignmentForm.businessRoleCode} onChange={(e) => onUpdateBusinessRoleAssignmentField("businessRoleCode", e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-                              {roleFilterOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                            </select>
-                          </div>
-                          <div className="flex min-w-[280px] flex-1 items-center gap-2">
-                            <label className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{l("Scope target", "Kapsam hedefi")}</label>
-                            <select value={businessRoleAssignmentForm.scopeId} onChange={(e) => onUpdateBusinessRoleAssignmentField("scopeId", e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-                              {businessRoleScopeOptions.map((o) => <option key={o.id} value={String(o.id)}>{o.label}</option>)}
-                            </select>
-                          </div>
-                          <button type="submit" disabled={saving || !businessRoleAssignmentWriteAccess.allowed} className="h-10 rounded-lg border border-slate-900 bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-60">
-                            {saving ? l("Saving...", "Kaydediliyor...") : l("Add label", "Etiket ekle")}
-                          </button>
-                        </form>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-950">
+                            {l("Business role labels", "Is rol etiketleri")}
+                          </h3>
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            {l(
+                              "Assign the label and choose which default workflow packages should be granted with it.",
+                              "Etiketi atayin ve birlikte verilecek varsayilan workflow paketlerini secin."
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Pill label={businessRoleAssignmentForm.scopeType} tone="blue" />
+                          <Pill
+                            label={l(
+                              "{{count}} selected",
+                              "{{count}} secili",
+                              { count: selectedBusinessRolePackageCodes.length }
+                            )}
+                            tone="violet"
+                          />
+                        </div>
                       </div>
                     </div>
                     <div className="space-y-3 px-5 py-4">
+                      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)]">
+                        <form
+                          onSubmit={onAssignBusinessRoleLabel}
+                          className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                        >
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                                {l("Business role", "Is rolu")}
+                              </label>
+                              <select
+                                value={businessRoleAssignmentForm.businessRoleCode}
+                                onChange={(e) =>
+                                  onUpdateBusinessRoleAssignmentField(
+                                    "businessRoleCode",
+                                    e.target.value
+                                  )
+                                }
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                              >
+                                {roleFilterOptions.map((o) => (
+                                  <option key={o.value} value={o.value}>
+                                    {o.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                                {l("Scope target", "Kapsam hedefi")}
+                              </label>
+                              <select
+                                value={businessRoleAssignmentForm.scopeId}
+                                onChange={(e) =>
+                                  onUpdateBusinessRoleAssignmentField("scopeId", e.target.value)
+                                }
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                              >
+                                {businessRoleScopeOptions.map((o) => (
+                                  <option key={o.id} value={String(o.id)}>
+                                    {o.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <p className="text-xs leading-5 text-slate-500">
+                            {l(
+                              "Starter packages are preselected when available. You can remove them for a label-only assignment or add optional packages before saving.",
+                              "Starter paketler varsa on secili gelir. Kaydetmeden once sadece etiket atamak icin bunlari kaldirabilir veya opsiyonel paketler ekleyebilirsiniz."
+                            )}
+                          </p>
+                          <button
+                            type="submit"
+                            disabled={saving || !businessRoleAssignmentWriteAccess.allowed}
+                            className="rounded-lg border border-slate-900 bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                          >
+                            {saving
+                              ? l("Saving...", "Kaydediliyor...")
+                              : selectedBusinessRolePackageCodes.length > 0
+                                ? l(
+                                    "Assign role + {{count}} packages",
+                                    "Rol + {{count}} paket uygula",
+                                    { count: selectedBusinessRolePackageCodes.length }
+                                  )
+                                : l("Add label only", "Sadece etiket ekle")}
+                          </button>
+                        </form>
+                        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              {l("Default authority packages", "Varsayilan yetki paketleri")}
+                            </div>
+                            <Pill
+                              label={l(
+                                "{{count}} selected",
+                                "{{count}} secili",
+                                { count: selectedBusinessRolePackageCodes.length }
+                              )}
+                              tone="blue"
+                            />
+                          </div>
+                          {businessRolePackagePreviewEntries.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                              {l(
+                                "No starter or optional packages are defined for this business role.",
+                                "Bu is rolu icin tanimli starter veya opsiyonel paket yok."
+                              )}
+                            </div>
+                          ) : (
+                            businessRolePackagePreviewEntries.map((entry) => {
+                              const state = getPackageSourcePreviewState(
+                                l,
+                                entry,
+                                businessRoleAssignmentForm.scopeType
+                              );
+                              const recommendationTone = getPackageSourceRecommendationTone(
+                                entry.recommendationType
+                              );
+                              return (
+                                <label
+                                  key={entry.code}
+                                  className={`flex items-start gap-3 rounded-2xl border px-4 py-3 ${
+                                    entry.assignable
+                                      ? "cursor-pointer border-slate-200 bg-white"
+                                      : "cursor-not-allowed border-slate-200 bg-slate-50 opacity-60"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedBusinessRolePackageCodes.includes(entry.code)}
+                                    onChange={() =>
+                                      onToggleBusinessRolePreviewPackage(entry.code)
+                                    }
+                                    disabled={!entry.assignable}
+                                    className="mt-0.5 h-4 w-4"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="text-sm font-semibold text-slate-950">
+                                        {entry.displayName}
+                                      </span>
+                                      <Pill
+                                        label={getPackageSourceRecommendationLabel(
+                                          l,
+                                          entry.recommendationType
+                                        )}
+                                        tone={recommendationTone}
+                                      />
+                                    </div>
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      {getPackageSourcePreviewNote(l, entry)}
+                                    </div>
+                                    <div
+                                      className={`mt-1 text-xs font-medium ${
+                                        state.tone === "green"
+                                          ? "text-emerald-700"
+                                          : "text-amber-700"
+                                      }`}
+                                    >
+                                      {state.text}
+                                    </div>
+                                  </div>
+                                </label>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
                       <div className="space-y-3">
                         {selectedBusinessRoleAssignments.length === 0 ? (
                           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
