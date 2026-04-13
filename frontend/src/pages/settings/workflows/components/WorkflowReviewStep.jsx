@@ -51,6 +51,7 @@ export default function WorkflowReviewStep({
   tenantScopeId = null,
 }) {
   const Icon = PROCESS_ICONS[String(workflowType || "").toUpperCase()] || FileText;
+  const isAp = String(workflowType || "").toUpperCase() === "AP_DOCUMENT_POSTING";
   const coverageReview = buildWorkflowCoverageReviewModel({
     diagnostics: coverageDiagnostics,
     workflowType,
@@ -67,8 +68,8 @@ export default function WorkflowReviewStep({
             <CardTitle>{l("Step 5 - Review your setup", "Adim 5 - Kurulumu gozden gecirin")}</CardTitle>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               {l(
-                "Check the workflow definition, approval steps, and target scope before saving the assignment.",
-                "Atamayi kaydetmeden once workflow tanimini, onay adimlarini ve hedef kapsami kontrol edin."
+                "Check the workflow definition, workflow steps, and target scope before saving the assignment.",
+                "Atamayi kaydetmeden once workflow tanimini, workflow adimlarini ve hedef kapsami kontrol edin."
               )}
             </p>
           </div>
@@ -156,14 +157,14 @@ export default function WorkflowReviewStep({
               value={definition?.versionNo || definition?.version_no || "1"}
             />
             <ReviewStat
-              label={l("Approval steps", "Onay adimlari")}
+              label={l("Workflow steps", "Workflow adimlari")}
               value={String(Array.isArray(stepDrafts) ? stepDrafts.length : 0)}
             />
             <ReviewStat label={l("Assignment status", "Atama durumu")} value={assignmentForm?.status} />
           </div>
 
           <WorkflowExplainabilityPreviewPanel
-            title={l("Approval path", "Onay yolu")}
+            title={l("Workflow path", "Workflow yolu")}
             previewModel={workflowExplainabilityPreview}
             tone="emerald"
           />
@@ -240,10 +241,15 @@ export default function WorkflowReviewStep({
                   {l("Coverage diagnostics", "Kapsam tanilari")}
                 </p>
                 <p className="mt-2 text-sm leading-6 text-foreground">
-                  {l(
-                    "Check whether active users currently exist for submit, approval, and posting roles before rollout.",
-                    "Canliya almadan once gonderim, onay ve kayit rolleri icin aktif kullanici olup olmadigini kontrol edin."
-                  )}
+                  {isAp
+                    ? l(
+                        "Explicit AP step diagnostics now follow the saved action chain. Confirm that in-scope actors exist for each saved action before rollout.",
+                        "Acik AP adim tanilari artik kaydedilen eylem zincirini izler. Canliya almadan once her kaydedilen eylem icin kapsam ici aktor bulundugunu dogrulayin."
+                      )
+                    : l(
+                        "Check whether active users currently exist for submit, approval, and posting roles before rollout.",
+                        "Canliya almadan once gonderim, onay ve kayit rolleri icin aktif kullanici olup olmadigini kontrol edin."
+                      )}
                 </p>
               </div>
               <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-amber-200 bg-amber-50 text-amber-700">
@@ -360,7 +366,7 @@ export default function WorkflowReviewStep({
 
         <CardFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <Button type="button" variant="outline" onClick={onBack}>
-            {l("Back to Approval Steps", "Onay adimlarina geri don")}
+            {l("Back to Workflow Steps", "Workflow adimlarina geri don")}
           </Button>
           <Button
             type="button"

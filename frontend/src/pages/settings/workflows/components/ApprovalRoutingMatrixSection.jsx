@@ -22,48 +22,18 @@ import {
   buildApprovalRoutingMatrixValidationModel,
   buildApprovalRoutingRulePreview,
   buildAssignmentScopeLabel,
-  buildWorkflowPresetPreviewModel,
   sortApprovalRoutingMatrixRows,
   todayIsoDate,
   toPositiveInt,
 } from "../utils/workflowSetupHelpers.js";
 
 const AP_PROCESS_TYPE = "AP_DOCUMENT_POSTING";
-
-function buildPresetBackedDefinitionCode(presetEntry) {
-  const presetCode = String(presetEntry?.code || "AP_ROUTE")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9_]+/g, "_");
-  const uniqueSuffix = String(Date.now()).slice(-6);
-  return `WF_${presetCode}_${uniqueSuffix}`;
-}
-
-function buildPresetBackedDefinitionName(presetEntry, l) {
-  const displayName = String(presetEntry?.displayName || "").trim();
-  if (!displayName) {
-    return l("AP Routing Workflow", "AP Yonlendirme Workflow'u");
-  }
-  return l(`${displayName} Route`, `${displayName} Rotasi`);
-}
-
-function createEmptyDraft(presetEntries = [], l) {
-  const firstUsablePreset = (Array.isArray(presetEntries) ? presetEntries : []).find(
-    (entry) => !entry?.usesExtension
-  );
-
+function createEmptyDraft() {
   return {
     id: null,
     processType: AP_PROCESS_TYPE,
     targetMode: "definition",
     workflowDefinitionId: "",
-    workflowPresetCode: String(firstUsablePreset?.code || ""),
-    newDefinitionCode: firstUsablePreset
-      ? buildPresetBackedDefinitionCode(firstUsablePreset)
-      : "",
-    newDefinitionName: firstUsablePreset
-      ? buildPresetBackedDefinitionName(firstUsablePreset, l)
-      : "",
     scopeType: "TENANT",
     groupCompanyId: "",
     countryId: "",
@@ -167,9 +137,6 @@ function mapRowToDraft(row, { clone = false } = {}) {
     processType: AP_PROCESS_TYPE,
     targetMode: "definition",
     workflowDefinitionId: String(row?.workflowDefinitionId || ""),
-    workflowPresetCode: "",
-    newDefinitionCode: "",
-    newDefinitionName: "",
     scopeType,
     groupCompanyId: scopeType === "GROUP" ? String(row?.groupCompanyId || "") : "",
     countryId: scopeType === "COUNTRY" ? String(row?.countryId || "") : "",
@@ -186,19 +153,7 @@ function mapRowToDraft(row, { clone = false } = {}) {
   };
 }
 
-function buildDraftTargetLabel(draft, selectedDefinition, selectedPreset, l) {
-  if (String(draft?.targetMode || "definition") === "preset") {
-    const definitionName = String(draft?.newDefinitionName || "").trim();
-    const definitionCode = String(draft?.newDefinitionCode || "").trim();
-    if (definitionName && definitionCode) {
-      return `${definitionName} (${definitionCode})`;
-    }
-    if (definitionName) {
-      return definitionName;
-    }
-    return selectedPreset?.displayName || l("the preset-backed workflow", "preset tabanli workflow");
-  }
-
+function buildDraftTargetLabel(draft, selectedDefinition, l) {
   if (selectedDefinition?.name && selectedDefinition?.code) {
     return `${selectedDefinition.name} (${selectedDefinition.code})`;
   }
@@ -217,7 +172,6 @@ export default function ApprovalRoutingMatrixSection({
   l,
   assignments = [],
   definitions = [],
-  presetEntries = [],
   orgTreeRoot = null,
   tenantScopeId = null,
   scopeTypeLabels = {},
@@ -228,7 +182,7 @@ export default function ApprovalRoutingMatrixSection({
   onSaveRule,
   onRetireRule,
 }) {
-  const [draft, setDraft] = useState(() => createEmptyDraft(presetEntries, l));
+  const [draft, setDraft] = useState(() => createEmptyDraft());
   const [scopeNodeKey, setScopeNodeKey] = useState("");
 
   const apAssignments = useMemo(
@@ -248,14 +202,6 @@ export default function ApprovalRoutingMatrixSection({
       ),
     [definitions]
   );
-  const apPresetEntries = useMemo(
-    () =>
-      presetEntries.filter(
-        (entry) => String(entry?.workflowFamily || "").trim().toUpperCase() === AP_PROCESS_TYPE
-      ),
-    [presetEntries]
-  );
-
   const selectedScopeSelection = useMemo(
     () => resolveDraftScopeSelection(draft, tenantScopeId),
     [draft, tenantScopeId]
@@ -273,19 +219,6 @@ export default function ApprovalRoutingMatrixSection({
     apDefinitions.find(
       (row) => toPositiveInt(row?.id) === toPositiveInt(draft?.workflowDefinitionId)
     ) || null;
-  const selectedPreset =
-    apPresetEntries.find(
-      (entry) => String(entry?.code || "") === String(draft?.workflowPresetCode || "")
-    ) || null;
-  const presetPreview = useMemo(
-    () =>
-      buildWorkflowPresetPreviewModel({
-        presetEntry: selectedPreset,
-        stepScopeLabels: scopeTypeLabels,
-        l,
-      }),
-    [l, scopeTypeLabels, selectedPreset]
-  );
   const scopeSummary = useMemo(() => {
     if (selectedScopeNode) {
       return getOrgScopeTreeNodeSummaryValue(selectedScopeNode) || "";
@@ -304,10 +237,10 @@ export default function ApprovalRoutingMatrixSection({
         maxAmount: draft.maxAmount === "" ? null : Number(draft.maxAmount),
         amountBasis: draft.amountBasis || "BASE_AMOUNT",
         isFallback: draft.isFallback,
-        targetLabel: buildDraftTargetLabel(draft, selectedDefinition, selectedPreset, l),
+        targetLabel: buildDraftTargetLabel(draft, selectedDefinition, l),
         l,
       }),
-    [draft, l, scopeSummary, selectedDefinition, selectedPreset]
+    [draft, l, scopeSummary, selectedDefinition]
   );
   const validation = useMemo(
     () =>
@@ -315,11 +248,10 @@ export default function ApprovalRoutingMatrixSection({
         draft,
         assignments: apAssignments,
         definitions: apDefinitions,
-        presetEntries: apPresetEntries,
         editingAssignmentId: draft.id,
         l,
       }),
-    [apAssignments, apDefinitions, apPresetEntries, draft, l]
+    [apAssignments, apDefinitions, draft, l]
   );
   const draftCanWrite =
     typeof canWriteScopeSelection === "function"
@@ -333,7 +265,7 @@ export default function ApprovalRoutingMatrixSection({
   const busy = String(saving || "").startsWith("routing-");
 
   function resetDraft() {
-    setDraft(createEmptyDraft(apPresetEntries, l));
+    setDraft(createEmptyDraft());
     setScopeNodeKey("");
   }
 
@@ -356,7 +288,7 @@ export default function ApprovalRoutingMatrixSection({
     if (typeof onSaveRule !== "function") {
       return;
     }
-    await onSaveRule(draft, { selectedPreset });
+    await onSaveRule(draft);
     resetDraft();
   }
 
@@ -422,8 +354,8 @@ export default function ApprovalRoutingMatrixSection({
                         "Kayitli bir AP rotasini bu matristen ayrilmadan guncelleyin."
                       )
                     : l(
-                        "Add a new AP route using either an existing workflow definition or a shipped preset.",
-                        "Mevcut workflow tanimi veya hazir bir preset kullanarak yeni bir AP rotasi ekleyin."
+                        "Add a new AP route by binding one existing workflow definition to one scope and amount band.",
+                        "Bir mevcut workflow tanimini tek bir kapsam ve tutar bandina baglayarak yeni bir AP rotasi ekleyin."
                       )}
                 </p>
               </div>
@@ -431,155 +363,33 @@ export default function ApprovalRoutingMatrixSection({
               {draft.id ? <Badge variant="outline">#{draft.id}</Badge> : null}
             </div>
 
-            <div className="grid gap-5 md:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-foreground">
-                  {l("Route target", "Rota hedefi")}
-                </label>
-                <Select
-                  value={draft.targetMode}
-                  onValueChange={(value) => {
-                    const presetCode =
-                      String(draft?.workflowPresetCode || "") ||
-                      String(apPresetEntries[0]?.code || "");
-                    const presetEntry =
-                      apPresetEntries.find(
-                        (entry) => String(entry?.code || "") === String(presetCode)
-                      ) || null;
-                    setDraft((prev) => ({
-                      ...prev,
-                      targetMode: value,
-                      workflowPresetCode:
-                        value === "preset"
-                          ? String(presetEntry?.code || prev.workflowPresetCode || "")
-                          : prev.workflowPresetCode,
-                      newDefinitionCode:
-                        value === "preset"
-                          ? buildPresetBackedDefinitionCode(presetEntry)
-                          : prev.newDefinitionCode,
-                      newDefinitionName:
-                        value === "preset"
-                          ? buildPresetBackedDefinitionName(presetEntry, l)
-                          : prev.newDefinitionName,
-                    }));
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="definition">
-                      {l("Workflow definition", "Workflow tanimi")}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground">
+                {l("Workflow definition", "Workflow tanimi")}
+              </label>
+              <Select
+                value={String(draft.workflowDefinitionId || "")}
+                onValueChange={(value) =>
+                  setDraft((prev) => ({ ...prev, workflowDefinitionId: value }))
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue
+                    placeholder={l(
+                      "Choose one saved AP workflow",
+                      "Kayitli bir AP workflow secin"
+                    )}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {apDefinitions.map((definition) => (
+                    <SelectItem key={definition.id} value={String(definition.id)}>
+                      {definition.name} ({definition.code})
                     </SelectItem>
-                    <SelectItem value="preset">{l("Workflow preset", "Workflow preset")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {draft.targetMode === "definition" ? (
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-foreground">
-                    {l("Workflow definition", "Workflow tanimi")}
-                  </label>
-                  <Select
-                    value={String(draft.workflowDefinitionId || "")}
-                    onValueChange={(value) =>
-                      setDraft((prev) => ({ ...prev, workflowDefinitionId: value }))
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue
-                        placeholder={l(
-                          "Choose one saved AP workflow",
-                          "Kayitli bir AP workflow secin"
-                        )}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {apDefinitions.map((definition) => (
-                        <SelectItem key={definition.id} value={String(definition.id)}>
-                          {definition.name} ({definition.code})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-foreground">
-                    {l("Workflow preset", "Workflow preset")}
-                  </label>
-                  <Select
-                    value={String(draft.workflowPresetCode || "")}
-                    onValueChange={(value) => {
-                      const presetEntry =
-                        apPresetEntries.find(
-                          (entry) => String(entry?.code || "") === String(value || "")
-                        ) || null;
-                      setDraft((prev) => ({
-                        ...prev,
-                        workflowPresetCode: value,
-                        newDefinitionCode: buildPresetBackedDefinitionCode(presetEntry),
-                        newDefinitionName: buildPresetBackedDefinitionName(presetEntry, l),
-                      }));
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue
-                        placeholder={l(
-                          "Choose a shipped AP preset",
-                          "Hazir bir AP preset secin"
-                        )}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {apPresetEntries.map((presetEntry) => (
-                        <SelectItem
-                          key={presetEntry.code}
-                          value={String(presetEntry.code)}
-                          disabled={Boolean(presetEntry.usesExtension)}
-                        >
-                          {presetEntry.displayName}
-                          {presetEntry.usesExtension
-                            ? ` - ${l("Preview only", "Yalnizca onizleme")}`
-                            : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-
-            {draft.targetMode === "preset" ? (
-              <div className="grid gap-5 md:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-foreground">
-                    {l("Workflow code", "Workflow kodu")}
-                  </label>
-                  <Input
-                    value={draft.newDefinitionCode}
-                    onChange={(event) =>
-                      setDraft((prev) => ({ ...prev, newDefinitionCode: event.target.value }))
-                    }
-                    placeholder="WF_AP_ROUTE_V1"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-foreground">
-                    {l("Workflow name", "Workflow adi")}
-                  </label>
-                  <Input
-                    value={draft.newDefinitionName}
-                    onChange={(event) =>
-                      setDraft((prev) => ({ ...prev, newDefinitionName: event.target.value }))
-                    }
-                    placeholder={l("AP Routing Workflow", "AP Yonlendirme Workflow'u")}
-                  />
-                </div>
-              </div>
-            ) : null}
 
             <OrgScopeTreePicker
               root={orgTreeRoot}
@@ -746,20 +556,6 @@ export default function ApprovalRoutingMatrixSection({
               </p>
               <p className="mt-2 text-sm leading-6 text-emerald-950">{previewText}</p>
             </div>
-
-            {selectedPreset ? (
-              <div className="rounded-3xl border border-border bg-card p-4 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  {l("Preset preview", "Preset onizlemesi")}
-                </p>
-                <p className="mt-1 text-sm font-semibold text-foreground">
-                  {selectedPreset.displayName}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {presetPreview?.summaryText || selectedPreset.description}
-                </p>
-              </div>
-            ) : null}
 
             {selectedScopeSelection && !draftCanWrite ? (
               <Alert variant="destructive">

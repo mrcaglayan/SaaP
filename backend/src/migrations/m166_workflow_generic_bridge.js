@@ -21,6 +21,9 @@ function normalizeUpper(value, fallback = "") {
   return String(value || fallback).trim().toUpperCase();
 }
 
+const AP_DOCUMENT_WORKFLOW_PROCESS_TYPE = "AP_DOCUMENT_POSTING";
+const CARI_DOCUMENT_WORKFLOW_TARGET_TYPE = "CARI_DOCUMENT";
+
 function parsePositiveInt(value) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -67,6 +70,9 @@ function mapWorkflowProcessToTargetType(processType) {
   if (normalized === "LOCAL_CLOSE_PACK") {
     return "LOCAL_CLOSE_PACK";
   }
+  if (normalized === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    return CARI_DOCUMENT_WORKFLOW_TARGET_TYPE;
+  }
   return normalized;
 }
 
@@ -78,10 +84,113 @@ function mapStageScopeTypeToResolutionMode(stageScopeType) {
   if (normalized === "LEGAL_ENTITY") {
     return "TARGET_LEGAL_ENTITY";
   }
+  if (normalized === "COUNTRY") {
+    return "TARGET_COUNTRY";
+  }
   if (normalized === "GROUP") {
     return "TARGET_GROUP";
   }
   return "REQUEST_SCOPE";
+}
+
+function isApDocumentWorkflowProcessType(processType) {
+  return normalizeUpper(processType) === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
+}
+
+function normalizeWorkflowDefinitionStep(step = {}) {
+  return {
+    stepNo: Number(step.step_no || step.stepNo || 0),
+    actionCode: normalizeUpper(step.action_code ?? step.actionCode),
+    stageScopeType: normalizeUpper(step.stage_scope_type ?? step.stageScopeType),
+    requiredPermissionCode: String(
+      step.required_permission_code ?? step.requiredPermissionCode ?? ""
+    ).trim(),
+    minApproverCount: Math.max(
+      1,
+      Number(step.min_approver_count ?? step.minApproverCount ?? 1) || 1
+    ),
+    allowSelfApprove: parseDbBoolean(
+      step.allow_self_approve ?? step.allowSelfApprove
+    ),
+    escalationAfterHours: parsePositiveInt(
+      step.escalation_after_hours ?? step.escalationAfterHours
+    ),
+  };
+}
+
+function buildWorkflowApprovalBridgeContext(definitionRow, stepRows = []) {
+  const normalizedSteps = (Array.isArray(stepRows) ? stepRows : [])
+    .map(normalizeWorkflowDefinitionStep)
+    .filter((step) => Number.isInteger(step.stepNo) && step.stepNo > 0)
+    .sort((left, right) => left.stepNo - right.stepNo);
+  const explicitToBridgeStepNo = new Map();
+
+  if (!isApDocumentWorkflowProcessType(definitionRow?.process_type)) {
+    normalizedSteps.forEach((step) => {
+      explicitToBridgeStepNo.set(step.stepNo, step.stepNo);
+    });
+    return {
+      isAp: false,
+      bridgeSteps: normalizedSteps,
+      explicitToBridgeStepNo,
+      firstBridgeStepNo: normalizedSteps[0]?.stepNo || null,
+      lastBridgeStepNo: normalizedSteps[normalizedSteps.length - 1]?.stepNo || null,
+      finalApprovalExplicitStepNo:
+        normalizedSteps[normalizedSteps.length - 1]?.stepNo || null,
+    };
+  }
+
+  const explicitApproveSteps = normalizedSteps.filter(
+    (step) => step.actionCode === "APPROVE"
+  );
+  const bridgeSteps = explicitApproveSteps.map((step, index) => {
+    const bridgeStepNo = index + 1;
+    explicitToBridgeStepNo.set(step.stepNo, bridgeStepNo);
+    return {
+      ...step,
+      stepNo: bridgeStepNo,
+    };
+  });
+
+  return {
+    isAp: true,
+    bridgeSteps,
+    explicitToBridgeStepNo,
+    firstBridgeStepNo: bridgeSteps[0]?.stepNo || null,
+    lastBridgeStepNo: bridgeSteps[bridgeSteps.length - 1]?.stepNo || null,
+    finalApprovalExplicitStepNo:
+      explicitApproveSteps[explicitApproveSteps.length - 1]?.stepNo || null,
+  };
+}
+
+function resolveWorkflowBridgeStepCount(definitionRow, bridgeSteps = []) {
+  return isApDocumentWorkflowProcessType(definitionRow?.process_type)
+    ? bridgeSteps.length
+    : Math.max(1, bridgeSteps.length);
+}
+
+function mapExplicitWorkflowStepNoToUnifiedBridgeStepNo(
+  bridgeContext,
+  explicitStepNo,
+  { fallbackToLastBridgeStep = false } = {}
+) {
+  const normalizedStepNo = Math.max(1, Number(explicitStepNo || 1));
+  if (!bridgeContext?.isAp) {
+    return normalizedStepNo;
+  }
+  const mappedStepNo = bridgeContext.explicitToBridgeStepNo.get(normalizedStepNo);
+  if (mappedStepNo) {
+    return mappedStepNo;
+  }
+  if (
+    fallbackToLastBridgeStep &&
+    bridgeContext.lastBridgeStepNo &&
+    bridgeContext.finalApprovalExplicitStepNo &&
+    normalizedStepNo > bridgeContext.finalApprovalExplicitStepNo
+  ) {
+    return bridgeContext.lastBridgeStepNo;
+  }
+  return null;
 }
 
 function mapWorkflowAssignmentScope(row) {
@@ -97,6 +206,13 @@ function mapWorkflowAssignmentScope(row) {
     return {
       scopeType: "LEGAL_ENTITY",
       scopeId: legalEntityId,
+    };
+  }
+  const countryId = parsePositiveInt(row?.country_id);
+  if (countryId) {
+    return {
+      scopeType: "COUNTRY",
+      scopeId: countryId,
     };
   }
   const groupCompanyId = parsePositiveInt(row?.group_company_id);
@@ -119,6 +235,7 @@ function resolveWorkflowRequestScope(row) {
       scopeType: "OPERATING_UNIT",
       scopeId: operatingUnitId,
       legalEntityId: parsePositiveInt(row?.target_legal_entity_id),
+      countryId: parsePositiveInt(row?.target_country_id),
       operatingUnitId,
       groupCompanyId: parsePositiveInt(row?.target_group_company_id),
     };
@@ -129,6 +246,18 @@ function resolveWorkflowRequestScope(row) {
       scopeType: "LEGAL_ENTITY",
       scopeId: legalEntityId,
       legalEntityId,
+      countryId: parsePositiveInt(row?.target_country_id),
+      operatingUnitId: null,
+      groupCompanyId: parsePositiveInt(row?.target_group_company_id),
+    };
+  }
+  const countryId = parsePositiveInt(row?.target_country_id);
+  if (countryId) {
+    return {
+      scopeType: "COUNTRY",
+      scopeId: countryId,
+      legalEntityId: null,
+      countryId,
       operatingUnitId: null,
       groupCompanyId: parsePositiveInt(row?.target_group_company_id),
     };
@@ -139,6 +268,7 @@ function resolveWorkflowRequestScope(row) {
       scopeType: "GROUP",
       scopeId: groupCompanyId,
       legalEntityId: null,
+      countryId: null,
       operatingUnitId: null,
       groupCompanyId,
     };
@@ -147,6 +277,7 @@ function resolveWorkflowRequestScope(row) {
     scopeType: "TENANT",
     scopeId: parsePositiveInt(row?.tenant_id),
     legalEntityId: null,
+    countryId: null,
     operatingUnitId: null,
     groupCompanyId: null,
   };
@@ -190,13 +321,24 @@ function mapLegacyWorkflowStatus(row) {
 function buildWorkflowPolicySnapshot({ definitionRow, stepRows }) {
   const normalizedSteps = (stepRows || [])
     .map((step) => ({
-      step_no: Number(step.step_no || 1),
-      required_permission_code: String(step.required_permission_code || "").trim(),
-      scope_resolution_mode: mapStageScopeTypeToResolutionMode(step.stage_scope_type),
+      step_no: Number(step.stepNo || step.step_no || 1),
+      required_permission_code: String(
+        step.requiredPermissionCode ?? step.required_permission_code ?? ""
+      ).trim(),
+      scope_resolution_mode: mapStageScopeTypeToResolutionMode(
+        step.stageScopeType ?? step.stage_scope_type
+      ),
       custom_scope_resolver_key: null,
-      min_approvals: Math.max(1, Number(step.min_approver_count || 1)),
-      allow_self_approve: Boolean(parseDbBoolean(step.allow_self_approve)),
-      escalation_after_hours: parsePositiveInt(step.escalation_after_hours),
+      min_approvals: Math.max(
+        1,
+        Number(step.minApproverCount ?? step.min_approver_count ?? 1)
+      ),
+      allow_self_approve: Boolean(
+        parseDbBoolean(step.allowSelfApprove ?? step.allow_self_approve)
+      ),
+      escalation_after_hours: parsePositiveInt(
+        step.escalationAfterHours ?? step.escalation_after_hours
+      ),
     }))
     .sort((left, right) => left.step_no - right.step_no);
 
@@ -215,7 +357,7 @@ function buildWorkflowPolicySnapshot({ definitionRow, stepRows }) {
     scope_id: null,
     effective_from: null,
     effective_to: null,
-    step_count: Math.max(1, normalizedSteps.length),
+    step_count: resolveWorkflowBridgeStepCount(definitionRow, normalizedSteps),
     min_approvals: 1,
     maker_checker_required: false,
     allow_self_approve: true,
@@ -260,6 +402,8 @@ async function upsertGenericWorkflowPolicyMirror(connection, definitionRow) {
   }
 
   const stepRows = await listWorkflowDefinitionSteps(connection, definitionId);
+  const bridgeContext = buildWorkflowApprovalBridgeContext(definitionRow, stepRows);
+  const bridgeStepRows = bridgeContext.bridgeSteps;
   const workflowAssignments = await listWorkflowAssignmentsForDefinition(
     connection,
     tenantId,
@@ -267,7 +411,11 @@ async function upsertGenericWorkflowPolicyMirror(connection, definitionRow) {
   );
   const mappedTargetType = mapWorkflowProcessToTargetType(definitionRow?.process_type);
   const firstStepPermissionCode =
-    String(stepRows[0]?.required_permission_code || "").trim() ||
+    String(
+      bridgeStepRows[0]?.requiredPermissionCode ??
+        bridgeStepRows[0]?.required_permission_code ??
+        ""
+    ).trim() ||
     "approvals.requests.approve";
 
   const [upsertResult] = await connection.execute(
@@ -312,7 +460,7 @@ async function upsertGenericWorkflowPolicyMirror(connection, definitionRow) {
         String(definitionRow.code || "").trim().toUpperCase(),
       mappedTargetType,
       Number(definitionRow.version_no || 1),
-      Math.max(1, stepRows.length),
+      resolveWorkflowBridgeStepCount(definitionRow, bridgeStepRows),
       firstStepPermissionCode,
       parseDbBoolean(definitionRow.is_active) ? 1 : 0,
       parsePositiveInt(definitionRow.created_by_user_id),
@@ -338,7 +486,7 @@ async function upsertGenericWorkflowPolicyMirror(connection, definitionRow) {
         AND policy_id = ?`,
     [tenantId, genericPolicyId]
   );
-  for (const stepRow of stepRows) {
+  for (const stepRow of bridgeStepRows) {
     // eslint-disable-next-line no-await-in-loop
     await connection.execute(
       `INSERT INTO approval_policy_steps (
@@ -355,12 +503,21 @@ async function upsertGenericWorkflowPolicyMirror(connection, definitionRow) {
       [
         tenantId,
         genericPolicyId,
-        Number(stepRow.step_no || 1),
-        String(stepRow.required_permission_code || "").trim(),
-        mapStageScopeTypeToResolutionMode(stepRow.stage_scope_type),
-        Math.max(1, Number(stepRow.min_approver_count || 1)),
-        parseDbBoolean(stepRow.allow_self_approve) ? 1 : 0,
-        parsePositiveInt(stepRow.escalation_after_hours),
+        Number(stepRow.stepNo || stepRow.step_no || 1),
+        String(
+          stepRow.requiredPermissionCode ?? stepRow.required_permission_code ?? ""
+        ).trim(),
+        mapStageScopeTypeToResolutionMode(
+          stepRow.stageScopeType ?? stepRow.stage_scope_type
+        ),
+        Math.max(
+          1,
+          Number(stepRow.minApproverCount ?? stepRow.min_approver_count ?? 1)
+        ),
+        parseDbBoolean(stepRow.allowSelfApprove ?? stepRow.allow_self_approve) ? 1 : 0,
+        parsePositiveInt(
+          stepRow.escalationAfterHours ?? stepRow.escalation_after_hours
+        ),
       ]
     );
   }
@@ -426,6 +583,7 @@ async function syncGenericWorkflowDecisionsFromLegacy(connection, {
   tenantId,
   genericRequestId,
   instanceId,
+  bridgeContext = null,
 }) {
   await connection.execute(
     `DELETE FROM approval_decisions
@@ -436,6 +594,13 @@ async function syncGenericWorkflowDecisionsFromLegacy(connection, {
 
   const legacyDecisions = await listWorkflowInstanceDecisionRows(connection, instanceId);
   for (const row of legacyDecisions) {
+    const bridgedStepNo = mapExplicitWorkflowStepNoToUnifiedBridgeStepNo(
+      bridgeContext,
+      row.step_no
+    );
+    if (!bridgedStepNo) {
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     await connection.execute(
       `INSERT INTO approval_decisions (
@@ -450,7 +615,7 @@ async function syncGenericWorkflowDecisionsFromLegacy(connection, {
       [
         tenantId,
         genericRequestId,
-        Number(row.step_no || 1),
+        bridgedStepNo,
         normalizeUpper(row.decision),
         parsePositiveInt(row.decision_by_user_id),
         row.decision_note || null,
@@ -480,6 +645,10 @@ async function upsertGenericWorkflowRequestMirror(connection, instanceRow) {
   }
 
   const stepRows = await listWorkflowDefinitionSteps(connection, definitionId);
+  const bridgeContext = buildWorkflowApprovalBridgeContext(definitionRow, stepRows);
+  if (bridgeContext.isAp && bridgeContext.bridgeSteps.length === 0) {
+    return null;
+  }
   const requestScope = resolveWorkflowRequestScope(instanceRow);
   const statusMapping = mapLegacyWorkflowStatus(instanceRow);
   const requestCode = `WFR-${tenantId}-${instanceId}`;
@@ -488,7 +657,7 @@ async function upsertGenericWorkflowRequestMirror(connection, instanceRow) {
       ...definitionRow,
       generic_policy_id: genericPolicyId,
     },
-    stepRows,
+    stepRows: bridgeContext.bridgeSteps,
   });
   const targetSnapshot = {
     module_code: "WORKFLOW",
@@ -496,6 +665,7 @@ async function upsertGenericWorkflowRequestMirror(connection, instanceRow) {
     target_type: normalizeUpper(instanceRow.target_type),
     target_id: parsePositiveInt(instanceRow.target_id),
     workflow_definition_id: definitionId,
+    country_id: parsePositiveInt(instanceRow.target_country_id),
     group_company_id: parsePositiveInt(instanceRow.target_group_company_id),
     legal_entity_id: parsePositiveInt(instanceRow.target_legal_entity_id),
     operating_unit_id: parsePositiveInt(instanceRow.target_operating_unit_id),
@@ -567,7 +737,19 @@ async function upsertGenericWorkflowRequestMirror(connection, instanceRow) {
       requestScope.legalEntityId,
       requestScope.operatingUnitId,
       statusMapping.requestStatus,
-      Math.max(1, Number(instanceRow.current_step_no || 1)),
+      Math.max(
+        1,
+        Number(
+          mapExplicitWorkflowStepNoToUnifiedBridgeStepNo(
+            bridgeContext,
+            instanceRow.current_step_no,
+            {
+              fallbackToLastBridgeStep:
+                normalizeUpper(instanceRow.status) === "APPROVED",
+            }
+          ) || 1
+        )
+      ),
       parsePositiveInt(instanceRow.requested_by_user_id),
       instanceRow.requested_at || instanceRow.created_at || null,
       statusMapping.approvedAt,
@@ -596,6 +778,7 @@ async function upsertGenericWorkflowRequestMirror(connection, instanceRow) {
     tenantId,
     genericRequestId,
     instanceId,
+    bridgeContext,
   });
 
   return genericRequestId;
@@ -603,14 +786,24 @@ async function upsertGenericWorkflowRequestMirror(connection, instanceRow) {
 
 const WORKFLOW_INSTANCE_SCOPE_SELECT_SQL = `COALESCE(
       period_close_book.legal_entity_id,
-      local_close_pack.legal_entity_id
+      local_close_pack.legal_entity_id,
+      workflow_cari_doc.legal_entity_id
     ) AS target_legal_entity_id,
+      COALESCE(
+        period_close_entity.country_id,
+        local_close_entity.country_id,
+        workflow_cari_entity.country_id
+      ) AS target_country_id,
       COALESCE(
         period_close_entity.group_company_id,
         local_close_entity.group_company_id,
-        consolidation_group.group_company_id
+        consolidation_group.group_company_id,
+        workflow_cari_entity.group_company_id
       ) AS target_group_company_id,
-      local_close_pack.operating_unit_id AS target_operating_unit_id`;
+      COALESCE(
+        local_close_pack.operating_unit_id,
+        workflow_cari_doc.operating_unit_id
+      ) AS target_operating_unit_id`;
 
 const WORKFLOW_INSTANCE_SCOPE_JOIN_SQL = `LEFT JOIN period_close_runs pcr
       ON pcr.id = wi.target_id
@@ -629,8 +822,14 @@ const WORKFLOW_INSTANCE_SCOPE_JOIN_SQL = `LEFT JOIN period_close_runs pcr
       ON local_close_pack.id = wi.target_id
      AND wi.target_type = 'LOCAL_CLOSE_PACK'
      AND local_close_pack.tenant_id = wi.tenant_id
-    LEFT JOIN legal_entities local_close_entity
-      ON local_close_entity.id = local_close_pack.legal_entity_id`;
+     LEFT JOIN legal_entities local_close_entity
+      ON local_close_entity.id = local_close_pack.legal_entity_id
+    LEFT JOIN cari_documents workflow_cari_doc
+      ON workflow_cari_doc.id = wi.target_id
+     AND wi.target_type = 'CARI_DOCUMENT'
+     AND workflow_cari_doc.tenant_id = wi.tenant_id
+    LEFT JOIN legal_entities workflow_cari_entity
+      ON workflow_cari_entity.id = workflow_cari_doc.legal_entity_id`;
 
 const migration166WorkflowGenericBridge = {
   key: "m166_workflow_generic_bridge",
@@ -643,17 +842,24 @@ const migration166WorkflowGenericBridge = {
         "approval_policy_steps",
         "scope_resolution_mode",
         "TARGET_GROUP"
+      )) ||
+      !(await enumColumnIncludesValue(
+        connection,
+        "approval_policy_steps",
+        "scope_resolution_mode",
+        "TARGET_COUNTRY"
       ))
     ) {
       await connection.execute(
         `ALTER TABLE approval_policy_steps
            MODIFY COLUMN scope_resolution_mode ENUM(
-             'REQUEST_SCOPE',
-             'POLICY_SCOPE',
-             'TARGET_GROUP',
-             'TARGET_LEGAL_ENTITY',
-             'TARGET_OPERATING_UNIT',
-             'CUSTOM'
+              'REQUEST_SCOPE',
+              'POLICY_SCOPE',
+              'TARGET_GROUP',
+              'TARGET_COUNTRY',
+              'TARGET_LEGAL_ENTITY',
+              'TARGET_OPERATING_UNIT',
+              'CUSTOM'
            ) NOT NULL DEFAULT 'REQUEST_SCOPE'`
       );
     }

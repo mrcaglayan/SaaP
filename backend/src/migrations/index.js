@@ -164,6 +164,7 @@ import migration175CariApWorkflowReviewStateCompatGuards from "./m175_cari_ap_wo
 import migration176ApDocumentWorkflowIntegrationFoundation from "./m176_ap_document_workflow_integration_foundation.js";
 import migration177CariReviewStateLegacyCheckCleanup from "./m177_cari_review_state_legacy_check_cleanup.js";
 import migration178WorkflowAssignmentRoutingMatrix from "./m178_workflow_assignment_routing_matrix.js";
+import migration179ApWorkflowActionStepContract from "./m179_ap_workflow_action_step_contract.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -332,6 +333,7 @@ const migrations = [
   migration176ApDocumentWorkflowIntegrationFoundation,
   migration177CariReviewStateLegacyCheckCleanup,
   migration178WorkflowAssignmentRoutingMatrix,
+  migration179ApWorkflowActionStepContract,
 ];
 
 export default migrations;

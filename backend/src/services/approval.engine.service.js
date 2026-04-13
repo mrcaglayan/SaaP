@@ -106,7 +106,10 @@ function mapPolicyRow(row) {
     scopeId: parsePositiveInt(row.scope_id),
     effectiveFrom: parseDateOnly(row.effective_from),
     effectiveTo: parseDateOnly(row.effective_to),
-    stepCount: Number(row.step_count || 1),
+    stepCount:
+      row.step_count === null || row.step_count === undefined || row.step_count === ""
+        ? 1
+        : Number(row.step_count),
     minApprovals: Number(row.min_approvals || 1),
     makerCheckerRequired: toDbBoolean(row.maker_checker_required),
     allowSelfApprove: toDbBoolean(row.allow_self_approve),
@@ -1296,6 +1299,9 @@ export async function submitRequest(
     runQuery,
   });
   const steps = await listApprovalPolicySteps(policy.id, runQuery);
+  if (steps.length === 0 && Number(policy.stepCount || 0) === 0) {
+    throw conflict("Approval policy has no approval steps");
+  }
   const policySnapshot = buildPolicySnapshot(
     policy,
     steps,

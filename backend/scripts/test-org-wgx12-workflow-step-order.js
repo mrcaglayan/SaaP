@@ -68,7 +68,7 @@ async function main() {
   );
 
   assert(
-    workflowStepsBuilderStepSource.includes("Step 4 - Define approval steps") &&
+    workflowStepsBuilderStepSource.includes("Step 4 - Define workflow steps") &&
       workflowStepsBuilderStepSource.includes("Current target scope") &&
       workflowStepsBuilderStepSource.includes("Save steps and continue to review"),
     "WorkflowStepsBuilderStep should move to the fourth stage and lead into review"
@@ -76,7 +76,7 @@ async function main() {
 
   assert(
     workflowReviewStepSource.includes("Save assignment") &&
-      workflowReviewStepSource.includes("Back to Approval Steps") &&
+      workflowReviewStepSource.includes("Back to Workflow Steps") &&
       workflowReviewStepSource.includes("Ready to save"),
     "WorkflowReviewStep should become the final assignment-save stage"
   );
@@ -92,9 +92,9 @@ async function main() {
       workflowSetupPageSource.includes("setCurrentStep(3);") &&
       workflowSetupPageSource.includes("setCurrentStep(4);") &&
       workflowSetupPageSource.includes(
-        'setCurrentStep(5);\n      setMessage(\n        l(\n          "Approval steps saved. Review the setup and save the assignment."'
+        'setCurrentStep(5);\n      setMessage(\n        l(\n          "Workflow steps saved. Review the setup and save the assignment."'
       ),
-    "WorkflowSetupPage should advance scope -> definition -> approval steps -> review in the new order"
+    "WorkflowSetupPage should advance scope -> definition -> workflow steps -> review in the new order"
   );
 
   assert(

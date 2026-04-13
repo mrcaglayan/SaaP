@@ -33,9 +33,7 @@ async function main() {
     "utf8"
   );
 
-  const apStandardPreset = getWorkflowPresetCatalogEntry("AP_STANDARD_ENTITY");
   const localClosePreset = getWorkflowPresetCatalogEntry("LOCAL_CLOSE_STANDARD");
-  const apBaselineDrafts = buildWorkflowPresetBaselineStepDrafts(apStandardPreset);
   const localCloseBaselineDrafts = buildWorkflowPresetBaselineStepDrafts(localClosePreset);
   const localCloseComparison = buildWorkflowPresetComparisonModel({
     presetEntry: localClosePreset,
@@ -48,22 +46,6 @@ async function main() {
     },
     l,
   });
-
-  assert.equal(
-    apBaselineDrafts.length,
-    1,
-    "UI-3A should adapt non-extension AP presets into the current approval-step model"
-  );
-  assert.equal(
-    apBaselineDrafts[0].stageScopeType,
-    "LEGAL_ENTITY",
-    "AP standard preset should baseline to legal-entity approval in the current step model"
-  );
-  assert.equal(
-    apBaselineDrafts[0].requiredPermissionCode,
-    "",
-    "AP preset baselines should keep the current AP permission-empty rule"
-  );
 
   assert.deepEqual(
     localCloseBaselineDrafts.map((step) => step.requiredPermissionCode),
@@ -82,13 +64,29 @@ async function main() {
   );
 
   assert(
+    /isApWorkflowProcess\s*\?\s*\[\]\s*:\s*workflowPresetEntries\.filter/s.test(
+      workflowSetupPageSource
+    ) &&
+      workflowStepsBuilderSource.includes(
+        "No preset is used. Every AP step saves explicit action, scope, and package binding."
+      ) &&
+      workflowStepsBuilderSource.includes(
+        "AP action-step mode stays explicit. Each row saves exactly which action happens at which scope."
+      ),
+    "AP workflow setup should keep shipped presets out of the first-pass authoring path"
+  );
+
+  assert(
     workflowSetupPageSource.includes("listWorkflowPresetCatalogEntries") &&
       workflowSetupPageSource.includes("selectedWorkflowPresetCode") &&
       workflowSetupPageSource.includes("workflowPresetComparison") &&
       workflowSetupPageSource.includes("function onCloneWorkflowPreset()") &&
-      workflowSetupPageSource.includes("workflowPresetOptions={workflowPresetOptions}") &&
+      workflowSetupPageSource.includes("const apStepBuilderPresetProps = isApWorkflowProcess") &&
+      workflowSetupPageSource.includes("const apReviewPresetProps = isApWorkflowProcess") &&
+      workflowSetupPageSource.includes("{...apStepBuilderPresetProps}") &&
+      workflowSetupPageSource.includes("{...apReviewPresetProps}") &&
       !workflowSetupPageSource.includes("selectedApTemplate"),
-    "WorkflowSetupPage should replace AP-template-only state with shared workflow preset state"
+    "WorkflowSetupPage should keep shared preset state for non-AP workflow families while short-circuiting AP preset props at the render boundary"
   );
 
   assert(

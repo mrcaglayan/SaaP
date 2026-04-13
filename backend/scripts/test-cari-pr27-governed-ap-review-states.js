@@ -24,7 +24,7 @@ function assert(condition, message) {
 }
 
 const RETURNED_FOR_CORRECTION_SUMMARY =
-  "Returned for correction \u2014 resubmission required";
+  "Returned to Country correction - Country resubmission required";
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -399,14 +399,19 @@ async function createGovernedApWorkflowAssignment({
     `INSERT INTO workflow_definition_steps (
         workflow_definition_id,
         step_no,
+        action_code,
         stage_scope_type,
+        required_package_code,
         required_permission_code,
         min_approver_count,
         allow_self_approve,
         escalation_after_hours
      )
-     VALUES (?, 1, 'COUNTRY', NULL, 1, FALSE, NULL)`,
-    [workflowDefinitionId]
+     VALUES
+       (?, 1, 'SUBMIT', 'COUNTRY', 'PKG-AP-DRAFT-SUBMIT', NULL, 1, FALSE, NULL),
+       (?, 2, 'APPROVE', 'COUNTRY', 'PKG-AP-APPROVE', NULL, 1, FALSE, NULL),
+       (?, 3, 'POST', 'COUNTRY', 'PKG-AP-POST', NULL, 1, FALSE, NULL)`,
+    [workflowDefinitionId, workflowDefinitionId, workflowDefinitionId]
   );
 
   await query(
@@ -470,6 +475,7 @@ async function updateLatestWorkflowInstanceForDocument({
   tenantId,
   documentId,
   status,
+  currentStepNo = null,
   decision = "",
   decisionByUserId = null,
   decisionNote = null,
@@ -491,6 +497,7 @@ async function updateLatestWorkflowInstanceForDocument({
   await query(
     `UPDATE workflow_instances
         SET status = ?,
+            current_step_no = COALESCE(?, current_step_no),
             resolved_at = ?,
             resolution_note = ?,
             updated_at = CURRENT_TIMESTAMP
@@ -498,6 +505,7 @@ async function updateLatestWorkflowInstanceForDocument({
         AND id = ?`,
     [
       status,
+      toPositiveInt(currentStepNo) || null,
       resolvedAt || null,
       resolutionNote || decisionNote || null,
       tenantId,
@@ -832,16 +840,23 @@ async function main() {
         fixtures.countryId &&
       submissionRequiredReadback.workflowGate?.assignmentScopeLabel === "Country" &&
       submissionRequiredReadback.workflowGate?.waitingForSummary ===
-        "Waiting for document submission" &&
+        "Waiting for Country submission" &&
       submissionRequiredReadback.workflowGate?.blockingReasonCode ===
         WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REQUIRED &&
       submissionRequiredReadback.workflowGate?.blockingReasonDetail ===
-        "Document must be submitted for workflow approval before posting" &&
+        "Submission is required at Country scope before posting" &&
       submissionRequiredReadback.workflowGate?.submitPermissionCode === "cari.doc.submit" &&
       submissionRequiredReadback.workflowGate?.postPermissionCode === "cari.doc.post" &&
-      submissionRequiredReadback.workflowGate?.currentStepNo === null &&
-      Number(submissionRequiredReadback.workflowGate?.totalSteps || 0) === 0,
-    "Governed AP draft readback should expose the blocked-before-submit explainability contract"
+      Number(submissionRequiredReadback.workflowGate?.currentStepNo || 0) === 1 &&
+      Number(submissionRequiredReadback.workflowGate?.totalSteps || 0) === 3 &&
+      submissionRequiredReadback.workflowGate?.currentActionCode === "SUBMIT" &&
+      submissionRequiredReadback.workflowGate?.currentRequiredPackageCode ===
+        "PKG-AP-DRAFT-SUBMIT" &&
+      submissionRequiredReadback.workflowGate?.currentStageScopeType === "COUNTRY" &&
+      submissionRequiredReadback.workflowGate?.currentStageScopeLabel === "Country" &&
+      submissionRequiredReadback.workflowGate?.nextActionCode === "APPROVE" &&
+      submissionRequiredReadback.workflowGate?.nextActionLabel === "Country approval",
+    "Governed AP draft readback should expose the explicit blocked-submit step contract"
   );
 
   const governedSubmitDraft = await createDraftDocument({
@@ -888,15 +903,17 @@ async function main() {
     submitted.workflowGate?.assignmentScopeType === "COUNTRY" &&
     toPositiveInt(submitted.workflowGate?.assignmentScopeId) === fixtures.countryId &&
     submitted.workflowGate?.assignmentScopeLabel === "Country" &&
-    Number(submitted.workflowGate?.currentStepNo || 0) === 1 &&
-    Number(submitted.workflowGate?.totalSteps || 0) === 1 &&
+    Number(submitted.workflowGate?.currentStepNo || 0) === 2 &&
+    Number(submitted.workflowGate?.totalSteps || 0) === 3 &&
+    submitted.workflowGate?.currentActionCode === "APPROVE" &&
+    submitted.workflowGate?.currentRequiredPackageCode === "PKG-AP-APPROVE" &&
     submitted.workflowGate?.currentStageScopeType === "COUNTRY" &&
     submitted.workflowGate?.currentStageScopeLabel === "Country" &&
     submitted.workflowGate?.effectiveApprovalPermissionCode ===
       "approvals.requests.approve" &&
     submitted.workflowGate?.effectiveApprovalPermissionLabel ===
       "AP approval at Country scope" &&
-    submitted.workflowGate?.nextActorType === "POSTER" &&
+    submitted.workflowGate?.nextActorType === "COUNTRY" &&
     submitted.workflowGate?.nextActionCode === "POST" &&
     submitted.workflowGate?.nextActionLabel === "Country posting" &&
     submitted.workflowGate?.waitingForSummary === "Waiting for Country approval" &&
@@ -947,6 +964,8 @@ async function main() {
   );
   assert(
     submittedReadback.workflowGate?.waitingForSummary === "Waiting for Country approval" &&
+      Number(submittedReadback.workflowGate?.currentStepNo || 0) === 2 &&
+      Number(submittedReadback.workflowGate?.totalSteps || 0) === 3 &&
       submittedReadback.workflowGate?.currentStageScopeLabel === "Country" &&
       submittedReadback.workflowGate?.nextActionLabel === "Country posting",
     "Document GET should preserve enriched workflow explainability fields after submit"
@@ -964,6 +983,7 @@ async function main() {
     tenantId,
     documentId: governedSubmitDraft.id,
     status: "APPROVED",
+    currentStepNo: 3,
     decision: "APPROVE",
     decisionByUserId: userId,
     decisionNote: approvalNote,
@@ -987,10 +1007,15 @@ async function main() {
       toPositiveInt(approvedReadback.workflowGate?.workflowInstanceId) ===
         approvedWorkflowInstanceId &&
       approvedReadback.workflowGate?.workflowInstanceStatus === "APPROVED" &&
+      Number(approvedReadback.workflowGate?.currentStepNo || 0) === 3 &&
+      Number(approvedReadback.workflowGate?.totalSteps || 0) === 3 &&
+      approvedReadback.workflowGate?.currentActionCode === "POST" &&
+      approvedReadback.workflowGate?.currentRequiredPackageCode === "PKG-AP-POST" &&
+      approvedReadback.workflowGate?.currentStageScopeLabel === "Country" &&
       approvedReadback.workflowGate?.waitingForSummary === "Ready for Country posting" &&
-      approvedReadback.workflowGate?.nextActorType === "POSTER" &&
-      approvedReadback.workflowGate?.nextActionCode === "POST" &&
-      approvedReadback.workflowGate?.nextActionLabel === "Country posting" &&
+      approvedReadback.workflowGate?.nextActorType === null &&
+      approvedReadback.workflowGate?.nextActionCode === null &&
+      approvedReadback.workflowGate?.nextActionLabel === null &&
       approvedReadback.workflowGate?.blockingReasonCode === null &&
       approvedReadback.workflowGate?.latestDecisionComment === approvalNote,
     "Approved governed AP readback should expose the ready-to-post explainability contract"
@@ -1111,16 +1136,19 @@ async function main() {
   });
   const returnedWorkflowExplainabilityMatches =
     returnedWorkflowReadback.workflowGate?.state === "returned" &&
-    returnedWorkflowReadback.workflowGate?.workflowInstanceStatus === "REJECTED" &&
-    returnedWorkflowReadback.workflowGate?.waitingForSummary ===
-      RETURNED_FOR_CORRECTION_SUMMARY &&
-    returnedWorkflowReadback.workflowGate?.blockingReasonCode ===
-      WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REJECTED &&
-    returnedWorkflowReadback.workflowGate?.blockingReasonDetail === workflowReturnReason &&
-    returnedWorkflowReadback.workflowGate?.latestDecisionComment === workflowReturnReason &&
-    Number(returnedWorkflowReadback.workflowGate?.currentStepNo || 0) === 1 &&
-    Number(returnedWorkflowReadback.workflowGate?.totalSteps || 0) === 1 &&
-    returnedWorkflowReadback.workflowGate?.currentStageScopeLabel === "Country";
+      returnedWorkflowReadback.workflowGate?.workflowInstanceStatus === "REJECTED" &&
+      returnedWorkflowReadback.workflowGate?.waitingForSummary ===
+        RETURNED_FOR_CORRECTION_SUMMARY &&
+      returnedWorkflowReadback.workflowGate?.blockingReasonCode ===
+        WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REJECTED &&
+      returnedWorkflowReadback.workflowGate?.blockingReasonDetail === workflowReturnReason &&
+      returnedWorkflowReadback.workflowGate?.latestDecisionComment === workflowReturnReason &&
+      Number(returnedWorkflowReadback.workflowGate?.currentStepNo || 0) === 1 &&
+      Number(returnedWorkflowReadback.workflowGate?.totalSteps || 0) === 3 &&
+      returnedWorkflowReadback.workflowGate?.currentActionCode === "SUBMIT" &&
+      returnedWorkflowReadback.workflowGate?.currentRequiredPackageCode ===
+        "PKG-AP-DRAFT-SUBMIT" &&
+      returnedWorkflowReadback.workflowGate?.currentStageScopeLabel === "Country";
   assert(
     returnedWorkflowExplainabilityMatches,
     `Returned governed AP readback should expose returned explainability fields from the workflow instance: ${JSON.stringify(

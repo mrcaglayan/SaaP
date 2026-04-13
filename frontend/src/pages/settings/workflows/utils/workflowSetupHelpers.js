@@ -56,6 +56,27 @@ const WORKFLOW_PERMISSION_TO_PACKAGE_CODE = Object.freeze({
   "consolidation.group.upsert": "PKG-CON-SETUP",
 });
 
+export const AP_WORKFLOW_ACTION_CODES = Object.freeze([
+  "DRAFT",
+  "SUBMIT",
+  "APPROVE",
+  "POST",
+]);
+
+const AP_WORKFLOW_REQUIRED_PACKAGE_BY_ACTION = Object.freeze({
+  DRAFT: "PKG-AP-DRAFT-SUBMIT",
+  SUBMIT: "PKG-AP-DRAFT-SUBMIT",
+  APPROVE: "PKG-AP-APPROVE",
+  POST: "PKG-AP-POST",
+});
+
+const AP_WORKFLOW_ACTION_LABELS = Object.freeze({
+  DRAFT: "Draft",
+  SUBMIT: "Submit",
+  APPROVE: "Approve",
+  POST: "Post",
+});
+
 function normalizeWorkflowCatalogOptions(options = {}) {
   return {
     workflowPackageEntries: Array.isArray(options.workflowPackageEntries)
@@ -99,7 +120,79 @@ function getWorkflowPackagePrimaryPermissionCode(requiredPackageCode, processTyp
   return WORKFLOW_PRESET_PRIMARY_PERMISSION_CODES[packageCode] || "";
 }
 
-function inferWorkflowStepPackageCode(rawStep, processType) {
+function normalizeApWorkflowActionCode(value) {
+  const normalizedValue = String(value || "").trim().toUpperCase();
+  return AP_WORKFLOW_ACTION_CODES.includes(normalizedValue) ? normalizedValue : "";
+}
+
+function inferApWorkflowStepActionCode(rawStep, requiredPackageCode = "") {
+  const explicitActionCode = normalizeApWorkflowActionCode(
+    rawStep?.actionCode ?? rawStep?.action_code
+  );
+  if (explicitActionCode) {
+    return explicitActionCode;
+  }
+
+  const explicitActionLabel = String(rawStep?.actionLabel ?? rawStep?.action_label ?? "")
+    .trim()
+    .toLowerCase();
+  if (explicitActionLabel.includes("draft") || explicitActionLabel.includes("taslak")) {
+    return "DRAFT";
+  }
+  if (explicitActionLabel.includes("submit") || explicitActionLabel.includes("gonder")) {
+    return "SUBMIT";
+  }
+  if (explicitActionLabel.includes("approve") || explicitActionLabel.includes("onay")) {
+    return "APPROVE";
+  }
+  if (explicitActionLabel.includes("post") || explicitActionLabel.includes("kaydet")) {
+    return "POST";
+  }
+
+  const normalizedPackageCode = String(requiredPackageCode || "").trim().toUpperCase();
+  if (normalizedPackageCode === "PKG-AP-APPROVE") {
+    return "APPROVE";
+  }
+  if (normalizedPackageCode === "PKG-AP-POST" || normalizedPackageCode === "PKG-AP-POST-GROUP") {
+    return "POST";
+  }
+  if (normalizedPackageCode === "PKG-AP-DRAFT-SUBMIT") {
+    return "SUBMIT";
+  }
+  return "SUBMIT";
+}
+
+function getApWorkflowActionLabel(actionCode) {
+  const normalizedActionCode = normalizeApWorkflowActionCode(actionCode);
+  return AP_WORKFLOW_ACTION_LABELS[normalizedActionCode] || "Step";
+}
+
+function getLocalizedApWorkflowActionLabel(actionCode, l) {
+  const normalizedActionCode = normalizeApWorkflowActionCode(actionCode);
+  if (normalizedActionCode === "DRAFT") {
+    return l("Draft", "Taslak");
+  }
+  if (normalizedActionCode === "SUBMIT") {
+    return l("Submit", "Gonder");
+  }
+  if (normalizedActionCode === "APPROVE") {
+    return l("Approve", "Onayla");
+  }
+  if (normalizedActionCode === "POST") {
+    return l("Post", "Kaydet");
+  }
+  return l("Step", "Adim");
+}
+
+/**
+ * Resolves the first-pass AP package that must be bound to one explicit action.
+ */
+export function getApWorkflowRequiredPackageCode(actionCode) {
+  const normalizedActionCode = normalizeApWorkflowActionCode(actionCode);
+  return AP_WORKFLOW_REQUIRED_PACKAGE_BY_ACTION[normalizedActionCode] || "";
+}
+
+function inferWorkflowStepPackageCode(rawStep, processType, actionCode = "") {
   const normalizedProcessType = String(processType || "").toUpperCase();
   const explicitPackageCode = String(
     rawStep?.requiredPackageCode ?? rawStep?.required_package_code ?? ""
@@ -110,7 +203,9 @@ function inferWorkflowStepPackageCode(rawStep, processType) {
     return explicitPackageCode;
   }
   if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return "PKG-AP-APPROVE";
+    return getApWorkflowRequiredPackageCode(
+      actionCode || rawStep?.actionCode || rawStep?.action_code
+    );
   }
   const permissionCode = String(
     rawStep?.requiredPermissionCode ?? rawStep?.required_permission_code ?? ""
@@ -200,6 +295,7 @@ function resolveWorkflowStepEligibleBusinessRoleCodes({
 
 function inferWorkflowStepActionLabel({
   rawStep,
+  actionCode,
   requiredPackageCode,
   stageScopeType,
   processType,
@@ -213,6 +309,9 @@ function inferWorkflowStepActionLabel({
 
   const normalizedPackageCode = String(requiredPackageCode || "").trim().toUpperCase();
   const normalizedProcessType = String(processType || "").toUpperCase();
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    return getApWorkflowActionLabel(actionCode);
+  }
   const normalizedScopeType = String(stageScopeType || "").trim().toUpperCase();
 
   const presetStepMatches = (Array.isArray(workflowPresetEntries) ? workflowPresetEntries : [])
@@ -239,18 +338,25 @@ function inferWorkflowStepActionLabel({
 
 /**
  * Lists the workflow packages the current builder can bind to for one workflow family.
- * AP stays intentionally narrowed to `PKG-AP-APPROVE` until the backend step contract
- * can represent submit/post stages as first-class package-bound workflow steps.
  */
-export function listWorkflowStepPackageOptions({ processType, workflowPackageEntries = [] }) {
+export function listWorkflowStepPackageOptions({
+  processType,
+  workflowPackageEntries = [],
+  actionCode = "",
+}) {
   const normalizedProcessType = String(processType || "").toUpperCase();
   const familyEntries = (Array.isArray(workflowPackageEntries) ? workflowPackageEntries : []).filter(
     (entry) => String(entry?.workflowFamily || "").toUpperCase() === normalizedProcessType
   );
   if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    return familyEntries.filter(
-      (entry) => String(entry?.code || "").trim().toUpperCase() === "PKG-AP-APPROVE"
-    );
+    const expectedPackageCode = getApWorkflowRequiredPackageCode(actionCode);
+    return familyEntries.filter((entry) => {
+      const normalizedCode = String(entry?.code || "").trim().toUpperCase();
+      if (!["PKG-AP-DRAFT-SUBMIT", "PKG-AP-APPROVE", "PKG-AP-POST"].includes(normalizedCode)) {
+        return false;
+      }
+      return expectedPackageCode ? normalizedCode === expectedPackageCode : true;
+    });
   }
   return familyEntries.filter((entry) => {
     const normalizedCode = String(entry?.code || "").trim().toUpperCase();
@@ -262,37 +368,6 @@ export function listWorkflowStepPackageOptions({ processType, workflowPackageEnt
     );
   });
 }
-
-/**
- * Predefined AP business flow templates.
- * Each template describes a real-world AP approval path in business terms.
- * The `steps` array feeds directly into `buildStepDrafts`.
- */
-export const AP_BUSINESS_TEMPLATES = Object.freeze([
-  {
-    id: "branch-entity-country",
-    steps: [
-      { stepNo: 1, stageScopeType: "LEGAL_ENTITY", requiredPermissionCode: null, minApproverCount: 1, allowSelfApprove: false },
-      { stepNo: 2, stageScopeType: "COUNTRY", requiredPermissionCode: null, minApproverCount: 1, allowSelfApprove: false },
-    ],
-  },
-  {
-    id: "branch-country",
-    steps: [
-      { stepNo: 1, stageScopeType: "COUNTRY", requiredPermissionCode: null, minApproverCount: 1, allowSelfApprove: false },
-    ],
-  },
-  {
-    id: "branch-entity",
-    steps: [
-      { stepNo: 1, stageScopeType: "LEGAL_ENTITY", requiredPermissionCode: null, minApproverCount: 1, allowSelfApprove: false },
-    ],
-  },
-  {
-    id: "direct-post",
-    steps: [],
-  },
-]);
 
 /**
  * Parses a positive integer from a mixed input.
@@ -329,7 +404,18 @@ export function buildDefaultSteps(processType) {
     return [
       {
         stepNo: 1,
-        stageScopeType: "COUNTRY",
+        actionCode: "SUBMIT",
+        stageScopeType: "OPERATING_UNIT",
+        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        requiredPermissionCode: null,
+        minApproverCount: 1,
+        allowSelfApprove: false,
+      },
+      {
+        stepNo: 2,
+        actionCode: "POST",
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-AP-POST",
         requiredPermissionCode: null,
         minApproverCount: 1,
         allowSelfApprove: false,
@@ -389,12 +475,27 @@ export function normalizeStepDraft(rawStep, fallbackStepNo, processType, options
   const normalizedProcessType = String(processType || "").toUpperCase();
   const step = rawStep && typeof rawStep === "object" ? rawStep : {};
   const catalogOptions = normalizeWorkflowCatalogOptions(options);
-  const inferredPackageCode = inferWorkflowStepPackageCode(step, processType);
+  const inferredActionCode =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+      ? inferApWorkflowStepActionCode(
+          step,
+          step?.requiredPackageCode ?? step?.required_package_code ?? ""
+        )
+      : "";
+  const inferredPackageCode = inferWorkflowStepPackageCode(
+    step,
+    processType,
+    inferredActionCode
+  );
+  const apDefaultScopeType =
+    inferredActionCode === "DRAFT" || inferredActionCode === "SUBMIT"
+      ? "OPERATING_UNIT"
+      : "LEGAL_ENTITY";
   const normalizedStageScopeType = String(
     step.stageScopeType ??
       step.stage_scope_type ??
       (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? "COUNTRY"
+        ? apDefaultScopeType
         : "LEGAL_ENTITY")
   ).toUpperCase();
   const normalizedRequiredPermissionCode =
@@ -422,19 +523,25 @@ export function normalizeStepDraft(rawStep, fallbackStepNo, processType, options
         ? Number(step.stepNo ?? step.step_no ?? fallbackStepNo)
         : fallbackStepNo
     ),
+    actionCode: inferredActionCode,
     stageScopeType: normalizedStageScopeType,
     requiredPermissionCode: normalizedRequiredPermissionCode,
     minApproverCount: String(
-      Math.max(1, Number(step.minApproverCount ?? step.min_approver_count ?? 1) || 1)
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE && inferredActionCode !== "APPROVE"
+        ? 1
+        : Math.max(1, Number(step.minApproverCount ?? step.min_approver_count ?? 1) || 1)
     ),
-    allowSelfApprove: Boolean(step.allowSelfApprove ?? step.allow_self_approve),
+    allowSelfApprove:
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE && inferredActionCode !== "APPROVE"
+        ? false
+        : Boolean(step.allowSelfApprove ?? step.allow_self_approve),
     escalationAfterHours:
       step.escalationAfterHours === null || step.escalation_after_hours === null
         ? ""
         : String(step.escalationAfterHours ?? step.escalation_after_hours ?? "").trim(),
-    // These fields are UI-only until the package-native step builder lands.
     actionLabel: inferWorkflowStepActionLabel({
       rawStep: step,
+      actionCode: inferredActionCode,
       requiredPackageCode: inferredPackageCode,
       stageScopeType: normalizedStageScopeType,
       processType,
@@ -473,25 +580,55 @@ export function buildStepDrafts(processType, rows, options = {}) {
  */
 export function serializeStepDrafts(stepDrafts, processType) {
   const normalizedProcessType = String(processType || "").toUpperCase();
-  return (Array.isArray(stepDrafts) ? stepDrafts : []).map((step, index) => ({
-    stepNo: Math.max(1, Number(step?.stepNo || index + 1) || index + 1),
-    stageScopeType: String(step?.stageScopeType || "LEGAL_ENTITY").toUpperCase(),
-    requiredPermissionCode:
-      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? null
-        : String(step?.requiredPermissionCode || "").trim() || null,
-    minApproverCount: Math.max(1, Number(step?.minApproverCount || 1) || 1),
-    allowSelfApprove: Boolean(step?.allowSelfApprove),
-    escalationAfterHours: String(step?.escalationAfterHours || "").trim()
+  return (Array.isArray(stepDrafts) ? stepDrafts : []).map((step, index) => {
+    const stepNo = Math.max(1, Number(step?.stepNo || index + 1) || index + 1);
+    const stageScopeType = String(step?.stageScopeType || "LEGAL_ENTITY").toUpperCase();
+    const escalationAfterHours = String(step?.escalationAfterHours || "").trim()
       ? Math.max(1, Number(step.escalationAfterHours) || 1)
-      : null,
-  }));
+      : null;
+
+    if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+      const actionCode =
+        normalizeApWorkflowActionCode(step?.actionCode) ||
+        inferApWorkflowStepActionCode(step, step?.requiredPackageCode);
+      const requiredPackageCode =
+        String(step?.requiredPackageCode || "").trim().toUpperCase() ||
+        getApWorkflowRequiredPackageCode(actionCode);
+      const isApproveAction = actionCode === "APPROVE";
+
+      return {
+        stepNo,
+        actionCode: actionCode || null,
+        stageScopeType,
+        requiredPackageCode: requiredPackageCode || null,
+        requiredPermissionCode: null,
+        minApproverCount: isApproveAction
+          ? Math.max(1, Number(step?.minApproverCount || 1) || 1)
+          : 1,
+        allowSelfApprove: isApproveAction ? Boolean(step?.allowSelfApprove) : false,
+        escalationAfterHours,
+      };
+    }
+
+    return {
+      stepNo,
+      stageScopeType,
+      requiredPermissionCode: String(step?.requiredPermissionCode || "").trim() || null,
+      minApproverCount: Math.max(1, Number(step?.minApproverCount || 1) || 1),
+      allowSelfApprove: Boolean(step?.allowSelfApprove),
+      escalationAfterHours,
+    };
+  });
 }
 
 function normalizeComparableWorkflowStep(step, processType) {
   const normalizedProcessType = String(processType || "").toUpperCase();
   const normalizedStep = normalizeStepDraft(step, Number(step?.stepNo || 1) || 1, processType);
   return {
+    actionCode:
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        ? String(normalizedStep.actionCode || "").trim().toUpperCase()
+        : "",
     actionLabel: String(normalizedStep.actionLabel || "").trim(),
     stageScopeType: normalizedStep.stageScopeType,
     requiredPackageCode: String(normalizedStep.requiredPackageCode || "").trim().toUpperCase(),
@@ -510,8 +647,6 @@ function normalizeComparableWorkflowStep(step, processType) {
 
 /**
  * Adapts one catalog preset into the current workflow-step editor model.
- * Until the package-native step builder ships, this keeps preset cloning on the
- * existing `requiredPermissionCode` API shape instead of inventing a new write contract.
  */
 export function buildWorkflowPresetBaselineStepDrafts(presetEntry) {
   if (!presetEntry || typeof presetEntry !== "object") {
@@ -520,25 +655,19 @@ export function buildWorkflowPresetBaselineStepDrafts(presetEntry) {
 
   const processType = String(presetEntry.workflowFamily || "").toUpperCase();
   const sourceSteps = Array.isArray(presetEntry.steps) ? presetEntry.steps : [];
-  const adaptableSteps =
-    processType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-      ? sourceSteps.filter(
-          (step) =>
-            String(step?.requiredPackageCode || "")
-              .trim()
-              .toUpperCase() === "PKG-AP-APPROVE"
-        )
-      : sourceSteps;
-
-  return adaptableSteps.map((step, index) =>
+  return sourceSteps.map((step, index) =>
     normalizeStepDraft(
       {
         stepNo: Number(step?.stepNo || index + 1) || index + 1,
+        actionCode:
+          processType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+            ? inferApWorkflowStepActionCode(step, step?.requiredPackageCode)
+            : "",
         stageScopeType: String(step?.scopeType || step?.stageScopeType || "LEGAL_ENTITY"),
-        requiredPermissionCode: getWorkflowPackagePrimaryPermissionCode(
-          step?.requiredPackageCode,
-          processType
-        ),
+        requiredPermissionCode:
+          processType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+            ? null
+            : getWorkflowPackagePrimaryPermissionCode(step?.requiredPackageCode, processType),
         minApproverCount: Number(step?.minApproverCount || 1) || 1,
         allowSelfApprove: Boolean(step?.allowSelfApprove),
         escalationAfterHours:
@@ -735,8 +864,8 @@ export function buildWorkflowPresetComparisonModel({
           "Bu preset bir extension paketine bagli ve su an icin yalnizca onizleme olarak kalir."
         )
       : l(
-          "Clone copies the preset baseline into the existing step model. Package-native step binding lands next.",
-          "Kopyala, preset temelini mevcut adim modeline aktarir. Paket-tabani adim baglama sonraki dilimde gelir."
+          "Clone copies the preset baseline into the current workflow step model.",
+          "Kopyala, preset temelini mevcut workflow adim modeline aktarir."
         ),
   };
 }
@@ -841,17 +970,6 @@ function buildWorkflowExplainabilityEntry({
   };
 }
 
-function buildApPosterActorText(scopeType, l) {
-  const normalizedScopeType = String(scopeType || "").toUpperCase();
-  if (normalizedScopeType === "GROUP") {
-    return l("Group posting authority", "Grup kayit yetkisi");
-  }
-  if (normalizedScopeType === "COUNTRY") {
-    return l("Country posting authority", "Ulke kayit yetkisi");
-  }
-  return l("Entity posting authority", "Entity kayit yetkisi");
-}
-
 /**
  * Builds the business-readable explainability preview used while configuring a
  * workflow. This is a design-time preview only; runtime waiting/cannot-act
@@ -869,41 +987,34 @@ export function buildWorkflowExplainabilityPreviewModel({
   const notes = [];
 
   if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    previewEntries.push(
-      buildWorkflowExplainabilityEntry({
-        key: "ap-submit",
-        stepNo: 1,
-        actionLabel: l("Create / Edit / Submit", "Olustur / Duzenle / Gonder"),
-        requiredPackageLabel: "AP Documents / Draft & Submit",
-        scopeType: "OPERATING_UNIT",
-        actorText: l("Branch Accountant", "Sube Muhasebecisi"),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-        stepScopeLabels,
-        l,
-      })
-    );
-
     normalizedSteps.forEach((step, index) => {
+      const actionCode =
+        normalizeApWorkflowActionCode(step?.actionCode) ||
+        inferApWorkflowStepActionCode(step, step?.requiredPackageCode);
+      const fallbackActorText =
+        actionCode === "APPROVE"
+          ? l("In-scope AP approvers", "Kapsam ici AP onaycilari")
+          : actionCode === "POST"
+            ? l("In-scope AP posters", "Kapsam ici AP kayit sorumlulari")
+            : l("In-scope AP actors", "Kapsam ici AP aktorleri");
       const actorText = buildWorkflowExplainabilityActorText(
         step?.eligibleBusinessRoleLabels,
-        l("In-scope AP reviewers", "Kapsam ici AP inceleyicileri"),
+        fallbackActorText,
         l
       );
       previewEntries.push(
         buildWorkflowExplainabilityEntry({
-          key: `ap-approval-${index + 1}`,
-          stepNo: index + 2,
-          actionLabel: step?.actionLabel || l("Approve", "Onayla"),
+          key: `ap-step-${index + 1}`,
+          stepNo: index + 1,
+          actionLabel: getLocalizedApWorkflowActionLabel(actionCode, l),
           requiredPackageLabel:
             step?.requiredPackageLabel ||
             step?.requiredPackageCode ||
-            "AP Documents / Approve",
+            getApWorkflowRequiredPackageCode(actionCode),
           scopeType: step?.stageScopeType || "LEGAL_ENTITY",
           actorText,
-          minApproverCount: step?.minApproverCount,
-          allowSelfApprove: step?.allowSelfApprove,
+          minApproverCount: actionCode === "APPROVE" ? step?.minApproverCount : 1,
+          allowSelfApprove: actionCode === "APPROVE" ? step?.allowSelfApprove : false,
           escalationAfterHours: step?.escalationAfterHours,
           stepScopeLabels,
           l,
@@ -911,34 +1022,10 @@ export function buildWorkflowExplainabilityPreviewModel({
       );
     });
 
-    const finalApprovalStep =
-      normalizedSteps[normalizedSteps.length - 1] || null;
-    const posterScopeType = String(
-      finalApprovalStep?.stageScopeType || "LEGAL_ENTITY"
-    ).toUpperCase();
-    previewEntries.push(
-      buildWorkflowExplainabilityEntry({
-        key: "ap-post",
-        stepNo: previewEntries.length + 1,
-        actionLabel: l("Post", "Kaydet"),
-        requiredPackageLabel:
-          posterScopeType === "GROUP"
-            ? "AP Documents / Group Post"
-            : "AP Documents / Post",
-        scopeType: posterScopeType,
-        actorText: buildApPosterActorText(posterScopeType, l),
-        minApproverCount: 1,
-        allowSelfApprove: false,
-        escalationAfterHours: null,
-        stepScopeLabels,
-        l,
-      })
-    );
-
     notes.push(
       l(
-        "The current AP backend bridge still stores only the approval-stage rows directly. This preview keeps submit and post visible in business language.",
-        "Mevcut AP backend koprusu dogrudan yalnizca onay asamasi satirlarini saklar. Bu onizleme, gonderim ve kaydi is dilinde gorunur tutar."
+        "This AP preview shows the exact saved action chain. No submit or post stages are injected implicitly.",
+        "Bu AP onizlemesi kaydedilen eylem zincirini oldugu gibi gosterir. Gonderim veya kayit asamalari otomatik eklenmez."
       )
     );
   } else {
@@ -989,28 +1076,58 @@ function buildWorkflowStepIssue(severity, code, title, description) {
   };
 }
 
-function findWorkflowCoverageApproverCheck(coverageDiagnostics, stepNo) {
-  const checks = Array.isArray(coverageDiagnostics?.checks?.approvers)
-    ? coverageDiagnostics.checks.approvers
-    : [];
+function findWorkflowCoverageStepCheck({
+  coverageDiagnostics,
+  stepNo,
+  processType,
+  actionCode,
+}) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const normalizedActionCode =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+      ? normalizeApWorkflowActionCode(actionCode)
+      : "";
+  const checks =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+    Array.isArray(coverageDiagnostics?.checks?.steps)
+      ? coverageDiagnostics.checks.steps
+      : Array.isArray(coverageDiagnostics?.checks?.approvers)
+        ? coverageDiagnostics.checks.approvers
+        : [];
   return (
     checks.find(
-      (check) => Math.max(1, Number(check?.stepNo || 0) || 0) === Math.max(1, Number(stepNo || 0) || 0)
+      (check) =>
+        Math.max(1, Number(check?.stepNo || 0) || 0) ===
+          Math.max(1, Number(stepNo || 0) || 0) &&
+        (
+          normalizedProcessType !== AP_DOCUMENT_WORKFLOW_PROCESS_TYPE ||
+          !normalizedActionCode ||
+          normalizeApWorkflowActionCode(check?.actionCode) === normalizedActionCode
+        )
     ) || null
   );
 }
 
 function buildWorkflowCoverageStepIssue({
   step,
+  processType,
   coverageDiagnostics,
   packageLabel,
   stepScopeLabels,
   l,
 }) {
-  const coverageCheck = findWorkflowCoverageApproverCheck(
+  const normalizedProcessType = String(processType || "").toUpperCase();
+  const normalizedActionCode =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+      ? normalizeApWorkflowActionCode(step?.actionCode) ||
+        inferApWorkflowStepActionCode(step, step?.requiredPackageCode)
+      : "";
+  const coverageCheck = findWorkflowCoverageStepCheck({
     coverageDiagnostics,
-    step?.stepNo
-  );
+    stepNo: step?.stepNo,
+    processType,
+    actionCode: normalizedActionCode,
+  });
   if (!coverageCheck) {
     return null;
   }
@@ -1018,6 +1135,10 @@ function buildWorkflowCoverageStepIssue({
   const status = String(coverageCheck.status || "").toUpperCase();
   const scopeLabel = getScopeLabel(step?.stageScopeType, stepScopeLabels);
   const uncoveredScopeCount = Math.max(0, Number(coverageCheck.uncoveredScopeCount || 0) || 0);
+  const actionLabel =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+      ? getLocalizedApWorkflowActionLabel(normalizedActionCode, l)
+      : packageLabel;
 
   if (status === "NO_TARGET_SCOPES") {
     return buildWorkflowStepIssue(
@@ -1025,8 +1146,12 @@ function buildWorkflowCoverageStepIssue({
       "no_target_scopes",
       l("No target scopes resolved", "Hedef kapsam cozulmedi"),
       l(
-        `This assignment currently resolves no concrete ${scopeLabel} targets for ${packageLabel}.`,
-        `Bu atama su anda ${packageLabel} icin somut ${scopeLabel} hedefi cozmuyor.`
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? `This assignment currently resolves no concrete ${scopeLabel} targets for the ${actionLabel} step.`
+          : `This assignment currently resolves no concrete ${scopeLabel} targets for ${packageLabel}.`,
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? `Bu atama su anda ${actionLabel} adimi icin somut ${scopeLabel} hedefi cozmuyor.`
+          : `Bu atama su anda ${packageLabel} icin somut ${scopeLabel} hedefi cozmuyor.`
       )
     );
   }
@@ -1037,8 +1162,12 @@ function buildWorkflowCoverageStepIssue({
       "no_eligible_users",
       l("No eligible users found", "Uygun kullanici bulunamadi"),
       l(
-        `No active users currently hold ${packageLabel} authority at the selected ${scopeLabel} targets.`,
-        `Secilen ${scopeLabel} hedeflerinde su anda ${packageLabel} yetkisine sahip aktif kullanici yok.`
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? `No active users currently match the ${actionLabel} step at the selected ${scopeLabel} targets for ${packageLabel}.`
+          : `No active users currently hold ${packageLabel} authority at the selected ${scopeLabel} targets.`,
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? `Secilen ${scopeLabel} hedeflerinde su anda ${packageLabel} icin ${actionLabel} adimina uyan aktif kullanici yok.`
+          : `Secilen ${scopeLabel} hedeflerinde su anda ${packageLabel} yetkisine sahip aktif kullanici yok.`
       )
     );
   }
@@ -1049,8 +1178,12 @@ function buildWorkflowCoverageStepIssue({
       "partial_coverage_gap",
       l("Partial actor coverage", "Kismi aktor kapsami"),
       l(
-        `${uncoveredScopeCount} ${scopeLabel} target scope(s) currently have no active users for ${packageLabel}.`,
-        `${uncoveredScopeCount} ${scopeLabel} hedef kapsaminda su anda ${packageLabel} icin aktif kullanici yok.`
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? `${uncoveredScopeCount} ${scopeLabel} target scope(s) currently have no active users for the ${actionLabel} step using ${packageLabel}.`
+          : `${uncoveredScopeCount} ${scopeLabel} target scope(s) currently have no active users for ${packageLabel}.`,
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? `${uncoveredScopeCount} ${scopeLabel} hedef kapsaminda su anda ${packageLabel} kullanan ${actionLabel} adimi icin aktif kullanici yok.`
+          : `${uncoveredScopeCount} ${scopeLabel} hedef kapsaminda su anda ${packageLabel} icin aktif kullanici yok.`
       )
     );
   }
@@ -1082,6 +1215,11 @@ export function buildWorkflowStepValidationModel({
   const steps = (Array.isArray(stepDrafts) ? stepDrafts : []).map((step, index) => {
     const normalizedPackageCode = String(step?.requiredPackageCode || "").trim().toUpperCase();
     const normalizedScopeType = String(step?.stageScopeType || "").trim().toUpperCase();
+    const normalizedActionCode =
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        ? normalizeApWorkflowActionCode(step?.actionCode) ||
+          inferApWorkflowStepActionCode(step, normalizedPackageCode)
+        : "";
     const packageEntry = packageEntriesByCode.get(normalizedPackageCode) || null;
     const packageLabel =
       packageEntry?.displayName ||
@@ -1123,6 +1261,24 @@ export function buildWorkflowStepValidationModel({
         getScopeLabel(scopeType, stepScopeLabels)
       );
 
+      if (
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+        normalizedActionCode &&
+        normalizedPackageCode !== getApWorkflowRequiredPackageCode(normalizedActionCode)
+      ) {
+        blockingIssues.push(
+          buildWorkflowStepIssue(
+            "error",
+            "ap_action_package_mismatch",
+            l("Action/package mismatch", "Eylem/paket uyusmazligi"),
+            l(
+              `${getLocalizedApWorkflowActionLabel(normalizedActionCode, l)} must use ${getApWorkflowRequiredPackageCode(normalizedActionCode)}.`,
+              `${getLocalizedApWorkflowActionLabel(normalizedActionCode, l)} icin ${getApWorkflowRequiredPackageCode(normalizedActionCode)} kullanilmalidir.`
+            )
+          )
+        );
+      }
+
       if (normalizedPackageCode === "PKG-AP-POST-GROUP") {
         blockingIssues.push(
           buildWorkflowStepIssue(
@@ -1134,23 +1290,6 @@ export function buildWorkflowStepValidationModel({
                 "Group-scoped AP posting remains preview-only until the clean extension package ships.",
                 "Grup kapsamli AP kaydi, temiz extension paketi cikana kadar yalnizca onizlemedir."
               )
-          )
-        );
-      } else if (
-        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
-        normalizedPackageCode !== "PKG-AP-APPROVE"
-      ) {
-        // The current AP backend bridge can only represent approval-stage
-        // packages. Submit/post remain explained by preset preview for now.
-        blockingIssues.push(
-          buildWorkflowStepIssue(
-            "error",
-            "ap_package_bridge_not_supported",
-            l("AP package bridge not supported", "AP paket koprusu desteklenmiyor"),
-            l(
-              "The current AP step builder can only bind approval-stage steps to AP Documents / Approve.",
-              "Mevcut AP adim olusturucusu yalnizca onay adimlarini AP Documents / Approve paketine baglayabilir."
-            )
           )
         );
       }
@@ -1238,6 +1377,7 @@ export function buildWorkflowStepValidationModel({
 
     const coverageIssue = buildWorkflowCoverageStepIssue({
       step,
+      processType,
       coverageDiagnostics,
       packageLabel,
       stepScopeLabels,
@@ -1250,6 +1390,7 @@ export function buildWorkflowStepValidationModel({
     return {
       index,
       stepNo: Math.max(1, Number(step?.stepNo || index + 1) || index + 1),
+      actionCode: normalizedActionCode,
       blockingIssues,
       warningIssues,
       allIssues: [...blockingIssues, ...warningIssues],
@@ -1257,6 +1398,174 @@ export function buildWorkflowStepValidationModel({
       hasWarnings: warningIssues.length > 0,
     };
   });
+
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE && steps.length > 0) {
+    let previousStepNo = 0;
+    let currentPhase = "START";
+    let postStepCount = 0;
+    let submitStepCount = 0;
+
+    const pushApBlockingIssue = (index, code, title, description) => {
+      const entry = steps[index];
+      if (!entry) {
+        return;
+      }
+      entry.blockingIssues.push(buildWorkflowStepIssue("error", code, title, description));
+    };
+
+    steps.forEach((entry, index) => {
+      if (entry.stepNo <= previousStepNo) {
+        pushApBlockingIssue(
+          index,
+          "ap_step_order_invalid",
+          l("Step numbers must increase", "Adim numaralari artmalidir"),
+          l(
+            "AP step numbers must stay unique and strictly increasing from top to bottom.",
+            "AP adim numaralari yukaridan asagi benzersiz ve kesin olarak artan kalmalidir."
+          )
+        );
+      }
+      previousStepNo = entry.stepNo;
+
+      if (!entry.actionCode) {
+        pushApBlockingIssue(
+          index,
+          "ap_action_required",
+          l("Action required", "Eylem gerekli"),
+          l(
+            "Choose DRAFT, SUBMIT, APPROVE, or POST for this AP workflow step.",
+            "Bu AP workflow adimi icin DRAFT, SUBMIT, APPROVE veya POST secin."
+          )
+        );
+        return;
+      }
+
+      if (entry.actionCode === "DRAFT") {
+        if (currentPhase !== "START") {
+          pushApBlockingIssue(
+            index,
+            "ap_draft_position_invalid",
+            l("DRAFT must be first", "DRAFT ilk olmali"),
+            l(
+              "DRAFT can appear only as the first AP step.",
+              "DRAFT yalnizca ilk AP adimi olarak yer alabilir."
+            )
+          );
+        }
+        currentPhase = "AFTER_DRAFT";
+        return;
+      }
+
+      if (entry.actionCode === "SUBMIT") {
+        if (!["START", "AFTER_DRAFT"].includes(currentPhase)) {
+          pushApBlockingIssue(
+            index,
+            "ap_submit_position_invalid",
+            l("SUBMIT is out of order", "SUBMIT sirasi hatali"),
+            l(
+              "SUBMIT must appear before APPROVE and POST.",
+              "SUBMIT, APPROVE ve POST adimlarindan once yer almalidir."
+            )
+          );
+        }
+        submitStepCount += 1;
+        currentPhase = "AFTER_SUBMIT";
+        return;
+      }
+
+      if (entry.actionCode === "APPROVE") {
+        if (!["AFTER_SUBMIT", "AFTER_APPROVE"].includes(currentPhase)) {
+          pushApBlockingIssue(
+            index,
+            "ap_approve_requires_submit",
+            l("APPROVE must follow SUBMIT", "APPROVE, SUBMIT sonrasinda olmali"),
+            l(
+              "APPROVE steps can appear only after SUBMIT and before the final POST step.",
+              "APPROVE adimlari yalnizca SUBMIT sonrasinda ve final POST adimindan once yer alabilir."
+            )
+          );
+        }
+        currentPhase = "AFTER_APPROVE";
+        return;
+      }
+
+      postStepCount += 1;
+      if (!["AFTER_SUBMIT", "AFTER_APPROVE"].includes(currentPhase)) {
+        pushApBlockingIssue(
+          index,
+          "ap_post_requires_submit",
+          l("POST must follow SUBMIT", "POST, SUBMIT sonrasinda olmali"),
+          l(
+            "AP workflows cannot jump to POST before a SUBMIT step is defined.",
+            "AP workflow'lari bir SUBMIT adimi tanimlanmadan POST adimina gecemez."
+          )
+        );
+      }
+      if (index !== steps.length - 1) {
+        pushApBlockingIssue(
+          index,
+          "ap_post_must_be_final",
+          l("POST must be final", "POST final olmali"),
+          l(
+            "AP workflows must end with a final POST step.",
+            "AP workflow'lari final bir POST adimi ile bitmelidir."
+          )
+        );
+      }
+      currentPhase = "AFTER_POST";
+    });
+
+    if (postStepCount !== 1) {
+      const postIndexes = steps
+        .map((entry, index) => (entry.actionCode === "POST" ? index : -1))
+        .filter((index) => index >= 0);
+      const targetIndexes =
+        postIndexes.length > 0 ? postIndexes : [Math.max(0, steps.length - 1)];
+
+      targetIndexes.forEach((index) => {
+        pushApBlockingIssue(
+          index,
+          "ap_post_required_once",
+          l("One final POST step is required", "Tek bir final POST adimi gerekli"),
+          l(
+            "AP workflows must contain exactly one POST step, and it must be the last step.",
+            "AP workflow'lari tam olarak bir POST adimi icermeli ve bu adim son adim olmalidir."
+          )
+        );
+      });
+    }
+
+    if (submitStepCount !== 1) {
+      const submitIndexes = steps
+        .map((entry, index) => (entry.actionCode === "SUBMIT" ? index : -1))
+        .filter((index) => index >= 0);
+      const firstActionableIndex = steps.findIndex(
+        (entry) => entry.actionCode && entry.actionCode !== "DRAFT"
+      );
+      const targetIndexes =
+        submitIndexes.length > 0
+          ? submitIndexes
+          : [firstActionableIndex >= 0 ? firstActionableIndex : 0];
+
+      targetIndexes.forEach((index) => {
+        pushApBlockingIssue(
+          index,
+          "ap_submit_required_once",
+          l("One SUBMIT step is required", "Tek bir SUBMIT adimi gerekli"),
+          l(
+            "AP workflows must contain exactly one SUBMIT step before APPROVE or POST.",
+            "AP workflow'lari APPROVE veya POST oncesinde tam olarak bir SUBMIT adimi icermelidir."
+          )
+        );
+      });
+    }
+
+    steps.forEach((entry) => {
+      entry.allIssues = [...entry.blockingIssues, ...entry.warningIssues];
+      entry.hasBlockingIssues = entry.blockingIssues.length > 0;
+      entry.hasWarnings = entry.warningIssues.length > 0;
+    });
+  }
 
   const blockingIssueCount = steps.reduce(
     (total, step) => total + step.blockingIssues.length,
@@ -1368,12 +1677,14 @@ function buildCoverageStatusLabel(status, l) {
 
 function buildCoverageActorLabel({
   actorType,
+  actionCode = "",
   scopeType,
   stepNo = null,
   workflowType,
   l,
 }) {
   const normalizedActorType = String(actorType || "").toUpperCase();
+  const normalizedActionCode = String(actionCode || "").trim().toUpperCase();
   const normalizedScopeType = String(scopeType || "").toUpperCase();
   const normalizedWorkflowType = String(workflowType || "").toUpperCase();
   const scopeLabel = getScopeLabel(normalizedScopeType, {
@@ -1385,6 +1696,26 @@ function buildCoverageActorLabel({
   });
 
   if (normalizedWorkflowType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    if (normalizedActionCode === "DRAFT") {
+      return stepNo
+        ? l(`Step ${stepNo} ${scopeLabel} draft editors`, `${stepNo}. adim ${scopeLabel} taslak duzenleyicileri`)
+        : l(`${scopeLabel} draft editors`, `${scopeLabel} taslak duzenleyicileri`);
+    }
+    if (normalizedActionCode === "SUBMIT") {
+      return stepNo
+        ? l(`Step ${stepNo} ${scopeLabel} submitters`, `${stepNo}. adim ${scopeLabel} gondericileri`)
+        : l(`${scopeLabel} submitters`, `${scopeLabel} gondericileri`);
+    }
+    if (normalizedActionCode === "POST") {
+      return stepNo
+        ? l(`Step ${stepNo} ${scopeLabel} posters`, `${stepNo}. adim ${scopeLabel} kayit sorumlulari`)
+        : l(`${scopeLabel} posters`, `${scopeLabel} kayit sorumlulari`);
+    }
+    if (normalizedActionCode === "APPROVE") {
+      return stepNo
+        ? l(`Step ${stepNo} ${scopeLabel} approvers`, `${stepNo}. adim ${scopeLabel} onaycilari`)
+        : l(`${scopeLabel} approvers`, `${scopeLabel} onaycilari`);
+    }
     if (normalizedActorType === "SUBMITTER") {
       return l("Branch submitters", "Sube gondericileri");
     }
@@ -1439,6 +1770,7 @@ function buildCoverageWarningDescription({
 }) {
   const normalizedWorkflowType = String(workflowType || "").toUpperCase();
   const normalizedActorType = String(warning?.actorType || "").toUpperCase();
+  const normalizedActionCode = normalizeApWorkflowActionCode(warning?.actionCode);
   const uncoveredScopeCount = Number(warning?.uncoveredScopeCount || 0);
   const targetScopeCount = Number(warning?.targetScopeCount || 0);
   const minRequiredActors = Math.max(1, Number(warning?.minRequiredActors || 1) || 1);
@@ -1452,6 +1784,50 @@ function buildCoverageWarningDescription({
   }
 
   if (normalizedWorkflowType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    if (normalizedActionCode === "DRAFT") {
+      return uncoveredScopeCount >= targetScopeCount
+        ? l(
+            `This workflow starts draft work at ${scopeLabel} scope, but no in-scope users currently hold draft editing authority.`,
+            `Bu workflow taslak calismasini ${scopeLabel} kapsaminda baslatiyor; ancak kapsam icinde taslak duzenleme yetkisine sahip kullanici yok.`
+          )
+        : l(
+            `${uncoveredScopeCount} ${scopeLabel} scopes in this assignment currently have no draft editing authority.`,
+            `Bu atamada ${uncoveredScopeCount} ${scopeLabel} kapsaminda su anda taslak duzenleme yetkisi yok.`
+          );
+    }
+    if (normalizedActionCode === "SUBMIT") {
+      return uncoveredScopeCount >= targetScopeCount
+        ? l(
+            `This workflow uses ${scopeLabel} submission, but no in-scope users currently hold submit authority.`,
+            `Bu workflow ${scopeLabel} gonderimi kullaniyor, ancak kapsam icinde gonderim yetkisine sahip kullanici yok.`
+          )
+        : l(
+            `${uncoveredScopeCount} ${scopeLabel} scopes in this assignment currently have no submit authority.`,
+            `Bu atamada ${uncoveredScopeCount} ${scopeLabel} kapsaminda su anda gonderim yetkisi yok.`
+          );
+    }
+    if (normalizedActionCode === "POST") {
+      return uncoveredScopeCount >= targetScopeCount
+        ? l(
+            `${scopeLabel} posting is selected, but no in-scope users currently hold posting authority.`,
+            `${scopeLabel} kaydi secildi, ancak kapsam icinde kayit yetkisine sahip kullanici yok.`
+          )
+        : l(
+            `${uncoveredScopeCount} ${scopeLabel} scopes in this assignment currently have no posting authority.`,
+            `Bu atamada ${uncoveredScopeCount} ${scopeLabel} kapsaminda su anda kayit yetkisi yok.`
+          );
+    }
+    if (normalizedActionCode === "APPROVE") {
+      return uncoveredScopeCount >= targetScopeCount
+        ? l(
+            `This workflow uses ${scopeLabel} approval, but no in-scope users currently hold AP approval authority.`,
+            `Bu workflow ${scopeLabel} onayi kullaniyor, ancak kapsam icinde AP onay yetkisine sahip kullanici yok.`
+          )
+        : l(
+            `${uncoveredScopeCount} ${scopeLabel} scopes in this assignment currently have no AP approval coverage.`,
+            `Bu atamada ${uncoveredScopeCount} ${scopeLabel} kapsaminda su anda AP onay kapsami yok.`
+          );
+    }
     if (normalizedActorType === "SUBMITTER") {
       return uncoveredScopeCount >= targetScopeCount
         ? l(
@@ -1517,20 +1893,33 @@ export function buildWorkflowCoverageReviewModel({
     return null;
   }
 
+  const normalizedWorkflowType = String(workflowType || "").toUpperCase();
   const checks = [];
-  if (diagnostics.checks?.submitter) {
+  if (
+    normalizedWorkflowType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+    Array.isArray(diagnostics.checks?.steps)
+  ) {
+    checks.push(...diagnostics.checks.steps);
+  } else if (diagnostics.checks?.submitter) {
     checks.push(diagnostics.checks.submitter);
   }
-  if (Array.isArray(diagnostics.checks?.approvers)) {
+  if (
+    normalizedWorkflowType !== AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+    Array.isArray(diagnostics.checks?.approvers)
+  ) {
     checks.push(...diagnostics.checks.approvers);
   }
-  if (diagnostics.checks?.poster) {
+  if (
+    normalizedWorkflowType !== AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+    diagnostics.checks?.poster
+  ) {
     checks.push(diagnostics.checks.poster);
   }
 
   const summaryCards = checks.map((check) => {
     const actorLabel = buildCoverageActorLabel({
       actorType: check.actorType,
+      actionCode: check.actionCode,
       scopeType: check.scopeType,
       stepNo: check.stepNo,
       workflowType,
@@ -1577,6 +1966,7 @@ export function buildWorkflowCoverageReviewModel({
         key: `${warning.code}-${warning.stepNo || "x"}-${index}`,
         title: buildCoverageActorLabel({
           actorType: warning.actorType,
+          actionCode: warning.actionCode,
           scopeType: warning.scopeType,
           stepNo: warning.stepNo,
           workflowType,
@@ -1632,94 +2022,41 @@ export function buildWorkflowCoverageReviewModel({
 }
 
 /**
- * Builds an AP business-language process summary.
- * Speaks in terms of actors (submitter / reviewer / poster) rather than engine terms.
+ * Builds an AP business-language process summary from the explicit saved action chain.
  *
  * @param {Array} stepDrafts – current step drafts
  * @param {Object} stepScopeLabels – e.g. { COUNTRY: "Country", LEGAL_ENTITY: "Legal Entity" }
  * @param {Function} l – i18n helper (en, tr) => string
  * @returns {string[]} array of plain-language sentences
  */
-export function buildApBusinessPreview(stepDrafts, stepScopeLabels, l) {
-  const steps = Array.isArray(stepDrafts) ? stepDrafts : [];
-  const lines = [];
-
-  // Submit line — always branch-level for AP
-  lines.push(
-    l(
-      "Branch accountants with submit authority can submit this AP document.",
-      "Gonderim yetkisine sahip sube muhasebecileri bu AP belgesini gonderebilir."
-    )
-  );
-
-  if (steps.length === 0) {
-    lines.push(
-      l(
-        "No approval step is configured. Documents can be posted directly after submission.",
-        "Onay adimi yapilandirilmamis. Belgeler gonderimden sonra dogrudan kaydedilebilir."
-      )
-    );
-    return lines;
-  }
-
-  // Approval lines — one per step
-  steps.forEach((step, index) => {
-    const scopeLabel = getScopeLabel(step?.stageScopeType, stepScopeLabels);
-    const count = Math.max(1, Number(step?.minApproverCount || 1));
-
-    if (steps.length === 1) {
-      lines.push(
-        count === 1
-          ? l(
-              `One ${scopeLabel} AP reviewer must approve it.`,
-              `Bir ${scopeLabel} AP inceleyicisi onaylamalidir.`
-            )
-          : l(
-              `${count} ${scopeLabel} AP reviewers must approve it.`,
-              `${count} ${scopeLabel} AP inceleyicisi onaylamalidir.`
-            )
-      );
-    } else {
-      lines.push(
-        count === 1
-          ? l(
-              `Step ${index + 1}: One ${scopeLabel} AP reviewer must approve.`,
-              `Adim ${index + 1}: Bir ${scopeLabel} AP inceleyicisi onaylamalidir.`
-            )
-          : l(
-              `Step ${index + 1}: ${count} ${scopeLabel} AP reviewers must approve.`,
-              `Adim ${index + 1}: ${count} ${scopeLabel} AP inceleyicisi onaylamalidir.`
-            )
-      );
-    }
-  });
-
-  // Post line — scope of the last step
-  const lastStep = steps[steps.length - 1];
-  const lastScopeLabel = getScopeLabel(lastStep?.stageScopeType, stepScopeLabels);
-  lines.push(
-    l(
-      `After approval, ${lastScopeLabel} posting authority can post the document.`,
-      `Onaydan sonra ${lastScopeLabel} kayit yetkisi belgeyi kaydedebilir.`
-    )
-  );
-
-  return lines;
-}
-
 /**
  * Builds a readable explanation for one workflow step.
  */
 export function buildStepPreview(step, processType, stepScopeLabels, l) {
+  const normalizedProcessType = String(processType || "").toUpperCase();
   const scopeLabel = getScopeLabel(step?.stageScopeType, stepScopeLabels);
   const packageLabel =
     step?.requiredPackageLabel || step?.requiredPackageCode || step?.requiredPermissionCode || "-";
-  const actionLabel = step?.actionLabel || deriveActionLabelFromPackage(step?.requiredPackageCode);
+  const actionCode =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+      ? normalizeApWorkflowActionCode(step?.actionCode) ||
+        inferApWorkflowStepActionCode(step, step?.requiredPackageCode)
+      : "";
+  const actionLabel =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+      ? getLocalizedApWorkflowActionLabel(actionCode, l)
+      : step?.actionLabel || deriveActionLabelFromPackage(step?.requiredPackageCode);
   const roleLabels = Array.isArray(step?.eligibleBusinessRoleLabels)
     ? step.eligibleBusinessRoleLabels.filter(Boolean)
     : [];
-  const minCount = Math.max(1, Number(step?.minApproverCount || 1));
-  const selfApprove = Boolean(step?.allowSelfApprove);
+  const minCount =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE && actionCode !== "APPROVE"
+      ? 1
+      : Math.max(1, Number(step?.minApproverCount || 1));
+  const selfApprove =
+    normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE && actionCode !== "APPROVE"
+      ? false
+      : Boolean(step?.allowSelfApprove);
   const escalation = String(step?.escalationAfterHours || "").trim();
 
   const parts = [];
@@ -1743,11 +2080,11 @@ export function buildStepPreview(step, processType, stepScopeLabels, l) {
       : l(`${minCount} actors are required.`, `${minCount} aktor gerekir.`)
   );
 
-  if (String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
     parts.push(
       l(
-        "Current AP backend bridge still resolves reviewer authority from the workflow assignment scope.",
-        "Mevcut AP backend koprusu, inceleyen yetkisini hala workflow atama kapsamindan cozer."
+        "Authority comes from the selected AP package at this step scope.",
+        "Yetki, bu adim kapsamindaki secili AP paketinden gelir."
       )
     );
   } else if (step?.requiredPermissionCode) {
@@ -1759,14 +2096,16 @@ export function buildStepPreview(step, processType, stepScopeLabels, l) {
     );
   }
 
-  parts.push(
-    selfApprove
-      ? l("The submitter may approve their own item.", "Gonderen kendi kaydini onaylayabilir.")
-      : l(
-          "The submitter cannot approve their own item.",
-          "Gonderen kendi kaydini onaylayamaz."
-        )
-  );
+  if (normalizedProcessType !== AP_DOCUMENT_WORKFLOW_PROCESS_TYPE || actionCode === "APPROVE") {
+    parts.push(
+      selfApprove
+        ? l("The submitter may approve their own item.", "Gonderen kendi kaydini onaylayabilir.")
+        : l(
+            "The submitter cannot approve their own item.",
+            "Gonderen kendi kaydini onaylayamaz."
+          )
+    );
+  }
 
   if (escalation) {
     parts.push(
@@ -1786,13 +2125,17 @@ export function buildStepPreview(step, processType, stepScopeLabels, l) {
 export function buildWorkflowPreview(stepDrafts, stepScopeLabels, l) {
   const steps = Array.isArray(stepDrafts) ? stepDrafts : [];
   if (steps.length === 0) {
-    return l("No approval steps defined yet.", "Henuz onay adimi tanimlanmadi.");
+    return l("No workflow steps defined yet.", "Henuz workflow adimi tanimlanmadi.");
   }
   return l(
     `This workflow runs in this order: ${steps
       .map(
         (step, index) =>
-          `${index + 1}. ${step?.actionLabel || "Step"} at ${getScopeLabel(
+          `${index + 1}. ${
+            step?.actionCode
+              ? getApWorkflowActionLabel(step.actionCode)
+              : step?.actionLabel || "Step"
+          } at ${getScopeLabel(
             step?.stageScopeType,
             stepScopeLabels
           )} using ${step?.requiredPackageLabel || step?.requiredPackageCode || step?.requiredPermissionCode || "-"}`
@@ -1801,7 +2144,11 @@ export function buildWorkflowPreview(stepDrafts, stepScopeLabels, l) {
     `Bu workflow su sirada calisir: ${steps
       .map(
         (step, index) =>
-          `${index + 1}. ${step?.actionLabel || "Adim"} - ${getScopeLabel(
+          `${index + 1}. ${
+            step?.actionCode
+              ? getLocalizedApWorkflowActionLabel(step.actionCode, l)
+              : step?.actionLabel || "Adim"
+          } - ${getScopeLabel(
             step?.stageScopeType,
             stepScopeLabels
           )} kapsaminda ${step?.requiredPackageLabel || step?.requiredPackageCode || step?.requiredPermissionCode || "-"}`
@@ -2193,7 +2540,6 @@ export function buildApprovalRoutingMatrixValidationModel({
   draft,
   assignments = [],
   definitions = [],
-  presetEntries = [],
   editingAssignmentId = null,
   l,
 }) {
@@ -2213,9 +2559,6 @@ export function buildApprovalRoutingMatrixValidationModel({
   const targetMode = String(draft?.targetMode || "definition").trim().toLowerCase();
   const selectedDefinition = (Array.isArray(definitions) ? definitions : []).find(
     (row) => toPositiveInt(row?.id) === toPositiveInt(draft?.workflowDefinitionId)
-  );
-  const selectedPreset = (Array.isArray(presetEntries) ? presetEntries : []).find(
-    (entry) => String(entry?.code || "") === String(draft?.workflowPresetCode || "")
   );
 
   if (!normalizedRule.scopeType) {
@@ -2271,53 +2614,30 @@ export function buildApprovalRoutingMatrixValidationModel({
     );
   }
 
-  if (targetMode === "definition") {
-    if (!toPositiveInt(draft?.workflowDefinitionId)) {
-      errors.push(
-        l(
-          "Choose a workflow definition for this route.",
-          "Bu rota icin bir workflow tanimi secin."
-        )
-      );
-    } else if (
-      String(selectedDefinition?.processType || "").trim().toUpperCase() !==
-      AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-    ) {
-      errors.push(
-        l(
-          "The selected definition must belong to AP Document Posting.",
-          "Secilen tanim AP Belge Kaydi surecine ait olmalidir."
-        )
-      );
-    }
-  } else if (targetMode === "preset") {
-    if (!selectedPreset) {
-      errors.push(l("Choose a workflow preset first.", "Once bir workflow preset secin."));
-    } else if (selectedPreset.usesExtension) {
-      errors.push(
-        selectedPreset.extensionNote ||
-          l(
-            "This preset is preview-only until its extension package is available.",
-            "Bu preset extension paketi hazir olana kadar yalnizca onizlemedir."
-          )
-      );
-    }
-    if (!String(draft?.newDefinitionCode || "").trim()) {
-      errors.push(
-        l(
-          "Preset-backed routes need a workflow code.",
-          "Preset tabanli rotalar bir workflow kodu ister."
-        )
-      );
-    }
-    if (!String(draft?.newDefinitionName || "").trim()) {
-      errors.push(
-        l(
-          "Preset-backed routes need a workflow name.",
-          "Preset tabanli rotalar bir workflow adi ister."
-        )
-      );
-    }
+  if (targetMode !== "definition") {
+    errors.push(
+      l(
+        "AP routing matrix routes must point to an existing workflow definition.",
+        "AP rota matrisi kayitlari mevcut bir workflow tanimina baglanmalidir."
+      )
+    );
+  } else if (!toPositiveInt(draft?.workflowDefinitionId)) {
+    errors.push(
+      l(
+        "Choose a workflow definition for this route.",
+        "Bu rota icin bir workflow tanimi secin."
+      )
+    );
+  } else if (
+    String(selectedDefinition?.processType || "").trim().toUpperCase() !==
+    AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+  ) {
+    errors.push(
+      l(
+        "The selected definition must belong to AP Document Posting.",
+        "Secilen tanim AP Belge Kaydi surecine ait olmalidir."
+      )
+    );
   }
 
   if (
@@ -2390,10 +2710,11 @@ export default {
   PROCESS_TYPES,
   ASSIGNMENT_SCOPE_TYPES,
   STEP_SCOPE_TYPES,
-  AP_BUSINESS_TEMPLATES,
+  AP_WORKFLOW_ACTION_CODES,
   toPositiveInt,
   todayIsoDate,
   buildDefaultSteps,
+  getApWorkflowRequiredPackageCode,
   listWorkflowStepPackageOptions,
   safeParseJsonArray,
   normalizeStepDraft,
@@ -2402,7 +2723,6 @@ export default {
   buildWorkflowExplainabilityPreviewModel,
   buildStepPreview,
   buildWorkflowPreview,
-  buildApBusinessPreview,
   buildWorkflowPresetBaselineStepDrafts,
   buildWorkflowPresetPreviewModel,
   buildWorkflowPresetComparisonModel,

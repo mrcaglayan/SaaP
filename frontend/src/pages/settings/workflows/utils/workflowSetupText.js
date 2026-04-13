@@ -36,8 +36,8 @@ export function getWorkflowSetupText(l) {
         description: l("Name and code", "Ad ve kod"),
       },
       {
-        label: l("Approval Steps", "Onay Adimlari"),
-        description: l("Who approves", "Kim onaylar"),
+        label: l("Workflow Steps", "Workflow Adimlari"),
+        description: l("Actions and order", "Eylemler ve sira"),
       },
       {
         label: l("Review", "Inceleme"),
@@ -56,10 +56,10 @@ export function getWorkflowSetupText(l) {
           active: "border-blue-500 bg-blue-50 ring-2 ring-blue-200",
         },
         recommended: {
-          level: l("Country", "Ulke"),
-          minApprovers: "1",
-          selfApproval: l("Not allowed", "Izin verilmez"),
-          permissionCode: l("Leave empty", "Bos birakin"),
+          level: l("Action-specific", "Eylem bazli"),
+          minApprovers: l("Only on APPROVE", "Yalnizca APPROVE icin"),
+          selfApproval: l("Only on APPROVE", "Yalnizca APPROVE icin"),
+          permissionCode: l("Package-bound", "Pakete bagli"),
         },
       },
       PERIOD_CLOSE: {
@@ -155,12 +155,15 @@ export function getWorkflowSetupText(l) {
       AP_DOCUMENT_POSTING: {
         title: l("Recommended for AP posting", "AP kaydi icin onerilen"),
         points: [
-          l("Use 1 country-level approval step.", "1 adet ulke seviyesinde onay adimi kullanin."),
           l(
-            "Leave reviewer permission empty. AP reviewer authority comes from scope assignment.",
-            "Inceleyen yetkisini bos birakin. AP inceleyen yetkisi kapsam atamasindan gelir."
+            "Add each AP action explicitly: DRAFT, SUBMIT, APPROVE, and POST only when you need them.",
+            "Her AP eylemini acikca ekleyin: DRAFT, SUBMIT, APPROVE ve POST yalnizca gerekiyorsa kullanin."
           ),
           l("Turn self-approval off.", "Kendi kendine onayi kapali tutun."),
+          l(
+            "The selected action determines the package; scope determines who owns that step.",
+            "Secilen eylem paketi belirler; kapsam ise o adimin kimde olacagini belirler."
+          ),
           l("Typical assignment scope: Country.", "Tipik atama kapsami: Ulke."),
         ],
       },
@@ -212,70 +215,15 @@ export function getWorkflowSetupText(l) {
       },
     },
     quickGuide: [
-      l("A workflow is the approval recipe.", "Workflow onay tarifidir."),
-      l("Steps define who approves and in what order.", "Adimlar kimin hangi sirada onay verecegini tanimlar."),
+      l("A workflow is the reusable process recipe.", "Workflow tekrar kullanilabilir surec tarifidir."),
+      l("Steps define which action happens and in what order.", "Adimlar hangi eylemin hangi sirayla olacagini tanimlar."),
       l("An assignment decides where the workflow is active.", "Atama workflow'un nerede aktif olacagini belirler."),
     ],
-    apBusinessTemplates: {
-      "branch-entity-country": {
-        label: l(
-          "Branch submits \u2192 Entity approves \u2192 Country posts",
-          "Sube gonderir \u2192 Entity onaylar \u2192 Ulke kaydeder"
-        ),
-        description: l(
-          "Two-step approval: Legal Entity reviewer approves first, then Country reviewer. Country poster posts after approval.",
-          "Iki adimli onay: Ilk olarak Legal Entity inceleyicisi, ardindan Ulke inceleyicisi onaylar. Onaydan sonra Ulke kayit yetkisi kaydeder."
-        ),
-      },
-      "branch-country": {
-        label: l(
-          "Branch submits \u2192 Country approves \u2192 Country posts",
-          "Sube gonderir \u2192 Ulke onaylar \u2192 Ulke kaydeder"
-        ),
-        description: l(
-          "Single-step approval at Country level. The most common AP flow.",
-          "Ulke seviyesinde tek adimli onay. En yaygin AP akisi."
-        ),
-      },
-      "branch-entity": {
-        label: l(
-          "Branch submits \u2192 Entity approves \u2192 Entity posts",
-          "Sube gonderir \u2192 Entity onaylar \u2192 Entity kaydeder"
-        ),
-        description: l(
-          "Single-step approval at Legal Entity level. Entity poster posts after approval.",
-          "Legal Entity seviyesinde tek adimli onay. Onaydan sonra Entity kayit yetkisi kaydeder."
-        ),
-      },
-      "direct-post": {
-        label: l(
-          "Direct post without workflow approval",
-          "Workflow onayi olmadan dogrudan kayit"
-        ),
-        description: l(
-          "No approval steps. Documents can be posted directly after submission by an authorized poster.",
-          "Onay adimi yok. Belgeler yetkili bir kayit sorumlusu tarafindan gonderimden sonra dogrudan kaydedilebilir."
-        ),
-      },
-    },
     apBusinessLabels: {
-      templateSectionTitle: l("AP business flow template", "AP is akisi sablonu"),
-      templateSectionDescription: l(
-        "Choose a predefined approval flow or customize the steps below.",
-        "Onceden tanimlanmis bir onay akisi secin veya adimlari asagidan ozellestirin."
-      ),
-      customTemplate: l("Custom (configure manually)", "Ozel (manuel yapilandir)"),
-      businessPreviewTitle: l("Business process preview", "Is sureci onizlemesi"),
-      whoReviews: l("Who reviews this step", "Bu adimi kim inceler"),
       atWhichScope: l("At which organizational scope", "Hangi organizasyon kapsaminda"),
-      whoPostsAfter: l("Who posts after approval", "Onaydan sonra kim kaydeder"),
-      reviewerAuthority: l(
-        "Reviewer authority comes from the workflow assignment scope, not from a step-level permission code.",
-        "Inceleyen yetkisi adim seviyesindeki bir yetki kodundan degil, workflow atama kapsamindan gelir."
-      ),
       effectivePermission: l(
-        "Effective permission: approvals.requests.approve at the step\u2019s scope",
-        "Gecerli yetki: adimin kapsaminda approvals.requests.approve"
+        "The selected AP action locks the package for this step. Scope decides which users can act.",
+        "Secilen AP eylemi bu adimin paketini kilitler. Hangi kullanicilarin islem yapabilecegini kapsam belirler."
       ),
     },
   };

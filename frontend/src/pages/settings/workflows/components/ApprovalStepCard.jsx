@@ -1,6 +1,6 @@
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,9 +13,13 @@ import {
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
 } from "../../../../../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  AP_WORKFLOW_ACTION_CODES,
+  getApWorkflowRequiredPackageCode,
+} from "../utils/workflowSetupHelpers.js";
 
 /**
- * Renders one editable approval step card.
+ * Renders one editable workflow step row inside the sequence editor table.
  */
 export default function ApprovalStepCard({
   l,
@@ -33,85 +37,114 @@ export default function ApprovalStepCard({
   validation = null,
   apBusinessLabels,
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
+  const selectedApActionCode = isAp ? String(step?.actionCode || "").trim().toUpperCase() : "";
+  const filteredPackageOptions = isAp
+    ? workflowStepPackageOptions.filter((packageEntry) => {
+        const expectedPackageCode = getApWorkflowRequiredPackageCode(selectedApActionCode);
+        return expectedPackageCode
+          ? String(packageEntry?.code || "").trim().toUpperCase() === expectedPackageCode
+          : true;
+      })
+    : workflowStepPackageOptions;
+  const isApproveAction = !isAp || selectedApActionCode === "APPROVE";
   const blockingIssueCount = Array.isArray(validation?.blockingIssues)
     ? validation.blockingIssues.length
     : 0;
   const warningIssueCount = Array.isArray(validation?.warningIssues)
     ? validation.warningIssues.length
     : 0;
+  const selectedRoleCodes = Array.isArray(step.eligibleBusinessRoleCodes)
+    ? step.eligibleBusinessRoleCodes
+    : [];
+  const runtimeBridgeMessage = step.requiredPermissionCode
+    ? l(
+        `Current runtime bridge permission: ${step.requiredPermissionCode}`,
+        `Mevcut runtime kopru yetkisi: ${step.requiredPermissionCode}`
+      )
+    : isAp
+      ? l(
+          "This AP package is bound by the selected action and resolves authority at the chosen step scope.",
+          "Bu AP paketi secilen eylemle baglanir ve yetkiyi secilen adim kapsaminda cozer."
+        )
+      : l(
+          "Choose a workflow package to define the acting authority for this step.",
+          "Bu adimin isleyen yetkisini tanimlamak icin bir workflow paketi secin."
+        );
+  const statusToneClass =
+    blockingIssueCount > 0
+      ? "border-rose-200 bg-rose-50 text-rose-700"
+      : warningIssueCount > 0
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-emerald-200 bg-emerald-50 text-emerald-700";
+  const statusLabel =
+    blockingIssueCount > 0
+      ? l("Blocked", "Engelli")
+      : warningIssueCount > 0
+        ? l("Warning", "Uyari")
+        : l("Ready", "Hazir");
+  const statusDetail =
+    blockingIssueCount > 0
+      ? l(
+          `${blockingIssueCount} blocking issue(s)`,
+          `${blockingIssueCount} engelleyici sorun`
+        )
+      : warningIssueCount > 0
+        ? l(`${warningIssueCount} warning(s)`, `${warningIssueCount} uyari`)
+        : l("No open issues", "Acik sorun yok");
 
   return (
-    <Card className="rounded-2xl border-border/80">
-      <CardHeader className="border-b border-border/70 bg-muted/30">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
-              {index + 1}
-            </div>
-            <div>
-              <CardTitle className="text-sm">
-                {l("Step", "Adim")} {index + 1}
-              </CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">{previewText}</p>
-            </div>
+    <>
+      <tr className="border-t border-slate-200 align-top hover:bg-slate-50/60">
+        <td className="px-4 py-2 align-middle">
+          <div className="flex min-w-[4.5rem] items-center">
+            <Input
+              type="number"
+              min={1}
+              value={step.stepNo}
+              onChange={(event) => onChange("stepNo", event.target.value)}
+              className="h-8 w-14 rounded-lg border-slate-200 bg-white px-2 text-xs"
+            />
           </div>
-          <div className="flex items-center gap-2">
-            {blockingIssueCount > 0 ? (
-              <Badge variant="outline" className="border-rose-300 bg-rose-50 text-rose-900">
-                {blockingIssueCount} {l("blocker", "engel")}
-              </Badge>
-            ) : null}
-            {warningIssueCount > 0 ? (
-              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">
-                {warningIssueCount} {l("warning", "uyari")}
-              </Badge>
-            ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={onRemove}
-              disabled={disableRemove}
+        </td>
+
+        <td className="min-w-[10rem] px-4 py-2 align-middle">
+          {isAp ? (
+            <Select
+              value={selectedApActionCode || AP_WORKFLOW_ACTION_CODES[0]}
+              onValueChange={(value) => onChange("actionCode", value)}
             >
-              {l("Remove", "Kaldir")}
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
+              <SelectTrigger className="h-8 w-full rounded-lg border-slate-200 bg-white text-xs">
+                <SelectValue placeholder={l("Choose an action", "Bir eylem secin")} />
+              </SelectTrigger>
+              <SelectContent>
+                {AP_WORKFLOW_ACTION_CODES.map((actionCode) => (
+                  <SelectItem key={actionCode} value={actionCode}>
+                    {actionCode === "DRAFT"
+                      ? l("Draft", "Taslak")
+                      : actionCode === "SUBMIT"
+                        ? l("Submit", "Gonder")
+                        : actionCode === "APPROVE"
+                          ? l("Approve", "Onayla")
+                          : l("Post", "Kaydet")}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              value={step.actionLabel || ""}
+              onChange={(event) => onChange("actionLabel", event.target.value)}
+              placeholder={l("Approve", "Onayla")}
+              className="h-8 rounded-lg border-slate-200 bg-white px-2 text-xs"
+            />
+          )}
+        </td>
 
-      <CardContent className="grid gap-4 pt-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {l("Step number", "Adim numarasi")}
-          </label>
-          <Input
-            type="number"
-            min={1}
-            value={step.stepNo}
-            onChange={(event) => onChange("stepNo", event.target.value)}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {l("Action label", "Islem etiketi")}
-          </label>
-          <Input
-            value={step.actionLabel || ""}
-            onChange={(event) => onChange("actionLabel", event.target.value)}
-            placeholder={l("Approve", "Onayla")}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {isAp
-              ? (apBusinessLabels?.atWhichScope || l("At which organizational scope", "Hangi organizasyon kapsaminda"))
-              : l("Step scope type", "Adim kapsam tipi")}
-          </label>
+        <td className="min-w-[11rem] px-4 py-2 align-middle">
           <Select value={step.stageScopeType} onValueChange={(value) => onChange("stageScopeType", value)}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="h-8 w-full rounded-lg border-slate-200 bg-white text-xs">
               <SelectValue placeholder={l("Choose a level", "Seviye secin")} />
             </SelectTrigger>
             <SelectContent>
@@ -122,156 +155,190 @@ export default function ApprovalStepCard({
               ))}
             </SelectContent>
           </Select>
-        </div>
+        </td>
 
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {l("Required package", "Gerekli paket")}
-          </label>
+        <td className="min-w-[14rem] px-4 py-2 align-middle">
           <Select
             value={step.requiredPackageCode || ""}
             onValueChange={(value) => onChange("requiredPackageCode", value)}
+            disabled={isAp && filteredPackageOptions.length <= 1}
           >
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="h-8 w-full rounded-lg border-slate-200 bg-white text-xs">
               <SelectValue placeholder={l("Choose a package", "Paket secin")} />
             </SelectTrigger>
             <SelectContent>
-              {workflowStepPackageOptions.map((packageEntry) => (
+              {filteredPackageOptions.map((packageEntry) => (
                 <SelectItem key={packageEntry.code} value={packageEntry.code}>
                   {packageEntry.displayName}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs leading-5 text-muted-foreground">
-            {step.requiredPermissionCode
-              ? l(
-                  `Current runtime bridge permission: ${step.requiredPermissionCode}`,
-                  `Mevcut runtime kopru yetkisi: ${step.requiredPermissionCode}`
-                )
-              : isAp
-                ? l(
-                    "AP review authority is still resolved from the assignment scope in the current backend bridge.",
-                    "AP inceleme yetkisi mevcut backend koprusunde hala atama kapsamindan cozulur."
-                  )
-                : l(
-                    "Choose a workflow package to define the acting authority for this step.",
-                    "Bu adimin isleyen yetkisini tanimlamak icin bir workflow paketi secin."
-                  )}
-          </p>
-        </div>
+        </td>
 
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {l("Minimum approvals", "Minimum onay")}
-          </label>
+        <td className="min-w-[7rem] px-4 py-2 align-middle">
           <Input
             type="number"
             min={1}
-            value={step.minApproverCount}
+            value={isApproveAction ? step.minApproverCount : "1"}
             onChange={(event) => onChange("minApproverCount", event.target.value)}
+            disabled={!isApproveAction}
+            className="h-8 rounded-lg border-slate-200 bg-white px-2 text-xs"
           />
-        </div>
+        </td>
 
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {l("Escalate after hours", "Kac saat sonra escalation")}
-          </label>
+        <td className="min-w-[9rem] px-4 py-2 align-middle">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              checked={isApproveAction && Boolean(step.allowSelfApprove)}
+              onCheckedChange={(checked) => onChange("allowSelfApprove", Boolean(checked))}
+              id={`workflow-step-self-approve-${index}`}
+              disabled={!isApproveAction}
+            />
+            <label
+              htmlFor={`workflow-step-self-approve-${index}`}
+              className="text-[11px] text-slate-600"
+            >
+              {isAp && !isApproveAction
+                ? l("Approve only", "Yalnizca approve")
+                : step.allowSelfApprove
+                  ? l("Allowed", "Acik")
+                  : l("Off", "Kapali")}
+            </label>
+          </div>
+        </td>
+
+        <td className="min-w-[7rem] px-4 py-2 align-middle">
           <Input
             type="number"
             min={1}
             value={step.escalationAfterHours || ""}
             placeholder="24"
             onChange={(event) => onChange("escalationAfterHours", event.target.value)}
+            className="h-8 rounded-lg border-slate-200 bg-white px-2 text-xs"
           />
-        </div>
+        </td>
 
-        <div className="space-y-2 md:col-span-2">
-          <div className="flex items-center justify-between gap-3">
-            <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              {l("Eligible business roles", "Uygun is rolleri")}
-            </label>
-            <Badge variant="secondary">
-              {l("Helper only", "Yardimci bilgi")}
-            </Badge>
-          </div>
-          <p className="text-xs leading-5 text-muted-foreground">
-            {l(
-              "These role suggestions improve readability and assignee filtering, but the workflow step still resolves authority from the selected package.",
-              "Bu rol onerileri okunabilirligi ve atanan kisiyi filtrelemeyi kolaylastirir; ancak workflow adimi yetkiyi yine secilen paketten cozer."
-            )}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {workflowStepBusinessRoleOptions.map((roleOption) => {
-              const selectedRoleCodes = Array.isArray(step.eligibleBusinessRoleCodes)
-                ? step.eligibleBusinessRoleCodes
-                : [];
-              const isSelected = selectedRoleCodes.includes(roleOption.code);
-              const nextRoleCodes = isSelected
-                ? selectedRoleCodes.filter((roleCode) => roleCode !== roleOption.code)
-                : [...selectedRoleCodes, roleOption.code];
-              return (
-                <button
-                  key={roleOption.code}
-                  type="button"
-                  onClick={() => onChange("eligibleBusinessRoleCodes", nextRoleCodes)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                    isSelected
-                      ? "border-blue-300 bg-blue-50 text-blue-900"
-                      : "border-border bg-card text-foreground hover:border-blue-200 hover:bg-blue-50/50"
-                  }`}
-                >
-                  {roleOption.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="md:col-span-2">
-          <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/20 px-4 py-3">
-            <Checkbox
-              checked={Boolean(step.allowSelfApprove)}
-              onCheckedChange={(checked) => onChange("allowSelfApprove", Boolean(checked))}
-              id={`workflow-step-self-approve-${index}`}
-            />
-            <label
-              htmlFor={`workflow-step-self-approve-${index}`}
-              className="text-sm text-foreground"
-            >
-              {l("Allow self-approval", "Kendi kendine onaya izin ver")}
-            </label>
-            <span className="ml-auto text-xs text-muted-foreground">
-              {l("Recommended: Off", "Onerilen: Kapali")}
+        <td className="min-w-[10rem] px-4 py-2 align-middle">
+          <div className="space-y-0.5">
+            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusToneClass}`}>
+              {statusLabel}
             </span>
+            <p className="text-[11px] leading-4 text-slate-500">{statusDetail}</p>
           </div>
-        </div>
+        </td>
 
-        {Array.isArray(validation?.allIssues) && validation.allIssues.length > 0 ? (
-          <div className="space-y-2 md:col-span-2">
-            {validation.allIssues.map((issue) => (
-              <div
-                key={`${issue.code}-${issue.severity}`}
-                className={`rounded-2xl border px-4 py-3 ${
-                  issue.severity === "error"
-                    ? "border-rose-200 bg-rose-50/80 text-rose-950"
-                    : "border-amber-200 bg-amber-50/80 text-amber-950"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-[0.16em]">
-                    {issue.severity === "error"
-                      ? l("Blocking issue", "Engelleyici sorun")
-                      : l("Warning", "Uyari")}
-                  </span>
-                  <span className="text-sm font-medium">{issue.title}</span>
-                </div>
-                <p className="mt-1 text-sm leading-6">{issue.description}</p>
-              </div>
-            ))}
+        <td className="px-4 py-2 align-middle">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              onClick={() => setIsExpanded((prev) => !prev)}
+            >
+              {isExpanded ? l("Hide details", "Detayi gizle") : l("Details", "Detay")}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+              onClick={onRemove}
+              disabled={disableRemove}
+            >
+              {l("Remove", "Kaldir")}
+            </Button>
           </div>
-        ) : null}
-      </CardContent>
-    </Card>
+        </td>
+      </tr>
+
+      {isExpanded ? (
+        <tr className="border-t border-dashed border-slate-200 bg-slate-50/70">
+          <td colSpan={9} className="px-4 py-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.52fr)_minmax(0,0.48fr)]">
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {l("Step preview", "Adim onizlemesi")}
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-900">{previewText}</p>
+                </div>
+                <p className="text-xs leading-5 text-slate-600">{runtimeBridgeMessage}</p>
+                {apBusinessLabels?.effectivePermission ? (
+                  <p className="text-xs leading-5 text-slate-600">
+                    {apBusinessLabels.effectivePermission}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {l("Eligible business roles", "Uygun is rolleri")}
+                  </p>
+                  <Badge variant="secondary">
+                    {l("Helper only", "Yardimci bilgi")}
+                  </Badge>
+                </div>
+                <p className="text-xs leading-5 text-slate-600">
+                  {l(
+                    "These role suggestions improve readability and assignee filtering, but the workflow step still resolves authority from the selected package.",
+                    "Bu rol onerileri okunabilirligi ve atanan kisiyi filtrelemeyi kolaylastirir; ancak workflow adimi yetkiyi yine secilen paketten cozer."
+                  )}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {workflowStepBusinessRoleOptions.map((roleOption) => {
+                    const isSelected = selectedRoleCodes.includes(roleOption.code);
+                    const nextRoleCodes = isSelected
+                      ? selectedRoleCodes.filter((roleCode) => roleCode !== roleOption.code)
+                      : [...selectedRoleCodes, roleOption.code];
+                    return (
+                      <button
+                        key={roleOption.code}
+                        type="button"
+                        onClick={() => onChange("eligibleBusinessRoleCodes", nextRoleCodes)}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          isSelected
+                            ? "border-blue-300 bg-blue-50 text-blue-900"
+                            : "border-border bg-card text-foreground hover:border-blue-200 hover:bg-blue-50/50"
+                        }`}
+                      >
+                        {roleOption.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {Array.isArray(validation?.allIssues) && validation.allIssues.length > 0 ? (
+              <div className="mt-4 space-y-2">
+                {validation.allIssues.map((issue) => (
+                  <div
+                    key={`${issue.code}-${issue.severity}`}
+                    className={`rounded-2xl border px-4 py-3 ${
+                      issue.severity === "error"
+                        ? "border-rose-200 bg-rose-50/80 text-rose-950"
+                        : "border-amber-200 bg-amber-50/80 text-amber-950"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em]">
+                        {issue.severity === "error"
+                          ? l("Blocking issue", "Engelleyici sorun")
+                          : l("Warning", "Uyari")}
+                      </span>
+                      <span className="text-sm font-medium">{issue.title}</span>
+                    </div>
+                    <p className="mt-1 text-sm leading-6">{issue.description}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </td>
+        </tr>
+      ) : null}
+    </>
   );
 }

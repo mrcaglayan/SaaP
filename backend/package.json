@@ -341,6 +341,7 @@
     "audit:inventory:transfer-schema": "node scripts/audit-inventory-transfer-schema.js",
     "test:cari:workflow-explainability-frontend": "node scripts/test-cari-workflow-explainability-frontend-smoke.js",
     "test:cari:workflow-explainability-release-gate": "node scripts/test-cari-workflow-explainability-release-gate.js",
+    "test:workflows:actap05": "node scripts/test-workflows-actap05-ap-action-step-scenarios.js",
     "test:workflows:amx07": "node scripts/test-workflows-amx07-release-gate.js",
     "test:cari-quality-gate": "npm run test:cari-pr01 && npm run test:cari-pr02 && npm run test:cari-pr03 && npm run test:cari-pr04 && npm run test:cari-pr05 && npm run test:cari-pr06 && npm run test:cari-pr07 && npm run test:cari-pr08 && npm run test:cari-pr09 && npm run test:cari-pr09-frontend && npm run test:cari-pr10 && npm run test:cari-pr11 && npm run test:cari-pr12 && npm run test:cari-pr12-documents-date-filter && npm run test:cari-pr13 && npm run test:cari-pr14 && npm run test:cari:line-model-rollout && npm run test:cari-payment-terms-bootstrap && npm run test:cari:workflow-explainability-release-gate && npm run test:workflows:amx07",
     "test:cash-characterization": "npm run test:cash-registers-sessions && npm run test:cash-posting-reversal && npm run test:cash-control-enforcement",

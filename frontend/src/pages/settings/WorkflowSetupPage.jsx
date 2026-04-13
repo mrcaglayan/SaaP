@@ -48,7 +48,6 @@ import {
   buildAssignmentEffectText,
   buildAssignmentSelectionLabel,
   buildAssignmentScopeLabel,
-  buildWorkflowPresetBaselineStepDrafts,
   buildDefaultSteps,
   buildWorkflowExplainabilityPreviewModel,
   buildWorkflowCoverageReviewModel,
@@ -58,6 +57,7 @@ import {
   buildStepPreview,
   buildWorkflowStepValidationModel,
   buildWorkflowPreview,
+  getApWorkflowRequiredPackageCode,
   listWorkflowStepPackageOptions,
   normalizeStepDraft,
   PROCESS_TYPES,
@@ -268,6 +268,8 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
 
   const selectedProcessType =
     selectedDefinition?.processType || definitionForm.processType || assignmentForm.processType;
+  const isApWorkflowProcess =
+    String(selectedProcessType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
   const selectedProcessTypeLabel =
     text.workflowTypeLabels[String(selectedProcessType || "").toUpperCase()] ||
     selectedProcessType ||
@@ -356,12 +358,14 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
   );
   const workflowPresetOptions = useMemo(
     () =>
-      workflowPresetEntries.filter(
-        (entry) =>
-          String(entry?.workflowFamily || "").toUpperCase() ===
-          String(selectedProcessType || "").toUpperCase()
-      ),
-    [selectedProcessType, workflowPresetEntries]
+      isApWorkflowProcess
+        ? []
+        : workflowPresetEntries.filter(
+            (entry) =>
+              String(entry?.workflowFamily || "").toUpperCase() ===
+              String(selectedProcessType || "").toUpperCase()
+          ),
+    [isApWorkflowProcess, selectedProcessType, workflowPresetEntries]
   );
   const selectedWorkflowPreset = useMemo(
     () =>
@@ -389,6 +393,36 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       }),
     [selectedWorkflowPreset, stepDrafts, text.stepScopeLabels, l]
   );
+  const apStepBuilderPresetProps = isApWorkflowProcess
+    ? {
+        workflowPresetOptions: [],
+        selectedWorkflowPreset: null,
+        workflowPresetPreview: null,
+        workflowPresetComparison: null,
+        onSelectWorkflowPreset: undefined,
+        onCloneWorkflowPreset: undefined,
+        onResetStepsToSelectedPreset: undefined,
+      }
+    : {
+        workflowPresetOptions,
+        selectedWorkflowPreset,
+        workflowPresetPreview,
+        workflowPresetComparison,
+        onSelectWorkflowPreset,
+        onCloneWorkflowPreset,
+        onResetStepsToSelectedPreset,
+      };
+  const apReviewPresetProps = isApWorkflowProcess
+    ? {
+        selectedWorkflowPreset: null,
+        workflowPresetPreview: null,
+        workflowPresetComparison: null,
+      }
+    : {
+        selectedWorkflowPreset,
+        workflowPresetPreview,
+        workflowPresetComparison,
+      };
   const workflowStepValidation = useMemo(
     () =>
       buildWorkflowStepValidationModel({
@@ -752,7 +786,9 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
           rows.length > 0
             ? rows.map((row) => ({
                 stepNo: Number(row?.stepNo || 0) || 1,
+                actionCode: row?.actionCode ?? null,
                 stageScopeType: String(row?.stageScopeType || "LEGAL_ENTITY"),
+                requiredPackageCode: row?.requiredPackageCode ?? null,
                 requiredPermissionCode: row?.requiredPermissionCode ?? null,
                 minApproverCount: Number(row?.minApproverCount || 1) || 1,
                 allowSelfApprove: Boolean(row?.allowSelfApprove),
@@ -851,6 +887,7 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
   useEffect(() => {
     if (
       !canReadAssignments ||
+      isApWorkflowProcess ||
       (currentStep < 4 &&
         (!isSecurityAdminWorkbench || activeWorkbenchTab !== "coverage"))
     ) {
@@ -916,6 +953,7 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
     activeWorkbenchTab,
     canReadAssignments,
     currentStep,
+    isApWorkflowProcess,
     isSecurityAdminWorkbench,
     l,
     selectedProcessType,
@@ -959,8 +997,8 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       setCurrentStep(4);
       setMessage(
         l(
-          "Workflow created. Next, define who must approve.",
-          "Workflow olusturuldu. Siradaki adim: kimin onay verecegini tanimlayin."
+          "Workflow created. Next, define the workflow steps.",
+          "Workflow olusturuldu. Siradaki adim: workflow adimlarini tanimlayin."
         )
       );
     } catch (err) {
@@ -1019,8 +1057,8 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       setCurrentStep(5);
       setMessage(
         l(
-          "Approval steps saved. Review the setup and save the assignment.",
-          "Onay adimlari kaydedildi. Kurulumu inceleyin ve atamayi kaydedin."
+          "Workflow steps saved. Review the setup and save the assignment.",
+          "Workflow adimlari kaydedildi. Kurulumu inceleyin ve atamayi kaydedin."
         )
       );
     } catch (err) {
@@ -1057,11 +1095,29 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
 
   function onStepFieldChange(index, field, value) {
     const normalizedFieldValue =
-      field === "requiredPackageCode" ? String(value || "").trim().toUpperCase() : value;
+      field === "requiredPackageCode" ||
+      field === "actionCode" ||
+      field === "stageScopeType"
+        ? String(value || "").trim().toUpperCase()
+        : value;
     applyStepDrafts(
       stepDrafts.map((step, stepIndex) =>
         stepIndex !== index
           ? step
+          : field === "actionCode" && isApWorkflowProcess
+            ? {
+                ...step,
+                actionCode: normalizedFieldValue,
+                requiredPackageCode: getApWorkflowRequiredPackageCode(normalizedFieldValue),
+                requiredPackageLabel: "",
+                requiredPermissionCode: "",
+                actionLabel: "",
+                minApproverCount: normalizedFieldValue === "APPROVE" ? step.minApproverCount : "1",
+                allowSelfApprove:
+                  normalizedFieldValue === "APPROVE" ? Boolean(step.allowSelfApprove) : false,
+                eligibleBusinessRoleCodes: [],
+                eligibleBusinessRoleLabels: [],
+              }
           : field === "requiredPackageCode"
             ? {
                 ...step,
@@ -1089,6 +1145,48 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
   }
 
   function onAddStep() {
+    if (isApWorkflowProcess) {
+      const currentSteps = Array.isArray(stepDrafts) ? stepDrafts : [];
+      const insertIndex = currentSteps.findIndex(
+        (step) => String(step?.actionCode || "").trim().toUpperCase() === "POST"
+      );
+      const nextStepNo =
+        insertIndex >= 0
+          ? Math.max(1, Number(currentSteps[insertIndex]?.stepNo || insertIndex + 1) || insertIndex + 1)
+          : (Array.isArray(currentSteps) ? currentSteps.length : 0) + 1;
+      const nextDraft = normalizeStepDraft(
+        {
+          actionCode: "APPROVE",
+          requiredPackageCode: getApWorkflowRequiredPackageCode("APPROVE"),
+        },
+        nextStepNo,
+        selectedProcessType,
+        workflowStepCatalogContext
+      );
+
+      if (insertIndex >= 0) {
+        const nextSteps = currentSteps.map((step, stepIndex) =>
+          stepIndex < insertIndex
+            ? step
+            : {
+                ...step,
+                stepNo: String(
+                  Math.max(1, Number(step?.stepNo || stepIndex + 1) || stepIndex + 1) + 1
+                ),
+              }
+        );
+        nextSteps.splice(insertIndex, 0, {
+          ...nextDraft,
+          stepNo: String(nextStepNo),
+        });
+        applyStepDrafts(nextSteps, selectedProcessType);
+        return;
+      }
+
+      applyStepDrafts([...currentSteps, nextDraft], selectedProcessType);
+      return;
+    }
+
     applyStepDrafts(
       [
         ...stepDrafts,
@@ -1170,12 +1268,21 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
    * Save one AP routing-matrix row through the existing workflow definition and
    * assignment APIs so the matrix stays an admin layer over the current model.
    */
-  async function onSaveApprovalRoutingRule(draft, { selectedPreset } = {}) {
+  async function onSaveApprovalRoutingRule(draft) {
     const targetMode = String(draft?.targetMode || "definition").trim().toLowerCase();
     const selectedScope = resolveAssignmentScopeSelection(draft, tenantScopeId);
 
     if (!selectedScope) {
       setError(l("Select a route scope first.", "Once bir rota kapsami secin."));
+      return;
+    }
+    if (targetMode !== "definition") {
+      setError(
+        l(
+          "AP routing matrix routes must use an existing workflow definition.",
+          "AP rota matrisi kayitlari mevcut bir workflow tanimi kullanmalidir."
+        )
+      );
       return;
     }
     if (!canWriteAssignmentAtScope(selectedScope)) {
@@ -1190,37 +1297,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
     setError("");
     setMessage("");
     try {
-      if (targetMode === "preset") {
-        if (!selectedPreset) {
-          throw new Error(
-            l("Choose a workflow preset first.", "Once bir workflow preset secin.")
-          );
-        }
-        const definitionResponse = await createWorkflowDefinition({
-          code: String(draft?.newDefinitionCode || "").trim(),
-          name: String(draft?.newDefinitionName || "").trim(),
-          processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
-          isActive: true,
-          versionNo: 1,
-        });
-        workflowDefinitionId = toPositiveInt(definitionResponse?.row?.id);
-        if (!workflowDefinitionId) {
-          throw new Error(
-            l(
-              "Preset-backed workflow definition could not be created.",
-              "Preset tabanli workflow tanimi olusturulamadi."
-            )
-          );
-        }
-
-        const presetDrafts = buildWorkflowPresetBaselineStepDrafts(selectedPreset);
-        const presetSteps = serializeStepDrafts(
-          presetDrafts,
-          AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        );
-        await replaceWorkflowDefinitionSteps(workflowDefinitionId, { steps: presetSteps });
-      }
-
       const payload = {
         processType: AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
         workflowDefinitionId,
@@ -1524,7 +1600,15 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
 
       {sharedAlerts}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div
+        className={`grid gap-6 ${
+          currentStep === 4 && isApWorkflowProcess
+            ? ""
+            : currentStep === 4
+              ? "xl:grid-cols-[minmax(0,1fr)_300px]"
+              : "xl:grid-cols-[minmax(0,1fr)_340px]"
+        }`}
+      >
         <div className="min-w-0">
           {currentStep === 1 ? (
             <WorkflowTypeStep
@@ -1612,13 +1696,7 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
               saving={saving === "steps"}
               canWrite={canWriteDefinitions}
               onBack={() => setCurrentStep(3)}
-              workflowPresetOptions={workflowPresetOptions}
-              selectedWorkflowPreset={selectedWorkflowPreset}
-              workflowPresetPreview={workflowPresetPreview}
-              workflowPresetComparison={workflowPresetComparison}
-              onSelectWorkflowPreset={onSelectWorkflowPreset}
-              onCloneWorkflowPreset={onCloneWorkflowPreset}
-              onResetStepsToSelectedPreset={onResetStepsToSelectedPreset}
+              {...apStepBuilderPresetProps}
               workflowStepValidation={workflowStepValidation}
               coverageDiagnosticsLoading={coverageDiagnosticsLoading}
               coverageDiagnosticsError={coverageDiagnosticsError}
@@ -1645,9 +1723,7 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
               assignmentSaving={saving === "assignment"}
               canWriteAssignment={canWriteAssignments}
               assignmentSaved={assignmentReviewSaved}
-              selectedWorkflowPreset={selectedWorkflowPreset}
-              workflowPresetPreview={workflowPresetPreview}
-              workflowPresetComparison={workflowPresetComparison}
+              {...apReviewPresetProps}
               coverageDiagnostics={coverageDiagnostics}
               coverageDiagnosticsLoading={coverageDiagnosticsLoading}
               coverageDiagnosticsError={coverageDiagnosticsError}
@@ -1662,21 +1738,24 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
           ) : null}
         </div>
 
-        <WorkflowSetupSidebar
-          l={l}
-          currentStep={currentStep}
-          processTypeLabel={selectedProcessTypeLabel}
-          definition={selectedDefinition}
-          stepDrafts={stepDrafts}
-          hasTargetScope={currentStep >= 2 && Boolean(assignmentScopeSelection)}
-          assignmentLabel={assignmentLabel}
-          assignmentStatus={assignmentForm.status}
-          recommendation={selectedRecommendation}
-          workflowPreviewText={workflowPreviewText}
-          workflowExplainabilityPreview={workflowExplainabilityPreview}
-          assignmentEffectText={assignmentEffectText}
-          quickGuide={text.quickGuide}
-        />
+        {!(currentStep === 4 && isApWorkflowProcess) ? (
+          <WorkflowSetupSidebar
+            l={l}
+            currentStep={currentStep}
+            processTypeLabel={selectedProcessTypeLabel}
+            definition={selectedDefinition}
+            stepDrafts={stepDrafts}
+            hasTargetScope={currentStep >= 2 && Boolean(assignmentScopeSelection)}
+            assignmentLabel={assignmentLabel}
+            assignmentStatus={assignmentForm.status}
+            recommendation={selectedRecommendation}
+            workflowPreviewText={workflowPreviewText}
+            workflowExplainabilityPreview={workflowExplainabilityPreview}
+            assignmentEffectText={assignmentEffectText}
+            quickGuide={text.quickGuide}
+            compactForStepBuilder={currentStep === 4}
+          />
+        ) : null}
       </div>
 
       {canReadAssignments ? (

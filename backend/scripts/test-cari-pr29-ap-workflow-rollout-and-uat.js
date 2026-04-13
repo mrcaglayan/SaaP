@@ -405,6 +405,17 @@ async function main() {
     path.resolve(root, "backend/src/services/ap.document.workflow.rollout.service.js"),
     "utf8"
   );
+  const workflowSetupPageSource = await readFile(
+    path.resolve(root, "frontend/src/pages/settings/WorkflowSetupPage.jsx"),
+    "utf8"
+  );
+  const routingMatrixSource = await readFile(
+    path.resolve(
+      root,
+      "frontend/src/pages/settings/workflows/components/ApprovalRoutingMatrixSection.jsx"
+    ),
+    "utf8"
+  );
   const roadmapSource = await readFile(
     path.resolve(
       root,
@@ -430,6 +441,15 @@ async function main() {
       !rolloutServiceSource.includes("setApWorkflowRolloutPhase") &&
       !rolloutServiceSource.includes("AP_WORKFLOW_ROLLOUT_PHASES"),
     "AP workflow setup service should keep definition/coverage helpers and drop phase-based rollout APIs"
+  );
+  assert(
+    !routingMatrixSource.includes('SelectItem value="preset"') &&
+      !routingMatrixSource.includes("Choose a shipped AP preset") &&
+      workflowSetupPageSource.includes(
+        "AP routing matrix routes must use an existing workflow definition."
+      ) &&
+      !workflowSetupPageSource.includes("Preset-backed workflow definition could not be created."),
+    "AP routing matrix should stay definition-only and should not create preset-backed AP workflows"
   );
   assert(
     !(await pathExists(rolloutCliPath)),

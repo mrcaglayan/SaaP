@@ -65,6 +65,8 @@ async function main() {
         routingMatchedScopeLayer: "LEGAL_ENTITY",
         currentStepNo: 1,
         totalSteps: 2,
+        currentActionCode: "APPROVE",
+        currentRequiredPackageCode: "PKG-AP-APPROVE",
         currentStageScopeType: "LEGAL_ENTITY",
         currentStageScopeLabel: "Legal Entity",
         effectiveApprovalPermissionCode: "approvals.requests.approve",
@@ -84,12 +86,54 @@ async function main() {
         "Legal Entity"
       ) &&
       findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
-        "Waiting for AP Documents / Approve at Legal Entity scope." &&
+        "Waiting for approval with AP Documents / Approve at Legal Entity scope." &&
       pendingDetailModel?.eligibleRoleLabels?.includes("Entity Accountant") &&
       pendingDetailModel?.eligibleRoleLabels?.includes("Entity Manager") &&
       findItemValue(pendingDetailModel?.technicalItems, "Routing match type") ===
         "Amount band",
     "AP detail explainability should surface the AMX06 route facts and in-scope approval gate"
+  );
+
+  const draftActionModel = buildCariWorkflowActionExplainabilityModel({
+    row: {
+      status: "DRAFT",
+      direction: "AP",
+      workflowGate: {
+        state: "blocked",
+        workflowGoverned: true,
+        assignmentResolved: true,
+        assignmentScopeType: "LEGAL_ENTITY",
+        assignmentScopeLabel: "Legal Entity",
+        workflowDefinitionCode: "WF-AP-ENTITY-DRAFT",
+        workflowDefinitionName: "Entity Draft Route",
+        currentStepNo: 1,
+        totalSteps: 3,
+        currentActionCode: "DRAFT",
+        currentRequiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        currentStageScopeType: "LEGAL_ENTITY",
+        currentStageScopeLabel: "Legal Entity",
+        waitingForSummary: "Draft is in progress at Legal Entity scope",
+        blockingReasonDetail: "Complete draft work at Legal Entity scope before submission",
+      },
+    },
+    workflowInstance: null,
+    canReadSelected: true,
+    canSubmitSelected: false,
+    canApproveSelected: false,
+    canApproveWorkflow: false,
+    canPostSelected: false,
+    l,
+  });
+  assert(
+    draftActionModel?.headline === "Draft is in progress at Legal Entity scope" &&
+      findItemValue(draftActionModel?.noteItems, "Current gate") ===
+        "Draft work stays with AP Documents / Draft & Submit at Legal Entity scope." &&
+      draftActionModel?.eligibleActorSummary ===
+        "Users assigned AP Documents / Draft & Submit at Legal Entity scope can create or edit the current draft." &&
+      draftActionModel?.userCapabilityLines?.includes(
+        "You cannot post because the document is still in its draft step."
+      ),
+    "AP action explainability should describe explicit DRAFT ownership before submission"
   );
 
   const approvedActionModel = buildCariWorkflowActionExplainabilityModel({
@@ -114,6 +158,8 @@ async function main() {
         evaluatedAmountBasis: "BASE_AMOUNT",
         routingUsedFallback: true,
         routingMatchType: "FALLBACK",
+        currentActionCode: "POST",
+        currentRequiredPackageCode: "PKG-AP-POST",
         currentStageScopeType: "LEGAL_ENTITY",
         currentStageScopeLabel: "Legal Entity",
         waitingForSummary: "Ready for Legal Entity posting",
@@ -134,7 +180,7 @@ async function main() {
       findItemValue(approvedActionModel?.factItems, "Matched rule") ===
         "Legal Entity fallback route" &&
       findItemValue(approvedActionModel?.noteItems, "Current gate") ===
-        "Waiting for AP Documents / Post at Legal Entity scope." &&
+        "Waiting for posting with AP Documents / Post at Legal Entity scope." &&
       findItemValue(approvedActionModel?.noteItems, "Fallback route used") ===
         "No amount band matched in the selected scope, so the fallback route was used." &&
       approvedActionModel?.userCapabilityLines?.includes(
@@ -161,6 +207,10 @@ async function main() {
     explainabilitySource.includes("Matched route") &&
       explainabilitySource.includes("Matched rule") &&
       explainabilitySource.includes("Fallback route used") &&
+      explainabilitySource.includes("Draft work stays with") &&
+      explainabilitySource.includes("Waiting for approval with") &&
+      explainabilitySource.includes("Waiting for posting with") &&
+      explainabilitySource.includes("You cannot post because the document is still in its draft step.") &&
       explainabilitySource.includes("You can view this document but cannot approve it.") &&
       explainabilitySource.includes("You can view this document but cannot post it.") &&
       hookSource.includes(

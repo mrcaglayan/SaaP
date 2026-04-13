@@ -135,6 +135,43 @@ async function main() {
     "UI-3C should warn when no in-scope users currently match the step package"
   );
 
+  const apSubmitCoverageValidation = buildWorkflowStepValidationModel({
+    stepDrafts: [
+      {
+        stepNo: 1,
+        actionCode: "SUBMIT",
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        requiredPackageLabel: "AP Documents / Draft & Submit",
+        allowSelfApprove: false,
+      },
+    ],
+    processType: "AP_DOCUMENT_POSTING",
+    workflowPackageEntries,
+    coverageDiagnostics: {
+      checks: {
+        steps: [
+          {
+            stepNo: 1,
+            actionCode: "SUBMIT",
+            status: "NO_COVERAGE",
+            uncoveredScopeCount: 1,
+          },
+        ],
+      },
+    },
+    stepScopeLabels,
+    l,
+  });
+
+  assert.equal(
+    apSubmitCoverageValidation.steps[0].warningIssues.some(
+      (issue) => issue.code === "no_eligible_users"
+    ),
+    true,
+    "UI-3C should keep AP submit coverage gaps visible instead of limiting warnings to APPROVE only"
+  );
+
   const apExtensionValidation = buildWorkflowStepValidationModel({
     stepDrafts: [
       {
@@ -200,7 +237,8 @@ async function main() {
   assert(
     approvalStepCardSource.includes('l("Blocking issue", "Engelleyici sorun")') &&
       approvalStepCardSource.includes('l("Warning", "Uyari")') &&
-      approvalStepCardSource.includes('l("blocker", "engel")'),
+      approvalStepCardSource.includes("validation?.allIssues") &&
+      approvalStepCardSource.includes('l("Blocked", "Engelli")'),
     "ApprovalStepCard should render inline blocker and warning states per workflow step"
   );
 

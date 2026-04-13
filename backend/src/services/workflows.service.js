@@ -20,6 +20,10 @@ import {
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+  findApWorkflowStepByNo,
+  listApWorkflowApproveSteps,
+  listApWorkflowSteps,
+  resolveApWorkflowEditableStep,
 } from "../../../shared/cariDocumentWorkflowGovernance.js";
 
 const FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1 =
@@ -28,6 +32,18 @@ const WORKFLOW_UNIFIED_MODULE_CODE = "WORKFLOW";
 const WORKFLOW_UNIFIED_ACTION_TYPE = "APPROVE_WORKFLOW";
 const WORKFLOW_ASSIGNMENT_AMOUNT_BASES = ["BASE_AMOUNT"];
 const DEFAULT_WORKFLOW_ASSIGNMENT_PRIORITY = 100;
+const AP_DOCUMENT_STEP_ACTION_CODES = Object.freeze([
+  "DRAFT",
+  "SUBMIT",
+  "APPROVE",
+  "POST",
+]);
+const AP_DOCUMENT_REQUIRED_PACKAGE_BY_ACTION = Object.freeze({
+  DRAFT: "PKG-AP-DRAFT-SUBMIT",
+  SUBMIT: "PKG-AP-DRAFT-SUBMIT",
+  APPROVE: "PKG-AP-APPROVE",
+  POST: "PKG-AP-POST",
+});
 
 const WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL = `COALESCE(
       period_close_book.legal_entity_id,
@@ -191,8 +207,37 @@ function isApDocumentWorkflowInstanceRow(row) {
   );
 }
 
+async function loadApWorkflowBridgeContext(instanceRow, runQuery = query) {
+  if (!isApDocumentWorkflowInstanceRow(instanceRow)) {
+    return null;
+  }
+  const definitionId = parsePositiveInt(
+    instanceRow?.workflow_definition_id ?? instanceRow?.workflowDefinitionId
+  );
+  if (!definitionId) {
+    return null;
+  }
+  const stepRows = await listWorkflowDefinitionStepRowsRaw(definitionId, runQuery);
+  return buildWorkflowApprovalBridgeContext(
+    {
+      process_type: instanceRow?.process_type ?? instanceRow?.processType,
+    },
+    stepRows
+  );
+}
+
 function normalizeWorkflowStepPermissionCode(value) {
   const normalized = String(value || "").trim();
+  return normalized || null;
+}
+
+function normalizeWorkflowStepActionCode(value) {
+  const normalized = toUpper(value);
+  return normalized || null;
+}
+
+function normalizeWorkflowStepPackageCode(value) {
+  const normalized = String(value || "").trim().toUpperCase();
   return normalized || null;
 }
 
@@ -449,22 +494,318 @@ function buildWorkflowAssignmentResolutionDiagnostics({
   };
 }
 
-function assertWorkflowStepPermissionCompatibility(processType, step, index) {
-  const normalizedProcessType = toUpper(processType);
-  const permissionCode = normalizeWorkflowStepPermissionCode(
-    step?.requiredPermissionCode ?? step?.required_permission_code ?? null
+function normalizeWorkflowDefinitionStepWriteShape(step = {}) {
+  const actionCode = normalizeWorkflowStepActionCode(
+    step.actionCode ?? step.action_code ?? null
   );
-  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    if (permissionCode) {
+  return {
+    stepNo: Number(step.stepNo ?? step.step_no ?? 0),
+    stageScopeType: toUpper(step.stageScopeType ?? step.stage_scope_type),
+    actionCode,
+    requiredPermissionCode: normalizeWorkflowStepPermissionCode(
+      step.requiredPermissionCode ?? step.required_permission_code ?? null
+    ),
+    requiredPackageCode: normalizeWorkflowStepPackageCode(
+      step.requiredPackageCode ?? step.required_package_code ?? null
+    ),
+    minApproverCount: Math.max(
+      1,
+      Number(step.minApproverCount ?? step.min_approver_count ?? 1) || 1
+    ),
+    allowSelfApprove: Boolean(
+      toDbBoolean(step.allowSelfApprove ?? step.allow_self_approve)
+    ),
+    escalationAfterHours:
+      parsePositiveInt(step.escalationAfterHours ?? step.escalation_after_hours) || null,
+  };
+}
+
+function assertApWorkflowDefinitionSteps(steps) {
+  let previousStepNo = 0;
+  let postStepCount = 0;
+  let submitStepCount = 0;
+  let currentPhase = "START";
+
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    const stepNo = Number(step.stepNo || 0);
+    if (!Number.isInteger(stepNo) || stepNo <= previousStepNo) {
+      throw badRequest(
+        `steps[${index}].stepNo must be greater than the previous AP step number`
+      );
+    }
+    previousStepNo = stepNo;
+
+    if (!AP_DOCUMENT_STEP_ACTION_CODES.includes(step.actionCode)) {
+      throw badRequest(`steps[${index}].actionCode is required for AP_DOCUMENT_POSTING`);
+    }
+    if (step.requiredPermissionCode) {
       throw badRequest(
         `steps[${index}].requiredPermissionCode must be null for AP_DOCUMENT_POSTING`
       );
     }
-    return;
+
+    const expectedPackageCode =
+      AP_DOCUMENT_REQUIRED_PACKAGE_BY_ACTION[step.actionCode] || null;
+    if (!step.requiredPackageCode) {
+      throw badRequest(
+        `steps[${index}].requiredPackageCode is required for AP_DOCUMENT_POSTING`
+      );
+    }
+    if (step.requiredPackageCode !== expectedPackageCode) {
+      throw badRequest(
+        `steps[${index}].requiredPackageCode must be ${expectedPackageCode} for action ${step.actionCode}`
+      );
+    }
+    if (step.actionCode !== "APPROVE" && step.minApproverCount > 1) {
+      throw badRequest(
+        `steps[${index}].minApproverCount greater than 1 is only valid for APPROVE`
+      );
+    }
+
+    // First-pass AP grammar: DRAFT? SUBMIT? APPROVE* POST
+    if (step.actionCode === "DRAFT") {
+      if (currentPhase !== "START") {
+        throw badRequest(`steps[${index}].actionCode DRAFT can only appear as the first AP step`);
+      }
+      currentPhase = "AFTER_DRAFT";
+      continue;
+    }
+    if (step.actionCode === "SUBMIT") {
+      if (!["START", "AFTER_DRAFT"].includes(currentPhase)) {
+        throw badRequest(
+          `steps[${index}].actionCode SUBMIT must appear before APPROVE and POST`
+        );
+      }
+      submitStepCount += 1;
+      currentPhase = "AFTER_SUBMIT";
+      continue;
+    }
+    if (step.actionCode === "APPROVE") {
+      if (!["AFTER_SUBMIT", "AFTER_APPROVE"].includes(currentPhase)) {
+        throw badRequest(
+          `steps[${index}].actionCode APPROVE must appear after SUBMIT and before POST`
+        );
+      }
+      currentPhase = "AFTER_APPROVE";
+      continue;
+    }
+    if (!["AFTER_SUBMIT", "AFTER_APPROVE"].includes(currentPhase)) {
+      throw badRequest(`steps[${index}].actionCode POST must appear after SUBMIT`);
+    }
+    if (index !== steps.length - 1) {
+      throw badRequest(`steps[${index}].actionCode POST must be the final AP step`);
+    }
+    postStepCount += 1;
+    currentPhase = "AFTER_POST";
   }
-  if (!permissionCode) {
-    throw badRequest(`steps[${index}].requiredPermissionCode is required`);
+
+  if (submitStepCount !== 1) {
+    throw badRequest("AP_DOCUMENT_POSTING workflows must contain exactly one SUBMIT step");
   }
+  if (postStepCount !== 1) {
+    throw badRequest("AP_DOCUMENT_POSTING workflows must contain exactly one final POST step");
+  }
+}
+
+function normalizeWorkflowDefinitionStepsForProcessType(processType, steps = []) {
+  const normalizedProcessType = toUpper(processType);
+  const normalizedSteps = steps.map((step) =>
+    normalizeWorkflowDefinitionStepWriteShape(step)
+  );
+
+  if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+    const normalizedApSteps = normalizedSteps.map((step) => ({
+      ...step,
+      allowSelfApprove: step.actionCode === "APPROVE" ? step.allowSelfApprove : false,
+    }));
+    assertApWorkflowDefinitionSteps(normalizedApSteps);
+    return normalizedApSteps;
+  }
+
+  normalizedSteps.forEach((step, index) => {
+    if (!step.requiredPermissionCode) {
+      throw badRequest(`steps[${index}].requiredPermissionCode is required`);
+    }
+    if (step.actionCode) {
+      throw badRequest(
+        `steps[${index}].actionCode is only supported for AP_DOCUMENT_POSTING`
+      );
+    }
+    if (step.requiredPackageCode) {
+      throw badRequest(
+        `steps[${index}].requiredPackageCode is only supported for AP_DOCUMENT_POSTING`
+      );
+    }
+  });
+
+  return normalizedSteps;
+}
+
+function mapWorkflowDefinitionStepToPolicySnapshot(step) {
+  const normalized = normalizeWorkflowDefinitionStepWriteShape(step);
+  return {
+    step_no: normalized.stepNo,
+    action_code: normalized.actionCode,
+    required_permission_code: normalized.requiredPermissionCode,
+    required_package_code: normalized.requiredPackageCode,
+    scope_resolution_mode: mapStageScopeTypeToUnifiedScopeResolutionMode(
+      normalized.stageScopeType
+    ),
+    custom_scope_resolver_key: null,
+    min_approvals: normalized.minApproverCount,
+    allow_self_approve: normalized.allowSelfApprove,
+    escalation_after_hours: normalized.escalationAfterHours,
+  };
+}
+
+function buildWorkflowApprovalBridgeContext(definitionRow, stepRows = []) {
+  const normalizedProcessType = toUpper(
+    definitionRow?.process_type ?? definitionRow?.processType
+  );
+  const normalizedSourceSteps = (Array.isArray(stepRows) ? stepRows : [])
+    .map(normalizeWorkflowDefinitionStepWriteShape)
+    .filter((step) => Number.isInteger(step.stepNo) && step.stepNo > 0)
+    .sort((left, right) => left.stepNo - right.stepNo);
+
+  const explicitToBridgeStepNo = new Map();
+  const bridgeToExplicitStepNo = new Map();
+
+  if (!isApDocumentWorkflowProcessType(normalizedProcessType)) {
+    normalizedSourceSteps.forEach((step) => {
+      explicitToBridgeStepNo.set(step.stepNo, step.stepNo);
+      bridgeToExplicitStepNo.set(step.stepNo, step.stepNo);
+    });
+    return {
+      isAp: false,
+      explicitSteps: normalizedSourceSteps,
+      bridgeSteps: normalizedSourceSteps,
+      explicitToBridgeStepNo,
+      bridgeToExplicitStepNo,
+      firstBridgeStepNo: normalizedSourceSteps[0]?.stepNo || null,
+      lastBridgeStepNo:
+        normalizedSourceSteps[normalizedSourceSteps.length - 1]?.stepNo || null,
+      finalApprovalExplicitStepNo:
+        normalizedSourceSteps[normalizedSourceSteps.length - 1]?.stepNo || null,
+      postApprovalExplicitStepNo:
+        normalizedSourceSteps[normalizedSourceSteps.length - 1]?.stepNo || null,
+    };
+  }
+
+  const explicitSteps = listApWorkflowSteps(normalizedSourceSteps);
+  const explicitApproveSteps = listApWorkflowApproveSteps(explicitSteps);
+  const bridgeSteps = explicitApproveSteps.map((step, index) => {
+    const bridgeStepNo = index + 1;
+    explicitToBridgeStepNo.set(step.stepNo, bridgeStepNo);
+    bridgeToExplicitStepNo.set(bridgeStepNo, step.stepNo);
+    return {
+      ...step,
+      stepNo: bridgeStepNo,
+      bridgeSourceStepNo: step.stepNo,
+    };
+  });
+  const finalApprovalExplicitStepNo =
+    explicitApproveSteps[explicitApproveSteps.length - 1]?.stepNo || null;
+  const postApprovalExplicitStepNo = finalApprovalExplicitStepNo
+    ? explicitSteps.find((step) => step.stepNo > finalApprovalExplicitStepNo)?.stepNo ||
+      null
+    : null;
+
+  return {
+    isAp: true,
+    explicitSteps,
+    bridgeSteps,
+    explicitToBridgeStepNo,
+    bridgeToExplicitStepNo,
+    firstBridgeStepNo: bridgeSteps[0]?.stepNo || null,
+    lastBridgeStepNo: bridgeSteps[bridgeSteps.length - 1]?.stepNo || null,
+    finalApprovalExplicitStepNo,
+    postApprovalExplicitStepNo,
+  };
+}
+
+function resolveWorkflowUnifiedBridgeStepCount(definitionRow, bridgeSteps = []) {
+  return isApDocumentWorkflowProcessType(
+    definitionRow?.process_type ?? definitionRow?.processType
+  )
+    ? bridgeSteps.length
+    : Math.max(1, bridgeSteps.length);
+}
+
+function mapExplicitWorkflowStepNoToUnifiedBridgeStepNo(
+  bridgeContext,
+  explicitStepNo,
+  { fallbackToLastBridgeStep = false } = {}
+) {
+  const normalizedStepNo = Math.max(1, Number(explicitStepNo || 1));
+  if (!bridgeContext?.isAp) {
+    return normalizedStepNo;
+  }
+
+  const mappedStepNo = bridgeContext.explicitToBridgeStepNo.get(normalizedStepNo);
+  if (mappedStepNo) {
+    return mappedStepNo;
+  }
+  if (
+    fallbackToLastBridgeStep &&
+    bridgeContext.lastBridgeStepNo &&
+    bridgeContext.finalApprovalExplicitStepNo &&
+    normalizedStepNo > bridgeContext.finalApprovalExplicitStepNo
+  ) {
+    return bridgeContext.lastBridgeStepNo;
+  }
+  return null;
+}
+
+function mapUnifiedBridgeStepNoToExplicitWorkflowStepNo(bridgeContext, bridgeStepNo) {
+  const normalizedStepNo = Math.max(1, Number(bridgeStepNo || 1));
+  if (!bridgeContext?.isAp) {
+    return normalizedStepNo;
+  }
+  return bridgeContext.bridgeToExplicitStepNo.get(normalizedStepNo) || null;
+}
+
+function resolveWorkflowLegacyStepNoFromUnifiedRequest(
+  bridgeContext,
+  requestStatus,
+  currentBridgeStepNo
+) {
+  if (!bridgeContext?.isAp) {
+    return Math.max(1, Number(currentBridgeStepNo || 1));
+  }
+  if (toUpper(requestStatus) === "APPROVED" && bridgeContext.postApprovalExplicitStepNo) {
+    return bridgeContext.postApprovalExplicitStepNo;
+  }
+  return (
+    mapUnifiedBridgeStepNoToExplicitWorkflowStepNo(
+      bridgeContext,
+      currentBridgeStepNo
+    ) ||
+    bridgeContext.postApprovalExplicitStepNo ||
+    bridgeContext.finalApprovalExplicitStepNo ||
+    bridgeContext.explicitSteps[0]?.stepNo ||
+    1
+  );
+}
+
+function mapWorkflowDefinitionStepRow(row) {
+  if (!row) {
+    return null;
+  }
+  const normalized = normalizeWorkflowDefinitionStepWriteShape(row);
+  return {
+    id: parsePositiveInt(row.id),
+    workflowDefinitionId: parsePositiveInt(row.workflow_definition_id),
+    stepNo: normalized.stepNo,
+    actionCode: normalized.actionCode,
+    stageScopeType: normalized.stageScopeType,
+    requiredPermissionCode: normalized.requiredPermissionCode,
+    requiredPackageCode: normalized.requiredPackageCode,
+    minApproverCount: normalized.minApproverCount,
+    allowSelfApprove: normalized.allowSelfApprove,
+    escalationAfterHours: normalized.escalationAfterHours,
+    createdAt: row.created_at || null,
+  };
 }
 
 function mapStageScopeTypeToUnifiedScopeResolutionMode(stageScopeType) {
@@ -828,26 +1169,9 @@ function buildWorkflowUnifiedPolicySnapshot(
   stepRows,
   snapshotOverrides = null
 ) {
-  const normalizedSteps = (Array.isArray(stepRows) ? stepRows : []).map((step) => ({
-    step_no: Number(step.step_no || step.stepNo || 1),
-    required_permission_code: normalizeWorkflowStepPermissionCode(
-      step.required_permission_code ?? step.requiredPermissionCode ?? null
-    ),
-    scope_resolution_mode: mapStageScopeTypeToUnifiedScopeResolutionMode(
-      step.stage_scope_type ?? step.stageScopeType
-    ),
-    custom_scope_resolver_key: null,
-    min_approvals: Math.max(
-      1,
-      Number(step.min_approver_count ?? step.minApproverCount ?? 1)
-    ),
-    allow_self_approve: Boolean(
-      toDbBoolean(step.allow_self_approve ?? step.allowSelfApprove)
-    ),
-    escalation_after_hours:
-      parsePositiveInt(step.escalation_after_hours ?? step.escalationAfterHours) ||
-      null,
-  }));
+  const normalizedSteps = (Array.isArray(stepRows) ? stepRows : []).map(
+    mapWorkflowDefinitionStepToPolicySnapshot
+  );
 
   const baseSnapshot = {
     id:
@@ -871,7 +1195,7 @@ function buildWorkflowUnifiedPolicySnapshot(
     scope_id: null,
     effective_from: null,
     effective_to: null,
-    step_count: Math.max(1, normalizedSteps.length),
+    step_count: resolveWorkflowUnifiedBridgeStepCount(definitionRow, normalizedSteps),
     min_approvals: 1,
     maker_checker_required: false,
     allow_self_approve: true,
@@ -938,25 +1262,6 @@ function mapWorkflowDefinitionRow(row) {
     stepCount: Number(row.step_count || 0),
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
-  };
-}
-
-function mapWorkflowDefinitionStepRow(row) {
-  if (!row) {
-    return null;
-  }
-  return {
-    id: parsePositiveInt(row.id),
-    workflowDefinitionId: parsePositiveInt(row.workflow_definition_id),
-    stepNo: Number(row.step_no || 0),
-    stageScopeType: toUpper(row.stage_scope_type),
-    requiredPermissionCode: normalizeWorkflowStepPermissionCode(
-      row.required_permission_code
-    ),
-    minApproverCount: Number(row.min_approver_count || 0),
-    allowSelfApprove: toDbBoolean(row.allow_self_approve),
-    escalationAfterHours: parsePositiveInt(row.escalation_after_hours),
-    createdAt: row.created_at || null,
   };
 }
 
@@ -2059,6 +2364,8 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
     normalizedDefinitionId,
     runQuery
   );
+  const bridgeContext = buildWorkflowApprovalBridgeContext(definitionRow, stepRows);
+  const bridgeStepRows = bridgeContext.bridgeSteps;
   const assignmentRows = await listWorkflowAssignmentRowsByDefinitionId({
     tenantId: normalizedTenantId,
     definitionId: normalizedDefinitionId,
@@ -2069,8 +2376,8 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
   );
   const firstStepPermissionCode =
     normalizeWorkflowStepPermissionCode(
-      stepRows[0]?.required_permission_code ??
-        stepRows[0]?.requiredPermissionCode ??
+      bridgeStepRows[0]?.requiredPermissionCode ??
+        bridgeStepRows[0]?.required_permission_code ??
         null
     ) || "approvals.requests.approve";
 
@@ -2118,7 +2425,7 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
       targetType,
       WORKFLOW_UNIFIED_ACTION_TYPE,
       Number(definitionRow.version_no ?? definitionRow.versionNo ?? 1),
-      Math.max(1, stepRows.length),
+      resolveWorkflowUnifiedBridgeStepCount(definitionRow, bridgeStepRows),
       firstStepPermissionCode,
       toDbBoolean(definitionRow.is_active ?? definitionRow.isActive) ? 1 : 0,
       parsePositiveInt(
@@ -2148,7 +2455,7 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
         AND policy_id = ?`,
     [normalizedTenantId, genericPolicyId]
   );
-  for (const stepRow of stepRows) {
+  for (const stepRow of bridgeStepRows) {
     // eslint-disable-next-line no-await-in-loop
     await runQuery(
       `INSERT INTO approval_policy_steps (
@@ -2165,12 +2472,21 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
       [
         normalizedTenantId,
         genericPolicyId,
-        Number(stepRow.step_no || 1),
-        normalizeWorkflowStepPermissionCode(stepRow.required_permission_code),
-        mapStageScopeTypeToUnifiedScopeResolutionMode(stepRow.stage_scope_type),
-        Math.max(1, Number(stepRow.min_approver_count || 1)),
-        toDbBoolean(stepRow.allow_self_approve) ? 1 : 0,
-        parsePositiveInt(stepRow.escalation_after_hours) || null,
+        Number(stepRow.stepNo || stepRow.step_no || 1),
+        normalizeWorkflowStepPermissionCode(
+          stepRow.requiredPermissionCode ?? stepRow.required_permission_code
+        ),
+        mapStageScopeTypeToUnifiedScopeResolutionMode(
+          stepRow.stageScopeType ?? stepRow.stage_scope_type
+        ),
+        Math.max(
+          1,
+          Number(stepRow.minApproverCount ?? stepRow.min_approver_count ?? 1)
+        ),
+        toDbBoolean(stepRow.allowSelfApprove ?? stepRow.allow_self_approve) ? 1 : 0,
+        parsePositiveInt(
+          stepRow.escalationAfterHours ?? stepRow.escalation_after_hours
+        ) || null,
       ]
     );
   }
@@ -2209,6 +2525,9 @@ async function upsertUnifiedWorkflowPolicyMirrorTx({
   return {
     genericPolicyId,
     stepRows,
+    bridgeStepRows,
+    approvalBridgeStepCount: bridgeStepRows.length,
+    hasApprovalBridgeSteps: bridgeStepRows.length > 0,
     assignmentRows,
   };
 }
@@ -2264,6 +2583,7 @@ async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
     parsePositiveInt(instanceRow.workflow_definition_id),
     runQuery
   );
+  const bridgeContext = buildWorkflowApprovalBridgeContext(definitionRow, stepRows);
   const requestScope = resolveWorkflowUnifiedRequestScope(instanceRow, fallbackScope);
   const targetSnapshot = buildWorkflowUnifiedTargetSnapshotWithOverrides(
     instanceRow,
@@ -2283,8 +2603,15 @@ async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
         parsePositiveInt(definitionRow.generic_policy_id) ||
         null,
     },
-    stepRows,
+    bridgeContext.bridgeSteps,
     policySnapshotOverrides
+  );
+  const bridgedCurrentStepNo = mapExplicitWorkflowStepNoToUnifiedBridgeStepNo(
+    bridgeContext,
+    instanceRow.current_step_no,
+    {
+      fallbackToLastBridgeStep: toUpper(instanceRow.status) === "APPROVED",
+    }
   );
   const requestStatus = mapWorkflowInstanceStatusToUnifiedRequestStatus(
     instanceRow.status
@@ -2331,7 +2658,7 @@ async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
       requestScope.legalEntityId || null,
       requestScope.operatingUnitId || null,
       requestStatus,
-      Math.max(1, Number(instanceRow.current_step_no || 1)),
+      Math.max(1, Number(bridgedCurrentStepNo || 1)),
       parsePositiveInt(instanceRow.requested_by_user_id),
       instanceRow.requested_at || instanceRow.created_at || null,
       requestStatus === "APPROVED" ? resolvedAt : null,
@@ -2360,6 +2687,13 @@ async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
     runQuery,
   });
   for (const row of legacyDecisionRows) {
+    const bridgedDecisionStepNo = mapExplicitWorkflowStepNoToUnifiedBridgeStepNo(
+      bridgeContext,
+      row.stepNo ?? row.step_no
+    );
+    if (!bridgedDecisionStepNo) {
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     await runQuery(
       `INSERT INTO approval_decisions (
@@ -2378,7 +2712,7 @@ async function syncUnifiedWorkflowRequestFromLegacyInstanceTx({
       [
         normalizedTenantId,
         normalizedRequestId,
-        Number(row.stepNo || 1),
+        bridgedDecisionStepNo,
         toUpper(row.decision),
         parsePositiveInt(row.decisionByUserId),
         parsePositiveInt(row.decisionByUserId),
@@ -2427,8 +2761,31 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
   const nextLegacyStatus = mapUnifiedRequestStatusToWorkflowStatus(
     requestRow.request_status
   );
+  let apDocumentStatus = null;
+  if (isApDocumentWorkflowInstanceRow(legacyRow)) {
+    const targetResult = await runQuery(
+      `SELECT status
+         FROM cari_documents
+        WHERE tenant_id = ?
+          AND id = ?
+        LIMIT 1`,
+      [tenantId, parsePositiveInt(legacyRow.target_id)]
+    );
+    apDocumentStatus = toUpper(targetResult.rows?.[0]?.status);
+  }
+  // Explicit AP POST completion is authoritative. Do not regress a posted
+  // document's legacy workflow row back to PENDING when the bridged request
+  // has not yet reflected the final POST step completion.
+  const preserveExplicitPostCompletion =
+    isApDocumentWorkflowInstanceRow(legacyRow) &&
+    ["POSTED", "PARTIALLY_SETTLED", "SETTLED", "REVERSED"].includes(apDocumentStatus) &&
+    nextLegacyStatus === "PENDING";
   const legacyStatus =
-    toUpper(legacyRow?.status) === "SUPERSEDED" ? "SUPERSEDED" : nextLegacyStatus;
+    toUpper(legacyRow?.status) === "SUPERSEDED"
+      ? "SUPERSEDED"
+      : preserveExplicitPostCompletion
+        ? "APPROVED"
+        : nextLegacyStatus;
   const latestDecision = decisionRows[decisionRows.length - 1] || null;
   const resolvedAt =
     requestRow.approved_at ||
@@ -2443,8 +2800,31 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
       : legacyStatus === "REJECTED"
         ? "Rejected through unified workflow engine"
         : legacyStatus === "CANCELLED"
-          ? "Cancelled from unified workflow bridge"
+        ? "Cancelled from unified workflow bridge"
           : null);
+  const bridgeContext = isApDocumentWorkflowInstanceRow(legacyRow)
+    ? buildWorkflowApprovalBridgeContext(
+        {
+          process_type: legacyRow.process_type,
+        },
+        await listWorkflowDefinitionStepRowsRaw(
+          parsePositiveInt(legacyRow.workflow_definition_id),
+          runQuery
+        )
+      )
+    : null;
+  const explicitStepRows = bridgeContext?.isAp ? bridgeContext.explicitSteps : [];
+  const editableApStep =
+    legacyStatus === "REJECTED" && explicitStepRows.length > 0
+      ? resolveApWorkflowEditableStep(explicitStepRows)
+      : null;
+  const nextLegacyStepNo =
+    editableApStep?.stepNo ||
+    resolveWorkflowLegacyStepNoFromUnifiedRequest(
+      bridgeContext,
+      requestRow.request_status,
+      requestRow.current_step_no
+    );
 
   await runQuery(
     `UPDATE workflow_instances
@@ -2457,7 +2837,7 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
         AND id = ?`,
     [
       legacyStatus,
-      Math.max(1, Number(requestRow.current_step_no || 1)),
+      nextLegacyStepNo,
       ["APPROVED", "REJECTED", "CANCELLED"].includes(legacyStatus)
         ? resolvedAt
         : null,
@@ -2475,6 +2855,13 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
     [parsePositiveInt(legacyRow.id)]
   );
   for (const decisionRow of decisionRows) {
+    const legacyDecisionStepNo = mapUnifiedBridgeStepNoToExplicitWorkflowStepNo(
+      bridgeContext,
+      decisionRow.step_no
+    );
+    if (!legacyDecisionStepNo) {
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     await runQuery(
       `INSERT INTO workflow_instance_decisions (
@@ -2487,7 +2874,7 @@ async function syncLegacyWorkflowInstanceFromUnifiedRequestTx({
        ) VALUES (?, ?, ?, ?, ?, ?)`,
       [
         parsePositiveInt(legacyRow.id),
-        Number(decisionRow.step_no || 1),
+        legacyDecisionStepNo,
         toUpper(decisionRow.decision),
         parsePositiveInt(decisionRow.decided_by_user_id),
         decisionRow.comment || null,
@@ -2559,6 +2946,27 @@ export async function ensureUnifiedWorkflowInstanceBridge({
   const genericPolicyId = parsePositiveInt(definitionMirror.genericPolicyId);
   if (!genericPolicyId) {
     throw conflict("Workflow definition is missing a generic approval-policy mirror");
+  }
+  if (
+    isApDocumentWorkflowInstanceRow(instanceRow) &&
+    !definitionMirror.hasApprovalBridgeSteps
+  ) {
+    // AP workflows with no explicit APPROVE step must not create a generic
+    // approval request, otherwise the approval engine invents a fake review step.
+    if (parsePositiveInt(instanceRow.generic_request_id)) {
+      await runQuery(
+        `UPDATE workflow_instances
+            SET generic_request_id = NULL
+          WHERE tenant_id = ?
+            AND id = ?`,
+        [tenantId, parsePositiveInt(instanceRow.id)]
+      );
+    }
+    return getWorkflowInstanceRowById({
+      tenantId,
+      instanceId,
+      runQuery,
+    });
   }
 
   let genericRequestId = parsePositiveInt(instanceRow.generic_request_id);
@@ -3245,8 +3653,24 @@ export async function resolveWorkflowDecisionPermissionAccess({
     normalizedDecisionCode === "RETURN" &&
     instanceStatus === "APPROVED" &&
     isApDocumentWorkflowInstanceRow(effectiveInstanceRow);
+  const apBridgeContext = await loadApWorkflowBridgeContext(
+    effectiveInstanceRow,
+    runQuery
+  );
+  const currentApStep = apBridgeContext?.isAp
+    ? findApWorkflowStepByNo(
+        apBridgeContext.explicitSteps,
+        effectiveInstanceRow?.current_step_no
+      )
+    : null;
   if (!isApprovedApReturn) {
     assertInstanceIsDecisionable(effectiveInstanceRow);
+    if (isApDocumentWorkflowInstanceRow(effectiveInstanceRow) && currentApStep?.actionCode !== "APPROVE") {
+      throw conflict(
+        `Workflow instance is currently at explicit ${currentApStep?.actionCode || "UNKNOWN"} step, not APPROVE`,
+        "APPROVAL_STEP_PERMISSION_DENIED"
+      );
+    }
   }
   const policySnapshot = parseJson(requestRow?.policy_snapshot_json, {});
   const policySteps = Array.isArray(policySnapshot?.steps) ? policySnapshot.steps : [];
@@ -3265,7 +3689,11 @@ export async function resolveWorkflowDecisionPermissionAccess({
       scopeType: unifiedAccess.scope.scopeType,
       scopeId: unifiedAccess.scope.scopeId,
     },
-    stepNo: unifiedAccess.stepNo,
+    stepNo:
+      mapUnifiedBridgeStepNoToExplicitWorkflowStepNo(
+        apBridgeContext,
+        unifiedAccess.stepNo
+      ) || unifiedAccess.stepNo,
     stageScopeType: unifiedAccess.stageScopeType,
     minApproverCount: unifiedAccess.minApproverCount,
     instanceStatus,
@@ -3381,14 +3809,12 @@ async function createWorkflowDecision({
     };
   }
 
-  const unifiedRequestRow = await getUnifiedWorkflowRequestRowById({
+  const permissionAccess = await resolveWorkflowDecisionPermissionAccess({
     tenantId,
-    requestId: parsePositiveInt(bridgedInstance.generic_request_id),
+    instanceId,
+    decisionCode,
     runQuery,
   });
-  const unifiedAccess = resolveUnifiedWorkflowDecisionAccessFromRequestRow(
-    unifiedRequestRow
-  );
   const decisionResult = await recordDecision(
     parsePositiveInt(bridgedInstance.generic_request_id),
     userId,
@@ -3408,7 +3834,7 @@ async function createWorkflowDecision({
     decisionCode === "APPROVE" &&
     syncedStatus === "PENDING" &&
       Number(syncedRow?.current_step_no ?? syncedRow?.currentStepNo ?? 0) >
-      unifiedAccess.stepNo;
+      permissionAccess.stepNo;
   const resolved = ["APPROVED", "REJECTED", "CANCELLED", "SUPERSEDED"].includes(
     syncedStatus
   );
@@ -3416,10 +3842,10 @@ async function createWorkflowDecision({
   return {
     row: mapWorkflowInstanceRow(syncedRow),
     decisions: synced?.decisions || [],
-    currentStepNo: unifiedAccess.stepNo,
-    minApproverCount: unifiedAccess.minApproverCount,
-    stageScopeType: unifiedAccess.stageScopeType,
-    requiredPermissionCode: unifiedAccess.requiredPermissionCode,
+    currentStepNo: permissionAccess.stepNo,
+    minApproverCount: permissionAccess.minApproverCount,
+    stageScopeType: permissionAccess.stageScopeType,
+    requiredPermissionCode: permissionAccess.requiredPermissionCode,
     advanced,
     resolved,
     decision: decisionCode,
@@ -3768,6 +4194,10 @@ export async function replaceWorkflowDefinitionSteps({ input }) {
       definitionId,
       tx.query
     );
+    const normalizedSteps = normalizeWorkflowDefinitionStepsForProcessType(
+      definitionRow.process_type ?? definitionRow.processType,
+      steps
+    );
 
     await tx.query(
       `DELETE FROM workflow_definition_steps
@@ -3775,33 +4205,31 @@ export async function replaceWorkflowDefinitionSteps({ input }) {
       [definitionId]
     );
 
-    for (let index = 0; index < steps.length; index += 1) {
-      const step = steps[index];
-      assertWorkflowStepPermissionCompatibility(
-        definitionRow.process_type ?? definitionRow.processType,
-        step,
-        index
-      );
+    for (const step of normalizedSteps) {
       // eslint-disable-next-line no-await-in-loop
       await tx.query(
         `INSERT INTO workflow_definition_steps (
            workflow_definition_id,
            step_no,
+           action_code,
            stage_scope_type,
            required_permission_code,
+           required_package_code,
            min_approver_count,
            allow_self_approve,
            escalation_after_hours
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           definitionId,
-          Number(step.stepNo),
-          toUpper(step.stageScopeType),
-          normalizeWorkflowStepPermissionCode(step.requiredPermissionCode),
-          Number(step.minApproverCount || 1),
+          step.stepNo,
+          step.actionCode,
+          step.stageScopeType,
+          step.requiredPermissionCode,
+          step.requiredPackageCode,
+          step.minApproverCount,
           step.allowSelfApprove ? 1 : 0,
-          step.escalationAfterHours || null,
+          step.escalationAfterHours,
         ]
       );
     }

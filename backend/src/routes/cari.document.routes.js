@@ -27,9 +27,13 @@ import {
   listCariDocumentWarehouseOptions,
   listCariDocumentOpenItemsByIdForTenant,
   listCariDocuments,
+  resolveCariDocumentDraftCreateScope,
+  resolveCariDocumentEditableScope,
   postCariDocumentById,
   reverseCariPostedDocumentById,
+  resolveCariDocumentPostScope,
   resolveCariDocumentScope,
+  resolveCariDocumentSubmitScope,
   submitCariDocumentById,
   updateCariDraftDocumentById,
 } from "../services/cari.document.service.js";
@@ -177,7 +181,13 @@ router.get(
 router.post(
   "/",
   requirePermission("cari.doc.create", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
+    resolveScope: async (req, tenantId) => {
+      const payload = parseDocumentCreateInput(req);
+      return (
+        (await resolveCariDocumentDraftCreateScope(payload, tenantId)) ||
+        resolveLegalEntityScopeFromBody(req)
+      );
+    },
   }),
   asyncHandler(async (req, res) => {
     const payload = parseDocumentCreateInput(req);
@@ -197,7 +207,8 @@ router.put(
   "/:documentId",
   requirePermission("cari.doc.update", {
     resolveScope: async (req, tenantId) => {
-      const scope = await resolveCariDocumentScope(req.params?.documentId, tenantId);
+      const payload = parseDocumentUpdateInput(req);
+      const scope = await resolveCariDocumentEditableScope(payload.documentId, tenantId);
       if (scope) {
         return scope;
       }
@@ -222,7 +233,8 @@ router.post(
   "/:documentId/cancel",
   requirePermission("cari.doc.cancel", {
     resolveScope: async (req, tenantId) => {
-      return resolveCariDocumentScope(req.params?.documentId, tenantId);
+      const payload = parseDraftCancelInput(req);
+      return resolveCariDocumentEditableScope(payload.documentId, tenantId);
     },
   }),
   asyncHandler(async (req, res) => {
@@ -243,7 +255,7 @@ router.post(
   "/:documentId/submit",
   requirePermission("cari.doc.submit", {
     resolveScope: async (req, tenantId) => {
-      return resolveCariDocumentScope(req.params?.documentId, tenantId);
+      return resolveCariDocumentSubmitScope(req.params?.documentId, tenantId);
     },
   }),
   asyncHandler(async (req, res) => {
@@ -264,7 +276,7 @@ router.post(
   "/:documentId/post",
   requirePermission("cari.doc.post", {
     resolveScope: async (req, tenantId) => {
-      return resolveCariDocumentScope(req.params?.documentId, tenantId);
+      return resolveCariDocumentPostScope(req.params?.documentId, tenantId);
     },
   }),
   asyncHandler(async (req, res) => {

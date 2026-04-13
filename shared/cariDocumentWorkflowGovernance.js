@@ -6,6 +6,18 @@ function normalizeUpperText(value) {
 
 export const AP_DOCUMENT_WORKFLOW_PROCESS_TYPE = "AP_DOCUMENT_POSTING";
 export const CARI_DOCUMENT_WORKFLOW_TARGET_TYPE = "CARI_DOCUMENT";
+export const AP_DOCUMENT_WORKFLOW_ACTION_CODES = Object.freeze([
+  "DRAFT",
+  "SUBMIT",
+  "APPROVE",
+  "POST",
+]);
+export const AP_DOCUMENT_REQUIRED_PACKAGE_BY_ACTION = Object.freeze({
+  DRAFT: "PKG-AP-DRAFT-SUBMIT",
+  SUBMIT: "PKG-AP-DRAFT-SUBMIT",
+  APPROVE: "PKG-AP-APPROVE",
+  POST: "PKG-AP-POST",
+});
 export const CARI_DOCUMENT_WORKFLOW_GATE_STATES = Object.freeze([
   "NONE",
   "PENDING",
@@ -195,4 +207,184 @@ export function canCariDocumentBeCancelled(row) {
   return CARI_CANCELLABLE_DOCUMENT_STATUSES.includes(
     normalizeUpperText(row?.status)
   );
+}
+
+/**
+ * Normalize one AP workflow action code from either persisted or API shape.
+ */
+export function normalizeApWorkflowActionCode(value) {
+  const normalized = normalizeUpperText(value);
+  return AP_DOCUMENT_WORKFLOW_ACTION_CODES.includes(normalized)
+    ? normalized
+    : null;
+}
+
+/**
+ * Normalize one saved AP workflow step from either workflow-definition rows or
+ * bridged approval-policy snapshots.
+ */
+export function normalizeApWorkflowStep(step = {}) {
+  const actionCode = normalizeApWorkflowActionCode(
+    step?.actionCode ?? step?.action_code
+  );
+  const stepNo = Number(step?.stepNo ?? step?.step_no ?? 0);
+  const rawAllowSelfApprove =
+    step?.allowSelfApprove ?? step?.allow_self_approve ?? false;
+  if (!actionCode || !Number.isInteger(stepNo) || stepNo <= 0) {
+    return null;
+  }
+  return {
+    stepNo,
+    actionCode,
+    stageScopeType: normalizeUpperText(
+      step?.stageScopeType ?? step?.stage_scope_type ?? null
+    ),
+    scopeResolutionMode: normalizeUpperText(
+      step?.scopeResolutionMode ?? step?.scope_resolution_mode ?? null
+    ),
+    requiredPermissionCode:
+      String(
+        step?.requiredPermissionCode ?? step?.required_permission_code ?? ""
+      ).trim() || null,
+    requiredPackageCode:
+      String(step?.requiredPackageCode ?? step?.required_package_code ?? "").trim() ||
+      null,
+    minApproverCount: Math.max(
+      1,
+      Number(step?.minApproverCount ?? step?.min_approvals ?? 1) || 1
+    ),
+    allowSelfApprove:
+      rawAllowSelfApprove === true ||
+      rawAllowSelfApprove === 1 ||
+      rawAllowSelfApprove === "1",
+    escalationAfterHours:
+      Number(step?.escalationAfterHours ?? step?.escalation_after_hours ?? 0) || null,
+  };
+}
+
+/**
+ * Return the explicit saved AP action chain in step order.
+ */
+export function listApWorkflowSteps(steps = []) {
+  return (Array.isArray(steps) ? steps : [])
+    .map(normalizeApWorkflowStep)
+    .filter(Boolean)
+    .sort((left, right) => left.stepNo - right.stepNo);
+}
+
+export function findApWorkflowStepByNo(steps = [], stepNo) {
+  const normalizedStepNo = Number(stepNo || 0);
+  if (!normalizedStepNo) {
+    return null;
+  }
+  return listApWorkflowSteps(steps).find((step) => step.stepNo === normalizedStepNo) || null;
+}
+
+export function findFirstApWorkflowStepByAction(steps = [], actionCode) {
+  const normalizedActionCode = normalizeApWorkflowActionCode(actionCode);
+  if (!normalizedActionCode) {
+    return null;
+  }
+  return listApWorkflowSteps(steps).find((step) => step.actionCode === normalizedActionCode) || null;
+}
+
+export function findNextApWorkflowStepAfter(steps = [], stepNo, predicate = null) {
+  const normalizedSteps = listApWorkflowSteps(steps);
+  const normalizedStepNo = Number(stepNo || 0);
+  for (const step of normalizedSteps) {
+    if (step.stepNo <= normalizedStepNo) {
+      continue;
+    }
+    if (typeof predicate === "function" && !predicate(step)) {
+      continue;
+    }
+    return step;
+  }
+  return null;
+}
+
+export function listApWorkflowApproveSteps(steps = []) {
+  return listApWorkflowSteps(steps).filter((step) => step.actionCode === "APPROVE");
+}
+
+/**
+ * Resolve the editable correction point for one AP workflow chain. Returned AP
+ * documents fall back here before they can be resubmitted.
+ */
+export function resolveApWorkflowEditableStep(steps = []) {
+  const normalizedSteps = listApWorkflowSteps(steps);
+  return (
+    findFirstApWorkflowStepByAction(normalizedSteps, "DRAFT") ||
+    findFirstApWorkflowStepByAction(normalizedSteps, "SUBMIT") ||
+    normalizedSteps[0] ||
+    null
+  );
+}
+
+/**
+ * Resolve the runtime AP action context from the saved action chain plus the
+ * document/workflow instance state. The returned `currentStep` is the current
+ * actionable AP step, while `editableStep` surfaces who owns draft correction.
+ */
+export function resolveApWorkflowRuntimeStepContext({
+  steps = [],
+  documentStatus = null,
+  workflowInstanceStatus = null,
+  currentStepNo = null,
+} = {}) {
+  const normalizedSteps = listApWorkflowSteps(steps);
+  const draftStep = findFirstApWorkflowStepByAction(normalizedSteps, "DRAFT");
+  const submitStep = findFirstApWorkflowStepByAction(normalizedSteps, "SUBMIT");
+  const postStep = findFirstApWorkflowStepByAction(normalizedSteps, "POST");
+  const approveSteps = listApWorkflowApproveSteps(normalizedSteps);
+  const editableStep = resolveApWorkflowEditableStep(normalizedSteps);
+  const instanceStep = findApWorkflowStepByNo(normalizedSteps, currentStepNo);
+  const normalizedDocumentStatus = normalizeUpperText(documentStatus);
+  const normalizedWorkflowInstanceStatus = normalizeUpperText(workflowInstanceStatus);
+
+  let currentStep = null;
+  if (
+    [
+      "POSTED",
+      "PARTIALLY_SETTLED",
+      "SETTLED",
+      "REVERSED",
+      "CANCELLED",
+    ].includes(normalizedDocumentStatus)
+  ) {
+    currentStep = null;
+  } else if (normalizedDocumentStatus === "RETURNED") {
+    currentStep = submitStep || editableStep;
+  } else if (normalizedDocumentStatus === "DRAFT") {
+    currentStep = draftStep || submitStep || instanceStep || null;
+  } else if (instanceStep && ["APPROVE", "POST"].includes(instanceStep.actionCode)) {
+    currentStep = instanceStep;
+  } else if (
+    normalizedDocumentStatus === "APPROVED" ||
+    normalizedWorkflowInstanceStatus === "APPROVED"
+  ) {
+    currentStep = postStep;
+  } else if (
+    normalizedDocumentStatus === "SUBMITTED" ||
+    normalizedWorkflowInstanceStatus === "PENDING"
+  ) {
+    currentStep = approveSteps[0] || postStep || instanceStep || null;
+  }
+
+  const nextStep = currentStep
+    ? findNextApWorkflowStepAfter(normalizedSteps, currentStep.stepNo)
+    : null;
+
+  return {
+    steps: normalizedSteps,
+    draftStep,
+    submitStep,
+    approveSteps,
+    postStep,
+    editableStep,
+    currentStep,
+    currentActionCode: currentStep?.actionCode || null,
+    nextStep,
+    totalSteps: normalizedSteps.length,
+  };
 }

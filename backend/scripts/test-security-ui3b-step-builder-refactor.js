@@ -10,6 +10,7 @@ import {
 import {
   buildStepDrafts,
   buildStepPreview,
+  buildWorkflowStepValidationModel,
   listWorkflowStepPackageOptions,
 } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
 
@@ -65,7 +66,9 @@ async function main() {
     [
       {
         stepNo: 1,
+        actionCode: "SUBMIT",
         stageScopeType: "COUNTRY",
+        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
         requiredPermissionCode: null,
         minApproverCount: 1,
         allowSelfApprove: false,
@@ -96,8 +99,13 @@ async function main() {
 
   assert.equal(
     apDrafts[0].requiredPackageCode,
-    "PKG-AP-APPROVE",
-    "UI-3B should keep AP approval steps bound to the AP approve package in the current bridge"
+    "PKG-AP-DRAFT-SUBMIT",
+    "UI-3B should preserve the explicit AP action/package binding in the step builder"
+  );
+  assert.equal(
+    apDrafts[0].actionCode,
+    "SUBMIT",
+    "UI-3B should keep explicit AP action codes intact when step drafts are normalized"
   );
   assert.equal(
     buildStepPreview(
@@ -126,6 +134,44 @@ async function main() {
     "UI-3B should include actionable family packages in the editable step-builder options"
   );
 
+  const invalidApValidation = buildWorkflowStepValidationModel({
+    processType: "AP_DOCUMENT_POSTING",
+    stepDrafts: [
+      {
+        stepNo: 1,
+        actionCode: "DRAFT",
+        stageScopeType: "OPERATING_UNIT",
+        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        requiredPermissionCode: null,
+        minApproverCount: 1,
+        allowSelfApprove: false,
+      },
+      {
+        stepNo: 2,
+        actionCode: "POST",
+        stageScopeType: "COUNTRY",
+        requiredPackageCode: "PKG-AP-POST",
+        requiredPermissionCode: null,
+        minApproverCount: 1,
+        allowSelfApprove: false,
+      },
+    ],
+    l,
+  });
+  assert.equal(
+    invalidApValidation.hasBlockingIssues,
+    true,
+    "UI-3B should block AP step chains that skip the explicit SUBMIT step"
+  );
+  assert.equal(
+    invalidApValidation.steps.some((entry) =>
+      Array.isArray(entry?.allIssues) &&
+      entry.allIssues.some((issue) => issue?.code === "ap_submit_required_once")
+    ),
+    true,
+    "UI-3B should tell admins that AP workflows require exactly one SUBMIT step"
+  );
+
   assert(
     workflowSetupPageSource.includes("listWorkflowPackageCatalogEntries") &&
       workflowSetupPageSource.includes("listBusinessRoleCatalogEntries") &&
@@ -144,11 +190,14 @@ async function main() {
   );
 
   assert(
-    approvalStepCardSource.includes('l("Action label", "Islem etiketi")') &&
-      approvalStepCardSource.includes('l("Required package", "Gerekli paket")') &&
+    approvalStepCardSource.includes("workflowStepPackageOptions") &&
+      approvalStepCardSource.includes("getApWorkflowRequiredPackageCode") &&
       approvalStepCardSource.includes('l("Eligible business roles", "Uygun is rolleri")') &&
+      approvalStepCardSource.includes(
+        "This AP package is bound by the selected action and resolves authority at the chosen step scope."
+      ) &&
       !approvalStepCardSource.includes('l("Required reviewer permission", "Gerekli inceleyen yetkisi")'),
-    "ApprovalStepCard should replace the raw reviewer-permission input with package and business-role fields"
+    "ApprovalStepCard should keep the package-first row editor and remove the raw reviewer-permission field"
   );
 
   console.log("test-security-ui3b-step-builder-refactor passed");

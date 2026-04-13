@@ -7,9 +7,9 @@ import {
   buildCariWorkflowListSummaryModel,
 } from "../../frontend/src/pages/cari/cariWorkflowExplainability.js";
 import {
-  buildApBusinessPreview,
   buildApprovalRoutingMatrixValidationModel,
   buildApprovalRoutingRulePreview,
+  buildWorkflowPreview,
   buildWorkflowCoverageReviewModel,
 } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
 import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../shared/cariDocumentWorkflowGovernance.js";
@@ -59,26 +59,41 @@ async function main() {
     "utf8"
   );
 
-  const apPreviewLines = buildApBusinessPreview(
+  const apPreviewText = buildWorkflowPreview(
     [
-      { stepNo: 1, stageScopeType: "LEGAL_ENTITY", minApproverCount: 1 },
-      { stepNo: 2, stageScopeType: "COUNTRY", minApproverCount: 1 },
+      {
+        stepNo: 1,
+        actionCode: "SUBMIT",
+        stageScopeType: "OPERATING_UNIT",
+        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        minApproverCount: 1,
+      },
+      {
+        stepNo: 2,
+        actionCode: "APPROVE",
+        stageScopeType: "LEGAL_ENTITY",
+        requiredPackageCode: "PKG-AP-APPROVE",
+        minApproverCount: 1,
+      },
+      {
+        stepNo: 3,
+        actionCode: "POST",
+        stageScopeType: "COUNTRY",
+        requiredPackageCode: "PKG-AP-POST",
+        minApproverCount: 1,
+      },
     ],
     {
+      OPERATING_UNIT: "Operating Unit",
       LEGAL_ENTITY: "Legal Entity",
       COUNTRY: "Country",
     },
     l
   );
   assert(
-    apPreviewLines[0] ===
-      "Branch accountants with submit authority can submit this AP document." &&
-      apPreviewLines.includes("Step 1: One Legal Entity AP reviewer must approve.") &&
-      apPreviewLines.includes("Step 2: One Country AP reviewer must approve.") &&
-      apPreviewLines.includes(
-        "After approval, Country posting authority can post the document."
-      ),
-    "AP setup preview should keep the business-language submit -> approve -> post flow wording"
+    apPreviewText ===
+      "This workflow runs in this order: 1. Submit at Operating Unit using PKG-AP-DRAFT-SUBMIT -> 2. Approve at Legal Entity using PKG-AP-APPROVE -> 3. Post at Country using PKG-AP-POST.",
+    "AP setup preview should list the explicit saved action chain without injecting implicit submit/post wording"
   );
 
   const routingRulePreview = buildApprovalRoutingRulePreview({
@@ -160,6 +175,8 @@ async function main() {
         routingMatchedScopeLayer: "LEGAL_ENTITY",
         currentStepNo: 1,
         totalSteps: 2,
+        currentActionCode: "APPROVE",
+        currentRequiredPackageCode: "PKG-AP-APPROVE",
         currentStageScopeType: "GROUP",
         currentStageScopeLabel: "Group",
         effectiveApprovalPermissionCode: "approvals.requests.approve",
@@ -196,7 +213,7 @@ async function main() {
       ) &&
       findItemValue(pendingDetailModel?.factItems, "Amount basis") === "Base amount" &&
       findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
-        "Waiting for AP Documents / Approve at Group scope." &&
+        "Waiting for approval with AP Documents / Approve at Group scope." &&
       findItemValue(pendingDetailModel?.technicalItems, "Required authority") ===
         "AP approval at Group scope" &&
       findItemValue(pendingDetailModel?.technicalItems, "Technical permission") ===
@@ -232,6 +249,8 @@ async function main() {
         routingMatchType: "BAND",
         currentStepNo: 1,
         totalSteps: 2,
+        currentActionCode: "APPROVE",
+        currentRequiredPackageCode: "PKG-AP-APPROVE",
         currentStageScopeType: "GROUP",
         currentStageScopeLabel: "Group",
         effectiveApprovalPermissionCode: "approvals.requests.approve",
@@ -278,7 +297,7 @@ async function main() {
         "You do not have approval authority for this step."
       ) &&
       pendingActionModel?.userCapabilityLines.includes(
-        "You cannot post because approval is still pending."
+        "You cannot post because the document is still waiting at an approval step."
       ) &&
       pendingActionModel?.historyItems?.[0]?.title === "Step 1" &&
       String(pendingActionModel?.historyItems?.[0]?.summary || "").includes("Approved") &&
@@ -300,10 +319,10 @@ async function main() {
         assignmentResolved: true,
         currentStepNo: 1,
         totalSteps: 1,
+        currentActionCode: "POST",
+        currentRequiredPackageCode: "PKG-AP-POST",
         currentStageScopeType: "COUNTRY",
         currentStageScopeLabel: "Country",
-        nextActionCode: "POST",
-        nextActionLabel: "Country posting",
         waitingForSummary: "Ready for Country posting",
       },
     },
@@ -313,8 +332,8 @@ async function main() {
     approvedListModel?.headline === "Ready for Country posting" &&
       String(approvedListModel?.detail || "").includes("Step 1 of 1") &&
       String(approvedListModel?.detail || "").includes("Country") &&
-      String(approvedListModel?.detail || "").includes("Next: Country posting"),
-    "List explainability should keep the ready-to-post queue summary wording"
+      String(approvedListModel?.detail || "").includes("Posting authority may act now."),
+    "List explainability should keep the explicit ready-to-post summary wording"
   );
 
   const returnedDetailModel = buildCariWorkflowDetailCardModel(
@@ -345,19 +364,11 @@ async function main() {
     diagnostics: {
       effectiveOn: "2026-04-07",
       checks: {
-        submitter: {
-          actorType: "SUBMITTER",
-          scopeType: "OPERATING_UNIT",
-          status: "COVERED",
-          targetScopeCount: 2,
-          coveredScopeCount: 2,
-          uncoveredScopeCount: 0,
-          matchedUserCount: 3,
-        },
-        approvers: [
+        steps: [
           {
             actorType: "APPROVER",
             stepNo: 1,
+            actionCode: "APPROVE",
             scopeType: "LEGAL_ENTITY",
             status: "NO_COVERAGE",
             targetScopeCount: 1,
@@ -368,21 +379,13 @@ async function main() {
             uncoveredScopes: [{ scopeType: "LEGAL_ENTITY", scopeId: 9 }],
           },
         ],
-        poster: {
-          actorType: "POSTER",
-          scopeType: "COUNTRY",
-          status: "COVERED",
-          targetScopeCount: 1,
-          coveredScopeCount: 1,
-          uncoveredScopeCount: 0,
-          matchedUserCount: 2,
-        },
       },
       warnings: [
         {
           code: "APPROVER_GAP",
           actorType: "APPROVER",
           stepNo: 1,
+          actionCode: "APPROVE",
           scopeType: "LEGAL_ENTITY",
           status: "NO_COVERAGE",
           targetScopeCount: 1,

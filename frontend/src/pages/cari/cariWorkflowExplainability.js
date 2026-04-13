@@ -47,23 +47,69 @@ function resolveWorkflowRequiredScopeType(gate) {
   return normalizeText(gate?.currentStageScopeType || gate?.assignmentScopeType).toUpperCase();
 }
 
+function normalizeApWorkflowActionCode(value) {
+  const normalizedValue = normalizeText(value).toUpperCase();
+  return ["DRAFT", "SUBMIT", "APPROVE", "POST"].includes(normalizedValue)
+    ? normalizedValue
+    : "";
+}
+
+function resolveApCurrentActionCode(gate) {
+  return normalizeApWorkflowActionCode(gate?.currentActionCode);
+}
+
+function resolveApNextActionCode(gate) {
+  return normalizeApWorkflowActionCode(gate?.nextActionCode);
+}
+
+function resolveApRequiredPackageCodeFromAction(actionCode) {
+  if (actionCode === "DRAFT" || actionCode === "SUBMIT") {
+    return "PKG-AP-DRAFT-SUBMIT";
+  }
+  if (actionCode === "APPROVE") {
+    return "PKG-AP-APPROVE";
+  }
+  if (actionCode === "POST") {
+    return "PKG-AP-POST";
+  }
+  return "";
+}
+
+function buildApActionOwnershipLabel(actionCode, scopeLabel, l) {
+  if (!actionCode || !scopeLabel) {
+    return "";
+  }
+  if (actionCode === "DRAFT") {
+    return l(`${scopeLabel} draft work`, `${scopeLabel} taslak calismasi`);
+  }
+  if (actionCode === "SUBMIT") {
+    return l(`${scopeLabel} submission`, `${scopeLabel} gonderimi`);
+  }
+  if (actionCode === "APPROVE") {
+    return l(`${scopeLabel} approval`, `${scopeLabel} onayi`);
+  }
+  return l(`${scopeLabel} posting`, `${scopeLabel} kaydi`);
+}
+
+function resolveApCurrentActionLabel(gate, l) {
+  const currentActionCode = resolveApCurrentActionCode(gate);
+  const currentScopeLabel =
+    resolveWorkflowCurrentScopeLabel(gate, l) ||
+    resolveWorkflowAssignmentScopeLabel(gate, l);
+  return buildApActionOwnershipLabel(currentActionCode, currentScopeLabel, l);
+}
+
 function resolveWorkflowNextActionLabel(gate, l) {
   const explicitLabel = normalizeText(gate?.nextActionLabel);
-  const nextActionCode = normalizeText(gate?.nextActionCode).toUpperCase();
-  const nextActorType = normalizeText(gate?.nextActorType).toUpperCase();
-  if (nextActionCode === "APPROVE") {
-    const nextScopeLabel = translateWorkflowScopeLabel(nextActorType, explicitLabel, l);
-    return nextScopeLabel
-      ? l(`${nextScopeLabel} approval`, `${nextScopeLabel} onayi`)
-      : explicitLabel;
-  }
-  if (nextActionCode === "POST") {
-    const postScopeLabel =
-      resolveWorkflowCurrentScopeLabel(gate, l) ||
-      resolveWorkflowAssignmentScopeLabel(gate, l);
-    return postScopeLabel
-      ? l(`${postScopeLabel} posting`, `${postScopeLabel} kaydi`)
-      : explicitLabel;
+  const nextActionCode = resolveApNextActionCode(gate);
+  const nextScopeLabel = translateWorkflowScopeLabel(
+    gate?.nextActorType,
+    explicitLabel,
+    l
+  );
+  const explicitActionLabel = buildApActionOwnershipLabel(nextActionCode, nextScopeLabel, l);
+  if (explicitActionLabel) {
+    return explicitActionLabel;
   }
   return explicitLabel;
 }
@@ -102,6 +148,14 @@ function resolveApRequiredPackageCode(row, gate, surfaceState) {
   const documentDirection = normalizeText(row?.direction).toUpperCase();
   if (documentDirection !== "AP" || !gate?.workflowGoverned) {
     return "";
+  }
+  const explicitPackageCode = normalizeText(gate?.currentRequiredPackageCode).toUpperCase();
+  if (explicitPackageCode) {
+    return explicitPackageCode;
+  }
+  const actionPackageCode = resolveApRequiredPackageCodeFromAction(resolveApCurrentActionCode(gate));
+  if (actionPackageCode) {
+    return actionPackageCode;
   }
   if (surfaceState.stage === "BLOCKED" || surfaceState.stage === "RETURNED") {
     return "PKG-AP-DRAFT-SUBMIT";
@@ -151,18 +205,37 @@ function resolveApEligibleBusinessRoleLabels(requiredPackageCode, requiredScopeT
     .filter(Boolean);
 }
 
-function buildApCurrentGateLine(requiredPackageLabel, requiredScopeLabel, l) {
-  if (!requiredPackageLabel || !requiredScopeLabel) {
+function buildApCurrentGateLine(currentActionCode, requiredPackageLabel, requiredScopeLabel, l) {
+  if (!currentActionCode || !requiredPackageLabel || !requiredScopeLabel) {
     return "";
   }
+  if (currentActionCode === "DRAFT") {
+    return l(
+      `Draft work stays with ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
+      `${requiredScopeLabel} kapsaminda taslak calismasi ${requiredPackageLabel} ile kalir.`
+    );
+  }
+  if (currentActionCode === "SUBMIT") {
+    return l(
+      `Waiting for submission with ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
+      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} ile gonderim bekleniyor.`
+    );
+  }
+  if (currentActionCode === "APPROVE") {
+    return l(
+      `Waiting for approval with ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
+      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} ile onay bekleniyor.`
+    );
+  }
   return l(
-    `Waiting for ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
-    `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} bekleniyor.`
+    `Waiting for posting with ${requiredPackageLabel} at ${requiredScopeLabel} scope.`,
+    `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} ile kayit bekleniyor.`
   );
 }
 
 function resolveWorkflowEligibleActorSummary(
   surfaceState,
+  currentActionCode,
   requiredPackageCode,
   requiredPackageLabel,
   requiredScopeLabel,
@@ -170,26 +243,32 @@ function resolveWorkflowEligibleActorSummary(
 ) {
   if (surfaceState.stage === "DIRECT_POST") {
     return l(
-      "Workflow approval is not required. Users with posting authority can act now.",
-      "Workflow onayi gerekmiyor. Kayit yetkisi olan kullanicilar simdi islem yapabilir."
+      "No workflow action chain is required. Users with posting authority can act now.",
+      "Workflow eylem zinciri gerekmiyor. Kayit yetkisi olan kullanicilar simdi islem yapabilir."
     );
   }
   if (!requiredPackageLabel || !requiredScopeLabel) {
     return "";
   }
-  if (requiredPackageCode === "PKG-AP-DRAFT-SUBMIT") {
+  if (currentActionCode === "DRAFT") {
     return l(
-      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can submit or resubmit this document.`,
-      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar bu belgeyi gonderebilir veya yeniden gonderebilir.`
+      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can create or edit the current draft.`,
+      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar mevcut taslagi olusturabilir veya duzenleyebilir.`
     );
   }
-  if (requiredPackageCode === "PKG-AP-APPROVE") {
+  if (currentActionCode === "SUBMIT" || requiredPackageCode === "PKG-AP-DRAFT-SUBMIT") {
+    return l(
+      `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can submit or resubmit this document into the next workflow step.`,
+      `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar bu belgeyi bir sonraki workflow adimina gonderebilir veya yeniden gonderebilir.`
+    );
+  }
+  if (currentActionCode === "APPROVE" || requiredPackageCode === "PKG-AP-APPROVE") {
     return l(
       `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can approve the current step.`,
       `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar mevcut adimi onaylayabilir.`
     );
   }
-  if (requiredPackageCode === "PKG-AP-POST") {
+  if (currentActionCode === "POST" || requiredPackageCode === "PKG-AP-POST") {
     return l(
       `Users assigned ${requiredPackageLabel} at ${requiredScopeLabel} scope can post the document now.`,
       `${requiredScopeLabel} kapsaminda ${requiredPackageLabel} atanan kullanicilar belgeyi simdi kaydedebilir.`
@@ -403,6 +482,7 @@ function buildWorkflowSurfaceState(row, l) {
   const gateState = normalizeWorkflowGateState(gate?.state);
   const documentStatus = normalizeText(row?.status).toUpperCase();
   const documentDirection = normalizeText(row?.direction).toUpperCase();
+  const currentActionCode = resolveApCurrentActionCode(gate);
   const workflowGoverned = Boolean(gate?.workflowGoverned);
   const assignmentResolved = Boolean(gate?.assignmentResolved);
   const waitingForSummary = normalizeText(gate?.waitingForSummary);
@@ -422,12 +502,12 @@ function buildWorkflowSurfaceState(row, l) {
       headline: l("Posted to ledger", "Muhasebeye kaydedildi"),
       supportingText: workflowGoverned
         ? l(
-            "Workflow approval was completed before posting.",
-            "Workflow onayi kayit oncesinde tamamlandi."
+            "All required workflow actions were completed before posting.",
+            "Kayit oncesinde gerekli workflow eylemlerinin tamami tamamlandi."
           )
         : l(
-            "This document did not require workflow approval.",
-            "Bu belge icin workflow onayi gerekmedi."
+            "This document did not require a workflow action chain.",
+            "Bu belge icin workflow eylem zinciri gerekmedi."
           ),
       latestDecisionComment,
     };
@@ -443,8 +523,8 @@ function buildWorkflowSurfaceState(row, l) {
       headline: l("Reversed after posting", "Kayit sonrasinda terslendi"),
       supportingText: workflowGoverned
         ? l(
-            "Workflow approval had already completed before reversal.",
-            "Workflow onayi ters kayit oncesinde tamamlanmisti."
+            "All required workflow actions had already completed before reversal.",
+            "Ters kayit oncesinde gerekli workflow eylemlerinin tamami zaten tamamlanmisti."
           )
         : "",
       latestDecisionComment,
@@ -486,8 +566,8 @@ function buildWorkflowSurfaceState(row, l) {
               "Bu belge kapsami icin aktif workflow atamasi tanimli degil."
             )
           : l(
-              "This document does not use workflow approval.",
-              "Bu belge workflow onayi kullanmaz."
+              "This document does not use a workflow action chain.",
+              "Bu belge workflow eylem zinciri kullanmaz."
             )),
       latestDecisionComment,
     };
@@ -525,8 +605,8 @@ function buildWorkflowSurfaceState(row, l) {
         blockingReasonDetail ||
         gateMessage ||
         l(
-          "Update the document, then resubmit it for approval.",
-          "Belgeyi guncelleyip yeniden onaya gonderin."
+          "Update the document, then resubmit it into the workflow action chain.",
+          "Belgeyi guncelleyip workflow eylem zincirine yeniden gonderin."
         ),
       latestDecisionComment,
     };
@@ -539,7 +619,7 @@ function buildWorkflowSurfaceState(row, l) {
       badgeLabel: l("Ready to post", "Kayda hazir"),
       toneClass: "border-emerald-200 bg-emerald-50 text-emerald-950",
       chipClass: "border-emerald-200 bg-white/80 text-emerald-800",
-      headline: waitingForSummary || l("Workflow approval is complete", "Workflow onayi tamam"),
+      headline: waitingForSummary || l("Ready for posting", "Kayda hazir"),
       supportingText:
         gateMessage || l("Posting authority may act now.", "Kayit yetkisi artik islem yapabilir."),
       latestDecisionComment,
@@ -550,16 +630,16 @@ function buildWorkflowSurfaceState(row, l) {
     return {
       stage: "PENDING",
       tone: "blue",
-      badgeLabel: l("Pending approval", "Onay bekleniyor"),
+      badgeLabel: l("Pending step", "Adim bekleniyor"),
       toneClass: "border-sky-200 bg-sky-50 text-sky-950",
       chipClass: "border-sky-200 bg-white/80 text-sky-800",
-      headline: waitingForSummary || l("Waiting for approval", "Onay bekleniyor"),
+      headline: waitingForSummary || l("Waiting for workflow step", "Workflow adimi bekleniyor"),
       supportingText:
         blockingReasonDetail ||
         gateMessage ||
         l(
-          "Workflow approval is still pending for this document.",
-          "Bu belge icin workflow onayi halen beklemede."
+          "A workflow step is still pending for this document.",
+          "Bu belge icin bir workflow adimi halen beklemede."
         ),
       latestDecisionComment,
     };
@@ -568,17 +648,29 @@ function buildWorkflowSurfaceState(row, l) {
   return {
     stage: "BLOCKED",
     tone: "rose",
-    badgeLabel: l("Needs submission", "Gonderim gerekli"),
+    badgeLabel:
+      currentActionCode === "DRAFT"
+        ? l("Draft step", "Taslak adimi")
+        : l("Needs submission", "Gonderim gerekli"),
     toneClass: "border-rose-200 bg-rose-50 text-rose-950",
     chipClass: "border-rose-200 bg-white/80 text-rose-800",
-    headline: waitingForSummary || l("Waiting for submission", "Gonderim bekleniyor"),
+    headline:
+      waitingForSummary ||
+      (currentActionCode === "DRAFT"
+        ? l("Draft is in progress", "Taslak uzerinde calisiliyor")
+        : l("Waiting for submission", "Gonderim bekleniyor")),
     supportingText:
       blockingReasonDetail ||
       gateMessage ||
-      l(
-        "Submit the document before workflow approval can begin.",
-        "Workflow onayi baslamadan once belgeyi gonderin."
-      ),
+      (currentActionCode === "DRAFT"
+        ? l(
+            "Complete the draft work before the workflow action chain can continue.",
+            "Workflow eylem zinciri devam etmeden once taslak calismasini tamamlayin."
+          )
+        : l(
+            "Submit the document before the workflow action chain can continue.",
+            "Workflow eylem zinciri devam etmeden once belgeyi gonderin."
+          )),
     latestDecisionComment,
   };
 }
@@ -597,6 +689,8 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
   const surfaceState = buildWorkflowSurfaceState(row, l);
   const currentScopeLabel = resolveWorkflowCurrentScopeLabel(gate, l);
   const assignmentScopeLabel = resolveWorkflowAssignmentScopeLabel(gate, l);
+  const currentActionCode = resolveApCurrentActionCode(gate);
+  const currentActionLabel = resolveApCurrentActionLabel(gate, l);
   const currentStepLabel = resolveWorkflowCurrentStepLabel(gate, surfaceState, l);
   const requiredPackageCode = resolveApRequiredPackageCode(row, gate, surfaceState);
   const requiredPackageLabel = translateApRequiredPackageLabel(requiredPackageCode, l);
@@ -675,7 +769,12 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
     appendWorkflowItem(
       noteItems,
       l("Current gate", "Guncel gecit"),
-      buildApCurrentGateLine(requiredPackageLabel, requiredScopeLabel || requiredScopeType, l)
+      buildApCurrentGateLine(
+        currentActionCode,
+        requiredPackageLabel,
+        requiredScopeLabel || requiredScopeType,
+        l
+      )
     );
   }
   if (gate?.routingUsedFallback) {
@@ -761,6 +860,8 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
   return {
     ...surfaceState,
     workflowStatusLabel: normalizeText(gate?.workflowInstanceStatus),
+    currentActionCode,
+    currentActionLabel,
     currentStepLabel,
     requiredPackageCode,
     requiredPackageLabel,
@@ -768,6 +869,7 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
     requiredScopeLabel,
     eligibleActorSummary: resolveWorkflowEligibleActorSummary(
       surfaceState,
+      currentActionCode,
       requiredPackageCode,
       requiredPackageLabel,
       requiredScopeLabel,
@@ -798,6 +900,7 @@ function buildCariWorkflowUserCapabilityLines({
   const isAp = direction === "AP";
   const gateState = normalizeWorkflowGateState(gate?.state);
   const surfaceState = buildWorkflowSurfaceState(row, l);
+  const currentActionCode = resolveApCurrentActionCode(gate);
   const requiredPackageCode = resolveApRequiredPackageCode(
     row,
     gate,
@@ -816,8 +919,8 @@ function buildCariWorkflowUserCapabilityLines({
       docStatus === "RETURNED"
         ? l("You can resubmit this document.", "Bu belgeyi yeniden gonderebilirsiniz.")
         : l(
-            "You can submit this document for approval.",
-            "Bu belgeyi onaya gonderebilirsiniz."
+            "You can submit this document into the next workflow step.",
+            "Bu belgeyi bir sonraki workflow adimina gonderebilirsiniz."
       )
     );
   }
@@ -886,8 +989,8 @@ function buildCariWorkflowUserCapabilityLines({
     userCapabilityLines.push(
       surfaceState.stage === "DIRECT_POST"
         ? l(
-            "No workflow approval is required. You can post this document now.",
-            "Workflow onayi gerekmiyor. Bu belgeyi simdi kaydedebilirsiniz."
+            "No workflow action chain is required. You can post this document now.",
+            "Workflow eylem zinciri gerekmiyor. Bu belgeyi simdi kaydedebilirsiniz."
           )
         : l("You can post this document.", "Bu belgeyi kaydedebilirsiniz.")
     );
@@ -909,22 +1012,29 @@ function buildCariWorkflowUserCapabilityLines({
   } else if (surfaceState.stage === "DIRECT_POST" && canReadSelected) {
     userCapabilityLines.push(
       l(
-        "Workflow approval is not required, but you do not have posting authority for this document.",
-        "Workflow onayi gerekmiyor ancak bu belge icin kayit yetkiniz yok."
+        "No workflow action chain is required, but you do not have posting authority for this document.",
+        "Workflow eylem zinciri gerekmiyor ancak bu belge icin kayit yetkiniz yok."
       )
     );
-  } else if (gateState === "PENDING") {
+  } else if (gateState === "PENDING" || currentActionCode === "APPROVE") {
     userCapabilityLines.push(
       l(
-        "You cannot post because approval is still pending.",
-        "Onay hala beklemede oldugu icin kaydedemezsiniz."
+        "You cannot post because the document is still waiting at an approval step.",
+        "Belge hala bir onay adiminda bekledigi icin kaydedemezsiniz."
       )
     );
-  } else if (gateState === "BLOCKED") {
+  } else if (currentActionCode === "DRAFT") {
     userCapabilityLines.push(
       l(
-        "You cannot post because the document has not been submitted yet.",
-        "Belge henuz gonderilmedigi icin kaydedemezsiniz."
+        "You cannot post because the document is still in its draft step.",
+        "Belge hala taslak adiminda oldugu icin kaydedemezsiniz."
+      )
+    );
+  } else if (gateState === "BLOCKED" || currentActionCode === "SUBMIT") {
+    userCapabilityLines.push(
+      l(
+        "You cannot post because the submission step is still pending.",
+        "Gonderim adimi halen bekledigi icin kaydedemezsiniz."
       )
     );
   }

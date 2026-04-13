@@ -39,9 +39,11 @@ export default function WorkflowSetupSidebar({
   workflowExplainabilityPreview = null,
   assignmentEffectText,
   quickGuide,
+  compactForStepBuilder = false,
 }) {
   const stepCount = Array.isArray(stepDrafts) ? stepDrafts.length : 0;
   const progressValue = Math.max(0, Math.min(100, ((currentStep - 1) / 4) * 100));
+  const isStepBuilderFocus = compactForStepBuilder || currentStep === 4;
 
   return (
     <div className="space-y-4 xl:sticky xl:top-4 xl:self-start">
@@ -69,13 +71,13 @@ export default function WorkflowSetupSidebar({
             fallback={l("Not selected yet", "Henuz secilmedi")}
           />
           <SummaryRow
-            label={l("Approval steps", "Onay adimlari")}
+            label={l("Workflow steps", "Workflow adimlari")}
             value={
               stepCount > 0
                 ? `${stepCount} ${l("steps", "adim")}`
                 : l("No steps yet", "Henuz adim yok")
             }
-            done={currentStep >= 5}
+            done={currentStep >= 4 && stepCount > 0}
             fallback={l("Save steps to continue", "Devam etmek icin adimlari kaydedin")}
           />
           <SummaryRow
@@ -95,50 +97,66 @@ export default function WorkflowSetupSidebar({
         </CardContent>
       </Card>
 
-      <Card className="rounded-3xl border-border/80 bg-muted/20">
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between gap-3">
-            <CardTitle className="text-sm">
-              {recommendation?.title || l("Recommendation", "Oneri")}
-            </CardTitle>
-            <Badge variant="secondary">{processTypeLabel}</Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          {(recommendation?.points || []).map((point) => (
-            <p key={point}>{point}</p>
-          ))}
-        </CardContent>
-      </Card>
+      {!isStepBuilderFocus ? (
+        <Card className="rounded-3xl border-border/80 bg-muted/20">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle className="text-sm">
+                {recommendation?.title || l("Recommendation", "Oneri")}
+              </CardTitle>
+              <Badge variant="secondary">{processTypeLabel}</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            {(recommendation?.points || []).map((point) => (
+              <p key={point}>{point}</p>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <Card className="rounded-3xl border-border/80">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">{l("Quick guide", "Hizli rehber")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          {(quickGuide || []).map((item) => (
-            <p key={item}>{item}</p>
-          ))}
-        </CardContent>
-      </Card>
+      {!isStepBuilderFocus ? (
+        <Card className="rounded-3xl border-border/80">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">{l("Quick guide", "Hizli rehber")}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            {(quickGuide || []).map((item) => (
+              <p key={item}>{item}</p>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <WorkflowExplainabilityPreviewPanel
-        title={l("Live preview", "Canli onizleme")}
-        previewModel={workflowExplainabilityPreview}
-        tone="blue"
-        compact
-        maxEntries={3}
-      />
+      {!isStepBuilderFocus ? (
+        <WorkflowExplainabilityPreviewPanel
+          title={l("Live preview", "Canli onizleme")}
+          previewModel={workflowExplainabilityPreview}
+          tone="blue"
+          compact
+          maxEntries={3}
+        />
+      ) : null}
 
       <Card className="rounded-3xl border-blue-200 bg-blue-50/80">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm text-blue-900">
-            {l("Scope outcome", "Kapsam sonucu")}
+            {isStepBuilderFocus
+              ? l("Builder focus", "Duzenleme odagi")
+              : l("Scope outcome", "Kapsam sonucu")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-blue-900">
           <p>{workflowPreviewText}</p>
           <p className="text-blue-800">{assignmentEffectText}</p>
+          {isStepBuilderFocus ? (
+            <p className="text-xs leading-5 text-blue-800/90">
+              {l(
+                "Recommendations and live preview are moved into the main Step 4 canvas so the step chain stays readable while editing.",
+                "Adim zinciri duzenleme sirasinda okunabilir kalsin diye oneriler ve canli onizleme ana Adim 4 alanina tasindi."
+              )}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </div>

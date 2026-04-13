@@ -34,6 +34,7 @@ const FIELD_VISIBILITY_POLICY_SCOPE_RANK = Object.freeze({
 });
 
 const WORKFLOW_COVERAGE_ACTOR_TYPES = Object.freeze({
+  DRAFTER: "DRAFTER",
   SUBMITTER: "SUBMITTER",
   APPROVER: "APPROVER",
   POSTER: "POSTER",
@@ -718,9 +719,12 @@ function normalizeWorkflowCoverageStep(step, index = 0) {
       1,
       Number(step?.stepNo ?? step?.step_no ?? index + 1) || index + 1
     ),
+    actionCode: normalizeUpperText(step?.actionCode ?? step?.action_code),
     stageScopeType: normalizeUpperText(
       step?.stageScopeType ?? step?.stage_scope_type
     ),
+    requiredPackageCode:
+      String(step?.requiredPackageCode ?? step?.required_package_code ?? "").trim() || null,
     requiredPermissionCode:
       String(
         step?.requiredPermissionCode ?? step?.required_permission_code ?? ""
@@ -730,6 +734,34 @@ function normalizeWorkflowCoverageStep(step, index = 0) {
       Number(step?.minApproverCount ?? step?.min_approver_count ?? 1) || 1
     ),
   };
+}
+
+function mapApCoverageActorType(actionCode) {
+  const normalizedActionCode = normalizeUpperText(actionCode);
+  if (normalizedActionCode === "DRAFT") {
+    return WORKFLOW_COVERAGE_ACTOR_TYPES.DRAFTER;
+  }
+  if (normalizedActionCode === "SUBMIT") {
+    return WORKFLOW_COVERAGE_ACTOR_TYPES.SUBMITTER;
+  }
+  if (normalizedActionCode === "POST") {
+    return WORKFLOW_COVERAGE_ACTOR_TYPES.POSTER;
+  }
+  return WORKFLOW_COVERAGE_ACTOR_TYPES.APPROVER;
+}
+
+function mapApCoveragePermissionCode(step) {
+  const normalizedActionCode = normalizeUpperText(step?.actionCode);
+  if (normalizedActionCode === "DRAFT") {
+    return "cari.doc.update";
+  }
+  if (normalizedActionCode === "SUBMIT") {
+    return "cari.doc.submit";
+  }
+  if (normalizedActionCode === "POST") {
+    return "cari.doc.post";
+  }
+  return step?.requiredPermissionCode || "approvals.requests.approve";
 }
 
 function addHierarchyIds(targetSet, sourceSet) {
@@ -1008,7 +1040,10 @@ function buildWorkflowCoverageWarning(check) {
           : `PARTIAL_${actorType}_COVERAGE`,
     actorType,
     stepNo: parsePositiveInt(check.stepNo) || null,
+    actionCode: normalizeUpperText(check.actionCode),
     scopeType: normalizeUpperText(check.scopeType),
+    requiredPackageCode:
+      String(check.requiredPackageCode || "").trim() || null,
     permissionCode: String(check.permissionCode || "").trim() || null,
     status,
     minRequiredActors: Math.max(1, Number(check.minRequiredActors || 1) || 1),
@@ -1056,12 +1091,13 @@ export async function evaluateWorkflowCoverageDiagnostics(input, options = {}) {
     normalizeWorkflowCoverageStep(step, index)
   );
   const warnings = [];
+  const stepChecks = [];
   const approverChecks = [];
 
   for (const step of normalizedSteps) {
     const permissionCode =
       normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? step.requiredPermissionCode || "approvals.requests.approve"
+        ? mapApCoveragePermissionCode(step)
         : step.requiredPermissionCode;
     const targetScopes = listTargetScopesForCoverage({
       assignmentScope,
@@ -1071,17 +1107,36 @@ export async function evaluateWorkflowCoverageDiagnostics(input, options = {}) {
     });
     const check = await evaluateWorkflowCoverageCheck({
       tenantId: normalizedTenantId,
-      actorType: WORKFLOW_COVERAGE_ACTOR_TYPES.APPROVER,
+      actorType:
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+          ? mapApCoverageActorType(step.actionCode)
+          : WORKFLOW_COVERAGE_ACTOR_TYPES.APPROVER,
       permissionCode,
       targetScopeType: step.stageScopeType,
       targetScopes,
       stepNo: step.stepNo,
-      minRequiredActors: step.minApproverCount,
+      minRequiredActors:
+        normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+        normalizeUpperText(step.actionCode) !== "APPROVE"
+          ? 1
+          : step.minApproverCount,
       runQuery,
       effectiveOn: normalizedEffectiveOn,
     });
-    approverChecks.push(check);
-    const warning = buildWorkflowCoverageWarning(check);
+    const enrichedCheck = {
+      ...check,
+      actionCode: step.actionCode || null,
+      requiredPackageCode: step.requiredPackageCode || null,
+    };
+    if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
+      stepChecks.push(enrichedCheck);
+      if (normalizeUpperText(step.actionCode) === "APPROVE") {
+        approverChecks.push(enrichedCheck);
+      }
+    } else {
+      approverChecks.push(enrichedCheck);
+    }
+    const warning = buildWorkflowCoverageWarning(enrichedCheck);
     if (warning) {
       warnings.push(warning);
     }
@@ -1090,51 +1145,10 @@ export async function evaluateWorkflowCoverageDiagnostics(input, options = {}) {
   let submitterCheck = null;
   let posterCheck = null;
   if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
-    const submitterTargetScopes = listTargetScopesForCoverage({
-      assignmentScope,
-      targetScopeType: "OPERATING_UNIT",
-      hierarchy,
-      tenantId: normalizedTenantId,
-    });
-    submitterCheck = await evaluateWorkflowCoverageCheck({
-      tenantId: normalizedTenantId,
-      actorType: WORKFLOW_COVERAGE_ACTOR_TYPES.SUBMITTER,
-      permissionCode: "cari.doc.submit",
-      targetScopeType: "OPERATING_UNIT",
-      targetScopes: submitterTargetScopes,
-      minRequiredActors: 1,
-      runQuery,
-      effectiveOn: normalizedEffectiveOn,
-    });
-    const submitterWarning = buildWorkflowCoverageWarning(submitterCheck);
-    if (submitterWarning) {
-      warnings.push(submitterWarning);
-    }
-
-    const posterScopeType =
-      normalizedSteps.length > 0
-        ? normalizedSteps[normalizedSteps.length - 1].stageScopeType
-        : assignmentScope.scopeType;
-    const posterTargetScopes = listTargetScopesForCoverage({
-      assignmentScope,
-      targetScopeType: posterScopeType,
-      hierarchy,
-      tenantId: normalizedTenantId,
-    });
-    posterCheck = await evaluateWorkflowCoverageCheck({
-      tenantId: normalizedTenantId,
-      actorType: WORKFLOW_COVERAGE_ACTOR_TYPES.POSTER,
-      permissionCode: "cari.doc.post",
-      targetScopeType: posterScopeType,
-      targetScopes: posterTargetScopes,
-      minRequiredActors: 1,
-      runQuery,
-      effectiveOn: normalizedEffectiveOn,
-    });
-    const posterWarning = buildWorkflowCoverageWarning(posterCheck);
-    if (posterWarning) {
-      warnings.push(posterWarning);
-    }
+    submitterCheck =
+      stepChecks.find((check) => normalizeUpperText(check.actionCode) === "SUBMIT") || null;
+    posterCheck =
+      stepChecks.find((check) => normalizeUpperText(check.actionCode) === "POST") || null;
   }
 
   return {
@@ -1143,6 +1157,7 @@ export async function evaluateWorkflowCoverageDiagnostics(input, options = {}) {
     effectiveOn: normalizedEffectiveOn,
     assignmentScope,
     checks: {
+      steps: stepChecks,
       submitter: submitterCheck,
       approvers: approverChecks,
       poster: posterCheck,

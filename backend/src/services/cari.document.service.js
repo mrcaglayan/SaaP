@@ -51,6 +51,12 @@ import {
 } from "./cari.document.workflow-governance.service.js";
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+  findNextApWorkflowStepAfter,
+  findFirstApWorkflowStepByAction,
+  listApWorkflowSteps,
+  normalizeApWorkflowActionCode,
+  resolveApWorkflowEditableStep,
+  resolveApWorkflowRuntimeStepContext,
   CARI_DOCUMENT_WORKFLOW_GATE_STATES,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
   WORKFLOW_GATE_BLOCKING_REASON_CODES,
@@ -64,6 +70,7 @@ import {
   ensureUnifiedWorkflowInstanceBridge,
   getUnifiedWorkflowRequestRowById,
   getWorkflowInstanceByTarget,
+  listWorkflowDefinitionSteps,
   listWorkflowInstanceDecisionRows,
   resolveWorkflowAssignmentForScope,
 } from "./workflows.service.js";
@@ -966,9 +973,10 @@ async function evaluateCariDocumentPostingWorkflowGate({
     };
   }
 
+  const documentStatus = normalizeUpperText(documentRow?.status);
   if (
-    normalizeUpperText(documentRow?.status) !== APPROVED_STATUS ||
-    String(workflowGate?.state || "").toLowerCase() !== "approved"
+    normalizeUpperText(workflowGate?.currentActionCode) !== "POST" ||
+    ![SUBMITTED_STATUS, APPROVED_STATUS].includes(documentStatus)
   ) {
     const gateState = String(workflowGate?.state || "").toLowerCase();
     const errorCode =
@@ -989,7 +997,7 @@ async function evaluateCariDocumentPostingWorkflowGate({
   return {
     workflowGoverned,
     workflowGate,
-    requiredDocumentStatus: APPROVED_STATUS,
+    requiredDocumentStatus: documentStatus,
   };
 }
 
@@ -7234,93 +7242,402 @@ const SCOPE_TYPE_LABELS = {
   TENANT: "Tenant",
 };
 
-function resolveWorkflowStageScopeType(step) {
-  const explicitStageScopeType = normalizeUpperText(
-    step?.stage_scope_type || step?.stageScopeType
-  );
-  if (explicitStageScopeType) {
-    return explicitStageScopeType;
+function buildApWorkflowActionLabel(actionCode, scopeLabel) {
+  const normalizedActionCode = normalizeApWorkflowActionCode(actionCode);
+  if (!normalizedActionCode) {
+    return null;
   }
-
-  // Bridged approval-request snapshots persist the scope as scope_resolution_mode
-  // rather than the legacy workflow stage_scope_type field.
-  const scopeResolutionMode = normalizeUpperText(
-    step?.scope_resolution_mode || step?.scopeResolutionMode
-  );
-  if (scopeResolutionMode === "TARGET_OPERATING_UNIT") {
-    return "OPERATING_UNIT";
+  const resolvedScopeLabel = scopeLabel || "Scope";
+  if (normalizedActionCode === "DRAFT") {
+    return `${resolvedScopeLabel} draft work`;
   }
-  if (scopeResolutionMode === "TARGET_LEGAL_ENTITY") {
-    return "LEGAL_ENTITY";
+  if (normalizedActionCode === "SUBMIT") {
+    return `${resolvedScopeLabel} submission`;
   }
-  if (scopeResolutionMode === "TARGET_COUNTRY") {
-    return "COUNTRY";
+  if (normalizedActionCode === "APPROVE") {
+    return `${resolvedScopeLabel} approval`;
   }
-  if (scopeResolutionMode === "TARGET_GROUP") {
-    return "GROUP";
-  }
-  return null;
+  return `${resolvedScopeLabel} posting`;
 }
 
-/**
- * Derives step-level enrichment fields from the policy snapshot steps and current step number.
- */
-function deriveStepEnrichment(policySteps, currentStepNo) {
-  const steps = Array.isArray(policySteps) ? policySteps : [];
-  const totalSteps = steps.length;
-  if (totalSteps === 0) {
+function resolveCariWorkflowScopeDescriptor(workflowScope, stageScopeType) {
+  const normalizedScopeType = normalizeUpperText(stageScopeType);
+  if (normalizedScopeType === "OPERATING_UNIT") {
     return {
-      currentStepNo: null,
-      totalSteps: 0,
-      currentStageScopeType: null,
-      currentStageScopeLabel: null,
-      effectiveApprovalPermissionCode: null,
-      effectiveApprovalPermissionLabel: null,
-      nextActorType: null,
-      nextActionCode: null,
-      nextActionLabel: null,
+      scopeType: normalizedScopeType,
+      scopeId: parsePositiveInt(workflowScope?.operatingUnitId) || null,
+      accessType: "operating_unit",
+      accessField: "operatingUnitId",
     };
   }
+  if (normalizedScopeType === "LEGAL_ENTITY") {
+    return {
+      scopeType: normalizedScopeType,
+      scopeId: parsePositiveInt(workflowScope?.legalEntityId) || null,
+      accessType: "legal_entity",
+      accessField: "legalEntityId",
+    };
+  }
+  if (normalizedScopeType === "COUNTRY") {
+    return {
+      scopeType: normalizedScopeType,
+      scopeId: parsePositiveInt(workflowScope?.countryId) || null,
+      accessType: "country",
+      accessField: "countryId",
+    };
+  }
+  if (normalizedScopeType === "GROUP") {
+    return {
+      scopeType: normalizedScopeType,
+      scopeId: parsePositiveInt(workflowScope?.groupCompanyId) || null,
+      accessType: "group",
+      accessField: "groupCompanyId",
+    };
+  }
+  return {
+    scopeType: null,
+    scopeId: null,
+    accessType: null,
+    accessField: null,
+  };
+}
 
-  const resolvedStepNo = Math.max(1, Number(currentStepNo || 1));
-  const currentStep = steps.find(
-    (s) => Number(s.step_no || s.stepNo || 1) === resolvedStepNo
+function assertCariDocumentWorkflowStepAccess({
+  req,
+  assertScopeAccess,
+  workflowScope,
+  step,
+}) {
+  if (!req || typeof assertScopeAccess !== "function" || !step) {
+    return;
+  }
+  const scopeDescriptor = resolveCariWorkflowScopeDescriptor(
+    workflowScope,
+    step.stageScopeType
   );
-  const currentStageScopeType = resolveWorkflowStageScopeType(currentStep);
-  const currentStageScopeLabel = SCOPE_TYPE_LABELS[currentStageScopeType] || currentStageScopeType;
-
-  // Effective approval permission — surfaces the existing route-layer fallback
-  const rawPermission = String(
-    currentStep?.required_permission_code ?? currentStep?.requiredPermissionCode ?? ""
-  ).trim();
-  const effectiveApprovalPermissionCode = rawPermission || "approvals.requests.approve";
-  const effectiveApprovalPermissionLabel = rawPermission
-    ? rawPermission
-    : `AP approval at ${currentStageScopeLabel || "scope"} scope`;
-
-  // Next-step lookahead — pure in-memory derivation from loaded data
-  const nextStep = steps.find(
-    (s) => Number(s.step_no || s.stepNo || 0) === resolvedStepNo + 1
+  if (!scopeDescriptor.scopeType || !scopeDescriptor.scopeId) {
+    throw conflictError(
+      "Workflow step scope could not be resolved for this document",
+      "WORKFLOW_STEP_SCOPE_UNRESOLVED",
+      {
+        stepNo: step.stepNo,
+        actionCode: step.actionCode,
+        stageScopeType: step.stageScopeType || null,
+      }
+    );
+  }
+  assertScopeAccess(
+    req,
+    scopeDescriptor.accessType,
+    scopeDescriptor.scopeId,
+    scopeDescriptor.accessField
   );
-  let nextActorType;
-  let nextActionCode;
-  let nextActionLabel;
-  if (nextStep) {
-    const nextScopeType = resolveWorkflowStageScopeType(nextStep);
-    nextActorType = nextScopeType || "REVIEWER";
-    nextActionCode = "APPROVE";
-    nextActionLabel = `${SCOPE_TYPE_LABELS[nextScopeType] || nextScopeType} approval`;
-  } else {
-    nextActorType = "POSTER";
-    nextActionCode = "POST";
-    nextActionLabel = `${currentStageScopeLabel || "Scope"} posting`;
+}
+
+async function loadCariDocumentRuntimeDefinitionSteps({
+  tenantId,
+  workflowDefinitionId,
+  fallbackSteps = [],
+  runQuery = query,
+}) {
+  const normalizedDefinitionId = parsePositiveInt(workflowDefinitionId);
+  if (!normalizedDefinitionId) {
+    return listApWorkflowSteps(fallbackSteps);
+  }
+  try {
+    const definitionSteps = await listWorkflowDefinitionSteps({
+      tenantId,
+      definitionId: normalizedDefinitionId,
+      runQuery,
+    });
+    return listApWorkflowSteps(definitionSteps);
+  } catch {
+    return listApWorkflowSteps(fallbackSteps);
+  }
+}
+
+async function resolveCariDocumentDraftAccessContext({
+  tenantId,
+  documentRow,
+  useReturnEditableStep = false,
+  runQuery = query,
+}) {
+  if (!isGovernedApDocumentRow(documentRow)) {
+    return null;
+  }
+  const assignmentResolution = await resolveCariDocumentWorkflowAssignment({
+    tenantId,
+    documentRow,
+    runQuery,
+  });
+  const assignmentRow = assignmentResolution?.assignmentRow || null;
+  if (!assignmentRow) {
+    return null;
+  }
+  const workflowDefinitionId =
+    parsePositiveInt(
+      assignmentRow?.workflow_definition_id ?? assignmentRow?.workflowDefinitionId
+    ) || null;
+  const workflowSteps = await loadCariDocumentRuntimeDefinitionSteps({
+    tenantId,
+    workflowDefinitionId,
+    runQuery,
+  });
+  const editStep = useReturnEditableStep
+    ? resolveApWorkflowEditableStep(workflowSteps)
+    : findFirstApWorkflowStepByAction(workflowSteps, "DRAFT");
+  if (!editStep) {
+    return null;
+  }
+  return {
+    workflowScope: assignmentResolution.scope || (await buildCariDocumentWorkflowScope({
+      tenantId,
+      documentRow,
+      runQuery,
+    })),
+    workflowDefinitionId,
+    workflowSteps,
+    editStep,
+  };
+}
+
+function buildResolvedCariDocumentScopeResult(scopeDescriptor, workflowScope) {
+  if (!scopeDescriptor?.scopeType || !scopeDescriptor?.scopeId) {
+    return null;
+  }
+  return {
+    scopeType: scopeDescriptor.scopeType,
+    scopeId: scopeDescriptor.scopeId,
+    legalEntityId: parsePositiveInt(workflowScope?.legalEntityId) || null,
+    operatingUnitId: parsePositiveInt(workflowScope?.operatingUnitId) || null,
+  };
+}
+
+function buildCariDocumentOwnershipScope({
+  legalEntityId,
+  operatingUnitId,
+}) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (normalizedOperatingUnitId) {
+    return {
+      scopeType: "OPERATING_UNIT",
+      scopeId: normalizedOperatingUnitId,
+      legalEntityId: parsePositiveInt(legalEntityId) || null,
+      operatingUnitId: normalizedOperatingUnitId,
+    };
+  }
+  const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!normalizedLegalEntityId) {
+    return null;
+  }
+  return {
+    scopeType: "LEGAL_ENTITY",
+    scopeId: normalizedLegalEntityId,
+    legalEntityId: normalizedLegalEntityId,
+    operatingUnitId: null,
+  };
+}
+
+async function resolveCariDocumentCreateAccessContext({
+  tenantId,
+  payload,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId ?? payload?.tenantId);
+  const legalEntityId = parsePositiveInt(payload?.legalEntityId);
+  const counterpartyId = parsePositiveInt(payload?.counterpartyId);
+  if (!normalizedTenantId || !legalEntityId || !counterpartyId) {
+    return null;
   }
 
+  const counterpartyRow = await fetchCounterpartyRow({
+    tenantId: normalizedTenantId,
+    legalEntityId,
+    counterpartyId,
+    runQuery,
+  });
+  if (!counterpartyRow) {
+    return null;
+  }
+
+  const operatingUnitId = await resolveDocumentOperatingUnitForCounterparty({
+    tenantId: normalizedTenantId,
+    legalEntityId,
+    requestedOperatingUnitId: parsePositiveInt(payload?.operatingUnitId),
+    counterpartyRow,
+    runQuery,
+  });
+
+  let resolvedAmountBase = payload?.amountBase ?? null;
+  if (resolvedAmountBase === null || resolvedAmountBase === undefined || resolvedAmountBase === "") {
+    try {
+      const legalEntity = await assertLegalEntityBelongsToTenant(
+        normalizedTenantId,
+        legalEntityId,
+        "legalEntityId"
+      );
+      const resolvedAmounts = resolveDraftDocumentAmounts({
+        amountTxn: payload?.amountTxn,
+        amountBase: payload?.amountBase,
+        currencyCode: payload?.currencyCode,
+        fxRate: payload?.fxRate,
+        functionalCurrencyCode: legalEntity?.functional_currency_code,
+      });
+      resolvedAmountBase = resolvedAmounts.amountBase;
+    } catch {
+      resolvedAmountBase = null;
+    }
+  }
+
+  const documentRow = {
+    direction: payload?.direction,
+    document_type: payload?.documentType,
+    document_date: payload?.documentDate || null,
+    legal_entity_id: legalEntityId,
+    operating_unit_id: operatingUnitId,
+    amount_base: resolvedAmountBase,
+    status: DRAFT_STATUS,
+  };
+  const draftAccessContext = await resolveCariDocumentDraftAccessContext({
+    tenantId: normalizedTenantId,
+    documentRow,
+    runQuery,
+  });
+
   return {
-    currentStepNo: resolvedStepNo,
-    totalSteps,
+    legalEntityId,
+    operatingUnitId,
+    documentRow,
+    draftAccessContext,
+  };
+}
+
+async function resolveCariDocumentWorkflowActionScope({
+  tenantId,
+  documentId,
+  actionCode,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedDocumentId = parsePositiveInt(documentId);
+  if (!normalizedTenantId || !normalizedDocumentId) {
+    return null;
+  }
+  const row = await fetchDocumentRow({
+    tenantId: normalizedTenantId,
+    documentId: normalizedDocumentId,
+    runQuery,
+  });
+  if (!row) {
+    return null;
+  }
+  const gate = await buildCariDocumentWorkflowGateSummary({
+    tenantId: normalizedTenantId,
+    documentRow: row,
+    runQuery,
+  });
+  const workflowScope = await buildCariDocumentWorkflowScope({
+    tenantId: normalizedTenantId,
+    documentRow: row,
+    runQuery,
+  });
+  const desiredActionCode = normalizeApWorkflowActionCode(actionCode);
+  const explicitActionStep = desiredActionCode
+    ? (Array.isArray(gate?.runtimeContext?.steps) ? gate.runtimeContext.steps : []).find(
+        (step) => normalizeUpperText(step?.actionCode) === desiredActionCode
+      ) || null
+    : null;
+  let scopeDescriptor = resolveCariWorkflowScopeDescriptor(
+    workflowScope,
+    explicitActionStep?.stageScopeType || gate?.currentStageScopeType
+  );
+  if (!scopeDescriptor.scopeType || !scopeDescriptor.scopeId) {
+    scopeDescriptor = resolveCariWorkflowScopeDescriptor(
+      workflowScope,
+      gate?.editableStageScopeType
+    );
+  }
+  if (!scopeDescriptor.scopeType || !scopeDescriptor.scopeId) {
+    scopeDescriptor = resolveCariWorkflowScopeDescriptor(
+      workflowScope,
+      gate?.assignmentScopeType
+    );
+  }
+  if (desiredActionCode === "POST" && normalizeUpperText(gate?.currentActionCode) === "POST") {
+    scopeDescriptor = resolveCariWorkflowScopeDescriptor(
+      workflowScope,
+      gate?.currentStageScopeType
+    );
+  }
+  if (desiredActionCode === "SUBMIT" && normalizeUpperText(gate?.currentActionCode) === "SUBMIT") {
+    scopeDescriptor = resolveCariWorkflowScopeDescriptor(
+      workflowScope,
+      gate?.currentStageScopeType
+    );
+  }
+  if (!scopeDescriptor.scopeType || !scopeDescriptor.scopeId) {
+    return resolveCariDocumentScope(normalizedDocumentId, normalizedTenantId);
+  }
+  return {
+    scopeType: scopeDescriptor.scopeType,
+    scopeId: scopeDescriptor.scopeId,
+    legalEntityId: parsePositiveInt(workflowScope?.legalEntityId) || null,
+    operatingUnitId: parsePositiveInt(workflowScope?.operatingUnitId) || null,
+  };
+}
+
+function deriveApRuntimeEnrichment({
+  workflowSteps,
+  documentRow,
+  workflowInstanceStatus,
+  currentStepNo,
+}) {
+  const runtimeContext = resolveApWorkflowRuntimeStepContext({
+    steps: workflowSteps,
+    documentStatus: documentRow?.status,
+    workflowInstanceStatus,
+    currentStepNo,
+  });
+  const currentStep = runtimeContext.currentStep;
+  const currentStageScopeType = currentStep?.stageScopeType || null;
+  const currentStageScopeLabel =
+    SCOPE_TYPE_LABELS[currentStageScopeType] || currentStageScopeType || null;
+  const editableStageScopeType = runtimeContext.editableStep?.stageScopeType || null;
+  const editableStageScopeLabel =
+    SCOPE_TYPE_LABELS[editableStageScopeType] || editableStageScopeType || null;
+  const currentActionCode = currentStep?.actionCode || null;
+
+  let effectiveApprovalPermissionCode = null;
+  let effectiveApprovalPermissionLabel = null;
+  if (currentActionCode === "APPROVE") {
+    const rawPermission = String(currentStep?.requiredPermissionCode || "").trim();
+    effectiveApprovalPermissionCode = rawPermission || "approvals.requests.approve";
+    effectiveApprovalPermissionLabel = rawPermission
+      ? rawPermission
+      : `AP approval at ${currentStageScopeLabel || "scope"} scope`;
+  }
+
+  const nextStep = runtimeContext.nextStep;
+  const nextActionCode = nextStep?.actionCode || null;
+  const nextActorType = nextStep?.stageScopeType || null;
+  const nextActionLabel = nextStep
+    ? buildApWorkflowActionLabel(
+        nextActionCode,
+        SCOPE_TYPE_LABELS[nextActorType] || nextActorType || null
+      )
+    : null;
+
+  return {
+    runtimeContext,
+    currentStepNo: currentStep?.stepNo || null,
+    totalSteps: runtimeContext.totalSteps,
+    currentActionCode,
+    currentRequiredPackageCode: currentStep?.requiredPackageCode || null,
     currentStageScopeType,
     currentStageScopeLabel,
+    editableStepNo: runtimeContext.editableStep?.stepNo || null,
+    editableStageScopeType,
+    editableStageScopeLabel,
     effectiveApprovalPermissionCode,
     effectiveApprovalPermissionLabel,
     nextActorType,
@@ -7354,8 +7671,13 @@ async function buildCariDocumentWorkflowGateSummary({
     routingUsedFallback: false,
     currentStepNo: null,
     totalSteps: 0,
+    currentActionCode: null,
+    currentRequiredPackageCode: null,
     currentStageScopeType: null,
     currentStageScopeLabel: null,
+    editableStepNo: null,
+    editableStageScopeType: null,
+    editableStageScopeLabel: null,
     effectiveApprovalPermissionCode: null,
     effectiveApprovalPermissionLabel: null,
     nextActorType: null,
@@ -7460,14 +7782,6 @@ async function buildCariDocumentWorkflowGateSummary({
   const assignmentScopeId = assignmentScope.scopeId;
   const assignmentScopeLabel = SCOPE_TYPE_LABELS[assignmentScopeType] || assignmentScopeType;
 
-  // -- Enrichment: step data from policy snapshot --
-  const policySteps = Array.isArray(bridgedSnapshots.policySnapshot?.steps)
-    ? bridgedSnapshots.policySnapshot.steps
-    : [];
-  const stepEnrichment = deriveStepEnrichment(
-    policySteps,
-    latestInstance?.current_step_no
-  );
   const commonDefinitionId =
     parsePositiveInt(
       latestInstance?.workflow_definition_id ??
@@ -7502,6 +7816,18 @@ async function buildCariDocumentWorkflowGateSummary({
     commonWorkflowDefinitionName =
       commonWorkflowDefinitionName || definitionDescriptor.workflowDefinitionName || null;
   }
+  const workflowSteps = await loadCariDocumentRuntimeDefinitionSteps({
+    tenantId: normalizedTenantId,
+    workflowDefinitionId: commonDefinitionId,
+    fallbackSteps: bridgedSnapshots.policySnapshot?.steps || [],
+    runQuery,
+  });
+  const stepEnrichment = deriveApRuntimeEnrichment({
+    workflowSteps,
+    documentRow,
+    workflowInstanceStatus,
+    currentStepNo: latestInstance?.current_step_no,
+  });
 
   // Shared enrichment fields for all resolved states
   const resolvedEnrichment = {
@@ -7556,6 +7882,12 @@ async function buildCariDocumentWorkflowGateSummary({
   }
 
   if (documentStatus === RETURNED_STATUS) {
+    const editableScopeLabel =
+      stepEnrichment.editableStageScopeLabel ||
+      stepEnrichment.currentStageScopeLabel ||
+      assignmentScopeLabel;
+    const submitScopeLabel =
+      stepEnrichment.currentStageScopeLabel || editableScopeLabel || assignmentScopeLabel;
     return {
       state: "returned",
       workflowGoverned: true,
@@ -7569,19 +7901,47 @@ async function buildCariDocumentWorkflowGateSummary({
       workflowDefinitionId: commonDefinitionId,
       workflowAssignmentId: commonAssignmentId,
       ...resolvedEnrichment,
-      waitingForSummary: "Returned for correction — resubmission required",
+      waitingForSummary: submitScopeLabel
+        ? `Returned to ${editableScopeLabel || submitScopeLabel} correction - ${submitScopeLabel} resubmission required`
+        : "Returned for correction - resubmission required",
       blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REJECTED,
       blockingReasonDetail: documentRow?.return_reason || "Document was returned for correction",
     };
   }
 
-  if (documentStatus === APPROVED_STATUS || workflowInstanceStatus === APPROVED_STATUS) {
-    const postScopeLabel = stepEnrichment.currentStageScopeLabel || assignmentScopeLabel;
+  if (stepEnrichment.currentActionCode === "DRAFT") {
+    const draftScopeLabel =
+      stepEnrichment.currentStageScopeLabel ||
+      stepEnrichment.editableStageScopeLabel ||
+      assignmentScopeLabel ||
+      "Scope";
+    return {
+      state: "blocked",
+      workflowGoverned: true,
+      assignmentResolved: true,
+      message: "Draft work is still in progress for this document",
+      latestDecisionComment,
+      workflowInstanceId,
+      workflowInstanceStatus: workflowInstanceStatus || null,
+      workflowDefinitionId: commonDefinitionId,
+      workflowAssignmentId: commonAssignmentId,
+      ...resolvedEnrichment,
+      waitingForSummary: `Draft is in progress at ${draftScopeLabel} scope`,
+      blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REQUIRED,
+      blockingReasonDetail: `Complete draft work at ${draftScopeLabel} scope before submission`,
+    };
+  }
+
+  if (stepEnrichment.currentActionCode === "POST") {
+    const postScopeLabel = stepEnrichment.currentStageScopeLabel || assignmentScopeLabel || "Scope";
     return {
       state: "approved",
       workflowGoverned: true,
       assignmentResolved: true,
-      message: "Workflow approval is complete",
+      message:
+        documentStatus === APPROVED_STATUS || workflowInstanceStatus === APPROVED_STATUS
+          ? "Workflow approval is complete"
+          : "Workflow action chain is ready for posting",
       latestDecisionComment,
       workflowInstanceId,
       workflowInstanceStatus: workflowInstanceStatus || null,
@@ -7591,15 +7951,11 @@ async function buildCariDocumentWorkflowGateSummary({
       waitingForSummary: `Ready for ${postScopeLabel} posting`,
       blockingReasonCode: null,
       blockingReasonDetail: null,
-      // Override next action — after last approval, next is POST
-      nextActorType: "POSTER",
-      nextActionCode: "POST",
-      nextActionLabel: `${postScopeLabel} posting`,
     };
   }
 
-  if (documentStatus === SUBMITTED_STATUS || workflowInstanceStatus === "PENDING") {
-    const scopeLabel = stepEnrichment.currentStageScopeLabel || assignmentScopeLabel;
+  if (stepEnrichment.currentActionCode === "APPROVE") {
+    const scopeLabel = stepEnrichment.currentStageScopeLabel || assignmentScopeLabel || "Scope";
     return {
       state: "pending",
       workflowGoverned: true,
@@ -7617,20 +7973,44 @@ async function buildCariDocumentWorkflowGateSummary({
     };
   }
 
+  if (stepEnrichment.currentActionCode === "SUBMIT") {
+    const scopeLabel = stepEnrichment.currentStageScopeLabel || assignmentScopeLabel || "Scope";
+    return {
+      state: "blocked",
+      workflowGoverned: true,
+      assignmentResolved: true,
+      message: "Submit document into the workflow action chain before posting",
+      latestDecisionComment,
+      workflowInstanceId,
+      workflowInstanceStatus: workflowInstanceStatus || null,
+      workflowDefinitionId: commonDefinitionId,
+      workflowAssignmentId: commonAssignmentId,
+      ...resolvedEnrichment,
+      waitingForSummary: `Waiting for ${scopeLabel} submission`,
+      blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REQUIRED,
+      blockingReasonDetail: `Submission is required at ${scopeLabel} scope before posting`,
+    };
+  }
+
   return {
     state: "blocked",
     workflowGoverned: true,
     assignmentResolved: true,
-    message: "Submit document for workflow approval before posting",
+    message: "Workflow action chain is not ready for posting",
     latestDecisionComment,
     workflowInstanceId,
     workflowInstanceStatus: workflowInstanceStatus || null,
     workflowDefinitionId: commonDefinitionId,
     workflowAssignmentId: commonAssignmentId,
     ...resolvedEnrichment,
-    waitingForSummary: "Waiting for document submission",
+    waitingForSummary: stepEnrichment.currentStageScopeLabel
+      ? `Waiting for ${stepEnrichment.currentStageScopeLabel} workflow action`
+      : "Waiting for workflow action",
     blockingReasonCode: WORKFLOW_GATE_BLOCKING_REASON_CODES.WORKFLOW_APPROVAL_REQUIRED,
-    blockingReasonDetail: "Document must be submitted for workflow approval before posting",
+    blockingReasonDetail:
+      stepEnrichment.currentActionCode && stepEnrichment.currentStageScopeLabel
+        ? `${stepEnrichment.currentActionCode} is required at ${stepEnrichment.currentStageScopeLabel} scope before posting`
+        : "Document is not yet at its explicit POST step",
   };
 }
 
@@ -7694,6 +8074,55 @@ async function resolveCariDocumentSubmitWorkflowContext({
   };
 }
 
+async function resolveCariDocumentSubmitPlan({
+  tenantId,
+  documentRow,
+  resolveWorkflowAssignment = null,
+  runQuery = query,
+}) {
+  const workflowContext = await resolveCariDocumentSubmitWorkflowContext({
+    tenantId,
+    documentRow,
+    resolveWorkflowAssignment,
+    runQuery,
+  });
+  const resolvedAssignmentRow =
+    workflowContext.assignmentResolution?.assignmentRow ||
+    workflowContext.assignmentResolution ||
+    null;
+  const workflowDefinitionId =
+    parsePositiveInt(
+      resolvedAssignmentRow?.workflow_definition_id ??
+        resolvedAssignmentRow?.workflowDefinitionId
+    ) || null;
+  const workflowScope =
+    workflowContext.assignmentResolution?.scope ||
+    (await buildCariDocumentWorkflowScope({
+      tenantId,
+      documentRow,
+      runQuery,
+    }));
+  const workflowSteps = await loadCariDocumentRuntimeDefinitionSteps({
+    tenantId,
+    workflowDefinitionId,
+    runQuery,
+  });
+  const submitStep = findFirstApWorkflowStepByAction(workflowSteps, "SUBMIT");
+  const nextStepAfterSubmit = submitStep
+    ? findNextApWorkflowStepAfter(workflowSteps, submitStep.stepNo)
+    : null;
+
+  return {
+    workflowContext,
+    resolvedAssignmentRow,
+    workflowDefinitionId,
+    workflowScope,
+    workflowSteps,
+    submitStep,
+    nextStepAfterSubmit,
+  };
+}
+
 export async function resolveCariDocumentScope(documentId, tenantId) {
   const parsedDocumentId = parsePositiveInt(documentId);
   const parsedTenantId = parsePositiveInt(tenantId);
@@ -7726,6 +8155,90 @@ export async function resolveCariDocumentScope(documentId, tenantId) {
     scopeType: "LEGAL_ENTITY",
     scopeId: parsePositiveInt(row.legal_entity_id),
   };
+}
+
+/**
+ * Resolve the create-time scope for AP draft work. When a DRAFT step exists,
+ * route RBAC follows that explicit step owner; otherwise it falls back to the
+ * resolved document ownership scope for legacy draft editing.
+ */
+export async function resolveCariDocumentDraftCreateScope(payload, tenantId) {
+  const createAccessContext = await resolveCariDocumentCreateAccessContext({
+    tenantId,
+    payload,
+  });
+  if (!createAccessContext) {
+    return null;
+  }
+  if (createAccessContext.draftAccessContext?.editStep) {
+    return buildResolvedCariDocumentScopeResult(
+      resolveCariWorkflowScopeDescriptor(
+        createAccessContext.draftAccessContext.workflowScope,
+        createAccessContext.draftAccessContext.editStep.stageScopeType
+      ),
+      createAccessContext.draftAccessContext.workflowScope
+    );
+  }
+  return buildCariDocumentOwnershipScope(createAccessContext);
+}
+
+/**
+ * Resolve the current editable scope for AP draft/update/cancel actions. This
+ * keeps route RBAC aligned with explicit DRAFT or returned editable steps.
+ */
+export async function resolveCariDocumentEditableScope(documentId, tenantId) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedDocumentId = parsePositiveInt(documentId);
+  if (!normalizedTenantId || !normalizedDocumentId) {
+    return null;
+  }
+  const row = await fetchDocumentRow({
+    tenantId: normalizedTenantId,
+    documentId: normalizedDocumentId,
+  });
+  if (!row) {
+    return null;
+  }
+  const documentStatus = normalizeUpperText(row.status);
+  const draftAccessContext = await resolveCariDocumentDraftAccessContext({
+    tenantId: normalizedTenantId,
+    documentRow: row,
+    useReturnEditableStep: documentStatus === RETURNED_STATUS,
+  });
+  if (draftAccessContext?.editStep) {
+    return buildResolvedCariDocumentScopeResult(
+      resolveCariWorkflowScopeDescriptor(
+        draftAccessContext.workflowScope,
+        draftAccessContext.editStep.stageScopeType
+      ),
+      draftAccessContext.workflowScope
+    );
+  }
+  return resolveCariDocumentScope(normalizedDocumentId, normalizedTenantId);
+}
+
+/**
+ * Resolve the explicit AP SUBMIT step scope so route-level RBAC matches the
+ * saved workflow chain instead of the document ownership scope.
+ */
+export async function resolveCariDocumentSubmitScope(documentId, tenantId) {
+  return resolveCariDocumentWorkflowActionScope({
+    tenantId,
+    documentId,
+    actionCode: "SUBMIT",
+  });
+}
+
+/**
+ * Resolve the explicit AP POST step scope so route-level RBAC follows the
+ * saved workflow step owner when posting is centralized above the entity.
+ */
+export async function resolveCariDocumentPostScope(documentId, tenantId) {
+  return resolveCariDocumentWorkflowActionScope({
+    tenantId,
+    documentId,
+    actionCode: "POST",
+  });
 }
 
 function buildCariDocumentVisibilityFilter(
@@ -8033,11 +8546,6 @@ export async function createCariDraftDocument({
       counterpartyRow: counterparty,
       runQuery: tx.query,
     });
-    if (operatingUnitId) {
-      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
-    } else {
-      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
-    }
 
     const paymentTerm = await fetchPaymentTermRow({
       tenantId,
@@ -8077,6 +8585,30 @@ export async function createCariDraftDocument({
       runQuery: tx.query,
     });
     const { resolvedAmounts, headerTotals } = draftWriteModel;
+    const draftAccessContext = await resolveCariDocumentDraftAccessContext({
+      tenantId,
+      documentRow: {
+        direction: payload.direction,
+        document_type: payload.documentType,
+        legal_entity_id: legalEntityId,
+        operating_unit_id: operatingUnitId,
+        amount_base: resolvedAmounts.amountBase,
+        status: DRAFT_STATUS,
+      },
+      runQuery: tx.query,
+    });
+    if (draftAccessContext?.editStep) {
+      assertCariDocumentWorkflowStepAccess({
+        req,
+        assertScopeAccess,
+        workflowScope: draftAccessContext.workflowScope,
+        step: draftAccessContext.editStep,
+      });
+    } else if (operatingUnitId) {
+      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+    } else {
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
 
     const draftNumbering = await reserveDraftSequence({
       tenantId,
@@ -8235,7 +8767,6 @@ export async function updateCariDraftDocumentById({
 
   const existingLegalEntityId = parsePositiveInt(existing.legal_entity_id);
   const existingOperatingUnitId = parsePositiveInt(existing.operating_unit_id);
-  assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
   const existingStatus = normalizeUpperText(existing.status);
   if (existingStatus !== DRAFT_STATUS && existingStatus !== RETURNED_STATUS) {
     // Returned governed AP documents must stay editable so entity controllers
@@ -8317,11 +8848,6 @@ export async function updateCariDraftDocumentById({
       counterpartyRow: counterparty,
       runQuery: tx.query,
     });
-    if (operatingUnitId) {
-      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
-    } else if (payload.operatingUnitId !== undefined || legalEntityId !== parsePositiveInt(existing.legal_entity_id)) {
-      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
-    }
 
     const paymentTerm = await fetchPaymentTermRow({
       tenantId,
@@ -8409,6 +8935,32 @@ export async function updateCariDraftDocumentById({
           grossAmountTxn: toDecimalNumber(existing.gross_amount_txn),
           grossAmountBase: toDecimalNumber(existing.gross_amount_base),
         };
+    const draftAccessContext = await resolveCariDocumentDraftAccessContext({
+      tenantId,
+      documentRow: {
+        ...existing,
+        direction: nextDirection,
+        document_type: nextDocumentType,
+        legal_entity_id: legalEntityId,
+        operating_unit_id: operatingUnitId,
+        amount_base: resolvedAmounts.amountBase,
+        status: existingStatus,
+      },
+      useReturnEditableStep: existingStatus === RETURNED_STATUS,
+      runQuery: tx.query,
+    });
+    if (draftAccessContext?.editStep) {
+      assertCariDocumentWorkflowStepAccess({
+        req,
+        assertScopeAccess,
+        workflowScope: draftAccessContext.workflowScope,
+        step: draftAccessContext.editStep,
+      });
+    } else if (operatingUnitId) {
+      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+    } else {
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
 
     let sequenceNamespace = existing.sequence_namespace;
     let fiscalYear = Number(existing.fiscal_year);
@@ -8630,12 +9182,20 @@ export async function submitCariDocumentById({
       throw badRequest("Only governed AP documents can be submitted");
     }
 
-    const workflowContext = await resolveCariDocumentSubmitWorkflowContext({
+    const submitPlan = await resolveCariDocumentSubmitPlan({
       tenantId,
       documentRow: lockedDocument,
       resolveWorkflowAssignment: options?.resolveWorkflowAssignment,
       runQuery: tx.query,
     });
+    const {
+      workflowContext,
+      resolvedAssignmentRow,
+      workflowDefinitionId,
+      workflowScope,
+      submitStep,
+      nextStepAfterSubmit,
+    } = submitPlan;
     if (!workflowContext.workflowGoverned) {
       throw badRequest("Only governed AP documents can be submitted");
     }
@@ -8649,29 +9209,31 @@ export async function submitCariDocumentById({
         }
       );
     }
-
-    const resolvedAssignmentRow =
-      workflowContext.assignmentResolution?.assignmentRow ||
-      workflowContext.assignmentResolution;
-    const workflowDefinitionId =
-      parsePositiveInt(
-        resolvedAssignmentRow?.workflow_definition_id ??
-          resolvedAssignmentRow?.workflowDefinitionId
-      ) || null;
     if (!workflowDefinitionId) {
       throw conflictError(
         "Workflow assignment is missing workflowDefinitionId",
         "WORKFLOW_ASSIGNMENT_INVALID"
       );
     }
+    if (!submitStep) {
+      throw conflictError(
+        "Governed AP workflow is missing an explicit SUBMIT step",
+        "WORKFLOW_DEFINITION_INVALID"
+      );
+    }
+    if (!nextStepAfterSubmit || !["APPROVE", "POST"].includes(nextStepAfterSubmit.actionCode)) {
+      throw conflictError(
+        "Governed AP workflow has no actionable step after SUBMIT",
+        "WORKFLOW_DEFINITION_INVALID"
+      );
+    }
+    assertCariDocumentWorkflowStepAccess({
+      req,
+      assertScopeAccess,
+      workflowScope,
+      step: submitStep,
+    });
 
-    const workflowScope =
-      workflowContext.assignmentResolution?.scope ||
-      (await buildCariDocumentWorkflowScope({
-        tenantId,
-        documentRow: lockedDocument,
-        runQuery: tx.query,
-      }));
     const instanceInsert = await tx.query(
       `INSERT INTO workflow_instances (
          tenant_id,
@@ -8682,13 +9244,14 @@ export async function submitCariDocumentById({
          status,
          current_step_no,
          requested_by_user_id
-       ) VALUES (?, ?, ?, ?, ?, 'PENDING', 1, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
       [
         tenantId,
         AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
         CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
         documentId,
         workflowDefinitionId,
+        nextStepAfterSubmit.stepNo,
         payload.userId,
       ]
     );
@@ -8697,16 +9260,19 @@ export async function submitCariDocumentById({
       throw new Error("Workflow instance create failed");
     }
 
-    await ensureUnifiedWorkflowInstanceBridge({
-      tenantId,
-      instanceId: workflowInstanceId,
-      requestedByUserId: payload.userId,
-      fallbackScope: workflowScope,
-      targetSnapshotOverrides:
-        workflowContext.assignmentResolution?.targetSnapshotOverrides || null,
-      resetToPending: true,
-      runQuery: tx.query,
-    });
+    // Only explicit APPROVE stages bridge into the generic approval engine.
+    if (nextStepAfterSubmit.actionCode === "APPROVE") {
+      await ensureUnifiedWorkflowInstanceBridge({
+        tenantId,
+        instanceId: workflowInstanceId,
+        requestedByUserId: payload.userId,
+        fallbackScope: workflowScope,
+        targetSnapshotOverrides:
+          workflowContext.assignmentResolution?.targetSnapshotOverrides || null,
+        resetToPending: true,
+        runQuery: tx.query,
+      });
+    }
 
     await tx.query(
       `UPDATE cari_documents
@@ -8803,9 +9369,23 @@ export async function cancelCariDraftDocumentById({
     throw badRequest("Document not found");
   }
 
-  const legalEntityId = parsePositiveInt(existing.legal_entity_id);
-  assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
   assertCariDocumentCanBeCancelled(existing);
+  const existingStatus = normalizeUpperText(existing.status);
+  const draftAccessContext = await resolveCariDocumentDraftAccessContext({
+    tenantId,
+    documentRow: existing,
+    useReturnEditableStep: existingStatus === RETURNED_STATUS,
+  });
+  if (draftAccessContext?.editStep) {
+    assertCariDocumentWorkflowStepAccess({
+      req,
+      assertScopeAccess,
+      workflowScope: draftAccessContext.workflowScope,
+      step: draftAccessContext.editStep,
+    });
+  } else {
+    assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
+  }
 
   const updated = await withTransaction(async (tx) => {
     let cancelledWorkflowInstanceId = null;
@@ -8924,6 +9504,26 @@ async function postCariDocumentByIdTx(
     documentRow: lockedDocument,
     runQuery: tx.query,
   });
+  if (
+    postingWorkflowContext.workflowGate?.assignmentResolved &&
+    normalizeUpperText(postingWorkflowContext.workflowGate?.currentActionCode) === "POST"
+  ) {
+    const workflowScope = await buildCariDocumentWorkflowScope({
+      tenantId,
+      documentRow: lockedDocument,
+      runQuery: tx.query,
+    });
+    assertCariDocumentWorkflowStepAccess({
+      req,
+      assertScopeAccess,
+      workflowScope,
+      step: {
+        stepNo: postingWorkflowContext.workflowGate?.currentStepNo,
+        actionCode: "POST",
+        stageScopeType: postingWorkflowContext.workflowGate?.currentStageScopeType,
+      },
+    });
+  }
   if (
     normalizeUpperText(lockedDocument.status) !==
     normalizeUpperText(postingWorkflowContext.requiredDocumentStatus)
@@ -9659,6 +10259,31 @@ async function postCariDocumentByIdTx(
       userId: payload.userId,
       fixedAssetPostingState,
     });
+    if (
+      postingWorkflowContext.workflowGate?.assignmentResolved &&
+      parsePositiveInt(postingWorkflowContext.workflowGate?.workflowInstanceId)
+    ) {
+      // Explicit POST is the terminal AP action-step, so the legacy workflow
+      // instance resolves only after posting succeeds.
+      await tx.query(
+        `UPDATE workflow_instances
+            SET status = 'APPROVED',
+                current_step_no = ?,
+                resolved_at = COALESCE(resolved_at, CURRENT_TIMESTAMP),
+                resolution_note = COALESCE(
+                  resolution_note,
+                  'completed_by_explicit_post_step'
+                ),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE tenant_id = ?
+            AND id = ?`,
+        [
+          Math.max(1, Number(postingWorkflowContext.workflowGate?.currentStepNo || 1)),
+          tenantId,
+          parsePositiveInt(postingWorkflowContext.workflowGate?.workflowInstanceId),
+        ]
+      );
+    }
 
     const row = await fetchDocumentRow({
       tenantId,

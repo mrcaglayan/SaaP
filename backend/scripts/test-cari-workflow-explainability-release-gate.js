@@ -7,8 +7,10 @@ const REQUIRED_NODE_SCRIPTS = Object.freeze([
   "test-followup-prf06-workflow-decisions-runtime.js",
   "test-cari-pr27-governed-ap-review-states.js",
   "test-cari-pr29-ap-workflow-rollout-and-uat.js",
+  "test-workflows-actap05-ap-action-step-scenarios.js",
   "test-followup-prf13-bootstrap-handoff.js",
   "test-cari-workflow-explainability-frontend-smoke.js",
+  "test-security-ui4b-ap-runtime-explainability.js",
 ]);
 
 function assert(condition, message) {
@@ -50,6 +52,11 @@ function assertPackageScripts(packageSource) {
     scripts["test:cari:workflow-explainability-release-gate"] ===
       "node scripts/test-cari-workflow-explainability-release-gate.js",
     "backend/package.json missing test:cari:workflow-explainability-release-gate script"
+  );
+  assert(
+    scripts["test:workflows:actap05"] ===
+      "node scripts/test-workflows-actap05-ap-action-step-scenarios.js",
+    "backend/package.json missing test:workflows:actap05 script"
   );
   assert(
     String(scripts["test:cari-quality-gate"] || "").includes(

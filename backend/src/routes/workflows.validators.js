@@ -36,6 +36,7 @@ const TARGET_TYPES = [
   LOCAL_CLOSE_PACK_WORKFLOW_TARGET_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
 ];
+const AP_DOCUMENT_STEP_ACTION_CODES = ["DRAFT", "SUBMIT", "APPROVE", "POST"];
 const DEFAULT_WORKFLOW_ASSIGNMENT_PRIORITY = 100;
 
 function hasOwn(obj, key) {
@@ -47,6 +48,13 @@ function normalizeOptionalEnum(value, label, allowedValues) {
     return null;
   }
   return normalizeEnum(value, label, allowedValues);
+}
+
+function normalizeOptionalCode(value, label, maxLength) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return normalizeCode(value, label, maxLength);
 }
 
 function parseDateOnly(rawValue, label, { required = false } = {}) {
@@ -188,6 +196,22 @@ function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
     }
     seenStepNos.add(stepNo);
 
+    const actionCode =
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        ? normalizeEnum(
+            step.actionCode ?? step.action_code,
+            `steps[${index}].actionCode`,
+            AP_DOCUMENT_STEP_ACTION_CODES
+          )
+        : null;
+    const requiredPackageCode =
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
+        ? normalizeOptionalCode(
+            step.requiredPackageCode ?? step.required_package_code,
+            `steps[${index}].requiredPackageCode`,
+            120
+          )
+        : null;
     const requiredPermissionCode = normalizeText(
       step.requiredPermissionCode ?? step.required_permission_code,
       `steps[${index}].requiredPermissionCode`,
@@ -199,14 +223,22 @@ function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
     ) {
       throw badRequest(`steps[${index}].requiredPermissionCode is required`);
     }
+    if (
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+      !requiredPackageCode
+    ) {
+      throw badRequest(`steps[${index}].requiredPackageCode is required`);
+    }
 
     return {
       stepNo,
+      actionCode,
       stageScopeType: normalizeEnum(
         step.stageScopeType ?? step.stage_scope_type,
         `steps[${index}].stageScopeType`,
         STAGE_SCOPE_TYPES
       ),
+      requiredPackageCode,
       requiredPermissionCode:
         normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
           ? requiredPermissionCode || null
@@ -364,9 +396,19 @@ export function parseWorkflowDefinitionStepsReplaceInput(req) {
         `steps[${index}].stageScopeType`,
         STAGE_SCOPE_TYPES
       ),
+      actionCode: normalizeOptionalEnum(
+        step.actionCode ?? step.action_code,
+        `steps[${index}].actionCode`,
+        AP_DOCUMENT_STEP_ACTION_CODES
+      ),
       requiredPermissionCode: normalizeText(
         step.requiredPermissionCode ?? step.required_permission_code,
         `steps[${index}].requiredPermissionCode`,
+        120
+      ),
+      requiredPackageCode: normalizeOptionalCode(
+        step.requiredPackageCode ?? step.required_package_code,
+        `steps[${index}].requiredPackageCode`,
         120
       ),
       minApproverCount:

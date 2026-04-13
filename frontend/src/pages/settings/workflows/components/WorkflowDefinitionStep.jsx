@@ -66,8 +66,8 @@ export default function WorkflowDefinitionStep({
             </CardTitle>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               {l(
-                "A workflow is the reusable approval recipe. Reuse an existing definition or create a new one with a stable code and clear name.",
-                "Workflow tekrar kullanilabilir onay tarifidir. Mevcut bir tanimi tekrar kullanin veya sabit kodlu ve acik adli yeni bir tane olusturun."
+                "A workflow is the reusable process recipe. Reuse an existing definition or create a new one with a stable code and clear name.",
+                "Workflow tekrar kullanilabilir surec tarifidir. Mevcut bir tanimi tekrar kullanin veya sabit kodlu ve acik adli yeni bir tane olusturun."
               )}
             </p>
           </div>
@@ -260,7 +260,7 @@ export default function WorkflowDefinitionStep({
               onClick={onContinueSelectedDefinition}
               disabled={!selectedDefinitionId}
             >
-              {l("Continue to Approval Steps", "Onay adimlarina devam et")}
+              {l("Continue to Workflow Steps", "Workflow adimlarina devam et")}
             </Button>
           )}
         </CardFooter>

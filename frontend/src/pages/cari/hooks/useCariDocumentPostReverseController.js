@@ -1369,9 +1369,15 @@ export default function useCariDocumentPostReverseController({
         );
       }
       if (selectedWorkflowGateState === "BLOCKED") {
+        if (String(selectedWorkflowGate?.currentActionCode || "").trim().toUpperCase() === "DRAFT") {
+          return l(
+            "You cannot post because the document is still in its draft step.",
+            "Belge hala taslak adiminda oldugu icin kaydedemezsiniz."
+          );
+        }
         return l(
-          "You cannot post because the document has not been submitted yet.",
-          "Belge henuz gonderilmedigi icin kaydedemezsiniz."
+          "You cannot post because the submission step is still pending.",
+          "Gonderim adimi halen bekledigi icin kaydedemezsiniz."
         );
       }
       if (selectedWorkflowGateState === "RETURNED") {
@@ -1426,6 +1432,7 @@ export default function useCariDocumentPostReverseController({
     postingLinesReadyForSubmit,
     selectedDocumentLegalEntityId,
     selectedDocumentStatus,
+    selectedWorkflowGate?.currentActionCode,
     selectedWorkflowGateState,
     workflowExplanation?.requiredPackageLabel,
     workflowExplanation?.requiredScopeType,
