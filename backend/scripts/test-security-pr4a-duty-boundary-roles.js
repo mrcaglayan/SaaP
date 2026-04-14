@@ -118,6 +118,14 @@ async function main() {
     "LocalClosePreparer",
     "LocalCloseReviewer",
     "GroupReportingController",
+    "BranchInventoryViewer",
+    "EntityInventoryViewer",
+    "BranchInventoryOperator",
+    "EntityInventoryOperator",
+    "BranchFixedAssetViewer",
+    "EntityFixedAssetViewer",
+    "BranchFixedAssetOperator",
+    "EntityFixedAssetOperator",
     "AuditorReadOnly",
     "BranchOperator",
   ];
@@ -135,6 +143,14 @@ async function main() {
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.APDocumentPoster, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.ShareholderCapitalOperator, ["org.capital_fulfillment"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalCloseReviewer, ["close.reviewer"]);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchInventoryViewer, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityInventoryViewer, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchInventoryOperator, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityInventoryOperator, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchFixedAssetViewer, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityFixedAssetViewer, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchFixedAssetOperator, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityFixedAssetOperator, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchOperator, ["gl.readonly"]);
 
   assertRoleHas(permissionCodesByRole, "SystemAdmin", "onboarding.company.setup");
@@ -264,6 +280,84 @@ async function main() {
   assertRoleLacks(permissionCodesByRole, "GroupReportingController", "gl.journal.post");
   assertRoleLacks(permissionCodesByRole, "GroupReportingController", "payments.batch.create");
 
+  assertRoleHas(permissionCodesByRole, "BranchInventoryViewer", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryViewer", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryViewer", "item.card.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryViewer", "inventory.read");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "item.card.upsert");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "inventory.upsert");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "gl.account.upsert");
+
+  assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "item.card.read");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "inventory.read");
+  assertRoleLacks(permissionCodesByRole, "EntityInventoryViewer", "item.card.upsert");
+  assertRoleLacks(permissionCodesByRole, "EntityInventoryViewer", "inventory.upsert");
+
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "item.card.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "item.card.upsert");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.upsert");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryOperator", "gl.account.upsert");
+
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "item.card.read");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "item.card.upsert");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.read");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.upsert");
+  assertRoleLacks(permissionCodesByRole, "EntityInventoryOperator", "gl.account.upsert");
+
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetViewer", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetViewer", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetViewer", "fixed_assets.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetViewer", "fixed_assets.settings.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetViewer", "fixed_assets.custodian.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetViewer", "fixed_assets.report.read");
+  assertRoleLacks(permissionCodesByRole, "BranchFixedAssetViewer", "fixed_assets.upsert");
+  assertRoleLacks(permissionCodesByRole, "BranchFixedAssetViewer", "fixed_assets.post");
+  assertRoleLacks(permissionCodesByRole, "BranchFixedAssetViewer", "fixed_assets.settings.upsert");
+
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetViewer", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetViewer", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetViewer", "fixed_assets.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetViewer", "fixed_assets.settings.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetViewer", "fixed_assets.custodian.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetViewer", "fixed_assets.report.read");
+  assertRoleLacks(permissionCodesByRole, "EntityFixedAssetViewer", "fixed_assets.upsert");
+  assertRoleLacks(permissionCodesByRole, "EntityFixedAssetViewer", "fixed_assets.depreciation.run");
+
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetOperator", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetOperator", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetOperator", "fixed_assets.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetOperator", "fixed_assets.upsert");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetOperator", "fixed_assets.settings.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetOperator", "fixed_assets.custodian.read");
+  assertRoleHas(permissionCodesByRole, "BranchFixedAssetOperator", "fixed_assets.report.read");
+  assertRoleLacks(permissionCodesByRole, "BranchFixedAssetOperator", "fixed_assets.post");
+  assertRoleLacks(permissionCodesByRole, "BranchFixedAssetOperator", "fixed_assets.dispose");
+  assertRoleLacks(permissionCodesByRole, "BranchFixedAssetOperator", "fixed_assets.settings.upsert");
+
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "org.fiscal_period.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.upsert");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.post");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.transfer");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.dispose");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.settings.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.settings.upsert");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.custodian.read");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.custodian.write");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.depreciation.run");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.depreciation.reverse");
+  assertRoleHas(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.report.read");
+  assertRoleLacks(permissionCodesByRole, "EntityFixedAssetOperator", "fixed_assets.account_override");
+
   assertRoleHas(permissionCodesByRole, "AuditorReadOnly", "security.role.read");
   assertRoleHas(permissionCodesByRole, "AuditorReadOnly", "workflow.definition.read");
   assertRoleHas(permissionCodesByRole, "AuditorReadOnly", "consolidation.report.summary.read");
@@ -279,6 +373,11 @@ async function main() {
   assertRoleLacks(permissionCodesByRole, "BranchOperator", "ouclose.prepare");
   assertRoleLacks(permissionCodesByRole, "BranchOperator", "workflow.definition.read");
   assertRoleLacks(permissionCodesByRole, "BranchOperator", "cari.request.review");
+  assertRoleLacks(permissionCodesByRole, "BranchOperator", "fixed_assets.read");
+  assertRoleLacks(permissionCodesByRole, "BranchOperator", "fixed_assets.upsert");
+  assertRoleLacks(permissionCodesByRole, "BranchOperator", "fixed_assets.settings.read");
+  assertRoleLacks(permissionCodesByRole, "BranchOperator", "fixed_assets.custodian.read");
+  assertRoleLacks(permissionCodesByRole, "BranchOperator", "fixed_assets.report.read");
 
   console.log("test-security-pr4a-duty-boundary-roles passed");
 }

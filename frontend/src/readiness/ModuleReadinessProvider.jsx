@@ -80,8 +80,37 @@ function mergeScopedReadinessSnapshot(previous, next) {
   };
 }
 
+function buildRequestedReadinessScopeOptions({ global = false, legalEntityId, tenantId }) {
+  if (global) {
+    if (!tenantId) {
+      return null;
+    }
+    return {
+      scope: {
+        scopeType: "TENANT",
+        scopeId: tenantId,
+      },
+    };
+  }
+
+  if (!legalEntityId) {
+    return null;
+  }
+
+  return {
+    scope: {
+      scopeType: "LEGAL_ENTITY",
+      scopeId: legalEntityId,
+    },
+  };
+}
+
+/**
+ * Loads the shared module-readiness snapshot while avoiding scoped fetches the
+ * caller cannot read for the current legal-entity or tenant target.
+ */
 export default function ModuleReadinessProvider({ children }) {
-  const { isAuthed } = useAuth();
+  const { getPermissionAccess, isAuthed, user } = useAuth();
   const { workingContext } = useWorkingContext();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -101,6 +130,22 @@ export default function ModuleReadinessProvider({ children }) {
         parsePositiveInt(options?.legalEntityId) ||
         (!global ? parsePositiveInt(workingContext?.legalEntityId) : null);
       if (!global && !legalEntityId) {
+        setLoading(false);
+        setError("");
+        return null;
+      }
+      const tenantId = parsePositiveInt(user?.tenant_id);
+      const requestedScopeOptions = buildRequestedReadinessScopeOptions({
+        global,
+        legalEntityId,
+        tenantId,
+      });
+      // Module readiness is enforced at tenant scope for global fetches and at
+      // legal-entity scope for focused reads, so skip requests that would 403.
+      if (
+        !requestedScopeOptions ||
+        !getPermissionAccess("org.tree.read", requestedScopeOptions).allowed
+      ) {
         setLoading(false);
         setError("");
         return null;
@@ -128,7 +173,7 @@ export default function ModuleReadinessProvider({ children }) {
         setLoading(false);
       }
     },
-    [isAuthed, workingContext?.legalEntityId]
+    [getPermissionAccess, isAuthed, user?.tenant_id, workingContext?.legalEntityId]
   );
 
   const refreshLegalEntity = useCallback(

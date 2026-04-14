@@ -1,5 +1,5 @@
 import express from "express";
-import { asyncHandler, parsePositiveInt, resolveTenantId } from "./_utils.js";
+import { asyncHandler, badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
 import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
 import inventoryTransferEvidenceRoutes from "./inventory.transfer.evidence.routes.js";
 import {
@@ -31,6 +31,14 @@ function resolveLegalEntityScopeFromQuery(req) {
   return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
 }
 
+function resolveInventoryReadScopeFromQuery(req) {
+  const operatingUnitId = parsePositiveInt(req.query?.operatingUnitId);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  return resolveLegalEntityScopeFromQuery(req);
+}
+
 function resolveLegalEntityScopeFromBody(req) {
   const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
   return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
@@ -50,12 +58,43 @@ async function resolveInventoryTransferScopeFromParam(req, tenantId) {
   return resolveInventoryTransferScope(transferId, normalizedTenantId);
 }
 
+function assertInventoryTransferReadAccess(req, row) {
+  const requestedOperatingUnitId = parsePositiveInt(req.query?.operatingUnitId);
+  const transferLegalEntityId = parsePositiveInt(row?.legalEntityId ?? row?.legal_entity_id);
+  if (requestedOperatingUnitId) {
+    const sourceOperatingUnitId = parsePositiveInt(
+      row?.sourceOperatingUnitId ?? row?.source_operating_unit_id
+    );
+    const targetOperatingUnitId = parsePositiveInt(
+      row?.targetOperatingUnitId ?? row?.target_operating_unit_id
+    );
+    if (
+      sourceOperatingUnitId !== requestedOperatingUnitId &&
+      targetOperatingUnitId !== requestedOperatingUnitId
+    ) {
+      throw badRequest("operatingUnitId must match the inventory transfer scope");
+    }
+    assertScopeAccess(
+      req,
+      "operating_unit",
+      requestedOperatingUnitId,
+      "inventory transfer operating unit"
+    );
+    return;
+  }
+  const requestedLegalEntityId = parsePositiveInt(req.query?.legalEntityId);
+  if (requestedLegalEntityId && requestedLegalEntityId !== transferLegalEntityId) {
+    throw badRequest("legalEntityId must match the inventory transfer legal entity");
+  }
+  assertScopeAccess(req, "legal_entity", transferLegalEntityId, "inventory transfer legal entity");
+}
+
 router.use("/transfers/:transferId/evidence", inventoryTransferEvidenceRoutes);
 
 router.get(
   "/transfers",
   requirePermission("inventory.read", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+    resolveScope: async (req) => resolveInventoryReadScopeFromQuery(req),
   }),
   asyncHandler(async (req, res) => {
     const filters = parseInventoryTransferListFilters(req);
@@ -74,6 +113,7 @@ router.get(
   "/transfers/:transferId",
   requirePermission("inventory.read", {
     resolveScope: async (req, tenantId) =>
+      resolveInventoryReadScopeFromQuery(req) ||
       (await resolveInventoryTransferScopeFromParam(req, tenantId)) ||
       resolveLegalEntityScopeFromQuery(req),
   }),
@@ -84,7 +124,7 @@ router.get(
       tenantId,
       transferId,
     });
-    assertScopeAccess(req, "legal_entity", row.legalEntityId, "inventory transfer legal entity");
+    assertInventoryTransferReadAccess(req, row);
     return res.json({
       tenantId,
       row,

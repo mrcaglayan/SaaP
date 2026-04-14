@@ -38,6 +38,29 @@ const AMOUNT_SCALE = 6;
 const BALANCE_EPSILON = 0.000001;
 const CROSS_CONTEXT_TRANSFER_WORKFLOW_MESSAGE =
   "Cross-context stock movement must use inventory transfer workflow";
+const INVENTORY_RECEIPT_POLICY_ALLOW = "ALLOW_INVOICE_BEFORE_RECEIPT";
+const INVENTORY_RECEIPT_POLICY_REQUIRE = "REQUIRE_RECEIPT_BEFORE_INVOICE";
+
+async function assertInventoryOperatingUnitFilter({
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  fieldName = "operatingUnitId",
+}) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (!normalizedOperatingUnitId) {
+    return null;
+  }
+  const operatingUnit = await assertOperatingUnitBelongsToTenant(
+    tenantId,
+    normalizedOperatingUnitId,
+    fieldName
+  );
+  if (legalEntityId && parsePositiveInt(operatingUnit?.legal_entity_id) !== legalEntityId) {
+    throw badRequest(`${fieldName} must belong to legalEntityId`);
+  }
+  return normalizedOperatingUnitId;
+}
 
 function toDecimalNumber(value) {
   if (value === null || value === undefined) {
@@ -151,6 +174,8 @@ function mapWarehouseRow(row) {
     code: row.code || null,
     name: row.name || null,
     status: row.status || null,
+    inventoryReceiptPolicy:
+      row.inventory_receipt_policy || "ALLOW_INVOICE_BEFORE_RECEIPT",
     notes: row.notes || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -1206,11 +1231,16 @@ export async function resolveIssueValuationPlanForWarehouse({
   }
 }
 
+/**
+ * Ensure stock-affecting CARI document lines are ready for posting under strict rules.
+ * Enforces stock availability checks and optional warehouse-level receipt policy.
+ */
 export async function assertStrictStockDocumentPostingReadiness({
   tenantId,
   legalEntityId,
   documentOperatingUnitId = null,
   documentLines,
+  documentDirection = null,
   fieldCollectionLabel = "storedLines",
   ownerLabel = "document",
   runQuery = query,
@@ -1256,6 +1286,7 @@ export async function assertStrictStockDocumentPostingReadiness({
   const warehouseCache = new Map();
   const itemCardCache = new Map();
   const issueGroups = new Map();
+  const policyErrors = [];
 
   for (const stockLine of stockLines) {
     if (!stockLine.warehouseId) {
@@ -1275,6 +1306,29 @@ export async function assertStrictStockDocumentPostingReadiness({
         runQuery,
       });
       warehouseCache.set(stockLine.warehouseId, warehouseRow);
+    }
+
+    if (
+      normalizeUpperText(documentDirection) === "AP" &&
+      stockLine.stockImpactMode === "RECEIPT_PENDING" &&
+      String(warehouseRow?.inventory_receipt_policy || INVENTORY_RECEIPT_POLICY_ALLOW)
+        .trim()
+        .toUpperCase() === INVENTORY_RECEIPT_POLICY_REQUIRE
+    ) {
+      const warehouseLabel =
+        warehouseRow?.code && warehouseRow?.name
+          ? `${warehouseRow.code} - ${warehouseRow.name}`
+          : warehouseRow?.code || warehouseRow?.name || `Warehouse #${stockLine.warehouseId}`;
+      policyErrors.push({
+        lineNo: stockLine.lineNo,
+        field: `${stockLine.fieldPrefix}.warehouseId`,
+        stockImpactMode: stockLine.stockImpactMode,
+        warehouseId: stockLine.warehouseId,
+        warehouseCode: warehouseRow?.code || null,
+        warehouseName: warehouseRow?.name || null,
+        reason: "RECEIPT_REQUIRED",
+        message: `${stockLine.fieldPrefix}.warehouseId: Inventory receipt is required before posting for ${warehouseLabel}.`,
+      });
     }
 
     if (stockLine.stockImpactMode !== "ISSUE_PENDING") {
@@ -1300,6 +1354,16 @@ export async function assertStrictStockDocumentPostingReadiness({
       });
     }
     issueGroups.get(groupKey).lines.push(stockLine);
+  }
+
+  if (policyErrors.length > 0) {
+    const err = badRequest(policyErrors[0].message);
+    err.code = "CARI_DOCUMENT_POST_RECEIPT_REQUIRED";
+    err.details = {
+      reason: "RECEIPT_REQUIRED",
+      lineErrors: policyErrors,
+    };
+    throw err;
   }
 
   if (issueGroups.size === 0) {
@@ -2636,6 +2700,11 @@ export async function createInventoryWarehouse({
     }
   }
 
+  const inventoryReceiptPolicy = normalizeUpperText(
+    payload?.inventoryReceiptPolicy,
+    80
+  );
+
   try {
     const insertResult = await runQuery(
       `INSERT INTO inventory_warehouses (
@@ -2646,8 +2715,9 @@ export async function createInventoryWarehouse({
           code,
           name,
           status,
+          inventory_receipt_policy,
           notes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         legalEntityId,
@@ -2656,6 +2726,7 @@ export async function createInventoryWarehouse({
         normalizeText(payload.code, 80, { required: true }).toUpperCase(),
         normalizeText(payload.name, 200, { required: true }),
         payload.status || "ACTIVE",
+        inventoryReceiptPolicy || "ALLOW_INVOICE_BEFORE_RECEIPT",
         normalizeText(payload.notes, 255),
       ]
     );
@@ -2674,6 +2745,89 @@ export async function createInventoryWarehouse({
   }
 }
 
+/**
+ * Create or update an inventory warehouse definition.
+ */
+export async function upsertInventoryWarehouse({
+  payload,
+  runQuery = query,
+}) {
+  const warehouseId = parsePositiveInt(payload?.id);
+  if (!warehouseId) {
+    return createInventoryWarehouse({ payload, runQuery });
+  }
+
+  const tenantId = parsePositiveInt(payload?.tenantId);
+  const legalEntityId = parsePositiveInt(payload?.legalEntityId);
+  if (!tenantId || !legalEntityId) {
+    throw badRequest("tenantId and legalEntityId are required");
+  }
+  await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId", {
+    runQuery,
+  });
+
+  const existingRow = await fetchWarehouseById({
+    tenantId,
+    legalEntityId,
+    warehouseId,
+    runQuery,
+  });
+  if (!existingRow) {
+    throw badRequest("Warehouse not found");
+  }
+
+  const nextCode =
+    normalizeText(payload?.code, 80) ||
+    normalizeText(existingRow.code, 80, { required: true });
+  const nextName =
+    normalizeText(payload?.name, 200) ||
+    normalizeText(existingRow.name, 200, { required: true });
+  const nextStatus =
+    normalizeUpperText(payload?.status, 50) || normalizeUpperText(existingRow.status, 50);
+  const nextInventoryReceiptPolicy =
+    normalizeUpperText(payload?.inventoryReceiptPolicy, 80) ||
+    normalizeUpperText(existingRow.inventory_receipt_policy, 80) ||
+    INVENTORY_RECEIPT_POLICY_ALLOW;
+  const nextNotes =
+    payload?.notes === undefined
+      ? normalizeText(existingRow.notes, 255)
+      : normalizeText(payload?.notes, 255);
+
+  await runQuery(
+    `UPDATE inventory_warehouses
+        SET code = ?,
+            name = ?,
+            status = ?,
+            inventory_receipt_policy = ?,
+            notes = ?,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+        AND id = ?`,
+    [
+      nextCode.toUpperCase(),
+      nextName,
+      nextStatus || "ACTIVE",
+      nextInventoryReceiptPolicy,
+      nextNotes,
+      tenantId,
+      legalEntityId,
+      warehouseId,
+    ]
+  );
+
+  const row = await fetchWarehouseById({
+    tenantId,
+    legalEntityId,
+    warehouseId,
+    runQuery,
+  });
+  return mapWarehouseRow(row);
+}
+
+/**
+ * List inventory stock-link rows for the requested legal entity or operating unit.
+ */
 export async function listPendingInventoryStockLinks({
   tenantId,
   filters,
@@ -2687,6 +2841,15 @@ export async function listPendingInventoryStockLinks({
   if (legalEntityId) {
     whereSql += " AND sl.legal_entity_id = ?";
     params.push(legalEntityId);
+  }
+  const operatingUnitId = await assertInventoryOperatingUnitFilter({
+    tenantId,
+    legalEntityId,
+    operatingUnitId: filters?.operatingUnitId,
+  });
+  if (operatingUnitId) {
+    whereSql += " AND d.operating_unit_id = ?";
+    params.push(operatingUnitId);
   }
   const queueScope =
     normalizeUpperText(filters?.queueScope) ||
@@ -2795,6 +2958,9 @@ export async function listPendingInventoryStockLinks({
   };
 }
 
+/**
+ * Summarize stock-link and transfer queue health for the requested inventory scope.
+ */
 export async function getInventoryWorkQueueSummary({
   tenantId,
   filters = {},
@@ -2806,12 +2972,21 @@ export async function getInventoryWorkQueueSummary({
   }
 
   const legalEntityId = parsePositiveInt(filters?.legalEntityId);
+  const operatingUnitId = await assertInventoryOperatingUnitFilter({
+    tenantId: normalizedTenantId,
+    legalEntityId,
+    operatingUnitId: filters?.operatingUnitId,
+  });
 
   const stockParams = [normalizedTenantId];
   let stockWhereSql = "WHERE sl.tenant_id = ?";
   if (legalEntityId) {
     stockWhereSql += " AND sl.legal_entity_id = ?";
     stockParams.push(legalEntityId);
+  }
+  if (operatingUnitId) {
+    stockWhereSql += " AND d.operating_unit_id = ?";
+    stockParams.push(operatingUnitId);
   }
 
   const stockSummary = await runQuery(
@@ -2847,6 +3022,12 @@ export async function getInventoryWorkQueueSummary({
   if (legalEntityId) {
     transferWhereSql += " AND t.legal_entity_id = ?";
     transferParams.push(legalEntityId);
+  }
+  if (operatingUnitId) {
+    // Branch dashboards need transfers where the selected OU is either shipping or receiving.
+    transferWhereSql +=
+      " AND (t.source_operating_unit_id = ? OR t.target_operating_unit_id = ?)";
+    transferParams.push(operatingUnitId, operatingUnitId);
   }
 
   const transferSummary = await runQuery(
@@ -2975,6 +3156,7 @@ export async function getInventoryWorkQueueSummary({
     asOfDate: asOfDateString,
     filters: {
       legalEntityId: legalEntityId || null,
+      operatingUnitId: operatingUnitId || null,
     },
     stockLinks: {
       ...stockLinkSummary,
@@ -2995,6 +3177,9 @@ export async function getInventoryWorkQueueSummary({
   };
 }
 
+/**
+ * List inventory movements for the requested legal entity or warehouse OU scope.
+ */
 export async function listInventoryMovements({
   tenantId,
   filters,
@@ -3008,6 +3193,15 @@ export async function listInventoryMovements({
   if (legalEntityId) {
     whereSql += " AND m.legal_entity_id = ?";
     params.push(legalEntityId);
+  }
+  const operatingUnitId = await assertInventoryOperatingUnitFilter({
+    tenantId,
+    legalEntityId,
+    operatingUnitId: filters?.operatingUnitId,
+  });
+  if (operatingUnitId) {
+    whereSql += " AND w.operating_unit_id = ?";
+    params.push(operatingUnitId);
   }
   const warehouseId = parsePositiveInt(filters?.warehouseId);
   if (warehouseId) {
@@ -3082,6 +3276,9 @@ export async function listInventoryMovements({
   };
 }
 
+/**
+ * List inventory cost layers for the requested legal entity or warehouse OU scope.
+ */
 export async function listInventoryCostLayers({
   tenantId,
   filters,
@@ -3095,6 +3292,15 @@ export async function listInventoryCostLayers({
   if (legalEntityId) {
     whereSql += " AND cl.legal_entity_id = ?";
     params.push(legalEntityId);
+  }
+  const operatingUnitId = await assertInventoryOperatingUnitFilter({
+    tenantId,
+    legalEntityId,
+    operatingUnitId: filters?.operatingUnitId,
+  });
+  if (operatingUnitId) {
+    whereSql += " AND w.operating_unit_id = ?";
+    params.push(operatingUnitId);
   }
   const warehouseId = parsePositiveInt(filters?.warehouseId);
   if (warehouseId) {

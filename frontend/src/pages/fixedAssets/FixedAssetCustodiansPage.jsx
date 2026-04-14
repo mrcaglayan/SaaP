@@ -91,9 +91,12 @@ export default function FixedAssetCustodiansPage() {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
   const {
+    workingContext,
     legalEntities: workingContextLegalEntities,
     loading: workingContextLoading,
   } = useWorkingContext();
+  const workingLegalEntityId = toPositiveInt(workingContext?.legalEntityId);
+  const workingOperatingUnitId = toPositiveInt(workingContext?.operatingUnitId);
 
   const canRead = hasPermission("fixed_assets.custodian.read");
   const canWrite = hasPermission("fixed_assets.custodian.write");
@@ -161,6 +164,13 @@ export default function FixedAssetCustodiansPage() {
   const [filterLeId, setFilterLeId] = useState("");
   const [filterStatus, setFilterStatus] = useState("ACTIVE");
 
+  useEffect(() => {
+    if (!workingLegalEntityId) {
+      return;
+    }
+    setFilterLeId((currentValue) => currentValue || String(workingLegalEntityId));
+  }, [workingLegalEntityId]);
+
   // ── List state ──────────────────────────────────────────────────
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -172,6 +182,29 @@ export default function FixedAssetCustodiansPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [formMsg, setFormMsg] = useState("");
+
+  useEffect(() => {
+    if (selectedRow?.id) {
+      return;
+    }
+    setForm((currentForm) => {
+      const nextLegalEntityId =
+        currentForm.legalEntityId || (workingLegalEntityId ? String(workingLegalEntityId) : "");
+      const nextOperatingUnitId =
+        currentForm.operatingUnitId || (workingOperatingUnitId ? String(workingOperatingUnitId) : "");
+      if (
+        nextLegalEntityId === currentForm.legalEntityId &&
+        nextOperatingUnitId === currentForm.operatingUnitId
+      ) {
+        return currentForm;
+      }
+      return {
+        ...currentForm,
+        legalEntityId: nextLegalEntityId,
+        operatingUnitId: nextOperatingUnitId,
+      };
+    });
+  }, [selectedRow?.id, workingLegalEntityId, workingOperatingUnitId]);
 
   // ── Load custodians ─────────────────────────────────────────────
   useEffect(() => {
@@ -187,6 +220,7 @@ export default function FixedAssetCustodiansPage() {
       try {
         const res = await listFixedAssetCustodians({
           legalEntityId: filterLeId || undefined,
+          operatingUnitId: workingOperatingUnitId || undefined,
           status: filterStatus || undefined,
         });
         if (active) setRows(Array.isArray(res?.rows) ? res.rows : []);
@@ -200,12 +234,16 @@ export default function FixedAssetCustodiansPage() {
       }
     })();
     return () => { active = false; };
-  }, [canRead, filterLeId, filterStatus, l]);
+  }, [canRead, filterLeId, filterStatus, workingOperatingUnitId, l]);
 
   // ── Handlers ────────────────────────────────────────────────────
   function resetForm() {
     setSelectedRow(null);
-    setForm({ ...createCustodianForm(), legalEntityId: filterLeId });
+    setForm({
+      ...createCustodianForm(),
+      legalEntityId: filterLeId,
+      operatingUnitId: workingOperatingUnitId ? String(workingOperatingUnitId) : "",
+    });
     setFormError("");
     setFormMsg("");
   }
@@ -235,6 +273,7 @@ export default function FixedAssetCustodiansPage() {
       if (res) { setSelectedRow(res); setForm(mapCustodianToForm(res)); }
       const refreshed = await listFixedAssetCustodians({
         legalEntityId: filterLeId || undefined,
+        operatingUnitId: workingOperatingUnitId || undefined,
         status: filterStatus || undefined,
       });
       setRows(Array.isArray(refreshed?.rows) ? refreshed.rows : []);

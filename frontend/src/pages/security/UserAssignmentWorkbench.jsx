@@ -80,6 +80,23 @@ function formatDateTime(value) {
   return new Date(timestamp).toLocaleString();
 }
 
+const RBAC_SCOPE_TYPES = Object.freeze([
+  "TENANT",
+  "GROUP",
+  "COUNTRY",
+  "LEGAL_ENTITY",
+  "OPERATING_UNIT",
+]);
+
+function createEmptyRoleRowDraft() {
+  return {
+    scopeType: "LEGAL_ENTITY",
+    scopeId: "",
+    effect: "ALLOW",
+    effectiveFrom: "",
+    effectiveTo: "",
+  };
+}
 
 function getInviteExpiryLabel(l, row) {
   const normalizedStatus = String(row?.status || "").trim().toUpperCase();
@@ -195,15 +212,22 @@ function getPackageSourcePreviewState(l, entry, scopeType) {
 function WorkbenchBundleCard({
   actingRowId,
   bundle,
+  editingRoleRowId,
   expanded,
   l,
-  onOpenUserEditor,
-  onRevokeBundle,
+  lookups,
+  onCancelRoleRowEdit,
+  onRemoveBundleRoleRow,
+  onSaveBundleRoleRow,
   onSelectBundle,
+  onStartRoleRowEdit,
+  onUpdateRoleRowDraft,
+  roleRowDraft,
+  roleRowScopeOptions,
   saving,
+  tenantScopeId,
 }) {
   const statusMeta = getBundleStatusMeta(bundle.status);
-  const revoking = saving && actingRowId === bundle.id;
   return (
     <button
       type="button"
@@ -240,7 +264,7 @@ function WorkbenchBundleCard({
         </div>
       </div>
       {expanded ? (
-        <div className="mt-4 grid gap-4 border-t border-sky-200 pt-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="mt-4 border-t border-sky-200 pt-4">
           <div>
             <p className="text-sm leading-6 text-slate-600">
               {bundle.presetSummary ||
@@ -261,34 +285,311 @@ function WorkbenchBundleCard({
                 ))}
               </div>
             ) : null}
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              {l("Actions", "Aksiyonlar")}
-            </div>
-            <div className="mt-3 space-y-2">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenUserEditor(bundle.userId);
-                }}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700"
-              >
-                {l("Open user editor", "Kullanici editorunu ac")}
-              </button>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onRevokeBundle(bundle);
-                }}
-                disabled={revoking}
-                className="w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {revoking ? l("Revoking...", "Geri aliniyor...") : l("Revoke bundle", "Paketi geri al")}
-              </button>
-            </div>
+            {Array.isArray(bundle.rows) && bundle.rows.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-sky-200 bg-white/80 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {l("Underlying role rows", "Alttaki rol satirlari")}
+                  </div>
+                  <Pill
+                    label={l("{{count}} rows", "{{count}} satir", {
+                      count: bundle.rows.length,
+                    })}
+                    tone="slate"
+                  />
+                </div>
+                <div className="mt-3 space-y-3">
+                  {bundle.rows.map((assignmentRow) => {
+                    const rowStatusMeta = getBundleStatusMeta(assignmentRow.status);
+                    const isEditing =
+                      String(editingRoleRowId || "") ===
+                      String(assignmentRow.assignmentId || "");
+                    const rowBusy =
+                      saving &&
+                      actingRowId === `bundle-role-${assignmentRow.assignmentId}`;
+                    const followsRecommendation =
+                      !Array.isArray(assignmentRow.recommendedScopes) ||
+                      assignmentRow.recommendedScopes.length === 0 ||
+                      assignmentRow.recommendedScopes.includes(
+                        assignmentRow.scopeType
+                      );
+                    return (
+                      <div
+                        key={`bundle-role-row-${assignmentRow.assignmentId}`}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-sm font-semibold text-slate-950">
+                                {assignmentRow.roleLabel || assignmentRow.roleCode}
+                              </div>
+                              <Pill
+                                label={rowStatusMeta.label}
+                                tone={rowStatusMeta.tone}
+                              />
+                              <Pill label={assignmentRow.scopeType} tone="blue" />
+                              {assignmentRow.effect !== "ALLOW" ? (
+                                <Pill label={assignmentRow.effect} tone="rose" />
+                              ) : null}
+                              {!followsRecommendation ? (
+                                <Pill
+                                  label={l(
+                                    "Outside recommendation",
+                                    "Oneri disi"
+                                  )}
+                                  tone="amber"
+                                />
+                              ) : null}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-600">
+                              {assignmentRow.scopeLabel}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {l(
+                                "Effective {{from}} to {{to}}",
+                                "{{from}} - {{to}} yururluk",
+                                {
+                                  from: assignmentRow.effectiveFrom || "-",
+                                  to: assignmentRow.effectiveTo || "-",
+                                }
+                              )}
+                            </div>
+                            {Array.isArray(assignmentRow.recommendedScopes) &&
+                            assignmentRow.recommendedScopes.length > 0 ? (
+                              <div className="mt-1 text-xs text-slate-500">
+                                {l(
+                                  "Recommended scopes: {{scopes}}",
+                                  "Onerilen kapsamlar: {{scopes}}",
+                                  {
+                                    scopes:
+                                      assignmentRow.recommendedScopes.join(", "),
+                                  }
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (isEditing) {
+                                  onCancelRoleRowEdit();
+                                  return;
+                                }
+                                onStartRoleRowEdit(assignmentRow);
+                              }}
+                              disabled={rowBusy}
+                              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                            >
+                              {isEditing
+                                ? l("Cancel", "Iptal")
+                                : l("Edit scope", "Kapsami duzenle")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onRemoveBundleRoleRow(assignmentRow);
+                              }}
+                              disabled={rowBusy}
+                              className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-60"
+                            >
+                              {rowBusy
+                                ? l("Working...", "Isleniyor...")
+                                : l("Remove role", "Rolu kaldir")}
+                            </button>
+                          </div>
+                        </div>
+                        {isEditing ? (
+                          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                              <div className="space-y-1">
+                                <label className="text-xs font-semibold text-slate-600">
+                                  {l("Scope type", "Kapsam tipi")}
+                                </label>
+                                <select
+                                  value={roleRowDraft.scopeType}
+                                  onChange={(event) =>
+                                    onUpdateRoleRowDraft(
+                                      "scopeType",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                >
+                                  {RBAC_SCOPE_TYPES.map((scopeType) => (
+                                    <option
+                                      key={`bundle-role-scope-type-${scopeType}`}
+                                      value={scopeType}
+                                    >
+                                      {scopeType}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1 md:col-span-1 xl:col-span-2">
+                                <label className="text-xs font-semibold text-slate-600">
+                                  {l("Target", "Hedef")}
+                                </label>
+                                <select
+                                  value={roleRowDraft.scopeId}
+                                  onChange={(event) =>
+                                    onUpdateRoleRowDraft(
+                                      "scopeId",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                >
+                                  <option value="">
+                                    {l("Select...", "Secin...")}
+                                  </option>
+                                  {roleRowScopeOptions.map((option) => (
+                                    <option
+                                      key={`bundle-role-scope-${option.id}`}
+                                      value={String(option.id)}
+                                    >
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs font-semibold text-slate-600">
+                                  {l("Effect", "Etki")}
+                                </label>
+                                <select
+                                  value={roleRowDraft.effect}
+                                  onChange={(event) =>
+                                    onUpdateRoleRowDraft(
+                                      "effect",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                >
+                                  <option value="ALLOW">ALLOW</option>
+                                  <option value="DENY">DENY</option>
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs font-semibold text-slate-600">
+                                  {l("Effective from", "Baslangic tarihi")}
+                                </label>
+                                <input
+                                  type="date"
+                                  value={roleRowDraft.effectiveFrom}
+                                  onChange={(event) =>
+                                    onUpdateRoleRowDraft(
+                                      "effectiveFrom",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs font-semibold text-slate-600">
+                                  {l("Effective to", "Bitis tarihi")}
+                                </label>
+                                <input
+                                  type="date"
+                                  value={roleRowDraft.effectiveTo}
+                                  onChange={(event) =>
+                                    onUpdateRoleRowDraft(
+                                      "effectiveTo",
+                                      event.target.value
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                />
+                              </div>
+                            </div>
+                            {bundle.isPresetBundle ? (
+                              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                {l(
+                                  "Changing only one underlying role row can turn this preset bundle into a custom bundle.",
+                                  "Yalnizca tek bir alttaki rol satirini degistirmek bu preset paketini ozel pakete cevirebilir."
+                                )}
+                              </div>
+                            ) : null}
+                            {!Array.isArray(assignmentRow.recommendedScopes) ||
+                            assignmentRow.recommendedScopes.length === 0 ||
+                            assignmentRow.recommendedScopes.includes(
+                              roleRowDraft.scopeType
+                            ) ? null : (
+                              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                {l(
+                                  "This role is usually assigned at {{scopes}} scope.",
+                                  "Bu rol genelde {{scopes}} kapsaminda atanir.",
+                                  {
+                                    scopes:
+                                      assignmentRow.recommendedScopes.join(", "),
+                                  }
+                                )}
+                              </div>
+                            )}
+                            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                              <div className="text-xs text-slate-500">
+                                {l(
+                                  "Current scope: {{scope}}",
+                                  "Mevcut kapsam: {{scope}}",
+                                  {
+                                    scope: buildScopeLabel(
+                                      roleRowDraft.scopeType,
+                                      roleRowDraft.scopeType === "TENANT"
+                                        ? Number(
+                                            tenantScopeId ||
+                                              roleRowDraft.scopeId ||
+                                              0
+                                          )
+                                        : Number(roleRowDraft.scopeId || 0),
+                                      lookups || {},
+                                      tenantScopeId || null
+                                    ),
+                                  }
+                                )}
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onCancelRoleRowEdit();
+                                  }}
+                                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+                                >
+                                  {l("Cancel", "Iptal")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onSaveBundleRoleRow(assignmentRow);
+                                  }}
+                                  disabled={
+                                    rowBusy ||
+                                    (!roleRowDraft.scopeId &&
+                                      roleRowDraft.scopeType !== "TENANT")
+                                  }
+                                  className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                                >
+                                  {rowBusy
+                                    ? l("Saving...", "Kaydediliyor...")
+                                    : l("Save role row", "Rol satirini kaydet")}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -313,7 +614,8 @@ export default function UserAssignmentWorkbench(props) {
     onAssignWorkflowPackage,
     onClearFilters,
     onInviteUser,
-    onOpenUserEditor,
+    onUpdateBundleRoleRow,
+    onRemoveBundleRoleRow,
     onSelectBundle,
     onSelectUser,
     onToggleBusinessRolePreviewPackage,
@@ -345,7 +647,6 @@ export default function UserAssignmentWorkbench(props) {
     saving,
     actingRowId,
     userFilters,
-    onRevokeBundle,
     workflowPackageAssignmentForm,
     workflowPackageAssignmentWriteAccess,
     workflowPackageCatalogEntries,
@@ -372,6 +673,8 @@ export default function UserAssignmentWorkbench(props) {
   const [scopeError, setScopeError] = useState("");
   const [scopeMessage, setScopeMessage] = useState("");
   const [draftScope, setDraftScope] = useState({ scopeType: "LEGAL_ENTITY", scopeId: "", effect: "ALLOW" });
+  const [editingRoleRowId, setEditingRoleRowId] = useState("");
+  const [roleRowDraft, setRoleRowDraft] = useState(createEmptyRoleRowDraft());
 
   useEffect(() => {
     if (!manageModalOpen || manageModalTab !== "scopes" || !selectedUser?.id) return;
@@ -422,6 +725,71 @@ export default function UserAssignmentWorkbench(props) {
     if (scopeType === "OPERATING_UNIT") return (l_.operatingUnits || []).map((r) => ({ id: Number(r.id), label: `${r.code} - ${r.name}` }));
     return [];
   }
+
+  useEffect(() => {
+    setEditingRoleRowId("");
+    setRoleRowDraft(createEmptyRoleRowDraft());
+  }, [manageModalOpen, selectedBundle?.id, selectedUser?.id]);
+
+  function startRoleRowEdit(roleRow) {
+    const scopeType = String(roleRow?.scopeType || "LEGAL_ENTITY").toUpperCase();
+    const scopeOptions = getScopeOptions(scopeType, lookups, tenantScopeId);
+    const currentScopeId = String(roleRow?.scopeId || "");
+    const nextScopeId =
+      scopeType === "TENANT"
+        ? String(tenantScopeId || roleRow?.scopeId || "")
+        : currentScopeId &&
+            scopeOptions.some((option) => String(option.id) === currentScopeId)
+          ? currentScopeId
+          : String(scopeOptions[0]?.id || currentScopeId || "");
+    setEditingRoleRowId(String(roleRow?.assignmentId || ""));
+    setRoleRowDraft({
+      scopeType,
+      scopeId: nextScopeId,
+      effect: String(roleRow?.effect || "ALLOW").toUpperCase(),
+      effectiveFrom: roleRow?.effectiveFrom || "",
+      effectiveTo: roleRow?.effectiveTo || "",
+    });
+  }
+
+  function cancelRoleRowEdit() {
+    setEditingRoleRowId("");
+    setRoleRowDraft(createEmptyRoleRowDraft());
+  }
+
+  function updateRoleRowDraft(field, value) {
+    setRoleRowDraft((prev) => {
+      if (field === "scopeType") {
+        const scopeType = String(value || "").toUpperCase();
+        const scopeOptions = getScopeOptions(scopeType, lookups, tenantScopeId);
+        return {
+          ...prev,
+          scopeType,
+          scopeId:
+            scopeType === "TENANT"
+              ? String(tenantScopeId || "")
+              : String(scopeOptions[0]?.id || ""),
+        };
+      }
+      return {
+        ...prev,
+        [field]: value,
+      };
+    });
+  }
+
+  async function handleSaveBundleRoleRow(roleRow) {
+    const didSave = await onUpdateBundleRoleRow?.(roleRow, roleRowDraft);
+    if (didSave) {
+      cancelRoleRowEdit();
+    }
+  }
+
+  const roleRowScopeOptions = getScopeOptions(
+    roleRowDraft.scopeType,
+    lookups,
+    tenantScopeId
+  );
 
   async function handleSaveScopes() {
     if (!selectedUser?.id) return;
@@ -775,12 +1143,20 @@ export default function UserAssignmentWorkbench(props) {
                             key={`modal-bundle-${bundle.id}`}
                             actingRowId={actingRowId}
                             bundle={bundle}
+                            editingRoleRowId={editingRoleRowId}
                             expanded={selectedBundle?.id === bundle.id}
                             l={l}
-                            onOpenUserEditor={onOpenUserEditor}
-                            onRevokeBundle={onRevokeBundle}
+                            lookups={lookups}
+                            onCancelRoleRowEdit={cancelRoleRowEdit}
+                            onRemoveBundleRoleRow={onRemoveBundleRoleRow}
+                            onSaveBundleRoleRow={handleSaveBundleRoleRow}
                             onSelectBundle={onSelectBundle}
+                            onStartRoleRowEdit={startRoleRowEdit}
+                            onUpdateRoleRowDraft={updateRoleRowDraft}
+                            roleRowDraft={roleRowDraft}
+                            roleRowScopeOptions={roleRowScopeOptions}
                             saving={saving}
+                            tenantScopeId={tenantScopeId}
                           />
                         ))
                       )}

@@ -1,6 +1,9 @@
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { query, withTransaction } from "../db.js";
-import { assertLegalEntityBelongsToTenant } from "../tenantGuards.js";
+import {
+  assertLegalEntityBelongsToTenant,
+  assertOperatingUnitBelongsToTenant,
+} from "../tenantGuards.js";
 import { getItemCardByIdForTenant } from "./item.card.service.js";
 import {
   buildIssueValuationPlan,
@@ -44,6 +47,27 @@ function conflict(message) {
 
 function noopScopeAccess() {
   return true;
+}
+
+async function assertInventoryTransferOperatingUnitFilter({
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  fieldName = "operatingUnitId",
+}) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (!normalizedOperatingUnitId) {
+    return null;
+  }
+  const operatingUnit = await assertOperatingUnitBelongsToTenant(
+    tenantId,
+    normalizedOperatingUnitId,
+    fieldName
+  );
+  if (legalEntityId && parsePositiveInt(operatingUnit?.legal_entity_id) !== legalEntityId) {
+    throw badRequest(`${fieldName} must belong to legalEntityId`);
+  }
+  return normalizedOperatingUnitId;
 }
 
 function toUpper(value) {
@@ -1498,6 +1522,9 @@ export async function resolveInventoryTransferScope(transferId, tenantId, runQue
     : null;
 }
 
+/**
+ * List inventory transfers for the requested legal entity or operating unit.
+ */
 export async function listInventoryTransfers({
   tenantId,
   filters,
@@ -1509,6 +1536,11 @@ export async function listInventoryTransfers({
   }
 
   const legalEntityId = parsePositiveInt(filters?.legalEntityId);
+  const operatingUnitId = await assertInventoryTransferOperatingUnitFilter({
+    tenantId: normalizedTenantId,
+    legalEntityId,
+    operatingUnitId: filters?.operatingUnitId,
+  });
   const status = normalizeTransferStatus(filters?.status);
   const sourceWarehouseId = parsePositiveInt(filters?.sourceWarehouseId);
   const targetWarehouseId = parsePositiveInt(filters?.targetWarehouseId);
@@ -1524,6 +1556,10 @@ export async function listInventoryTransfers({
   if (legalEntityId) {
     whereSql += " AND t.legal_entity_id = ?";
     params.push(legalEntityId);
+  }
+  if (operatingUnitId) {
+    whereSql += " AND (t.source_operating_unit_id = ? OR t.target_operating_unit_id = ?)";
+    params.push(operatingUnitId, operatingUnitId);
   }
   if (status) {
     whereSql += " AND t.status = ?";

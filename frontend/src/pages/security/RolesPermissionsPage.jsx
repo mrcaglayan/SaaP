@@ -49,6 +49,7 @@ function buildRoleSearchText(role, entry) {
   return [
     role?.code,
     role?.name,
+    ...(role?.permissionCodes || []),
     entry?.code,
     entry?.displayName,
     entry?.description,
@@ -307,8 +308,8 @@ export default function RolesPermissionsPage() {
                   value={roleSearchValue}
                   onChange={(event) => setRoleSearchValue(event.target.value)}
                   placeholder={l(
-                    "Search role, code, workflow family, or scope",
-                    "Rol, kod, workflow ailesi veya kapsam ara"
+                    "Search role, permission code, workflow family, or scope",
+                    "Rol, yetki kodu, workflow ailesi veya kapsam ara"
                   )}
                   className="w-full rounded-md border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900"
                 />

@@ -96,10 +96,14 @@ export function parseInventoryTransferIdParam(req) {
   return transferId;
 }
 
+/**
+ * Parse transfer-list filters, including optional OU scoping for branch reads.
+ */
 export function parseInventoryTransferListFilters(req) {
   return {
     tenantId: requireTenantId(req),
     legalEntityId: normalizeOptionalPositiveInt(req.query?.legalEntityId, "legalEntityId"),
+    operatingUnitId: normalizeOptionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId"),
     sourceWarehouseId: normalizeOptionalPositiveInt(
       req.query?.sourceWarehouseId,
       "sourceWarehouseId"

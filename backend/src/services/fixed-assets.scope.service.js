@@ -20,12 +20,17 @@ import { parsePositiveInt } from "../routes/_utils.js";
 /**
  * Resolve scope from query-string filters.
  * Prefers owner-OU when a single authoritative OU input is present;
+ * falls back to generic operating-unit query filters used by custodian pages;
  * otherwise falls back to legal-entity scope.
  */
 export function resolveLegalEntityScopeFromQuery(req) {
-  const ownerOuId = parsePositiveInt(req.query?.ownerOperatingUnitId);
-  if (ownerOuId) {
-    return { scopeType: "OPERATING_UNIT", scopeId: ownerOuId };
+  const ownerOperatingUnitId = parsePositiveInt(req.query?.ownerOperatingUnitId);
+  if (ownerOperatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: ownerOperatingUnitId };
+  }
+  const operatingUnitId = parsePositiveInt(req.query?.operatingUnitId);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
   }
   const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
   return legalEntityId
@@ -35,12 +40,17 @@ export function resolveLegalEntityScopeFromQuery(req) {
 
 /**
  * Resolve scope from request body.
- * Prefers owner-OU when present; otherwise falls back to legal-entity.
+ * Prefers owner-OU when present; falls back to generic operating-unit body
+ * filters used by custodian upserts; otherwise falls back to legal-entity.
  */
 export function resolveLegalEntityScopeFromBody(req) {
-  const ownerOuId = parsePositiveInt(req.body?.ownerOperatingUnitId);
-  if (ownerOuId) {
-    return { scopeType: "OPERATING_UNIT", scopeId: ownerOuId };
+  const ownerOperatingUnitId = parsePositiveInt(req.body?.ownerOperatingUnitId);
+  if (ownerOperatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: ownerOperatingUnitId };
+  }
+  const operatingUnitId = parsePositiveInt(req.body?.operatingUnitId);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
   }
   const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
   return legalEntityId

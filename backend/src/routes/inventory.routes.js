@@ -1,7 +1,8 @@
 import express from "express";
-import { asyncHandler, parsePositiveInt } from "./_utils.js";
+import { asyncHandler, badRequest, parsePositiveInt } from "./_utils.js";
 import { query } from "../db.js";
 import { requirePermission } from "../middleware/rbac.js";
+import { assertOperatingUnitBelongsToTenant } from "../tenantGuards.js";
 import {
   parseInventoryCostLayerListFilters,
   parseInventoryMovementCreateInput,
@@ -9,12 +10,12 @@ import {
   parseInventoryMovementReverseInput,
   parseInventoryStockLinkMaterializeInput,
   parseInventoryStockLinkListFilters,
-  parseInventoryWarehouseCreateInput,
+  parseInventoryWarehouseUpsertInput,
   parseInventoryWarehouseListFilters,
 } from "./inventory.validators.js";
 import {
   createInventoryMovementFromStockLink,
-  createInventoryWarehouse,
+  upsertInventoryWarehouse,
   getInventoryWorkQueueSummary,
   listInventoryCostLayers,
   listInventoryMovements,
@@ -31,9 +32,63 @@ function resolveLegalEntityScopeFromQuery(req) {
   return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
 }
 
+function resolveInventoryReadScopeFromQuery(req) {
+  const operatingUnitId = parsePositiveInt(req.query?.operatingUnitId);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  return resolveLegalEntityScopeFromQuery(req);
+}
+
 function resolveLegalEntityScopeFromBody(req) {
   const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
   return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+}
+
+function mapInventoryOwnershipToScope(row) {
+  const operatingUnitId = parsePositiveInt(row?.operating_unit_id);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  const legalEntityId = parsePositiveInt(row?.legal_entity_id);
+  return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+}
+
+async function resolveInventoryWarehouseWriteScopeFromBody(req, tenantId) {
+  const operatingUnitId = parsePositiveInt(req.body?.operatingUnitId);
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  if (operatingUnitId) {
+    const operatingUnit = await assertOperatingUnitBelongsToTenant(
+      tenantId,
+      operatingUnitId,
+      "operatingUnitId"
+    );
+    if (
+      legalEntityId &&
+      parsePositiveInt(operatingUnit?.legal_entity_id) !== legalEntityId
+    ) {
+      throw badRequest("operatingUnitId must belong to legalEntityId");
+    }
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+}
+
+async function resolveInventoryWarehouseScopeFromId(warehouseId, tenantId) {
+  const normalizedWarehouseId = parsePositiveInt(warehouseId);
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  if (!normalizedWarehouseId || !normalizedTenantId) {
+    return null;
+  }
+  const result = await query(
+    `SELECT legal_entity_id, operating_unit_id
+       FROM inventory_warehouses
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [normalizedTenantId, normalizedWarehouseId]
+  );
+  return mapInventoryOwnershipToScope(result.rows?.[0] || null);
 }
 
 async function resolveInventoryMovementScopeFromParam(req, tenantId) {
@@ -43,15 +98,28 @@ async function resolveInventoryMovementScopeFromParam(req, tenantId) {
     return null;
   }
   const result = await query(
-    `SELECT legal_entity_id
-       FROM inventory_movements
-      WHERE tenant_id = ?
-        AND id = ?
+    `SELECT m.legal_entity_id, w.operating_unit_id
+       FROM inventory_movements m
+       LEFT JOIN inventory_warehouses w
+         ON w.tenant_id = m.tenant_id
+        AND w.id = m.warehouse_id
+      WHERE m.tenant_id = ?
+        AND m.id = ?
       LIMIT 1`,
     [normalizedTenantId, movementId]
   );
-  const legalEntityId = parsePositiveInt(result.rows?.[0]?.legal_entity_id);
-  return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+  return mapInventoryOwnershipToScope(result.rows?.[0] || null);
+}
+
+async function resolveInventoryMovementScopeFromBody(req, tenantId) {
+  const warehouseId = parsePositiveInt(req.body?.warehouseId);
+  if (warehouseId) {
+    return (
+      (await resolveInventoryWarehouseScopeFromId(warehouseId, tenantId)) ||
+      resolveLegalEntityScopeFromBody(req)
+    );
+  }
+  return resolveLegalEntityScopeFromBody(req);
 }
 
 async function resolveInventoryStockLinkScopeFromParam(req, tenantId) {
@@ -61,21 +129,23 @@ async function resolveInventoryStockLinkScopeFromParam(req, tenantId) {
     return null;
   }
   const result = await query(
-    `SELECT legal_entity_id
-       FROM cari_document_line_stock_links
-      WHERE tenant_id = ?
-        AND id = ?
+    `SELECT sl.legal_entity_id, w.operating_unit_id
+       FROM cari_document_line_stock_links sl
+       LEFT JOIN inventory_warehouses w
+         ON w.tenant_id = sl.tenant_id
+        AND w.id = sl.warehouse_id
+      WHERE sl.tenant_id = ?
+        AND sl.id = ?
       LIMIT 1`,
     [normalizedTenantId, stockLinkId]
   );
-  const legalEntityId = parsePositiveInt(result.rows?.[0]?.legal_entity_id);
-  return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+  return mapInventoryOwnershipToScope(result.rows?.[0] || null);
 }
 
 router.get(
   "/warehouses",
   requirePermission("inventory.read", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+    resolveScope: async (req) => resolveInventoryReadScopeFromQuery(req),
   }),
   asyncHandler(async (req, res) => {
     const filters = parseInventoryWarehouseListFilters(req);
@@ -93,11 +163,12 @@ router.get(
 router.post(
   "/warehouses",
   requirePermission("inventory.upsert", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
+    resolveScope: async (req, tenantId) =>
+      resolveInventoryWarehouseWriteScopeFromBody(req, tenantId),
   }),
   asyncHandler(async (req, res) => {
-    const payload = parseInventoryWarehouseCreateInput(req);
-    const row = await createInventoryWarehouse({ payload });
+    const payload = parseInventoryWarehouseUpsertInput(req);
+    const row = await upsertInventoryWarehouse({ payload });
     return res.status(201).json({
       tenantId: payload.tenantId,
       row,
@@ -108,7 +179,7 @@ router.post(
 router.get(
   "/work-queue-summary",
   requirePermission("inventory.read", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+    resolveScope: async (req) => resolveInventoryReadScopeFromQuery(req),
   }),
   asyncHandler(async (req, res) => {
     const filters = parseInventoryStockLinkListFilters(req);
@@ -126,7 +197,7 @@ router.get(
 router.get(
   "/cari-stock-links",
   requirePermission("inventory.read", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+    resolveScope: async (req) => resolveInventoryReadScopeFromQuery(req),
   }),
   asyncHandler(async (req, res) => {
     const filters = parseInventoryStockLinkListFilters(req);
@@ -161,7 +232,7 @@ router.post(
 router.get(
   "/movements",
   requirePermission("inventory.read", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+    resolveScope: async (req) => resolveInventoryReadScopeFromQuery(req),
   }),
   asyncHandler(async (req, res) => {
     const filters = parseInventoryMovementListFilters(req);
@@ -179,7 +250,8 @@ router.get(
 router.post(
   "/movements",
   requirePermission("inventory.upsert", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
+    resolveScope: async (req, tenantId) =>
+      resolveInventoryMovementScopeFromBody(req, tenantId),
   }),
   asyncHandler(async (req, res) => {
     const payload = parseInventoryMovementCreateInput(req);
@@ -211,7 +283,7 @@ router.post(
 router.get(
   "/cost-layers",
   requirePermission("inventory.read", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+    resolveScope: async (req) => resolveInventoryReadScopeFromQuery(req),
   }),
   asyncHandler(async (req, res) => {
     const filters = parseInventoryCostLayerListFilters(req);

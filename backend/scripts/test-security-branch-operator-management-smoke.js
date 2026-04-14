@@ -444,7 +444,20 @@ async function main() {
     const localAdminRoleCodes = localAdminRoles.map((role) => String(role.code || "").trim());
     assertIncludesAll(
       localAdminRoleCodes,
-      ["BranchOperator", "OUAPSubmitter", "OUAccountant", "AuditorReadOnly"],
+      [
+        "BranchOperator",
+        "OUAPSubmitter",
+        "OUAccountant",
+        "AuditorReadOnly",
+        "BranchInventoryViewer",
+        "BranchInventoryOperator",
+        "EntityInventoryViewer",
+        "EntityInventoryOperator",
+        "BranchFixedAssetViewer",
+        "BranchFixedAssetOperator",
+        "EntityFixedAssetViewer",
+        "EntityFixedAssetOperator",
+      ],
       "Local user admin allow-list should include bounded local roles"
     );
     assert(
@@ -637,6 +650,11 @@ async function main() {
       true,
       "Legacy branch-operator compatibility seam should still create assignments"
     );
+    assert.deepEqual(
+      compatCreateResponse.json?.createdCompanionRoleCodes || [],
+      ["BranchInventoryViewer", "BranchFixedAssetOperator"],
+      "Legacy branch-operator compatibility seam should auto-assign inventory and fixed-asset companions"
+    );
     assert(
       (await findRoleAssignment({
         tenantId: admin.tenantId,
@@ -646,6 +664,26 @@ async function main() {
         scopeId: entityAOuId,
       })) > 0,
       "Legacy branch-operator compatibility seam should persist BranchOperator assignments"
+    );
+    assert(
+      (await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: compatManagedUser.userId,
+        roleCode: "BranchInventoryViewer",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      })) > 0,
+      "Legacy branch-operator compatibility seam should persist BranchInventoryViewer companion assignments"
+    );
+    assert(
+      (await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: compatManagedUser.userId,
+        roleCode: "BranchFixedAssetOperator",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      })) > 0,
+      "Legacy branch-operator compatibility seam should persist BranchFixedAssetOperator companion assignments"
     );
 
     const compatAuditActions = await listAuditActions(admin.tenantId, compatManager.userId);

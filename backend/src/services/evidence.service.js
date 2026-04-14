@@ -233,7 +233,11 @@ async function assertCariDocumentScope({
 
 async function findInventoryTransferRow({ tenantId, transferId, runQuery = query }) {
   const result = await runQuery(
-    `SELECT id, legal_entity_id
+    `SELECT
+        id,
+        legal_entity_id,
+        source_operating_unit_id,
+        target_operating_unit_id
        FROM inventory_transfers
       WHERE tenant_id = ?
         AND id = ?
@@ -273,8 +277,25 @@ async function assertInventoryTransferScope({
     throw badRequest("Inventory transfer scope is invalid");
   }
 
+  const requestedOperatingUnitId = parsePositiveInt(req?.query?.operatingUnitId);
   if (typeof assertScopeAccess === "function") {
-    assertScopeAccess(req, "legal_entity", legalEntityId, "transferId");
+    if (requestedOperatingUnitId) {
+      const sourceOperatingUnitId = parsePositiveInt(row.source_operating_unit_id);
+      const targetOperatingUnitId = parsePositiveInt(row.target_operating_unit_id);
+      if (
+        sourceOperatingUnitId !== requestedOperatingUnitId &&
+        targetOperatingUnitId !== requestedOperatingUnitId
+      ) {
+        throw badRequest("operatingUnitId must match the inventory transfer scope");
+      }
+      assertScopeAccess(req, "operating_unit", requestedOperatingUnitId, "transferId");
+    } else {
+      const requestedLegalEntityId = parsePositiveInt(req?.query?.legalEntityId);
+      if (requestedLegalEntityId && requestedLegalEntityId !== legalEntityId) {
+        throw badRequest("legalEntityId must match the inventory transfer legal entity");
+      }
+      assertScopeAccess(req, "legal_entity", legalEntityId, "transferId");
+    }
   }
 
   return {

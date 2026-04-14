@@ -238,7 +238,8 @@ export default function FixedAssetFormPage() {
   const { l, t } = useI18n();
   const { hasPermission } = useAuth();
   const navigate = useNavigate();
-  const { legalEntity } = useWorkingContext();
+  const { legalEntity, workingContext } = useWorkingContext();
+  const workingOperatingUnitId = toPositiveInt(workingContext?.operatingUnitId);
 
   const canUpsert = hasPermission("fixed_assets.upsert");
   const canPost = hasPermission("fixed_assets.post");
@@ -281,6 +282,29 @@ export default function FixedAssetFormPage() {
     if (ctxLeId && !form.legalEntityId) setField("legalEntityId", String(ctxLeId));
   }, [legalEntity]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!workingOperatingUnitId) {
+      return;
+    }
+    setForm((prev) => {
+      const nextOwnerOperatingUnitId =
+        prev.ownerOperatingUnitId || String(workingOperatingUnitId);
+      const nextLocationOperatingUnitId =
+        prev.locationOperatingUnitId || String(workingOperatingUnitId);
+      if (
+        nextOwnerOperatingUnitId === prev.ownerOperatingUnitId &&
+        nextLocationOperatingUnitId === prev.locationOperatingUnitId
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        ownerOperatingUnitId: nextOwnerOperatingUnitId,
+        locationOperatingUnitId: nextLocationOperatingUnitId,
+      };
+    });
+  }, [workingOperatingUnitId]);
+
   // ── Load legal entity lookup ────────────────────────────────────
   useEffect(() => {
     let active = true;
@@ -318,6 +342,8 @@ export default function FixedAssetFormPage() {
       try {
         const res = await listFixedAssetCategories({
           legalEntityId: form.legalEntityId || undefined,
+          ownerOperatingUnitId:
+            form.ownerOperatingUnitId || workingOperatingUnitId || undefined,
           status: "ACTIVE",
         });
         const items = Array.isArray(res?.rows) ? res.rows : [];
@@ -330,7 +356,7 @@ export default function FixedAssetFormPage() {
       }
     })();
     return () => { active = false; };
-  }, [form.legalEntityId]);
+  }, [form.legalEntityId, form.ownerOperatingUnitId, workingOperatingUnitId]);
 
   // ── Load depreciation profile lookup ────────────────────────────
   useEffect(() => {
@@ -339,6 +365,8 @@ export default function FixedAssetFormPage() {
       try {
         const res = await listFixedAssetDepreciationProfiles({
           legalEntityId: form.legalEntityId || undefined,
+          ownerOperatingUnitId:
+            form.ownerOperatingUnitId || workingOperatingUnitId || undefined,
           status: "ACTIVE",
         });
         const items = Array.isArray(res?.rows) ? res.rows : [];
@@ -348,7 +376,7 @@ export default function FixedAssetFormPage() {
       }
     })();
     return () => { active = false; };
-  }, [form.legalEntityId]);
+  }, [form.legalEntityId, form.ownerOperatingUnitId, workingOperatingUnitId]);
 
   // ── Load custodian lookup ───────────────────────────────────────
   useEffect(() => {
@@ -357,6 +385,8 @@ export default function FixedAssetFormPage() {
       try {
         const res = await listFixedAssetCustodians({
           legalEntityId: form.legalEntityId || undefined,
+          operatingUnitId:
+            form.ownerOperatingUnitId || workingOperatingUnitId || undefined,
           status: "ACTIVE",
         });
         const items = Array.isArray(res?.rows) ? res.rows : [];
@@ -366,7 +396,7 @@ export default function FixedAssetFormPage() {
       }
     })();
     return () => { active = false; };
-  }, [form.legalEntityId]);
+  }, [form.legalEntityId, form.ownerOperatingUnitId, workingOperatingUnitId]);
 
   // ── Category-driven defaults ────────────────────────────────────
   const selectedCategory = catRows.find((c) => String(c.id) === form.categoryId) || null;

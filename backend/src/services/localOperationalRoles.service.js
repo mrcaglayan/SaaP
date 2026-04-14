@@ -12,6 +12,30 @@ export const LOCAL_OPERATIONAL_ROLE_CATALOG = Object.freeze({
   AuditorReadOnly: Object.freeze({
     scopeTypes: Object.freeze(["LEGAL_ENTITY", "OPERATING_UNIT"]),
   }),
+  BranchInventoryViewer: Object.freeze({
+    scopeTypes: Object.freeze(["OPERATING_UNIT"]),
+  }),
+  EntityInventoryViewer: Object.freeze({
+    scopeTypes: Object.freeze(["LEGAL_ENTITY"]),
+  }),
+  BranchInventoryOperator: Object.freeze({
+    scopeTypes: Object.freeze(["OPERATING_UNIT"]),
+  }),
+  EntityInventoryOperator: Object.freeze({
+    scopeTypes: Object.freeze(["LEGAL_ENTITY"]),
+  }),
+  BranchFixedAssetViewer: Object.freeze({
+    scopeTypes: Object.freeze(["OPERATING_UNIT"]),
+  }),
+  EntityFixedAssetViewer: Object.freeze({
+    scopeTypes: Object.freeze(["LEGAL_ENTITY"]),
+  }),
+  BranchFixedAssetOperator: Object.freeze({
+    scopeTypes: Object.freeze(["OPERATING_UNIT"]),
+  }),
+  EntityFixedAssetOperator: Object.freeze({
+    scopeTypes: Object.freeze(["LEGAL_ENTITY"]),
+  }),
   BranchOperator: Object.freeze({
     scopeTypes: Object.freeze(["OPERATING_UNIT"]),
   }),

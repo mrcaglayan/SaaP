@@ -165,6 +165,7 @@ import migration176ApDocumentWorkflowIntegrationFoundation from "./m176_ap_docum
 import migration177CariReviewStateLegacyCheckCleanup from "./m177_cari_review_state_legacy_check_cleanup.js";
 import migration178WorkflowAssignmentRoutingMatrix from "./m178_workflow_assignment_routing_matrix.js";
 import migration179ApWorkflowActionStepContract from "./m179_ap_workflow_action_step_contract.js";
+import migration180InventoryWarehouseReceiptPolicy from "./m180_inventory_warehouse_receipt_policy.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -334,6 +335,7 @@ const migrations = [
   migration177CariReviewStateLegacyCheckCleanup,
   migration178WorkflowAssignmentRoutingMatrix,
   migration179ApWorkflowActionStepContract,
+  migration180InventoryWarehouseReceiptPolicy,
 ];
 
 export default migrations;

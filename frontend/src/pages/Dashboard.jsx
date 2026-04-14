@@ -345,7 +345,7 @@ function ReadinessSummaryCard({ title, value, subtitle, tone = "slate", locked =
  */
 export default function Dashboard() {
   const { l, t } = useI18n();
-  const { hasPermission } = useAuth();
+  const { getPermissionAccess, hasPermission } = useAuth();
   const { workingContext } = useWorkingContext();
   const {
     readiness: moduleReadinessPayload,
@@ -361,7 +361,18 @@ export default function Dashboard() {
   const canReadOps = hasPermission("ops.dashboard.read");
   const canReadCash = hasPermission("cash.txn.read");
   const canReadExceptions = hasPermission("ops.exceptions.read");
-  const canReadReadiness = hasPermission("org.tree.read");
+  const currentLegalEntityId = toInt(workingContext?.legalEntityId, 0);
+  const canReadReadiness = getPermissionAccess(
+    "org.tree.read",
+    currentLegalEntityId > 0
+      ? {
+          scope: {
+            scopeType: "LEGAL_ENTITY",
+            scopeId: currentLegalEntityId,
+          },
+        }
+      : undefined
+  ).allowed;
   const canReadInventory = hasPermission("inventory.read");
   const canReadFixedAssetRuns =
     hasPermission("fixed_assets.depreciation.run") || hasPermission("fixed_assets.read");
@@ -407,8 +418,12 @@ export default function Dashboard() {
     if (scopeParams.legalEntityId) {
       params.legalEntityId = scopeParams.legalEntityId;
     }
+    const operatingUnitId = toInt(workingContext?.operatingUnitId, 0);
+    if (operatingUnitId > 0) {
+      params.operatingUnitId = operatingUnitId;
+    }
     return params;
-  }, [scopeParams.legalEntityId]);
+  }, [scopeParams.legalEntityId, workingContext?.operatingUnitId]);
 
   const loadConsolidationReadiness = useCallback(async () => {
     if (!canReadConsolidationRuns) {
@@ -970,46 +985,56 @@ export default function Dashboard() {
 
   const inventoryQueueLinks = useMemo(() => {
     const legalEntityId = inventoryScopeParams.legalEntityId || "";
+    const operatingUnitId = inventoryScopeParams.operatingUnitId || "";
     return {
       receiptMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
         legalEntityId,
+        operatingUnitId,
         queueScope: "ACTIONABLE",
         stockImpactMode: "RECEIPT_PENDING",
       }),
       issueMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
         legalEntityId,
+        operatingUnitId,
         queueScope: "ACTIONABLE",
         stockImpactMode: "ISSUE_PENDING",
       }),
       completedMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
         legalEntityId,
+        operatingUnitId,
         queueScope: "COMPLETED",
       }),
       voidMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
         legalEntityId,
+        operatingUnitId,
         queueScope: "VOID",
       }),
       waitingApproval: buildAppPath("/app/stok-transferleri", {
         legalEntityId,
+        operatingUnitId,
         status: "INITIATED",
       }),
       readyToShip: buildAppPath("/app/stok-transferleri", {
         legalEntityId,
+        operatingUnitId,
         status: "APPROVED",
       }),
       waitingReceipt: buildAppPath("/app/stok-transferleri", {
         legalEntityId,
+        operatingUnitId,
         status: "IN_TRANSIT",
       }),
       transfers: buildAppPath("/app/stok-transferleri", {
         legalEntityId,
+        operatingUnitId,
       }),
       materialization: buildAppPath("/app/stok-yansitma-islemleri", {
         legalEntityId,
+        operatingUnitId,
         queueScope: "ACTIONABLE",
       }),
     };
-  }, [inventoryScopeParams.legalEntityId]);
+  }, [inventoryScopeParams.legalEntityId, inventoryScopeParams.operatingUnitId]);
 
   const windowLabel = useMemo(() => {
     const firstWindow =

@@ -61,6 +61,7 @@ function createWarehouseForm(legalEntityId = "") {
     code: "",
     name: "",
     status: "ACTIVE",
+    inventoryReceiptPolicy: "ALLOW_INVOICE_BEFORE_RECEIPT",
     notes: "",
   };
 }
@@ -116,6 +117,22 @@ function getOwnershipBadgeClass(value) {
     case "CENTRAL":
     default:
       return "border border-slate-200 bg-slate-100 text-slate-700";
+  }
+}
+
+function describeReceiptPolicy(value, translate = (en) => en) {
+  switch (String(value || "").trim().toUpperCase()) {
+    case "REQUIRE_RECEIPT_BEFORE_INVOICE":
+      return translate(
+        "Require receipt before invoice posting",
+        "Faturadan once mal kabul zorunlu"
+      );
+    case "ALLOW_INVOICE_BEFORE_RECEIPT":
+    default:
+      return translate(
+        "Allow invoice before receipt",
+        "Mal kabul olmadan fatura post edilebilir"
+      );
   }
 }
 
@@ -229,6 +246,7 @@ function describeTransferRequiredReason(row, translate = (en) => en) {
 function buildInventoryTransferLink(row) {
   const params = new URLSearchParams();
   const legalEntityId = toPositiveInt(row?.legalEntityId);
+  const operatingUnitId = toPositiveInt(row?.documentOperatingUnitId);
   const sourceWarehouseId = toPositiveInt(row?.transferSourceWarehouseId);
   const targetWarehouseId = toPositiveInt(row?.boundWarehouseId);
   const itemCardId = toPositiveInt(row?.itemCardId);
@@ -239,6 +257,9 @@ function buildInventoryTransferLink(row) {
 
   if (legalEntityId) {
     params.set("legalEntityId", String(legalEntityId));
+  }
+  if (operatingUnitId) {
+    params.set("operatingUnitId", String(operatingUnitId));
   }
   if (sourceWarehouseId) {
     params.set("sourceWarehouseId", String(sourceWarehouseId));
@@ -366,6 +387,10 @@ export default function InventoryMovementsPage() {
     () => String(toPositiveInt(searchParams.get("legalEntityId")) || ""),
     [searchParams]
   );
+  const deepLinkedOperatingUnitId = useMemo(
+    () => String(toPositiveInt(searchParams.get("operatingUnitId")) || ""),
+    [searchParams]
+  );
   const deepLinkedMovementId = useMemo(
     () => String(toPositiveInt(searchParams.get("movementId")) || ""),
     [searchParams]
@@ -389,6 +414,7 @@ export default function InventoryMovementsPage() {
 
   const [filters, setFilters] = useState({
     legalEntityId: "",
+    operatingUnitId: deepLinkedOperatingUnitId,
     warehouseId: "",
     queueScope: deepLinkedQueueScope,
     stockImpactMode: deepLinkedStockImpactMode || "",
@@ -512,6 +538,18 @@ export default function InventoryMovementsPage() {
 
   useEffect(() => {
     setFilters((previous) =>
+      previous.operatingUnitId === deepLinkedOperatingUnitId
+        ? previous
+        : {
+            ...previous,
+            operatingUnitId: deepLinkedOperatingUnitId,
+            warehouseId: "",
+          }
+    );
+  }, [deepLinkedOperatingUnitId]);
+
+  useEffect(() => {
+    setFilters((previous) =>
       previous.queueScope === deepLinkedQueueScope &&
       previous.stockImpactMode === (deepLinkedStockImpactMode || "")
         ? previous
@@ -615,6 +653,7 @@ export default function InventoryMovementsPage() {
 
   const loadPageData = useCallback(async () => {
     const legalEntityId = toPositiveInt(filters.legalEntityId);
+    const operatingUnitId = toPositiveInt(filters.operatingUnitId);
     if (!canRead) {
       setWarehouseRows([]);
       setStockLinkRows([]);
@@ -641,11 +680,13 @@ export default function InventoryMovementsPage() {
         await Promise.all([
           listInventoryWarehouses({
             legalEntityId,
+            operatingUnitId: operatingUnitId || undefined,
             limit: 200,
             offset: 0,
           }),
           listInventoryCariStockLinks({
             legalEntityId,
+            operatingUnitId: operatingUnitId || undefined,
             queueScope: filters.queueScope || "ACTIONABLE",
             stockImpactMode: filters.stockImpactMode || undefined,
             warehouseId: filters.warehouseId || undefined,
@@ -654,12 +695,14 @@ export default function InventoryMovementsPage() {
           }),
           listInventoryMovements({
             legalEntityId,
+            operatingUnitId: operatingUnitId || undefined,
             warehouseId: filters.warehouseId || undefined,
             limit: 200,
             offset: 0,
           }),
           listInventoryCostLayers({
             legalEntityId,
+            operatingUnitId: operatingUnitId || undefined,
             warehouseId: filters.warehouseId || undefined,
             limit: 200,
             offset: 0,
@@ -687,6 +730,7 @@ export default function InventoryMovementsPage() {
   }, [
     canRead,
     filters.legalEntityId,
+    filters.operatingUnitId,
     filters.queueScope,
     filters.stockImpactMode,
     filters.warehouseId,
@@ -893,6 +937,8 @@ export default function InventoryMovementsPage() {
         code: normalizeText(warehouseForm.code).toUpperCase(),
         name: normalizeText(warehouseForm.name),
         status: normalizeText(warehouseForm.status).toUpperCase() || "ACTIVE",
+        inventoryReceiptPolicy:
+          normalizeText(warehouseForm.inventoryReceiptPolicy) || undefined,
         notes: normalizeText(warehouseForm.notes) || undefined,
       });
       const createdRow = response?.row || null;
@@ -1388,6 +1434,27 @@ export default function InventoryMovementsPage() {
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {l("Receipt Policy", "Mal Kabul Politikasi")}
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={warehouseForm.inventoryReceiptPolicy}
+                  onChange={(event) =>
+                    setWarehouseForm((previous) => ({
+                      ...previous,
+                      inventoryReceiptPolicy: event.target.value,
+                    }))
+                  }
+                  disabled={warehouseSaving || !canUpsert}
+                >
+                  <option value="ALLOW_INVOICE_BEFORE_RECEIPT">
+                    {l("Allow invoice before receipt", "Mal kabul olmadan fatura post edilebilir")}
+                  </option>
+                  <option value="REQUIRE_RECEIPT_BEFORE_INVOICE">
+                    {l("Require receipt before invoice", "Faturadan once mal kabul zorunlu")}
+                  </option>
+                </select>
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 {l("Notes", "Notlar")}
                 <textarea
                   className="mt-1 min-h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -1508,6 +1575,10 @@ export default function InventoryMovementsPage() {
                       </div>
                       <div className="mt-2 text-sm text-slate-700">
                         {l("Owner Context", "Sahiplik Baglami")}: {operatingUnitLabel}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-700">
+                        {l("Receipt Policy", "Mal Kabul Politikasi")}:{" "}
+                        {describeReceiptPolicy(row.inventoryReceiptPolicy, l)}
                       </div>
                       {row.notes ? (
                         <div className="mt-1 text-sm text-slate-600">{row.notes}</div>

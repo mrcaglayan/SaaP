@@ -132,6 +132,9 @@ const COLUMN_CONFIGS = {
 function buildFilterParams(reportName, filters) {
   const params = {};
   if (filters.legalEntityId) params.legalEntityId = filters.legalEntityId;
+  if (filters.ownerOperatingUnitId) {
+    params.ownerOperatingUnitId = filters.ownerOperatingUnitId;
+  }
   if (filters.dateFrom) params.dateFrom = filters.dateFrom;
   if (filters.dateTo) params.dateTo = filters.dateTo;
   if (filters.categoryId) params.categoryId = filters.categoryId;
@@ -255,8 +258,12 @@ function isUnresolvedOwnerRow(row) {
 export default function FixedAssetReportsPage() {
   const { l, t } = useI18n();
   const { hasPermission } = useAuth();
-  const { legalEntity } = useWorkingContext();
+  const { legalEntity, workingContext } = useWorkingContext();
   const canRead = hasPermission("fixed_assets.report.read");
+  const ownerOperatingUnitId = Number.isInteger(Number(workingContext?.operatingUnitId))
+    && Number(workingContext?.operatingUnitId) > 0
+    ? Number(workingContext.operatingUnitId)
+    : null;
 
   const rf = (key) => t(["fixedAssets", "reports", key]);
 
@@ -299,6 +306,7 @@ export default function FixedAssetReportsPage() {
       const params = buildFilterParams(selectedReport, {
         ...filters,
         legalEntityId: effectiveLegalEntityId,
+        ownerOperatingUnitId: ownerOperatingUnitId || undefined,
       });
       const result = await getFixedAssetReport(selectedReport, params);
       setReportData(result);
@@ -317,6 +325,7 @@ export default function FixedAssetReportsPage() {
       const params = buildFilterParams(selectedReport, {
         ...filters,
         legalEntityId: effectiveLegalEntityId,
+        ownerOperatingUnitId: ownerOperatingUnitId || undefined,
       });
       await exportFixedAssetReport(selectedReport, params);
     } catch (err) {

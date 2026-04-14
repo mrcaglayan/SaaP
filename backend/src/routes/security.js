@@ -80,6 +80,8 @@ const VALID_USER_STATUSES = new Set(["ACTIVE", "DISABLED"]);
 const LOCAL_USER_ADMIN_PERMISSION = "security.user_admin.local";
 const ENTITY_USER_ADMIN_PERMISSION = "security.user_admin.entity";
 const BRANCH_OPERATOR_ROLE_CODE = "BranchOperator";
+const BRANCH_INVENTORY_VIEWER_ROLE_CODE = "BranchInventoryViewer";
+const BRANCH_FIXED_ASSET_OPERATOR_ROLE_CODE = "BranchFixedAssetOperator";
 const BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX = "BUSINESS_ROLE__";
 const LOCAL_USER_ADMIN_COMPAT_PERMISSION_CODES = Object.freeze([
   LOCAL_USER_ADMIN_PERMISSION,
@@ -356,6 +358,179 @@ async function getBranchOperatorRoleForTenant(tenantId, runQuery = query) {
   return role;
 }
 
+function getRoleAssignmentCompanionRoleCodes(
+  primaryRoleCode,
+  { scopeType, effect = "ALLOW" } = {},
+) {
+  const normalizedRoleCode = String(primaryRoleCode || "").trim();
+  const normalizedScopeType = String(scopeType || "")
+    .trim()
+    .toUpperCase();
+  const normalizedEffect = String(effect || "ALLOW")
+    .trim()
+    .toUpperCase();
+  if (
+    normalizedRoleCode === BRANCH_OPERATOR_ROLE_CODE &&
+    normalizedScopeType === "OPERATING_UNIT" &&
+    normalizedEffect === "ALLOW"
+  ) {
+    return [
+      BRANCH_INVENTORY_VIEWER_ROLE_CODE,
+      BRANCH_FIXED_ASSET_OPERATOR_ROLE_CODE,
+    ];
+  }
+  return [];
+}
+
+async function ensureCompanionRoleAssignments({
+  tenantId,
+  userId,
+  primaryRoleCode,
+  scopeType,
+  scopeId,
+  effect = "ALLOW",
+  effectiveFrom = null,
+  effectiveTo = null,
+  runQuery = query,
+}) {
+  const companionRoleCodes = getRoleAssignmentCompanionRoleCodes(primaryRoleCode, {
+    scopeType,
+    effect,
+  });
+  const companionRoleIds = [];
+  const companionAssignmentIds = [];
+  const createdCompanionRoleCodes = [];
+
+  for (const companionRoleCode of companionRoleCodes) {
+    const companionRole = await getRoleByCodeForTenant(
+      companionRoleCode,
+      tenantId,
+      runQuery,
+    );
+    if (!companionRole) {
+      throw badRequest(
+        `${companionRoleCode} role is not configured for this tenant`,
+      );
+    }
+    const roleId = parsePositiveInt(companionRole.id);
+    const existingResult = await runQuery(
+      `SELECT id, effect
+       FROM user_role_scopes
+       WHERE tenant_id = ?
+         AND user_id = ?
+         AND role_id = ?
+         AND scope_type = ?
+         AND scope_id = ?
+       LIMIT 1`,
+      [tenantId, userId, roleId, scopeType, scopeId],
+    );
+    const existingAssignment = existingResult.rows[0] || null;
+    if (String(existingAssignment?.effect || "").toUpperCase() === "DENY") {
+      throw badRequest(
+        `${companionRoleCode} has a deny assignment at this scope and must be resolved before assigning ${primaryRoleCode}`,
+      );
+    }
+    if (!existingAssignment) {
+      await runQuery(
+        `INSERT INTO user_role_scopes (
+            tenant_id,
+            user_id,
+            role_id,
+            scope_type,
+            scope_id,
+            effect,
+            effective_from,
+            effective_to
+         )
+         VALUES (?, ?, ?, ?, ?, 'ALLOW', ?, ?)`,
+        [
+          tenantId,
+          userId,
+          roleId,
+          scopeType,
+          scopeId,
+          effectiveFrom,
+          effectiveTo,
+        ],
+      );
+      createdCompanionRoleCodes.push(companionRoleCode);
+    }
+    const currentResult = await runQuery(
+      `SELECT id
+       FROM user_role_scopes
+       WHERE tenant_id = ?
+         AND user_id = ?
+         AND role_id = ?
+         AND scope_type = ?
+         AND scope_id = ?
+       LIMIT 1`,
+      [tenantId, userId, roleId, scopeType, scopeId],
+    );
+    companionRoleIds.push(roleId);
+    companionAssignmentIds.push(parsePositiveInt(currentResult.rows?.[0]?.id));
+  }
+
+  return {
+    companionRoleCodes,
+    companionRoleIds: companionRoleIds.filter(Boolean),
+    companionAssignmentIds: companionAssignmentIds.filter(Boolean),
+    createdCompanionRoleCodes,
+  };
+}
+
+async function deleteCompanionRoleAssignments({
+  tenantId,
+  userId,
+  primaryRoleCode,
+  scopeType,
+  scopeId,
+  effect = "ALLOW",
+  runQuery = query,
+}) {
+  const companionRoleCodes = getRoleAssignmentCompanionRoleCodes(primaryRoleCode, {
+    scopeType,
+    effect,
+  });
+  if (companionRoleCodes.length === 0) {
+    return {
+      removedCompanionRoleCodes: [],
+      removedCompanionAssignmentIds: [],
+    };
+  }
+  const rowsResult = await runQuery(
+    `SELECT urs.id, r.code AS role_code
+       FROM user_role_scopes urs
+       JOIN roles r
+         ON r.id = urs.role_id
+        AND r.tenant_id = urs.tenant_id
+      WHERE urs.tenant_id = ?
+        AND urs.user_id = ?
+        AND urs.scope_type = ?
+        AND urs.scope_id = ?
+        AND urs.effect = 'ALLOW'
+        AND r.code IN (${companionRoleCodes.map(() => "?").join(", ")})`,
+    [tenantId, userId, scopeType, scopeId, ...companionRoleCodes],
+  );
+  const rows = Array.isArray(rowsResult.rows) ? rowsResult.rows : [];
+  const assignmentIds = rows
+    .map((row) => parsePositiveInt(row?.id))
+    .filter(Boolean);
+  if (assignmentIds.length > 0) {
+    await runQuery(
+      `DELETE FROM user_role_scopes
+       WHERE tenant_id = ?
+         AND id IN (${assignmentIds.map(() => "?").join(", ")})`,
+      [tenantId, ...assignmentIds],
+    );
+  }
+  return {
+    removedCompanionRoleCodes: normalizeRoleCodeList(
+      rows.map((row) => row.role_code),
+    ),
+    removedCompanionAssignmentIds: assignmentIds,
+  };
+}
+
 async function lookupUserByEmail(email, runQuery = query) {
   const result = await runQuery(
     `SELECT id, tenant_id, email, name, status
@@ -503,12 +678,25 @@ function validateRolePermissionSetOrThrow(roleCode, permissionCodes) {
   });
 }
 
+function summarizeCompanionRoleAssignmentResult(result) {
+  return {
+    companionRoleCodes: normalizeRoleCodeList(result?.companionRoleCodes),
+    createdCompanionRoleCodes: normalizeRoleCodeList(
+      result?.createdCompanionRoleCodes,
+    ),
+    companionRoleIds: Array.isArray(result?.companionRoleIds)
+      ? result.companionRoleIds.map((value) => parsePositiveInt(value)).filter(Boolean)
+      : [],
+  };
+}
+
 async function buildCombinedRoleAssignmentWarnings({
   tenantId,
   userId,
   scopeType,
   scopeId,
   includeRoleId,
+  includeRoleIds = [],
   excludeAssignmentId = null,
   effect = "ALLOW",
   asOfDate = null,
@@ -547,12 +735,19 @@ async function buildCombinedRoleAssignmentWarnings({
     (existingResult.rows || []).map((row) => row.code),
   );
 
-  const includeRolePermissionCodes = parsePositiveInt(includeRoleId)
-    ? await loadRolePermissionCodes(includeRoleId, runQuery)
-    : [];
+  const normalizedIncludeRoleIds = Array.from(
+    new Set(
+      [includeRoleId, ...(Array.isArray(includeRoleIds) ? includeRoleIds : [])]
+        .map((value) => parsePositiveInt(value))
+        .filter(Boolean),
+    ),
+  );
+  const includeRolePermissionCodeSets = await Promise.all(
+    normalizedIncludeRoleIds.map((roleId) => loadRolePermissionCodes(roleId, runQuery)),
+  );
   const combinedPermissionCodes = normalizePermissionCodeList([
     ...permissionCodes,
-    ...includeRolePermissionCodes,
+    ...includeRolePermissionCodeSets.flat(),
   ]);
 
   const evaluation = evaluatePermissionRuleSet({
@@ -925,6 +1120,21 @@ async function createLocalUserAdminAssignment({
       );
     }
 
+    // BranchOperator intentionally auto-provisions bounded companion roles at
+    // the same OU scope so branch users inherit the shipped inventory/fixed-
+    // asset baseline without broadening BranchOperator itself.
+    const companionAssignments = summarizeCompanionRoleAssignmentResult(
+      await ensureCompanionRoleAssignments({
+        tenantId,
+        userId,
+        primaryRoleCode: normalizedRoleCode,
+        scopeType: normalizedScopeType,
+        scopeId: normalizedScopeId,
+        effect: "ALLOW",
+        runQuery: tx.query,
+      }),
+    );
+
     const currentAssignmentResult = await tx.query(
       `SELECT id
        FROM user_role_scopes
@@ -948,6 +1158,7 @@ async function createLocalUserAdminAssignment({
       scopeType: normalizedScopeType,
       scopeId: normalizedScopeId,
       includeRoleId: parsePositiveInt(role.id),
+      includeRoleIds: companionAssignments.companionRoleIds,
       effect: "ALLOW",
       runQuery: tx.query,
     });
@@ -963,6 +1174,8 @@ async function createLocalUserAdminAssignment({
       assignmentWarnings,
       scopeType: normalizedScopeType,
       scopeId: normalizedScopeId,
+      companionRoleCodes: companionAssignments.companionRoleCodes,
+      createdCompanionRoleCodes: companionAssignments.createdCompanionRoleCodes,
     };
   });
 
@@ -982,6 +1195,8 @@ async function createLocalUserAdminAssignment({
         email: operation.managedUser.email,
         expiresAt: operation.invite.expiresAt,
         roleCode: operation.role.code,
+        companionRoleCodes: operation.companionRoleCodes,
+        createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
       },
     });
   }
@@ -1000,6 +1215,8 @@ async function createLocalUserAdminAssignment({
         roleId: parsePositiveInt(operation.role.id),
         roleCode: operation.role.code,
         effect: "ALLOW",
+        companionRoleCodes: operation.companionRoleCodes,
+        createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
       },
     });
   }
@@ -1412,6 +1629,8 @@ router.post(
         assignmentCreated: operation.assignmentCreated,
         assignmentId: operation.assignmentId,
         assignmentWarnings: operation.assignmentWarnings,
+        companionRoleCodes: operation.companionRoleCodes,
+        createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
         scopeType: operation.scopeType,
         scopeId: operation.scopeId,
         role: {
@@ -1532,6 +1751,8 @@ router.post(
         assignmentCreated: operation.assignmentCreated,
         assignmentId: operation.assignmentId,
         assignmentWarnings: operation.assignmentWarnings,
+        companionRoleCodes: operation.companionRoleCodes,
+        createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
         role: {
           id: parsePositiveInt(operation.role.id),
           code: operation.role.code,
@@ -1991,76 +2212,103 @@ router.post(
     assertRoleAssignmentUpsertAllowed(role);
     await assertScopeTargetExists(tenantId, scopeType, scopeId);
 
-    const existingResult = await query(
-      `SELECT id, effect, effective_from, effective_to
-       FROM user_role_scopes
-       WHERE tenant_id = ?
-         AND user_id = ?
-         AND role_id = ?
-         AND scope_type = ?
-         AND scope_id = ?
-       LIMIT 1`,
-      [tenantId, userId, roleId, scopeType, scopeId],
-    );
-    const existingAssignment = existingResult.rows[0] || null;
-    const existingAssignmentId = parsePositiveInt(existingAssignment?.id);
-    const effectiveDates = resolveAssignmentEffectiveDates(
-      req.body,
-      existingAssignment,
-    );
-    const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
-      tenantId,
-      userId,
-      scopeType,
-      scopeId,
-      includeRoleId: roleId,
-      effect,
-      asOfDate: effectiveDates.effectiveFrom,
-    });
+    const operation = await withTransaction(async (tx) => {
+      const existingResult = await tx.query(
+        `SELECT id, effect, effective_from, effective_to
+         FROM user_role_scopes
+         WHERE tenant_id = ?
+           AND user_id = ?
+           AND role_id = ?
+           AND scope_type = ?
+           AND scope_id = ?
+         LIMIT 1`,
+        [tenantId, userId, roleId, scopeType, scopeId],
+      );
+      const existingAssignment = existingResult.rows[0] || null;
+      const existingAssignmentId = parsePositiveInt(existingAssignment?.id);
+      const effectiveDates = resolveAssignmentEffectiveDates(
+        req.body,
+        existingAssignment,
+      );
 
-    await query(
-      `INSERT INTO user_role_scopes (
-          tenant_id,
-          user_id,
-          role_id,
-          scope_type,
-          scope_id,
+      await tx.query(
+        `INSERT INTO user_role_scopes (
+            tenant_id,
+            user_id,
+            role_id,
+            scope_type,
+            scope_id,
+            effect,
+            effective_from,
+            effective_to
+          )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+         effect = VALUES(effect),
+         effective_from = VALUES(effective_from),
+         effective_to = VALUES(effective_to)`,
+        [
+          tenantId,
+          userId,
+          roleId,
+          scopeType,
+          scopeId,
           effect,
-          effective_from,
-          effective_to
-        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-       effect = VALUES(effect),
-       effective_from = VALUES(effective_from),
-       effective_to = VALUES(effective_to)`,
-      [
+          effectiveDates.effectiveFrom,
+          effectiveDates.effectiveTo,
+        ],
+      );
+
+      const companionAssignments = summarizeCompanionRoleAssignmentResult(
+        await ensureCompanionRoleAssignments({
+          tenantId,
+          userId,
+          primaryRoleCode: role.code,
+          scopeType,
+          scopeId,
+          effect,
+          effectiveFrom: effectiveDates.effectiveFrom,
+          effectiveTo: effectiveDates.effectiveTo,
+          runQuery: tx.query,
+        }),
+      );
+
+      const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
         tenantId,
         userId,
-        roleId,
         scopeType,
         scopeId,
+        includeRoleId: roleId,
+        includeRoleIds: companionAssignments.companionRoleIds,
         effect,
-        effectiveDates.effectiveFrom,
-        effectiveDates.effectiveTo,
-      ],
-    );
+        asOfDate: effectiveDates.effectiveFrom,
+        runQuery: tx.query,
+      });
+
+      const currentResult = await tx.query(
+        `SELECT id
+         FROM user_role_scopes
+         WHERE tenant_id = ?
+           AND user_id = ?
+           AND role_id = ?
+           AND scope_type = ?
+           AND scope_id = ?
+         LIMIT 1`,
+        [tenantId, userId, roleId, scopeType, scopeId],
+      );
+
+      return {
+        existingAssignmentId,
+        currentAssignmentId: parsePositiveInt(currentResult.rows[0]?.id),
+        effectiveDates,
+        assignmentWarnings,
+        companionRoleCodes: companionAssignments.companionRoleCodes,
+        createdCompanionRoleCodes: companionAssignments.createdCompanionRoleCodes,
+      };
+    });
     await invalidateRbacCache(tenantId);
 
-    const currentResult = await query(
-      `SELECT id
-       FROM user_role_scopes
-       WHERE tenant_id = ?
-         AND user_id = ?
-         AND role_id = ?
-         AND scope_type = ?
-         AND scope_id = ?
-       LIMIT 1`,
-      [tenantId, userId, roleId, scopeType, scopeId],
-    );
-    const currentAssignmentId = parsePositiveInt(currentResult.rows[0]?.id);
-
-    if (!existingAssignmentId) {
+    if (!operation.existingAssignmentId) {
       await logRbacAuditEvent(req, {
         tenantId,
         targetUserId: userId,
@@ -2074,19 +2322,24 @@ router.post(
           scopeType,
           scopeId,
           effect,
-          effectiveFrom: effectiveDates.effectiveFrom,
-          effectiveTo: effectiveDates.effectiveTo,
+          effectiveFrom: operation.effectiveDates.effectiveFrom,
+          effectiveTo: operation.effectiveDates.effectiveTo,
+          companionRoleCodes: operation.companionRoleCodes,
+          createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
         },
       });
     }
 
     return res.status(201).json({
       ok: true,
-      created: !existingAssignmentId,
-      assignmentId: currentAssignmentId || existingAssignmentId || null,
-      effectiveFrom: effectiveDates.effectiveFrom,
-      effectiveTo: effectiveDates.effectiveTo,
-      assignmentWarnings,
+      created: !operation.existingAssignmentId,
+      assignmentId:
+        operation.currentAssignmentId || operation.existingAssignmentId || null,
+      effectiveFrom: operation.effectiveDates.effectiveFrom,
+      effectiveTo: operation.effectiveDates.effectiveTo,
+      assignmentWarnings: operation.assignmentWarnings,
+      companionRoleCodes: operation.companionRoleCodes,
+      createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
     });
   }),
 );
@@ -2154,16 +2407,6 @@ router.put(
       req.body,
       assignment,
     );
-    const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
-      tenantId,
-      userId: assignment.user_id,
-      scopeType,
-      scopeId,
-      includeRoleId: assignment.role_id,
-      excludeAssignmentId: assignmentId,
-      effect,
-      asOfDate: effectiveDates.effectiveFrom,
-    });
 
     const oldScopeType = String(assignment.scope_type || "").toLowerCase();
     const oldScopeId = parsePositiveInt(assignment.scope_id);
@@ -2171,25 +2414,60 @@ router.put(
       assertScopeAccess(req, oldScopeType, oldScopeId, "existing scope");
     }
 
-    await query(
-      `UPDATE user_role_scopes
-       SET scope_type = ?,
-           scope_id = ?,
-           effect = ?,
-           effective_from = ?,
-           effective_to = ?
-       WHERE id = ?
-         AND tenant_id = ?`,
-      [
+    const operation = await withTransaction(async (tx) => {
+      await tx.query(
+        `UPDATE user_role_scopes
+         SET scope_type = ?,
+             scope_id = ?,
+             effect = ?,
+             effective_from = ?,
+             effective_to = ?
+         WHERE id = ?
+           AND tenant_id = ?`,
+        [
+          scopeType,
+          scopeId,
+          effect,
+          effectiveDates.effectiveFrom,
+          effectiveDates.effectiveTo,
+          assignmentId,
+          tenantId,
+        ],
+      );
+
+      const companionAssignments = summarizeCompanionRoleAssignmentResult(
+        await ensureCompanionRoleAssignments({
+          tenantId,
+          userId: parsePositiveInt(assignment.user_id),
+          primaryRoleCode: role.code,
+          scopeType,
+          scopeId,
+          effect,
+          effectiveFrom: effectiveDates.effectiveFrom,
+          effectiveTo: effectiveDates.effectiveTo,
+          runQuery: tx.query,
+        }),
+      );
+
+      const assignmentWarnings = await buildCombinedRoleAssignmentWarnings({
+        tenantId,
+        userId: assignment.user_id,
         scopeType,
         scopeId,
+        includeRoleId: assignment.role_id,
+        includeRoleIds: companionAssignments.companionRoleIds,
+        excludeAssignmentId: assignmentId,
         effect,
-        effectiveDates.effectiveFrom,
-        effectiveDates.effectiveTo,
-        assignmentId,
-        tenantId,
-      ],
-    );
+        asOfDate: effectiveDates.effectiveFrom,
+        runQuery: tx.query,
+      });
+
+      return {
+        assignmentWarnings,
+        companionRoleCodes: companionAssignments.companionRoleCodes,
+        createdCompanionRoleCodes: companionAssignments.createdCompanionRoleCodes,
+      };
+    });
     await invalidateRbacCache(tenantId);
 
     await logRbacAuditEvent(req, {
@@ -2218,6 +2496,8 @@ router.put(
           effectiveFrom: effectiveDates.effectiveFrom,
           effectiveTo: effectiveDates.effectiveTo,
         },
+        companionRoleCodes: operation.companionRoleCodes,
+        createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
       },
     });
 
@@ -2229,7 +2509,9 @@ router.put(
       effect,
       effectiveFrom: effectiveDates.effectiveFrom,
       effectiveTo: effectiveDates.effectiveTo,
-      assignmentWarnings,
+      assignmentWarnings: operation.assignmentWarnings,
+      companionRoleCodes: operation.companionRoleCodes,
+      createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
     });
   }),
 );

@@ -274,6 +274,78 @@ const ROLE_CATALOG = Object.freeze({
     workflowFamily: "CONSOLIDATION_RUN",
     sortOrder: 340,
   },
+  BranchInventoryViewer: {
+    code: "Branch Inventory Viewer",
+    category: "readonly",
+    summary:
+      "Reads branch-owned warehouses, inventory movements, and item-card account mappings without maintenance authority.",
+    capabilities: ["Branch inventory visibility", "Warehouse lookup", "Item-card mapping review"],
+    recommendedScopes: ["OPERATING_UNIT"],
+    sortOrder: 111,
+  },
+  BranchInventoryOperator: {
+    code: "Branch Inventory Operator",
+    category: "scoped",
+    summary:
+      "Maintains branch-owned warehouses, materializes branch stock movements, and edits shared item cards from branch scope.",
+    capabilities: ["Branch warehouse setup", "Stock movement handling", "Item-card maintenance"],
+    recommendedScopes: ["OPERATING_UNIT"],
+    sortOrder: 112,
+  },
+  BranchFixedAssetViewer: {
+    code: "Branch Fixed Asset Viewer",
+    category: "readonly",
+    summary:
+      "Reads branch-owned fixed-asset registers, categories, custodians, and reports without lifecycle write authority.",
+    capabilities: ["Branch asset visibility", "Category lookup", "Custodian lookup"],
+    recommendedScopes: ["OPERATING_UNIT"],
+    sortOrder: 113,
+  },
+  BranchFixedAssetOperator: {
+    code: "Branch Fixed Asset Operator",
+    category: "scoped",
+    summary:
+      "Creates and updates branch-owned fixed-asset drafts while keeping posting, disposal, and depreciation governance at entity scope.",
+    capabilities: ["Branch asset drafting", "Fixed-asset maintenance", "Custodian-aware updates"],
+    recommendedScopes: ["OPERATING_UNIT"],
+    sortOrder: 114,
+  },
+  EntityInventoryViewer: {
+    code: "Entity Inventory Viewer",
+    category: "readonly",
+    summary:
+      "Reads entity inventory, warehouse setups, and item-card account mappings without write authority.",
+    capabilities: ["Entity inventory visibility", "Warehouse review", "Item-card mapping review"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    sortOrder: 241,
+  },
+  EntityInventoryOperator: {
+    code: "Entity Inventory Operator",
+    category: "scoped",
+    summary:
+      "Creates and updates entity warehouses, inventory movements, and shared item cards without broader GL master-data write authority.",
+    capabilities: ["Entity warehouse setup", "Inventory operations", "Item-card maintenance"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    sortOrder: 242,
+  },
+  EntityFixedAssetViewer: {
+    code: "Entity Fixed Asset Viewer",
+    category: "readonly",
+    summary:
+      "Reads legal-entity fixed-asset registers, setup tables, custodians, and reports without lifecycle write authority.",
+    capabilities: ["Entity asset visibility", "Setup review", "Fixed-asset reporting"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    sortOrder: 243,
+  },
+  EntityFixedAssetOperator: {
+    code: "Entity Fixed Asset Operator",
+    category: "scoped",
+    summary:
+      "Owns legal-entity fixed-asset lifecycle, setup, depreciation, and custodian maintenance without broader GL override authority.",
+    capabilities: ["Fixed-asset lifecycle", "Setup governance", "Depreciation control"],
+    recommendedScopes: ["LEGAL_ENTITY"],
+    sortOrder: 244,
+  },
   AuditorReadOnly: {
     category: "readonly",
     summary:
@@ -804,11 +876,15 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     runtimeNotes: freezeList([]),
   }),
   "PKG-AP-DRAFT-SUBMIT": Object.freeze({
-    runtimeMappingLabel: "OU / entity AP submitter source roles",
+    runtimeMappingLabel: "Branch / OU / entity AP submitter source roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["OUAPSubmitter", "EntityAPController"]),
+    runtimeRoleCodes: freezeList([
+      "BranchOperator",
+      "OUAPSubmitter",
+      "EntityAPController",
+    ]),
     runtimeNotes: freezeList([
-      "Current runtime roles split AP draft creation/edit on BranchOperator and submit on branch/entity AP submitter roles instead of shipping one standalone package role.",
+      "BranchOperator now covers branch draft-and-submit access directly; OUAPSubmitter remains compatible with older runtime assignments.",
     ]),
   }),
   "PKG-AP-APPROVE": Object.freeze({

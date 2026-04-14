@@ -561,9 +561,12 @@ export default function FixedAssetSettingsPage() {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
   const {
+    workingContext,
     legalEntities: workingContextLegalEntities,
     loading: workingContextLoading,
   } = useWorkingContext();
+  const workingLegalEntityId = toPositiveInt(workingContext?.legalEntityId);
+  const workingOperatingUnitId = toPositiveInt(workingContext?.operatingUnitId);
 
   const canReadSettings = hasPermission("fixed_assets.settings.read");
   const canUpsertSettings = hasPermission("fixed_assets.settings.upsert");
@@ -618,6 +621,12 @@ export default function FixedAssetSettingsPage() {
 
   // ── Shared filter ───────────────────────────────────────────────
   const [filterLeId, setFilterLeId] = useState("");
+  useEffect(() => {
+    if (!workingLegalEntityId) {
+      return;
+    }
+    setFilterLeId((currentValue) => currentValue || String(workingLegalEntityId));
+  }, [workingLegalEntityId]);
 
   // ── Category state ──────────────────────────────────────────────
   const [catRows, setCatRows] = useState([]);
@@ -668,6 +677,7 @@ export default function FixedAssetSettingsPage() {
       try {
         const res = await listFixedAssetCategories({
           legalEntityId: filterLeId || undefined,
+          ownerOperatingUnitId: workingOperatingUnitId || undefined,
         });
         if (active) setCatRows(Array.isArray(res?.rows) ? res.rows : []);
       } catch (err) {
@@ -680,7 +690,7 @@ export default function FixedAssetSettingsPage() {
       }
     })();
     return () => { active = false; };
-  }, [canReadSettings, filterLeId, l]);
+  }, [canReadSettings, filterLeId, workingOperatingUnitId, l]);
 
   // ── Load profiles ───────────────────────────────────────────────
   useEffect(() => {
@@ -696,6 +706,7 @@ export default function FixedAssetSettingsPage() {
       try {
         const res = await listFixedAssetDepreciationProfiles({
           legalEntityId: filterLeId || undefined,
+          ownerOperatingUnitId: workingOperatingUnitId || undefined,
         });
         if (active) setProfRows(Array.isArray(res?.rows) ? res.rows : []);
       } catch (err) {
@@ -708,7 +719,7 @@ export default function FixedAssetSettingsPage() {
       }
     })();
     return () => { active = false; };
-  }, [canReadSettings, filterLeId, l]);
+  }, [canReadSettings, filterLeId, workingOperatingUnitId, l]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(catForm.legalEntityId);
@@ -727,7 +738,10 @@ export default function FixedAssetSettingsPage() {
       setCatProfileLoading(true);
       setCatProfileError("");
       try {
-        const response = await listFixedAssetDepreciationProfiles({ legalEntityId });
+        const response = await listFixedAssetDepreciationProfiles({
+          legalEntityId,
+          ownerOperatingUnitId: workingOperatingUnitId || undefined,
+        });
         const items = Array.isArray(response?.rows) ? response.rows : [];
         if (active) {
           setCatProfileOptions(items.map(mapDepreciationProfileOption).filter(Boolean));
@@ -752,7 +766,7 @@ export default function FixedAssetSettingsPage() {
       }
     })();
     return () => { active = false; };
-  }, [activeTab, canReadSettings, catForm.legalEntityId, l]);
+  }, [activeTab, canReadSettings, catForm.legalEntityId, workingOperatingUnitId, l]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(catDetailRow?.legalEntityId);
@@ -769,7 +783,10 @@ export default function FixedAssetSettingsPage() {
       setCatDetailError("");
       try {
         const [profileResponse, accountResponse] = await Promise.all([
-          listFixedAssetDepreciationProfiles({ legalEntityId }),
+          listFixedAssetDepreciationProfiles({
+            legalEntityId,
+            ownerOperatingUnitId: workingOperatingUnitId || undefined,
+          }),
           listAccounts({
             legalEntityId,
             includeInactive: true,
@@ -803,7 +820,7 @@ export default function FixedAssetSettingsPage() {
       }
     })();
     return () => { active = false; };
-  }, [canReadSettings, catDetailRow, l]);
+  }, [canReadSettings, catDetailRow, workingOperatingUnitId, l]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(catForm.legalEntityId);
@@ -1216,7 +1233,10 @@ export default function FixedAssetSettingsPage() {
           : l("Category created.", "Kategori olusturuldu.")
       );
       if (res) { setCatSelected(res); setCatForm(mapCategoryToForm(res)); }
-      const refreshed = await listFixedAssetCategories({ legalEntityId: filterLeId || undefined });
+      const refreshed = await listFixedAssetCategories({
+        legalEntityId: filterLeId || undefined,
+        ownerOperatingUnitId: workingOperatingUnitId || undefined,
+      });
       setCatRows(Array.isArray(refreshed?.rows) ? refreshed.rows : []);
     } catch (err) {
       setCatFormError(normalizeApiError(err, l("Failed to save category.", "Kategori kaydedilemedi.")));
@@ -1256,7 +1276,10 @@ export default function FixedAssetSettingsPage() {
           : l("Profile created.", "Profil olusturuldu.")
       );
       if (res) { setProfSelected(res); setProfForm(mapProfileToForm(res)); }
-      const refreshed = await listFixedAssetDepreciationProfiles({ legalEntityId: filterLeId || undefined });
+      const refreshed = await listFixedAssetDepreciationProfiles({
+        legalEntityId: filterLeId || undefined,
+        ownerOperatingUnitId: workingOperatingUnitId || undefined,
+      });
       setProfRows(Array.isArray(refreshed?.rows) ? refreshed.rows : []);
     } catch (err) {
       setProfFormError(normalizeApiError(err, l("Failed to save profile.", "Profil kaydedilemedi.")));

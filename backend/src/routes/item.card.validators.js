@@ -104,6 +104,10 @@ export function parseItemCardListFilters(req) {
   };
 }
 
+/**
+ * Parse item-card create input while preserving optional operating-unit
+ * context used only for scoped RBAC authorization on LE-owned item cards.
+ */
 export function parseItemCardCreateInput(req) {
   const body = req.body || {};
   return {
@@ -111,6 +115,10 @@ export function parseItemCardCreateInput(req) {
     legalEntityId: normalizeOptionalPositiveInt(
       body.legalEntityId ?? body.legal_entity_id,
       "legalEntityId"
+    ),
+    operatingUnitId: normalizeOptionalPositiveInt(
+      body.operatingUnitId ?? body.operating_unit_id,
+      "operatingUnitId"
     ),
     code: normalizeShortText(body.code, "code", 80, { required: true }).toUpperCase(),
     name: normalizeShortText(body.name, "name", 200, { required: true }),
@@ -153,6 +161,10 @@ export function parseItemCardCreateInput(req) {
   };
 }
 
+/**
+ * Parse item-card update input while preserving optional operating-unit
+ * context used only for scoped RBAC authorization on LE-owned item cards.
+ */
 export function parseItemCardUpdateInput(req) {
   const body = req.body || {};
   return {
@@ -161,6 +173,10 @@ export function parseItemCardUpdateInput(req) {
     legalEntityId: normalizeOptionalPositiveInt(
       body.legalEntityId ?? body.legal_entity_id,
       "legalEntityId"
+    ),
+    operatingUnitId: normalizeOptionalPositiveInt(
+      body.operatingUnitId ?? body.operating_unit_id,
+      "operatingUnitId"
     ),
     code: normalizeShortText(body.code, "code", 80, { required: true }).toUpperCase(),
     name: normalizeShortText(body.name, "name", 200, { required: true }),

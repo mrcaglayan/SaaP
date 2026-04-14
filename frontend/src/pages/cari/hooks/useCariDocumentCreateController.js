@@ -1928,8 +1928,10 @@ export default function useCariDocumentCreateController({
     async function loadCreateCashRegisters() {
       setCreateCashRegistersLoading(true);
       try {
+        const operatingUnitId = toPositiveInt(effectiveCreateOperatingUnitId);
         const response = await listCashRegisters({
           legalEntityId,
+          operatingUnitId: operatingUnitId || undefined,
           status: "ACTIVE",
           limit: 300,
           offset: 0,
@@ -1956,7 +1958,7 @@ export default function useCariDocumentCreateController({
     return () => {
       active = false;
     };
-  }, [canReadCashRegisters, createForm.legalEntityId, l]);
+  }, [canReadCashRegisters, createForm.legalEntityId, effectiveCreateOperatingUnitId, l]);
   useEffect(() => {
     setTaxCategoryError("");
     if (!canReadOrgTree) {

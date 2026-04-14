@@ -43,7 +43,7 @@ function formatNumber(value) {
 export default function FixedAssetDisposalsPage() {
   const { l } = useI18n();
   const { hasPermission } = useAuth();
-  const { legalEntity } = useWorkingContext();
+  const { legalEntity, workingContext } = useWorkingContext();
   const [searchParams] = useSearchParams();
   const canRead = hasPermission("fixed_assets.read");
   const canDispose = hasPermission("fixed_assets.dispose");
@@ -63,6 +63,7 @@ export default function FixedAssetDisposalsPage() {
   const [listError, setListError] = useState("");
 
   const legalEntityId = legalEntity?.id || "";
+  const ownerOperatingUnitId = parsePositiveInt(workingContext?.operatingUnitId);
 
   // Load disposal context when deep-link params are present
   useEffect(() => {
@@ -103,6 +104,7 @@ export default function FixedAssetDisposalsPage() {
       try {
         const res = await listFixedAssets({
           legalEntityId: legalEntityId || undefined,
+          ownerOperatingUnitId: ownerOperatingUnitId || undefined,
           disposed: "true",
         });
         if (active) setDisposedAssets(Array.isArray(res?.rows) ? res.rows : []);
@@ -116,7 +118,7 @@ export default function FixedAssetDisposalsPage() {
       }
     })();
     return () => { active = false; };
-  }, [canRead, queryTransactionId, legalEntityId, l]);
+  }, [canRead, queryTransactionId, legalEntityId, ownerOperatingUnitId, l]);
 
   if (!canRead) {
     return (

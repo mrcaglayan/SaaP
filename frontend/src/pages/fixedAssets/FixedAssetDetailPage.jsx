@@ -742,6 +742,7 @@ export default function FixedAssetDetailPage() {
 
   useEffect(() => {
     const legalEntityId = parsePositiveInt(asset?.legalEntityId);
+    const ownerOperatingUnitId = parsePositiveInt(asset?.ownerOperatingUnitId);
     if (!legalEntityId) {
       setAccountRows([]);
       setOperatingUnitRows([]);
@@ -760,6 +761,7 @@ export default function FixedAssetDetailPage() {
           listOperatingUnits({ legalEntityId, limit: 500 }),
           listFixedAssetCustodians({
             legalEntityId,
+            operatingUnitId: ownerOperatingUnitId || undefined,
             status: "ACTIVE",
           }),
         ]);
@@ -775,7 +777,7 @@ export default function FixedAssetDetailPage() {
       }
     })();
     return () => { active = false; };
-  }, [asset?.legalEntityId]);
+  }, [asset?.legalEntityId, asset?.ownerOperatingUnitId]);
 
   useEffect(() => {
     const documentId = parsePositiveInt(asset?.sourceCariDocumentId);

@@ -53,12 +53,13 @@ function buildCariDocumentPath(documentId) {
 export default function FixedAssetAcquisitionsPage() {
   const { l, t } = useI18n();
   const { hasPermission } = useAuth();
-  const { legalEntity } = useWorkingContext();
+  const { legalEntity, workingContext } = useWorkingContext();
   const navigate = useNavigate();
   const canRead = hasPermission("fixed_assets.read");
   const canPost = hasPermission("fixed_assets.post");
 
   const legalEntityId = legalEntity?.id || "";
+  const workingOperatingUnitId = toPositiveInt(workingContext?.operatingUnitId);
 
   // ── Acquisitions list state ──────────────────────────────────────
   const [rows, setRows] = useState([]);
@@ -91,6 +92,29 @@ export default function FixedAssetAcquisitionsPage() {
   const [catOptions, setCatOptions] = useState([]);
   const [ouOptions, setOuOptions] = useState([]);
 
+  useEffect(() => {
+    if (!workingOperatingUnitId) {
+      return;
+    }
+    setCapForm((prev) => {
+      const nextOwnerOperatingUnitId =
+        prev.ownerOperatingUnitId || String(workingOperatingUnitId);
+      const nextLocationOperatingUnitId =
+        prev.locationOperatingUnitId || String(workingOperatingUnitId);
+      if (
+        nextOwnerOperatingUnitId === prev.ownerOperatingUnitId &&
+        nextLocationOperatingUnitId === prev.locationOperatingUnitId
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        ownerOperatingUnitId: nextOwnerOperatingUnitId,
+        locationOperatingUnitId: nextLocationOperatingUnitId,
+      };
+    });
+  }, [workingOperatingUnitId]);
+
   // ── Load acquisitions list ───────────────────────────────────────
   useEffect(() => {
     if (!canRead) {
@@ -106,6 +130,7 @@ export default function FixedAssetAcquisitionsPage() {
       try {
         const res = await listFixedAssets({
           legalEntityId: legalEntityId || undefined,
+          ownerOperatingUnitId: workingOperatingUnitId || undefined,
           status: filterStatus || undefined,
         });
         const items = Array.isArray(res?.rows) ? res.rows : [];
@@ -120,7 +145,7 @@ export default function FixedAssetAcquisitionsPage() {
       }
     })();
     return () => { active = false; };
-  }, [canRead, legalEntityId, filterStatus, l]);
+  }, [canRead, legalEntityId, filterStatus, workingOperatingUnitId, l]);
 
   useEffect(() => {
     if (!canRead || rows.length === 0) {
@@ -172,6 +197,7 @@ export default function FixedAssetAcquisitionsPage() {
       try {
         const res = await listFixedAssetCategories({
           legalEntityId: legalEntityId || undefined,
+          ownerOperatingUnitId: workingOperatingUnitId || undefined,
           status: "ACTIVE",
         });
         const items = Array.isArray(res?.rows) ? res.rows : [];
@@ -181,7 +207,7 @@ export default function FixedAssetAcquisitionsPage() {
       }
     })();
     return () => { active = false; };
-  }, [capOpen, canPost, legalEntityId]);
+  }, [capOpen, canPost, legalEntityId, workingOperatingUnitId]);
 
   useEffect(() => {
     if (!capOpen || !canPost) return;

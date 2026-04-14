@@ -22,13 +22,20 @@ export async function createInventoryWarehouse(payload) {
   return response.data;
 }
 
+export async function upsertInventoryWarehouse(payload) {
+  const response = await api.post("/api/v1/inventory/warehouses", payload);
+  return response.data;
+}
+
 export async function listInventoryTransfers(params = {}) {
   const response = await api.get(`/api/v1/inventory/transfers${toQueryString(params)}`);
   return response.data;
 }
 
-export async function getInventoryTransfer(transferId) {
-  const response = await api.get(`/api/v1/inventory/transfers/${transferId}`);
+export async function getInventoryTransfer(transferId, params = {}) {
+  const response = await api.get(
+    `/api/v1/inventory/transfers/${transferId}${toQueryString(params)}`
+  );
   return response.data;
 }
 
@@ -62,8 +69,10 @@ export async function reverseInventoryTransfer(transferId, payload = {}) {
   return response.data;
 }
 
-export async function listInventoryTransferEvidence(transferId) {
-  const response = await api.get(`/api/v1/inventory/transfers/${transferId}/evidence`);
+export async function listInventoryTransferEvidence(transferId, params = {}) {
+  const response = await api.get(
+    `/api/v1/inventory/transfers/${transferId}/evidence${toQueryString(params)}`
+  );
   return response.data;
 }
 
@@ -107,9 +116,9 @@ function parseDispositionFileName(dispositionHeader) {
   return basicMatch?.[1] ? String(basicMatch[1]).trim() : null;
 }
 
-export async function downloadInventoryTransferEvidence(transferId, evidenceId) {
+export async function downloadInventoryTransferEvidence(transferId, evidenceId, params = {}) {
   const response = await api.get(
-    `/api/v1/inventory/transfers/${transferId}/evidence/${evidenceId}/download`,
+    `/api/v1/inventory/transfers/${transferId}/evidence/${evidenceId}/download${toQueryString(params)}`,
     { responseType: "blob" }
   );
   return {

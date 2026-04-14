@@ -10,6 +10,10 @@ const STOCK_LINK_STATUS_VALUES = ["PENDING", "LINKED", "VOID"];
 const STOCK_LINK_QUEUE_SCOPE_VALUES = ["ACTIONABLE", "COMPLETED", "VOID", "ALL"];
 const STOCK_IMPACT_MODE_VALUES = ["RECEIPT_PENDING", "ISSUE_PENDING"];
 const MOVEMENT_TYPE_VALUES = ["RECEIPT", "ISSUE", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"];
+const INVENTORY_RECEIPT_POLICY_VALUES = [
+  "ALLOW_INVOICE_BEFORE_RECEIPT",
+  "REQUIRE_RECEIPT_BEFORE_INVOICE",
+];
 const VALUATION_STATUS_VALUES = ["NOT_REQUIRED", "PENDING", "VALUED"];
 const LAYER_STATUS_VALUES = ["OPEN", "CLOSED"];
 
@@ -110,7 +114,8 @@ export function parseInventoryWarehouseListFilters(req) {
   };
 }
 
-export function parseInventoryWarehouseCreateInput(req) {
+export function parseInventoryWarehouseUpsertInput(req) {
+  const id = normalizeOptionalPositiveInt(req.body?.id, "id");
   const normalizedOwnershipScope =
     normalizeEnum(
       req.body?.ownershipScope ?? "CENTRAL",
@@ -126,22 +131,39 @@ export function parseInventoryWarehouseCreateInput(req) {
     ownershipScope: normalizedOwnershipScope,
     operatingUnitId: normalizedOperatingUnitId,
   });
+  const normalizedCode = normalizeShortText(req.body?.code, "code", 80, {
+    required: !id,
+  });
+  const normalizedName = normalizeShortText(req.body?.name, "name", 200, {
+    required: !id,
+  });
+  const defaultStatus = id ? null : "ACTIVE";
   return {
+    id,
     tenantId: requireTenantId(req),
     userId: requireUserId(req),
     legalEntityId: normalizeOptionalPositiveInt(req.body?.legalEntityId, "legalEntityId"),
     ownershipScope,
     operatingUnitId,
-    code: normalizeShortText(req.body?.code, "code", 80, { required: true }).toUpperCase(),
-    name: normalizeShortText(req.body?.name, "name", 200, { required: true }),
+    code: normalizedCode ? normalizedCode.toUpperCase() : null,
+    name: normalizedName || null,
     status:
-      normalizeEnum(req.body?.status ?? "ACTIVE", "status", WAREHOUSE_STATUS_VALUES, {
-        required: true,
-      }) || "ACTIVE",
+      normalizeEnum(req.body?.status ?? defaultStatus, "status", WAREHOUSE_STATUS_VALUES, {
+        required: !id,
+      }) || defaultStatus,
+    inventoryReceiptPolicy:
+      normalizeEnum(
+        req.body?.inventoryReceiptPolicy,
+        "inventoryReceiptPolicy",
+        INVENTORY_RECEIPT_POLICY_VALUES
+      ) || null,
     notes: normalizeShortText(req.body?.notes, "notes", 255) || null,
   };
 }
 
+/**
+ * Parse stock-link list filters, including optional OU scoping for branch reads.
+ */
 export function parseInventoryStockLinkListFilters(req) {
   const linkedRaw = String(req.query?.warehouseLinked ?? "").trim().toLowerCase();
   const linkStatusRaw = String(req.query?.linkStatus ?? req.query?.status ?? "").trim();
@@ -149,6 +171,7 @@ export function parseInventoryStockLinkListFilters(req) {
   return {
     tenantId: requireTenantId(req),
     legalEntityId: normalizeOptionalPositiveInt(req.query?.legalEntityId, "legalEntityId"),
+    operatingUnitId: normalizeOptionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId"),
     queueScope: queueScopeRaw
       ? normalizeEnum(queueScopeRaw, "queueScope", STOCK_LINK_QUEUE_SCOPE_VALUES, {
           required: true,
@@ -178,10 +201,14 @@ export function parseInventoryStockLinkListFilters(req) {
   };
 }
 
+/**
+ * Parse inventory movement list filters, including optional warehouse ownership scope.
+ */
 export function parseInventoryMovementListFilters(req) {
   return {
     tenantId: requireTenantId(req),
     legalEntityId: normalizeOptionalPositiveInt(req.query?.legalEntityId, "legalEntityId"),
+    operatingUnitId: normalizeOptionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId"),
     warehouseId: normalizeOptionalPositiveInt(req.query?.warehouseId, "warehouseId"),
     movementType:
       normalizeEnum(req.query?.movementType, "movementType", MOVEMENT_TYPE_VALUES) || null,
@@ -232,10 +259,14 @@ export function parseInventoryMovementReverseInput(req) {
   };
 }
 
+/**
+ * Parse inventory cost-layer list filters, including optional OU scoping.
+ */
 export function parseInventoryCostLayerListFilters(req) {
   return {
     tenantId: requireTenantId(req),
     legalEntityId: normalizeOptionalPositiveInt(req.query?.legalEntityId, "legalEntityId"),
+    operatingUnitId: normalizeOptionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId"),
     warehouseId: normalizeOptionalPositiveInt(req.query?.warehouseId, "warehouseId"),
     itemCardId: normalizeOptionalPositiveInt(req.query?.itemCardId, "itemCardId"),
     layerStatus:

@@ -1022,6 +1022,12 @@ export const sidebarItems = [
         requiredPermissions: ["item.card.read"],
         implemented: true,
       },
+      {
+        label: "Stok Ayarlari",
+        to: "/app/stok-ayarlari",
+        requiredPermissions: ["inventory.read"],
+        implemented: true,
+      },
     ],
   },
   {
@@ -1465,6 +1471,8 @@ export const sidebarItems = [
       {
         label: "Stok Ayarlari",
         to: "/app/ayarlar/stok-ayarlari",
+        requiredPermissions: ["inventory.read"],
+        implemented: true,
       },
     ],
   },

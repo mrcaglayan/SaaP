@@ -9634,6 +9634,7 @@ async function postCariDocumentByIdTx(
       legalEntityId: lockedLegalEntityId,
       documentOperatingUnitId,
       documentLines,
+      documentDirection: direction,
       fieldCollectionLabel: "storedLines",
       ownerLabel: "document",
       runQuery: tx.query,

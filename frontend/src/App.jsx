@@ -78,6 +78,7 @@ import InventoryLandedCostVoucherDetailPage from "./pages/inventory/InventoryLan
 import InventoryLandedCostVoucherNewPage from "./pages/inventory/InventoryLandedCostVoucherNewPage.jsx";
 import InventoryLandedCostVouchersPage from "./pages/inventory/InventoryLandedCostVouchersPage.jsx";
 import InventoryMovementsPage from "./pages/inventory/InventoryMovementsPage.jsx";
+import InventorySettingsPage from "./pages/inventory/InventorySettingsPage.jsx";
 import InventoryTransfersPage from "./pages/inventory/InventoryTransfersPage.jsx";
 import ContractsPage from "./pages/contracts/ContractsPage.jsx";
 import FixedAssetsPage from "./pages/fixedAssets/FixedAssetsPage.jsx";
@@ -603,6 +604,11 @@ const implementedRoutes = [
     element: <InventoryTransfersPage />,
   },
   {
+    appPath: "/app/stok-ayarlari",
+    childPath: "stok-ayarlari",
+    element: <InventorySettingsPage />,
+  },
+  {
     appPath: "/app/demirbaslar",
     childPath: "demirbaslar",
     permissionPath: "/app/demirbas-karti-listesi",
@@ -802,6 +808,12 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/exception-workbench",
     childPath: "ayarlar/exception-workbench",
     element: <ExceptionsWorkbenchPage />,
+  },
+  {
+    appPath: "/app/ayarlar/stok-ayarlari",
+    childPath: "ayarlar/stok-ayarlari",
+    permissionPath: "/app/stok-ayarlari",
+    element: <Navigate to="/app/stok-ayarlari" replace />,
   },
   {
     appPath: "/app/ayarlar/veri-saklama-snapshot",

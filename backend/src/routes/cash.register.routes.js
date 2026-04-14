@@ -22,6 +22,10 @@ router.get(
   "/",
   requirePermission("cash.register.read", {
     resolveScope: async (req) => {
+      const operatingUnitId = parsePositiveInt(req.query?.operatingUnitId);
+      if (operatingUnitId) {
+        return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+      }
       const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
       if (legalEntityId) {
         return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };

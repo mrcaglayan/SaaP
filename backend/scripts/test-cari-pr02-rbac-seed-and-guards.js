@@ -64,6 +64,7 @@ const CARI_ROLE_EXPECTATIONS = {
     "cari.doc.read",
     "cari.doc.create",
     "cari.doc.update",
+    "cari.doc.submit",
     "cari.settlement.apply",
     "cari.report.read",
     "cari.bank.attach",

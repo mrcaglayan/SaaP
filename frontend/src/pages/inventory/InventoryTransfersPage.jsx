@@ -216,6 +216,10 @@ export default function InventoryTransfersPage() {
     () => String(toPositiveInt(searchParams.get("legalEntityId")) || ""),
     [searchParams]
   );
+  const deepLinkedOperatingUnitId = useMemo(
+    () => String(toPositiveInt(searchParams.get("operatingUnitId")) || ""),
+    [searchParams]
+  );
   const deepLinkedStatus = useMemo(() => {
     const value = normalizeText(searchParams.get("status")).toUpperCase();
     return TRANSFER_STATUS_VALUES.includes(value) ? value : "";
@@ -260,11 +264,19 @@ export default function InventoryTransfersPage() {
   );
   const [filters, setFilters] = useState({
     legalEntityId: "",
+    operatingUnitId: deepLinkedOperatingUnitId,
     status: "",
     sourceWarehouseId: "",
     targetWarehouseId: "",
     q: "",
   });
+  const activeTransferScopeParams = useMemo(
+    () => ({
+      legalEntityId: filters.legalEntityId || undefined,
+      operatingUnitId: filters.operatingUnitId || undefined,
+    }),
+    [filters.legalEntityId, filters.operatingUnitId]
+  );
   const [form, setForm] = useState(() => createTransferForm());
   const [warehouseRows, setWarehouseRows] = useState([]);
   const [itemCardRows, setItemCardRows] = useState([]);
@@ -329,6 +341,18 @@ export default function InventoryTransfersPage() {
     );
   }, [deepLinkedLegalEntityId]);
   useEffect(() => {
+    setFilters((previous) =>
+      previous.operatingUnitId === deepLinkedOperatingUnitId
+        ? previous
+        : {
+            ...previous,
+            operatingUnitId: deepLinkedOperatingUnitId,
+            sourceWarehouseId: "",
+            targetWarehouseId: "",
+          }
+    );
+  }, [deepLinkedOperatingUnitId]);
+  useEffect(() => {
     if (!deepLinkedStatus) {
       return;
     }
@@ -377,6 +401,7 @@ export default function InventoryTransfersPage() {
   }, [filters.legalEntityId]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(filters.legalEntityId);
+    const operatingUnitId = toPositiveInt(filters.operatingUnitId);
     if (!canRead || !legalEntityId) {
       setWarehouseRows([]);
       setItemCardRows([]);
@@ -388,6 +413,7 @@ export default function InventoryTransfersPage() {
         const [warehouseResponse, itemCardResponse] = await Promise.all([
           listInventoryWarehouses({
             legalEntityId,
+            operatingUnitId: operatingUnitId || undefined,
             status: "ACTIVE",
             limit: 500,
             offset: 0,
@@ -424,7 +450,7 @@ export default function InventoryTransfersPage() {
     return () => {
       active = false;
     };
-  }, [canRead, canReadItemCards, filters.legalEntityId, l]);
+  }, [canRead, canReadItemCards, filters.legalEntityId, filters.operatingUnitId, l]);
   useEffect(() => {
     if (!canRead) {
       setRows([]);
@@ -439,6 +465,7 @@ export default function InventoryTransfersPage() {
       try {
         const response = await listInventoryTransfers({
           legalEntityId: filters.legalEntityId || undefined,
+          operatingUnitId: filters.operatingUnitId || undefined,
           status: filters.status || undefined,
           sourceWarehouseId: filters.sourceWarehouseId || undefined,
           targetWarehouseId: filters.targetWarehouseId || undefined,
@@ -493,7 +520,7 @@ export default function InventoryTransfersPage() {
       setDetailLoading(true);
       setDetailError("");
       try {
-        const response = await getInventoryTransfer(transferId);
+        const response = await getInventoryTransfer(transferId, activeTransferScopeParams);
         if (!active) {
           return;
         }
@@ -519,7 +546,7 @@ export default function InventoryTransfersPage() {
     return () => {
       active = false;
     };
-  }, [canRead, selectedTransferId, l]);
+  }, [activeTransferScopeParams, canRead, selectedTransferId, l]);
   useEffect(() => {
     setEvidenceError("");
     setEvidenceMessage("");
@@ -542,7 +569,7 @@ export default function InventoryTransfersPage() {
       setEvidenceLoading(true);
       setEvidenceError("");
       try {
-        const response = await listInventoryTransferEvidence(transferId);
+        const response = await listInventoryTransferEvidence(transferId, activeTransferScopeParams);
         if (!active) {
           return;
         }
@@ -568,7 +595,7 @@ export default function InventoryTransfersPage() {
     return () => {
       active = false;
     };
-  }, [canRead, selectedTransferId, l]);
+  }, [activeTransferScopeParams, canRead, selectedTransferId, l]);
   const activeWarehouseOptions = useMemo(
     () =>
       warehouseRows
@@ -696,6 +723,7 @@ export default function InventoryTransfersPage() {
   async function reloadTransfers(nextSelectedTransferId = selectedTransferId) {
     const response = await listInventoryTransfers({
       legalEntityId: filters.legalEntityId || undefined,
+      operatingUnitId: filters.operatingUnitId || undefined,
       status: filters.status || undefined,
       sourceWarehouseId: filters.sourceWarehouseId || undefined,
       targetWarehouseId: filters.targetWarehouseId || undefined,
@@ -721,7 +749,7 @@ export default function InventoryTransfersPage() {
       setEvidenceRows([]);
       return [];
     }
-    const response = await listInventoryTransferEvidence(transferId);
+    const response = await listInventoryTransferEvidence(transferId, activeTransferScopeParams);
     const nextRows = Array.isArray(response?.rows) ? response.rows : [];
     setEvidenceRows(nextRows);
     return nextRows;
@@ -938,7 +966,11 @@ export default function InventoryTransfersPage() {
     setEvidenceError("");
     setEvidenceMessage("");
     try {
-      const response = await downloadInventoryTransferEvidence(transferId, evidenceId);
+      const response = await downloadInventoryTransferEvidence(
+        transferId,
+        evidenceId,
+        activeTransferScopeParams
+      );
       const fileName =
         normalizeText(response?.fileName) ||
         normalizeText(row?.fileName) ||

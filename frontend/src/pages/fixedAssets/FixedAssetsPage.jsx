@@ -81,7 +81,8 @@ export default function FixedAssetsPage() {
   const { hasPermission } = useAuth();
   const canRead = hasPermission("fixed_assets.read");
   const canUpsert = hasPermission("fixed_assets.upsert");
-  const { legalEntity } = useWorkingContext();
+  const { legalEntity, workingContext } = useWorkingContext();
+  const workingOperatingUnitId = toPositiveInt(workingContext?.operatingUnitId);
 
   // ── Filters ───────────────────────────────────────────────────
   const [filterLeId, setFilterLeId] = useState("");
@@ -115,6 +116,18 @@ export default function FixedAssetsPage() {
     const ctxLeId = toPositiveInt(legalEntity?.id);
     if (ctxLeId) setFilterLeId(String(ctxLeId));
   }, [legalEntity]);
+
+  useEffect(() => {
+    if (!workingOperatingUnitId) {
+      return;
+    }
+    setFilterOwnerOuId((currentValue) => {
+      if (toPositiveInt(currentValue)) {
+        return currentValue;
+      }
+      return String(workingOperatingUnitId);
+    });
+  }, [workingOperatingUnitId]);
 
   // ── Load legal entity lookup ──────────────────────────────────
   useEffect(() => {
@@ -160,6 +173,8 @@ export default function FixedAssetsPage() {
       try {
         const res = await listFixedAssetCategories({
           legalEntityId: filterLeId || undefined,
+          ownerOperatingUnitId:
+            filterOwnerOuId || workingOperatingUnitId || undefined,
           status: "ACTIVE",
         });
         const items = Array.isArray(res?.rows) ? res.rows : [];
@@ -171,7 +186,7 @@ export default function FixedAssetsPage() {
       }
     })();
     return () => { active = false; };
-  }, [filterLeId]);
+  }, [filterLeId, filterOwnerOuId, workingOperatingUnitId]);
 
   // ── Load asset list ───────────────────────────────────────────
   useEffect(() => {
@@ -183,7 +198,8 @@ export default function FixedAssetsPage() {
       try {
         const res = await listFixedAssets({
           legalEntityId: filterLeId || undefined,
-          ownerOperatingUnitId: filterOwnerOuId || undefined,
+          ownerOperatingUnitId:
+            filterOwnerOuId || workingOperatingUnitId || undefined,
           locationOperatingUnitId: filterLocationOuId || undefined,
           categoryId: filterCategoryId || undefined,
           status: filterStatus || undefined,
@@ -210,7 +226,8 @@ export default function FixedAssetsPage() {
     canRead, filterLeId, filterOwnerOuId, filterLocationOuId,
     filterCategoryId, filterStatus,
     filterAcqFrom, filterAcqTo, filterInServiceFrom, filterInServiceTo,
-    filterDepartmentCode, filterCostCenterCode, filterDisposed, l,
+    filterDepartmentCode, filterCostCenterCode, filterDisposed,
+    workingOperatingUnitId, l,
   ]);
 
   // ── Render ────────────────────────────────────────────────────

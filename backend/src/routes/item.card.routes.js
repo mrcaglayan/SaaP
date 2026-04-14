@@ -1,6 +1,7 @@
 import express from "express";
-import { asyncHandler, parsePositiveInt } from "./_utils.js";
+import { asyncHandler, badRequest, parsePositiveInt } from "./_utils.js";
 import { requirePermission } from "../middleware/rbac.js";
+import { assertOperatingUnitBelongsToTenant } from "../tenantGuards.js";
 import {
   parseItemCardCreateInput,
   parseItemCardIdParam,
@@ -34,10 +35,33 @@ function resolveItemCardReadScopeFromQuery(req) {
   return resolveLegalEntityScopeFromQuery(req);
 }
 
-function resolveLegalEntityScopeFromBody(req) {
-  const legalEntityId = parsePositiveInt(
-    req.body?.legalEntityId ?? req.body?.legal_entity_id
+async function resolveItemCardWriteScopeFromBody(
+  req,
+  tenantId,
+  fallbackLegalEntityId = null
+) {
+  const operatingUnitId = parsePositiveInt(
+    req.body?.operatingUnitId ?? req.body?.operating_unit_id
   );
+  const legalEntityId =
+    parsePositiveInt(req.body?.legalEntityId ?? req.body?.legal_entity_id) ||
+    parsePositiveInt(fallbackLegalEntityId);
+  if (operatingUnitId) {
+    // Item cards stay legal-entity-owned, but branch-scoped operators still need
+    // to author them through their OU entitlement when working inside that branch.
+    const operatingUnit = await assertOperatingUnitBelongsToTenant(
+      tenantId,
+      operatingUnitId,
+      "operatingUnitId"
+    );
+    if (
+      legalEntityId &&
+      parsePositiveInt(operatingUnit?.legal_entity_id) !== legalEntityId
+    ) {
+      throw badRequest("operatingUnitId must belong to legalEntityId");
+    }
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
   return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
 }
 
@@ -82,7 +106,8 @@ router.get(
 router.post(
   "/",
   requirePermission("item.card.upsert", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
+    resolveScope: async (req, tenantId) =>
+      resolveItemCardWriteScopeFromBody(req, tenantId),
   }),
   asyncHandler(async (req, res) => {
     const payload = parseItemCardCreateInput(req);
@@ -99,7 +124,15 @@ router.patch(
   requirePermission("item.card.upsert", {
     resolveScope: async (req, tenantId) => {
       const existingScope = await resolveItemCardScope(req.params?.itemCardId, tenantId);
-      return existingScope || resolveLegalEntityScopeFromBody(req);
+      const existingLegalEntityId =
+        existingScope?.scopeType === "LEGAL_ENTITY" ? existingScope.scopeId : null;
+      return (
+        (await resolveItemCardWriteScopeFromBody(
+          req,
+          tenantId,
+          existingLegalEntityId
+        )) || existingScope
+      );
     },
   }),
   asyncHandler(async (req, res) => {

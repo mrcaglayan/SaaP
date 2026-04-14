@@ -266,9 +266,10 @@ function mapItemCardRowToForm(row) {
   };
 }
 
-function buildPayload(form) {
+function buildPayload(form, operatingUnitId) {
   return {
     legalEntityId: toPositiveInt(form.legalEntityId) || undefined,
+    operatingUnitId: toPositiveInt(operatingUnitId) || undefined,
     code: normalizeText(form.code).toUpperCase(),
     name: normalizeText(form.name),
     itemType: normalizeText(form.itemType).toUpperCase(),
@@ -309,6 +310,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
   const {
+    workingContext,
     legalEntities: workingContextLegalEntities,
     loading: workingContextLoading,
     error: workingContextError,
@@ -430,7 +432,29 @@ export default function ItemCardsPage({ pageKey = "list" }) {
   const [taxRuleRows, setTaxRuleRows] = useState([]);
   const [taxCategoryError, setTaxCategoryError] = useState("");
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
+  const selectedWorkingOperatingUnitId = toPositiveInt(workingContext?.operatingUnitId);
   const formTransitSetup = describeTransitSetup(form, l);
+  const itemCardScopeParams = useMemo(
+    () => ({
+      legalEntityId: filters.legalEntityId || undefined,
+      operatingUnitId:
+        filters.legalEntityId && selectedWorkingOperatingUnitId
+          ? selectedWorkingOperatingUnitId
+          : undefined,
+      status: filters.status || undefined,
+      itemType: filters.itemType || undefined,
+      q: filters.q || undefined,
+      limit: 200,
+      offset: 0,
+    }),
+    [
+      filters.itemType,
+      filters.legalEntityId,
+      filters.q,
+      filters.status,
+      selectedWorkingOperatingUnitId,
+    ]
+  );
 
   function clearInlineChildState() {
     setInlineChildFieldKey("");
@@ -478,14 +502,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
       setLoading(true);
       setListError("");
       try {
-        const response = await listItemCards({
-          legalEntityId: filters.legalEntityId || undefined,
-          status: filters.status || undefined,
-          itemType: filters.itemType || undefined,
-          q: filters.q || undefined,
-          limit: 200,
-          offset: 0,
-        });
+        const response = await listItemCards(itemCardScopeParams);
         if (!active) {
           return;
         }
@@ -512,7 +529,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
     return () => {
       active = false;
     };
-  }, [canRead, filters, l]);
+  }, [canRead, itemCardScopeParams, l]);
 
   useEffect(() => {
     setAccountError("");
@@ -739,7 +756,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
   }
 
   function validateForm() {
-    const payload = buildPayload(form);
+    const payload = buildPayload(form, selectedWorkingOperatingUnitId);
     const errors = [];
     if (!payload.code) {
       errors.push(l("Code is required.", "Kod zorunludur."));
@@ -1087,14 +1104,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
         setForm(mapItemCardRowToForm(nextRow));
         clearInlineChildState();
       }
-      const refreshed = await listItemCards({
-        legalEntityId: filters.legalEntityId || undefined,
-        status: filters.status || undefined,
-        itemType: filters.itemType || undefined,
-        q: filters.q || undefined,
-        limit: 200,
-        offset: 0,
-      });
+      const refreshed = await listItemCards(itemCardScopeParams);
       setRows(Array.isArray(refreshed?.rows) ? refreshed.rows : []);
     } catch (error) {
       setFormError(

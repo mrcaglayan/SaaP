@@ -937,11 +937,68 @@ const GROUP_REPORTING_CONTROLLER_PERMISSION_CODES = buildPermissionList({
   ],
 });
 
+const INVENTORY_VIEWER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "org.tree.read",
+    // Item-card read screens need account lookup visibility to show mapped
+    // posting accounts without granting GL master-data maintenance.
+    "gl.account.read",
+    "item.card.read",
+    "inventory.read",
+  ],
+});
+
+const INVENTORY_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    ...INVENTORY_VIEWER_PERMISSION_CODES,
+    "item.card.upsert",
+    "inventory.upsert",
+  ],
+});
+
+const FIXED_ASSET_VIEWER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "org.tree.read",
+    // Fixed-asset detail and settings-read pages surface account mappings but
+    // should not imply GL master-data maintenance.
+    "gl.account.read",
+    "fixed_assets.read",
+    "fixed_assets.settings.read",
+    "fixed_assets.custodian.read",
+    "fixed_assets.report.read",
+  ],
+});
+
+const BRANCH_FIXED_ASSET_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    ...FIXED_ASSET_VIEWER_PERMISSION_CODES,
+    "fixed_assets.upsert",
+  ],
+});
+
+const ENTITY_FIXED_ASSET_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    ...FIXED_ASSET_VIEWER_PERMISSION_CODES,
+    // Entity-side lifecycle governance needs fiscal-period visibility for
+    // depreciation-run orchestration without inheriting broader GL posting.
+    "org.fiscal_period.read",
+    "fixed_assets.upsert",
+    "fixed_assets.post",
+    "fixed_assets.transfer",
+    "fixed_assets.dispose",
+    "fixed_assets.settings.upsert",
+    "fixed_assets.custodian.write",
+    "fixed_assets.depreciation.run",
+    "fixed_assets.depreciation.reverse",
+  ],
+});
+
 const BRANCH_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["gl.readonly"],
   permissions: [
     ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
     "org.tree.read",
+    "org.fiscal_calendar.read",
     "org.fiscal_period.read",
     "cash.register.read",
     "cash.session.open",
@@ -954,16 +1011,10 @@ const BRANCH_OPERATOR_PERMISSION_CODES = buildPermissionList({
     "cari.card.request",
     "item.card.read",
     "inventory.read",
-    "fixed_assets.read",
-    // Branch AP fixed-asset purchasing needs category/profile lookup access,
-    // but not fixed-asset settings write authority.
-    "fixed_assets.settings.read",
-    "fixed_assets.upsert",
-    "fixed_assets.custodian.read",
-    "fixed_assets.report.read",
     "cari.doc.read",
     "cari.doc.create",
     "cari.doc.update",
+    "cari.doc.submit",
     "cari.doc.cancel",
     "cari.settlement.apply",
     "cari.report.read",
@@ -1010,6 +1061,14 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   LocalClosePreparer: Object.freeze(["close.operator"]),
   LocalCloseReviewer: Object.freeze(["close.reviewer"]),
   GroupReportingController: Object.freeze(["gl.readonly"]),
+  BranchInventoryViewer: Object.freeze([]),
+  EntityInventoryViewer: Object.freeze([]),
+  BranchInventoryOperator: Object.freeze([]),
+  EntityInventoryOperator: Object.freeze([]),
+  BranchFixedAssetViewer: Object.freeze([]),
+  EntityFixedAssetViewer: Object.freeze([]),
+  BranchFixedAssetOperator: Object.freeze([]),
+  EntityFixedAssetOperator: Object.freeze([]),
   BranchOperator: Object.freeze([
     // Branch/OU roles keep GL visibility even after manual posting is removed.
     "gl.readonly",
@@ -1169,6 +1228,46 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "LocalCloseReviewer",
     name: "Local Close Reviewer",
     permissions: LOCAL_CLOSE_REVIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "BranchInventoryViewer",
+    name: "Branch Inventory Viewer",
+    permissions: INVENTORY_VIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "EntityInventoryViewer",
+    name: "Entity Inventory Viewer",
+    permissions: INVENTORY_VIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "BranchInventoryOperator",
+    name: "Branch Inventory Operator",
+    permissions: INVENTORY_OPERATOR_PERMISSION_CODES,
+  },
+  {
+    code: "EntityInventoryOperator",
+    name: "Entity Inventory Operator",
+    permissions: INVENTORY_OPERATOR_PERMISSION_CODES,
+  },
+  {
+    code: "BranchFixedAssetViewer",
+    name: "Branch Fixed Asset Viewer",
+    permissions: FIXED_ASSET_VIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "EntityFixedAssetViewer",
+    name: "Entity Fixed Asset Viewer",
+    permissions: FIXED_ASSET_VIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "BranchFixedAssetOperator",
+    name: "Branch Fixed Asset Operator",
+    permissions: BRANCH_FIXED_ASSET_OPERATOR_PERMISSION_CODES,
+  },
+  {
+    code: "EntityFixedAssetOperator",
+    name: "Entity Fixed Asset Operator",
+    permissions: ENTITY_FIXED_ASSET_OPERATOR_PERMISSION_CODES,
   },
   {
     code: "BranchOperator",

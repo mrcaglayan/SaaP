@@ -20,6 +20,7 @@ import {
   listRoleAssignments,
   listRoles,
   listUsers,
+  replaceRoleAssignmentScope,
   replaceRolePermissions,
 } from "../../api/rbacAdmin.js";
 import PermissionAccessNotice from "../../auth/PermissionAccessNotice.jsx";
@@ -741,6 +742,39 @@ function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) 
       const packageEntries = resolveWorkflowPackagesForRuntimeRoles(roleCodes);
       const presetMatch = findPresetMatch(roleCodes);
       const status = resolveAssignmentLifecycle(rows);
+      const assignmentRows = rows
+        .map((row) => {
+          const roleEntry = getRoleCatalogEntry(row.role_code);
+          return {
+            assignmentId: Number(row.id || 0),
+            userId,
+            roleId: Number(row.role_id || 0),
+            roleCode: normalizeText(row.role_code),
+            roleLabel: roleEntry.code,
+            scopeType: normalizeText(row.scope_type).toUpperCase(),
+            scopeId: Number(row.scope_id || 0),
+            scopeLabel: buildScopeLabel(
+              row.scope_type,
+              row.scope_id,
+              lookups,
+              tenantScopeId
+            ),
+            effect: normalizeText(row.effect).toUpperCase() || "ALLOW",
+            effectiveFrom: row.effective_from || "",
+            effectiveTo: row.effective_to || "",
+            status: resolveAssignmentLifecycle([row]),
+            recommendedScopes: Array.isArray(roleEntry.recommendedScopes)
+              ? roleEntry.recommendedScopes
+              : [],
+          };
+        })
+        .sort((left, right) => {
+          const roleLabelCompare = left.roleLabel.localeCompare(right.roleLabel);
+          if (roleLabelCompare !== 0) {
+            return roleLabelCompare;
+          }
+          return left.assignmentId - right.assignmentId;
+        });
       return {
         id: key,
         assignmentIds: rows.map((row) => Number(row.id)).filter(Boolean),
@@ -769,7 +803,7 @@ function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) 
         sourceType: presetMatch ? "PRESET_DERIVED" : "DIRECT",
         sourceTypeLabel: presetMatch ? "Preset-derived" : "Direct / custom",
         scopeKey: `${normalizeText(first.scope_type).toUpperCase()}:${Number(first.scope_id || 0)}`,
-        rows,
+        rows: assignmentRows,
       };
     })
     .sort((left, right) => {
@@ -4581,6 +4615,163 @@ export default function UserAssignmentsPage() {
       setSaving(false);
     }
   }
+  async function handleUpdateBundleRoleRow(assignmentRow, nextRowState) {
+    if (!assignmentRow?.assignmentId) {
+      return false;
+    }
+    const nextScopeType = String(nextRowState?.scopeType || assignmentRow.scopeType || "TENANT")
+      .trim()
+      .toUpperCase();
+    const nextScopeId =
+      nextScopeType === "TENANT"
+        ? Number(tenantScopeId || nextRowState?.scopeId || assignmentRow.scopeId || 0)
+        : Number(nextRowState?.scopeId || 0);
+    const nextEffect = String(nextRowState?.effect || assignmentRow.effect || "ALLOW")
+      .trim()
+      .toUpperCase();
+    if (!nextScopeId) {
+      setError(l("Choose a valid scope before saving this role row.", "Bu rol satirini kaydetmeden once gecerli bir kapsam secin."));
+      return false;
+    }
+    const currentScopeAccess = getPermissionAccess(
+      "security.role_assignment.upsert",
+      assignmentRow.scopeId
+        ? {
+            scope: {
+              scopeType: assignmentRow.scopeType,
+              scopeId: assignmentRow.scopeId,
+            },
+          }
+        : undefined
+    );
+    if (!currentScopeAccess.allowed) {
+      setError(
+        l(
+          "You do not have permission to modify this role row from its current scope.",
+          "Bu rol satirini mevcut kapsamindan duzenleme yetkiniz yok."
+        )
+      );
+      return false;
+    }
+    const nextScopeAccess = getPermissionAccess(
+      "security.role_assignment.upsert",
+      {
+        scope: {
+          scopeType: nextScopeType,
+          scopeId: nextScopeId,
+        },
+      }
+    );
+    if (!nextScopeAccess.allowed) {
+      setError(
+        l(
+          "You do not have permission to save this role row at the selected scope.",
+          "Bu rol satirini secilen kapsamda kaydetme yetkiniz yok."
+        )
+      );
+      return false;
+    }
+
+    setActingRowId(`bundle-role-${assignmentRow.assignmentId}`);
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await replaceRoleAssignmentScope(assignmentRow.assignmentId, {
+        scopeType: nextScopeType,
+        scopeId: nextScopeId,
+        effect: nextEffect,
+        effectiveFrom: nextRowState?.effectiveFrom || undefined,
+        effectiveTo: nextRowState?.effectiveTo || undefined,
+      });
+      setWarningMessages(response?.assignmentWarnings || []);
+      setMessage(
+        l(
+          "Role row updated. Bundle grouping may change if scope or dates changed.",
+          "Rol satiri guncellendi. Kapsam veya tarihler degistiyse paket gruplamasi da degisebilir."
+        )
+      );
+      await loadData({ showLoadingState: false });
+      return true;
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l(
+            "The role row scope could not be updated.",
+            "Rol satirinin kapsami guncellenemedi."
+          )
+        )
+      );
+      return false;
+    } finally {
+      setActingRowId("");
+      setSaving(false);
+    }
+  }
+  async function handleRemoveBundleRoleRow(assignmentRow) {
+    if (!assignmentRow?.assignmentId) {
+      return;
+    }
+    const revokeAccess = getPermissionAccess(
+      "security.role_assignment.upsert",
+      assignmentRow.scopeId
+        ? {
+            scope: {
+              scopeType: assignmentRow.scopeType,
+              scopeId: assignmentRow.scopeId,
+            },
+          }
+        : undefined
+    );
+    if (!revokeAccess.allowed) {
+      setError(
+        l(
+          "You do not have permission to remove this role row.",
+          "Bu rol satirini kaldirma yetkiniz yok."
+        )
+      );
+      return;
+    }
+    const confirmed = window.confirm(
+      l(
+        "Remove only {{role}} from this bundle? The other role rows will stay unchanged.",
+        "Yalnizca {{role}} rolunu bu paketten kaldirmak istiyor musunuz? Diger rol satirlari degismeden kalir.",
+        {
+          role: assignmentRow.roleLabel || assignmentRow.roleCode || l("this role", "bu rol"),
+        }
+      )
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setActingRowId(`bundle-role-${assignmentRow.assignmentId}`);
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setWarningMessages([]);
+    try {
+      await deleteRoleAssignment(assignmentRow.assignmentId);
+      setMessage(
+        l(
+          "Role row removed. Other bundle roles stayed unchanged.",
+          "Rol satiri kaldirildi. Diger paket rolleri degismeden kaldi."
+        )
+      );
+      await loadData({ showLoadingState: false });
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l("The role row could not be removed.", "Rol satiri kaldirilamadi.")
+        )
+      );
+    } finally {
+      setActingRowId("");
+      setSaving(false);
+    }
+  }
   async function handleRevokeBundle(bundle) {
     if (!bundle) {
       return;
@@ -4831,19 +5022,8 @@ export default function UserAssignmentsPage() {
                 sourceType: "",
               })
             }
-            onOpenUserEditor={(userOrId) => {
-              if (typeof userOrId === "object" && userOrId) {
-                openExistingUserModal(userOrId);
-                return;
-              }
-              const userRow = usersById.get(Number(userOrId || 0));
-              if (userRow) {
-                openExistingUserModal(userRow);
-              }
-            }}
             onRemoveBusinessRoleLabel={handleRemoveBusinessRoleLabel}
             onRemoveWorkflowPackage={handleRemoveWorkflowPackage}
-            onRevokeBundle={handleRevokeBundle}
             onSelectBundle={setSelectedWorkbenchBundleId}
             onSelectUser={setSelectedWorkbenchUserId}
             onToggleBusinessRolePreviewPackage={toggleBusinessRolePreviewPackage}
@@ -4851,6 +5031,8 @@ export default function UserAssignmentsPage() {
             onUpdatePackageSourceApplyField={updatePackageSourceApplyField}
             onUpdateWorkflowPackageAssignmentField={updateWorkflowPackageAssignmentField}
             onTogglePackageSourcePreviewPackage={togglePackageSourcePreviewPackage}
+            onUpdateBundleRoleRow={handleUpdateBundleRoleRow}
+            onRemoveBundleRoleRow={handleRemoveBundleRoleRow}
             packageSourceApplyForm={packageSourceApplyForm}
             packageSourceApplyWriteAccess={packageSourceApplyWriteAccess}
             packageSourcePreviewEntries={packageSourcePreviewEntries}

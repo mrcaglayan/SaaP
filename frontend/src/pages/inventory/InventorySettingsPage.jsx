@@ -4,7 +4,7 @@ import Combobox from "../../components/Combobox.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
-import { listLegalEntities, listOperatingUnits } from "../../api/orgAdmin.js";
+import { listOperatingUnits } from "../../api/orgAdmin.js";
 import {
   createInventoryWarehouse,
   listInventoryWarehouses,

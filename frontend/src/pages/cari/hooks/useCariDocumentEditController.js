@@ -1496,8 +1496,10 @@ export default function useCariDocumentEditController({
     async function loadEditCashRegisters() {
       setEditCashRegistersLoading(true);
       try {
+        const operatingUnitId = toPositiveInt(editForm.operatingUnitId);
         const response = await listCashRegisters({
           legalEntityId,
+          operatingUnitId: operatingUnitId || undefined,
           status: "ACTIVE",
           limit: 300,
           offset: 0,
@@ -1524,7 +1526,7 @@ export default function useCariDocumentEditController({
     return () => {
       active = false;
     };
-  }, [canReadCashRegisters, editForm.legalEntityId, l]);
+  }, [canReadCashRegisters, editForm.legalEntityId, editForm.operatingUnitId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
     setEditLineAccountsError("");

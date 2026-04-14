@@ -16,6 +16,15 @@ import { asyncHandler, badRequest, parsePositiveInt } from "./_utils.js";
 
 const router = express.Router({ mergeParams: true });
 
+function resolveInventoryReadScopeFromQuery(req) {
+  const operatingUnitId = parsePositiveInt(req.query?.operatingUnitId);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+  return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+}
+
 function resolveBinaryUploadLimit() {
   const fallbackBytes = 15 * 1024 * 1024;
   const parsed = Number(process.env.EVIDENCE_MAX_UPLOAD_BYTES || fallbackBytes);
@@ -63,6 +72,7 @@ function toSafeAttachmentFileName(value) {
 }
 
 const resolveTransferScope = async (req, tenantId) =>
+  resolveInventoryReadScopeFromQuery(req) ||
   resolveInventoryTransferScope(req.params?.transferId, tenantId);
 
 router.get(
