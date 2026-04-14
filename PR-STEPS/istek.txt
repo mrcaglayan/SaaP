@@ -284,3 +284,16 @@ roleCatalog.js
       "Owns entity inventory execution, setup, landed-cost, transfer governance, and shared item-card maintenance without broader GL master-data write authority.",
     capabilities: ["Inventory execution", "Warehouse and landed-cost setup", "Item-card maintenance"],
     recommendedScopes: ["LEGAL_ENTITY"],
+Implemented `PR-INVEXEC-01`.
+
+I added the new granular inventory permission family and the new `BranchInventoryExecutor` role in [seedCore.js](/c:/Users/ufukk/Desktop/SaaP/backend/src/seedCore.js), exposed that role through the local operational-role allow-list in [localOperationalRoles.service.js](/c:/Users/ufukk/Desktop/SaaP/backend/src/services/localOperationalRoles.service.js), and added it to the security UI catalog in [roleCatalog.js](/c:/Users/ufukk/Desktop/SaaP/frontend/src/pages/security/roleCatalog.js). I also rebuilt the broad inventory operator role definitions so they now include the new granular execution/setup permissions while still keeping legacy `inventory.upsert` temporarily for compatibility until step 2 rewires the routes.
+
+I did not change runtime authorization yet. So `BranchInventoryExecutor` is now a real seeded/catalog role, but the actual inventory pages/routes still mostly check `inventory.upsert` until `PR-INVEXEC-02`. I also left the `BranchOperator` companion mapping unchanged on purpose; that belongs to step 3.
+
+Verification:
+- `npm --prefix frontend run -s lint` passed
+- `node backend/scripts/test-security-branch-operator-management-smoke.js` passed
+- backend import sanity check for the touched seed/local-role files passed
+- `node backend/scripts/test-security-pr4a-duty-boundary-roles.js` is blocked in this DB by a preexisting missing seeded role (`GroupReportingController`), so I could not use that as a clean gate here
+
+Next step is `PR-INVEXEC-02`: route/UI rewiring away from broad `inventory.upsert`.
