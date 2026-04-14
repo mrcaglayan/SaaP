@@ -120,6 +120,7 @@ async function main() {
     "GroupReportingController",
     "BranchInventoryViewer",
     "EntityInventoryViewer",
+    "BranchInventoryExecutor",
     "BranchInventoryOperator",
     "EntityInventoryOperator",
     "BranchFixedAssetViewer",
@@ -145,6 +146,7 @@ async function main() {
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalCloseReviewer, ["close.reviewer"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchInventoryViewer, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityInventoryViewer, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchInventoryExecutor, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchInventoryOperator, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityInventoryOperator, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchFixedAssetViewer, []);
@@ -284,6 +286,7 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "BranchInventoryViewer", "gl.account.read");
   assertRoleHas(permissionCodesByRole, "BranchInventoryViewer", "item.card.read");
   assertRoleHas(permissionCodesByRole, "BranchInventoryViewer", "inventory.read");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "inventory.materialize");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "item.card.upsert");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "inventory.upsert");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "gl.account.upsert");
@@ -292,14 +295,52 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "gl.account.read");
   assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "item.card.read");
   assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "inventory.read");
+  assertRoleLacks(permissionCodesByRole, "EntityInventoryViewer", "inventory.transfer.create");
   assertRoleLacks(permissionCodesByRole, "EntityInventoryViewer", "item.card.upsert");
   assertRoleLacks(permissionCodesByRole, "EntityInventoryViewer", "inventory.upsert");
+
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "gl.account.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "item.card.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "inventory.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "inventory.materialize");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "inventory.movement.reverse");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "inventory.transfer.create");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "inventory.transfer.ship");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "inventory.transfer.receive");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "inventory.transfer.cancel");
+  assertRoleHas(
+    permissionCodesByRole,
+    "BranchInventoryExecutor",
+    "inventory.transfer.evidence.upsert"
+  );
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "item.card.upsert");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.warehouse.upsert");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.landed_cost.upsert");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.transfer.approve");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.transfer.reverse");
+  assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.upsert");
 
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "org.tree.read");
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "gl.account.read");
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "item.card.read");
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "item.card.upsert");
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.read");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.materialize");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.movement.reverse");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.transfer.create");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.transfer.ship");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.transfer.receive");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.transfer.cancel");
+  assertRoleHas(
+    permissionCodesByRole,
+    "BranchInventoryOperator",
+    "inventory.transfer.evidence.upsert"
+  );
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.warehouse.upsert");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.landed_cost.upsert");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.transfer.approve");
+  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.transfer.reverse");
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.upsert");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryOperator", "gl.account.upsert");
 
@@ -308,6 +349,21 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "item.card.read");
   assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "item.card.upsert");
   assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.read");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.materialize");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.movement.reverse");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.transfer.create");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.transfer.ship");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.transfer.receive");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.transfer.cancel");
+  assertRoleHas(
+    permissionCodesByRole,
+    "EntityInventoryOperator",
+    "inventory.transfer.evidence.upsert"
+  );
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.warehouse.upsert");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.landed_cost.upsert");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.transfer.approve");
+  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.transfer.reverse");
   assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.upsert");
   assertRoleLacks(permissionCodesByRole, "EntityInventoryOperator", "gl.account.upsert");
 

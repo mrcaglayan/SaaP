@@ -8,7 +8,6 @@ import {
   DOCUMENT_LINE_CHARGE_ALLOCATION_METHODS,
   DOCUMENT_LINE_FIXED_ASSET_MODES,
   DOCUMENT_LINE_KINDS,
-  DOCUMENT_LINE_STOCK_IMPACT_MODES,
   DOCUMENT_LINE_SUBLEDGER_TYPES,
 } from "../cariDocumentsUtils.js";
 import {
@@ -23,8 +22,10 @@ import {
   formatFixedAssetStatusLabel,
   formatPostableAccountDisplay,
   formatWarehouseDisplay,
+  getAllowedStockImpactModesForDirection,
   normalizeChargeAllocationMethod,
   normalizeCurrencyCode,
+  normalizeStockImpactModeForDirection,
   normalizeText,
   resolveFixedAssetDisplayAccountId,
   roundDocumentUiAmount,
@@ -168,19 +169,25 @@ function DocumentLineRow({
   const handleMoveLineDown = useCallback(() => onMoveLine(line.rowId, 1), [line.rowId, onMoveLine]);
   const handlePreviewRow = useCallback(() => onPreviewRow(line.rowId), [line.rowId, onPreviewRow]);
   const handleRemoveLine = useCallback(() => onRemoveLine(line.rowId), [line.rowId, onRemoveLine]);
-          const lineCurrencyCode = normalizeCurrencyCode(currencyCode) || currencyCode || "USD";
-          const hasTaxCategory = Boolean(normalizeText(line.taxCategoryCode));
-          const isStockAffectingLine =
-            normalizeText(line.stockImpactMode).toUpperCase() !== "NONE";
-          const isFixedAssetLine = line.subledgerType === "FIXED_ASSET";
-          const isStockLine = line.subledgerType === "STOCK";
-          const isNoneLine = !isFixedAssetLine && !isStockLine;
-          const isApDocument = documentDirection === "AP";
-          const isArDocument = documentDirection === "AR";
-          const chargeAllocationMethod = normalizeChargeAllocationMethod(
-            line.chargeAllocationMethod
-          );
-          const isChargeLine = chargeAllocationMethod !== "NONE";
+  const lineCurrencyCode = normalizeCurrencyCode(currencyCode) || currencyCode || "USD";
+  const hasTaxCategory = Boolean(normalizeText(line.taxCategoryCode));
+  const isApDocument = documentDirection === "AP";
+  const isArDocument = documentDirection === "AR";
+  const allowedStockImpactModes = getAllowedStockImpactModesForDirection(
+    documentDirection
+  );
+  const normalizedStockImpactMode = normalizeStockImpactModeForDirection(
+    line.stockImpactMode,
+    documentDirection
+  );
+  const isStockAffectingLine = normalizedStockImpactMode !== "NONE";
+  const isFixedAssetLine = line.subledgerType === "FIXED_ASSET";
+  const isStockLine = line.subledgerType === "STOCK";
+  const isNoneLine = !isFixedAssetLine && !isStockLine;
+  const chargeAllocationMethod = normalizeChargeAllocationMethod(
+    line.chargeAllocationMethod
+  );
+  const isChargeLine = chargeAllocationMethod !== "NONE";
           const selectedChargeTargetRowIds = new Set(
             Array.isArray(line.chargeTargets)
               ? line.chargeTargets
@@ -1240,13 +1247,13 @@ function DocumentLineRow({
                       {l("Stock Impact", "Stok Etkisi")}
                       <select
                         className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                        value={line.stockImpactMode}
+                        value={normalizedStockImpactMode}
                         onChange={(event) =>
                           onChangeStockImpactMode(line.rowId, event.target.value)
                         }
                         disabled={saving}
                       >
-                        {DOCUMENT_LINE_STOCK_IMPACT_MODES.map((mode) => (
+                        {allowedStockImpactModes.map((mode) => (
                           <option key={`stock-impact-${line.rowId}-${mode}`} value={mode}>
                             {mode === "NONE"
                               ? l("None", "Yok")
@@ -1798,7 +1805,7 @@ function DocumentLineRow({
                         ? l("Charge method", "Masraf metodu")
                         : l("Stock impact", "Stok etkisi")}
                       :{" "}
-                      {isChargeLine ? chargeAllocationMethod : line.stockImpactMode || "NONE"}
+                      {isChargeLine ? chargeAllocationMethod : normalizedStockImpactMode}
                     </span>
                     <span>
                       {isChargeLine

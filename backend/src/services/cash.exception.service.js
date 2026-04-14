@@ -1,6 +1,9 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
-import { findCashRegisterById } from "./cash.queries.js";
+import {
+  buildCashOwnershipScopeFilter,
+  resolveCashRegisterScopedFilters,
+} from "./cash.register.service.js";
 
 function emptySection() {
   return {
@@ -109,7 +112,14 @@ function buildSessionFilters({
 }) {
   const params = [tenantId];
   const conditions = ["cs.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "cr.legal_entity_id", params));
+  conditions.push(
+    buildCashOwnershipScopeFilter(req, {
+      buildScopeFilter,
+      legalEntityColumn: "cr.legal_entity_id",
+      operatingUnitColumn: "cr.operating_unit_id",
+      params,
+    })
+  );
 
   if (filters.legalEntityId) {
     conditions.push("cr.legal_entity_id = ?");
@@ -147,7 +157,14 @@ function buildTransactionFilters({
 }) {
   const params = [tenantId];
   const conditions = ["ct.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "cr.legal_entity_id", params));
+  conditions.push(
+    buildCashOwnershipScopeFilter(req, {
+      buildScopeFilter,
+      legalEntityColumn: "cr.legal_entity_id",
+      operatingUnitColumn: "cr.operating_unit_id",
+      params,
+    })
+  );
 
   if (filters.legalEntityId) {
     conditions.push("cr.legal_entity_id = ?");
@@ -187,7 +204,25 @@ function buildGlAuditFilters({
   const legalScopeSql = legalEntityScopeExpression();
   const params = [tenantId];
   const conditions = ["al.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", legalScopeSql, params));
+  const legalScopeParams = [];
+  const operatingUnitScopeParams = [];
+  const legalScopeFilter = buildScopeFilter(req, "legal_entity", legalScopeSql, legalScopeParams);
+  const operatingUnitScopeFilter = buildScopeFilter(
+    req,
+    "operating_unit",
+    "jl_scope.operating_unit_id",
+    operatingUnitScopeParams
+  );
+  params.push(...legalScopeParams, ...operatingUnitScopeParams);
+  conditions.push(`(
+    (${legalScopeFilter})
+    OR EXISTS (
+      SELECT 1
+      FROM journal_lines jl_scope
+      WHERE jl_scope.journal_entry_id = je.id
+        AND ${operatingUnitScopeFilter}
+    )
+  )`);
 
   if (filters.legalEntityId) {
     conditions.push(`${legalScopeSql} = ?`);
@@ -250,45 +285,21 @@ export async function listCashExceptionSnapshot({
     )
   );
   const includeRows = normalizeBoolean(filters.includeRows, true);
-
-  if (filters.legalEntityId) {
-    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
-  }
-  if (filters.operatingUnitId) {
-    assertScopeAccess(req, "operating_unit", filters.operatingUnitId, "operatingUnitId");
-  }
-
-  let register = null;
-  let registerAccountId = null;
-  if (filters.registerId) {
-    register = await findCashRegisterById({
-      tenantId,
-      registerId: filters.registerId,
-    });
-    if (!register) {
-      throw badRequest("registerId not found for tenant");
-    }
-
-    assertScopeAccess(req, "legal_entity", register.legal_entity_id, "registerId");
-    if (register.operating_unit_id) {
-      assertScopeAccess(req, "operating_unit", register.operating_unit_id, "registerId");
-    }
-
-    if (
-      filters.legalEntityId &&
-      parsePositiveInt(register.legal_entity_id) !== filters.legalEntityId
-    ) {
-      throw badRequest("registerId does not belong to legalEntityId");
-    }
-    if (
-      filters.operatingUnitId &&
-      parsePositiveInt(register.operating_unit_id) !== filters.operatingUnitId
-    ) {
-      throw badRequest("registerId does not belong to operatingUnitId");
-    }
-
-    registerAccountId = parsePositiveInt(register.account_id);
-  }
+  const scopedFilters = await resolveCashRegisterScopedFilters({
+    req,
+    tenantId,
+    legalEntityId: filters.legalEntityId,
+    operatingUnitId: filters.operatingUnitId,
+    registerId: filters.registerId,
+    assertScopeAccess,
+  });
+  const effectiveFilters = {
+    ...filters,
+    legalEntityId: scopedFilters.legalEntityId,
+    operatingUnitId: scopedFilters.operatingUnitId,
+  };
+  const register = scopedFilters.register || null;
+  const registerAccountId = register ? parsePositiveInt(register.account_id) : null;
 
   const sessionFromSql = `
     FROM cash_sessions cs
@@ -318,16 +329,16 @@ export async function listCashExceptionSnapshot({
   const sessionFilters = buildSessionFilters({
     req,
     tenantId,
-    filters,
+    filters: effectiveFilters,
     buildScopeFilter,
-    registerId: filters.registerId,
+    registerId: register ? parsePositiveInt(register.id) : null,
   });
   const transactionFilters = buildTransactionFilters({
     req,
     tenantId,
-    filters,
+    filters: effectiveFilters,
     buildScopeFilter,
-    registerId: filters.registerId,
+    registerId: register ? parsePositiveInt(register.id) : null,
   });
 
   const glActionCodes = [];
@@ -340,7 +351,7 @@ export async function listCashExceptionSnapshot({
   const glFilters = buildGlAuditFilters({
     req,
     tenantId,
-    filters,
+    filters: effectiveFilters,
     buildScopeFilter,
     registerAccountId,
     actionCodes: glActionCodes,

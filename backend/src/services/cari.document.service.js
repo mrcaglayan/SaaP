@@ -3677,6 +3677,18 @@ function sumAmountRows(rows, fieldName) {
   return total;
 }
 
+function normalizeStockImpactModeForDirection(stockImpactMode, direction) {
+  const normalizedDirection = normalizeUpperText(direction);
+  const normalizedMode = normalizeStockImpactMode(stockImpactMode);
+  if (normalizedDirection === "AP" && normalizedMode === "ISSUE_PENDING") {
+    return "RECEIPT_PENDING";
+  }
+  if (normalizedDirection === "AR" && normalizedMode === "RECEIPT_PENDING") {
+    return "ISSUE_PENDING";
+  }
+  return normalizedMode;
+}
+
 function normalizeExplicitDraftLines(linesInput, options = {}) {
   const normalizedDirection = normalizeUpperText(options.direction);
   return (linesInput || []).map((line, index) => {
@@ -3718,7 +3730,10 @@ function normalizeExplicitDraftLines(linesInput, options = {}) {
             allowZero: true,
           });
 
-    const stockImpactMode = normalizeStockImpactMode(line.stockImpactMode);
+    const stockImpactMode = normalizeStockImpactModeForDirection(
+      line.stockImpactMode,
+      normalizedDirection
+    );
     const chargeAllocationMethod = normalizeChargeAllocationMethod(
       line.chargeAllocationMethod ?? line.charge_allocation_method
     );
@@ -3841,8 +3856,9 @@ async function applyItemCardDefaultsToLines({
     const line = lines[index] || {};
     const fieldPrefix = `${fieldCollectionLabel}[${index + 1}]`;
     const itemCardId = parsePositiveInt(line.itemCardId);
-    const normalizedStockImpactMode = normalizeStockImpactMode(
-      line.stockImpactMode
+    const normalizedStockImpactMode = normalizeStockImpactModeForDirection(
+      line.stockImpactMode,
+      direction
     );
     if ((line.stockImpactMode || "NONE") !== normalizedStockImpactMode) {
       line.stockImpactMode = normalizedStockImpactMode;
@@ -4082,6 +4098,7 @@ async function applyResolvedLineTaxes({
 function buildSyntheticDraftLines({
   resolvedAmounts,
   existingLineRows = [],
+  direction = null,
 }) {
   const existingSingleLine =
     Array.isArray(existingLineRows) && existingLineRows.length === 1
@@ -4117,8 +4134,9 @@ function buildSyntheticDraftLines({
         taxCodeId: null,
         taxCode: null,
         taxCategoryCode: toNullableString(existingSingleLine?.tax_category_code, 60),
-        stockImpactMode: normalizeStockImpactMode(
-          existingSingleLine?.stock_impact_mode
+        stockImpactMode: normalizeStockImpactModeForDirection(
+          existingSingleLine?.stock_impact_mode,
+          direction
         ),
         warehouseId: parsePositiveInt(existingSingleLine?.warehouse_id),
         subledgerType: normalizeUpperText(existingSingleLine?.subledger_type || "NONE"),
@@ -4619,7 +4637,10 @@ async function replaceDocumentLineStockLinksTx(
   for (const line of lines || []) {
     const lineId = parsePositiveInt(line.id);
     const itemCardId = parsePositiveInt(line.itemCardId);
-    const stockImpactMode = normalizeStockImpactMode(line.stockImpactMode);
+    const stockImpactMode = normalizeStockImpactModeForDirection(
+      line.stockImpactMode,
+      direction
+    );
     if (!lineId || !itemCardId || !isStockAffectingLine({ stockImpactMode })) {
       continue;
     }
@@ -5946,6 +5967,7 @@ async function resolveDraftDocumentWriteModel({
   const syntheticWriteModel = buildSyntheticDraftLines({
     resolvedAmounts,
     existingLineRows,
+    direction,
   });
   await validateFixedAssetDraftLineBindings({
     tenantId,
@@ -11004,7 +11026,10 @@ export async function reverseCariPostedDocumentById({
             ),
             postingAccountId: parsePositiveInt(line.postingAccountId),
             taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
-            stockImpactMode: normalizeStockImpactMode(line.stockImpactMode),
+            stockImpactMode: normalizeStockImpactModeForDirection(
+              line.stockImpactMode,
+              original.direction
+            ),
             warehouseId: parsePositiveInt(line.warehouseId),
             subledgerType: normalizeUpperText(line.subledgerType || "NONE") || "NONE",
             fixedAssetMode: normalizeUpperText(line.fixedAssetMode),

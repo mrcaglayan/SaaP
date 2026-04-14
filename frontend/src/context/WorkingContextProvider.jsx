@@ -33,6 +33,21 @@ function getFirstId(rows) {
   return "";
 }
 
+function getOnlyVisibleOperatingUnitId(rows) {
+  let onlyId = "";
+  for (const row of rows || []) {
+    const id = toIdString(row?.id);
+    if (!id) {
+      continue;
+    }
+    if (onlyId && onlyId !== id) {
+      return "";
+    }
+    onlyId = id;
+  }
+  return onlyId;
+}
+
 function hasId(rows, id) {
   const targetId = toIdString(id);
   if (!targetId) return false;
@@ -432,11 +447,21 @@ export default function WorkingContextProvider({ children }) {
         if (!active) return;
         const rows = toRows(response);
         setOperatingUnits(rows);
+        const onlyVisibleOperatingUnitId = getOnlyVisibleOperatingUnitId(rows);
         setWorkingContextState((previous) => {
-          if (!previous.operatingUnitId) return previous;
-          return hasId(rows, previous.operatingUnitId)
-            ? previous
-            : { ...previous, operatingUnitId: "" };
+          if (previous.operatingUnitId) {
+            return hasId(rows, previous.operatingUnitId)
+              ? previous
+              : onlyVisibleOperatingUnitId
+                ? { ...previous, operatingUnitId: onlyVisibleOperatingUnitId }
+                : { ...previous, operatingUnitId: "" };
+          }
+          // When exactly one operating unit is visible for the selected legal
+          // entity, treat it as the default branch context and let the
+          // existing preference sync persist it for the next session.
+          return onlyVisibleOperatingUnitId
+            ? { ...previous, operatingUnitId: onlyVisibleOperatingUnitId }
+            : previous;
         });
       } catch (err) {
         if (!active) return;

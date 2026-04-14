@@ -98,6 +98,7 @@ export function parseCashExceptionReadFilters(req) {
 
 export function parseCashExceptionRouteScopeInput(req) {
   return {
+    operatingUnitId: parsePositiveInt(req.query?.operatingUnitId),
     legalEntityId: parsePositiveInt(req.query?.legalEntityId),
     registerId: parsePositiveInt(req.query?.registerId),
   };

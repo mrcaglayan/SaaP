@@ -374,15 +374,27 @@ function createInventoryMovementAnchorId(movementId) {
   return normalizedMovementId ? `inventory-movement-${normalizedMovementId}` : "";
 }
 
+/**
+ * Render stock reflection operations with ownership-aware defaults so branch
+ * users can open the page directly without losing OU-scoped read access.
+ */
 export default function InventoryMovementsPage() {
-  const { hasPermission } = useAuth();
+  const { entitlements, hasPermission } = useAuth();
   const { l } = useI18n();
-  const { legalEntities: workingContextLegalEntities } = useWorkingContext();
+  const { legalEntities: workingContextLegalEntities, workingContext } = useWorkingContext();
   const [searchParams] = useSearchParams();
 
   const canRead = hasPermission("inventory.read");
   const canUpsert = hasPermission("inventory.upsert");
   const canReadOrgTree = hasPermission("org.tree.read");
+  const workingContextLegalEntityId = useMemo(
+    () => String(toPositiveInt(workingContext?.legalEntityId) || ""),
+    [workingContext?.legalEntityId]
+  );
+  const workingContextOperatingUnitId = useMemo(
+    () => String(toPositiveInt(workingContext?.operatingUnitId) || ""),
+    [workingContext?.operatingUnitId]
+  );
   const deepLinkedLegalEntityId = useMemo(
     () => String(toPositiveInt(searchParams.get("legalEntityId")) || ""),
     [searchParams]
@@ -411,6 +423,23 @@ export default function InventoryMovementsPage() {
         .filter(Boolean),
     [workingContextLegalEntities]
   );
+  const inventoryEntitlementOperatingUnitIds = useMemo(() => {
+    const rows = Array.isArray(entitlements?.permissions) ? entitlements.permissions : [];
+    return Array.from(
+      new Set(
+        rows
+          .filter((row) => normalizeText(row?.code) === "inventory.read")
+          .filter((row) => normalizeText(row?.scopeType).toUpperCase() === "OPERATING_UNIT")
+          .flatMap((row) =>
+            Array.isArray(row?.scopeIds)
+              ? row.scopeIds.map((scopeId) => String(toPositiveInt(scopeId) || "")).filter(Boolean)
+              : []
+          )
+      )
+    );
+  }, [entitlements?.permissions]);
+  const singleInventoryEntitlementOperatingUnitId =
+    inventoryEntitlementOperatingUnitIds.length === 1 ? inventoryEntitlementOperatingUnitIds[0] : "";
 
   const [filters, setFilters] = useState({
     legalEntityId: "",
@@ -486,24 +515,54 @@ export default function InventoryMovementsPage() {
         .filter(Boolean),
     [warehouseOperatingUnits]
   );
+  const resolvedInventoryOperatingUnitId = useMemo(() => {
+    if (deepLinkedOperatingUnitId) {
+      return deepLinkedOperatingUnitId;
+    }
+    // This page does not expose an OU picker. Use the current context, or the
+    // user's only inventory-read OU, so direct opens do not fall back to LE scope.
+    if (
+      workingContextOperatingUnitId &&
+      (!filters.legalEntityId ||
+        (workingContextLegalEntityId && filters.legalEntityId === workingContextLegalEntityId))
+    ) {
+      return workingContextOperatingUnitId;
+    }
+    if (singleInventoryEntitlementOperatingUnitId && (!filters.legalEntityId || legalEntityOptions.length === 1)) {
+      return singleInventoryEntitlementOperatingUnitId;
+    }
+    return "";
+  }, [
+    deepLinkedOperatingUnitId,
+    filters.legalEntityId,
+    legalEntityOptions.length,
+    singleInventoryEntitlementOperatingUnitId,
+    workingContextLegalEntityId,
+    workingContextOperatingUnitId,
+  ]);
 
   useEffect(() => {
-    if (!filters.legalEntityId && legalEntityOptions.length === 1) {
-      const onlyValue = legalEntityOptions[0]?.value || "";
+    if (deepLinkedLegalEntityId || filters.legalEntityId) {
+      return;
+    }
+    const defaultLegalEntityId =
+      workingContextLegalEntityId ||
+      (legalEntityOptions.length === 1 ? legalEntityOptions[0]?.value || "" : "");
+    if (defaultLegalEntityId) {
       setFilters((previous) => ({
         ...previous,
-        legalEntityId: onlyValue,
+        legalEntityId: defaultLegalEntityId,
       }));
       setWarehouseForm((previous) => ({
         ...previous,
-        legalEntityId: onlyValue,
+        legalEntityId: defaultLegalEntityId,
       }));
       setMovementForm((previous) => ({
         ...previous,
-        legalEntityId: onlyValue,
+        legalEntityId: defaultLegalEntityId,
       }));
     }
-  }, [filters.legalEntityId, legalEntityOptions]);
+  }, [deepLinkedLegalEntityId, filters.legalEntityId, legalEntityOptions, workingContextLegalEntityId]);
 
   useEffect(() => {
     if (!deepLinkedLegalEntityId) {
@@ -653,7 +712,7 @@ export default function InventoryMovementsPage() {
 
   const loadPageData = useCallback(async () => {
     const legalEntityId = toPositiveInt(filters.legalEntityId);
-    const operatingUnitId = toPositiveInt(filters.operatingUnitId);
+    const operatingUnitId = toPositiveInt(filters.operatingUnitId || resolvedInventoryOperatingUnitId);
     if (!canRead) {
       setWarehouseRows([]);
       setStockLinkRows([]);
@@ -735,6 +794,7 @@ export default function InventoryMovementsPage() {
     filters.stockImpactMode,
     filters.warehouseId,
     l,
+    resolvedInventoryOperatingUnitId,
   ]);
 
   useEffect(() => {

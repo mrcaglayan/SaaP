@@ -116,14 +116,14 @@ router.get(
   "/",
   requirePermission("cash.txn.read", {
     resolveScope: async (req, tenantId) => {
-      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
-
       const registerId = parsePositiveInt(req.query?.registerId);
       if (registerId) {
         return resolveCashRegisterScope(registerId, tenantId);
+      }
+
+      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
       }
       return null;
     },
@@ -148,11 +148,6 @@ router.get(
   "/transit",
   requirePermission("cash.txn.read", {
     resolveScope: async (req, tenantId) => {
-      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
-
       const sourceRegisterId = parsePositiveInt(req.query?.sourceRegisterId);
       if (sourceRegisterId) {
         return resolveCashRegisterScope(sourceRegisterId, tenantId);
@@ -161,6 +156,11 @@ router.get(
       const targetRegisterId = parsePositiveInt(req.query?.targetRegisterId);
       if (targetRegisterId) {
         return resolveCashRegisterScope(targetRegisterId, tenantId);
+      }
+
+      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
       }
 
       return null;

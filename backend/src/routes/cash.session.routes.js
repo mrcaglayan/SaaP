@@ -41,14 +41,14 @@ router.get(
   "/",
   requirePermission("cash.register.read", {
     resolveScope: async (req, tenantId) => {
-      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
-
       const registerId = parsePositiveInt(req.query?.registerId);
       if (registerId) {
         return resolveCashRegisterScope(registerId, tenantId);
+      }
+
+      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
       }
       return null;
     },

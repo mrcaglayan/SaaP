@@ -1,6 +1,11 @@
 import { query } from "../db.js";
-import { parsePositiveInt } from "../routes/_utils.js";
+import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { findCashRegisterById } from "./cash.queries.js";
 import { listCashExchangeBatchRows } from "./cash.exchange.service.js";
+import {
+  assertCashOwnershipScopeAccess,
+  buildCashOwnershipScopeFilter,
+} from "./cash.register.service.js";
 
 const AMOUNT_SCALE = 6;
 const AMOUNT_EPSILON = 0.000001;
@@ -202,15 +207,32 @@ export async function getForeignCashBalancesReport({
   const where = ["ct.tenant_id = ?", "ct.status IN ('POSTED', 'REVERSED')", "ct.book_date <= ?"];
   const params = [filters.tenantId, filters.asOfDate];
 
+  const hasScopedRegisterFilter = Boolean(filters.registerId);
+  if (filters.legalEntityId && !hasScopedRegisterFilter && typeof assertScopeAccess === "function") {
+    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+  }
   if (filters.legalEntityId) {
-    if (typeof assertScopeAccess === "function") {
-      assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
-    }
     where.push("cr.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }
 
   if (filters.registerId) {
+    const register = await findCashRegisterById({
+      tenantId: filters.tenantId,
+      registerId: filters.registerId,
+    });
+    if (!register) {
+      throw badRequest("registerId not found for tenant");
+    }
+    if (typeof assertScopeAccess === "function") {
+      assertCashOwnershipScopeAccess(req, register, assertScopeAccess, "registerId");
+    }
+    if (
+      filters.legalEntityId &&
+      parsePositiveInt(register.legal_entity_id) !== filters.legalEntityId
+    ) {
+      throw badRequest("registerId does not belong to legalEntityId");
+    }
     where.push("cr.id = ?");
     params.push(filters.registerId);
   }
@@ -225,8 +247,13 @@ export async function getForeignCashBalancesReport({
   }
 
   if (typeof buildScopeFilter === "function") {
-    const scopeSql = buildScopeFilter(req, "legal_entity", "cr.legal_entity_id", params);
-    if (scopeSql && scopeSql !== "1 = 1") {
+    const scopeSql = buildCashOwnershipScopeFilter(req, {
+      buildScopeFilter,
+      legalEntityColumn: "cr.legal_entity_id",
+      operatingUnitColumn: "cr.operating_unit_id",
+      params,
+    });
+    if (scopeSql) {
       where.push(scopeSql);
     }
   }

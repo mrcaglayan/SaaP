@@ -224,6 +224,95 @@ export async function resolveCashRegisterScope(registerId, tenantId) {
   return resolveCashOwnershipScope(row);
 }
 
+/**
+ * Normalizes mixed legal-entity / operating-unit / register filters for
+ * ownership-aware cash reads. When a concrete register is supplied, authority
+ * comes from that register's effective owner scope and parent filters only act
+ * as relationship constraints.
+ */
+export async function resolveCashRegisterScopedFilters({
+  req,
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  registerId = null,
+  assertScopeAccess,
+  fieldLabel = "registerId",
+}) {
+  const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  const normalizedRegisterId = parsePositiveInt(registerId);
+  const legalEntity = normalizedLegalEntityId
+    ? await assertLegalEntityBelongsToTenant(tenantId, normalizedLegalEntityId, "legalEntityId")
+    : null;
+
+  let operatingUnit = null;
+  if (normalizedOperatingUnitId) {
+    operatingUnit = await assertOperatingUnitBelongsToTenant(
+      tenantId,
+      normalizedOperatingUnitId,
+      "operatingUnitId"
+    );
+    if (
+      legalEntity &&
+      parsePositiveInt(operatingUnit.legal_entity_id) !== normalizedLegalEntityId
+    ) {
+      throw badRequest("operatingUnitId must belong to legalEntityId");
+    }
+  }
+
+  if (normalizedRegisterId) {
+    const register = await findCashRegisterById({
+      tenantId,
+      registerId: normalizedRegisterId,
+    });
+    if (!register) {
+      throw badRequest(`${fieldLabel} not found for tenant`);
+    }
+
+    if (
+      legalEntity &&
+      parsePositiveInt(register.legal_entity_id) !== normalizedLegalEntityId
+    ) {
+      throw badRequest(`${fieldLabel} does not belong to legalEntityId`);
+    }
+    if (
+      operatingUnit &&
+      parsePositiveInt(register.operating_unit_id) !== normalizedOperatingUnitId
+    ) {
+      throw badRequest(`${fieldLabel} does not belong to operatingUnitId`);
+    }
+
+    assertCashOwnershipScopeAccess(req, register, assertScopeAccess, fieldLabel);
+    return {
+      legalEntityId: normalizedLegalEntityId,
+      operatingUnitId: normalizedOperatingUnitId,
+      register,
+    };
+  }
+
+  if (!operatingUnit) {
+    if (legalEntity) {
+      assertScopeAccess(req, "legal_entity", normalizedLegalEntityId, "legalEntityId");
+    }
+    return {
+      legalEntityId: normalizedLegalEntityId,
+      operatingUnitId: null,
+      register: null,
+    };
+  }
+
+  // Branch readers are allowed to constrain an OU-scoped list by its parent
+  // legal entity, but the authority check still belongs to the branch itself.
+  assertScopeAccess(req, "operating_unit", normalizedOperatingUnitId, "operatingUnitId");
+
+  return {
+    legalEntityId: normalizedLegalEntityId,
+    operatingUnitId: normalizedOperatingUnitId,
+    register: null,
+  };
+}
+
 export async function listCashRegisterRows({
   req,
   tenantId,
@@ -231,6 +320,13 @@ export async function listCashRegisterRows({
   buildScopeFilter,
   assertScopeAccess,
 }) {
+  const scopedFilters = await resolveCashRegisterScopedFilters({
+    req,
+    tenantId,
+    legalEntityId: filters.legalEntityId,
+    operatingUnitId: filters.operatingUnitId,
+    assertScopeAccess,
+  });
   const params = [tenantId];
   const conditions = ["cr.tenant_id = ?"];
   conditions.push(
@@ -242,16 +338,14 @@ export async function listCashRegisterRows({
     })
   );
 
-  if (filters.legalEntityId) {
-    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+  if (scopedFilters.legalEntityId) {
     conditions.push("cr.legal_entity_id = ?");
-    params.push(filters.legalEntityId);
+    params.push(scopedFilters.legalEntityId);
   }
 
-  if (filters.operatingUnitId) {
-    assertScopeAccess(req, "operating_unit", filters.operatingUnitId, "operatingUnitId");
+  if (scopedFilters.operatingUnitId) {
     conditions.push("cr.operating_unit_id = ?");
-    params.push(filters.operatingUnitId);
+    params.push(scopedFilters.operatingUnitId);
   }
 
   if (filters.ownershipScope) {

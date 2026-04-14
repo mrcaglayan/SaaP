@@ -15,6 +15,9 @@ export const LOCAL_OPERATIONAL_ROLE_CATALOG = Object.freeze({
   BranchInventoryViewer: Object.freeze({
     scopeTypes: Object.freeze(["OPERATING_UNIT"]),
   }),
+  BranchInventoryExecutor: Object.freeze({
+    scopeTypes: Object.freeze(["OPERATING_UNIT"]),
+  }),
   EntityInventoryViewer: Object.freeze({
     scopeTypes: Object.freeze(["LEGAL_ENTITY"]),
   }),

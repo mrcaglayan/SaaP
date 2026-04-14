@@ -121,6 +121,24 @@ function Pill({ label, tone = "slate" }) {
   );
 }
 
+function InfoHint({ label, description }) {
+  return (
+    <div className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        title={label}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-bold text-slate-500 transition hover:border-slate-400 hover:text-slate-700"
+      >
+        i
+      </button>
+      <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-80 -translate-x-1/2 rounded-2xl bg-slate-950 px-3 py-2 text-xs leading-5 text-white shadow-xl group-hover:block group-focus-within:block">
+        {description}
+      </div>
+    </div>
+  );
+}
+
 function getPackageSourceRecommendationTone(recommendationType) {
   if (recommendationType === "starter") {
     return "blue";
@@ -798,7 +816,12 @@ export default function UserAssignmentWorkbench(props) {
     setScopeMessage("");
     try {
       await replaceUserDataScopes(Number(selectedUser.id), scopeRows);
-      setScopeMessage(l("Scopes saved.", "Kapsamlar kaydedildi."));
+      setScopeMessage(
+        l(
+          "Organizational visibility rules saved.",
+          "Organizasyon gorunurluk kurallari kaydedildi."
+        )
+      );
       try {
         const [ds, ra] = await Promise.all([
           listDataScopes({ userId: selectedUser.id }),
@@ -813,19 +836,25 @@ export default function UserAssignmentWorkbench(props) {
         );
         setScopeRoleRows(Array.isArray(ra?.rows) ? ra.rows : []);
       } catch (reloadError) {
-        setScopeError(
-          reloadError?.response?.data?.message ||
-            l(
-              "Scopes saved, but the latest scope data could not be refreshed.",
-              "Kapsamlar kaydedildi ancak en guncel kapsam verisi yenilenemedi."
-            )
-        );
+          setScopeError(
+            reloadError?.response?.data?.message ||
+              l(
+                "Visibility rules were saved, but the latest scope data could not be refreshed.",
+                "Gorunurluk kurallari kaydedildi ancak en guncel kapsam verisi yenilenemedi."
+              )
+          );
+        }
+      } catch (err) {
+      setScopeError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to save organizational visibility rules.",
+            "Organizasyon gorunurluk kurallari kaydedilemedi."
+          )
+      );
+      } finally {
+        setScopeSaving(false);
       }
-    } catch (err) {
-      setScopeError(err?.response?.data?.message || l("Failed to save scopes.", "Kapsamlar kaydedilemedi."));
-    } finally {
-      setScopeSaving(false);
-    }
   }
 
   function addDraftScope() {
@@ -981,7 +1010,7 @@ export default function UserAssignmentWorkbench(props) {
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Status", "Durum")}</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Roles & packages", "Roller ve paketler")}</th>
                   <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Bundles", "Paketler")}</th>
-                  <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Organizational scope", "Organizasyon kapsami")}</th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{l("Organizational visibility rules", "Organizasyon gorunurluk kurallari")}</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-[0.12em] text-slate-500"></th>
                 </tr>
               </thead>
@@ -1867,10 +1896,27 @@ export default function UserAssignmentWorkbench(props) {
                     <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{scopeMessage}</div>
                   ) : null}
 
-                  {/* Data scope access */}
+                  {/* Organizational visibility rules */}
                   <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
                     <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3">
-                      <h3 className="text-sm font-semibold text-slate-950">{l("Data scope access", "Veri kapsami erisimi")}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-950">
+                          {l(
+                            "Organizational visibility rules",
+                            "Organizasyon gorunurluk kurallari"
+                          )}
+                        </h3>
+                        <InfoHint
+                          label={l(
+                            "What are organizational visibility rules?",
+                            "Organizasyon gorunurluk kurallari nedir?"
+                          )}
+                          description={l(
+                            "These rules narrow which organizational records the user can see. They do not assign bundles or grant permissions on their own; authority still comes from role assignments.",
+                            "Bu kurallar kullanicinin hangi organizasyon kayitlarini gorecegini sinirlar. Tek basina paket atamaz veya yetki vermez; asıl yetki yine rol atamalarindan gelir."
+                          )}
+                        />
+                      </div>
                       <Pill label={l("{{count}} rules", "{{count}} kural", { count: scopeRows.length })} />
                     </div>
 
@@ -1936,7 +1982,10 @@ export default function UserAssignmentWorkbench(props) {
                         </div>
                       ) : scopeRows.length === 0 ? (
                         <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                          {l("No data scopes assigned yet. Add one above.", "Henuz veri kapsami atanmamis. Yukaridan ekleyin.")}
+                          {l(
+                            "No organizational visibility rules yet. Add one above.",
+                            "Henuz organizasyon gorunurluk kurali yok. Yukaridan ekleyin."
+                          )}
                         </div>
                       ) : (
                         <div className="space-y-2">
@@ -1970,7 +2019,12 @@ export default function UserAssignmentWorkbench(props) {
                         disabled={scopeSaving || scopeLoading}
                         className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
                       >
-                        {scopeSaving ? l("Saving…", "Kaydediliyor…") : l("Save scope rules", "Kapsam kurallarini kaydet")}
+                        {scopeSaving
+                          ? l("Saving…", "Kaydediliyor…")
+                          : l(
+                              "Save visibility rules",
+                              "Gorunurluk kurallarini kaydet"
+                            )}
                       </button>
                     </div>
                   </div>

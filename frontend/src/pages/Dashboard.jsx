@@ -345,7 +345,7 @@ function ReadinessSummaryCard({ title, value, subtitle, tone = "slate", locked =
  */
 export default function Dashboard() {
   const { l, t } = useI18n();
-  const { getPermissionAccess, hasPermission } = useAuth();
+  const { entitlements, getPermissionAccess, hasPermission } = useAuth();
   const { workingContext } = useWorkingContext();
   const {
     readiness: moduleReadinessPayload,
@@ -373,7 +373,34 @@ export default function Dashboard() {
         }
       : undefined
   ).allowed;
-  const canReadInventory = hasPermission("inventory.read");
+  const inventoryEntitlementOus = useMemo(() => {
+    const rows = Array.isArray(entitlements?.permissions) ? entitlements.permissions : [];
+    return rows
+      .filter((row) => String(row?.code || "").trim() === "inventory.read")
+      .filter((row) => String(row?.scopeType || "").trim().toUpperCase() === "OPERATING_UNIT")
+      .flatMap((row) =>
+        Array.isArray(row?.scopeIds) ? row.scopeIds.map((id) => toInt(id, 0)) : []
+      )
+      .filter((id) => id > 0);
+  }, [entitlements?.permissions]);
+  const singleInventoryOuId =
+    inventoryEntitlementOus.length === 1 ? inventoryEntitlementOus[0] : 0;
+  const inventoryReadAtLegalEntity = getPermissionAccess(
+    "inventory.read",
+    currentLegalEntityId > 0
+      ? {
+          scope: {
+            scopeType: "LEGAL_ENTITY",
+            scopeId: currentLegalEntityId,
+          },
+        }
+      : undefined
+  ).allowed;
+  const canReadInventory =
+    hasPermission("inventory.read") &&
+    (toInt(workingContext?.operatingUnitId, 0) > 0 ||
+      singleInventoryOuId > 0 ||
+      inventoryReadAtLegalEntity);
   const canReadFixedAssetRuns =
     hasPermission("fixed_assets.depreciation.run") || hasPermission("fixed_assets.read");
   const canReadConsolidationRuns = hasPermission("consolidation.run.read");
@@ -415,15 +442,23 @@ export default function Dashboard() {
   const workingFiscalPeriodId = toInt(workingContext?.fiscalPeriodId, 0);
   const inventoryScopeParams = useMemo(() => {
     const params = {};
+    const operatingUnitId = toInt(workingContext?.operatingUnitId, 0);
+    if (operatingUnitId > 0) {
+      if (scopeParams.legalEntityId) {
+        params.legalEntityId = scopeParams.legalEntityId;
+      }
+      params.operatingUnitId = operatingUnitId;
+      return params;
+    }
+    if (singleInventoryOuId > 0) {
+      params.operatingUnitId = singleInventoryOuId;
+      return params;
+    }
     if (scopeParams.legalEntityId) {
       params.legalEntityId = scopeParams.legalEntityId;
     }
-    const operatingUnitId = toInt(workingContext?.operatingUnitId, 0);
-    if (operatingUnitId > 0) {
-      params.operatingUnitId = operatingUnitId;
-    }
     return params;
-  }, [scopeParams.legalEntityId, workingContext?.operatingUnitId]);
+  }, [scopeParams.legalEntityId, singleInventoryOuId, workingContext?.operatingUnitId]);
 
   const loadConsolidationReadiness = useCallback(async () => {
     if (!canReadConsolidationRuns) {

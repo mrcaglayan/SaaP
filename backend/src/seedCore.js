@@ -507,6 +507,17 @@ const PERMISSIONS = [
     "inventory.read",
     "Read inventory warehouses, stock links, movements, and cost layers",
   ],
+  ["inventory.materialize", "Materialize inventory movements from pending stock links"],
+  ["inventory.movement.reverse", "Reverse posted inventory movements"],
+  ["inventory.transfer.create", "Create inventory transfer drafts"],
+  ["inventory.transfer.ship", "Ship inventory transfers"],
+  ["inventory.transfer.receive", "Receive inventory transfers"],
+  ["inventory.transfer.cancel", "Cancel inventory transfers before completion"],
+  ["inventory.transfer.evidence.upsert", "Create/update inventory transfer evidence"],
+  ["inventory.warehouse.upsert", "Create/update inventory warehouses and receipt policy"],
+  ["inventory.landed_cost.upsert", "Create/reverse inventory landed-cost vouchers"],
+  ["inventory.transfer.approve", "Approve inventory transfers"],
+  ["inventory.transfer.reverse", "Reverse completed inventory transfers"],
   ["inventory.upsert", "Create/update inventory warehouses and movements"],
   [
     "fixed_assets.read",
@@ -948,10 +959,29 @@ const INVENTORY_VIEWER_PERMISSION_CODES = buildPermissionList({
   ],
 });
 
-const INVENTORY_OPERATOR_PERMISSION_CODES = buildPermissionList({
+const INVENTORY_EXECUTOR_PERMISSION_CODES = buildPermissionList({
   permissions: [
     ...INVENTORY_VIEWER_PERMISSION_CODES,
+    "inventory.materialize",
+    "inventory.movement.reverse",
+    "inventory.transfer.create",
+    "inventory.transfer.ship",
+    "inventory.transfer.receive",
+    "inventory.transfer.cancel",
+    "inventory.transfer.evidence.upsert",
+  ],
+});
+
+const INVENTORY_OPERATOR_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    ...INVENTORY_EXECUTOR_PERMISSION_CODES,
     "item.card.upsert",
+    "inventory.warehouse.upsert",
+    "inventory.landed_cost.upsert",
+    "inventory.transfer.approve",
+    "inventory.transfer.reverse",
+    // Legacy catch-all retained until the granular route split stops checking
+    // inventory.upsert across inventory execution/setup flows.
     "inventory.upsert",
   ],
 });
@@ -1063,6 +1093,7 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   GroupReportingController: Object.freeze(["gl.readonly"]),
   BranchInventoryViewer: Object.freeze([]),
   EntityInventoryViewer: Object.freeze([]),
+  BranchInventoryExecutor: Object.freeze([]),
   BranchInventoryOperator: Object.freeze([]),
   EntityInventoryOperator: Object.freeze([]),
   BranchFixedAssetViewer: Object.freeze([]),
@@ -1233,6 +1264,11 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "BranchInventoryViewer",
     name: "Branch Inventory Viewer",
     permissions: INVENTORY_VIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "BranchInventoryExecutor",
+    name: "Branch Inventory Executor",
+    permissions: INVENTORY_EXECUTOR_PERMISSION_CODES,
   },
   {
     code: "EntityInventoryViewer",

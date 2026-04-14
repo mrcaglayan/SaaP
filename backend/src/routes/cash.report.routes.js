@@ -44,10 +44,6 @@ async function resolveBookScope(bookId, tenantId) {
 async function resolveCashReportScope(req, tenantId) {
   const scopeInput = parseCashReportScopeInput(req);
 
-  if (scopeInput.legalEntityId) {
-    return { scopeType: "LEGAL_ENTITY", scopeId: scopeInput.legalEntityId };
-  }
-
   if (scopeInput.registerId) {
     return resolveCashRegisterScope(scopeInput.registerId, tenantId);
   }
@@ -58,6 +54,10 @@ async function resolveCashReportScope(req, tenantId) {
 
   if (scopeInput.targetRegisterId) {
     return resolveCashRegisterScope(scopeInput.targetRegisterId, tenantId);
+  }
+
+  if (scopeInput.legalEntityId) {
+    return { scopeType: "LEGAL_ENTITY", scopeId: scopeInput.legalEntityId };
   }
 
   if (scopeInput.bookId) {

@@ -77,13 +77,14 @@ import {
   normalizeChargeAllocationMethod,
   normalizeCurrencyCode,
   normalizeDocumentSettlementMode,
-  normalizeTranslatedApiError,
   normalizeOptionalDecimalText,
+  normalizeStockImpactModeForDirection,
   normalizePositiveIntText,
   normalizeRecurringAnchorDay,
   normalizeRecurringCadence,
   normalizeRecurringInterval,
   normalizeText,
+  normalizeTranslatedApiError,
   resolveCounterpartyRoleFromDirection,
   resolvePaymentTermDueDateCandidate,
   resetDocumentLineTaxPreview,
@@ -1319,12 +1320,16 @@ export default function useCariDocumentCreateController({
   const changeCreateDocumentLineStockImpactMode = useCallback((rowId, nextMode) => {
     setCreateLinePreviewError("");
     setCreateLinePreviewMessage("");
+    const normalizedNextMode = normalizeStockImpactModeForDirection(
+      nextMode,
+      createForm.direction
+    );
     patchDraftFormLine(
       setCreateForm,
       rowId,
       {
-        stockImpactMode: nextMode,
-        ...(String(nextMode || "").trim().toUpperCase() === "NONE"
+        stockImpactMode: normalizedNextMode,
+        ...(normalizedNextMode === "NONE"
           ? {
               warehouseId: "",
               warehouseCode: "",
@@ -1334,7 +1339,7 @@ export default function useCariDocumentCreateController({
       },
       { resetTaxPreview: true }
     );
-  }, []);
+  }, [createForm.direction]);
   const expandCreateDocumentLineFixedAsset = useCallback((rowId) => {
     setCreateLinePreviewError("");
     setCreateLinePreviewMessage("");

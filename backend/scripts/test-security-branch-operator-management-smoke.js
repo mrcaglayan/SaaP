@@ -450,6 +450,7 @@ async function main() {
         "OUAccountant",
         "AuditorReadOnly",
         "BranchInventoryViewer",
+        "BranchInventoryExecutor",
         "BranchInventoryOperator",
         "EntityInventoryViewer",
         "EntityInventoryOperator",

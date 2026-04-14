@@ -39,6 +39,7 @@ import {
   assertCashOwnershipScopeAccess,
   assertRegisterOperationalConfig,
   buildCashOwnershipScopeFilter,
+  resolveCashRegisterScopedFilters,
   resolveCashOwnershipScope,
 } from "./cash.register.service.js";
 import { createAndPostCashJournalTx } from "./cash.service.js";
@@ -1165,8 +1166,11 @@ export async function listCashTransitTransferRows({
   params.push(...transitScopeParams);
   conditions.push(`(${entityScopeFilter} OR ${sourceOuScopeFilter} OR ${targetOuScopeFilter})`);
 
-  if (filters.legalEntityId) {
+  const hasScopedRegisterFilter = Boolean(filters.sourceRegisterId || filters.targetRegisterId);
+  if (filters.legalEntityId && !hasScopedRegisterFilter) {
     assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+  }
+  if (filters.legalEntityId) {
     conditions.push("ctt.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }
@@ -1180,6 +1184,12 @@ export async function listCashTransitTransferRows({
       throw badRequest("sourceRegisterId not found for tenant");
     }
     assertCashOwnershipScopeAccess(req, sourceRegister, assertScopeAccess, "sourceRegisterId");
+    if (
+      filters.legalEntityId &&
+      parsePositiveInt(sourceRegister.legal_entity_id) !== filters.legalEntityId
+    ) {
+      throw badRequest("sourceRegisterId does not belong to legalEntityId");
+    }
     conditions.push("ctt.source_cash_register_id = ?");
     params.push(filters.sourceRegisterId);
   }
@@ -1193,6 +1203,12 @@ export async function listCashTransitTransferRows({
       throw badRequest("targetRegisterId not found for tenant");
     }
     assertCashOwnershipScopeAccess(req, targetRegister, assertScopeAccess, "targetRegisterId");
+    if (
+      filters.legalEntityId &&
+      parsePositiveInt(targetRegister.legal_entity_id) !== filters.legalEntityId
+    ) {
+      throw badRequest("targetRegisterId does not belong to legalEntityId");
+    }
     conditions.push("ctt.target_cash_register_id = ?");
     params.push(filters.targetRegisterId);
   }
@@ -1239,6 +1255,13 @@ export async function listCashTransactionRows({
   buildScopeFilter,
   assertScopeAccess,
 }) {
+  const scopedFilters = await resolveCashRegisterScopedFilters({
+    req,
+    tenantId,
+    legalEntityId: filters.legalEntityId,
+    registerId: filters.registerId,
+    assertScopeAccess,
+  });
   const params = [tenantId];
   const conditions = ["ct.tenant_id = ?"];
   conditions.push(
@@ -1250,24 +1273,14 @@ export async function listCashTransactionRows({
     })
   );
 
-  if (filters.legalEntityId) {
-    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+  if (scopedFilters.legalEntityId) {
     conditions.push("cr.legal_entity_id = ?");
-    params.push(filters.legalEntityId);
+    params.push(scopedFilters.legalEntityId);
   }
 
-  if (filters.registerId) {
-    const register = await findCashRegisterById({
-      tenantId,
-      registerId: filters.registerId,
-    });
-    if (!register) {
-      throw badRequest("registerId not found for tenant");
-    }
-    assertCashOwnershipScopeAccess(req, register, assertScopeAccess, "registerId");
-
+  if (scopedFilters.register) {
     conditions.push("ct.cash_register_id = ?");
-    params.push(filters.registerId);
+    params.push(parsePositiveInt(scopedFilters.register.id));
   }
 
   if (filters.sessionId) {

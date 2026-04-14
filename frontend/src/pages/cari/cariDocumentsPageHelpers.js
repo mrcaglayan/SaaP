@@ -2,6 +2,7 @@ import {
   createDocumentLineDraft,
   DOCUMENT_LINE_CHARGE_ALLOCATION_METHODS,
   DOCUMENT_LINE_FIXED_ASSET_MODES,
+  DOCUMENT_LINE_STOCK_IMPACT_MODES,
   computeDocumentChargeAllocationPreview,
   computeDocumentLineAmounts,
   DOCUMENT_LINE_SUBLEDGER_TYPES,
@@ -1189,6 +1190,41 @@ export function getDefaultStockImpactModeForDirection(direction) {
     return "ISSUE_PENDING";
   }
   return "NONE";
+}
+
+/**
+ * Limits stock-impact choices to the inventory direction that matches the document.
+ */
+export function getAllowedStockImpactModesForDirection(direction) {
+  const normalizedDirection = normalizeDirection(direction);
+  if (normalizedDirection === "AP") {
+    return DOCUMENT_LINE_STOCK_IMPACT_MODES.filter(
+      (value) => value === "NONE" || value === "RECEIPT_PENDING"
+    );
+  }
+  if (normalizedDirection === "AR") {
+    return DOCUMENT_LINE_STOCK_IMPACT_MODES.filter(
+      (value) => value === "NONE" || value === "ISSUE_PENDING"
+    );
+  }
+  return DOCUMENT_LINE_STOCK_IMPACT_MODES;
+}
+
+/**
+ * Normalizes stale opposite-direction stock-impact modes so AP stays inbound and AR stays outbound.
+ */
+export function normalizeStockImpactModeForDirection(value, direction) {
+  const normalizedDirection = normalizeDirection(direction);
+  const normalizedMode = normalizeText(value).toUpperCase() || "NONE";
+  if (normalizedDirection === "AP" && normalizedMode === "ISSUE_PENDING") {
+    return "RECEIPT_PENDING";
+  }
+  if (normalizedDirection === "AR" && normalizedMode === "RECEIPT_PENDING") {
+    return "ISSUE_PENDING";
+  }
+  return getAllowedStockImpactModesForDirection(normalizedDirection).includes(normalizedMode)
+    ? normalizedMode
+    : "NONE";
 }
 
 export function buildChargeTargetDrafts(lines, chargeLineRowId, allocationPreview = null) {

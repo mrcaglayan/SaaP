@@ -8,7 +8,6 @@ import {
   getCashExchangeBatchByIdForTenant,
   listCashExchangeBatchRows,
   postCashExchangeBatchById,
-  resolveCashExchangeScope,
   reverseCashExchangeBatchById,
 } from "../services/cash.exchange.service.js";
 import {
@@ -40,11 +39,6 @@ router.get(
   "/",
   requirePermission("cash.txn.read", {
     resolveScope: async (req, tenantId) => {
-      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
-
       const sourceRegisterId = parsePositiveInt(req.query?.sourceRegisterId);
       if (sourceRegisterId) {
         return resolveCashRegisterScope(sourceRegisterId, tenantId);
@@ -53,6 +47,11 @@ router.get(
       const targetRegisterId = parsePositiveInt(req.query?.targetRegisterId);
       if (targetRegisterId) {
         return resolveCashRegisterScope(targetRegisterId, tenantId);
+      }
+
+      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
       }
 
       return null;
@@ -76,11 +75,7 @@ router.get(
 
 router.get(
   "/:exchangeBatchId",
-  requirePermission("cash.txn.read", {
-    resolveScope: async (req, tenantId) => {
-      return resolveCashExchangeScope(req.params?.exchangeBatchId, tenantId);
-    },
-  }),
+  requirePermission("cash.txn.read"),
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
     const exchangeBatchId = parseCashExchangeBatchIdParam(req);
@@ -116,11 +111,7 @@ router.post(
 
 router.post(
   "/:exchangeBatchId/post",
-  requirePermission("cash.txn.create", {
-    resolveScope: async (req, tenantId) => {
-      return resolveCashExchangeScope(req.params?.exchangeBatchId, tenantId);
-    },
-  }),
+  requirePermission("cash.txn.create"),
   asyncHandler(async (req, res) => {
     const payload = parseCashExchangePostInput(req);
     const result = await postCashExchangeBatchById({
@@ -134,11 +125,7 @@ router.post(
 
 router.post(
   "/:exchangeBatchId/reverse",
-  requirePermission("cash.txn.reverse", {
-    resolveScope: async (req, tenantId) => {
-      return resolveCashExchangeScope(req.params?.exchangeBatchId, tenantId);
-    },
-  }),
+  requirePermission("cash.txn.reverse"),
   asyncHandler(async (req, res) => {
     const payload = parseCashExchangeReverseInput(req);
     const result = await reverseCashExchangeBatchById({

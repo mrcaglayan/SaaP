@@ -63,6 +63,7 @@ import {
   normalizeCurrencyCode,
   normalizeDocumentSettlementMode,
   normalizeOptionalDecimalText,
+  normalizeStockImpactModeForDirection,
   normalizeText,
   normalizeTranslatedApiError,
   resetDocumentLineTaxPreview,
@@ -1092,12 +1093,16 @@ export default function useCariDocumentEditController({
   const changeEditDocumentLineStockImpactMode = useCallback((rowId, nextMode) => {
     setEditLinePreviewError("");
     setEditLinePreviewMessage("");
+    const normalizedNextMode = normalizeStockImpactModeForDirection(
+      nextMode,
+      editForm.direction
+    );
     patchDraftFormLine(
       setEditForm,
       rowId,
       {
-        stockImpactMode: nextMode,
-        ...(String(nextMode || "").trim().toUpperCase() === "NONE"
+        stockImpactMode: normalizedNextMode,
+        ...(normalizedNextMode === "NONE"
           ? {
               warehouseId: "",
               warehouseCode: "",
@@ -1107,7 +1112,7 @@ export default function useCariDocumentEditController({
       },
       { resetTaxPreview: true }
     );
-  }, []);
+  }, [editForm.direction]);
   const expandEditDocumentLineFixedAsset = useCallback((rowId) => {
     setEditLinePreviewError("");
     setEditLinePreviewMessage("");

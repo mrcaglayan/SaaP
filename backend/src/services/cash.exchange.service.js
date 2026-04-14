@@ -14,7 +14,10 @@ import {
   markCashTransactionAsReversed,
   postCashTransaction,
 } from "./cash.queries.js";
-import { assertRegisterOperationalConfig } from "./cash.register.service.js";
+import {
+  assertCashOwnershipScopeAccess,
+  assertRegisterOperationalConfig,
+} from "./cash.register.service.js";
 import {
   createCashTransaction,
   postCashTransactionById,
@@ -1328,15 +1331,59 @@ async function reverseDirectExchangeBatch({
   return result;
 }
 
-function assertExchangeScopeAccess(req, row, assertScopeAccess, label = "exchangeBatchId") {
-  assertScopeAccess(req, "legal_entity", row.legal_entity_id, label);
-  const sourceOuId = parsePositiveInt(row.source_operating_unit_id);
-  if (sourceOuId) {
-    assertScopeAccess(req, "operating_unit", sourceOuId, label);
+function canScopeAccess(req, assertScopeAccess, scopeKind, scopeId, fieldLabel) {
+  const normalizedScopeId = parsePositiveInt(scopeId);
+  if (!normalizedScopeId) {
+    return false;
   }
+  try {
+    assertScopeAccess(req, scopeKind, normalizedScopeId, fieldLabel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function assertExchangeParticipantScopeAccess(req, row, assertScopeAccess, label = "exchangeBatchId") {
+  const legalEntityId = parsePositiveInt(row.legal_entity_id);
+  const sourceOuId = parsePositiveInt(row.source_operating_unit_id);
   const targetOuId = parsePositiveInt(row.target_operating_unit_id);
-  if (targetOuId && targetOuId !== sourceOuId) {
-    assertScopeAccess(req, "operating_unit", targetOuId, label);
+
+  if (canScopeAccess(req, assertScopeAccess, "legal_entity", legalEntityId, label)) {
+    return;
+  }
+  if (canScopeAccess(req, assertScopeAccess, "operating_unit", sourceOuId, label)) {
+    return;
+  }
+  if (canScopeAccess(req, assertScopeAccess, "operating_unit", targetOuId, label)) {
+    return;
+  }
+
+  assertScopeAccess(req, "legal_entity", legalEntityId, label);
+}
+
+function assertExchangePairScopeAccess(req, row, assertScopeAccess, label = "exchangeBatchId") {
+  const scopeRows = [
+    {
+      legal_entity_id: row.legal_entity_id,
+      operating_unit_id: row.source_operating_unit_id,
+    },
+    {
+      legal_entity_id: row.legal_entity_id,
+      operating_unit_id: row.target_operating_unit_id,
+    },
+  ];
+  const seen = new Set();
+
+  for (const scopeRow of scopeRows) {
+    const operatingUnitId = parsePositiveInt(scopeRow.operating_unit_id);
+    const legalEntityId = parsePositiveInt(scopeRow.legal_entity_id);
+    const scopeKey = operatingUnitId ? `ou:${operatingUnitId}` : `le:${legalEntityId}`;
+    if (!legalEntityId || seen.has(scopeKey)) {
+      continue;
+    }
+    seen.add(scopeKey);
+    assertCashOwnershipScopeAccess(req, scopeRow, assertScopeAccess, label);
   }
 }
 
@@ -1503,7 +1550,7 @@ export async function getCashExchangeBatchByIdForTenant({
   if (!row) {
     throw badRequest("Cash exchange batch not found");
   }
-  assertExchangeScopeAccess(req, row, assertScopeAccess, "exchangeBatchId");
+  assertExchangeParticipantScopeAccess(req, row, assertScopeAccess, "exchangeBatchId");
   const transactions = await getBatchTransactions(row);
   return {
     batch: mapExchangeBatchRow(row),
@@ -1527,15 +1574,47 @@ export async function listCashExchangeBatchRows({
   const where = ["ceb.tenant_id = ?"];
   const params = [tenantId];
 
+  const hasScopedRegisterFilter = Boolean(filters.sourceRegisterId || filters.targetRegisterId);
+  if (filters.legalEntityId && !hasScopedRegisterFilter) {
+    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+  }
   if (filters.legalEntityId) {
     where.push("ceb.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }
   if (filters.sourceRegisterId) {
+    const sourceRegister = await findCashRegisterById({
+      tenantId,
+      registerId: filters.sourceRegisterId,
+    });
+    if (!sourceRegister) {
+      throw badRequest("sourceRegisterId not found for tenant");
+    }
+    assertCashOwnershipScopeAccess(req, sourceRegister, assertScopeAccess, "sourceRegisterId");
+    if (
+      filters.legalEntityId &&
+      parsePositiveInt(sourceRegister.legal_entity_id) !== filters.legalEntityId
+    ) {
+      throw badRequest("sourceRegisterId does not belong to legalEntityId");
+    }
     where.push("ceb.source_cash_register_id = ?");
     params.push(filters.sourceRegisterId);
   }
   if (filters.targetRegisterId) {
+    const targetRegister = await findCashRegisterById({
+      tenantId,
+      registerId: filters.targetRegisterId,
+    });
+    if (!targetRegister) {
+      throw badRequest("targetRegisterId not found for tenant");
+    }
+    assertCashOwnershipScopeAccess(req, targetRegister, assertScopeAccess, "targetRegisterId");
+    if (
+      filters.legalEntityId &&
+      parsePositiveInt(targetRegister.legal_entity_id) !== filters.legalEntityId
+    ) {
+      throw badRequest("targetRegisterId does not belong to legalEntityId");
+    }
     where.push("ceb.target_cash_register_id = ?");
     params.push(filters.targetRegisterId);
   }
@@ -1552,15 +1631,36 @@ export async function listCashExchangeBatchRows({
     params.push(filters.createdDateTo);
   }
 
-  const scopeSql = buildScopeFilter(req, "legal_entity", "ceb.legal_entity_id", params);
-  if (scopeSql !== "1 = 1") {
-    where.push(scopeSql);
-  }
+  const legalScopeParams = [];
+  const sourceOuScopeParams = [];
+  const targetOuScopeParams = [];
+  const legalScopeFilter = buildScopeFilter(
+    req,
+    "legal_entity",
+    "ceb.legal_entity_id",
+    legalScopeParams
+  );
+  const sourceOuScopeFilter = buildScopeFilter(
+    req,
+    "operating_unit",
+    "sr.operating_unit_id",
+    sourceOuScopeParams
+  );
+  const targetOuScopeFilter = buildScopeFilter(
+    req,
+    "operating_unit",
+    "tr.operating_unit_id",
+    targetOuScopeParams
+  );
+  params.push(...legalScopeParams, ...sourceOuScopeParams, ...targetOuScopeParams);
+  where.push(`(${legalScopeFilter} OR ${sourceOuScopeFilter} OR ${targetOuScopeFilter})`);
   const whereSql = where.join(" AND ");
 
   const countResult = await query(
     `SELECT COUNT(*) AS total
      FROM cash_exchange_batches ceb
+     JOIN cash_registers sr ON sr.id = ceb.source_cash_register_id
+     JOIN cash_registers tr ON tr.id = ceb.target_cash_register_id
      WHERE ${whereSql}`,
     params
   );
@@ -1577,7 +1677,7 @@ export async function listCashExchangeBatchRows({
   const rows = result.rows || [];
   const mapped = [];
   for (const row of rows) {
-    assertExchangeScopeAccess(req, row, assertScopeAccess, "exchangeBatchId");
+    assertExchangeParticipantScopeAccess(req, row, assertScopeAccess, "exchangeBatchId");
     mapped.push(mapExchangeBatchRow(row));
   }
 
@@ -1647,18 +1747,8 @@ export async function createCashExchangeBatch({
     requireCashControlledAccount: true,
   });
 
-  assertScopeAccess(req, "legal_entity", sourceRegister.legal_entity_id, "sourceRegisterId");
-  if (sourceRegister.operating_unit_id) {
-    assertScopeAccess(req, "operating_unit", sourceRegister.operating_unit_id, "sourceRegisterId");
-  }
-  assertScopeAccess(req, "legal_entity", targetRegister.legal_entity_id, "targetRegisterId");
-  if (
-    targetRegister.operating_unit_id &&
-    parsePositiveInt(targetRegister.operating_unit_id) !==
-      parsePositiveInt(sourceRegister.operating_unit_id)
-  ) {
-    assertScopeAccess(req, "operating_unit", targetRegister.operating_unit_id, "targetRegisterId");
-  }
+  assertCashOwnershipScopeAccess(req, sourceRegister, assertScopeAccess, "sourceRegisterId");
+  assertCashOwnershipScopeAccess(req, targetRegister, assertScopeAccess, "targetRegisterId");
 
   if (parsePositiveInt(sourceRegister.id) === parsePositiveInt(targetRegister.id)) {
     throw badRequest("sourceRegisterId and targetRegisterId must be different");
@@ -1748,7 +1838,7 @@ export async function createCashExchangeBatch({
           }
         : effectivePayload;
     assertBatchRequestFingerprint(replayByIdempotency, replayFingerprintPayload);
-    assertExchangeScopeAccess(req, replayByIdempotency, assertScopeAccess, "sourceRegisterId");
+    assertExchangePairScopeAccess(req, replayByIdempotency, assertScopeAccess, "sourceRegisterId");
     if (
       asUpper(replayByIdempotency.status) === EXCHANGE_STATUS_POSTED ||
       asUpper(replayByIdempotency.status) === EXCHANGE_STATUS_REVERSED
@@ -1779,7 +1869,7 @@ export async function createCashExchangeBatch({
           }
         : effectivePayload;
     assertBatchRequestFingerprint(replayByEvent, replayFingerprintPayload);
-    assertExchangeScopeAccess(req, replayByEvent, assertScopeAccess, "sourceRegisterId");
+    assertExchangePairScopeAccess(req, replayByEvent, assertScopeAccess, "sourceRegisterId");
     if (
       asUpper(replayByEvent.status) === EXCHANGE_STATUS_POSTED ||
       asUpper(replayByEvent.status) === EXCHANGE_STATUS_REVERSED
@@ -2229,7 +2319,7 @@ export async function postCashExchangeBatchById({
   if (!batch) {
     throw badRequest("Cash exchange batch not found");
   }
-  assertExchangeScopeAccess(req, batch, assertScopeAccess, "exchangeBatchId");
+  assertExchangePairScopeAccess(req, batch, assertScopeAccess, "exchangeBatchId");
 
   const status = asUpper(batch.status);
   if (status === EXCHANGE_STATUS_POSTED || status === EXCHANGE_STATUS_REVERSED) {
@@ -2413,7 +2503,7 @@ export async function reverseCashExchangeBatchById({
   if (!batch) {
     throw badRequest("Cash exchange batch not found");
   }
-  assertExchangeScopeAccess(req, batch, assertScopeAccess, "exchangeBatchId");
+  assertExchangePairScopeAccess(req, batch, assertScopeAccess, "exchangeBatchId");
 
   if (asUpper(batch.status) === EXCHANGE_STATUS_REVERSED) {
     const transactions = await getBatchTransactions(batch);

@@ -283,14 +283,23 @@ const ROLE_CATALOG = Object.freeze({
     recommendedScopes: ["OPERATING_UNIT"],
     sortOrder: 111,
   },
+  BranchInventoryExecutor: {
+    code: "Branch Inventory Executor",
+    category: "scoped",
+    summary:
+      "Executes branch stock materialization, movement reversal, and transfer handling without item-card or warehouse setup authority.",
+    capabilities: ["Stock materialization", "Movement reversal", "Transfer execution"],
+    recommendedScopes: ["OPERATING_UNIT"],
+    sortOrder: 112,
+  },
   BranchInventoryOperator: {
     code: "Branch Inventory Operator",
     category: "scoped",
     summary:
-      "Maintains branch-owned warehouses, materializes branch stock movements, and edits shared item cards from branch scope.",
-    capabilities: ["Branch warehouse setup", "Stock movement handling", "Item-card maintenance"],
+      "Runs broad branch inventory operations including stock execution, warehouse setup, landed-cost maintenance, transfer governance, and shared item-card maintenance.",
+    capabilities: ["Warehouse setup", "Inventory power-user control", "Item-card maintenance"],
     recommendedScopes: ["OPERATING_UNIT"],
-    sortOrder: 112,
+    sortOrder: 113,
   },
   BranchFixedAssetViewer: {
     code: "Branch Fixed Asset Viewer",
@@ -299,7 +308,7 @@ const ROLE_CATALOG = Object.freeze({
       "Reads branch-owned fixed-asset registers, categories, custodians, and reports without lifecycle write authority.",
     capabilities: ["Branch asset visibility", "Category lookup", "Custodian lookup"],
     recommendedScopes: ["OPERATING_UNIT"],
-    sortOrder: 113,
+    sortOrder: 114,
   },
   BranchFixedAssetOperator: {
     code: "Branch Fixed Asset Operator",
@@ -308,7 +317,7 @@ const ROLE_CATALOG = Object.freeze({
       "Creates and updates branch-owned fixed-asset drafts while keeping posting, disposal, and depreciation governance at entity scope.",
     capabilities: ["Branch asset drafting", "Fixed-asset maintenance", "Custodian-aware updates"],
     recommendedScopes: ["OPERATING_UNIT"],
-    sortOrder: 114,
+    sortOrder: 115,
   },
   EntityInventoryViewer: {
     code: "Entity Inventory Viewer",
@@ -323,8 +332,8 @@ const ROLE_CATALOG = Object.freeze({
     code: "Entity Inventory Operator",
     category: "scoped",
     summary:
-      "Creates and updates entity warehouses, inventory movements, and shared item cards without broader GL master-data write authority.",
-    capabilities: ["Entity warehouse setup", "Inventory operations", "Item-card maintenance"],
+      "Owns entity inventory execution, setup, landed-cost, transfer governance, and shared item-card maintenance without broader GL master-data write authority.",
+    capabilities: ["Inventory execution", "Warehouse and landed-cost setup", "Item-card maintenance"],
     recommendedScopes: ["LEGAL_ENTITY"],
     sortOrder: 242,
   },

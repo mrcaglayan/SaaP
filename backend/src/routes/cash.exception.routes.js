@@ -15,11 +15,14 @@ router.get(
   requirePermission("cash.report.read", {
     resolveScope: async (req, tenantId) => {
       const scopeInput = parseCashExceptionRouteScopeInput(req);
-      if (scopeInput.legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: scopeInput.legalEntityId };
-      }
       if (scopeInput.registerId) {
         return resolveCashRegisterScope(scopeInput.registerId, tenantId);
+      }
+      if (scopeInput.operatingUnitId) {
+        return { scopeType: "OPERATING_UNIT", scopeId: scopeInput.operatingUnitId };
+      }
+      if (scopeInput.legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: scopeInput.legalEntityId };
       }
       return null;
     },
