@@ -236,6 +236,17 @@ function patchDraftFormLineChargeTargetAmount(
   );
 }
 
+function buildRequestedScopes(legalEntityId, operatingUnitId) {
+  const scopes = [];
+  if (operatingUnitId) {
+    scopes.push({ scopeType: "OPERATING_UNIT", scopeId: operatingUnitId });
+  }
+  if (legalEntityId) {
+    scopes.push({ scopeType: "LEGAL_ENTITY", scopeId: legalEntityId });
+  }
+  return scopes;
+}
+
 /**
  * Hosts the mutable document workbench for draft and returned CARI documents,
  * including returned AP correction flows that must stay editable until
@@ -257,7 +268,7 @@ export default function useCariDocumentEditController({
 }) {
   void fixedDirection;
 
-  const { hasPermission } = useAuth();
+  const { hasPermission, getPermissionAccess } = useAuth();
   const canCreate = hasPermission("cari.doc.create");
   const canUpdate = hasPermission("cari.doc.update");
   const canCancel = hasPermission("cari.doc.cancel");
@@ -265,12 +276,9 @@ export default function useCariDocumentEditController({
   const canReadCards = hasPermission("cari.card.read");
   const canUpsertCards = hasPermission("cari.card.upsert");
   const canReadCashRegisters = hasPermission("cash.register.read");
-  const canReadItemCards = hasPermission("item.card.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
   const canReadOrgTree = hasPermission("org.tree.read");
-  const canReadFixedAssets = hasPermission("fixed_assets.read");
   const canUpsertFixedAssets = hasPermission("fixed_assets.upsert");
-  const canReadFixedAssetSettings = hasPermission("fixed_assets.settings.read");
   const canUpsertFixedAssetSettings = hasPermission("fixed_assets.settings.upsert");
 
   const [editForm, setEditForm] = useState(() => createInitialDraftForm());
@@ -561,6 +569,25 @@ export default function useCariDocumentEditController({
     }
     return rows;
   }, [editForm.operatingUnitId, editOperatingUnitOptions]);
+  const editRequestedLegalEntityId = toPositiveInt(editForm.legalEntityId);
+  const editRequestedOperatingUnitId = toPositiveInt(editForm.operatingUnitId);
+  const editRequestedScopes = buildRequestedScopes(
+    editRequestedLegalEntityId,
+    editRequestedOperatingUnitId
+  );
+  const canReadScopedItemCards = getPermissionAccess("item.card.read", {
+    scopes: editRequestedScopes,
+  }).allowed;
+  const canReadScopedFixedAssets = getPermissionAccess("fixed_assets.read", {
+    scopes: editRequestedScopes,
+  }).allowed;
+  const canReadScopedFixedAssetSettings = getPermissionAccess(
+    "fixed_assets.settings.read",
+    {
+      scopes: editRequestedScopes,
+    }
+  ).allowed;
+  const canReadFixedAssetSettings = canReadScopedFixedAssetSettings;
   const editCashRegisterLookupOptions = useMemo(
     () =>
       extendCashRegisterOptionsForSelectedValue(
@@ -1547,8 +1574,9 @@ export default function useCariDocumentEditController({
   }, [canReadGlAccounts, editForm.legalEntityId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    const operatingUnitId = toPositiveInt(editForm.operatingUnitId);
     setEditItemCardsError("");
-    if (!canReadItemCards || !legalEntityId) {
+    if (!canReadScopedItemCards || !legalEntityId) {
       setEditItemCardRows([]);
       setEditItemCardsLoading(false);
       return;
@@ -1559,6 +1587,7 @@ export default function useCariDocumentEditController({
       try {
         const response = await listItemCards({
           legalEntityId,
+          operatingUnitId: operatingUnitId || undefined,
           status: "ACTIVE",
           limit: 300,
           offset: 0,
@@ -1591,11 +1620,12 @@ export default function useCariDocumentEditController({
     return () => {
       active = false;
     };
-  }, [canReadItemCards, editForm.legalEntityId, l]);
+  }, [canReadScopedItemCards, editForm.legalEntityId, editForm.operatingUnitId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    const ownerOperatingUnitId = toPositiveInt(editForm.operatingUnitId);
     setEditFixedAssetCategoriesError("");
-    if (!canReadFixedAssets || !legalEntityId) {
+    if (!canReadScopedFixedAssetSettings || !legalEntityId) {
       setEditFixedAssetCategoryRows([]);
       setEditFixedAssetCategoriesLoading(false);
       return;
@@ -1606,6 +1636,7 @@ export default function useCariDocumentEditController({
       try {
         const response = await listFixedAssetCategories({
           legalEntityId,
+          ownerOperatingUnitId: ownerOperatingUnitId || undefined,
           status: "ACTIVE",
         });
         if (!active) {
@@ -1633,11 +1664,18 @@ export default function useCariDocumentEditController({
     return () => {
       active = false;
     };
-  }, [canReadFixedAssets, editForm.legalEntityId, fixedAssetCategoryRefreshToken, l]);
+  }, [
+    canReadScopedFixedAssetSettings,
+    editForm.legalEntityId,
+    editForm.operatingUnitId,
+    fixedAssetCategoryRefreshToken,
+    l,
+  ]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    const ownerOperatingUnitId = toPositiveInt(editForm.operatingUnitId);
     setEditFixedAssetDraftError("");
-    if (!canReadFixedAssets || !legalEntityId) {
+    if (!canReadScopedFixedAssets || !legalEntityId) {
       setEditFixedAssetDraftRows([]);
       setEditFixedAssetDraftLoading(false);
       return;
@@ -1648,6 +1686,7 @@ export default function useCariDocumentEditController({
       try {
         const response = await listFixedAssets({
           legalEntityId,
+          ownerOperatingUnitId: ownerOperatingUnitId || undefined,
           status: "DRAFT",
           limit: 500,
           offset: 0,
@@ -1677,11 +1716,12 @@ export default function useCariDocumentEditController({
     return () => {
       active = false;
     };
-  }, [canReadFixedAssets, editForm.legalEntityId, l]);
+  }, [canReadScopedFixedAssets, editForm.legalEntityId, editForm.operatingUnitId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    const ownerOperatingUnitId = toPositiveInt(editForm.operatingUnitId);
     setEditFixedAssetSaleError("");
-    if (!canReadFixedAssets || !legalEntityId) {
+    if (!canReadScopedFixedAssets || !legalEntityId) {
       setEditFixedAssetSaleRows([]);
       setEditFixedAssetSaleLoading(false);
       return;
@@ -1694,6 +1734,7 @@ export default function useCariDocumentEditController({
           FIXED_ASSET_AR_ELIGIBLE_STATUSES.map((status) =>
             listFixedAssets({
               legalEntityId,
+              ownerOperatingUnitId: ownerOperatingUnitId || undefined,
               status,
               limit: 500,
               offset: 0,
@@ -1734,7 +1775,7 @@ export default function useCariDocumentEditController({
     return () => {
       active = false;
     };
-  }, [canReadFixedAssets, editForm.legalEntityId, l]);
+  }, [canReadScopedFixedAssets, editForm.legalEntityId, editForm.operatingUnitId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
     const operatingUnitId = toPositiveInt(editForm.operatingUnitId);

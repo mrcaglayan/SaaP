@@ -45,6 +45,11 @@ const CARI_ROLE_EXPECTATIONS = {
     "cari.doc.update",
     "cari.doc.submit",
   ],
+  OUAPSubmitter: [
+    "cari.doc.read",
+    "cari.doc.update",
+    "cari.doc.submit",
+  ],
   CountryAPApprover: [
     "cari.doc.read",
   ],

@@ -108,6 +108,18 @@ function buildSmartResetDraftForm(previousForm) {
     currencyCode: normalizeCurrencyCode(previousForm?.currencyCode) || baseline.currencyCode,
   };
 }
+
+function buildRequestedScopes(legalEntityId, operatingUnitId) {
+  const scopes = [];
+  if (operatingUnitId) {
+    scopes.push({ scopeType: "OPERATING_UNIT", scopeId: operatingUnitId });
+  }
+  if (legalEntityId) {
+    scopes.push({ scopeType: "LEGAL_ENTITY", scopeId: legalEntityId });
+  }
+  return scopes;
+}
+
 function focusCreateDraftSection() {
   if (typeof document === "undefined") {
     return;
@@ -265,11 +277,10 @@ function patchDraftFormLineChargeTargetAmount(
   );
 }
 /**
- * Manage the create-draft workbench state for CARI AP/AR documents, including
- * scope-aware lookups that respect the current working legal entity and OU.
- */
-/**
  * Manage the create-draft workbench state for CARI AP/AR documents.
+ * Scope-aware lookups honor the current legal entity and operating unit so
+ * OU-scoped branch users can load only the master data they are allowed to
+ * see while preparing governed AP drafts.
  */
 export default function useCariDocumentCreateController({
   fixedDirection = "",
@@ -283,7 +294,7 @@ export default function useCariDocumentCreateController({
 }) {
   const { language } = useI18n();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
-  const { hasPermission } = useAuth();
+  const { hasPermission, getPermissionAccess } = useAuth();
   const {
     legalEntities: workingContextLegalEntities,
     loadingBase: workingContextBaseLoading,
@@ -294,12 +305,9 @@ export default function useCariDocumentCreateController({
   const canReadCards = hasPermission("cari.card.read");
   const canUpsertCards = hasPermission("cari.card.upsert");
   const canReadCashRegisters = hasPermission("cash.register.read");
-  const canReadItemCards = hasPermission("item.card.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
   const canReadOrgTree = hasPermission("org.tree.read");
-  const canReadFixedAssets = hasPermission("fixed_assets.read");
   const canUpsertFixedAssets = hasPermission("fixed_assets.upsert");
-  const canReadFixedAssetSettings = hasPermission("fixed_assets.settings.read");
   const canUpsertFixedAssetSettings = hasPermission("fixed_assets.settings.upsert");
   const hasFixedRouteDirection = Boolean(fixedDirection);
   const [createForm, setCreateForm] = useState(() => {
@@ -690,6 +698,25 @@ export default function useCariDocumentCreateController({
   const effectiveCreateOperatingUnitId = createOperatingUnitDerivedFromCounterpartyPrimary
     ? selectedCreateCounterpartyPrimaryOperatingUnitId
     : normalizePositiveIntText(createForm.operatingUnitId);
+  const createRequestedLegalEntityId = toPositiveInt(createForm.legalEntityId);
+  const createRequestedOperatingUnitId = toPositiveInt(effectiveCreateOperatingUnitId);
+  const createRequestedScopes = buildRequestedScopes(
+    createRequestedLegalEntityId,
+    createRequestedOperatingUnitId
+  );
+  const canReadScopedItemCards = getPermissionAccess("item.card.read", {
+    scopes: createRequestedScopes,
+  }).allowed;
+  const canReadScopedFixedAssets = getPermissionAccess("fixed_assets.read", {
+    scopes: createRequestedScopes,
+  }).allowed;
+  const canReadScopedFixedAssetSettings = getPermissionAccess(
+    "fixed_assets.settings.read",
+    {
+      scopes: createRequestedScopes,
+    }
+  ).allowed;
+  const canReadFixedAssetSettings = canReadScopedFixedAssetSettings;
   const createCashRegisterLookupOptions = useMemo(
     () =>
       extendCashRegisterOptionsForSelectedValue(
@@ -2193,8 +2220,9 @@ export default function useCariDocumentCreateController({
   }, [canReadGlAccounts, createForm.legalEntityId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    const operatingUnitId = toPositiveInt(effectiveCreateOperatingUnitId);
     setCreateItemCardsError("");
-    if (!canReadItemCards || !legalEntityId) {
+    if (!canReadScopedItemCards || !legalEntityId) {
       setCreateItemCardRows([]);
       setCreateItemCardsLoading(false);
       return;
@@ -2205,6 +2233,7 @@ export default function useCariDocumentCreateController({
       try {
         const response = await listItemCards({
           legalEntityId,
+          operatingUnitId: operatingUnitId || undefined,
           status: "ACTIVE",
           limit: 300,
           offset: 0,
@@ -2234,11 +2263,12 @@ export default function useCariDocumentCreateController({
     return () => {
       active = false;
     };
-  }, [canReadItemCards, createForm.legalEntityId, l]);
+  }, [canReadScopedItemCards, createForm.legalEntityId, effectiveCreateOperatingUnitId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    const ownerOperatingUnitId = toPositiveInt(effectiveCreateOperatingUnitId);
     setCreateFixedAssetCategoriesError("");
-    if (!canReadFixedAssets || !legalEntityId) {
+    if (!canReadScopedFixedAssetSettings || !legalEntityId) {
       setCreateFixedAssetCategoryRows([]);
       setCreateFixedAssetCategoriesLoading(false);
       return;
@@ -2249,6 +2279,7 @@ export default function useCariDocumentCreateController({
       try {
         const response = await listFixedAssetCategories({
           legalEntityId,
+          ownerOperatingUnitId: ownerOperatingUnitId || undefined,
           status: "ACTIVE",
         });
         if (!active) {
@@ -2279,11 +2310,18 @@ export default function useCariDocumentCreateController({
     return () => {
       active = false;
     };
-  }, [canReadFixedAssets, createForm.legalEntityId, fixedAssetCategoryRefreshToken, l]);
+  }, [
+    canReadScopedFixedAssetSettings,
+    createForm.legalEntityId,
+    effectiveCreateOperatingUnitId,
+    fixedAssetCategoryRefreshToken,
+    l,
+  ]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    const ownerOperatingUnitId = toPositiveInt(effectiveCreateOperatingUnitId);
     setCreateFixedAssetDraftError("");
-    if (!canReadFixedAssets || !legalEntityId) {
+    if (!canReadScopedFixedAssets || !legalEntityId) {
       setCreateFixedAssetDraftRows([]);
       setCreateFixedAssetDraftLoading(false);
       return;
@@ -2294,6 +2332,7 @@ export default function useCariDocumentCreateController({
       try {
         const response = await listFixedAssets({
           legalEntityId,
+          ownerOperatingUnitId: ownerOperatingUnitId || undefined,
           status: "DRAFT",
           limit: 500,
           offset: 0,
@@ -2323,11 +2362,12 @@ export default function useCariDocumentCreateController({
     return () => {
       active = false;
     };
-  }, [canReadFixedAssets, createForm.legalEntityId, l]);
+  }, [canReadScopedFixedAssets, createForm.legalEntityId, effectiveCreateOperatingUnitId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    const ownerOperatingUnitId = toPositiveInt(effectiveCreateOperatingUnitId);
     setCreateFixedAssetSaleError("");
-    if (!canReadFixedAssets || !legalEntityId) {
+    if (!canReadScopedFixedAssets || !legalEntityId) {
       setCreateFixedAssetSaleRows([]);
       setCreateFixedAssetSaleLoading(false);
       return;
@@ -2340,6 +2380,7 @@ export default function useCariDocumentCreateController({
           FIXED_ASSET_AR_ELIGIBLE_STATUSES.map((status) =>
             listFixedAssets({
               legalEntityId,
+              ownerOperatingUnitId: ownerOperatingUnitId || undefined,
               status,
               limit: 500,
               offset: 0,
@@ -2380,7 +2421,7 @@ export default function useCariDocumentCreateController({
     return () => {
       active = false;
     };
-  }, [canReadFixedAssets, createForm.legalEntityId, l]);
+  }, [canReadScopedFixedAssets, createForm.legalEntityId, effectiveCreateOperatingUnitId, l]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
     const operatingUnitId = toPositiveInt(effectiveCreateOperatingUnitId);

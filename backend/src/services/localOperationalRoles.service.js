@@ -15,6 +15,9 @@ export const LOCAL_OPERATIONAL_ROLE_CATALOG = Object.freeze({
   BranchOperator: Object.freeze({
     scopeTypes: Object.freeze(["OPERATING_UNIT"]),
   }),
+  OUAPSubmitter: Object.freeze({
+    scopeTypes: Object.freeze(["OPERATING_UNIT"]),
+  }),
   GLOperator: Object.freeze({
     scopeTypes: Object.freeze(["LEGAL_ENTITY"]),
   }),

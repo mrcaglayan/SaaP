@@ -104,6 +104,7 @@ async function main() {
     "MasterDataSteward",
     "CounterpartyCardEditor",
     "EntityAPController",
+    "OUAPSubmitter",
     "CountryAPApprover",
     "CountryAPPoster",
     "GLOperator",
@@ -128,6 +129,7 @@ async function main() {
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalUserAdmin, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.CounterpartyCardEditor, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.EntityAPController, []);
+  assert.deepEqual(ROLE_CAPABILITY_GROUPS.OUAPSubmitter, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.CountryAPApprover, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.CountryAPPoster, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.APDocumentPoster, []);
@@ -171,6 +173,17 @@ async function main() {
   assertRoleLacks(permissionCodesByRole, "EntityAPController", "cari.doc.reverse");
   assertRoleLacks(permissionCodesByRole, "EntityAPController", "cari.card.read");
   assertRoleLacks(permissionCodesByRole, "EntityAPController", "gl.journal.post");
+
+  assertRoleHas(permissionCodesByRole, "OUAPSubmitter", "org.tree.read");
+  assertRoleHas(permissionCodesByRole, "OUAPSubmitter", "org.fiscal_period.read");
+  assertRoleHas(permissionCodesByRole, "OUAPSubmitter", "cari.doc.read");
+  assertRoleHas(permissionCodesByRole, "OUAPSubmitter", "cari.doc.update");
+  assertRoleHas(permissionCodesByRole, "OUAPSubmitter", "cari.doc.submit");
+  assertRoleLacks(permissionCodesByRole, "OUAPSubmitter", "cari.doc.create");
+  assertRoleLacks(permissionCodesByRole, "OUAPSubmitter", "cari.doc.post");
+  assertRoleLacks(permissionCodesByRole, "OUAPSubmitter", "cari.doc.reverse");
+  assertRoleLacks(permissionCodesByRole, "OUAPSubmitter", "cari.card.read");
+  assertRoleLacks(permissionCodesByRole, "OUAPSubmitter", "gl.journal.post");
 
   assertRoleHas(permissionCodesByRole, "CountryAPApprover", "org.tree.read");
   assertRoleHas(permissionCodesByRole, "CountryAPApprover", "org.fiscal_period.read");

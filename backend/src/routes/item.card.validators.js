@@ -76,12 +76,20 @@ export function parseItemCardIdParam(req) {
   return itemCardId;
 }
 
+/**
+ * Parse item-card list filters while preserving whichever legal-entity or
+ * operating-unit scope the caller is using for RBAC-bounded lookup lists.
+ */
 export function parseItemCardListFilters(req) {
   return {
     tenantId: requireTenantId(req),
     legalEntityId: normalizeOptionalPositiveInt(
       req.query?.legalEntityId ?? req.query?.legal_entity_id,
       "legalEntityId"
+    ),
+    operatingUnitId: normalizeOptionalPositiveInt(
+      req.query?.operatingUnitId ?? req.query?.operating_unit_id,
+      "operatingUnitId"
     ),
     status: normalizeEnum(req.query?.status, "status", STATUS_VALUES) || null,
     itemType:

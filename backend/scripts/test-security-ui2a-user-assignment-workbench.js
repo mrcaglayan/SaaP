@@ -18,6 +18,9 @@ async function main() {
   const submitterPackageCodes = resolveWorkflowPackagesForRuntimeRoles(["EntityAPController"]).map(
     (entry) => entry.code
   );
+  const branchSubmitterPackageCodes = resolveWorkflowPackagesForRuntimeRoles([
+    "OUAPSubmitter",
+  ]).map((entry) => entry.code);
   const posterPackageCodes = resolveWorkflowPackagesForRuntimeRoles(["CountryAPPoster"]).map(
     (entry) => entry.code
   );
@@ -26,6 +29,11 @@ async function main() {
     submitterPackageCodes.includes("PKG-AP-VIEW") &&
       submitterPackageCodes.includes("PKG-AP-DRAFT-SUBMIT"),
     "UI-2A should keep explainability package coverage for AP submitter runtime roles"
+  );
+  assert(
+    branchSubmitterPackageCodes.includes("PKG-AP-VIEW") &&
+      branchSubmitterPackageCodes.includes("PKG-AP-DRAFT-SUBMIT"),
+    "UI-2A should explain branch-scoped AP submitter runtime roles through the same package catalog"
   );
   assert(
     posterPackageCodes.includes("PKG-AP-POST") &&

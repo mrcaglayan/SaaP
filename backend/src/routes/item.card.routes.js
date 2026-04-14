@@ -24,6 +24,16 @@ function resolveLegalEntityScopeFromQuery(req) {
   return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
 }
 
+function resolveItemCardReadScopeFromQuery(req) {
+  const operatingUnitId = parsePositiveInt(
+    req.query?.operatingUnitId ?? req.query?.operating_unit_id
+  );
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  return resolveLegalEntityScopeFromQuery(req);
+}
+
 function resolveLegalEntityScopeFromBody(req) {
   const legalEntityId = parsePositiveInt(
     req.body?.legalEntityId ?? req.body?.legal_entity_id
@@ -34,7 +44,7 @@ function resolveLegalEntityScopeFromBody(req) {
 router.get(
   "/",
   requirePermission("item.card.read", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+    resolveScope: async (req) => resolveItemCardReadScopeFromQuery(req),
   }),
   asyncHandler(async (req, res) => {
     const filters = parseItemCardListFilters(req);

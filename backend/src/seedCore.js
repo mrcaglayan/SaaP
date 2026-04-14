@@ -769,6 +769,17 @@ const ENTITY_AP_CONTROLLER_PERMISSION_CODES = buildPermissionList({
   ],
 });
 
+const OU_AP_SUBMITTER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    // Optional operating-unit submitter seam for branches that can hand off
+    // their own AP drafts without inheriting legal-entity submit coverage.
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "cari.doc.read",
+    "cari.doc.update",
+    "cari.doc.submit",
+  ],
+});
+
 const COUNTRY_AP_APPROVER_PERMISSION_CODES = buildPermissionList({
   permissions: [
     // Country approval authority is workflow-driven, so CARI-side access stays
@@ -944,6 +955,9 @@ const BRANCH_OPERATOR_PERMISSION_CODES = buildPermissionList({
     "item.card.read",
     "inventory.read",
     "fixed_assets.read",
+    // Branch AP fixed-asset purchasing needs category/profile lookup access,
+    // but not fixed-asset settings write authority.
+    "fixed_assets.settings.read",
     "fixed_assets.upsert",
     "fixed_assets.custodian.read",
     "fixed_assets.report.read",
@@ -981,6 +995,7 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   MasterDataSteward: Object.freeze(["gl.masterdata"]),
   CounterpartyCardEditor: Object.freeze([]),
   EntityAPController: Object.freeze([]),
+  OUAPSubmitter: Object.freeze([]),
   CountryAPApprover: Object.freeze([]),
   CountryAPPoster: Object.freeze([]),
   APApprover: Object.freeze([]),
@@ -1081,6 +1096,11 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "EntityAPController",
     name: "Entity AP Controller",
     permissions: ENTITY_AP_CONTROLLER_PERMISSION_CODES,
+  },
+  {
+    code: "OUAPSubmitter",
+    name: "OU AP Submitter",
+    permissions: OU_AP_SUBMITTER_PERMISSION_CODES,
   },
   {
     code: "CountryAPApprover",

@@ -136,6 +136,17 @@ const ROLE_CATALOG = Object.freeze({
     workflowFamily: "AP_DOCUMENT_POSTING",
     sortOrder: 120,
   },
+  OUAPSubmitter: {
+    code: "Branch AP Submitter",
+    category: "composable",
+    summary:
+      "Optional operating-unit AP submitter role for branches that can hand off their own governed AP drafts without broader entity submit coverage.",
+    capabilities: ["OU AP submit", "Workflow handoff", "Draft correction"],
+    recommendedScopes: ["OPERATING_UNIT"],
+    replacementLabel: "Branch AP Submitter",
+    workflowFamily: "AP_DOCUMENT_POSTING",
+    sortOrder: 115,
+  },
   CountryAPApprover: {
     code: "AP Reviewer",
     category: "composable",
@@ -785,6 +796,7 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     helperBundleCodes: freezeList([]),
     runtimeRoleCodes: freezeList([
       "BranchOperator",
+      "OUAPSubmitter",
       "EntityAPController",
       "CountryAPApprover",
       "CountryAPPoster",
@@ -792,11 +804,11 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     runtimeNotes: freezeList([]),
   }),
   "PKG-AP-DRAFT-SUBMIT": Object.freeze({
-    runtimeMappingLabel: "BranchOperator + AP Submitter source roles",
+    runtimeMappingLabel: "OU / entity AP submitter source roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["BranchOperator", "EntityAPController"]),
+    runtimeRoleCodes: freezeList(["OUAPSubmitter", "EntityAPController"]),
     runtimeNotes: freezeList([
-      "Current runtime roles split AP draft creation/edit and submit instead of shipping one standalone package role.",
+      "Current runtime roles split AP draft creation/edit on BranchOperator and submit on branch/entity AP submitter roles instead of shipping one standalone package role.",
     ]),
   }),
   "PKG-AP-APPROVE": Object.freeze({

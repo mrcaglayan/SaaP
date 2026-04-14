@@ -65,6 +65,10 @@ const RUNTIME_ROLE_PREVIEW_SUMMARIES = Object.freeze({
     en: "handle operating-unit accounting exceptions",
     tr: "operating-unit muhasebe istisnalarini yonetebilir",
   },
+  OUAPSubmitter: {
+    en: "submit operating-unit AP drafts for workflow handoff",
+    tr: "operating-unit AP taslaklarini workflow devri icin gonderebilir",
+  },
   AuditorReadOnly: {
     en: "review governed areas in read-only mode",
     tr: "yonetilen alanlari salt-okunur modda inceleyebilir",

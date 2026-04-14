@@ -444,7 +444,7 @@ async function main() {
     const localAdminRoleCodes = localAdminRoles.map((role) => String(role.code || "").trim());
     assertIncludesAll(
       localAdminRoleCodes,
-      ["BranchOperator", "OUAccountant", "AuditorReadOnly"],
+      ["BranchOperator", "OUAPSubmitter", "OUAccountant", "AuditorReadOnly"],
       "Local user admin allow-list should include bounded local roles"
     );
     assert(
