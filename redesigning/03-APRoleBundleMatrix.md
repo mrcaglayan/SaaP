@@ -71,7 +71,7 @@ Use this document to review:
 
 | Role code | Category | Recommended scopes | Primary use | Keep direction |
 | --- | --- | --- | --- | --- |
-| `APDocumentPoster` | legacy | `LEGAL_ENTITY` | Compatibility AP submit/cancel/post role | Legacy only |
+| Legacy broad AP posting role | legacy | `LEGAL_ENTITY` | Compatibility AP submit/cancel/post role | Legacy only |
 | `GroupController` | legacy | `GROUP` | Broad historical reporting role | Legacy only |
 | `CountryController` | legacy | `COUNTRY` | Broad historical controller role | Legacy only |
 | `EntityAccountant` | legacy | `LEGAL_ENTITY` | Broad historical entity operator role | Legacy only |
@@ -93,7 +93,7 @@ Use this document to review:
 | `EntityAPController` | `cari.doc.read`, `cari.doc.update`, `cari.doc.submit` | Entity AP submitter/editor |
 | `CountryAPApprover` + `APApprover` | `cari.doc.read` + approval-engine permissions | Country approver |
 | `CountryAPPoster` | `cari.doc.read`, `cari.doc.post`, `cari.doc.reverse` | Country poster |
-| `APDocumentPoster` | `cari.doc.read`, `cari.doc.update`, `cari.doc.submit`, `cari.doc.cancel`, `cari.doc.post` | Legacy broad AP operator |
+| Legacy broad AP posting role | `cari.doc.read`, `cari.doc.update`, `cari.doc.submit`, `cari.doc.cancel`, `cari.doc.post` | Legacy broad AP operator |
 
 ## 3. Existing Atomic AP Permission Seams
 

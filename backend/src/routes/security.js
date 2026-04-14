@@ -81,7 +81,16 @@ const LOCAL_USER_ADMIN_PERMISSION = "security.user_admin.local";
 const ENTITY_USER_ADMIN_PERMISSION = "security.user_admin.entity";
 const BRANCH_OPERATOR_ROLE_CODE = "BranchOperator";
 const BRANCH_INVENTORY_VIEWER_ROLE_CODE = "BranchInventoryViewer";
+const BRANCH_INVENTORY_EXECUTOR_ROLE_CODE = "BranchInventoryExecutor";
 const BRANCH_FIXED_ASSET_OPERATOR_ROLE_CODE = "BranchFixedAssetOperator";
+const BRANCH_OPERATOR_COMPANION_ROLE_CODES = Object.freeze([
+  BRANCH_INVENTORY_EXECUTOR_ROLE_CODE,
+  BRANCH_FIXED_ASSET_OPERATOR_ROLE_CODE,
+]);
+const BRANCH_OPERATOR_COMPANION_CLEANUP_ROLE_CODES = Object.freeze([
+  BRANCH_INVENTORY_VIEWER_ROLE_CODE,
+  ...BRANCH_OPERATOR_COMPANION_ROLE_CODES,
+]);
 const BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX = "BUSINESS_ROLE__";
 const LOCAL_USER_ADMIN_COMPAT_PERMISSION_CODES = Object.freeze([
   LOCAL_USER_ADMIN_PERMISSION,
@@ -374,14 +383,87 @@ function getRoleAssignmentCompanionRoleCodes(
     normalizedScopeType === "OPERATING_UNIT" &&
     normalizedEffect === "ALLOW"
   ) {
-    return [
-      BRANCH_INVENTORY_VIEWER_ROLE_CODE,
-      BRANCH_FIXED_ASSET_OPERATOR_ROLE_CODE,
-    ];
+    return BRANCH_OPERATOR_COMPANION_ROLE_CODES;
   }
   return [];
 }
 
+function getRoleAssignmentCompanionCleanupRoleCodes(
+  primaryRoleCode,
+  { scopeType } = {},
+) {
+  const normalizedRoleCode = String(primaryRoleCode || "").trim();
+  const normalizedScopeType = String(scopeType || "")
+    .trim()
+    .toUpperCase();
+  if (
+    normalizedRoleCode === BRANCH_OPERATOR_ROLE_CODE &&
+    normalizedScopeType === "OPERATING_UNIT"
+  ) {
+    return BRANCH_OPERATOR_COMPANION_CLEANUP_ROLE_CODES;
+  }
+  return [];
+}
+
+/**
+ * Remove scoped companion assignments for the supplied role codes. This is
+ * used both for explicit bundle teardown and for BranchOperator cleanup when
+ * the old viewer-only companion must be replaced by the executor role.
+ */
+async function deleteScopedRoleAssignmentsByRoleCodes({
+  tenantId,
+  userId,
+  scopeType,
+  scopeId,
+  roleCodes = [],
+  runQuery = query,
+}) {
+  const normalizedRoleCodes = normalizeRoleCodeList(roleCodes);
+  if (normalizedRoleCodes.length === 0) {
+    return {
+      removedCompanionRoleCodes: [],
+      removedCompanionAssignmentIds: [],
+    };
+  }
+  const rowsResult = await runQuery(
+    `SELECT urs.id, r.code AS role_code
+       FROM user_role_scopes urs
+       JOIN roles r
+         ON r.id = urs.role_id
+        AND r.tenant_id = urs.tenant_id
+      WHERE urs.tenant_id = ?
+        AND urs.user_id = ?
+        AND urs.scope_type = ?
+        AND urs.scope_id = ?
+        AND urs.effect = 'ALLOW'
+        AND r.code IN (${normalizedRoleCodes.map(() => "?").join(", ")})`,
+    [tenantId, userId, scopeType, scopeId, ...normalizedRoleCodes],
+  );
+  const rows = Array.isArray(rowsResult.rows) ? rowsResult.rows : [];
+  const assignmentIds = rows
+    .map((row) => parsePositiveInt(row?.id))
+    .filter(Boolean);
+  if (assignmentIds.length > 0) {
+    await runQuery(
+      `DELETE FROM user_role_scopes
+       WHERE tenant_id = ?
+         AND id IN (${assignmentIds.map(() => "?").join(", ")})`,
+      [tenantId, ...assignmentIds],
+    );
+  }
+  return {
+    removedCompanionRoleCodes: normalizeRoleCodeList(
+      rows.map((row) => row.role_code),
+    ),
+    removedCompanionAssignmentIds: assignmentIds,
+  };
+}
+
+/**
+ * Ensure BranchOperator-style companion bundles exist at the same scope as the
+ * primary assignment, while pruning any legacy viewer-only companion rows that
+ * became redundant once executor includes the full viewer permission set.
+ */
 async function ensureCompanionRoleAssignments({
   tenantId,
   userId,
@@ -470,14 +552,36 @@ async function ensureCompanionRoleAssignments({
     companionAssignmentIds.push(parsePositiveInt(currentResult.rows?.[0]?.id));
   }
 
+  const staleCompanionRoleCodes = getRoleAssignmentCompanionCleanupRoleCodes(
+    primaryRoleCode,
+    {
+      scopeType,
+      effect,
+    },
+  ).filter((roleCode) => !companionRoleCodes.includes(roleCode));
+  const staleCompanionAssignments = await deleteScopedRoleAssignmentsByRoleCodes({
+    tenantId,
+    userId,
+    scopeType,
+    scopeId,
+    effect,
+    roleCodes: staleCompanionRoleCodes,
+    runQuery,
+  });
+
   return {
     companionRoleCodes,
     companionRoleIds: companionRoleIds.filter(Boolean),
     companionAssignmentIds: companionAssignmentIds.filter(Boolean),
     createdCompanionRoleCodes,
+    removedCompanionRoleCodes:
+      staleCompanionAssignments.removedCompanionRoleCodes,
   };
 }
 
+/**
+ * Remove the managed companion bundle for one scoped role assignment.
+ */
 async function deleteCompanionRoleAssignments({
   tenantId,
   userId,
@@ -487,48 +591,17 @@ async function deleteCompanionRoleAssignments({
   effect = "ALLOW",
   runQuery = query,
 }) {
-  const companionRoleCodes = getRoleAssignmentCompanionRoleCodes(primaryRoleCode, {
+  return deleteScopedRoleAssignmentsByRoleCodes({
+    tenantId,
+    userId,
     scopeType,
-    effect,
+    scopeId,
+    roleCodes: getRoleAssignmentCompanionCleanupRoleCodes(primaryRoleCode, {
+      scopeType,
+      effect,
+    }),
+    runQuery,
   });
-  if (companionRoleCodes.length === 0) {
-    return {
-      removedCompanionRoleCodes: [],
-      removedCompanionAssignmentIds: [],
-    };
-  }
-  const rowsResult = await runQuery(
-    `SELECT urs.id, r.code AS role_code
-       FROM user_role_scopes urs
-       JOIN roles r
-         ON r.id = urs.role_id
-        AND r.tenant_id = urs.tenant_id
-      WHERE urs.tenant_id = ?
-        AND urs.user_id = ?
-        AND urs.scope_type = ?
-        AND urs.scope_id = ?
-        AND urs.effect = 'ALLOW'
-        AND r.code IN (${companionRoleCodes.map(() => "?").join(", ")})`,
-    [tenantId, userId, scopeType, scopeId, ...companionRoleCodes],
-  );
-  const rows = Array.isArray(rowsResult.rows) ? rowsResult.rows : [];
-  const assignmentIds = rows
-    .map((row) => parsePositiveInt(row?.id))
-    .filter(Boolean);
-  if (assignmentIds.length > 0) {
-    await runQuery(
-      `DELETE FROM user_role_scopes
-       WHERE tenant_id = ?
-         AND id IN (${assignmentIds.map(() => "?").join(", ")})`,
-      [tenantId, ...assignmentIds],
-    );
-  }
-  return {
-    removedCompanionRoleCodes: normalizeRoleCodeList(
-      rows.map((row) => row.role_code),
-    ),
-    removedCompanionAssignmentIds: assignmentIds,
-  };
 }
 
 async function lookupUserByEmail(email, runQuery = query) {
@@ -684,6 +757,9 @@ function summarizeCompanionRoleAssignmentResult(result) {
     createdCompanionRoleCodes: normalizeRoleCodeList(
       result?.createdCompanionRoleCodes,
     ),
+    removedCompanionRoleCodes: normalizeRoleCodeList(
+      result?.removedCompanionRoleCodes,
+    ),
     companionRoleIds: Array.isArray(result?.companionRoleIds)
       ? result.companionRoleIds.map((value) => parsePositiveInt(value)).filter(Boolean)
       : [],
@@ -834,16 +910,102 @@ async function getLocalUserAdminRoleRows(
   return result.rows || [];
 }
 
+/**
+ * Upgrade visible BranchOperator assignments from the legacy viewer companion
+ * bundle to the executor bundle during local-admin reads. This keeps the
+ * rollout idempotent without needing a one-off migration script in this track.
+ */
+async function reconcileVisibleBranchOperatorCompanionAssignments({
+  req,
+  tenantId,
+  runQuery = query,
+}) {
+  const branchOperatorRole = await getRoleByCodeForTenant(
+    BRANCH_OPERATOR_ROLE_CODE,
+    tenantId,
+    runQuery,
+  );
+  const branchOperatorRoleId = parsePositiveInt(branchOperatorRole?.id);
+  if (!branchOperatorRoleId) {
+    return {
+      changed: false,
+      createdCompanionRoleCodes: [],
+      removedCompanionRoleCodes: [],
+    };
+  }
+
+  const assignmentParams = [tenantId, branchOperatorRoleId];
+  const assignmentConditions = [
+    "urs.tenant_id = ?",
+    "urs.role_id = ?",
+    "urs.scope_type = 'OPERATING_UNIT'",
+    "urs.effect = 'ALLOW'",
+    buildScopeFilter(req, "operating_unit", "urs.scope_id", assignmentParams),
+  ];
+  const assignmentResult = await runQuery(
+    `SELECT
+       urs.id,
+       urs.user_id,
+       urs.scope_id,
+       urs.effective_from,
+       urs.effective_to
+     FROM user_role_scopes urs
+     WHERE ${assignmentConditions.join(" AND ")}
+     ORDER BY urs.id`,
+    assignmentParams,
+  );
+  const assignmentRows = Array.isArray(assignmentResult.rows)
+    ? assignmentResult.rows
+    : [];
+
+  const createdCompanionRoleCodes = [];
+  const removedCompanionRoleCodes = [];
+  for (const assignmentRow of assignmentRows) {
+    const result = await ensureCompanionRoleAssignments({
+      tenantId,
+      userId: parsePositiveInt(assignmentRow.user_id),
+      primaryRoleCode: BRANCH_OPERATOR_ROLE_CODE,
+      scopeType: "OPERATING_UNIT",
+      scopeId: parsePositiveInt(assignmentRow.scope_id),
+      effect: "ALLOW",
+      effectiveFrom: toDateOnly(assignmentRow.effective_from),
+      effectiveTo: toDateOnly(assignmentRow.effective_to),
+      runQuery,
+    });
+    createdCompanionRoleCodes.push(...result.createdCompanionRoleCodes);
+    removedCompanionRoleCodes.push(...result.removedCompanionRoleCodes);
+  }
+
+  return {
+    changed:
+      createdCompanionRoleCodes.length > 0 ||
+      removedCompanionRoleCodes.length > 0,
+    createdCompanionRoleCodes: normalizeRoleCodeList(createdCompanionRoleCodes),
+    removedCompanionRoleCodes: normalizeRoleCodeList(removedCompanionRoleCodes),
+  };
+}
+
 async function listLocalUserAdminData({
   req,
   tenantId,
   runQuery = query,
   roleCodes = LOCAL_USER_ADMIN_ROLE_CODES,
 }) {
+  const normalizedRoleCodes = normalizeRoleCodeList(roleCodes);
+  if (normalizedRoleCodes.includes(BRANCH_OPERATOR_ROLE_CODE)) {
+    const reconciliation = await reconcileVisibleBranchOperatorCompanionAssignments({
+      req,
+      tenantId,
+      runQuery,
+    });
+    if (reconciliation.changed && runQuery === query) {
+      await invalidateRbacCache(tenantId);
+    }
+  }
   const roleRows = await getLocalUserAdminRoleRows(
     tenantId,
     runQuery,
-    roleCodes,
+    normalizedRoleCodes,
   );
   const roleIdList = roleRows
     .map((row) => parsePositiveInt(row?.id))
@@ -1121,8 +1283,8 @@ async function createLocalUserAdminAssignment({
     }
 
     // BranchOperator intentionally auto-provisions bounded companion roles at
-    // the same OU scope so branch users inherit the shipped inventory/fixed-
-    // asset baseline without broadening BranchOperator itself.
+    // the same OU scope so branch users inherit executor-grade inventory and
+    // fixed-asset baseline authority without broadening BranchOperator itself.
     const companionAssignments = summarizeCompanionRoleAssignmentResult(
       await ensureCompanionRoleAssignments({
         tenantId,
@@ -1176,6 +1338,7 @@ async function createLocalUserAdminAssignment({
       scopeId: normalizedScopeId,
       companionRoleCodes: companionAssignments.companionRoleCodes,
       createdCompanionRoleCodes: companionAssignments.createdCompanionRoleCodes,
+      removedCompanionRoleCodes: companionAssignments.removedCompanionRoleCodes,
     };
   });
 
@@ -1197,6 +1360,7 @@ async function createLocalUserAdminAssignment({
         roleCode: operation.role.code,
         companionRoleCodes: operation.companionRoleCodes,
         createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
+        removedCompanionRoleCodes: operation.removedCompanionRoleCodes,
       },
     });
   }
@@ -1217,6 +1381,7 @@ async function createLocalUserAdminAssignment({
         effect: "ALLOW",
         companionRoleCodes: operation.companionRoleCodes,
         createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
+        removedCompanionRoleCodes: operation.removedCompanionRoleCodes,
       },
     });
   }
@@ -1289,30 +1454,46 @@ async function deleteLocalUserAdminAssignment({
     throw badRequest("Local user admin assignment has unsupported scope type");
   }
 
-  await query(
-    `DELETE FROM user_role_scopes
-     WHERE id = ?
-       AND tenant_id = ?`,
-    [normalizedAssignmentId, tenantId],
-  );
+  const deletedAssignment = await withTransaction(async (tx) => {
+    const companionAssignments = await deleteCompanionRoleAssignments({
+      tenantId,
+      userId: parsePositiveInt(assignment.user_id),
+      primaryRoleCode: assignment.role_code,
+      scopeType: normalizedScopeType,
+      scopeId: normalizedScopeId,
+      effect: assignment.effect,
+      runQuery: tx.query,
+    });
+    await tx.query(
+      `DELETE FROM user_role_scopes
+       WHERE id = ?
+         AND tenant_id = ?`,
+      [normalizedAssignmentId, tenantId],
+    );
+    return {
+      ...assignment,
+      removedCompanionRoleCodes: companionAssignments.removedCompanionRoleCodes,
+    };
+  });
   await invalidateRbacCache(tenantId);
 
   await logRbacAuditEvent(req, {
     tenantId,
-    targetUserId: parsePositiveInt(assignment.user_id),
+    targetUserId: parsePositiveInt(deletedAssignment.user_id),
     action: `${auditActionPrefix}.assignment.delete`,
     resourceType: "user_role_scope",
     resourceId: normalizedAssignmentId,
     scopeType: normalizedScopeType,
     scopeId: normalizedScopeId,
     payload: {
-      userId: parsePositiveInt(assignment.user_id),
-      roleId: parsePositiveInt(assignment.role_id),
-      roleCode: assignment.role_code,
+      userId: parsePositiveInt(deletedAssignment.user_id),
+      roleId: parsePositiveInt(deletedAssignment.role_id),
+      roleCode: deletedAssignment.role_code,
+      removedCompanionRoleCodes: deletedAssignment.removedCompanionRoleCodes,
     },
   });
 
-  return assignment;
+  return deletedAssignment;
 }
 
 router.get(
@@ -1631,6 +1812,7 @@ router.post(
         assignmentWarnings: operation.assignmentWarnings,
         companionRoleCodes: operation.companionRoleCodes,
         createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
+        removedCompanionRoleCodes: operation.removedCompanionRoleCodes,
         scopeType: operation.scopeType,
         scopeId: operation.scopeId,
         role: {
@@ -1753,6 +1935,7 @@ router.post(
         assignmentWarnings: operation.assignmentWarnings,
         companionRoleCodes: operation.companionRoleCodes,
         createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
+        removedCompanionRoleCodes: operation.removedCompanionRoleCodes,
         role: {
           id: parsePositiveInt(operation.role.id),
           code: operation.role.code,
@@ -2304,6 +2487,7 @@ router.post(
         assignmentWarnings,
         companionRoleCodes: companionAssignments.companionRoleCodes,
         createdCompanionRoleCodes: companionAssignments.createdCompanionRoleCodes,
+        removedCompanionRoleCodes: companionAssignments.removedCompanionRoleCodes,
       };
     });
     await invalidateRbacCache(tenantId);
@@ -2326,6 +2510,7 @@ router.post(
           effectiveTo: operation.effectiveDates.effectiveTo,
           companionRoleCodes: operation.companionRoleCodes,
           createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
+          removedCompanionRoleCodes: operation.removedCompanionRoleCodes,
         },
       });
     }
@@ -2340,6 +2525,7 @@ router.post(
       assignmentWarnings: operation.assignmentWarnings,
       companionRoleCodes: operation.companionRoleCodes,
       createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
+      removedCompanionRoleCodes: operation.removedCompanionRoleCodes,
     });
   }),
 );
@@ -2415,6 +2601,30 @@ router.put(
     }
 
     const operation = await withTransaction(async (tx) => {
+      const oldScopeTypeForCleanup = String(assignment.scope_type || "")
+        .trim()
+        .toUpperCase();
+      const oldScopeIdForCleanup = parsePositiveInt(assignment.scope_id);
+      let removedCompanionRoleCodes = [];
+      // Scope moves need an explicit teardown for the old companion bundle; the
+      // destination-scope ensure below only manages the new scope.
+      if (
+        oldScopeTypeForCleanup &&
+        oldScopeIdForCleanup &&
+        (oldScopeTypeForCleanup !== scopeType || oldScopeIdForCleanup !== scopeId)
+      ) {
+        const oldCompanionAssignments = await deleteCompanionRoleAssignments({
+          tenantId,
+          userId: parsePositiveInt(assignment.user_id),
+          primaryRoleCode: role.code,
+          scopeType: oldScopeTypeForCleanup,
+          scopeId: oldScopeIdForCleanup,
+          effect: assignment.effect,
+          runQuery: tx.query,
+        });
+        removedCompanionRoleCodes = oldCompanionAssignments.removedCompanionRoleCodes;
+      }
+
       await tx.query(
         `UPDATE user_role_scopes
          SET scope_type = ?,
@@ -2466,6 +2676,10 @@ router.put(
         assignmentWarnings,
         companionRoleCodes: companionAssignments.companionRoleCodes,
         createdCompanionRoleCodes: companionAssignments.createdCompanionRoleCodes,
+        removedCompanionRoleCodes: normalizeRoleCodeList([
+          ...removedCompanionRoleCodes,
+          ...companionAssignments.removedCompanionRoleCodes,
+        ]),
       };
     });
     await invalidateRbacCache(tenantId);
@@ -2498,6 +2712,7 @@ router.put(
         },
         companionRoleCodes: operation.companionRoleCodes,
         createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
+        removedCompanionRoleCodes: operation.removedCompanionRoleCodes,
       },
     });
 
@@ -2512,6 +2727,7 @@ router.put(
       assignmentWarnings: operation.assignmentWarnings,
       companionRoleCodes: operation.companionRoleCodes,
       createdCompanionRoleCodes: operation.createdCompanionRoleCodes,
+      removedCompanionRoleCodes: operation.removedCompanionRoleCodes,
     });
   }),
 );
@@ -2533,7 +2749,11 @@ router.delete(
     const assignmentResult = await query(
       `SELECT
          urs.id,
+         urs.user_id,
          urs.role_id,
+         urs.scope_type,
+         urs.scope_id,
+         urs.effect,
          r.code AS role_code,
          r.is_system
        FROM user_role_scopes urs
@@ -2550,12 +2770,25 @@ router.delete(
       await assertSystemRoleManageAllowed(req, tenantId, assignment);
     }
 
-    await query(
-      `DELETE FROM user_role_scopes
-       WHERE id = ?
-         AND tenant_id = ?`,
-      [assignmentId, tenantId],
-    );
+    await withTransaction(async (tx) => {
+      if (assignment) {
+        await deleteCompanionRoleAssignments({
+          tenantId,
+          userId: parsePositiveInt(assignment.user_id),
+          primaryRoleCode: assignment.role_code,
+          scopeType: String(assignment.scope_type || "").toUpperCase(),
+          scopeId: parsePositiveInt(assignment.scope_id),
+          effect: assignment.effect,
+          runQuery: tx.query,
+        });
+      }
+      await tx.query(
+        `DELETE FROM user_role_scopes
+         WHERE id = ?
+           AND tenant_id = ?`,
+        [assignmentId, tenantId],
+      );
+    });
     await invalidateRbacCache(tenantId);
 
     return res.json({ ok: true });

@@ -58,10 +58,10 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
   - `item.card.read`
   - `item.card.upsert`
   - `inventory.read`
-  - `inventory.upsert`
+  - action-specific inventory permissions such as `inventory.materialize`, `inventory.movement.reverse`, `inventory.warehouse.upsert`, and the `inventory.transfer.*` family
 - Operational rule:
   - grant item-card maintenance separately from CARI counterparty maintenance
-  - grant inventory read/upsert separately from item-card maintenance when warehouse operators do not maintain item masters
+  - grant inventory read and the needed execution/setup permissions separately from item-card maintenance when warehouse operators do not maintain item masters
 - Existing tenants need permission backfill after code rollout:
   - `cd backend && npm run db:seed:core`
 

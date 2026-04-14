@@ -402,6 +402,13 @@ async function main() {
       name: "PR7C Branch User",
       password: "PR7CBranchUser#12345",
     });
+    const legacyCompatUser = await createActiveTenantUser({
+      baseUrl: BASE_URL,
+      token: adminToken,
+      email: `pr7c_legacy_branch_user_${stamp}@example.com`,
+      name: "PR7C Legacy Branch User",
+      password: "PR7CLegacyBranchUser#12345",
+    });
 
     await assignRoleScope({
       tenantId: admin.tenantId,
@@ -653,7 +660,7 @@ async function main() {
     );
     assert.deepEqual(
       compatCreateResponse.json?.createdCompanionRoleCodes || [],
-      ["BranchInventoryViewer", "BranchFixedAssetOperator"],
+      ["BranchInventoryExecutor", "BranchFixedAssetOperator"],
       "Legacy branch-operator compatibility seam should auto-assign inventory and fixed-asset companions"
     );
     assert(
@@ -670,11 +677,22 @@ async function main() {
       (await findRoleAssignment({
         tenantId: admin.tenantId,
         userId: compatManagedUser.userId,
-        roleCode: "BranchInventoryViewer",
+        roleCode: "BranchInventoryExecutor",
         scopeType: "OPERATING_UNIT",
         scopeId: entityAOuId,
       })) > 0,
-      "Legacy branch-operator compatibility seam should persist BranchInventoryViewer companion assignments"
+      "Legacy branch-operator compatibility seam should persist BranchInventoryExecutor companion assignments"
+    );
+    assert.equal(
+      await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: compatManagedUser.userId,
+        roleCode: "BranchInventoryViewer",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      }),
+      0,
+      "Legacy branch-operator compatibility seam should not persist redundant BranchInventoryViewer companion assignments"
     );
     assert(
       (await findRoleAssignment({
@@ -687,10 +705,107 @@ async function main() {
       "Legacy branch-operator compatibility seam should persist BranchFixedAssetOperator companion assignments"
     );
 
+    await apiRequest({
+      baseUrl: BASE_URL,
+      token: compatManagerToken,
+      method: "DELETE",
+      requestPath: `/api/v1/security/entity-branch-operators/${compatCreateResponse.json?.assignmentId}`,
+      expectedStatus: 200,
+    });
+    assert.equal(
+      await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: compatManagedUser.userId,
+        roleCode: "BranchOperator",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      }),
+      0,
+      "Deleting the compatibility bridge assignment should remove BranchOperator"
+    );
+    assert.equal(
+      await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: compatManagedUser.userId,
+        roleCode: "BranchInventoryExecutor",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      }),
+      0,
+      "Deleting the compatibility bridge assignment should remove BranchInventoryExecutor companions"
+    );
+    assert.equal(
+      await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: compatManagedUser.userId,
+        roleCode: "BranchFixedAssetOperator",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      }),
+      0,
+      "Deleting the compatibility bridge assignment should remove BranchFixedAssetOperator companions"
+    );
+
+    await assignRoleScope({
+      tenantId: admin.tenantId,
+      userId: legacyCompatUser.userId,
+      roleCode: "BranchOperator",
+      scopeType: "OPERATING_UNIT",
+      scopeId: entityAOuId,
+    });
+    await assignRoleScope({
+      tenantId: admin.tenantId,
+      userId: legacyCompatUser.userId,
+      roleCode: "BranchInventoryViewer",
+      scopeType: "OPERATING_UNIT",
+      scopeId: entityAOuId,
+    });
+    await apiRequest({
+      baseUrl: BASE_URL,
+      token: compatManagerToken,
+      method: "GET",
+      requestPath: "/api/v1/security/entity-branch-operators",
+      expectedStatus: 200,
+    });
+    assert(
+      (await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: legacyCompatUser.userId,
+        roleCode: "BranchInventoryExecutor",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      })) > 0,
+      "Listing the compatibility bridge should reconcile legacy BranchOperator inventory companions to BranchInventoryExecutor"
+    );
+    assert.equal(
+      await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: legacyCompatUser.userId,
+        roleCode: "BranchInventoryViewer",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      }),
+      0,
+      "Listing the compatibility bridge should remove redundant legacy BranchInventoryViewer companions"
+    );
+    assert(
+      (await findRoleAssignment({
+        tenantId: admin.tenantId,
+        userId: legacyCompatUser.userId,
+        roleCode: "BranchFixedAssetOperator",
+        scopeType: "OPERATING_UNIT",
+        scopeId: entityAOuId,
+      })) > 0,
+      "Listing the compatibility bridge should backfill the fixed-asset companion when reconciling legacy BranchOperator rows"
+    );
+
     const compatAuditActions = await listAuditActions(admin.tenantId, compatManager.userId);
     assertIncludesAll(
       compatAuditActions,
-      ["entity_user_admin.branch_operator.assignment.create"],
+      [
+        "entity_user_admin.branch_operator.assignment.create",
+        "entity_user_admin.branch_operator.assignment.delete",
+      ],
       "Legacy branch-operator bridge should keep audit logging"
     );
 
@@ -707,6 +822,7 @@ async function main() {
           compatManagerUserId: compatManager.userId,
           invitedLocalUserId,
           compatManagedUserId: compatManagedUser.userId,
+          legacyCompatUserId: legacyCompatUser.userId,
         },
         null,
         2

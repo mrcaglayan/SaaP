@@ -82,7 +82,7 @@ That is handled by the companion roles/packages/presets plan.
 ### Existing legacy roles that should be hidden from fresh-tenant UX
 
 - `TenantAdmin`
-- `APDocumentPoster`
+- legacy broad AP posting role
 - `GroupController`
 - `CountryController`
 - `EntityAccountant` legacy broad role
@@ -443,7 +443,7 @@ Keep compatibility items visible to power admins without polluting fresh-tenant 
 ### Items to show
 
 - TenantAdmin
-- APDocumentPoster
+- legacy broad AP posting role
 - GroupController
 - CountryController
 - EntityAccountant legacy role

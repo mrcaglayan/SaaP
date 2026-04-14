@@ -101,7 +101,7 @@ export default function InventoryLandedCostVouchersPage() {
   const { l } = useI18n();
   const { workingContext, legalEntities: workingContextLegalEntities } = useWorkingContext();
   const canRead = hasPermission("inventory.read");
-  const canUpsert = hasPermission("inventory.upsert");
+  const canLandedCostUpsert = hasPermission("inventory.landed_cost.upsert");
 
   const [filters, setFilters] = useState(() => createDefaultFilters(workingContext));
   const [rows, setRows] = useState([]);
@@ -248,10 +248,13 @@ export default function InventoryLandedCostVouchersPage() {
   }
 
   async function handleReverseConfirm() {
-    if (!canUpsert) {
+    if (!canLandedCostUpsert) {
       setReverseState((current) => ({
         ...current,
-        error: l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"),
+        error: l(
+          "Missing permission: inventory.landed_cost.upsert",
+          "Eksik yetki: inventory.landed_cost.upsert"
+        ),
       }));
       return;
     }
@@ -310,24 +313,34 @@ export default function InventoryLandedCostVouchersPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {!canUpsert ? (
+          {!canLandedCostUpsert ? (
             <span className="text-sm text-amber-700">
-              {l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert")}
+              {l(
+                "Missing permission: inventory.landed_cost.upsert",
+                "Eksik yetki: inventory.landed_cost.upsert"
+              )}
             </span>
           ) : null}
           <Link
             to="/app/stok-maliyet-voucherleri/yeni"
             className={`inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold ${
-              canUpsert
+              canLandedCostUpsert
                 ? "bg-slate-900 text-white hover:bg-slate-700"
                 : "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
             }`}
             onClick={(event) => {
-              if (!canUpsert) {
+              if (!canLandedCostUpsert) {
                 event.preventDefault();
               }
             }}
-            title={!canUpsert ? l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert") : ""}
+            title={
+              !canLandedCostUpsert
+                ? l(
+                    "Missing permission: inventory.landed_cost.upsert",
+                    "Eksik yetki: inventory.landed_cost.upsert"
+                  )
+                : ""
+            }
           >
             {l("New Landed Cost Voucher", "Yeni stok maliyet voucheri")}
           </Link>
@@ -559,16 +572,19 @@ export default function InventoryLandedCostVouchersPage() {
                               event.stopPropagation();
                               openReverseDrawer(row);
                             }}
-                            disabled={reverseBlocked || !canUpsert}
+                            disabled={reverseBlocked || !canLandedCostUpsert}
                             title={
                               row.hasReversalDependencies
                                 ? l("Blocked by downstream dependency", "Asagi bagimlilik nedeniyle bloklu")
-                                : !canUpsert
-                                  ? l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert")
+                                : !canLandedCostUpsert
+                                  ? l(
+                                      "Missing permission: inventory.landed_cost.upsert",
+                                      "Eksik yetki: inventory.landed_cost.upsert"
+                                    )
                                   : ""
                             }
                             className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                              reverseBlocked || !canUpsert
+                              reverseBlocked || !canLandedCostUpsert
                                 ? "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
                                 : "bg-rose-600 text-white hover:bg-rose-700"
                             }`}
@@ -684,12 +700,12 @@ export default function InventoryLandedCostVouchersPage() {
                 type="button"
                 onClick={handleReverseConfirm}
                 disabled={
-                  !canUpsert
+                  !canLandedCostUpsert
                   || reverseState.submitting
                   || reverseState.voucher?.hasReversalDependencies
                 }
                 className={`rounded-xl px-4 py-2 text-sm font-semibold ${
-                  canUpsert
+                  canLandedCostUpsert
                   && !reverseState.submitting
                   && !reverseState.voucher?.hasReversalDependencies
                     ? "bg-rose-600 text-white hover:bg-rose-700"

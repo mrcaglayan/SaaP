@@ -2,12 +2,15 @@
 
 ## Status
 
-- Planned
-- Based on repo state checked on April 14, 2026
+- Implemented in repo
+- Repo state revalidated on April 14, 2026
+- `PR-INVEXEC-01` completed
+- `PR-INVEXEC-02` completed
+- `PR-INVEXEC-03` completed
 - Scope is inventory execution authority for branch accountants and related inventory roles
 - Locked decision: `BranchOperator` must not inherit item-card master write, warehouse configuration, or landed-cost authoring just to run day-to-day stock operations
 - Locked decision: scope remains OU-vs-legal-entity through role assignment scope; we will not create separate permission codes such as `branch.inventory.transfer.ship` vs `entity.inventory.transfer.ship`
-- Locked decision: the current broad inventory operator roles stay available, but their authority will be rebuilt on top of granular execution/setup permissions instead of the catch-all `inventory.upsert`
+- Locked decision: the current broad inventory operator roles stay available, but their authority is rebuilt on top of granular execution/setup permissions instead of the catch-all `inventory.upsert`
 - Locked decision: once the split is complete, the default inventory companion for `BranchOperator` should be execution-capable, not viewer-only
 
 ---
@@ -71,6 +74,9 @@ Without also allowing them to:
 
 - `backend/scripts/test-security-pr4a-duty-boundary-roles.js`
 - `backend/scripts/test-security-branch-operator-management-smoke.js`
+- `backend/scripts/test-inventory-invexec-branch-execution-smoke.js`
+- `backend/scripts/test-inventory-pr26-release-gate.js`
+- `backend/scripts/test-inventory-ou07-transfer-evidence.js`
 
 ---
 
@@ -78,16 +84,14 @@ Without also allowing them to:
 
 ### Conflict / plan gap
 
-- `inventory.upsert` is too broad. It currently gates warehouse create/update, stock-link materialization, movement reverse, all transfer write actions, and landed-cost voucher writes.
-- `BranchInventoryOperator` currently bundles both `item.card.upsert` and `inventory.upsert`, so it is too broad for a branch accountant who should execute stock work but not maintain item masters or warehouse setup.
-- Inventory UI pages still treat `inventory.upsert` as the single write switch, so the frontend cannot currently distinguish execution authority from setup authority.
-- Transfer writes are not only a permission-taxonomy problem. `resolveInventoryTransferScope()` currently resolves write authority at legal-entity scope, so OU-scoped branch execution would still hit authorization seams even after adding new role codes.
+- None at the implementation layer after aligning the stale regression scripts to the granular permission model.
 
 ### Deferred item already covered
 
-- `item.card.upsert` already exists as a separate permission and does not need a second branch-vs-entity variant.
-- Inventory viewer roles already exist and can remain the baseline read package.
-- Stock-link materialization and movement reverse already have ownership-aware scope resolution on the inventory route side; that logic can be reused instead of inventing a second scope model.
+- `PR-INVEXEC-01` is covered: granular inventory permissions are seeded, `BranchInventoryExecutor` exists, `BranchInventoryViewer` stays read-only, and the broad inventory operator roles are rebuilt from the granular permission family.
+- `PR-INVEXEC-02` is covered: inventory routes and pages now use action-specific permissions, and transfer write scope resolves through source/target ownership context instead of a blanket legal-entity write fallback.
+- `PR-INVEXEC-03` is covered: `BranchOperator` now auto-assigns `BranchInventoryExecutor`, redundant viewer companions are cleaned up, and visible existing branch-operator assignments reconcile to the new companion bundle.
+- The dedicated branch-execution workflow smoke is now covered in `backend/scripts/test-inventory-invexec-branch-execution-smoke.js`, including OU-scoped materialize, transfer create/ship/receive, and the expected setup/governance denials for warehouse create, landed-cost write, item-card edit, and transfer approve/reverse.
 
 ### Optional hardening
 
@@ -344,4 +348,4 @@ After this track, the product message should be:
 
 - branch accountants are allowed to execute stock work
 - inventory master/setup authority remains separate
-- the old `inventory.upsert` catch-all is retired in favor of action-specific inventory permissions
+- the old `inventory.upsert` catch-all is removed in favor of action-specific inventory permissions

@@ -141,7 +141,6 @@ async function main() {
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.OUAPSubmitter, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.CountryAPApprover, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.CountryAPPoster, []);
-  assert.deepEqual(ROLE_CAPABILITY_GROUPS.APDocumentPoster, []);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.ShareholderCapitalOperator, ["org.capital_fulfillment"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.LocalCloseReviewer, ["close.reviewer"]);
   assert.deepEqual(ROLE_CAPABILITY_GROUPS.BranchInventoryViewer, []);
@@ -288,7 +287,6 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "BranchInventoryViewer", "inventory.read");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "inventory.materialize");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "item.card.upsert");
-  assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "inventory.upsert");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryViewer", "gl.account.upsert");
 
   assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "org.tree.read");
@@ -297,7 +295,6 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "EntityInventoryViewer", "inventory.read");
   assertRoleLacks(permissionCodesByRole, "EntityInventoryViewer", "inventory.transfer.create");
   assertRoleLacks(permissionCodesByRole, "EntityInventoryViewer", "item.card.upsert");
-  assertRoleLacks(permissionCodesByRole, "EntityInventoryViewer", "inventory.upsert");
 
   assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "org.tree.read");
   assertRoleHas(permissionCodesByRole, "BranchInventoryExecutor", "gl.account.read");
@@ -319,7 +316,6 @@ async function main() {
   assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.landed_cost.upsert");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.transfer.approve");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.transfer.reverse");
-  assertRoleLacks(permissionCodesByRole, "BranchInventoryExecutor", "inventory.upsert");
 
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "org.tree.read");
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "gl.account.read");
@@ -341,7 +337,6 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.landed_cost.upsert");
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.transfer.approve");
   assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.transfer.reverse");
-  assertRoleHas(permissionCodesByRole, "BranchInventoryOperator", "inventory.upsert");
   assertRoleLacks(permissionCodesByRole, "BranchInventoryOperator", "gl.account.upsert");
 
   assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "org.tree.read");
@@ -364,7 +359,6 @@ async function main() {
   assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.landed_cost.upsert");
   assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.transfer.approve");
   assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.transfer.reverse");
-  assertRoleHas(permissionCodesByRole, "EntityInventoryOperator", "inventory.upsert");
   assertRoleLacks(permissionCodesByRole, "EntityInventoryOperator", "gl.account.upsert");
 
   assertRoleHas(permissionCodesByRole, "BranchFixedAssetViewer", "org.tree.read");

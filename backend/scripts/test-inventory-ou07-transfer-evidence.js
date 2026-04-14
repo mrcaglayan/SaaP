@@ -224,8 +224,11 @@ async function main() {
       normalizedEvidenceRouteSource.includes('"/:evidenceId/content"') &&
       normalizedEvidenceRouteSource.includes('"/:evidenceId/download"') &&
       normalizedEvidenceRouteSource.includes('requirePermission("inventory.read"') &&
-      normalizedEvidenceRouteSource.includes('requirePermission("inventory.upsert"'),
-    "Inventory transfer evidence routes should provide list/create/upload/download/delete with inventory permission guards"
+      normalizedEvidenceRouteSource.includes(
+        'requirePermission("inventory.transfer.evidence.upsert"'
+      ) &&
+      !normalizedEvidenceRouteSource.includes('requirePermission("inventory.upsert"'),
+    "Inventory transfer evidence routes should provide list/create/upload/download/delete with granular inventory permission guards"
   );
   assert(
     transferRouteSource.includes(

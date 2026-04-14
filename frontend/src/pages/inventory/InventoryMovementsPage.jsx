@@ -385,7 +385,9 @@ export default function InventoryMovementsPage() {
   const [searchParams] = useSearchParams();
 
   const canRead = hasPermission("inventory.read");
-  const canUpsert = hasPermission("inventory.upsert");
+  const canWarehouseUpsert = hasPermission("inventory.warehouse.upsert");
+  const canMaterialize = hasPermission("inventory.materialize");
+  const canMovementReverse = hasPermission("inventory.movement.reverse");
   const canReadOrgTree = hasPermission("org.tree.read");
   const workingContextLegalEntityId = useMemo(
     () => String(toPositiveInt(workingContext?.legalEntityId) || ""),
@@ -979,8 +981,13 @@ export default function InventoryMovementsPage() {
 
   async function handleCreateWarehouse(event) {
     event.preventDefault();
-    if (!canUpsert) {
-      setWarehouseError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canWarehouseUpsert) {
+      setWarehouseError(
+        l(
+          "Missing permission: inventory.warehouse.upsert",
+          "Eksik yetki: inventory.warehouse.upsert"
+        )
+      );
       return;
     }
     setWarehouseSaving(true);
@@ -1025,8 +1032,13 @@ export default function InventoryMovementsPage() {
 
   async function handleCreateMovement(event) {
     event.preventDefault();
-    if (!canUpsert) {
-      setMovementError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canMaterialize) {
+      setMovementError(
+        l(
+          "Missing permission: inventory.materialize",
+          "Eksik yetki: inventory.materialize"
+        )
+      );
       return;
     }
     if (!selectedPendingLink) {
@@ -1102,8 +1114,13 @@ export default function InventoryMovementsPage() {
 
   async function handleReverseMovement(row, overrides = {}) {
     const movementId = toPositiveInt(row?.id);
-    if (!canUpsert || !movementId) {
-      setReverseError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canMovementReverse || !movementId) {
+      setReverseError(
+        l(
+          "Missing permission: inventory.movement.reverse",
+          "Eksik yetki: inventory.movement.reverse"
+        )
+      );
       return;
     }
     const confirmed = window.confirm(
@@ -1181,8 +1198,13 @@ export default function InventoryMovementsPage() {
     }
 
     const movementId = toPositiveInt(selectedReversibleReceipt.id);
-    if (!canUpsert || !movementId) {
-      setReverseError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canMovementReverse || !movementId) {
+      setReverseError(
+        l(
+          "Missing permission: inventory.movement.reverse",
+          "Eksik yetki: inventory.movement.reverse"
+        )
+      );
       return;
     }
 
@@ -1428,7 +1450,7 @@ export default function InventoryMovementsPage() {
                       ownershipScope: event.target.value,
                     }))
                   }
-                  disabled={warehouseSaving || !canUpsert}
+                  disabled={warehouseSaving || !canWarehouseUpsert}
                 >
                   <option value="CENTRAL">{l("Central", "Merkez")}</option>
                   <option value="OPERATING_UNIT">{l("Operating Unit", "Isletme Birimi")}</option>
@@ -1448,7 +1470,7 @@ export default function InventoryMovementsPage() {
                     }
                     disabled={
                       warehouseSaving ||
-                      !canUpsert ||
+                      !canWarehouseUpsert ||
                       !warehouseForm.legalEntityId ||
                       !canReadOrgTree ||
                       warehouseOperatingUnitsLoading
@@ -1475,7 +1497,7 @@ export default function InventoryMovementsPage() {
                       code: event.target.value,
                     }))
                   }
-                  disabled={warehouseSaving || !canUpsert}
+                  disabled={warehouseSaving || !canWarehouseUpsert}
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -1490,7 +1512,7 @@ export default function InventoryMovementsPage() {
                       name: event.target.value,
                     }))
                   }
-                  disabled={warehouseSaving || !canUpsert}
+                  disabled={warehouseSaving || !canWarehouseUpsert}
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -1504,7 +1526,7 @@ export default function InventoryMovementsPage() {
                       inventoryReceiptPolicy: event.target.value,
                     }))
                   }
-                  disabled={warehouseSaving || !canUpsert}
+                  disabled={warehouseSaving || !canWarehouseUpsert}
                 >
                   <option value="ALLOW_INVOICE_BEFORE_RECEIPT">
                     {l("Allow invoice before receipt", "Mal kabul olmadan fatura post edilebilir")}
@@ -1525,7 +1547,7 @@ export default function InventoryMovementsPage() {
                       notes: event.target.value,
                     }))
                   }
-                  disabled={warehouseSaving || !canUpsert}
+                  disabled={warehouseSaving || !canWarehouseUpsert}
                 />
               </label>
             </div>
@@ -1551,7 +1573,7 @@ export default function InventoryMovementsPage() {
               className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={
                 warehouseSaving ||
-                !canUpsert ||
+                !canWarehouseUpsert ||
                 !toPositiveInt(warehouseForm.legalEntityId) ||
                 !normalizeText(warehouseForm.code) ||
                 !normalizeText(warehouseForm.name) ||
@@ -1742,7 +1764,7 @@ export default function InventoryMovementsPage() {
                       movementDate: event.target.value,
                     }))
                   }
-                  disabled={movementSaving || !canUpsert}
+                  disabled={movementSaving || !canMaterialize}
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -1756,7 +1778,7 @@ export default function InventoryMovementsPage() {
                       note: event.target.value,
                     }))
                   }
-                  disabled={movementSaving || !canUpsert}
+                  disabled={movementSaving || !canMaterialize}
                 />
               </label>
             </div>
@@ -1843,7 +1865,7 @@ export default function InventoryMovementsPage() {
               className="mt-4 rounded-md bg-sky-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={
                 movementSaving ||
-                !canUpsert ||
+                !canMaterialize ||
                 !toPositiveInt(selectedPendingLink?.id) ||
                 !selectedPendingLink?.canMaterialize
               }
@@ -1887,7 +1909,11 @@ export default function InventoryMovementsPage() {
                       movementId: event.target.value,
                     }))
                   }
-                  disabled={reversingMovementId !== null || !canUpsert || reversibleIssueRows.length === 0}
+                  disabled={
+                    reversingMovementId !== null
+                    || !canMovementReverse
+                    || reversibleIssueRows.length === 0
+                  }
                 >
                   <option value="">{l("Select issue movement", "Cikis hareketi secin")}</option>
                   {reversibleIssueRows.map((row) => (
@@ -1911,7 +1937,7 @@ export default function InventoryMovementsPage() {
                       reversalDate: event.target.value,
                     }))
                   }
-                  disabled={reversingMovementId !== null || !canUpsert}
+                  disabled={reversingMovementId !== null || !canMovementReverse}
                 />
               </label>
             </div>
@@ -1941,7 +1967,7 @@ export default function InventoryMovementsPage() {
               type="submit"
               className="mt-4 rounded-md bg-rose-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={
-                !canUpsert ||
+                !canMovementReverse ||
                 reversingMovementId !== null ||
                 !toPositiveInt(reverseForm.movementId)
               }
@@ -1987,7 +2013,7 @@ export default function InventoryMovementsPage() {
                   }
                   disabled={
                     reversingMovementId !== null ||
-                    !canUpsert ||
+                    !canMovementReverse ||
                     reversibleReceiptRows.length === 0
                   }
                 >
@@ -2013,7 +2039,7 @@ export default function InventoryMovementsPage() {
                       reversalDate: event.target.value,
                     }))
                   }
-                  disabled={reversingMovementId !== null || !canUpsert}
+                  disabled={reversingMovementId !== null || !canMovementReverse}
                 />
               </label>
             </div>
@@ -2043,7 +2069,7 @@ export default function InventoryMovementsPage() {
               type="submit"
               className="mt-4 rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={
-                !canUpsert ||
+                !canMovementReverse ||
                 reversingMovementId !== null ||
                 !toPositiveInt(receiptReverseForm.movementId)
               }

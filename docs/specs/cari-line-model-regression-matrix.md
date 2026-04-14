@@ -72,7 +72,7 @@ It exists to prove two things together:
 - Expected:
   - CARI post panel disables split posting for the stored-tax draft before submit
   - item-card routes/pages use `item.card.read` / `item.card.upsert`
-  - inventory routes/pages use `inventory.read` / `inventory.upsert`
+  - inventory routes/pages use `inventory.read` plus the granular inventory execution/setup permissions
   - inventory and item-card access no longer depends on `cari.card.*`
 
 ### 7. Valued issue reversal

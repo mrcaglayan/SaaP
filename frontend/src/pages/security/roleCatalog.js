@@ -290,6 +290,8 @@ const ROLE_CATALOG = Object.freeze({
       "Executes branch stock materialization, movement reversal, and transfer handling without item-card or warehouse setup authority.",
     capabilities: ["Stock materialization", "Movement reversal", "Transfer execution"],
     recommendedScopes: ["OPERATING_UNIT"],
+    companionNote:
+      "Auto-assigned with BranchOperator at the same OU scope. Item cards, warehouses, landed-cost vouchers, and transfer governance stay separate.",
     sortOrder: 112,
   },
   BranchInventoryOperator: {
@@ -367,9 +369,11 @@ const ROLE_CATALOG = Object.freeze({
     code: "Branch Accountant",
     category: "scoped",
     summary:
-      "Operating-unit AP draft and operational-document role for creation, editing, and cancellation. Review and final posting stay separate.",
-    capabilities: ["OU visibility", "Draft AP handling", "Operational documents"],
+      "Operating-unit AP draft and operational-document role with bounded inventory and fixed-asset execution companions. Review, final posting, and setup authority stay separate.",
+    capabilities: ["OU visibility", "Draft AP handling", "Bounded execution companions"],
     recommendedScopes: ["OPERATING_UNIT"],
+    companionNote:
+      "Assigning BranchOperator at OU scope also auto-assigns BranchInventoryExecutor and BranchFixedAssetOperator at the same OU scope.",
     replacementLabel: "Branch Accountant",
     workflowFamily: "AP_DOCUMENT_POSTING",
     sortOrder: 110,
@@ -381,7 +385,7 @@ const BUSINESS_ROLE_CATALOG = Object.freeze({
   BRANCH_ACCOUNTANT: Object.freeze({
     displayName: "Branch Accountant",
     description:
-      "Branch-level finance operator who usually drafts and submits AP work and can support branch-assisted close preparation.",
+      "Branch-level finance operator who drafts and submits AP work and, by default, receives bounded branch inventory and fixed-asset execution companions.",
     category: "operating_unit_scope",
     defaultScope: "OPERATING_UNIT",
     workflowFamily: "CROSS_WORKFLOW",

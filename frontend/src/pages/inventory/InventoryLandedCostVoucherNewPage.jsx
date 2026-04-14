@@ -224,7 +224,7 @@ export default function InventoryLandedCostVoucherNewPage() {
   const { l } = useI18n();
   const { workingContext, legalEntities: workingContextLegalEntities } = useWorkingContext();
   const canRead = hasPermission("inventory.read");
-  const canUpsert = hasPermission("inventory.upsert");
+  const canLandedCostUpsert = hasPermission("inventory.landed_cost.upsert");
   const canReadItemCards = hasPermission("item.card.read");
   const [currentStep, setCurrentStep] = useState(1);
   const [form, setForm] = useState(() => createDefaultForm(workingContext));
@@ -827,8 +827,13 @@ export default function InventoryLandedCostVoucherNewPage() {
     }
   }
   async function handlePostVoucher() {
-    if (!canUpsert) {
-      setSubmitError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canLandedCostUpsert) {
+      setSubmitError(
+        l(
+          "Missing permission: inventory.landed_cost.upsert",
+          "Eksik yetki: inventory.landed_cost.upsert"
+        )
+      );
       return;
     }
     if (!previewResult) {
@@ -987,11 +992,11 @@ export default function InventoryLandedCostVoucherNewPage() {
           {dependencyError}
         </div>
       ) : null}
-      {!canUpsert ? (
+      {!canLandedCostUpsert ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           {l(
-            "You can review and preview this workflow, but posting actions require inventory.upsert.",
-            "Bu akisi inceleyebilir ve onizleyebilirsiniz; ancak kaydetme islemleri inventory.upsert gerektirir."
+            "You can review and preview this workflow, but posting actions require inventory.landed_cost.upsert.",
+            "Bu akisi inceleyebilir ve onizleyebilirsiniz; ancak kaydetme islemleri inventory.landed_cost.upsert gerektirir."
           )}
         </div>
       ) : null}
@@ -1906,9 +1911,17 @@ export default function InventoryLandedCostVoucherNewPage() {
                     <button
                       type="button"
                       onClick={() => void handlePostVoucher()}
-                      disabled={!canUpsert || submitting || previewHasBlockedContextAmount || !previewResult}
+                      disabled={
+                        !canLandedCostUpsert
+                        || submitting
+                        || previewHasBlockedContextAmount
+                        || !previewResult
+                      }
                       className={`rounded-xl px-4 py-2 text-sm font-semibold ${
-                        canUpsert && !submitting && !previewHasBlockedContextAmount && previewResult
+                        canLandedCostUpsert
+                        && !submitting
+                        && !previewHasBlockedContextAmount
+                        && previewResult
                           ? "bg-slate-900 text-white hover:bg-slate-700"
                           : "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
                       }`}

@@ -1,5 +1,6 @@
 import express from "express";
 import { asyncHandler, badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
+import { query } from "../db.js";
 import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
 import inventoryTransferEvidenceRoutes from "./inventory.transfer.evidence.routes.js";
 import {
@@ -19,6 +20,7 @@ import {
   getInventoryTransferById,
   listInventoryTransfers,
   receiveInventoryTransferById,
+  resolveInventoryTransferActionScope,
   resolveInventoryTransferScope,
   reverseInventoryTransferById,
   shipInventoryTransferById,
@@ -44,18 +46,56 @@ function resolveLegalEntityScopeFromBody(req) {
   return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
 }
 
+function mapInventoryOwnershipToScope(row) {
+  const operatingUnitId = parsePositiveInt(row?.operating_unit_id);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  const legalEntityId = parsePositiveInt(row?.legal_entity_id);
+  return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+}
+
 function requireTenantId(req) {
   const tenantId = parsePositiveInt(resolveTenantId(req));
   return tenantId || null;
 }
 
-async function resolveInventoryTransferScopeFromParam(req, tenantId) {
+async function resolveInventoryTransferScopeFromParam(req, tenantId, action = "LEGAL_ENTITY") {
   const transferId = parsePositiveInt(req.params?.transferId);
   const normalizedTenantId = parsePositiveInt(tenantId) || requireTenantId(req);
   if (!transferId || !normalizedTenantId) {
     return null;
   }
-  return resolveInventoryTransferScope(transferId, normalizedTenantId);
+  return action === "LEGAL_ENTITY"
+    ? resolveInventoryTransferScope(transferId, normalizedTenantId)
+    : resolveInventoryTransferActionScope(transferId, normalizedTenantId, action);
+}
+
+async function resolveInventoryTransferCreateScopeFromBody(req, tenantId) {
+  const normalizedTenantId = parsePositiveInt(tenantId) || requireTenantId(req);
+  const sourceWarehouseId = parsePositiveInt(req.body?.sourceWarehouseId);
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  if (!normalizedTenantId || !sourceWarehouseId) {
+    return resolveLegalEntityScopeFromBody(req);
+  }
+  const result = await query(
+    `SELECT legal_entity_id, operating_unit_id
+       FROM inventory_warehouses
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [normalizedTenantId, sourceWarehouseId]
+  );
+  const row = result.rows?.[0] || null;
+  if (
+    row &&
+    legalEntityId &&
+    parsePositiveInt(row.legal_entity_id) &&
+    parsePositiveInt(row.legal_entity_id) !== legalEntityId
+  ) {
+    throw badRequest("sourceWarehouseId must belong to legalEntityId");
+  }
+  return mapInventoryOwnershipToScope(row) || resolveLegalEntityScopeFromBody(req);
 }
 
 function assertInventoryTransferReadAccess(req, row) {
@@ -134,15 +174,15 @@ router.get(
 
 router.post(
   "/transfers",
-  requirePermission("inventory.upsert", {
-    resolveScope: async (req) => resolveLegalEntityScopeFromBody(req),
+  requirePermission("inventory.transfer.create", {
+    resolveScope: async (req, tenantId) =>
+      resolveInventoryTransferCreateScopeFromBody(req, tenantId),
   }),
   asyncHandler(async (req, res) => {
     const payload = parseInventoryTransferCreateInput(req);
     const row = await createInventoryTransfer({
       payload,
     });
-    assertScopeAccess(req, "legal_entity", row.legalEntityId, "inventory transfer legal entity");
     return res.status(201).json({
       tenantId: payload.tenantId,
       row,
@@ -152,9 +192,9 @@ router.post(
 
 router.post(
   "/transfers/:transferId/approve",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.transfer.approve", {
     resolveScope: async (req, tenantId) =>
-      (await resolveInventoryTransferScopeFromParam(req, tenantId)) ||
+      (await resolveInventoryTransferScopeFromParam(req, tenantId, "LEGAL_ENTITY")) ||
       resolveLegalEntityScopeFromBody(req),
   }),
   asyncHandler(async (req, res) => {
@@ -162,7 +202,6 @@ router.post(
     const row = await approveInventoryTransferById({
       payload,
     });
-    assertScopeAccess(req, "legal_entity", row.legalEntityId, "inventory transfer legal entity");
     return res.json({
       tenantId: payload.tenantId,
       row,
@@ -172,9 +211,9 @@ router.post(
 
 router.post(
   "/transfers/:transferId/ship",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.transfer.ship", {
     resolveScope: async (req, tenantId) =>
-      (await resolveInventoryTransferScopeFromParam(req, tenantId)) ||
+      (await resolveInventoryTransferScopeFromParam(req, tenantId, "SOURCE")) ||
       resolveLegalEntityScopeFromBody(req),
   }),
   asyncHandler(async (req, res) => {
@@ -182,7 +221,6 @@ router.post(
     const row = await shipInventoryTransferById({
       payload,
     });
-    assertScopeAccess(req, "legal_entity", row.legalEntityId, "inventory transfer legal entity");
     return res.json({
       tenantId: payload.tenantId,
       row,
@@ -192,9 +230,9 @@ router.post(
 
 router.post(
   "/transfers/:transferId/receive",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.transfer.receive", {
     resolveScope: async (req, tenantId) =>
-      (await resolveInventoryTransferScopeFromParam(req, tenantId)) ||
+      (await resolveInventoryTransferScopeFromParam(req, tenantId, "TARGET")) ||
       resolveLegalEntityScopeFromBody(req),
   }),
   asyncHandler(async (req, res) => {
@@ -202,7 +240,6 @@ router.post(
     const row = await receiveInventoryTransferById({
       payload,
     });
-    assertScopeAccess(req, "legal_entity", row.legalEntityId, "inventory transfer legal entity");
     return res.json({
       tenantId: payload.tenantId,
       row,
@@ -212,9 +249,9 @@ router.post(
 
 router.post(
   "/transfers/:transferId/cancel",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.transfer.cancel", {
     resolveScope: async (req, tenantId) =>
-      (await resolveInventoryTransferScopeFromParam(req, tenantId)) ||
+      (await resolveInventoryTransferScopeFromParam(req, tenantId, "SOURCE")) ||
       resolveLegalEntityScopeFromBody(req),
   }),
   asyncHandler(async (req, res) => {
@@ -222,7 +259,6 @@ router.post(
     const row = await cancelInventoryTransferById({
       payload,
     });
-    assertScopeAccess(req, "legal_entity", row.legalEntityId, "inventory transfer legal entity");
     return res.json({
       tenantId: payload.tenantId,
       row,
@@ -232,9 +268,9 @@ router.post(
 
 router.post(
   "/transfers/:transferId/reverse",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.transfer.reverse", {
     resolveScope: async (req, tenantId) =>
-      (await resolveInventoryTransferScopeFromParam(req, tenantId)) ||
+      (await resolveInventoryTransferScopeFromParam(req, tenantId, "LEGAL_ENTITY")) ||
       resolveLegalEntityScopeFromBody(req),
   }),
   asyncHandler(async (req, res) => {
@@ -242,7 +278,6 @@ router.post(
     const row = await reverseInventoryTransferById({
       payload,
     });
-    assertScopeAccess(req, "legal_entity", row.legalEntityId, "inventory transfer legal entity");
     return res.json({
       tenantId: payload.tenantId,
       row,

@@ -326,18 +326,6 @@ async function assertRolePermissionMappings(tenantId) {
     }
   }
 
-  const retiredRoleResult = await query(
-    `SELECT code
-     FROM roles
-     WHERE tenant_id = ?
-       AND code = 'APDocumentPoster'
-     LIMIT 1`,
-    [tenantId]
-  );
-  assert(
-    (retiredRoleResult.rows || []).length === 0,
-    "Fresh tenant should not seed retired APDocumentPoster role"
-  );
 }
 
 async function createUsersAndAssignments({ tenantId, stamp }) {

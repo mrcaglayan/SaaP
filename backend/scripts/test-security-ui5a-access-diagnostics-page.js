@@ -118,13 +118,13 @@ async function main() {
     "UI-5A should name that package authority exists only at other scopes"
   );
 
-  const legacySummary = buildAccessDiagnosticsSummary({
+  const runtimeRoleSummary = buildAccessDiagnosticsSummary({
     assignments: [
       {
         id: 31,
-        role_code: "APDocumentPoster",
-        scope_type: "LEGAL_ENTITY",
-        scope_id: 1,
+        role_code: "CountryAPPoster",
+        scope_type: "COUNTRY",
+        scope_id: 4,
         effect: "ALLOW",
       },
     ],
@@ -137,22 +137,29 @@ async function main() {
   });
 
   assert.equal(
-    legacySummary.legacyMappings.length,
-    1,
-    "UI-5A should keep legacy runtime-role dependency visible even when it does not map cleanly to the package model"
+    runtimeRoleSummary.matchingActionPackages.length,
+    2,
+    "UI-5A should project current runtime AP poster roles into action-package coverage"
   );
   assert.equal(
-    legacySummary.legacyMappings[0].legacyReason.includes("brownfield"),
+    runtimeRoleSummary.matchingActionPackages.every((item) =>
+      Array.isArray(item.sourceLabels) && item.sourceLabels.includes("Runtime role source")
+    ),
     true,
-    "UI-5A should surface the legacy-role reason text in the diagnostics model"
+    "UI-5A should label runtime-role-derived package authority explicitly"
+  );
+  assert.equal(
+    runtimeRoleSummary.matchingActionPackages.some((item) => item.packageCode === "PKG-AP-POST"),
+    true,
+    "UI-5A should surface the AP post package when CountryAPPoster covers the target scope"
   );
 
   assert(
     pageSource.includes("buildAccessDiagnosticsSummary") &&
       pageSource.includes("listRoleAssignments") &&
       pageSource.includes('l("Business-facing diagnosis", "Is-odakli tani")') &&
-      pageSource.includes('l("Matching workflow packages", "Eslesen workflow paketleri")') &&
-      pageSource.includes('l("Legacy mapping used", "Kullanilan legacy eslesme")') &&
+      pageSource.includes('l("Matching scopes", "Eslesen kapsamlar")') &&
+      pageSource.includes('l("Matching scopes and blockers", "Eslesen kapsamlar ve engeller")') &&
       pageSource.includes('l("Technical access chain", "Teknik erisim zinciri")'),
     "AccessDebuggerPage should render the new UI-5A business diagnostics surface on top of the older technical checker"
   );

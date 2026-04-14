@@ -136,7 +136,7 @@ router.post(
 
 router.post(
   "/landed-cost-vouchers",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.landed_cost.upsert", {
     resolveScope: async (req) => resolvePreviewScopeFromBody(req),
   }),
   asyncHandler(async (req, res) => {
@@ -150,7 +150,7 @@ router.post(
 
 router.post(
   "/landed-cost-vouchers/:voucherId/reverse",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.landed_cost.upsert", {
     resolveScope: async (req, tenantId) =>
       (await resolveVoucherScopeFromParam(req, tenantId)) || resolvePreviewScopeFromBody(req),
   }),

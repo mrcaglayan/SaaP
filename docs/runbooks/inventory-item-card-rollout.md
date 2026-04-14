@@ -10,7 +10,7 @@ For OU-owned warehouse transfers and cross-context settlement follow-up, also us
   - `item.card.read`
   - `item.card.upsert`
   - `inventory.read`
-  - `inventory.upsert`
+  - granular inventory permissions such as `inventory.materialize`, `inventory.movement.reverse`, `inventory.warehouse.upsert`, `inventory.landed_cost.upsert`, and the `inventory.transfer.*` family
 - Explicit OpenAPI contracts for `/api/v1/items/*` and `/api/v1/inventory/*`
 - FIFO outbound issue valuation with persisted layer-consumption audit rows
 - Inventory-side `Dr COGS / Cr Inventory` posting on valued outbound issues
@@ -44,7 +44,7 @@ npm run db:seed:core
 - Warehouse/inventory users do not need broad CARI-card maintenance rights.
 - Recommended assignment split:
   - finance master-data user: `item.card.read`, `item.card.upsert`
-  - warehouse operator: `inventory.read`, `inventory.upsert`
+  - warehouse operator: `inventory.read` plus the exact execution/setup permissions needed for the assigned workflow
   - finance reviewer: `inventory.read`
 
 ## Operational Lifecycle
@@ -80,7 +80,7 @@ npm run db:seed:core
 ## Audit And Troubleshooting
 
 - If inventory page access fails:
-  - verify `inventory.read` / `inventory.upsert`
+  - verify `inventory.read` and the blocked action's granular inventory permission
 - If item-card page access fails:
   - verify `item.card.read` / `item.card.upsert`
 - If issue materialization fails:

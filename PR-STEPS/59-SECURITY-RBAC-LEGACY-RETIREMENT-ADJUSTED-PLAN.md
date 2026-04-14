@@ -12,7 +12,7 @@
 
 Remove live-product security migration surfaces and retired security-role compatibility paths so fresh tenants behave as a clean steady-state product.
 
-Fresh tenants should use `SecurityAdmin` plus `SystemAdmin` for bootstrap and administration. Retired roles such as `TenantAdmin`, `GroupController`, `CountryController`, `EntityAccountant`, and legacy `APDocumentPoster` should not be seeded, exposed, assignable, or required by runtime or tests.
+Fresh tenants should use `SecurityAdmin` plus `SystemAdmin` for bootstrap and administration. Retired roles such as `TenantAdmin`, `GroupController`, `CountryController`, `EntityAccountant`, and the legacy broad AP posting role should not be seeded, exposed, assignable, or required by runtime or tests.
 
 ## Out Of Scope
 
@@ -321,7 +321,7 @@ Make the core security model fresh-only by removing `TenantAdmin` retention and 
 Run after this PR:
 
 - `rg -n "roleMigration|roleMigration\\.service|loadActiveLegacyDisabledRoleCodeSet|isRetiredLegacyRoleCode|isRoleLegacyDisabled|includeLegacyTenantAdmin|LEGACY_TENANT_ADMIN" backend/src frontend/src`
-- `rg -n "TenantAdmin|GroupController|CountryController|EntityAccountant|APDocumentPoster" backend/src frontend/src`
+- `rg -n "TenantAdmin|GroupController|CountryController|EntityAccountant" backend/src frontend/src`
 
 Expected result: no steady-state runtime dependencies. Some non-security domain references may remain in tests until PR-04.
 

@@ -101,7 +101,7 @@ This roadmap covers two linked architecture changes:
 - CARI documents currently do not support `SUBMITTED`, `RETURNED`, or `APPROVED` as first-class business states.
 - CARI routes currently expose create, update, cancel, post, and reverse only; there is no real AP submit / governed return path yet.
 - CARI permission model currently has `cari.doc.create`, `cari.doc.update`, `cari.doc.post`, and `cari.doc.reverse`; it does not yet have a separate `cari.doc.submit`, and approve / return / review are not yet modeled through workflow-step assignment.
-- Existing composable AP role `APDocumentPoster` collapses legal-entity review and posting into one role.
+- Existing legacy broad AP posting role collapses legal-entity review and posting into one role.
 - The current composable replacement for legacy `CountryController` does not include AP-document final approval / posting authority.
 - CARI document visibility currently maps only `LEGAL_ENTITY` and `OPERATING_UNIT`, so country-scoped AP actors would not reliably see the documents they govern.
 - Several accounting / reporting queries currently exclude only `DRAFT` and `CANCELLED`, which would leak `SUBMITTED`, `RETURNED`, and `APPROVED` into accounting-facing surfaces unless corrected.
@@ -603,7 +603,7 @@ Replace the current compressed AP posting role with explicit AP submit / review 
   - `cari.doc.cancel` (if not already separated from `cari.doc.update`)
 - Do NOT add `cari.doc.approve`, `cari.doc.review`, or `cari.doc.return`: approve / return / review are pure workflow decisions. Authorization for those actions is driven entirely by workflow step assignment on the AP workflow definition — not by a parallel CARI permission gate. This keeps the authz model single-sourced and avoids UI-visible-but-blocked or blocked-but-UI-visible contradictions.
 - Keep `cari.doc.post` and `cari.doc.reverse` separate.
-- Redefine `APDocumentPoster` or replace it with narrower composable roles.
+- Retire the legacy broad AP posting role and replace it with narrower composable roles.
 - Add country-scoped AP final roles to the new replacement model so legacy `CountryController` is no longer needed for AP.
 - Update onboarding presets so country finance setup can provision the new AP final-governance roles.
 - If onboarding/security API contracts change, update OpenAPI in the same PR rather than deferring to rollout.
@@ -749,7 +749,7 @@ Roll out the new country-scoped AP approval model safely without breaking existi
 
 Do not start PR-3 before PR-1 is merged, because AP cannot use country-scoped governance correctly until country assignment exists, `TARGET_COUNTRY` exists, target snapshots carry country context, and generic workflow decision access can resolve country steps correctly.
 
-Do not start PR-2 before PR-4 is merged, because PR-2 introduces new submit/post enforcement paths that need the new permission codes to gate correctly. PR-4 introduces the permission codes only — the actual role re-composition (retiring `APDocumentPoster`, adding `EntityAPController` / `CountryAPApprover` / `CountryAPPoster`) can still be split between PR-4 and PR-5 as needed.
+Do not start PR-2 before PR-4 is merged, because PR-2 introduces new submit/post enforcement paths that need the new permission codes to gate correctly. PR-4 introduces the permission codes only — the actual role re-composition (retiring the legacy broad AP posting role, adding `EntityAPController` / `CountryAPApprover` / `CountryAPPoster`) can still be split between PR-4 and PR-5 as needed.
 
 Do not ship PR-4 role provisioning to production tenants until PR-5 has merged, because country-scoped AP actors need the PR-5 CARI visibility extension to actually see the documents they must approve.
 

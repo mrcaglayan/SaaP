@@ -162,7 +162,7 @@ router.get(
 
 router.post(
   "/warehouses",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.warehouse.upsert", {
     resolveScope: async (req, tenantId) =>
       resolveInventoryWarehouseWriteScopeFromBody(req, tenantId),
   }),
@@ -214,7 +214,7 @@ router.get(
 
 router.post(
   "/cari-stock-links/:stockLinkId/materialize",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.materialize", {
     resolveScope: async (req, tenantId) =>
       (await resolveInventoryStockLinkScopeFromParam(req, tenantId)) ||
       resolveLegalEntityScopeFromBody(req),
@@ -249,7 +249,7 @@ router.get(
 
 router.post(
   "/movements",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.materialize", {
     resolveScope: async (req, tenantId) =>
       resolveInventoryMovementScopeFromBody(req, tenantId),
   }),
@@ -265,7 +265,7 @@ router.post(
 
 router.post(
   "/movements/:movementId/reverse",
-  requirePermission("inventory.upsert", {
+  requirePermission("inventory.movement.reverse", {
     resolveScope: async (req, tenantId) =>
       (await resolveInventoryMovementScopeFromParam(req, tenantId)) ||
       resolveLegalEntityScopeFromBody(req),

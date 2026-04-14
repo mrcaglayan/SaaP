@@ -518,7 +518,6 @@ const PERMISSIONS = [
   ["inventory.landed_cost.upsert", "Create/reverse inventory landed-cost vouchers"],
   ["inventory.transfer.approve", "Approve inventory transfers"],
   ["inventory.transfer.reverse", "Reverse completed inventory transfers"],
-  ["inventory.upsert", "Create/update inventory warehouses and movements"],
   [
     "fixed_assets.read",
     "Read fixed asset register, detail, lifecycle transactions, and evidence metadata",
@@ -980,9 +979,6 @@ const INVENTORY_OPERATOR_PERMISSION_CODES = buildPermissionList({
     "inventory.landed_cost.upsert",
     "inventory.transfer.approve",
     "inventory.transfer.reverse",
-    // Legacy catch-all retained until the granular route split stops checking
-    // inventory.upsert across inventory execution/setup flows.
-    "inventory.upsert",
   ],
 });
 
@@ -1259,6 +1255,11 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     code: "LocalCloseReviewer",
     name: "Local Close Reviewer",
     permissions: LOCAL_CLOSE_REVIEWER_PERMISSION_CODES,
+  },
+  {
+    code: "GroupReportingController",
+    name: "Group Reporting Controller",
+    permissions: GROUP_REPORTING_CONTROLLER_PERMISSION_CODES,
   },
   {
     code: "BranchInventoryViewer",

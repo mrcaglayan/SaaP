@@ -1,9 +1,13 @@
 import express from "express";
 import {
   assertScopeAccess,
+  hasScopeAccess,
   requirePermission,
 } from "../middleware/rbac.js";
-import { resolveInventoryTransferScope } from "../services/inventory.transfer.service.js";
+import {
+  resolveInventoryTransferParticipantScopes,
+  resolveInventoryTransferScope,
+} from "../services/inventory.transfer.service.js";
 import {
   createInventoryTransferEvidenceDraft,
   deleteInventoryTransferEvidenceByIdForTenant,
@@ -71,9 +75,45 @@ function toSafeAttachmentFileName(value) {
   return normalized || "evidence.bin";
 }
 
+function missingPermission(permissionCode) {
+  const err = new Error(`Missing permission: ${permissionCode}`);
+  err.status = 403;
+  return err;
+}
+
+function hasResolvedScopeAccess(req, scope) {
+  if (!scope?.scopeType || !parsePositiveInt(scope?.scopeId)) {
+    return false;
+  }
+  const scopeType = String(scope.scopeType).trim().toUpperCase();
+  if (scopeType === "OPERATING_UNIT") {
+    return hasScopeAccess(req, "operating_unit", scope.scopeId);
+  }
+  if (scopeType === "LEGAL_ENTITY") {
+    return hasScopeAccess(req, "legal_entity", scope.scopeId);
+  }
+  return false;
+}
+
 const resolveTransferScope = async (req, tenantId) =>
   resolveInventoryReadScopeFromQuery(req) ||
   resolveInventoryTransferScope(req.params?.transferId, tenantId);
+
+async function assertTransferParticipantPermission(req, tenantId, permissionCode) {
+  // Evidence writes are participant-scoped: either the source or target owner
+  // may attach/delete supporting documents for the transfer.
+  const scopes = await resolveInventoryTransferParticipantScopes(
+    req.params?.transferId,
+    tenantId
+  );
+  if (scopes.length === 0) {
+    return;
+  }
+  if (scopes.some((scope) => hasResolvedScopeAccess(req, scope))) {
+    return;
+  }
+  throw missingPermission(permissionCode);
+}
 
 router.get(
   "/",
@@ -99,11 +139,14 @@ router.get(
 
 router.post(
   "/",
-  requirePermission("inventory.upsert", {
-    resolveScope: resolveTransferScope,
-  }),
+  requirePermission("inventory.transfer.evidence.upsert"),
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
+    await assertTransferParticipantPermission(
+      req,
+      tenantId,
+      "inventory.transfer.evidence.upsert"
+    );
     const transferId = parseTransferIdParam(req);
     const userId = requireUserId(req);
     const fileName = String(req.body?.fileName ?? req.body?.file_name ?? "").trim();
@@ -122,7 +165,6 @@ router.post(
         displayName: req.body?.displayName ?? req.body?.display_name ?? null,
         note: req.body?.note ?? null,
       },
-      assertScopeAccess,
     });
 
     return res.status(201).json({
@@ -136,12 +178,15 @@ router.post(
 
 router.put(
   "/:evidenceId/content",
-  requirePermission("inventory.upsert", {
-    resolveScope: resolveTransferScope,
-  }),
+  requirePermission("inventory.transfer.evidence.upsert"),
   evidenceBinaryUploadMiddleware,
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
+    await assertTransferParticipantPermission(
+      req,
+      tenantId,
+      "inventory.transfer.evidence.upsert"
+    );
     const transferId = parseTransferIdParam(req);
     const evidenceId = parseEvidenceIdParam(req);
     if (!(req.body instanceof Buffer)) {
@@ -157,7 +202,6 @@ router.put(
         contentType: sanitizeHeaderContentType(req.headers?.["content-type"]),
       },
       binaryData: req.body,
-      assertScopeAccess,
     });
 
     return res.json({
@@ -197,11 +241,14 @@ router.get(
 
 router.delete(
   "/:evidenceId",
-  requirePermission("inventory.upsert", {
-    resolveScope: resolveTransferScope,
-  }),
+  requirePermission("inventory.transfer.evidence.upsert"),
   asyncHandler(async (req, res) => {
     const tenantId = requireTenantId(req);
+    await assertTransferParticipantPermission(
+      req,
+      tenantId,
+      "inventory.transfer.evidence.upsert"
+    );
     const transferId = parseTransferIdParam(req);
     const evidenceId = parseEvidenceIdParam(req);
     const userId = requireUserId(req);
@@ -213,7 +260,6 @@ router.delete(
         evidenceId,
         userId,
       },
-      assertScopeAccess,
     });
     return res.json({
       tenantId,

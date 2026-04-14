@@ -89,7 +89,7 @@ Yeni fresh kurulumda asagidaki rol ayrimini kullanin:
 - Approve yetkisi ile post yetkisi ayri tutulur.
 
 Tavsiye:
-1. Fresh kurulumda yeni model icin `APDocumentPoster` kullanmayin.
+1. Fresh kurulumda yeni model icin legacy genis AP posting rolunu kullanmayin.
 2. Pilot hiz icin ayni kisiye hem `CountryAPApprover` hem `CountryAPPoster` verilebilir.
 3. Ancak rol ayrimini koruyun; boylece gorevler ileride ayristirilabilir.
 

@@ -89,9 +89,9 @@ function createEditForm(row) {
 export default function InventorySettingsPage() {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
-  const { legalEntities: workingContextLegalEntities } = useWorkingContext();
+  const { legalEntities: workingContextLegalEntities, workingContext } = useWorkingContext();
   const canRead = hasPermission("inventory.read");
-  const canUpsert = hasPermission("inventory.upsert");
+  const canWarehouseUpsert = hasPermission("inventory.warehouse.upsert");
   const canReadOrgTree = hasPermission("org.tree.read");
   const legalEntityOptions = useMemo(
     () =>
@@ -140,18 +140,30 @@ export default function InventorySettingsPage() {
     [warehouseOperatingUnits]
   );
   useEffect(() => {
-    if (!filters.legalEntityId && legalEntityOptions.length === 1) {
-      const onlyValue = legalEntityOptions[0]?.value || "";
+    if (!filters.legalEntityId) {
+      const onlyValue =
+        String(toPositiveInt(workingContext?.legalEntityId) || "")
+        || (legalEntityOptions.length === 1 ? legalEntityOptions[0]?.value || "" : "");
+      if (!onlyValue) {
+        return;
+      }
+      const workingContextMatchesLegalEntity =
+        String(toPositiveInt(workingContext?.legalEntityId) || "") === onlyValue;
       setFilters((previous) => ({
         ...previous,
         legalEntityId: onlyValue,
+        operatingUnitId:
+          previous.operatingUnitId
+          || (workingContextMatchesLegalEntity
+            ? String(toPositiveInt(workingContext?.operatingUnitId) || "")
+            : ""),
       }));
       setWarehouseForm((previous) => ({
         ...previous,
         legalEntityId: onlyValue,
       }));
     }
-  }, [filters.legalEntityId, legalEntityOptions]);
+  }, [filters.legalEntityId, legalEntityOptions, workingContext]);
   useEffect(() => {
     if (!filters.legalEntityId || !canReadOrgTree) {
       setWarehouseOperatingUnits([]);
@@ -237,8 +249,13 @@ export default function InventorySettingsPage() {
   }, [canRead, filters.legalEntityId, filters.operatingUnitId, filters.ownershipScope, filters.status, l]);
   async function handleCreateWarehouse(event) {
     event.preventDefault();
-    if (!canUpsert) {
-      setWarehouseError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canWarehouseUpsert) {
+      setWarehouseError(
+        l(
+          "Missing permission: inventory.warehouse.upsert",
+          "Eksik yetki: inventory.warehouse.upsert"
+        )
+      );
       return;
     }
     setWarehouseSaving(true);
@@ -275,8 +292,13 @@ export default function InventorySettingsPage() {
   }
   async function handleUpdateWarehouse(event) {
     event.preventDefault();
-    if (!canUpsert) {
-      setEditError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canWarehouseUpsert) {
+      setEditError(
+        l(
+          "Missing permission: inventory.warehouse.upsert",
+          "Eksik yetki: inventory.warehouse.upsert"
+        )
+      );
       return;
     }
     if (!editWarehouseId) {
@@ -379,7 +401,7 @@ export default function InventorySettingsPage() {
                     ownershipScope: event.target.value,
                   }))
                 }
-                disabled={warehouseSaving || !canUpsert}
+                  disabled={warehouseSaving || !canWarehouseUpsert}
               >
                 <option value="CENTRAL">{l("Central", "Merkez")}</option>
                 <option value="OPERATING_UNIT">{l("Operating Unit", "Isletme Birimi")}</option>
@@ -399,7 +421,7 @@ export default function InventorySettingsPage() {
                   }
                   disabled={
                     warehouseSaving ||
-                    !canUpsert ||
+                    !canWarehouseUpsert ||
                     !warehouseForm.legalEntityId ||
                     !canReadOrgTree ||
                     warehouseOperatingUnitsLoading
@@ -426,7 +448,7 @@ export default function InventorySettingsPage() {
                     code: event.target.value,
                   }))
                 }
-                disabled={warehouseSaving || !canUpsert}
+                  disabled={warehouseSaving || !canWarehouseUpsert}
               />
             </label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -441,7 +463,7 @@ export default function InventorySettingsPage() {
                     name: event.target.value,
                   }))
                 }
-                disabled={warehouseSaving || !canUpsert}
+                disabled={warehouseSaving || !canWarehouseUpsert}
               />
             </label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -455,7 +477,7 @@ export default function InventorySettingsPage() {
                     inventoryReceiptPolicy: event.target.value,
                   }))
                 }
-                disabled={warehouseSaving || !canUpsert}
+                disabled={warehouseSaving || !canWarehouseUpsert}
               >
                 <option value="ALLOW_INVOICE_BEFORE_RECEIPT">
                   {l("Allow invoice before receipt", "Mal kabul olmadan fatura post edilebilir")}
@@ -476,7 +498,7 @@ export default function InventorySettingsPage() {
                     status: event.target.value,
                   }))
                 }
-                disabled={warehouseSaving || !canUpsert}
+                disabled={warehouseSaving || !canWarehouseUpsert}
               >
                 <option value="ACTIVE">{l("Active", "Aktif")}</option>
                 <option value="INACTIVE">{l("Inactive", "Pasif")}</option>
@@ -493,7 +515,7 @@ export default function InventorySettingsPage() {
                     notes: event.target.value,
                   }))
                 }
-                disabled={warehouseSaving || !canUpsert}
+                disabled={warehouseSaving || !canWarehouseUpsert}
               />
             </label>
           </div>
@@ -518,7 +540,7 @@ export default function InventorySettingsPage() {
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               disabled={
                 warehouseSaving ||
-                !canUpsert ||
+                !canWarehouseUpsert ||
                 !toPositiveInt(warehouseForm.legalEntityId) ||
                 !normalizeText(warehouseForm.code) ||
                 !normalizeText(warehouseForm.name) ||
@@ -684,7 +706,7 @@ export default function InventorySettingsPage() {
                                 code: event.target.value,
                               }))
                             }
-                            disabled={!canUpsert || editSaving}
+                            disabled={!canWarehouseUpsert || editSaving}
                           />
                         </label>
                         <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -699,7 +721,7 @@ export default function InventorySettingsPage() {
                                 name: event.target.value,
                               }))
                             }
-                            disabled={!canUpsert || editSaving}
+                            disabled={!canWarehouseUpsert || editSaving}
                           />
                         </label>
                         <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -713,7 +735,7 @@ export default function InventorySettingsPage() {
                                 inventoryReceiptPolicy: event.target.value,
                               }))
                             }
-                            disabled={!canUpsert || editSaving}
+                            disabled={!canWarehouseUpsert || editSaving}
                           >
                             <option value="ALLOW_INVOICE_BEFORE_RECEIPT">
                               {l(
@@ -740,7 +762,7 @@ export default function InventorySettingsPage() {
                                 status: event.target.value,
                               }))
                             }
-                            disabled={!canUpsert || editSaving}
+                            disabled={!canWarehouseUpsert || editSaving}
                           >
                             <option value="ACTIVE">{l("Active", "Aktif")}</option>
                             <option value="INACTIVE">{l("Inactive", "Pasif")}</option>
@@ -758,7 +780,7 @@ export default function InventorySettingsPage() {
                               notes: event.target.value,
                             }))
                           }
-                          disabled={!canUpsert || editSaving}
+                          disabled={!canWarehouseUpsert || editSaving}
                         />
                       </label>
                       {editError ? (
@@ -786,7 +808,7 @@ export default function InventorySettingsPage() {
                           className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                           disabled={
                             editSaving ||
-                            !canUpsert ||
+                            !canWarehouseUpsert ||
                             !normalizeText(editForm.code) ||
                             !normalizeText(editForm.name)
                           }
@@ -808,7 +830,7 @@ export default function InventorySettingsPage() {
                           setEditError("");
                           setEditMessage("");
                         }}
-                        disabled={!canUpsert}
+                        disabled={!canWarehouseUpsert}
                       >
                         {l("Edit", "Duzenle")}
                       </button>

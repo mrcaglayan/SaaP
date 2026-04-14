@@ -69,7 +69,7 @@ This guide is for support and finance users operating the Cari UI modules:
 
 - Access issues on stock reflection screens should be checked against:
   - `inventory.read`
-  - `inventory.upsert`
+  - the blocked action's granular inventory permission such as `inventory.materialize`, `inventory.movement.reverse`, `inventory.warehouse.upsert`, or the `inventory.transfer.*` family
 - Item-card access is separate:
   - `item.card.read`
   - `item.card.upsert`

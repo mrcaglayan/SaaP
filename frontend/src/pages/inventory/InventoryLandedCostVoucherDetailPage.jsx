@@ -156,7 +156,7 @@ export default function InventoryLandedCostVoucherDetailPage() {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
   const canRead = hasPermission("inventory.read");
-  const canUpsert = hasPermission("inventory.upsert");
+  const canLandedCostUpsert = hasPermission("inventory.landed_cost.upsert");
   const canReadJournal = hasPermission("gl.journal.read");
   const canReadCari = hasPermission("cari.doc.read");
   const [loading, setLoading] = useState(false);
@@ -204,7 +204,7 @@ export default function InventoryLandedCostVoucherDetailPage() {
   const postedJournal = voucher?.journalAudit?.postedJournal || null;
   const reversalJournal = voucher?.journalAudit?.reversalJournal || null;
   const canOpenReverseDrawer =
-    canUpsert && String(voucher?.status || "").toUpperCase() === "POSTED";
+    canLandedCostUpsert && String(voucher?.status || "").toUpperCase() === "POSTED";
   const canSubmitReverse =
     canOpenReverseDrawer && !voucher?.hasReversalDependencies;
   const openJournalRoute = buildJournalRoute(voucher?.postedJournalEntryId);
@@ -307,8 +307,13 @@ export default function InventoryLandedCostVoucherDetailPage() {
     setVoucher(response || null);
   }
   async function handleReverseConfirm() {
-    if (!canUpsert) {
-      setReverseError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canLandedCostUpsert) {
+      setReverseError(
+        l(
+          "Missing permission: inventory.landed_cost.upsert",
+          "Eksik yetki: inventory.landed_cost.upsert"
+        )
+      );
       return;
     }
     if (!canSubmitReverse) {
@@ -1316,8 +1321,11 @@ export default function InventoryLandedCostVoucherDetailPage() {
             onClick={() => setReverseOpen(true)}
             disabled={!canOpenReverseDrawer}
             title={
-              !canUpsert
-                ? l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert")
+              !canLandedCostUpsert
+                ? l(
+                    "Missing permission: inventory.landed_cost.upsert",
+                    "Eksik yetki: inventory.landed_cost.upsert"
+                  )
                 : String(voucher?.status || "").toUpperCase() !== "POSTED"
                   ? l("Only posted vouchers can be reversed.", "Yalniz kaydedilmis voucher terslenebilir.")
                   : ""
@@ -1337,11 +1345,11 @@ export default function InventoryLandedCostVoucherDetailPage() {
           {l("Missing permission: inventory.read", "Eksik yetki: inventory.read")}
         </div>
       ) : null}
-      {canRead && !canUpsert && String(voucher?.status || "").toUpperCase() === "POSTED" ? (
+      {canRead && !canLandedCostUpsert && String(voucher?.status || "").toUpperCase() === "POSTED" ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           {l(
-            "You can open this detail page with inventory.read, but Reverse and any later mutating detail actions require inventory.upsert.",
-            "Bu detay sayfasini inventory.read ile acabilirsiniz; ancak Reverse ve sonraki tum degistirici detay islemleri inventory.upsert gerektirir."
+            "You can open this detail page with inventory.read, but Reverse and any later mutating detail actions require inventory.landed_cost.upsert.",
+            "Bu detay sayfasini inventory.read ile acabilirsiniz; ancak Reverse ve sonraki tum degistirici detay islemleri inventory.landed_cost.upsert gerektirir."
           )}
         </div>
       ) : null}
@@ -1463,11 +1471,11 @@ export default function InventoryLandedCostVoucherDetailPage() {
                 <div className="font-semibold text-slate-900">{l("Journal Ref", "Yevmiye ref")}</div>
                 <div className="mt-2">{voucher?.postedJournalNo || postedJournal?.journalNo || "-"}</div>
               </div>
-              {!canUpsert ? (
+              {!canLandedCostUpsert ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
                   {l(
-                    "Missing permission: inventory.upsert. You can review reversal readiness here, but you cannot submit the reverse action.",
-                    "Eksik yetki: inventory.upsert. Ters kayit hazirligini burada inceleyebilirsiniz ancak islemi gonderemezsiniz."
+                    "Missing permission: inventory.landed_cost.upsert. You can review reversal readiness here, but you cannot submit the reverse action.",
+                    "Eksik yetki: inventory.landed_cost.upsert. Ters kayit hazirligini burada inceleyebilirsiniz ancak islemi gonderemezsiniz."
                   )}
                 </div>
               ) : null}

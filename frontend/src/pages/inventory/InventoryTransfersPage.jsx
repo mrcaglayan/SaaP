@@ -204,14 +204,32 @@ function formatLifecycleValue(at, userId, translate = (en) => en) {
   return parts.join(" | ");
 }
 
+function getMissingPermissionMessage(permissionCode, l) {
+  return l(`Missing permission: ${permissionCode}`, `Eksik yetki: ${permissionCode}`);
+}
+
 export default function InventoryTransfersPage() {
-  const { hasPermission } = useAuth();
+  const { entitlements, hasPermission } = useAuth();
   const { l } = useI18n();
-  const { legalEntities: workingContextLegalEntities } = useWorkingContext();
+  const { legalEntities: workingContextLegalEntities, workingContext } = useWorkingContext();
   const [searchParams] = useSearchParams();
   const canRead = hasPermission("inventory.read");
-  const canUpsert = hasPermission("inventory.upsert");
+  const canCreateTransfer = hasPermission("inventory.transfer.create");
+  const canApproveTransfer = hasPermission("inventory.transfer.approve");
+  const canShipTransfer = hasPermission("inventory.transfer.ship");
+  const canReceiveTransfer = hasPermission("inventory.transfer.receive");
+  const canCancelTransfer = hasPermission("inventory.transfer.cancel");
+  const canReverseTransfer = hasPermission("inventory.transfer.reverse");
+  const canTransferEvidenceUpsert = hasPermission("inventory.transfer.evidence.upsert");
   const canReadItemCards = hasPermission("item.card.read");
+  const workingContextLegalEntityId = useMemo(
+    () => String(toPositiveInt(workingContext?.legalEntityId) || ""),
+    [workingContext?.legalEntityId]
+  );
+  const workingContextOperatingUnitId = useMemo(
+    () => String(toPositiveInt(workingContext?.operatingUnitId) || ""),
+    [workingContext?.operatingUnitId]
+  );
   const deepLinkedLegalEntityId = useMemo(
     () => String(toPositiveInt(searchParams.get("legalEntityId")) || ""),
     [searchParams]
@@ -262,6 +280,23 @@ export default function InventoryTransfersPage() {
         .filter(Boolean),
     [workingContextLegalEntities]
   );
+  const inventoryEntitlementOperatingUnitIds = useMemo(() => {
+    const rows = Array.isArray(entitlements?.permissions) ? entitlements.permissions : [];
+    return Array.from(
+      new Set(
+        rows
+          .filter((row) => normalizeText(row?.code) === "inventory.read")
+          .filter((row) => normalizeText(row?.scopeType).toUpperCase() === "OPERATING_UNIT")
+          .flatMap((row) =>
+            Array.isArray(row?.scopeIds)
+              ? row.scopeIds.map((scopeId) => String(toPositiveInt(scopeId) || "")).filter(Boolean)
+              : []
+          )
+      )
+    );
+  }, [entitlements?.permissions]);
+  const singleInventoryEntitlementOperatingUnitId =
+    inventoryEntitlementOperatingUnitIds.length === 1 ? inventoryEntitlementOperatingUnitIds[0] : "";
   const [filters, setFilters] = useState({
     legalEntityId: "",
     operatingUnitId: deepLinkedOperatingUnitId,
@@ -270,12 +305,36 @@ export default function InventoryTransfersPage() {
     targetWarehouseId: "",
     q: "",
   });
+  const resolvedInventoryOperatingUnitId = useMemo(() => {
+    if (deepLinkedOperatingUnitId) {
+      return deepLinkedOperatingUnitId;
+    }
+    if (
+      workingContextOperatingUnitId &&
+      (!filters.legalEntityId
+        || (workingContextLegalEntityId && filters.legalEntityId === workingContextLegalEntityId))
+    ) {
+      return workingContextOperatingUnitId;
+    }
+    if (singleInventoryEntitlementOperatingUnitId && (!filters.legalEntityId || legalEntityOptions.length === 1)) {
+      return singleInventoryEntitlementOperatingUnitId;
+    }
+    return "";
+  }, [
+    deepLinkedOperatingUnitId,
+    filters.legalEntityId,
+    legalEntityOptions.length,
+    singleInventoryEntitlementOperatingUnitId,
+    workingContextLegalEntityId,
+    workingContextOperatingUnitId,
+  ]);
+  const effectiveOperatingUnitId = filters.operatingUnitId || resolvedInventoryOperatingUnitId;
   const activeTransferScopeParams = useMemo(
     () => ({
       legalEntityId: filters.legalEntityId || undefined,
-      operatingUnitId: filters.operatingUnitId || undefined,
+      operatingUnitId: effectiveOperatingUnitId || undefined,
     }),
-    [filters.legalEntityId, filters.operatingUnitId]
+    [effectiveOperatingUnitId, filters.legalEntityId]
   );
   const [form, setForm] = useState(() => createTransferForm());
   const [warehouseRows, setWarehouseRows] = useState([]);
@@ -304,10 +363,15 @@ export default function InventoryTransfersPage() {
   const [evidenceDeletingId, setEvidenceDeletingId] = useState(null);
   const [evidenceDownloadingId, setEvidenceDownloadingId] = useState(null);
   useEffect(() => {
-    if (filters.legalEntityId || legalEntityOptions.length !== 1) {
+    if (deepLinkedLegalEntityId || filters.legalEntityId) {
       return;
     }
-    const onlyValue = legalEntityOptions[0]?.value || "";
+    const onlyValue =
+      workingContextLegalEntityId ||
+      (legalEntityOptions.length === 1 ? legalEntityOptions[0]?.value || "" : "");
+    if (!onlyValue) {
+      return;
+    }
     setFilters((previous) => ({
       ...previous,
       legalEntityId: onlyValue,
@@ -316,7 +380,7 @@ export default function InventoryTransfersPage() {
       ...previous,
       legalEntityId: onlyValue,
     }));
-  }, [filters.legalEntityId, legalEntityOptions]);
+  }, [deepLinkedLegalEntityId, filters.legalEntityId, legalEntityOptions, workingContextLegalEntityId]);
   useEffect(() => {
     if (!deepLinkedLegalEntityId) {
       return;
@@ -401,7 +465,7 @@ export default function InventoryTransfersPage() {
   }, [filters.legalEntityId]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(filters.legalEntityId);
-    const operatingUnitId = toPositiveInt(filters.operatingUnitId);
+    const operatingUnitId = toPositiveInt(effectiveOperatingUnitId);
     if (!canRead || !legalEntityId) {
       setWarehouseRows([]);
       setItemCardRows([]);
@@ -450,7 +514,7 @@ export default function InventoryTransfersPage() {
     return () => {
       active = false;
     };
-  }, [canRead, canReadItemCards, filters.legalEntityId, filters.operatingUnitId, l]);
+  }, [canRead, canReadItemCards, effectiveOperatingUnitId, filters.legalEntityId, l]);
   useEffect(() => {
     if (!canRead) {
       setRows([]);
@@ -465,7 +529,7 @@ export default function InventoryTransfersPage() {
       try {
         const response = await listInventoryTransfers({
           legalEntityId: filters.legalEntityId || undefined,
-          operatingUnitId: filters.operatingUnitId || undefined,
+          operatingUnitId: effectiveOperatingUnitId || undefined,
           status: filters.status || undefined,
           sourceWarehouseId: filters.sourceWarehouseId || undefined,
           targetWarehouseId: filters.targetWarehouseId || undefined,
@@ -506,7 +570,7 @@ export default function InventoryTransfersPage() {
     return () => {
       active = false;
     };
-  }, [canRead, filters, l]);
+  }, [canRead, effectiveOperatingUnitId, filters, l]);
   useEffect(() => {
     const transferId = toPositiveInt(selectedTransferId);
     if (!canRead || !transferId) {
@@ -617,6 +681,37 @@ export default function InventoryTransfersPage() {
       })),
     [itemCardRows]
   );
+  const transferActionPermissions = useMemo(
+    () => ({
+      approve: {
+        allowed: canApproveTransfer,
+        permissionCode: "inventory.transfer.approve",
+      },
+      ship: {
+        allowed: canShipTransfer,
+        permissionCode: "inventory.transfer.ship",
+      },
+      receive: {
+        allowed: canReceiveTransfer,
+        permissionCode: "inventory.transfer.receive",
+      },
+      cancel: {
+        allowed: canCancelTransfer,
+        permissionCode: "inventory.transfer.cancel",
+      },
+      reverse: {
+        allowed: canReverseTransfer,
+        permissionCode: "inventory.transfer.reverse",
+      },
+    }),
+    [
+      canApproveTransfer,
+      canCancelTransfer,
+      canReceiveTransfer,
+      canReverseTransfer,
+      canShipTransfer,
+    ]
+  );
   const selectedTransferLifecycleRows = selectedRow
     ? [
         {
@@ -693,37 +788,42 @@ export default function InventoryTransfersPage() {
       key: "approve",
       label: l("Approve", "Onayla"),
       enabled: Boolean(selectedRow) && canApprove(selectedRow),
+      ...transferActionPermissions.approve,
       className: "rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60",
     },
     {
       key: "ship",
       label: l("Ship", "Sevk et"),
       enabled: Boolean(selectedRow) && canShip(selectedRow),
+      ...transferActionPermissions.ship,
       className: "rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60",
     },
     {
       key: "receive",
       label: l("Receive", "Teslim al"),
       enabled: Boolean(selectedRow) && canReceive(selectedRow),
+      ...transferActionPermissions.receive,
       className: "rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60",
     },
     {
       key: "cancel",
       label: l("Cancel", "Iptal et"),
       enabled: Boolean(selectedRow) && canCancel(selectedRow),
+      ...transferActionPermissions.cancel,
       className: "rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60",
     },
     {
       key: "reverse",
       label: l("Reverse", "Ters kaydet"),
       enabled: Boolean(selectedRow) && canReverse(selectedRow),
+      ...transferActionPermissions.reverse,
       className: "rounded-lg border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60",
     },
   ];
   async function reloadTransfers(nextSelectedTransferId = selectedTransferId) {
     const response = await listInventoryTransfers({
       legalEntityId: filters.legalEntityId || undefined,
-      operatingUnitId: filters.operatingUnitId || undefined,
+      operatingUnitId: effectiveOperatingUnitId || undefined,
       status: filters.status || undefined,
       sourceWarehouseId: filters.sourceWarehouseId || undefined,
       targetWarehouseId: filters.targetWarehouseId || undefined,
@@ -784,8 +884,8 @@ export default function InventoryTransfersPage() {
   }
   async function handleCreateTransfer(event) {
     event.preventDefault();
-    if (!canUpsert) {
-      setFormError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canCreateTransfer) {
+      setFormError(getMissingPermissionMessage("inventory.transfer.create", l));
       return;
     }
     setSaving(true);
@@ -837,10 +937,6 @@ export default function InventoryTransfersPage() {
     if (!selectedRow?.id) {
       return;
     }
-    if (!canUpsert) {
-      setActionError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
-      return;
-    }
     const transferId = Number(selectedRow.id);
     const actionMap = {
       approve: {
@@ -886,6 +982,11 @@ export default function InventoryTransfersPage() {
     if (!action) {
       return;
     }
+    const permissionState = transferActionPermissions[actionKey];
+    if (!permissionState?.allowed) {
+      setActionError(getMissingPermissionMessage(permissionState?.permissionCode || "", l));
+      return;
+    }
     setActionLoading(true);
     setActionError("");
     setActionMessage("");
@@ -907,11 +1008,11 @@ export default function InventoryTransfersPage() {
   }
   async function handleAttachEvidence() {
     const transferId = toPositiveInt(selectedRow?.id);
-    if (!transferId || !canUpsert) {
+    if (!transferId || !canTransferEvidenceUpsert) {
       setEvidenceError(
         l(
-          "Evidence attach requires a selected transfer and inventory.upsert permission.",
-          "Kanit ekleme icin secili transfer ve inventory.upsert yetkisi gerekir."
+          "Evidence attach requires a selected transfer and inventory.transfer.evidence.upsert permission.",
+          "Kanit ekleme icin secili transfer ve inventory.transfer.evidence.upsert yetkisi gerekir."
         )
       );
       return;
@@ -990,11 +1091,11 @@ export default function InventoryTransfersPage() {
   async function handleDeleteEvidence(evidenceIdRaw) {
     const transferId = toPositiveInt(selectedRow?.id);
     const evidenceId = toPositiveInt(evidenceIdRaw);
-    if (!transferId || !evidenceId || !canUpsert) {
+    if (!transferId || !evidenceId || !canTransferEvidenceUpsert) {
       setEvidenceError(
         l(
-          "Evidence delete requires a selected transfer, valid evidence id, and inventory.upsert permission.",
-          "Kanit silme icin secili transfer, gecerli kanit kimligi ve inventory.upsert yetkisi gerekir."
+          "Evidence delete requires a selected transfer, valid evidence id, and inventory.transfer.evidence.upsert permission.",
+          "Kanit silme icin secili transfer, gecerli kanit kimligi ve inventory.transfer.evidence.upsert yetkisi gerekir."
         )
       );
       return;
@@ -1048,6 +1149,7 @@ export default function InventoryTransfersPage() {
                   setFilters((previous) => ({
                     ...previous,
                     legalEntityId: event.target.value,
+                    operatingUnitId: "",
                     sourceWarehouseId: "",
                     targetWarehouseId: "",
                   }))
@@ -1369,13 +1471,19 @@ export default function InventoryTransfersPage() {
               <button
                 type="submit"
                 className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={saving}
+                disabled={saving || !canCreateTransfer}
+                title={!canCreateTransfer ? getMissingPermissionMessage("inventory.transfer.create", l) : ""}
               >
                 {saving
                   ? l("Creating...", "Olusturuluyor...")
                   : l("Create transfer", "Transfer olustur")}
               </button>
             </div>
+            {!canCreateTransfer ? (
+              <p className="text-xs text-slate-500">
+                {getMissingPermissionMessage("inventory.transfer.create", l)}
+              </p>
+            ) : null}
           </form>
         </section>
 
@@ -1738,16 +1846,20 @@ export default function InventoryTransfersPage() {
                         key={`transfer-action-${action.key}`}
                         type="button"
                         className={action.className}
-                        disabled={actionLoading || !canUpsert || !action.enabled}
+                        disabled={actionLoading || !action.allowed || !action.enabled}
+                        title={!action.allowed ? getMissingPermissionMessage(action.permissionCode, l) : ""}
                         onClick={() => void runTransferAction(action.key)}
                       >
                         {action.label}
                       </button>
                     ))}
                   </div>
-                  {!canUpsert ? (
+                  {selectedTransferActions.some((action) => action.enabled && !action.allowed) ? (
                     <p className="mt-2 text-xs text-slate-500">
-                      {l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert")}
+                      {selectedTransferActions
+                        .filter((action) => action.enabled && !action.allowed)
+                        .map((action) => getMissingPermissionMessage(action.permissionCode, l))
+                        .join(" | ")}
                     </p>
                   ) : null}
                 </div>
@@ -1791,7 +1903,7 @@ export default function InventoryTransfersPage() {
                         onChange={(event) =>
                           setEvidenceUploadFile(event.target.files?.[0] || null)
                         }
-                        disabled={evidenceUploading || !canUpsert}
+                        disabled={evidenceUploading || !canTransferEvidenceUpsert}
                       />
                     </label>
                     <label className="grid gap-1 text-sm text-slate-600">
@@ -1800,7 +1912,7 @@ export default function InventoryTransfersPage() {
                         className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
                         value={evidenceNote}
                         onChange={(event) => setEvidenceNote(event.target.value)}
-                        disabled={evidenceUploading || !canUpsert}
+                        disabled={evidenceUploading || !canTransferEvidenceUpsert}
                         placeholder={l("Optional evidence note", "Istege bagli kanit notu")}
                       />
                     </label>
@@ -1808,7 +1920,11 @@ export default function InventoryTransfersPage() {
                       <button
                         type="button"
                         className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={!evidenceUploadFile || evidenceUploading || !canUpsert}
+                        disabled={
+                          !evidenceUploadFile
+                          || evidenceUploading
+                          || !canTransferEvidenceUpsert
+                        }
                         onClick={() => void handleAttachEvidence()}
                       >
                         {evidenceUploading
@@ -1818,12 +1934,9 @@ export default function InventoryTransfersPage() {
                     </div>
                   </div>
 
-                  {!canUpsert ? (
+                  {!canTransferEvidenceUpsert ? (
                     <p className="mt-2 text-xs text-slate-500">
-                      {l(
-                        "Missing permission: inventory.upsert",
-                        "Eksik yetki: inventory.upsert"
-                      )}
+                      {getMissingPermissionMessage("inventory.transfer.evidence.upsert", l)}
                     </p>
                   ) : null}
                   {evidenceLoading ? (
@@ -1881,7 +1994,12 @@ export default function InventoryTransfersPage() {
                               <button
                                 type="button"
                                 className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                disabled={!canUpsert || isDeleting}
+                                disabled={!canTransferEvidenceUpsert || isDeleting}
+                                title={
+                                  !canTransferEvidenceUpsert
+                                    ? getMissingPermissionMessage("inventory.transfer.evidence.upsert", l)
+                                    : ""
+                                }
                                 onClick={() => void handleDeleteEvidence(row.id)}
                               >
                                 {isDeleting

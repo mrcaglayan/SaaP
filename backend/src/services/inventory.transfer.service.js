@@ -1505,6 +1505,33 @@ function normalizeTransferStatus(value, fieldName = "status") {
   return normalized;
 }
 
+function mapTransferScopeFromRow(row, action = "LEGAL_ENTITY") {
+  if (!row) {
+    return null;
+  }
+  const normalizedAction = normalizeUpperText(action, 40) || "LEGAL_ENTITY";
+  const legalEntityId = parsePositiveInt(row.legal_entity_id);
+  if (!legalEntityId) {
+    return null;
+  }
+  if (normalizedAction === "SOURCE") {
+    const sourceOperatingUnitId = parsePositiveInt(row.source_operating_unit_id);
+    return sourceOperatingUnitId
+      ? { scopeType: "OPERATING_UNIT", scopeId: sourceOperatingUnitId }
+      : { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+  }
+  if (normalizedAction === "TARGET") {
+    const targetOperatingUnitId = parsePositiveInt(row.target_operating_unit_id);
+    return targetOperatingUnitId
+      ? { scopeType: "OPERATING_UNIT", scopeId: targetOperatingUnitId }
+      : { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+  }
+  return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+}
+
+/**
+ * Resolve the transfer's legacy legal-entity scope for read and governance flows.
+ */
 export async function resolveInventoryTransferScope(transferId, tenantId, runQuery = query) {
   const normalizedTransferId = parsePositiveInt(transferId);
   const normalizedTenantId = parsePositiveInt(tenantId);
@@ -1516,10 +1543,56 @@ export async function resolveInventoryTransferScope(transferId, tenantId, runQue
     transferId: normalizedTransferId,
     runQuery,
   });
-  const legalEntityId = parsePositiveInt(row?.legal_entity_id);
-  return legalEntityId
-    ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId }
-    : null;
+  return mapTransferScopeFromRow(row, "LEGAL_ENTITY");
+}
+
+/**
+ * Resolve the transfer action scope from the persisted source/target ownership context.
+ */
+export async function resolveInventoryTransferActionScope(
+  transferId,
+  tenantId,
+  action = "LEGAL_ENTITY",
+  runQuery = query
+) {
+  const normalizedTransferId = parsePositiveInt(transferId);
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  if (!normalizedTransferId || !normalizedTenantId) {
+    return null;
+  }
+  const row = await fetchTransferRowById({
+    tenantId: normalizedTenantId,
+    transferId: normalizedTransferId,
+    runQuery,
+  });
+  return mapTransferScopeFromRow(row, action);
+}
+
+/**
+ * Resolve the distinct source/target scopes that may participate in transfer evidence writes.
+ */
+export async function resolveInventoryTransferParticipantScopes(
+  transferId,
+  tenantId,
+  runQuery = query
+) {
+  const normalizedTransferId = parsePositiveInt(transferId);
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  if (!normalizedTransferId || !normalizedTenantId) {
+    return [];
+  }
+  const row = await fetchTransferRowById({
+    tenantId: normalizedTenantId,
+    transferId: normalizedTransferId,
+    runQuery,
+  });
+  const scopes = [
+    mapTransferScopeFromRow(row, "SOURCE"),
+    mapTransferScopeFromRow(row, "TARGET"),
+  ].filter(Boolean);
+  return Array.from(
+    new Map(scopes.map((scope) => [`${scope.scopeType}:${scope.scopeId}`, scope])).values()
+  );
 }
 
 /**

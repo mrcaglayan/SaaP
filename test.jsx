@@ -91,7 +91,7 @@ export default function InventorySettingsPage() {
   const { l } = useI18n();
   const { legalEntities: workingContextLegalEntities } = useWorkingContext();
   const canRead = hasPermission("inventory.read");
-  const canUpsert = hasPermission("inventory.upsert");
+  const canWarehouseUpsert = hasPermission("inventory.warehouse.upsert");
   const canReadOrgTree = hasPermission("org.tree.read");
   const legalEntityOptions = useMemo(
     () =>
@@ -237,8 +237,13 @@ export default function InventorySettingsPage() {
   }, [canRead, filters.legalEntityId, filters.operatingUnitId, filters.ownershipScope, filters.status, l]);
   async function handleCreateWarehouse(event) {
     event.preventDefault();
-    if (!canUpsert) {
-      setWarehouseError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canWarehouseUpsert) {
+      setWarehouseError(
+        l(
+          "Missing permission: inventory.warehouse.upsert",
+          "Eksik yetki: inventory.warehouse.upsert"
+        )
+      );
       return;
     }
     setWarehouseSaving(true);
@@ -275,8 +280,13 @@ export default function InventorySettingsPage() {
   }
   async function handleUpdateWarehouse(event) {
     event.preventDefault();
-    if (!canUpsert) {
-      setEditError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
+    if (!canWarehouseUpsert) {
+      setEditError(
+        l(
+          "Missing permission: inventory.warehouse.upsert",
+          "Eksik yetki: inventory.warehouse.upsert"
+        )
+      );
       return;
     }
     if (!editWarehouseId) {

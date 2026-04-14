@@ -676,8 +676,23 @@ function assertSourceGuards(
   );
   assertContains(
     inventoryRouteSource,
+    'requirePermission("inventory.warehouse.upsert"',
+    "Inventory routes must guard warehouse writes with inventory.warehouse.upsert"
+  );
+  assertContains(
+    inventoryRouteSource,
+    'requirePermission("inventory.materialize"',
+    "Inventory routes must guard materialization writes with inventory.materialize"
+  );
+  assertContains(
+    inventoryRouteSource,
+    'requirePermission("inventory.movement.reverse"',
+    "Inventory routes must guard movement reversals with inventory.movement.reverse"
+  );
+  assertNotContains(
+    inventoryRouteSource,
     'requirePermission("inventory.upsert"',
-    "Inventory routes must guard writes with inventory.upsert"
+    "Inventory routes must not keep the retired inventory.upsert write guard"
   );
   assertContains(
     itemRouteSource,
@@ -696,8 +711,18 @@ function assertSourceGuards(
   );
   assertContains(
     seedSource,
-    '["inventory.read", "Read inventory warehouses, stock links, movements, and cost layers"]',
+    '"inventory.read"',
     "seedCore must define inventory.read"
+  );
+  assertContains(
+    seedSource,
+    '"inventory.materialize"',
+    "seedCore must define inventory.materialize"
+  );
+  assertContains(
+    seedSource,
+    '"inventory.warehouse.upsert"',
+    "seedCore must define inventory.warehouse.upsert"
   );
   assertContains(
     regressionScriptSource,

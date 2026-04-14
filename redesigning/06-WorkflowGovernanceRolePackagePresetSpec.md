@@ -156,7 +156,7 @@ Show ready-made templates like:
 These current roles should remain in runtime/backend for compatibility, but be hidden from normal fresh-tenant admin pickers:
 
 - TenantAdmin
-- APDocumentPoster
+- Legacy broad AP posting role
 - GroupController
 - CountryController
 - EntityAccountant (legacy inline broad role)
@@ -228,7 +228,7 @@ These packages apply across all workflow families.
 
 - AP already has the strongest current split between submit/edit, approve, and post
 - group-scoped AP posting is valid in the target model but should be introduced as a clean new package, not by using legacy GroupController
-- APDocumentPoster should be hidden from fresh-tenant UI as a compatibility role
+- Legacy broad AP posting role should be hidden from fresh-tenant UI as a compatibility role
 
 ---
 
