@@ -256,7 +256,7 @@
 #### Validators and routes
 - [x] Add create, list, detail, approve, ship, receive, cancel, reverse validators
 - [x] Reuse existing `inventory.read` for transfer list/detail access
-- [x] Reuse existing `inventory.upsert` for transfer create/approve/ship/receive/cancel/reverse access
+- [x] At this tracker stage, reuse existing `inventory.upsert` for transfer create/approve/ship/receive/cancel/reverse access; later superseded by PR-64 granular `inventory.transfer.*` permissions
 - [x] Do not introduce new transfer-specific permission codes in v1
 - [x] Enforce source warehouse required
 - [x] Enforce target warehouse required
@@ -629,7 +629,7 @@
 
 #### Evidence
 - [x] Reuse existing `inventory.read` for transfer evidence list/download
-- [x] Reuse existing `inventory.upsert` for transfer evidence create/upload/delete
+- [x] At this tracker stage, reuse existing `inventory.upsert` for transfer evidence create/upload/delete; later superseded by PR-64 `inventory.transfer.evidence.upsert`
 - [x] Extend evidence service to support `INVENTORY_TRANSFER`
 - [x] Add transfer row lookup helper
 - [x] Add transfer scope assertion helper
@@ -875,7 +875,7 @@
 - [x] Add texts for transfer lifecycle
 - [x] Add texts for transfer evidence
 - [x] Add texts for cross-context settlement warnings / errors
-- [x] Keep transfer route/sidebar gating on existing `inventory.read` / `inventory.upsert` permission family
+- [x] Keep transfer route/sidebar gating on the then-current `inventory.read` / `inventory.upsert` permission family; later superseded by PR-64 granular transfer permissions
 - [x] Finalize `messages.sidebar.byPath` TR/EN labels for the transfer route
 
 ### Acceptance

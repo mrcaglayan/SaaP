@@ -91,9 +91,9 @@ Goal:
 - Decouple inventory and item-card authorization from CARI card authorization.
 
 Deliverables:
-- Introduce dedicated permission codes, at minimum:
+- Introduce dedicated permission codes, at minimum for this tracker stage:
   - `inventory.read`
-  - `inventory.upsert`
+  - `inventory.upsert` (historical for this tracker; later superseded by PR-64 granular inventory execution/setup permissions)
   - `item.card.read`
   - `item.card.upsert`
 - Update backend route guards for:

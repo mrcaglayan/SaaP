@@ -103,7 +103,7 @@
   - `docs/specs/cari-line-model-regression-matrix.md`
 - [x] CARI and inventory permissions are split today:
   - CARI routes use `cari.doc.*`
-  - inventory routes/pages use `inventory.read` / `inventory.upsert`
+  - inventory routes/pages used `inventory.read` / `inventory.upsert` at that tracker stage; later superseded by PR-64 granular inventory permissions
 - [x] Do not add repair-only permission, page, or navigation work in this rollout; keep the normal queue under its existing inventory permissions only.
 - [x] Keep warehouse lookup / preview route ownership in `backend/src/routes/cari.document.routes.js` and reuse shared inventory-domain logic underneath; do not couple `/app/cari-belgeler` to broad inventory-page permissions just to support warehouse binding.
 

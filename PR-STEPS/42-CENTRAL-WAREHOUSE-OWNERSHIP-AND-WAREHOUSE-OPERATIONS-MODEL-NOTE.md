@@ -193,9 +193,19 @@ Suggested split:
 
 - `inventory.read`
   - admin/read-model style visibility
-- `inventory.upsert`
-  - warehouse master / admin mutation
-- future worker-scoped permissions
+- historical draft placeholder: `inventory.upsert`
+  - this note predated PR-64 and used `inventory.upsert` as a broad warehouse/admin placeholder
+- current warehouse/admin mutation
+  - `inventory.warehouse.upsert`
+- current execution permissions
+  - `inventory.materialize`
+  - `inventory.movement.reverse`
+  - `inventory.transfer.create`
+  - `inventory.transfer.ship`
+  - `inventory.transfer.receive`
+  - `inventory.transfer.cancel`
+  - `inventory.transfer.evidence.upsert`
+- future worker-scoped refinements can still go narrower later
   - `inventory.ops.receive`
   - `inventory.ops.ship`
   - `inventory.ops.transfer.receive`

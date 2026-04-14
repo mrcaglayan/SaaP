@@ -160,10 +160,10 @@ The following repo-level implementation choices are also locked:
      - `frontend/src/pages/inventory/InventoryLandedCostVoucherNewPage.jsx`
      - `frontend/src/pages/inventory/InventoryLandedCostVoucherDetailPage.jsx`
 17. `Permission model`
-   - V1 should reuse the current inventory module permission model: `inventory.read` and `inventory.upsert`.
-   - Page access and action access should follow the current inventory page pattern:
-     - list / detail / preview read use `inventory.read`
-     - new / save draft / post / reverse actions use `inventory.upsert`
+   - This draft originally proposed reusing the then-current inventory module permission model: `inventory.read` and `inventory.upsert`.
+   - Later runtime implementation superseded that split via PR-64:
+     - list / detail / preview read still use `inventory.read`
+     - landed-cost create / post / reverse actions now use `inventory.landed_cost.upsert`
    - Missing action permission should be surfaced inline rather than hidden implicitly.
    - A finance-only permission split is a possible follow-up, not a V1 requirement.
 18. `Frontend route and page model`
@@ -692,9 +692,9 @@ Avoid:
     - total consumed adjustment
     - warnings / blockers
 22. Keep this workflow separate from the Track 40 same-document line editor and separate from the generic inventory movements workbench.
-23. Frontend permission gating should mirror the current inventory page behavior:
+23. Frontend permission gating in this draft mirrored the then-current inventory page behavior:
     - list / detail / preview read use `inventory.read`
-    - `New`, `Save Draft`, `Post Voucher`, and `Reverse Voucher` actions require `inventory.upsert`
+    - mutating landed-cost actions were originally described under `inventory.upsert`, but later implementation uses `inventory.landed_cost.upsert`
     - missing action permission should be shown inline rather than hidden implicitly
 24. New landed-cost pages should follow the repo's existing `useI18n()` pattern; visible labels, banners, disabled reasons, and action messages should be localized rather than hard-coded.
    - Explicit copy shown in this tracker, such as `Stock Landed Cost Vouchers`, `New Landed Cost Voucher`, `Review & Post`, or `Blocked by downstream dependency`, should be treated as example/localizable UI wording rather than literal hard-coded strings.
@@ -800,9 +800,9 @@ Avoid:
     - reversal blocker visibility
     - source-document blocker state
     - audit timestamps
-12. Detail page access/action gating should stay explicit and mirror current inventory behavior:
+12. Detail page access/action gating should stay explicit:
     - detail page open/read uses `inventory.read`
-    - `Reverse` and any future mutating detail actions require `inventory.upsert`
+    - this draft originally grouped `Reverse` and other mutating detail actions under `inventory.upsert`, but later implementation uses `inventory.landed_cost.upsert`
     - missing mutating permission should be surfaced inline rather than hidden implicitly
 13. Reverse flow must use a side drawer or dedicated confirmation surface and not a tiny modal.
 14. Reverse drawer should:
