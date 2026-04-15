@@ -305,8 +305,12 @@ const ROLE_CATALOG = Object.freeze({
     code: "Branch Fixed Asset Operator",
     category: "scoped",
     summary:
-      "Creates and updates branch-owned fixed-asset drafts while keeping posting, disposal, and depreciation governance at entity scope.",
-    capabilities: ["Branch asset drafting", "Fixed-asset maintenance", "Custodian-aware updates"],
+      "Creates, updates, and activates branch-owned fixed assets while keeping disposal, transfer, and depreciation governance at entity scope.",
+    capabilities: [
+      "Branch asset drafting",
+      "Branch asset activation",
+      "Custodian-aware updates",
+    ],
     recommendedScopes: ["OPERATING_UNIT"],
     sortOrder: 115,
   },

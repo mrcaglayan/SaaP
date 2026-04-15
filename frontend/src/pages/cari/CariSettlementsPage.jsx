@@ -6,6 +6,7 @@ import {
   applyCariBankSettlement,
   describeCariSettlementContext,
   getCariSettlementErrorHint,
+  getCariSettlementOpenItemsPreview,
   reverseCariSettlement,
 } from "../../api/cariSettlements.js";
 import {
@@ -20,13 +21,13 @@ import { listFxRates } from "../../api/fxAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import {
   getCariCounterpartyStatementReport,
-  getCariOpenItemsReport,
 } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import Combobox from "../../components/Combobox.jsx";
 import MoneyText from "../../components/MoneyText.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
 import {
@@ -565,6 +566,7 @@ export default function CariSettlementsPage({ direction = "" }) {
   );
   const hasFixedRouteDirection = Boolean(fixedRouteDirection);
   const { hasPermission } = useAuth();
+  const { workingContext } = useWorkingContext();
   const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
@@ -1392,8 +1394,9 @@ export default function CariSettlementsPage({ direction = "" }) {
       setPreviewLoading(true);
       setPreviewError("");
       try {
-        const payload = await getCariOpenItemsReport({
+        const payload = await getCariSettlementOpenItemsPreview({
           legalEntityId: previewLegalEntityId,
+          operatingUnitId: toPositiveInt(workingContext?.operatingUnitId) || undefined,
           counterpartyId: previewCounterpartyId,
           direction: previewDirection || undefined,
           asOfDate: applyForm.settlementDate || todayIsoDate(),
@@ -1431,6 +1434,7 @@ export default function CariSettlementsPage({ direction = "" }) {
     previewDirection,
     previewRefreshToken,
     applyForm.settlementDate,
+    workingContext?.operatingUnitId,
   ]);
 
   useEffect(() => {
@@ -3582,8 +3586,8 @@ export default function CariSettlementsPage({ direction = "" }) {
           </h3>
           <p className="mt-2 text-sm text-slate-600">
             {l(
-              "This preview shows only posted documents that still have an open residual balance for the selected legal entity, counterparty, and as-of date.",
-              "Bu onizleme, secili tuzel kisilik, cari ve tarih icin acik bakiye tasiyan sadece kaydedilmis belgeleri gosterir."
+              "This preview shows only posted documents that still have an open residual balance for the selected settlement context, counterparty, and as-of date.",
+              "Bu onizleme, secili mahsuplastirma baglami, cari ve tarih icin acik bakiye tasiyan sadece kaydedilmis belgeleri gosterir."
             )}
           </p>
           {!canReadReports ? (
@@ -3724,8 +3728,8 @@ export default function CariSettlementsPage({ direction = "" }) {
                       {previewLoading
                         ? l("Loading preview...", "Onizleme yukleniyor...")
                         : l(
-                            "No currently settleable open items were found for the selected legalEntityId and counterpartyId.",
-                            "Secili legalEntityId ve counterpartyId icin mahsuplastirilabilir acik kalem bulunamadi."
+                            "No currently settleable open items were found for the selected context and counterparty.",
+                            "Secili baglam ve cari icin mahsuplastirilabilir acik kalem bulunamadi."
                           )}
                     </td>
                   </tr>

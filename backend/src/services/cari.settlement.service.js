@@ -74,6 +74,54 @@ const FOLLOW_UP_RISKS = Object.freeze([
   "FX lookup uses request fxRate first, then exact-date SPOT, then optional nearest-prior fallback when enabled by config.",
   "Settlement posting resolves source context (CASH_LINKED, MANUAL, ON_ACCOUNT_APPLY) and falls back to generic purpose mappings for compatibility.",
 ]);
+
+function listPermissionScopedIds(req, scopeKey) {
+  return Array.from(req?.rbac?.permissionScopeContext?.[scopeKey] || []).filter(Boolean);
+}
+
+function hasDirectLegalEntityPermissionScope(req) {
+  const scopeContext = req?.rbac?.permissionScopeContext;
+  if (!scopeContext) {
+    return false;
+  }
+  if (scopeContext.tenantWide) {
+    return true;
+  }
+  return (
+    listPermissionScopedIds(req, "groups").length > 0 ||
+    listPermissionScopedIds(req, "countries").length > 0 ||
+    listPermissionScopedIds(req, "legalEntities").length > 0
+  );
+}
+
+// Settlement actions may be authorized at either the LE level or a specific OU.
+// OU-scoped users should be validated against the concrete branch context instead
+// of failing an LE-only assertion on the parent legal entity.
+function assertSettlementPermissionScope({
+  req,
+  assertScopeAccess,
+  legalEntityId,
+  operatingUnitId = null,
+  legalEntityLabel = "legalEntityId",
+  operatingUnitLabel = "operatingUnitId",
+}) {
+  if (typeof assertScopeAccess !== "function") {
+    return;
+  }
+
+  if (hasDirectLegalEntityPermissionScope(req)) {
+    assertScopeAccess(req, "legal_entity", legalEntityId, legalEntityLabel);
+    return;
+  }
+
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (normalizedOperatingUnitId) {
+    assertScopeAccess(req, "operating_unit", normalizedOperatingUnitId, operatingUnitLabel);
+    return;
+  }
+
+  assertScopeAccess(req, "legal_entity", legalEntityId, legalEntityLabel);
+}
 const CARI_SETTLEMENT_PURPOSES = Object.freeze({
   AR: Object.freeze({
     control: "CARI_AR_CONTROL",
@@ -2649,7 +2697,14 @@ async function createOrReplaySettlementCashTransaction({
     label: "linkedCashTransaction.registerId",
     runQuery,
   });
-  assertScopeAccess(req, "legal_entity", register.legal_entity_id, "linkedCashTransaction.registerId");
+  assertSettlementPermissionScope({
+    req,
+    assertScopeAccess,
+    legalEntityId: register.legal_entity_id,
+    operatingUnitId: register.operating_unit_id,
+    legalEntityLabel: "linkedCashTransaction.registerId",
+    operatingUnitLabel: "linkedCashTransaction.registerId",
+  });
   if (register.operating_unit_id) {
     assertScopeAccess(
       req,
@@ -2907,7 +2962,14 @@ async function ensureSettlementLinkedCashTransactionPostedTx({
     throw badRequest("cashTransactionId must belong to legalEntityId");
   }
 
-  assertScopeAccess(req, "legal_entity", cashTxn.legal_entity_id, "cashTransactionId");
+  assertSettlementPermissionScope({
+    req,
+    assertScopeAccess,
+    legalEntityId: cashTxn.legal_entity_id,
+    operatingUnitId: cashTxn.operating_unit_id,
+    legalEntityLabel: "cashTransactionId",
+    operatingUnitLabel: "cashTransactionId",
+  });
   if (cashTxn.operating_unit_id) {
     assertScopeAccess(req, "operating_unit", cashTxn.operating_unit_id, "cashTransactionId");
   }
@@ -4427,6 +4489,10 @@ export async function resolveCariSettlementScope(settlementBatchId, tenantId) {
 }
 
 export const CARI_SETTLEMENT_FOLLOW_UP_RISKS = FOLLOW_UP_RISKS;
+/**
+ * Apply a settlement inside an existing transaction while honoring either
+ * legal-entity-scoped or operating-unit-scoped permissions from the request.
+ */
 export async function applyCariSettlementTx(
   tx,
   {
@@ -4509,7 +4575,14 @@ export async function applyCariSettlementTx(
     );
   }
 
-  assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+  assertSettlementPermissionScope({
+    req,
+    assertScopeAccess,
+    legalEntityId,
+    operatingUnitId: requestedOperatingUnitId,
+    legalEntityLabel: "legalEntityId",
+    operatingUnitLabel: "operatingUnitId",
+  });
   const legalEntity = await assertLegalEntityBelongsToTenant(
     tenantId,
     legalEntityId,

@@ -1750,6 +1750,124 @@ export async function getInventoryTransferById({
   });
 }
 
+export async function resolveInventoryTransferSourceWarehouseScope(
+  sourceWarehouseId,
+  tenantId,
+  runQuery = query
+) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedWarehouseId = parsePositiveInt(sourceWarehouseId);
+  if (!normalizedTenantId || !normalizedWarehouseId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT legal_entity_id, operating_unit_id
+       FROM inventory_warehouses
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [normalizedTenantId, normalizedWarehouseId]
+  );
+  const row = Array.isArray(result?.rows) ? result.rows[0] || null : null;
+  if (!row) {
+    return null;
+  }
+  const operatingUnitId = parsePositiveInt(row.operating_unit_id);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  const legalEntityId = parsePositiveInt(row.legal_entity_id);
+  return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+}
+
+export async function listInventoryTransferTargetWarehouseOptions({
+  tenantId,
+  sourceWarehouseId,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedSourceId = parsePositiveInt(sourceWarehouseId);
+  if (!normalizedTenantId || !normalizedSourceId) {
+    throw badRequest("tenantId and sourceWarehouseId are required");
+  }
+  const sourceResult = await runQuery(
+    `SELECT
+        w.id,
+        w.legal_entity_id,
+        w.operating_unit_id,
+        w.ownership_scope,
+        w.status
+       FROM inventory_warehouses w
+      WHERE w.tenant_id = ?
+        AND w.id = ?
+      LIMIT 1`,
+    [normalizedTenantId, normalizedSourceId]
+  );
+  const sourceRow = Array.isArray(sourceResult?.rows) ? sourceResult.rows[0] || null : null;
+  if (!sourceRow) {
+    throw badRequest("sourceWarehouseId not found");
+  }
+  if (String(sourceRow.status || "").toUpperCase() !== "ACTIVE") {
+    throw badRequest("sourceWarehouseId must be ACTIVE");
+  }
+  const legalEntityId = parsePositiveInt(sourceRow.legal_entity_id);
+  if (!legalEntityId) {
+    throw badRequest("sourceWarehouseId is missing a legal entity");
+  }
+  const sourceContext = deriveWarehouseOwnershipContext(sourceRow);
+
+  const candidatesResult = await runQuery(
+    `SELECT
+        w.id,
+        w.tenant_id,
+        w.legal_entity_id,
+        w.code,
+        w.name,
+        w.status,
+        w.ownership_scope,
+        w.operating_unit_id,
+        le.code AS legal_entity_code,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name
+       FROM inventory_warehouses w
+       JOIN legal_entities le
+         ON le.tenant_id = w.tenant_id
+        AND le.id = w.legal_entity_id
+       LEFT JOIN operating_units ou
+         ON ou.tenant_id = w.tenant_id
+        AND ou.id = w.operating_unit_id
+      WHERE w.tenant_id = ?
+        AND w.legal_entity_id = ?
+        AND w.status = 'ACTIVE'
+        AND w.id <> ?
+      ORDER BY w.ownership_scope ASC, ou.code ASC, w.code ASC, w.id ASC`,
+    [normalizedTenantId, legalEntityId, normalizedSourceId]
+  );
+  const rows = Array.isArray(candidatesResult?.rows) ? candidatesResult.rows : [];
+  const filtered = rows.filter((row) => {
+    const candidateContext = deriveWarehouseOwnershipContext(row);
+    return !sameOwnershipContext(sourceContext, candidateContext);
+  });
+  return {
+    sourceWarehouseId: normalizedSourceId,
+    legalEntityId,
+    sourceOwnershipContext: sourceContext,
+    rows: filtered.map((row) => ({
+      id: parsePositiveInt(row.id),
+      tenantId: parsePositiveInt(row.tenant_id),
+      legalEntityId: parsePositiveInt(row.legal_entity_id),
+      legalEntityCode: row.legal_entity_code || null,
+      ownershipScope: row.ownership_scope || "CENTRAL",
+      operatingUnitId: parsePositiveInt(row.operating_unit_id),
+      operatingUnitCode: row.operating_unit_code || null,
+      operatingUnitName: row.operating_unit_name || null,
+      code: row.code || null,
+      name: row.name || null,
+      status: row.status || null,
+    })),
+  };
+}
+
 export async function createInventoryTransfer({
   payload,
 }) {

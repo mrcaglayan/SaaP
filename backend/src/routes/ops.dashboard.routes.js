@@ -1,5 +1,10 @@
 import express from "express";
-import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middleware/rbac.js";
+import {
+  assertScopeAccess,
+  buildScopeFilter,
+  requireAnyPermission,
+  requirePermission,
+} from "../middleware/rbac.js";
 import { asyncHandler, badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
 import { resolveBankAccountScope } from "../services/bank.accounts.service.js";
 import {
@@ -16,6 +21,11 @@ import {
 import { buildAuditExportCsv, buildUsageExportCsv } from "../services/ops.exports.service.js";
 
 const router = express.Router();
+const FIXED_ASSET_DASHBOARD_PERMISSION_CODES = Object.freeze([
+  "ops.dashboard.read",
+  "fixed_assets.read",
+  "fixed_assets.depreciation.run",
+]);
 
 function requireTenantIdFromReq(req) {
   const tenantId = resolveTenantId(req);
@@ -58,6 +68,17 @@ function parseOpsCommonFilters(req) {
   };
 }
 
+function parseOpsFixedAssetFilters(req) {
+  const base = parseOpsCommonFilters(req);
+  return {
+    ...base,
+    operatingUnitId: parsePositiveIntMaybe(
+      req.query?.operatingUnitId ?? req.query?.operating_unit_id,
+      "operatingUnitId"
+    ),
+  };
+}
+
 function parseOpsJobsFilters(req) {
   const base = parseOpsCommonFilters(req);
   return {
@@ -94,6 +115,19 @@ async function resolveOpsScope(req, tenantId) {
   );
   if (bankAccountId) return resolveBankAccountScope(bankAccountId, tenantId);
   return null;
+}
+
+async function resolveOpsFixedAssetScope(req, tenantId) {
+  const operatingUnitId = parsePositiveInt(
+    req.query?.operatingUnitId ??
+      req.query?.operating_unit_id ??
+      req.body?.operatingUnitId ??
+      req.body?.operating_unit_id
+  );
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
+  return resolveOpsScope(req, tenantId);
 }
 
 router.get(
@@ -146,9 +180,11 @@ router.get(
 
 router.get(
   "/fixed-assets/activation-attention",
-  requirePermission("ops.dashboard.read", { resolveScope: resolveOpsScope }),
+  requireAnyPermission(FIXED_ASSET_DASHBOARD_PERMISSION_CODES, {
+    resolveScope: resolveOpsFixedAssetScope,
+  }),
   asyncHandler(async (req, res) => {
-    const filters = parseOpsCommonFilters(req);
+    const filters = parseOpsFixedAssetFilters(req);
     const result = await getOpsFixedAssetActivationAttention({
       req,
       tenantId: filters.tenantId,
@@ -162,9 +198,11 @@ router.get(
 
 router.get(
   "/fixed-assets/late-catch-up-attention",
-  requirePermission("ops.dashboard.read", { resolveScope: resolveOpsScope }),
+  requireAnyPermission(FIXED_ASSET_DASHBOARD_PERMISSION_CODES, {
+    resolveScope: resolveOpsFixedAssetScope,
+  }),
   asyncHandler(async (req, res) => {
-    const filters = parseOpsCommonFilters(req);
+    const filters = parseOpsFixedAssetFilters(req);
     const result = await getOpsFixedAssetLateCatchUpAttention({
       req,
       tenantId: filters.tenantId,
@@ -178,9 +216,11 @@ router.get(
 
 router.get(
   "/fixed-assets/depreciation-attention",
-  requirePermission("ops.dashboard.read", { resolveScope: resolveOpsScope }),
+  requireAnyPermission(FIXED_ASSET_DASHBOARD_PERMISSION_CODES, {
+    resolveScope: resolveOpsFixedAssetScope,
+  }),
   asyncHandler(async (req, res) => {
-    const filters = parseOpsCommonFilters(req);
+    const filters = parseOpsFixedAssetFilters(req);
     const result = await getOpsFixedAssetDepreciationAttention({
       req,
       tenantId: filters.tenantId,

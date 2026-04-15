@@ -18,10 +18,12 @@ import {
   cancelInventoryTransferById,
   createInventoryTransfer,
   getInventoryTransferById,
+  listInventoryTransferTargetWarehouseOptions,
   listInventoryTransfers,
   receiveInventoryTransferById,
   resolveInventoryTransferActionScope,
   resolveInventoryTransferScope,
+  resolveInventoryTransferSourceWarehouseScope,
   reverseInventoryTransferById,
   shipInventoryTransferById,
 } from "../services/inventory.transfer.service.js";
@@ -130,6 +132,41 @@ function assertInventoryTransferReadAccess(req, row) {
 }
 
 router.use("/transfers/:transferId/evidence", inventoryTransferEvidenceRoutes);
+
+router.get(
+  "/transfers/warehouse-options/targets",
+  requirePermission("inventory.transfer.create", {
+    resolveScope: async (req, tenantId) => {
+      const normalizedTenantId = parsePositiveInt(tenantId) || requireTenantId(req);
+      const sourceWarehouseId = parsePositiveInt(req.query?.sourceWarehouseId);
+      if (!normalizedTenantId || !sourceWarehouseId) {
+        return null;
+      }
+      return resolveInventoryTransferSourceWarehouseScope(
+        sourceWarehouseId,
+        normalizedTenantId
+      );
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = requireTenantId(req);
+    const sourceWarehouseId = parsePositiveInt(req.query?.sourceWarehouseId);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+    if (!sourceWarehouseId) {
+      throw badRequest("sourceWarehouseId is required");
+    }
+    const result = await listInventoryTransferTargetWarehouseOptions({
+      tenantId,
+      sourceWarehouseId,
+    });
+    return res.json({
+      tenantId,
+      ...result,
+    });
+  })
+);
 
 router.get(
   "/transfers",

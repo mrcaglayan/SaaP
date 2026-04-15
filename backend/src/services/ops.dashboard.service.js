@@ -99,6 +99,95 @@ function buildScopedLegalEntityWhere({
   return where;
 }
 
+function listScopedIds(scopeContext, scopeKey) {
+  const values = scopeContext?.[scopeKey];
+  if (!values) {
+    return [];
+  }
+  if (values instanceof Set) {
+    return Array.from(values).map((value) => parsePositiveInt(value)).filter(Boolean);
+  }
+  if (Array.isArray(values)) {
+    return values.map((value) => parsePositiveInt(value)).filter(Boolean);
+  }
+  return [];
+}
+
+function hasDirectLegalEntityVisibilityScope(req) {
+  const scopeContext = getVisibilityScope(req);
+  if (!scopeContext) {
+    return false;
+  }
+  return (
+    Boolean(scopeContext.tenantWide)
+    || listScopedIds(scopeContext, "groups").length > 0
+    || listScopedIds(scopeContext, "countries").length > 0
+    || listScopedIds(scopeContext, "legalEntities").length > 0
+  );
+}
+
+function buildScopedFixedAssetWhere({
+  req,
+  tenantId,
+  filters,
+  alias,
+  params,
+  buildScopeFilter,
+  assertScopeAccess,
+}) {
+  const where = [`${alias}.tenant_id = ?`];
+  params.push(tenantId);
+
+  const legalEntityId = parsePositiveInt(filters.legalEntityId);
+  const operatingUnitId = parsePositiveInt(
+    filters.operatingUnitId ?? filters.ownerOperatingUnitId
+  );
+
+  if (operatingUnitId) {
+    if (typeof assertScopeAccess === "function") {
+      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+    }
+    where.push(`${alias}.owner_operating_unit_id = ?`);
+    params.push(operatingUnitId);
+  }
+
+  if (legalEntityId) {
+    if (!operatingUnitId && hasDirectLegalEntityVisibilityScope(req)) {
+      if (typeof assertScopeAccess === "function") {
+        assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+      }
+    }
+    where.push(`${alias}.legal_entity_id = ?`);
+    params.push(legalEntityId);
+  }
+
+  if (typeof buildScopeFilter === "function") {
+    const legalEntityParams = [];
+    const legalEntitySql = buildScopeFilter(
+      req,
+      "legal_entity",
+      `${alias}.legal_entity_id`,
+      legalEntityParams
+    );
+    if (legalEntitySql !== "1 = 0") {
+      where.push(legalEntitySql);
+      params.push(...legalEntityParams);
+    } else {
+      const operatingUnitParams = [];
+      const operatingUnitSql = buildScopeFilter(
+        req,
+        "operating_unit",
+        `${alias}.owner_operating_unit_id`,
+        operatingUnitParams
+      );
+      where.push(operatingUnitSql);
+      params.push(...operatingUnitParams);
+    }
+  }
+
+  return where;
+}
+
 function appendCashTransitTargetScopeWhere({ req, where, params, buildScopeFilter }) {
   const scopeContext = getVisibilityScope(req);
   if (!scopeContext || scopeContext.tenantWide || typeof buildScopeFilter !== "function") {
@@ -1008,6 +1097,11 @@ export async function getOpsJobsHealth({
   };
 }
 
+/**
+ * Summarize skipped-run depreciation attention for the fixed assets visible in
+ * the current working context. OU-scoped users are narrowed by owner OU rather
+ * than the broader legal entity so their dashboard only reflects their branch.
+ */
 export async function getOpsFixedAssetDepreciationAttention({
   req,
   tenantId,
@@ -1016,7 +1110,7 @@ export async function getOpsFixedAssetDepreciationAttention({
   assertScopeAccess,
 }) {
   const params = [];
-  const where = buildScopedLegalEntityWhere({
+  const where = buildScopedFixedAssetWhere({
     req,
     tenantId,
     filters,
@@ -1063,6 +1157,7 @@ export async function getOpsFixedAssetDepreciationAttention({
   return {
     filters: {
       legalEntityId: parsePositiveInt(filters.legalEntityId) || null,
+      operatingUnitId: parsePositiveInt(filters.operatingUnitId) || null,
     },
     affected_assets: {
       pending_skipped_assets: toInt(summary.affected_asset_count, 0),
@@ -1075,6 +1170,10 @@ export async function getOpsFixedAssetDepreciationAttention({
   };
 }
 
+/**
+ * Count fixed assets that were created from acquisition flow but are still in
+ * DRAFT status and therefore waiting activation into service.
+ */
 export async function getOpsFixedAssetActivationAttention({
   req,
   tenantId,
@@ -1083,7 +1182,7 @@ export async function getOpsFixedAssetActivationAttention({
   assertScopeAccess,
 }) {
   const params = [];
-  const where = buildScopedLegalEntityWhere({
+  const where = buildScopedFixedAssetWhere({
     req,
     tenantId,
     filters,
@@ -1107,6 +1206,7 @@ export async function getOpsFixedAssetActivationAttention({
   return {
     filters: {
       legalEntityId: parsePositiveInt(filters.legalEntityId) || null,
+      operatingUnitId: parsePositiveInt(filters.operatingUnitId) || null,
     },
     affected_assets: {
       pending_activation_assets: toInt(summary.pending_activation_asset_count, 0),
@@ -1122,6 +1222,10 @@ export async function getOpsFixedAssetActivationAttention({
   };
 }
 
+/**
+ * Summarize late catch-up depreciation cases for assets whose historical
+ * depreciation periods were already posted before the asset entered service.
+ */
 export async function getOpsFixedAssetLateCatchUpAttention({
   req,
   tenantId,
@@ -1130,7 +1234,7 @@ export async function getOpsFixedAssetLateCatchUpAttention({
   assertScopeAccess,
 }) {
   const params = [];
-  const where = buildScopedLegalEntityWhere({
+  const where = buildScopedFixedAssetWhere({
     req,
     tenantId,
     filters,
@@ -1158,6 +1262,7 @@ export async function getOpsFixedAssetLateCatchUpAttention({
     return {
       filters: {
         legalEntityId: parsePositiveInt(filters.legalEntityId) || null,
+        operatingUnitId: parsePositiveInt(filters.operatingUnitId) || null,
       },
       affected_assets: {
         pending_late_catch_up_assets: 0,
@@ -1234,6 +1339,7 @@ export async function getOpsFixedAssetLateCatchUpAttention({
   return {
     filters: {
       legalEntityId: parsePositiveInt(filters.legalEntityId) || null,
+      operatingUnitId: parsePositiveInt(filters.operatingUnitId) || null,
     },
     affected_assets: {
       pending_late_catch_up_assets: pendingLateCatchUpAssets,

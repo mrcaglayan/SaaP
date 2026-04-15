@@ -23,7 +23,10 @@
       "Bash(xargs grep:*)",
       "Bash(grep -rn \"country.*approval\\\\|country.*posting\\\\|country-scoped\\\\|scope-driven.*review\\\\|authority.*scope\" /c/Users/ufukk/Desktop/SaaP/backend/src/services/*.service.js)",
       "Bash(grep -rn \"scope.*assignment\\\\|assignment.*scope\\\\|getApproversAtScope\\\\|findApprovers\" /c/Users/ufukk/Desktop/SaaP/backend/src/services/approval*.service.js)",
-      "Bash(npx --yes vite build --mode development)"
+      "Bash(npx --yes vite build --mode development)",
+      "Bash(node --input-type=module)",
+      "Bash(grep -n \"getCariOpenItemsReport\\\\|openItemsReport\\\\|open-items-report\\\\|open_items_report\" /c/Users/ufukk/Desktop/SaaP/frontend/src/api/*.js)",
+      "Bash(grep -n \"open-items-preview\\\\|openItemsPreview\\\\|getCariSettlement\" /c/Users/ufukk/Desktop/SaaP/frontend/src/api/*.js)"
     ]
   }
 }

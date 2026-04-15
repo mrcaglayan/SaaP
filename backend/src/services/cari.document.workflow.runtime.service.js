@@ -6,6 +6,14 @@ import {
   isDocClassWorkflowGoverned,
 } from "../../../shared/cariDocumentWorkflowGovernance.js";
 
+const POSTING_COMPLETED_DOCUMENT_STATUSES = new Set([
+  "POSTED",
+  "PARTIALLY_SETTLED",
+  "SETTLED",
+  "REVERSED",
+  "CANCELLED",
+]);
+
 function toUpperText(value) {
   return String(value || "")
     .trim()
@@ -126,10 +134,19 @@ export async function syncCariDocumentFromWorkflowRequestTx({
   }
   assertGovernedApTarget(documentRow);
 
+  const currentStatus = toUpperText(documentRow.status ?? documentRow.status);
+
   const requestStatus = toUpperText(
     requestRow?.request_status ?? requestRow?.requestStatus
   );
   if (requestStatus === "APPROVED") {
+    // Late-arriving workflow sync must not overwrite a document that has already
+    // reached a terminal state (POSTED, REVERSED, CANCELLED). The posting action
+    // is the authoritative terminal step — the workflow approval that preceded it
+    // is implicitly satisfied.
+    if (POSTING_COMPLETED_DOCUMENT_STATUSES.has(currentStatus)) {
+      return { documentId: targetId, status: currentStatus, returnReason: null };
+    }
     await runQuery(
       `UPDATE cari_documents
           SET status = 'APPROVED',
@@ -149,6 +166,12 @@ export async function syncCariDocumentFromWorkflowRequestTx({
 
   if (!["RETURNED", "REJECTED"].includes(requestStatus)) {
     return null;
+  }
+
+  // A RETURNED/REJECTED sync on an already-terminal document is a no-op.
+  // A document cannot be returned after it has been posted, reversed, or cancelled.
+  if (POSTING_COMPLETED_DOCUMENT_STATUSES.has(currentStatus)) {
+    return { documentId: targetId, status: currentStatus, returnReason: null };
   }
 
   const returnReason = resolveLatestDecisionComment(

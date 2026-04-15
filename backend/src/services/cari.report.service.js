@@ -285,6 +285,68 @@ function appendAccountingVisibleDocumentStatusCondition({
   params.push(...CARI_ACCOUNTING_VISIBLE_DOCUMENT_STATUSES);
 }
 
+function getReportScopeContext(req) {
+  return req?.rbac?.visibilityScopeContext || req?.rbac?.permissionScopeContext || null;
+}
+
+function listScopedIds(scopeContext, scopeKey) {
+  return Array.from(scopeContext?.[scopeKey] || []).filter(Boolean);
+}
+
+function hasDirectLegalEntityPermissionScope(req) {
+  const scopeContext = req?.rbac?.permissionScopeContext;
+  if (!scopeContext) {
+    return false;
+  }
+  if (scopeContext.tenantWide) {
+    return true;
+  }
+  return (
+    listScopedIds(scopeContext, "groups").length > 0 ||
+    listScopedIds(scopeContext, "countries").length > 0 ||
+    listScopedIds(scopeContext, "legalEntities").length > 0
+  );
+}
+
+function appendScopedLegalEntityCondition({
+  req,
+  filters,
+  params,
+  conditions,
+  buildScopeFilter,
+  legalEntityColumn,
+  operatingUnitColumn = null,
+}) {
+  if (typeof buildScopeFilter !== "function") {
+    return;
+  }
+
+  const legalEntityScopeFilter = buildScopeFilter(req, "legal_entity", legalEntityColumn, params);
+  if (legalEntityScopeFilter !== "1 = 0") {
+    conditions.push(legalEntityScopeFilter);
+    return;
+  }
+
+  const scopeContext = getReportScopeContext(req);
+  const operatingUnitIds = listScopedIds(scopeContext, "operatingUnits");
+  if (operatingUnitIds.length === 0) {
+    conditions.push("1 = 0");
+    return;
+  }
+
+  if (operatingUnitColumn) {
+    conditions.push(buildScopeFilter(req, "operating_unit", operatingUnitColumn, params));
+    return;
+  }
+
+  // Some report rows only store legal_entity_id. For OU-scoped users, derive the
+  // visible legal entities from the operating units already in their scope context.
+  params.push(filters.tenantId, ...operatingUnitIds);
+  conditions.push(
+    `${legalEntityColumn} IN (SELECT DISTINCT legal_entity_id FROM operating_units WHERE tenant_id = ? AND id IN (${operatingUnitIds.map(() => "?").join(", ")}))`
+  );
+}
+
 function appendCommonEntityFilters({
   req,
   filters,
@@ -293,19 +355,79 @@ function appendCommonEntityFilters({
   buildScopeFilter,
   assertScopeAccess,
   legalEntityColumn,
+  operatingUnitColumn,
   counterpartyColumn,
   roleCustomerColumn,
   roleVendorColumn,
   directionColumn,
 }) {
-  if (typeof buildScopeFilter === "function") {
-    conditions.push(buildScopeFilter(req, "legal_entity", legalEntityColumn, params));
+  if (Array.isArray(params) && params.length < 0 && typeof buildScopeFilter === "function") {
+    const leScopeFilter = buildScopeFilter(req, "legal_entity", legalEntityColumn, params);
+    if (leScopeFilter === "1 = 0") {
+      // User has no LE scope — they are OU-scoped (e.g. a branch operator or
+      // branch accountant who holds permissions at the OPERATING_UNIT level).
+      // The RBAC core only expands scope downward (GROUP → LE → OU), so for
+      // OU-scoped users legalEntities stays empty and buildScopeFilter("legal_entity")
+      // always returns "1 = 0". We need to resolve data access upward (OU → parent LE).
+      if (operatingUnitColumn) {
+        // Fast path: the table has a direct OU column — filter on it directly.
+        conditions.push(buildScopeFilter(req, "operating_unit", operatingUnitColumn, params));
+      } else {
+        // General path: derive the user's parent LE via a subquery on operating_units.
+        // Works for any table that has legal_entity_id even without an OU column.
+        const scopeCtx = req?.rbac?.visibilityScopeContext || req?.rbac?.permissionScopeContext;
+        const ouIds = scopeCtx ? Array.from(scopeCtx.operatingUnits || []) : [];
+        if (ouIds.length > 0) {
+          params.push(filters.tenantId, ...ouIds);
+          conditions.push(
+            `${legalEntityColumn} IN (SELECT legal_entity_id FROM operating_units WHERE tenant_id = ? AND id IN (${ouIds.map(() => "?").join(", ")}))`
+          );
+        } else {
+          conditions.push("1 = 0");
+        }
+      }
+    } else {
+      conditions.push(leScopeFilter);
+    }
+  }
+
+  if (Array.isArray(params) && params.length < 0) {
+    if (typeof assertScopeAccess === "function") {
+      // Only assert LE scope access when the user actually has LEs in their scope
+      // context. OU-scoped users have legalEntities = {} so the scope filter above
+      // already resolves data isolation via OU→LE subquery or direct OU column.
+      // Calling assertScopeAccess for them would always throw even though their
+      // data access is already correctly restricted.
+      const userHasLeScope =
+        typeof buildScopeFilter === "function" &&
+        buildScopeFilter(req, "legal_entity", legalEntityColumn, []) !== "1 = 0";
+      if (userHasLeScope) {
+        assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+      }
+    }
+    conditions.push(`${legalEntityColumn} = ?`);
+    params.push(filters.legalEntityId);
+  }
+
+  appendScopedLegalEntityCondition({
+    req,
+    filters,
+    params,
+    conditions,
+    buildScopeFilter,
+    legalEntityColumn,
+    operatingUnitColumn,
+  });
+
+  if (
+    filters.legalEntityId &&
+    typeof assertScopeAccess === "function" &&
+    hasDirectLegalEntityPermissionScope(req)
+  ) {
+    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
   }
 
   if (filters.legalEntityId) {
-    if (typeof assertScopeAccess === "function") {
-      assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
-    }
     conditions.push(`${legalEntityColumn} = ?`);
     params.push(filters.legalEntityId);
   }
@@ -664,6 +786,7 @@ async function loadOpenItemAsOfRows({
     buildScopeFilter,
     assertScopeAccess,
     legalEntityColumn: "oi.legal_entity_id",
+    operatingUnitColumn: "d.operating_unit_id",
     counterpartyColumn: "oi.counterparty_id",
     roleCustomerColumn: "cp.is_customer",
     roleVendorColumn: "cp.is_vendor",
@@ -2351,12 +2474,20 @@ export async function getCariSettlementRealizedFxReport({
   const params = [filters.tenantId];
   const conditions = ["b.tenant_id = ?", "b.status <> 'DRAFT'"];
 
-  if (typeof buildScopeFilter === "function") {
-    conditions.push(buildScopeFilter(req, "legal_entity", "b.legal_entity_id", params));
-  }
+  appendScopedLegalEntityCondition({
+    req,
+    filters,
+    params,
+    conditions,
+    buildScopeFilter,
+    legalEntityColumn: "b.legal_entity_id",
+  });
 
   if (filters.legalEntityId) {
-    if (typeof assertScopeAccess === "function") {
+    if (
+      typeof assertScopeAccess === "function" &&
+      hasDirectLegalEntityPermissionScope(req)
+    ) {
       assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
     }
     conditions.push("b.legal_entity_id = ?");

@@ -1781,9 +1781,19 @@ export async function loadCorrectionAwareOwnerTimeline({
 }
 
 const FA06_REQUIRED_DOCUMENT_DIRECTION = "AP";
-const FA06_REQUIRED_DOCUMENT_STATUS = "POSTED";
+const FA06_ALLOWED_DOCUMENT_STATUSES = new Set([
+  "POSTED",
+  "PARTIALLY_SETTLED",
+  "SETTLED",
+]);
 const FA06_REQUIRED_LINE_KIND = "STANDARD";
 const FA06_SPLIT_AMOUNT_SCALE = 10000;
+
+function isFa06SourceDocumentStatusAllowed(status) {
+  // Settlement changes the AP open-item lifecycle, not the posted source
+  // document/journal lineage that fixed-asset activation depends on.
+  return FA06_ALLOWED_DOCUMENT_STATUSES.has(normalizeUpperText(status));
+}
 
 function isPositiveWholeUnitQuantity(quantity) {
   const normalized = Number(quantity);
@@ -1883,7 +1893,7 @@ function buildCariEligibleApLineRow({
   if (normalizedDirection !== FA06_REQUIRED_DOCUMENT_DIRECTION) {
     ineligibleReasons.push("DOCUMENT_DIRECTION_MUST_BE_AP");
   }
-  if (normalizedStatus !== FA06_REQUIRED_DOCUMENT_STATUS) {
+  if (!isFa06SourceDocumentStatusAllowed(normalizedStatus)) {
     ineligibleReasons.push("DOCUMENT_STATUS_MUST_BE_POSTED");
   }
   if (normalizedLineKind !== FA06_REQUIRED_LINE_KIND) {
@@ -1933,6 +1943,11 @@ function buildCariEligibleApLineRow({
   };
 }
 
+/**
+ * List AP document lines that can still seed FA06 capitalization.
+ * Payment lifecycle changes do not invalidate already-posted source lines, so
+ * settled documents remain eligible while pre-post states stay blocked.
+ */
 export async function listCariEligibleApLinesForFa06({
   req,
   tenantId,
@@ -2868,7 +2883,7 @@ function buildActivationSourceRevalidationOutcome({
  *   original_cost_txn, original_cost_base, currency_code
  *
  * Hard-blocking conditions:
- *   - source document no longer POSTED
+ *   - source document no longer in a posted lifecycle state
  *   - reserved unit slot no longer valid (quantity shrank or slot taken)
  *   - quantity / equal-split assumptions no longer hold
  *   - threshold-path changed (low-value ↔ standard) due to amount drift
@@ -2910,12 +2925,12 @@ async function revalidateSourceLinkageForActivation({
     runQuery: queryFn,
   });
 
-  // ── Validate document is still POSTED ─────────────────────────
+  // Validate that the source document still sits in a posted lifecycle state.
   const docStatus = normalizeUpperText(document?.status);
-  if (docStatus !== FA06_REQUIRED_DOCUMENT_STATUS) {
+  if (!isFa06SourceDocumentStatusAllowed(docStatus)) {
     throw badRequest(
-      `Source CARI document (id=${sourceCariDocumentId}) is no longer POSTED (status=${docStatus}). ` +
-      "Activation of source-linked assets requires the source document to remain in POSTED status."
+      `Source CARI document (id=${sourceCariDocumentId}) is no longer in a posted lifecycle state (status=${docStatus}). ` +
+      "Activation of source-linked assets requires the source document to be POSTED, PARTIALLY_SETTLED, or SETTLED."
     );
   }
 
@@ -5299,6 +5314,10 @@ export async function createAssetsFromCariDocumentLineFa06(input) {
   });
 }
 
+/**
+ * Activate one fixed-asset draft into service, revalidating any source-linked
+ * CARI lineage before depreciation and lifecycle tracking begin.
+ */
 export async function activateAsset(input) {
   const {
     tenantId,

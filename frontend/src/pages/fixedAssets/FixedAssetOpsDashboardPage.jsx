@@ -130,6 +130,10 @@ function buildScopeParams(workingContext) {
   if (legalEntityId) {
     params.legalEntityId = legalEntityId;
   }
+  const operatingUnitId = parsePositiveInt(workingContext?.operatingUnitId);
+  if (operatingUnitId) {
+    params.operatingUnitId = operatingUnitId;
+  }
 
   const dateFrom = String(workingContext?.dateFrom || "").trim();
   const dateTo = String(workingContext?.dateTo || "").trim();
@@ -145,6 +149,19 @@ function buildScopeParams(workingContext) {
   }
 
   return params;
+}
+
+function buildScopeLabel(legalEntities, legalEntityId, operatingUnitId, l) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  const legalEntityLabel = buildLegalEntityLabel(legalEntities, legalEntityId, l);
+  if (normalizedOperatingUnitId) {
+    return legalEntityLabel
+      && legalEntityLabel
+        !== l("All permitted legal entities", "Tum yetkili tuzel kisilikler")
+      ? `${legalEntityLabel} / OU #${normalizedOperatingUnitId}`
+      : `OU #${normalizedOperatingUnitId}`;
+  }
+  return legalEntityLabel;
 }
 
 function buildLegalEntityLabel(legalEntities, legalEntityId, l) {
@@ -203,9 +220,10 @@ export default function FixedAssetOpsDashboardPage() {
   const { hasPermission } = useAuth();
   const { workingContext, legalEntities } = useWorkingContext();
 
-  const canReadOps = hasPermission("ops.dashboard.read");
   const canReadFixedAssets =
     hasPermission("fixed_assets.read") || hasPermission("fixed_assets.depreciation.run");
+  const canReadFixedAssetAttention =
+    hasPermission("ops.dashboard.read") || canReadFixedAssets;
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -215,12 +233,14 @@ export default function FixedAssetOpsDashboardPage() {
   const [attention, setAttention] = useState(EMPTY_ATTENTION);
 
   const workingContextLegalEntityId = workingContext?.legalEntityId;
+  const workingContextOperatingUnitId = workingContext?.operatingUnitId;
   const workingContextDateFrom = workingContext?.dateFrom;
   const workingContextDateTo = workingContext?.dateTo;
   const scopeParams = useMemo(
     () =>
       buildScopeParams({
         legalEntityId: workingContextLegalEntityId,
+        operatingUnitId: workingContextOperatingUnitId,
         dateFrom: workingContextDateFrom,
         dateTo: workingContextDateTo,
       }),
@@ -228,6 +248,7 @@ export default function FixedAssetOpsDashboardPage() {
       workingContextDateFrom,
       workingContextDateTo,
       workingContextLegalEntityId,
+      workingContextOperatingUnitId,
     ]
   );
   const pendingActivationAssetCount = toInt(
@@ -247,9 +268,10 @@ export default function FixedAssetOpsDashboardPage() {
     Number(hasPendingActivationWarning)
     + Number(hasLateCatchUpWarning)
     + Number(hasSkippedMonthWarning);
-  const legalEntityLabel = buildLegalEntityLabel(
+  const legalEntityLabel = buildScopeLabel(
     legalEntities,
     scopeParams.legalEntityId,
+    scopeParams.operatingUnitId,
     l
   );
   const periodHint = buildPeriodHint(attention, l);
@@ -281,7 +303,7 @@ export default function FixedAssetOpsDashboardPage() {
         || l("No pending periods", "Bekleyen donem yok");
 
   useEffect(() => {
-    if (!canReadOps || !canReadFixedAssets) {
+    if (!canReadFixedAssetAttention) {
       setActivationAttention(EMPTY_ACTIVATION_ATTENTION);
       setLateCatchUpAttention(EMPTY_LATE_CATCH_UP_ATTENTION);
       setAttention(EMPTY_ATTENTION);
@@ -365,29 +387,17 @@ export default function FixedAssetOpsDashboardPage() {
       active = false;
     };
   }, [
-    canReadFixedAssets,
-    canReadOps,
+    canReadFixedAssetAttention,
     l,
     scopeParams,
   ]);
 
-  if (!canReadFixedAssets) {
+  if (!canReadFixedAssetAttention) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
         {l(
-          "Missing fixed asset access. Required: fixed_assets.read or fixed_assets.depreciation.run",
-          "Demirbas erisimi eksik. Gerekli yetki: fixed_assets.read veya fixed_assets.depreciation.run"
-        )}
-      </div>
-    );
-  }
-
-  if (!canReadOps) {
-    return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        {l(
-          "Missing permission: ops.dashboard.read",
-          "Eksik yetki: ops.dashboard.read"
+          "Missing permission: ops.dashboard.read, fixed_assets.read, or fixed_assets.depreciation.run",
+          "Eksik yetki: ops.dashboard.read, fixed_assets.read veya fixed_assets.depreciation.run"
         )}
       </div>
     );
@@ -429,8 +439,8 @@ export default function FixedAssetOpsDashboardPage() {
             label={l("Scope", "Kapsam")}
             value={legalEntityLabel}
             hint={l(
-              "Respects working-context legal entity and date filters.",
-              "Calisma baglamindaki tuzel kisilik ve tarih filtrelerine uyar."
+              "Respects working-context scope and date filters.",
+              "Calisma baglamindaki kapsam ve tarih filtrelerine uyar."
             )}
           />
           <SummaryCard

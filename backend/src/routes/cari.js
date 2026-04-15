@@ -61,6 +61,12 @@ function requireTenant(req) {
 }
 
 function resolveCariScope(req) {
+  const operatingUnitId =
+    parsePositiveInt(req.body?.operatingUnitId) ||
+    parsePositiveInt(req.query?.operatingUnitId);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
   const legalEntityId =
     parsePositiveInt(req.body?.legalEntityId) ||
     parsePositiveInt(req.query?.legalEntityId);

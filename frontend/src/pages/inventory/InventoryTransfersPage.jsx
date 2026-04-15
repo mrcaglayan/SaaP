@@ -13,6 +13,7 @@ import {
   downloadInventoryTransferEvidence,
   getInventoryTransfer,
   listInventoryTransferEvidence,
+  listInventoryTransferTargetWarehouses,
   listInventoryTransfers,
   listInventoryWarehouses,
   receiveInventoryTransfer,
@@ -338,6 +339,9 @@ export default function InventoryTransfersPage() {
   );
   const [form, setForm] = useState(() => createTransferForm());
   const [warehouseRows, setWarehouseRows] = useState([]);
+  const [targetWarehouseRows, setTargetWarehouseRows] = useState([]);
+  const [targetWarehousesLoading, setTargetWarehousesLoading] = useState(false);
+  const [targetWarehousesError, setTargetWarehousesError] = useState("");
   const [itemCardRows, setItemCardRows] = useState([]);
   const [rows, setRows] = useState([]);
   const [selectedTransferId, setSelectedTransferId] = useState("");
@@ -517,6 +521,51 @@ export default function InventoryTransfersPage() {
     };
   }, [canRead, canReadItemCards, effectiveOperatingUnitId, filters.legalEntityId, l]);
   useEffect(() => {
+    const sourceWarehouseId = toPositiveInt(form.sourceWarehouseId);
+    if (!canRead || !sourceWarehouseId) {
+      setTargetWarehouseRows([]);
+      setTargetWarehousesError("");
+      setTargetWarehousesLoading(false);
+      return;
+    }
+    let active = true;
+    setTargetWarehousesLoading(true);
+    setTargetWarehousesError("");
+    async function loadTargets() {
+      try {
+        const response = await listInventoryTransferTargetWarehouses({
+          sourceWarehouseId,
+        });
+        if (!active) {
+          return;
+        }
+        setTargetWarehouseRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setTargetWarehouseRows([]);
+        setTargetWarehousesError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load target warehouses.",
+              "Hedef depolar yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setTargetWarehousesLoading(false);
+        }
+      }
+    }
+    loadTargets();
+    return () => {
+      active = false;
+    };
+  }, [canRead, form.sourceWarehouseId, l]);
+  useEffect(() => {
     if (!canRead) {
       setRows([]);
       setLoading(false);
@@ -671,6 +720,44 @@ export default function InventoryTransfersPage() {
         })),
     [warehouseRows, l]
   );
+  const activeTargetWarehouseGroups = useMemo(() => {
+    const groups = new Map();
+    for (const row of targetWarehouseRows) {
+      const scope = String(row?.ownershipScope || "CENTRAL").toUpperCase();
+      const groupKey =
+        scope === "OPERATING_UNIT"
+          ? `OU:${row?.operatingUnitId || ""}`
+          : "CENTRAL";
+      const groupLabel =
+        scope === "OPERATING_UNIT"
+          ? l(
+              `OU: ${row?.operatingUnitCode || row?.operatingUnitName || "-"}`,
+              `OU: ${row?.operatingUnitCode || row?.operatingUnitName || "-"}`
+            )
+          : l("Central warehouses", "Merkez depolar");
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, { key: groupKey, label: groupLabel, options: [] });
+      }
+      groups.get(groupKey).options.push({
+        value: String(row.id || ""),
+        label: formatWarehouseOptionLabel(row, l),
+      });
+    }
+    return Array.from(groups.values());
+  }, [targetWarehouseRows, l]);
+  useEffect(() => {
+    if (!form.targetWarehouseId) {
+      return;
+    }
+    const stillValid = targetWarehouseRows.some(
+      (row) => String(row.id) === String(form.targetWarehouseId)
+    );
+    if (!stillValid && !targetWarehousesLoading) {
+      setForm((previous) =>
+        previous.targetWarehouseId ? { ...previous, targetWarehouseId: "" } : previous
+      );
+    }
+  }, [form.targetWarehouseId, targetWarehouseRows, targetWarehousesLoading]);
   const itemCardOptions = useMemo(
     () =>
       itemCardRows.map((row) => ({
@@ -795,21 +882,36 @@ export default function InventoryTransfersPage() {
     {
       key: "ship",
       label: l("Ship", "Sevk et"),
-      enabled: Boolean(selectedRow) && canShip(selectedRow),
+      enabled:
+        Boolean(selectedRow) &&
+        canShip(selectedRow) &&
+        (!effectiveOperatingUnitId ||
+          String(effectiveOperatingUnitId) ===
+            String(selectedRow?.sourceOperatingUnitId || "")),
       ...transferActionPermissions.ship,
       className: "rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60",
     },
     {
       key: "receive",
       label: l("Receive", "Teslim al"),
-      enabled: Boolean(selectedRow) && canReceive(selectedRow),
+      enabled:
+        Boolean(selectedRow) &&
+        canReceive(selectedRow) &&
+        (!effectiveOperatingUnitId ||
+          String(effectiveOperatingUnitId) ===
+            String(selectedRow?.targetOperatingUnitId || "")),
       ...transferActionPermissions.receive,
       className: "rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60",
     },
     {
       key: "cancel",
       label: l("Cancel", "Iptal et"),
-      enabled: Boolean(selectedRow) && canCancel(selectedRow),
+      enabled:
+        Boolean(selectedRow) &&
+        canCancel(selectedRow) &&
+        (!effectiveOperatingUnitId ||
+          String(effectiveOperatingUnitId) ===
+            String(selectedRow?.sourceOperatingUnitId || "")),
       ...transferActionPermissions.cancel,
       className: "rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60",
     },
@@ -1337,6 +1439,7 @@ export default function InventoryTransfersPage() {
                     setForm((previous) => ({
                       ...previous,
                       sourceWarehouseId: event.target.value,
+                      targetWarehouseId: "",
                     }))
                   }
                 >
@@ -1352,8 +1455,9 @@ export default function InventoryTransfersPage() {
               <label className="grid gap-1 text-sm text-slate-600">
                 <span>{l("Target warehouse", "Hedef depo")}</span>
                 <select
-                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
                   value={form.targetWarehouseId}
+                  disabled={!form.sourceWarehouseId || targetWarehousesLoading}
                   onChange={(event) =>
                     setForm((previous) => ({
                       ...previous,
@@ -1361,13 +1465,31 @@ export default function InventoryTransfersPage() {
                     }))
                   }
                 >
-                  <option value="">{l("Select", "Sec")}</option>
-                  {activeWarehouseOptions.map((option) => (
-                    <option key={`target-${option.value}`} value={option.value}>
-                      {option.label}
-                    </option>
+                  <option value="">
+                    {!form.sourceWarehouseId
+                      ? l("Select source first", "Once kaynak secin")
+                      : targetWarehousesLoading
+                        ? l("Loading...", "Yukleniyor...")
+                        : activeTargetWarehouseGroups.length === 0
+                          ? l(
+                              "No cross-context targets available",
+                              "Contextler arasi hedef bulunamadi"
+                            )
+                          : l("Select", "Sec")}
+                  </option>
+                  {activeTargetWarehouseGroups.map((group) => (
+                    <optgroup key={group.key} label={group.label}>
+                      {group.options.map((option) => (
+                        <option key={`target-${option.value}`} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
+                {targetWarehousesError ? (
+                  <span className="text-xs text-rose-600">{targetWarehousesError}</span>
+                ) : null}
               </label>
             </div>
 

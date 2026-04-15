@@ -74,7 +74,7 @@ export const SOD_RULES = Object.freeze([
   Object.freeze({
     code: "inventory.transfer.initiate-approve.same-record",
     recordType: "INVENTORY_TRANSFER",
-    action_a: "inventory.transfer.initiate",
+    action_a: "inventory.transfer.create",
     action_b: "inventory.transfer.approve",
     actorUserField: "initiatedByUserId",
     scope: "per-record",

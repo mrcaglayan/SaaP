@@ -90,7 +90,7 @@ export async function assertSecondaryPermission(req, permissionCode, options = {
 
   const bundle = await getPermissionBundleForRequest(req, userId, tenantId, normalizedCode);
   if (bundle?.missingPermission || !bundle?.permissionScopeContext) {
-    throw forbidden(`Missing secondary permission: ${normalizedCode}`);
+    throw forbidden(`Missing secondary permission: ${normalizedCode} — permission not assigned`);
   }
 
   const primaryRequestedScope = resolveRequestScope(req, tenantId);
@@ -117,16 +117,22 @@ export async function assertSecondaryPermission(req, permissionCode, options = {
 
   // Permission scope: can the user act at this scope?
   if (!isScopeAllowed(bundle.permissionScopeContext, requestedScope)) {
-    throw forbidden(`Missing secondary permission: ${normalizedCode}`);
+    throw forbidden(
+      `Secondary permission scope not authorized: ${normalizedCode} — your working context does not cover the requested scope`
+    );
   }
 
   // Visibility scope: can the user access data at this scope?
   const visibilityScope = bundle.visibilityScopeContext || bundle.permissionScopeContext;
   if (requestedScope && !isScopeAllowed(visibilityScope, requestedScope)) {
-    throw forbidden(`Secondary data scope denied: ${normalizedCode}`);
+    throw forbidden(
+      `Secondary data scope not authorized: ${normalizedCode} — your working context does not cover the requested data scope`
+    );
   }
   if (!requestedScope && !isScopeAllowed(visibilityScope, null)) {
-    throw forbidden(`Secondary data scope denied: ${normalizedCode}`);
+    throw forbidden(
+      `Secondary data scope not authorized: ${normalizedCode} — your working context does not cover the requested data scope`
+    );
   }
 }
 
@@ -182,17 +188,23 @@ export function requirePermission(permissionCode, options = {}) {
 
       // Permission scope: can the user act at this scope?
       if (!isScopeAllowed(permissionBundle.permissionScopeContext, requestedScope)) {
-        throw forbidden(`Missing permission: ${normalizedPermissionCode}`);
+        throw forbidden(
+          `Permission scope not authorized: ${normalizedPermissionCode} — your working context does not cover the requested scope`
+        );
       }
 
       // Visibility scope: can the user access data at this scope?
       const visibilityScope =
         permissionBundle.visibilityScopeContext || permissionBundle.permissionScopeContext;
       if (requestedScope && !isScopeAllowed(visibilityScope, requestedScope)) {
-        throw forbidden(`Data scope denied: ${normalizedPermissionCode}`);
+        throw forbidden(
+          `Data scope not authorized: ${normalizedPermissionCode} — your working context does not cover the requested data scope`
+        );
       }
       if (!requestedScope && !isScopeAllowed(visibilityScope, null)) {
-        throw forbidden(`Data scope denied: ${normalizedPermissionCode}`);
+        throw forbidden(
+          `Data scope not authorized: ${normalizedPermissionCode} — your working context does not cover the requested data scope`
+        );
       }
 
       req.rbac = {

@@ -186,6 +186,15 @@ function resolveScopeParams(workingContext) {
   return params;
 }
 
+function resolveFixedAssetScopeParams(workingContext) {
+  const params = resolveScopeParams(workingContext);
+  const operatingUnitId = Number(workingContext?.operatingUnitId || 0);
+  if (Number.isInteger(operatingUnitId) && operatingUnitId > 0) {
+    params.operatingUnitId = operatingUnitId;
+  }
+  return params;
+}
+
 function buildAppPath(basePath, params = {}) {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params || {})) {
@@ -401,8 +410,11 @@ export default function Dashboard() {
     (toInt(workingContext?.operatingUnitId, 0) > 0 ||
       singleInventoryOuId > 0 ||
       inventoryReadAtLegalEntity);
-  const canReadFixedAssetRuns =
-    hasPermission("fixed_assets.depreciation.run") || hasPermission("fixed_assets.read");
+  const canReadFixedAssetRuns = hasPermission("fixed_assets.depreciation.run");
+  const canReadFixedAssetAttention =
+    hasPermission("ops.dashboard.read")
+    || canReadFixedAssetRuns
+    || hasPermission("fixed_assets.read");
   const canReadConsolidationRuns = hasPermission("consolidation.run.read");
   const canReadConsolidationGroups = hasPermission("consolidation.group.read");
   const canReadLocalClose = hasPermission("ouclose.read");
@@ -437,6 +449,10 @@ export default function Dashboard() {
 
   const scopeParams = useMemo(
     () => resolveScopeParams(workingContext),
+    [workingContext]
+  );
+  const fixedAssetScopeParams = useMemo(
+    () => resolveFixedAssetScopeParams(workingContext),
     [workingContext]
   );
   const workingFiscalPeriodId = toInt(workingContext?.fiscalPeriodId, 0);
@@ -673,18 +689,18 @@ export default function Dashboard() {
       });
     }
 
-    if (canReadOps && canReadFixedAssetRuns) {
+    if (canReadFixedAssetAttention) {
       requestEntries.push({
         key: "fixedAssetActivationAttention",
-        run: () => getOpsFixedAssetActivationAttention(scopeParams),
+        run: () => getOpsFixedAssetActivationAttention(fixedAssetScopeParams),
       });
       requestEntries.push({
         key: "fixedAssetLateCatchUpAttention",
-        run: () => getOpsFixedAssetLateCatchUpAttention(scopeParams),
+        run: () => getOpsFixedAssetLateCatchUpAttention(fixedAssetScopeParams),
       });
       requestEntries.push({
         key: "fixedAssetDepreciationAttention",
-        run: () => getOpsFixedAssetDepreciationAttention(scopeParams),
+        run: () => getOpsFixedAssetDepreciationAttention(fixedAssetScopeParams),
       });
     }
 
@@ -783,9 +799,11 @@ export default function Dashboard() {
   }, [
     canReadCash,
     canReadExceptions,
+    canReadFixedAssetAttention,
     canReadFixedAssetRuns,
     canReadInventory,
     canReadOps,
+    fixedAssetScopeParams,
     inventoryScopeParams,
     scopeParams,
     t,
@@ -1329,7 +1347,7 @@ export default function Dashboard() {
           }
           to="/app/demirbas-alim-islemleri"
           ctaLabel={t("dashboard.openQueue", "Open queue")}
-          locked={!canReadOps || !canReadFixedAssetRuns}
+          locked={!canReadFixedAssetAttention}
         />
         <MetricCard
           title={t("dashboard.cards.fixedAssetLateCatchUp", "FA Late Catch-Up Pending")}
@@ -1351,7 +1369,7 @@ export default function Dashboard() {
           }
           to="/app/demirbas-ops-dashboard"
           ctaLabel={t("dashboard.openDashboard", "Open dashboard")}
-          locked={!canReadOps || !canReadFixedAssetRuns}
+          locked={!canReadFixedAssetAttention}
         />
         <MetricCard
           title={t("dashboard.cards.fixedAssetSkippedMonths", "FA Skipped Runs")}
@@ -1374,7 +1392,7 @@ export default function Dashboard() {
           }
           to="/app/demirbas-ops-dashboard"
           ctaLabel={t("dashboard.openDashboard", "Open dashboard")}
-          locked={!canReadOps || !canReadFixedAssetRuns}
+          locked={!canReadFixedAssetAttention}
         />
       </div>
 

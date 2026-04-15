@@ -27,6 +27,13 @@ export async function upsertInventoryWarehouse(payload) {
   return response.data;
 }
 
+export async function listInventoryTransferTargetWarehouses(params = {}) {
+  const response = await api.get(
+    `/api/v1/inventory/transfers/warehouse-options/targets${toQueryString(params)}`
+  );
+  return response.data;
+}
+
 export async function listInventoryTransfers(params = {}) {
   const response = await api.get(`/api/v1/inventory/transfers${toQueryString(params)}`);
   return response.data;

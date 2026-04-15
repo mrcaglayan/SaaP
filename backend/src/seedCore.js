@@ -999,6 +999,9 @@ const BRANCH_FIXED_ASSET_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissions: [
     ...FIXED_ASSET_VIEWER_PERMISSION_CODES,
     "fixed_assets.upsert",
+    // Temporary rollout: branch accountants may activate branch-owned assets,
+    // but transfer, disposal, and depreciation governance remain entity-level.
+    "fixed_assets.post",
   ],
 });
 
