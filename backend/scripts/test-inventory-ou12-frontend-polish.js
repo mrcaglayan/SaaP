@@ -85,7 +85,9 @@ async function main() {
       transferPageSource.includes("Available actions") &&
       transferPageSource.includes("Only actions valid for the current lifecycle are enabled.") &&
       transferPageSource.includes('sourceWarehouseId: filters.sourceWarehouseId || undefined') &&
-      transferPageSource.includes('targetWarehouseId: filters.targetWarehouseId || undefined'),
+      transferPageSource.includes('targetWarehouseId: filters.targetWarehouseId || undefined') &&
+      transferPageSource.includes("listItemCards({") &&
+      transferPageSource.includes("operatingUnitId: operatingUnitId || undefined"),
     "Transfer page should expose finalized filters, lifecycle, journals, evidence, and action gating"
   );
 

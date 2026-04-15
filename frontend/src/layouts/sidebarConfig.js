@@ -180,8 +180,8 @@ export const SECURITY_ADMIN_WORKSPACE_SECTIONS = Object.freeze([
       tr: "Erisim Katalogu",
     }),
     description: Object.freeze({
-      en: "Browse business roles, runtime roles, workflow packages, presets, and companion catalog policies in one domain.",
-      tr: "Is rolleri, runtime roller, workflow paketleri, presetler ve kataloga bagli politikalarin tamamini tek alanda inceleyin.",
+      en: "Browse runtime roles, workflow packages, presets, and companion catalog policies in one domain.",
+      tr: "Runtime roller, workflow paketleri, presetler ve kataloga bagli politikalarin tamamini tek alanda inceleyin.",
     }),
   }),
   Object.freeze({

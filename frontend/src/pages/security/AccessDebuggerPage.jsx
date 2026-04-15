@@ -141,8 +141,8 @@ function ScopeList({ values, emptyLabel }) {
 
 /**
  * Admin-facing page for UI-5A business diagnostics plus the existing layered
- * access checker. It explains label/package/scope coverage first, then lets
- * admins drill down into the lower-level access chain when needed.
+ * access checker. It explains workflow-package and scope coverage first, then
+ * lets admins drill down into the lower-level access chain when needed.
  */
 export default function AccessDebuggerPage() {
   const { hasPermission, user } = useAuth();
@@ -220,17 +220,8 @@ export default function AccessDebuggerPage() {
       title: l("Matching scopes", "Eslesen kapsamlar"),
       value: diagnosticsSummary.matchingScopeLabels.length,
       description: l(
-        "Scope labels or packages that currently cover the selected investigation target.",
-        "Secili inceleme hedefini su anda kapsayan scope etiketleri veya paketleri."
-      ),
-      tone: "blue",
-    },
-    {
-      title: l("Business roles", "Is rolleri"),
-      value: diagnosticsSummary.matchingBusinessRoles.length,
-      description: l(
-        "Business-facing role labels contributing to the current posture.",
-        "Mevcut yetki durusuna katkida bulunan is-odakli rol etiketleri."
+        "Workflow package scopes that currently cover the selected investigation target.",
+        "Secili inceleme hedefini su anda kapsayan workflow paket kapsamları."
       ),
       tone: "violet",
     },
@@ -560,14 +551,14 @@ export default function AccessDebuggerPage() {
             </div>
           ) : null}
 
-          {assignmentLoading ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-              {l(
-                "Loading role labels, workflow packages, and runtime mappings for the selected user...",
-                "Secili kullanici icin rol etiketleri, workflow paketleri ve runtime eslesmeleri yukleniyor..."
-              )}
-            </div>
-          ) : (
+              {assignmentLoading ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                {l(
+                  "Loading workflow packages and runtime mappings for the selected user...",
+                  "Secili kullanici icin workflow paketleri ve runtime eslesmeleri yukleniyor..."
+                )}
+              </div>
+            ) : (
             <div className="space-y-4">
               <section
                 className={joinClassNames(
@@ -598,10 +589,6 @@ export default function AccessDebuggerPage() {
                   value={diagnosticsSummary.matchingScopeLabels.length}
                 />
                 <MiniStat
-                  label={l("Role labels at target", "Hedefte rol etiketleri")}
-                  value={diagnosticsSummary.matchingBusinessRoles.length}
-                />
-                <MiniStat
                   label={l("Packages at target", "Hedefte paketler")}
                   value={diagnosticsSummary.matchingWorkflowPackages.length}
                 />
@@ -611,51 +598,7 @@ export default function AccessDebuggerPage() {
                 />
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-2">
-                <section className="rounded-xl border border-slate-200 bg-white p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-900">
-                        {l("Business role labels", "Is-rolu etiketleri")}
-                      </h3>
-                      <p className="mt-1 text-sm text-slate-600">
-                        {l(
-                          "These stay non-authoritative. Use them to explain the user's title posture at the selected or inherited scope.",
-                          "Bunlar yetki vermez. Kullanicinin secili veya devralinan kapsamdaki unvan durusunu aciklamak icin kullanin."
-                        )}
-                      </p>
-                    </div>
-                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                      {diagnosticsSummary.businessRoleAssignments.length}
-                    </span>
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {diagnosticsSummary.businessRoleAssignments.length === 0 ? (
-                      <div className="text-sm text-slate-500">
-                        {l(
-                          "No business-role labels are assigned for this user.",
-                          "Bu kullaniciya atanmis bir is-rolu etiketi yok."
-                        )}
-                      </div>
-                    ) : (
-                      diagnosticsSummary.businessRoleAssignments.map((item) => (
-                        <div
-                          key={item.id}
-                          className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <div className="font-medium text-slate-900">{item.label}</div>
-                              <div className="mt-1 text-sm text-slate-600">{item.scopeLabel}</div>
-                            </div>
-                            <CoverageBadge status={item.coverageStatus} l={l} />
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </section>
-
+              <div>
                 <section className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -741,8 +684,8 @@ export default function AccessDebuggerPage() {
                     <ScopeList
                       values={diagnosticsSummary.matchingScopeLabels}
                       emptyLabel={l(
-                        "No role label or package currently covers the selected scope.",
-                        "Secili kapsami su anda kapsayan bir rol etiketi veya paket yok."
+                        "No workflow package currently covers the selected scope.",
+                        "Secili kapsami su anda kapsayan bir workflow paketi yok."
                       )}
                     />
                   </div>

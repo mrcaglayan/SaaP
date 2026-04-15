@@ -31,13 +31,13 @@ async function main() {
   );
   assert(packageEntries.length >= 10, "UI-1C should surface the workflow package catalog");
 
-  assert.equal(apApprove.runtimeMappingLabel, "CountryAPApprover + APApprover compatibility split");
+  assert.equal(apApprove.runtimeMappingLabel, "AP Reviewer + APApprover source roles");
   assert.deepEqual(apApprove.runtimeRoleLabels, [
     "AP Reviewer / CountryAPApprover",
     "APApprover",
   ]);
   assert.match(
-    apApprove.legacyWarnings[0] || "",
+    apApprove.runtimeNotes[0] || "",
     /Approval-engine request authority still rides on APApprover/i
   );
 
@@ -46,11 +46,11 @@ async function main() {
   ]);
   assert.deepEqual(lcReview.runtimeRoleLabels, ["LocalCloseReviewer"]);
 
-  assert.equal(pcClose.runtimeMappingLabel, "GLPostingAuthority compatibility companion");
+  assert.equal(pcClose.runtimeMappingLabel, "GLPostingAuthority companion role");
   assert.deepEqual(pcClose.helperBundleLabels, ["GL posting bundle (gl.posting)"]);
 
   assert.equal(groupPost.plannedExtension, true);
-  assert.match(groupPost.legacyWarnings[0] || "", /GroupController/i);
+  assert.match(groupPost.runtimeNotes[0] || "", /backend group-post extension/i);
 
   assert(
     accessModelPageSource.includes("Workflow package guidance") &&
@@ -59,30 +59,28 @@ async function main() {
       accessModelPageSource.includes("Package name") &&
       accessModelPageSource.includes("Allowed scopes") &&
       accessModelPageSource.includes("Underlying permission codes") &&
-      accessModelPageSource.includes("Current runtime mapping") &&
+      accessModelPageSource.includes("Current runtime sources") &&
       accessModelPageSource.includes("Used in presets") &&
       accessModelPageSource.includes("Permission modules") &&
       accessModelPageSource.includes("Permissions grouped by module") &&
       accessModelPageSource.includes("Scope coverage") &&
-      accessModelPageSource.includes("Legacy warnings") &&
       accessModelPageSource.includes("WorkflowPackageCatalogTable"),
     "AccessModelCatalogPage should expose the dedicated UI-1C package card list and richer drawer surface"
   );
 
   assert(
-    accessModelPageSource.includes("Workflow steps bind to packages, not to job titles.") &&
-      accessModelPageSource.includes("Current runtime mapping") &&
+    accessModelPageSource.includes("Workflow steps bind to packages, not to legacy job-title labels.") &&
+      accessModelPageSource.includes("Current runtime sources") &&
       accessModelPageSource.includes("Module groups keep package meaning readable") &&
-      accessModelPageSource.includes("Existing helper bundle mapping") &&
-      accessModelPageSource.includes("Existing runtime role mapping"),
+      accessModelPageSource.includes("Helper bundle sources") &&
+      accessModelPageSource.includes("Runtime role sources"),
     "UI-1C should explain package authority and the compatibility mapping from current runtime roles"
   );
 
   assert(
-    accessModelPageSource.includes('to="/app/ayarlar/workflow-kurulumu"') &&
-      accessModelPageSource.includes('to="/app/ayarlar/rbac/roles-permissions"') &&
-      accessModelPageSource.includes('entry.modelType === "business_role" && Array.isArray(entry.usedInPresetLabels)'),
-    "UI-1C should provide workflow/current-role handoffs and keep the business-role where-used drawer scoped correctly"
+    accessModelPageSource.includes('to="/app/ayarlar/security-admin/workflows?tab=definitions"') &&
+      accessModelPageSource.includes("ROLES_PERMISSIONS_CANONICAL_PATH"),
+    "UI-1C should provide workflow and current-role handoffs from the package catalog"
   );
 
   console.log("test-security-ui1c-workflow-packages-tab passed");

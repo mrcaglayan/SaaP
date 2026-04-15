@@ -133,7 +133,6 @@ export default function RolePermissionsDetailPage() {
     setSelectedPermissionCodes(selectedRole.permissionCodes || []);
   }, [selectedRole]);
 
-  const selectedRoleLocksPermissions = Boolean(selectedRoleEntry?.businessLabelOnly);
   const selectedRoleHeading =
     normalizeText(selectedRoleEntry?.displayName) ||
     normalizeText(selectedRole?.name) ||
@@ -168,12 +167,6 @@ export default function RolePermissionsDetailPage() {
 
   async function handleReplacePermissions() {
     if (!selectedRole?.id) {
-      return;
-    }
-    if (selectedRoleLocksPermissions) {
-      setError(
-        "Business role label roles stay non-authoritative and cannot receive permissions."
-      );
       return;
     }
     if (!canReplaceRolePermissions) {
@@ -241,7 +234,7 @@ export default function RolePermissionsDetailPage() {
               <div className="grid gap-0 border border-slate-200 md:grid-cols-3">
                 <DetailMetric
                   label={l("Permissions", "Yetkiler")}
-                  value={selectedRoleLocksPermissions ? l("Locked", "Kilitli") : savedPermissionCount}
+                  value={savedPermissionCount}
                 />
                 <DetailMetric
                   label={l("Warnings", "Uyarilar")}
@@ -249,7 +242,7 @@ export default function RolePermissionsDetailPage() {
                 />
                 <DetailMetric
                   label={l("Staged", "Bekleyen")}
-                  value={selectedRoleLocksPermissions ? 0 : stagedChangeCount}
+                  value={stagedChangeCount}
                 />
               </div>
             </div>
@@ -275,7 +268,6 @@ export default function RolePermissionsDetailPage() {
             saving={saving}
             stagedChangeCount={stagedChangeCount}
             selectedRole={selectedRole}
-            selectedRoleLocksPermissions={selectedRoleLocksPermissions}
           />
         </>
       ) : null}

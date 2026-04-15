@@ -61,7 +61,6 @@ async function main() {
         stageScopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-PREPARE",
         requiredPackageLabel: "Local Close Pack / Prepare & Submit",
-        eligibleBusinessRoleLabels: ["Entity Accountant"],
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: "",
@@ -72,7 +71,6 @@ async function main() {
         stageScopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-APPROVE-LOCK",
         requiredPackageLabel: "Local Close Pack / Approve & Lock",
-        eligibleBusinessRoleLabels: ["Entity CEO"],
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: "",
@@ -89,10 +87,10 @@ async function main() {
   );
   assert.equal(
     localClosePreview.entries[0].lineText.includes(
-      "Step 1: Local Close Pack / Prepare & Submit at Legal Entity scope - usually Entity Accountant"
+      "Step 1: Local Close Pack / Prepare & Submit at Legal Entity scope - usually In-scope package holders"
     ),
     true,
-    "UI-3D should explain the package, scope, and typical actor for local-close stages"
+    "UI-3D should explain the package, scope, and package-holder audience for local-close stages"
   );
 
   const apPreview = buildWorkflowExplainabilityPreviewModel({
@@ -100,11 +98,11 @@ async function main() {
     stepDrafts: [
       {
         stepNo: 1,
+        actionCode: "APPROVE",
         actionLabel: "Approve",
         stageScopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-AP-APPROVE",
         requiredPackageLabel: "AP Documents / Approve",
-        eligibleBusinessRoleLabels: ["Entity Accountant"],
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: "",
@@ -116,22 +114,15 @@ async function main() {
 
   assert.equal(
     apPreview.entryCount,
-    3,
-    "UI-3D should keep AP submit and post stages visible even though the current backend bridge stores approval rows only"
+    1,
+    "UI-3D should preview only the explicit AP steps saved in the current builder model"
   );
   assert.equal(
     apPreview.entries[0].lineText.includes(
-      "Step 1: AP Documents / Draft & Submit at Operating Unit scope - usually Branch Accountant"
+      "Step 1: AP Documents / Approve at Legal Entity scope - usually In-scope AP approvers"
     ),
     true,
-    "UI-3D should prepend the implicit AP submit stage in business language"
-  );
-  assert.equal(
-    apPreview.entries[2].lineText.includes(
-      "Step 3: AP Documents / Post at Legal Entity scope - usually Entity posting authority"
-    ),
-    true,
-    "UI-3D should append the implicit AP posting stage in business language"
+    "UI-3D should explain the explicit AP package and scope in business language"
   );
   assert.equal(
     apPreview.notes.length > 0,

@@ -10,13 +10,11 @@ const CATEGORY_LABELS = Object.freeze({
   composable: "Composable duty-boundary",
   scoped: "Scoped operations",
   readonly: "Read-only",
-  business_label: "Business role label",
   package_authority: "Workflow package role",
   custom: "Custom tenant role",
 });
 const ACCESS_MODEL_TYPE_LABELS = Object.freeze({
   runtime_role: "Runtime Role",
-  business_role: "Business Role",
   workflow_package: "Workflow Package",
   workflow_preset: "Workflow Preset",
   assignment_preset: "Assignment Preset",
@@ -27,11 +25,6 @@ const WORKFLOW_FAMILY_LABELS = Object.freeze({
   LOCAL_CLOSE_PACK: "Local Close Pack",
   PERIOD_CLOSE: "Period Close",
   CONSOLIDATION_RUN: "Consolidation Run",
-});
-const BUSINESS_ROLE_CATEGORY_LABELS = Object.freeze({
-  operating_unit_scope: "Operating unit scope",
-  legal_entity_scope: "Legal entity scope",
-  group_scope: "Group scope",
 });
 const WORKFLOW_PACKAGE_CATEGORY_LABELS = Object.freeze({
   shared_governance: "Shared governance",
@@ -50,18 +43,15 @@ const ASSIGNMENT_PRESET_CATEGORY_LABELS = Object.freeze({
   bootstrap_setup: "Bootstrap setup",
 });
 const ACCESS_MODEL_SECTION_LABELS = Object.freeze({
-  business_roles: "Business Roles",
   workflow_packages: "Workflow Packages",
   workflow_presets: "Workflow Presets",
 });
 const ACCESS_MODEL_SECTION_ORDER = Object.freeze({
-  business_roles: 10,
-  workflow_packages: 20,
-  workflow_presets: 30,
+  workflow_packages: 10,
+  workflow_presets: 20,
 });
 const MODEL_CATEGORY_LABELS = Object.freeze({
   runtime_role: CATEGORY_LABELS,
-  business_role: BUSINESS_ROLE_CATEGORY_LABELS,
   workflow_package: WORKFLOW_PACKAGE_CATEGORY_LABELS,
   workflow_preset: WORKFLOW_PRESET_CATEGORY_LABELS,
   assignment_preset: ASSIGNMENT_PRESET_CATEGORY_LABELS,
@@ -73,7 +63,6 @@ const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
   EntitySetupManager: "EntityAPController",
   CountryFinanceSetupManager: "CountryAPApprover",
 });
-export const BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX = "BUSINESS_ROLE__";
 export const WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX = "WORKFLOW_PACKAGE__";
 const ROLE_CATALOG = Object.freeze({
   SecurityAdmin: {
@@ -378,98 +367,6 @@ const ROLE_CATALOG = Object.freeze({
     workflowFamily: "AP_DOCUMENT_POSTING",
     sortOrder: 110,
   },
-});
-// Business roles stay separate from runtime roles because the plan explicitly
-// requires human titles to remain non-authoritative helper labels.
-const BUSINESS_ROLE_CATALOG = Object.freeze({
-  BRANCH_ACCOUNTANT: Object.freeze({
-    displayName: "Branch Accountant",
-    description:
-      "Branch-level finance operator who drafts and submits AP work and, by default, receives bounded branch inventory and fixed-asset execution companions.",
-    category: "operating_unit_scope",
-    defaultScope: "OPERATING_UNIT",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT"]),
-    optionalPackageCodes: freezeList(["PKG-PC-READINESS"]),
-    sortOrder: 110,
-  }),
-  BRANCH_MANAGER: Object.freeze({
-    displayName: "Branch Manager",
-    description:
-      "Optional operating-unit reviewer or manager used when the tenant wants a branch-level review checkpoint.",
-    category: "operating_unit_scope",
-    defaultScope: "OPERATING_UNIT",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList([]),
-    optionalPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-LC-REVIEW"]),
-    sortOrder: 120,
-  }),
-  ENTITY_ACCOUNTANT: Object.freeze({
-    displayName: "Entity Accountant",
-    description:
-      "Legal-entity accounting owner who usually reviews AP, prepares local close, and validates period-close readiness.",
-    category: "legal_entity_scope",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-LC-PREPARE", "PKG-PC-READINESS"]),
-    optionalPackageCodes: freezeList([]),
-    sortOrder: 210,
-  }),
-  ENTITY_MANAGER: Object.freeze({
-    displayName: "Entity Manager",
-    description:
-      "Legal-entity managerial approver used for review and controlled close checkpoints above day-to-day accounting work.",
-    category: "legal_entity_scope",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-LC-REVIEW"]),
-    optionalPackageCodes: freezeList(["PKG-AP-APPROVE", "PKG-PC-CLOSE"]),
-    sortOrder: 220,
-  }),
-  ENTITY_CEO: Object.freeze({
-    displayName: "Entity CEO",
-    description:
-      "Final legal-entity authority used for entity-level posting, close, and approval lock decisions.",
-    category: "legal_entity_scope",
-    defaultScope: "LEGAL_ENTITY",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-LC-APPROVE-LOCK", "PKG-PC-CLOSE"]),
-    optionalPackageCodes: freezeList(["PKG-AP-POST"]),
-    sortOrder: 230,
-  }),
-  GROUP_CHECKER: Object.freeze({
-    displayName: "Group Checker",
-    description:
-      "Group-level checker or reviewer who prepares consolidation work and can participate in controlled execution steps.",
-    category: "group_scope",
-    defaultScope: "GROUP",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-CON-PREPARE"]),
-    optionalPackageCodes: freezeList(["PKG-CON-EXECUTE"]),
-    sortOrder: 310,
-  }),
-  GROUP_APPROVER: Object.freeze({
-    displayName: "Group Approver",
-    description:
-      "Group-level approver or finalizer used for consolidation finalization and selected controlled package handoffs.",
-    category: "group_scope",
-    defaultScope: "GROUP",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList(["PKG-CON-FINALIZE"]),
-    optionalPackageCodes: freezeList(["PKG-CON-ADJUST", "PKG-CON-ELIM"]),
-    sortOrder: 320,
-  }),
-  GROUP_CEO: Object.freeze({
-    displayName: "Group CEO",
-    description:
-      "Executive group authority used when the tenant wants final consolidation signoff above the normal approver tier.",
-    category: "group_scope",
-    defaultScope: "GROUP",
-    workflowFamily: "CROSS_WORKFLOW",
-    starterPackageCodes: freezeList([]),
-    optionalPackageCodes: freezeList(["PKG-CON-FINALIZE"]),
-    sortOrder: 330,
-  }),
 });
 const WORKFLOW_PACKAGE_CATALOG = Object.freeze({
   "PKG-WF-SETUP-ADMIN": Object.freeze({
@@ -1074,7 +971,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "baseline_preset",
     defaultScope: "LEGAL_ENTITY",
     workflowFamily: "AP_DOCUMENT_POSTING",
-    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT"]),
     requiredPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT", "PKG-AP-APPROVE", "PKG-AP-POST"]),
     usesExtension: false,
     sortOrder: 110,
@@ -1084,7 +980,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Create / Edit / Submit",
         scopeType: "OPERATING_UNIT",
         requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1094,7 +989,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Approve",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-AP-APPROVE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1104,7 +998,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Post",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-AP-POST",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1118,7 +1011,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "baseline_preset",
     defaultScope: "LEGAL_ENTITY",
     workflowFamily: "AP_DOCUMENT_POSTING",
-    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
     requiredPackageCodes: freezeList(["PKG-AP-DRAFT-SUBMIT", "PKG-AP-APPROVE", "PKG-AP-POST"]),
     usesExtension: false,
     sortOrder: 120,
@@ -1128,7 +1020,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Create / Edit / Submit",
         scopeType: "OPERATING_UNIT",
         requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1138,7 +1029,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Approve",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-AP-APPROVE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1148,7 +1038,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Post",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-AP-POST",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1162,7 +1051,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "extension_preset",
     defaultScope: "GROUP",
     workflowFamily: "AP_DOCUMENT_POSTING",
-    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "GROUP_APPROVER"]),
     requiredPackageCodes: freezeList([
       "PKG-AP-DRAFT-SUBMIT",
       "PKG-AP-APPROVE",
@@ -1178,7 +1066,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Create / Edit / Submit",
         scopeType: "OPERATING_UNIT",
         requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1188,7 +1075,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Approve",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-AP-APPROVE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1198,7 +1084,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Post",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-AP-POST-GROUP",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1212,7 +1097,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "baseline_preset",
     defaultScope: "LEGAL_ENTITY",
     workflowFamily: "LOCAL_CLOSE_PACK",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
     requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
     usesExtension: false,
     sortOrder: 210,
@@ -1222,7 +1106,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Prepare & Submit",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1232,7 +1115,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Review",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-REVIEW",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1242,7 +1124,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Approve & Lock",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-APPROVE-LOCK",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1256,7 +1137,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "assisted_preset",
     defaultScope: "LEGAL_ENTITY",
     workflowFamily: "LOCAL_CLOSE_PACK",
-    typicalActorCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
     requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
     usesExtension: false,
     sortOrder: 220,
@@ -1266,7 +1146,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Prepare working pack",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["BRANCH_ACCOUNTANT", "ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1276,7 +1155,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Review",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-REVIEW",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1286,7 +1164,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Approve & Lock",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-APPROVE-LOCK",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1300,7 +1177,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "supervised_preset",
     defaultScope: "GROUP",
     workflowFamily: "LOCAL_CLOSE_PACK",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "GROUP_APPROVER"]),
     requiredPackageCodes: freezeList(["PKG-LC-PREPARE", "PKG-LC-REVIEW", "PKG-LC-APPROVE-LOCK"]),
     usesExtension: true,
     extensionNote:
@@ -1312,7 +1188,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Prepare & Submit",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1322,7 +1197,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Review",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-LC-REVIEW",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1332,7 +1206,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Approve & Lock",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-LC-APPROVE-LOCK",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1346,7 +1219,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "baseline_preset",
     defaultScope: "LEGAL_ENTITY",
     workflowFamily: "PERIOD_CLOSE",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
     requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
     usesExtension: false,
     sortOrder: 310,
@@ -1356,7 +1228,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Review readiness",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-PC-READINESS",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1366,7 +1237,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Close period",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-PC-CLOSE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER", "ENTITY_CEO"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1380,7 +1250,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "controlled_preset",
     defaultScope: "LEGAL_ENTITY",
     workflowFamily: "PERIOD_CLOSE",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "ENTITY_MANAGER", "ENTITY_CEO"]),
     requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
     usesExtension: false,
     sortOrder: 320,
@@ -1390,7 +1259,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Review readiness",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-PC-READINESS",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1400,7 +1268,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Internal approval",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-PC-CLOSE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_MANAGER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1410,7 +1277,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Final close",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-PC-CLOSE",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_CEO"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1424,7 +1290,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "supervised_preset",
     defaultScope: "GROUP",
     workflowFamily: "PERIOD_CLOSE",
-    typicalActorCodes: freezeList(["ENTITY_ACCOUNTANT", "GROUP_APPROVER"]),
     requiredPackageCodes: freezeList(["PKG-PC-READINESS", "PKG-PC-CLOSE"]),
     usesExtension: true,
     extensionNote:
@@ -1436,7 +1301,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Review readiness",
         scopeType: "LEGAL_ENTITY",
         requiredPackageCode: "PKG-PC-READINESS",
-        eligibleBusinessRoleCodes: freezeList(["ENTITY_ACCOUNTANT"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1446,7 +1310,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Final close",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-PC-CLOSE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1460,7 +1323,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "baseline_preset",
     defaultScope: "GROUP",
     workflowFamily: "CONSOLIDATION_RUN",
-    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
     requiredPackageCodes: freezeList(["PKG-CON-PREPARE", "PKG-CON-EXECUTE", "PKG-CON-FINALIZE"]),
     usesExtension: false,
     sortOrder: 410,
@@ -1470,7 +1332,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Prepare run",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1480,7 +1341,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Execute run",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-EXECUTE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1490,7 +1350,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Finalize",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-FINALIZE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1504,7 +1363,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "controlled_preset",
     defaultScope: "GROUP",
     workflowFamily: "CONSOLIDATION_RUN",
-    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER"]),
     requiredPackageCodes: freezeList([
       "PKG-CON-PREPARE",
       "PKG-CON-ADJUST",
@@ -1519,7 +1377,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Prepare run",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1529,7 +1386,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Post adjustments",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-ADJUST",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1539,7 +1395,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Post eliminations",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-ELIM",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1549,7 +1404,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Finalize",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-FINALIZE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1563,7 +1417,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
     category: "executive_preset",
     defaultScope: "GROUP",
     workflowFamily: "CONSOLIDATION_RUN",
-    typicalActorCodes: freezeList(["GROUP_CHECKER", "GROUP_APPROVER", "GROUP_CEO"]),
     requiredPackageCodes: freezeList(["PKG-CON-PREPARE", "PKG-CON-EXECUTE", "PKG-CON-FINALIZE"]),
     usesExtension: false,
     sortOrder: 430,
@@ -1573,7 +1426,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Prepare run",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-PREPARE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CHECKER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1583,7 +1435,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Execute run",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-EXECUTE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_APPROVER"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1593,7 +1444,6 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
         actionLabel: "Finalize",
         scopeType: "GROUP",
         requiredPackageCode: "PKG-CON-FINALIZE",
-        eligibleBusinessRoleCodes: freezeList(["GROUP_CEO"]),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: null,
@@ -1650,7 +1500,6 @@ const CATEGORY_ORDER = Object.freeze([
   "composable",
   "scoped",
   "readonly",
-  "business_label",
   "package_authority",
   "system",
   "custom",
@@ -1665,19 +1514,6 @@ function normalizeRoleCatalogCode(roleCode) {
 function normalizeBootstrapHandoffPresetCode(presetCode) {
   const normalizedPresetCode = normalizeText(presetCode);
   return BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES[normalizedPresetCode] || normalizedPresetCode;
-}
-function normalizeBusinessRoleCode(roleCode) {
-  return normalizeText(roleCode).toUpperCase();
-}
-function getBusinessRoleAssignmentBusinessRoleCode(roleCode) {
-  const normalizedRoleCode = normalizeText(roleCode).toUpperCase();
-  if (!normalizedRoleCode.startsWith(BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX)) {
-    return "";
-  }
-  const businessRoleCode = normalizedRoleCode.slice(
-    BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX.length
-  );
-  return BUSINESS_ROLE_CATALOG[businessRoleCode] ? businessRoleCode : "";
 }
 function getWorkflowPackageAssignmentPackageCode(roleCode) {
   const normalizedRoleCode = normalizeText(roleCode).toUpperCase();
@@ -1743,47 +1579,6 @@ function buildMetadataEntry({
     workflowFamily,
     workflowFamilyLabel: getWorkflowFamilyLabel(workflowFamily),
     sortOrder: Number(sortOrder || 9999),
-  };
-}
-function getBusinessRoleDisplayName(roleCode) {
-  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
-  return BUSINESS_ROLE_CATALOG[normalizedRoleCode]?.displayName || normalizedRoleCode;
-}
-function buildBusinessRoleAssignmentRoleEntry(roleCode) {
-  const businessRoleCode = getBusinessRoleAssignmentBusinessRoleCode(roleCode);
-  const businessRoleEntry = businessRoleCode
-    ? getBusinessRoleCatalogEntry(businessRoleCode)
-    : null;
-  const runtimeCode =
-    businessRoleCode || normalizeText(roleCode).toUpperCase() || "BUSINESS_ROLE_LABEL";
-  const metadata = buildMetadataEntry({
-    modelType: "runtime_role",
-    code: businessRoleEntry?.displayName || runtimeCode,
-    displayName: businessRoleEntry?.displayName || runtimeCode,
-    description:
-      businessRoleEntry?.description ||
-      "Non-authoritative business role label. Assign workflow packages separately.",
-    category: "business_label",
-    defaultScope: businessRoleEntry?.defaultScope || "",
-    replacementLabel: "",
-    workflowFamily: businessRoleEntry?.workflowFamily || "CROSS_WORKFLOW",
-    sortOrder: (businessRoleEntry?.sortOrder || 9999) + 1,
-  });
-
-  return {
-    ...metadata,
-    runtimeCode,
-    technicalCode: runtimeCode,
-    summary:
-      "Business role label only. It does not grant package or permission authority by itself.",
-    capabilities: ["Label only", "No direct authority", "Packages assigned separately"],
-    recommendedScopes: metadata.defaultScope ? [metadata.defaultScope] : [],
-    companionOnly: false,
-    companionNote:
-      "Assign workflow packages separately. This label is non-authoritative by design.",
-    businessRoleCode,
-    nonAuthoritative: true,
-    businessLabelOnly: true,
   };
 }
 function buildWorkflowPackageAssignmentRoleEntry(roleCode) {
@@ -1861,28 +1656,6 @@ function getPresetCodesUsingPackage(packageCode) {
   );
 }
 
-function getPresetCodesUsingBusinessRole(roleCode) {
-  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
-  return Object.keys(WORKFLOW_PRESET_CATALOG)
-    .filter((presetCode) => {
-      const preset = WORKFLOW_PRESET_CATALOG[presetCode];
-      const matchesTypicalActors = cloneList(preset?.typicalActorCodes)
-        .map(normalizeBusinessRoleCode)
-        .includes(normalizedRoleCode);
-      if (matchesTypicalActors) {
-        return true;
-      }
-      return cloneList(preset?.steps).some((step) =>
-        cloneList(step?.eligibleBusinessRoleCodes)
-          .map(normalizeBusinessRoleCode)
-          .includes(normalizedRoleCode)
-      );
-    })
-    .sort((leftCode, rightCode) =>
-      sortCatalogEntries(WORKFLOW_PRESET_CATALOG[leftCode], WORKFLOW_PRESET_CATALOG[rightCode])
-    );
-}
-
 /**
  * Returns the display label for one access-model item type.
  */
@@ -1938,31 +1711,11 @@ export function getBootstrapHandoffPresetEntry(presetCode) {
 }
 
 /**
- * Returns whether the supplied runtime role code is one of the dedicated
- * zero-permission business label roles used by the UI-2B assignment flow.
- */
-export function isBusinessRoleAssignmentRoleCode(roleCode) {
-  return Boolean(getBusinessRoleAssignmentBusinessRoleCode(roleCode));
-}
-
-/**
  * Returns whether the supplied runtime role code is one of the managed
  * workflow-package roles used by the UI-2C direct package assignment flow.
  */
 export function isWorkflowPackageAssignmentRoleCode(roleCode) {
   return Boolean(getWorkflowPackageAssignmentPackageCode(roleCode));
-}
-
-/**
- * Returns the dedicated zero-permission runtime role code used to persist one
- * business-role label assignment safely inside the existing role-assignment
- * system.
- */
-export function getBusinessRoleAssignmentRuntimeRoleCode(roleCode) {
-  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
-  return BUSINESS_ROLE_CATALOG[normalizedRoleCode]
-    ? `${BUSINESS_ROLE_ASSIGNMENT_ROLE_PREFIX}${normalizedRoleCode}`
-    : "";
 }
 
 /**
@@ -1974,29 +1727,6 @@ export function getWorkflowPackageAssignmentRuntimeRoleCode(packageCode) {
   return WORKFLOW_PACKAGE_CATALOG[normalizedPackageCode]
     ? `${WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX}${normalizedPackageCode}`
     : "";
-}
-
-/**
- * Builds the non-authoritative tenant-role payload used when a business label
- * role must be created before assignment.
- */
-export function getBusinessRoleAssignmentRoleDefinition(roleCode) {
-  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
-  const businessRoleEntry = getBusinessRoleCatalogEntry(normalizedRoleCode);
-  const runtimeRoleCode = getBusinessRoleAssignmentRuntimeRoleCode(normalizedRoleCode);
-  if (!runtimeRoleCode || !businessRoleEntry.active) {
-    return null;
-  }
-
-  return {
-    businessRoleCode: normalizedRoleCode,
-    roleCode: runtimeRoleCode,
-    roleName: `Business Role Label / ${businessRoleEntry.displayName}`,
-    displayName: businessRoleEntry.displayName,
-    defaultScope: businessRoleEntry.defaultScope,
-    description:
-      "Non-authoritative business role label. Assign workflow packages separately.",
-  };
 }
 
 /**
@@ -2036,9 +1766,6 @@ export function getRoleCatalogEntry(roleOrCode) {
     typeof roleOrCode === "string"
       ? normalizeText(roleOrCode)
       : normalizeText(roleOrCode?.code || roleOrCode?.roleCode);
-  if (isBusinessRoleAssignmentRoleCode(requestedRoleCode)) {
-    return buildBusinessRoleAssignmentRoleEntry(requestedRoleCode);
-  }
   if (isWorkflowPackageAssignmentRoleCode(requestedRoleCode)) {
     return buildWorkflowPackageAssignmentRoleEntry(requestedRoleCode);
   }
@@ -2076,53 +1803,6 @@ export function getRoleCatalogEntry(roleOrCode) {
     companionOnly: Boolean(base?.companionOnly),
     companionNote: base?.companionNote || "",
   };
-}
-
-/**
- * Returns one business-role catalog entry from the plan-defined admin model.
- */
-export function getBusinessRoleCatalogEntry(roleCode) {
-  const normalizedRoleCode = normalizeBusinessRoleCode(roleCode);
-  const base = BUSINESS_ROLE_CATALOG[normalizedRoleCode] || null;
-  const metadata = buildMetadataEntry({
-    modelType: "business_role",
-    code: normalizedRoleCode,
-    displayName: base?.displayName || normalizedRoleCode,
-    description:
-      base?.description ||
-      "Business-facing title used only as an admin label. Assign workflow packages separately.",
-    category: base?.category || "unclassified",
-    defaultScope: base?.defaultScope || "",
-    replacementLabel: "",
-    workflowFamily: base?.workflowFamily || "CROSS_WORKFLOW",
-    sortOrder: base?.sortOrder || 9999,
-  });
-
-  const starterPackageCodes = cloneList(base?.starterPackageCodes);
-  const optionalPackageCodes = cloneList(base?.optionalPackageCodes);
-  const usedInPresetCodes = getPresetCodesUsingBusinessRole(normalizedRoleCode);
-  const hiddenFromPicker = Boolean(base?.hiddenFromPicker);
-  return {
-    ...metadata,
-    starterPackageCodes,
-    starterPackageLabels: starterPackageCodes.map(getWorkflowPackageDisplayName),
-    optionalPackageCodes,
-    optionalPackageLabels: optionalPackageCodes.map(getWorkflowPackageDisplayName),
-    usedInPresetCodes,
-    usedInPresetLabels: usedInPresetCodes.map(getWorkflowPresetDisplayName),
-    hiddenFromPicker,
-    statusLabel: hiddenFromPicker ? "Hidden" : "Active",
-    active: Boolean(base),
-  };
-}
-
-/**
- * Returns all business-role metadata entries in stable admin sort order.
- */
-export function listBusinessRoleCatalogEntries() {
-  return Object.keys(BUSINESS_ROLE_CATALOG)
-    .map((roleCode) => getBusinessRoleCatalogEntry(roleCode))
-    .sort(sortCatalogEntries);
 }
 
 /**
@@ -2215,7 +1895,8 @@ export function resolveWorkflowPackagesForRuntimeRoles(roleCodes) {
 }
 
 /**
- * Returns one workflow-preset catalog entry with step metadata ready for future catalog tabs.
+ * Returns one workflow-preset catalog entry with step metadata ready for admin
+ * catalog and workflow-governance surfaces.
  */
 export function getWorkflowPresetCatalogEntry(presetCode) {
   const normalizedPresetCode = normalizeWorkflowPresetCode(presetCode);
@@ -2235,7 +1916,6 @@ export function getWorkflowPresetCatalogEntry(presetCode) {
   });
 
   const requiredPackageCodes = cloneList(base?.requiredPackageCodes);
-  const typicalActorCodes = cloneList(base?.typicalActorCodes);
   const draft = Boolean(base?.draft);
   const steps = cloneList(base?.steps).map((step) => ({
     stepNo: Number(step?.stepNo || 0),
@@ -2243,10 +1923,6 @@ export function getWorkflowPresetCatalogEntry(presetCode) {
     scopeType: step?.scopeType || "",
     requiredPackageCode: step?.requiredPackageCode || "",
     requiredPackageLabel: getWorkflowPackageDisplayName(step?.requiredPackageCode),
-    eligibleBusinessRoleCodes: cloneList(step?.eligibleBusinessRoleCodes),
-    eligibleBusinessRoleLabels: cloneList(step?.eligibleBusinessRoleCodes).map(
-      getBusinessRoleDisplayName
-    ),
     minApproverCount: Number(step?.minApproverCount || 1),
     allowSelfApprove: Boolean(step?.allowSelfApprove),
     escalationAfterHours:
@@ -2259,8 +1935,6 @@ export function getWorkflowPresetCatalogEntry(presetCode) {
     stepCount: steps.length,
     draft,
     statusLabel: draft ? "Draft" : "Active",
-    typicalActorCodes,
-    typicalActorLabels: typicalActorCodes.map(getBusinessRoleDisplayName),
     requiredPackageCodes,
     requiredPackageLabels: requiredPackageCodes.map(getWorkflowPackageDisplayName),
     usesExtension: Boolean(base?.usesExtension),
@@ -2280,21 +1954,11 @@ export function listWorkflowPresetCatalogEntries() {
 }
 
 /**
- * Returns the access-model catalog sections so tabs can render business roles,
- * workflow packages, and workflow presets from one shared source.
+ * Returns the access-model catalog sections so tabs can render workflow
+ * packages and workflow presets from one shared source.
  */
 export function listAccessModelCatalogSections() {
   return [
-    {
-      key: "business_roles",
-      label: ACCESS_MODEL_SECTION_LABELS.business_roles,
-      modelType: "business_role",
-      modelTypeLabel: getAccessModelTypeLabel("business_role"),
-      description:
-        "Human-facing titles only. Workflow authority still comes from assigned packages.",
-      sortOrder: ACCESS_MODEL_SECTION_ORDER.business_roles,
-      entries: listBusinessRoleCatalogEntries(),
-    },
     {
       key: "workflow_packages",
       label: ACCESS_MODEL_SECTION_LABELS.workflow_packages,

@@ -39,16 +39,12 @@ import { buildEffectiveAuthorityPreview } from "./userAssignmentAuthorityPreview
 import {
   BOOTSTRAP_HANDOFF_PRESET_CATALOG,
   buildScopeLabel,
-  getBusinessRoleCatalogEntry,
-  getBusinessRoleAssignmentRoleDefinition,
   getBootstrapHandoffPresetEntry,
   getBootstrapHandoffPresetDisplayLabel,
   getRoleCatalogEntry,
   getWorkflowPackageAssignmentRoleDefinition,
   groupRolesForManagement,
-  isBusinessRoleAssignmentRoleCode,
   isWorkflowPackageAssignmentRoleCode,
-  listBusinessRoleCatalogEntries,
   listWorkflowPresetCatalogEntries,
   listWorkflowPackageCatalogEntries,
   resolveWorkflowPackagesForRuntimeRoles,
@@ -466,45 +462,6 @@ function resolveAssignmentLifecycle(rows) {
   return "CUSTOM";
 }
 
-function buildBusinessRoleLabelAssignments(assignments, usersById, lookups, tenantScopeId) {
-  return (Array.isArray(assignments) ? assignments : [])
-    .filter((assignment) => isBusinessRoleAssignmentRoleCode(assignment?.role_code))
-    .map((assignment) => {
-      const userId = Number(assignment.user_id || 0);
-      const user = usersById.get(userId) || null;
-      const roleEntry = getRoleCatalogEntry(assignment.role_code);
-      return {
-        assignmentId: Number(assignment.id || 0),
-        userId,
-        userName: normalizeText(user?.name || assignment.user_name || `User #${userId}`),
-        userEmail: normalizeText(user?.email || assignment.user_email),
-        roleId: Number(assignment.role_id || 0),
-        businessRoleCode: roleEntry.businessRoleCode || "",
-        businessRoleLabel: roleEntry.code,
-        roleCode: normalizeText(assignment.role_code),
-        scopeType: normalizeText(assignment.scope_type).toUpperCase(),
-        scopeId: Number(assignment.scope_id || 0),
-        scopeLabel: buildScopeLabel(
-          assignment.scope_type,
-          assignment.scope_id,
-          lookups,
-          tenantScopeId
-        ),
-        effect: normalizeText(assignment.effect).toUpperCase() || "ALLOW",
-        effectiveFrom: assignment.effective_from || "",
-        effectiveTo: assignment.effective_to || "",
-        createdAt: assignment.created_at || "",
-        status: resolveAssignmentLifecycle([assignment]),
-      };
-    })
-    .sort((left, right) => {
-      if (left.userId !== right.userId) {
-        return left.userId - right.userId;
-      }
-      return left.businessRoleLabel.localeCompare(right.businessRoleLabel);
-    });
-}
-
 function buildWorkflowPackageAssignments(assignments, usersById, lookups, tenantScopeId) {
   return (Array.isArray(assignments) ? assignments : [])
     .filter((assignment) => isWorkflowPackageAssignmentRoleCode(assignment?.role_code))
@@ -557,50 +514,6 @@ function buildWorkflowPackageAssignments(assignments, usersById, lookups, tenant
     });
 }
 
-function findStarterBundleSourceMatch(packageCodes, businessRoleAssignments) {
-  const normalizedPackageCodes = Array.from(
-    new Set((Array.isArray(packageCodes) ? packageCodes : []).map((code) => normalizeText(code)).filter(Boolean))
-  );
-  if (normalizedPackageCodes.length === 0) {
-    return null;
-  }
-
-  const matches = (Array.isArray(businessRoleAssignments) ? businessRoleAssignments : [])
-    .map((assignment) => {
-      const businessRoleEntry = getBusinessRoleCatalogEntry(assignment.businessRoleCode);
-      const candidatePackageCodes = Array.from(
-        new Set([
-          ...(businessRoleEntry.starterPackageCodes || []),
-          ...(businessRoleEntry.optionalPackageCodes || []),
-        ])
-      );
-      if (
-        candidatePackageCodes.length === 0 ||
-        !normalizedPackageCodes.every((packageCode) => candidatePackageCodes.includes(packageCode))
-      ) {
-        return null;
-      }
-      return {
-        sourceType: "STARTER_DERIVED",
-        sourceTypeLabel: "Starter-derived",
-        sourceDetail: `${businessRoleEntry.displayName} starter bundle`,
-        sourceBusinessRoleCode: businessRoleEntry.code,
-        sourceBusinessRoleLabel: businessRoleEntry.displayName,
-        sortOrder: Number(businessRoleEntry.sortOrder || 9999),
-        packageCount: candidatePackageCodes.length,
-      };
-    })
-    .filter(Boolean)
-    .sort((left, right) => {
-      if (left.sortOrder !== right.sortOrder) {
-        return left.sortOrder - right.sortOrder;
-      }
-      return left.packageCount - right.packageCount;
-    });
-
-  return matches[0] || null;
-}
-
 function findWorkflowPresetSourceMatch(packageCodes, workflowPresetCatalogEntries) {
   const normalizedPackageCodes = Array.from(
     new Set((Array.isArray(packageCodes) ? packageCodes : []).map((code) => normalizeText(code)).filter(Boolean))
@@ -646,7 +559,6 @@ function findWorkflowPresetSourceMatch(packageCodes, workflowPresetCatalogEntrie
 
 function buildWorkflowPackageAssignmentSourceMap(
   workflowPackageAssignments,
-  businessRoleLabelAssignments,
   workflowPresetCatalogEntries
 ) {
   const byGroupKey = new Map();
@@ -674,24 +586,11 @@ function buildWorkflowPackageAssignmentSourceMap(
       continue;
     }
     const packageCodes = assignmentsAtScope.map((assignment) => assignment.packageCode);
-    const sameScopeBusinessRoles = (Array.isArray(businessRoleLabelAssignments)
-      ? businessRoleLabelAssignments
-      : []
-    ).filter(
-      (assignment) =>
-        Number(assignment.userId) === Number(first.userId) &&
-        assignment.scopeType === first.scopeType &&
-        Number(assignment.scopeId) === Number(first.scopeId)
-    );
-    const starterMatch = findStarterBundleSourceMatch(
+    const presetMatch = findWorkflowPresetSourceMatch(
       packageCodes,
-      sameScopeBusinessRoles
+      workflowPresetCatalogEntries
     );
-    const presetMatch = starterMatch
-      ? null
-      : findWorkflowPresetSourceMatch(packageCodes, workflowPresetCatalogEntries);
     const sourceInfo =
-      starterMatch ||
       presetMatch || {
         sourceType: "DIRECT",
         sourceTypeLabel: "Direct / custom",
@@ -707,14 +606,9 @@ function buildWorkflowPackageAssignmentSourceMap(
 function buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId) {
   const grouped = new Map();
   for (const assignment of Array.isArray(assignments) ? assignments : []) {
-    // Label-only business roles stay outside bundle/package explainability so
-    // UI-2B does not blur non-authoritative titles with effective authority.
-    // UI-2C direct workflow-package grants also stay outside these grouped
-    // business bundles so one package can be removed independently later.
-    if (
-      isBusinessRoleAssignmentRoleCode(assignment?.role_code) ||
-      isWorkflowPackageAssignmentRoleCode(assignment?.role_code)
-    ) {
+    // Direct workflow-package grants stay outside grouped runtime bundles so
+    // one package can be removed independently later.
+    if (isWorkflowPackageAssignmentRoleCode(assignment?.role_code)) {
       continue;
     }
     const key = [
@@ -821,8 +715,7 @@ function buildUserDirectoryRows(
   workflowPackageAssignments,
   workflowPackageAssignmentSourceMap,
   approvalRows,
-  coverageRows,
-  businessRoleLabelAssignments,
+  coverageRows
 ) {
   const bundleMap = new Map();
   for (const bundle of Array.isArray(bundles) ? bundles : []) {
@@ -831,16 +724,6 @@ function buildUserDirectoryRows(
       bundleMap.set(userId, []);
     }
     bundleMap.get(userId).push(bundle);
-  }
-  const businessRoleMap = new Map();
-  for (const assignment of Array.isArray(businessRoleLabelAssignments)
-    ? businessRoleLabelAssignments
-    : []) {
-    const userId = Number(assignment.userId || 0);
-    if (!businessRoleMap.has(userId)) {
-      businessRoleMap.set(userId, []);
-    }
-    businessRoleMap.get(userId).push(assignment);
   }
   const packageAssignmentMap = new Map();
   for (const assignment of Array.isArray(workflowPackageAssignments)
@@ -855,7 +738,6 @@ function buildUserDirectoryRows(
   return (Array.isArray(users) ? users : []).map((user) => {
     const userId = Number(user.id || 0);
     const userBundles = bundleMap.get(userId) || [];
-    const userBusinessRoles = businessRoleMap.get(userId) || [];
     const userPackageAssignments = packageAssignmentMap.get(userId) || [];
     const derivedPackageAssignments = userPackageAssignments.filter((assignment) => {
       const sourceInfo = workflowPackageAssignmentSourceMap.get(
@@ -899,15 +781,11 @@ function buildUserDirectoryRows(
         ...userPackageAssignments.map(
           (assignment) => `${assignment.scopeType}:${assignment.scopeId}`
         ),
-        ...userBusinessRoles.map(
-          (assignment) => `${assignment.scopeType}:${assignment.scopeId}`
-        ),
       ])
     );
     const topScopeLabels = Array.from(
       new Set([
         ...userPackageAssignments.map((assignment) => assignment.scopeLabel),
-        ...userBusinessRoles.map((assignment) => assignment.scopeLabel),
         ...userBundles.map((bundle) => bundle.scopeLabel),
       ].filter(Boolean))
     );
@@ -929,13 +807,6 @@ function buildUserDirectoryRows(
     });
     return {
       ...user,
-      businessRoleCount: userBusinessRoles.length,
-      businessRoleCodes: Array.from(
-        new Set(userBusinessRoles.map((assignment) => assignment.businessRoleCode).filter(Boolean))
-      ),
-      businessRoleLabels: Array.from(
-        new Set(userBusinessRoles.map((assignment) => assignment.businessRoleLabel).filter(Boolean))
-      ),
       assignmentCount: userBundles.length,
       derivedAssignmentCount,
       directAssignmentCount,
@@ -977,8 +848,6 @@ function buildUserSearchText(row) {
     row.name,
     row.email,
     row.status,
-    row.businessRoleCodes.join(" "),
-    row.businessRoleLabels.join(" "),
     row.topRoleCodes.join(" "),
     row.topRoleCodes.map((roleCode) => getRoleDisplayCode(roleCode)).join(" "),
     row.currentPresetCodes.join(" "),
@@ -1002,8 +871,7 @@ function getPresetDisplayLabel(presetCode) {
 
 function buildScopeTargetOptions(
   bundles,
-  workflowPackageAssignments,
-  businessRoleLabelAssignments
+  workflowPackageAssignments
 ) {
   const byScopeKey = new Map();
   for (const bundle of Array.isArray(bundles) ? bundles : []) {
@@ -1019,18 +887,6 @@ function buildScopeTargetOptions(
   }
   for (const assignment of Array.isArray(workflowPackageAssignments)
     ? workflowPackageAssignments
-    : []) {
-    const scopeKey = `${assignment.scopeType}:${assignment.scopeId}`;
-    if (!scopeKey || !assignment?.scopeLabel || byScopeKey.has(scopeKey)) {
-      continue;
-    }
-    byScopeKey.set(scopeKey, {
-      value: scopeKey,
-      label: assignment.scopeLabel,
-    });
-  }
-  for (const assignment of Array.isArray(businessRoleLabelAssignments)
-    ? businessRoleLabelAssignments
     : []) {
     const scopeKey = `${assignment.scopeType}:${assignment.scopeId}`;
     if (!scopeKey || !assignment?.scopeLabel || byScopeKey.has(scopeKey)) {
@@ -1381,8 +1237,8 @@ function AuditSodSummarySurface({
             description={
               selectedUser
                 ? l(
-                    "{{user}} icin mevcut etiket, paket ve bundle audit satirlari.",
-                    "{{user}} icin mevcut etiket, paket ve bundle audit satirlari.",
+                    "{{user}} icin mevcut paket ve bundle audit satirlari.",
+                    "{{user}} icin mevcut paket ve bundle audit satirlari.",
                     { user: selectedUser.name || selectedUser.email || "#" }
                   )
                 : l(
@@ -1582,10 +1438,10 @@ function AuditSodSummarySurface({
             {auditItems.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
                 {l(
-                  "No current labels, package grants, or runtime bundles are available for the compact audit summary yet.",
-                  "Kompakt audit ozeti icin gosterilecek mevcut etiket, paket yetkisi veya runtime paketi henuz bulunmuyor."
-                )}
-              </div>
+                    "No current package grants or runtime bundles are available for the compact audit summary yet.",
+                    "Kompakt audit ozeti icin gosterilecek mevcut paket yetkisi veya runtime paketi henuz bulunmuyor."
+                  )}
+                </div>
             ) : (
               <div className="space-y-3">
                 {auditItems.slice(0, SOD_PREVIEW_LIMIT).map((item) => (
@@ -2275,7 +2131,6 @@ export default function UserAssignmentsPage() {
   const [userFilters, setUserFilters] = useState({
     search: "",
     status: "ALL",
-    roleCode: "",
     packageCode: "",
     scopeType: "",
     scopeTarget: "",
@@ -2311,29 +2166,11 @@ export default function UserAssignmentsPage() {
     effectiveFrom: "",
     effectiveTo: "",
   });
-  const [businessRoleAssignmentForm, setBusinessRoleAssignmentForm] = useState({
-    userId: "",
-    businessRoleCode: "BRANCH_ACCOUNTANT",
-    scopeType: "OPERATING_UNIT",
-    scopeId: "",
-    selectedPackageCodes: [],
-    autoSelectStarterPackages: true,
-  });
   const [workflowPackageAssignmentForm, setWorkflowPackageAssignmentForm] = useState({
     userId: "",
     packageCode: "PKG-AP-DRAFT-SUBMIT",
     scopeType: "OPERATING_UNIT",
     scopeId: "",
-  });
-  const [packageSourceApplyForm, setPackageSourceApplyForm] = useState({
-    userId: "",
-    sourceKind: "STARTER",
-    businessRoleCode: "BRANCH_ACCOUNTANT",
-    presetCode: "AP_STANDARD_ENTITY",
-    scopeType: "OPERATING_UNIT",
-    scopeId: "",
-    selectedPackageCodes: [],
-    assignBusinessRoleLabel: true,
   });
   const setWorkspaceDelegationTab = useCallback(
     (nextTab) => {
@@ -2370,10 +2207,6 @@ export default function UserAssignmentsPage() {
     [roles]
   );
   const roleGroups = useMemo(() => groupRolesForManagement(roles), [roles]);
-  const businessRoleCatalogEntries = useMemo(
-    () => listBusinessRoleCatalogEntries(),
-    []
-  );
   const workflowPackageCatalogEntries = useMemo(
     () =>
       listWorkflowPackageCatalogEntries().filter(
@@ -2381,35 +2214,13 @@ export default function UserAssignmentsPage() {
       ),
     []
   );
-  const workflowPackageCatalogByCode = useMemo(
-    () =>
-      new Map(
-        workflowPackageCatalogEntries.map((entry) => [normalizeText(entry.code), entry])
-      ),
-    [workflowPackageCatalogEntries]
-  );
   const workflowPresetCatalogEntries = useMemo(
     () => listWorkflowPresetCatalogEntries(),
     []
   );
-  const roleFilterOptions = useMemo(
-    () =>
-      businessRoleCatalogEntries
-        .map((entry) => ({
-          value: normalizeText(entry.code),
-          label: entry.displayName,
-        }))
-        .sort((left, right) => left.label.localeCompare(right.label)),
-    [businessRoleCatalogEntries]
-  );
   const assignableRoleGroups = roleGroups;
   const assignmentBundles = useMemo(
     () => buildAssignmentBundles(assignments, usersById, lookups, tenantScopeId),
-    [assignments, lookups, tenantScopeId, usersById]
-  );
-  const businessRoleLabelAssignments = useMemo(
-    () =>
-      buildBusinessRoleLabelAssignments(assignments, usersById, lookups, tenantScopeId),
     [assignments, lookups, tenantScopeId, usersById]
   );
   const workflowPackageAssignments = useMemo(
@@ -2421,14 +2232,9 @@ export default function UserAssignmentsPage() {
     () =>
       buildWorkflowPackageAssignmentSourceMap(
         workflowPackageAssignments,
-        businessRoleLabelAssignments,
         workflowPresetCatalogEntries
       ),
-    [
-      businessRoleLabelAssignments,
-      workflowPackageAssignments,
-      workflowPresetCatalogEntries,
-    ]
+    [workflowPackageAssignments, workflowPresetCatalogEntries]
   );
   const userDirectoryRows = useMemo(
     () =>
@@ -2438,13 +2244,11 @@ export default function UserAssignmentsPage() {
         workflowPackageAssignments,
         workflowPackageAssignmentSourceMap,
         approvalDelegations,
-        coverageRows,
-        businessRoleLabelAssignments
+        coverageRows
       ),
     [
       approvalDelegations,
       assignmentBundles,
-      businessRoleLabelAssignments,
       coverageRows,
       workflowPackageAssignmentSourceMap,
       workflowPackageAssignments,
@@ -2452,13 +2256,8 @@ export default function UserAssignmentsPage() {
     ]
   );
   const scopeTargetOptions = useMemo(
-    () =>
-      buildScopeTargetOptions(
-        assignmentBundles,
-        workflowPackageAssignments,
-        businessRoleLabelAssignments
-      ),
-    [assignmentBundles, businessRoleLabelAssignments, workflowPackageAssignments]
+    () => buildScopeTargetOptions(assignmentBundles, workflowPackageAssignments),
+    [assignmentBundles, workflowPackageAssignments]
   );
   const packageFilterOptions = useMemo(
     () => buildPackageFilterOptions(assignmentBundles, workflowPackageAssignments),
@@ -2477,9 +2276,6 @@ export default function UserAssignmentsPage() {
         return false;
       }
       if (userFilters.scopeTarget && !row.scopeKeys.includes(userFilters.scopeTarget)) {
-        return false;
-      }
-      if (userFilters.roleCode && !row.businessRoleCodes.includes(userFilters.roleCode)) {
         return false;
       }
       if (userFilters.packageCode && !row.currentPackageCodes.includes(userFilters.packageCode)) {
@@ -2554,13 +2350,6 @@ export default function UserAssignmentsPage() {
     selectedWorkbenchUserBundles.find((bundle) => bundle.id === selectedWorkbenchBundleId) ||
     selectedWorkbenchUserBundles[0] ||
     null;
-  const selectedWorkbenchBusinessRoleAssignments = useMemo(
-    () =>
-      businessRoleLabelAssignments.filter(
-        (assignment) => Number(assignment.userId) === Number(selectedWorkbenchUser?.id || 0)
-      ),
-    [businessRoleLabelAssignments, selectedWorkbenchUser?.id]
-  );
   const selectedWorkbenchWorkflowPackageAssignments = useMemo(
     () =>
       workflowPackageAssignments.filter(
@@ -2677,32 +2466,19 @@ export default function UserAssignmentsPage() {
             ...selectedWorkbenchWorkflowPackageAssignments.map(
               (assignment) => assignment.scopeLabel
             ),
-            ...selectedWorkbenchBusinessRoleAssignments.map(
-              (assignment) => assignment.scopeLabel
-            ),
           ].filter(Boolean)
         )
       ),
-    [
-      selectedWorkbenchBusinessRoleAssignments,
-      selectedWorkbenchUserBundles,
-      selectedWorkbenchWorkflowPackageAssignments,
-    ]
+    [selectedWorkbenchUserBundles, selectedWorkbenchWorkflowPackageAssignments]
   );
   const selectedWorkbenchEffectiveAuthorityPreview = useMemo(
     () =>
       buildEffectiveAuthorityPreview({
-        businessRoleAssignments: selectedWorkbenchBusinessRoleAssignments,
         workflowPackageAssignments: selectedWorkbenchWorkflowPackageAssignments,
         userBundles: selectedWorkbenchUserBundles,
         l,
       }),
-    [
-      l,
-      selectedWorkbenchBusinessRoleAssignments,
-      selectedWorkbenchUserBundles,
-      selectedWorkbenchWorkflowPackageAssignments,
-    ]
+    [l, selectedWorkbenchUserBundles, selectedWorkbenchWorkflowPackageAssignments]
   );
   useEffect(() => {
     if (activeTab !== "users" || !selectedWorkbenchUser?.id || !canReadAudit) {
@@ -2757,7 +2533,6 @@ export default function UserAssignmentsPage() {
   const selectedWorkbenchAssignmentAuditSummary = useMemo(
     () =>
       buildAssignmentAuditSummary({
-        businessRoleAssignments: selectedWorkbenchBusinessRoleAssignments,
         workflowPackageAssignments: selectedWorkbenchWorkflowPackageAssignments,
         userBundles: selectedWorkbenchUserBundles,
         auditRows: selectedWorkbenchAuditRows,
@@ -2769,25 +2544,9 @@ export default function UserAssignmentsPage() {
       l,
       selectedWorkbenchAuditError,
       selectedWorkbenchAuditRows,
-      selectedWorkbenchBusinessRoleAssignments,
       selectedWorkbenchUserBundles,
       selectedWorkbenchWorkflowPackageAssignments,
     ]
-  );
-  const selectedBusinessRoleCatalogEntry = useMemo(
-    () =>
-      businessRoleCatalogEntries.find(
-        (entry) => entry.code === normalizeText(businessRoleAssignmentForm.businessRoleCode)
-      ) || businessRoleCatalogEntries[0] || null,
-    [businessRoleAssignmentForm.businessRoleCode, businessRoleCatalogEntries]
-  );
-  const selectedBusinessRoleDefinition = useMemo(
-    () =>
-      getBusinessRoleAssignmentRoleDefinition(businessRoleAssignmentForm.businessRoleCode),
-    [businessRoleAssignmentForm.businessRoleCode]
-  );
-  const selectedBusinessRoleRuntimeRoleExists = Boolean(
-    rolesByCode.get(selectedBusinessRoleDefinition?.roleCode || "")
   );
   const selectedWorkflowPackageCatalogEntry = useMemo(
     () =>
@@ -2820,20 +2579,6 @@ export default function UserAssignmentsPage() {
     () => selectedWorkflowPackageCatalogEntry?.allowedScopes || [],
     [selectedWorkflowPackageCatalogEntry?.allowedScopes]
   );
-  const businessRoleScopeOptions = useMemo(
-    () =>
-      buildScopeOptions(
-        businessRoleAssignmentForm.scopeType || selectedBusinessRoleCatalogEntry?.defaultScope,
-        lookups,
-        tenantScopeId
-      ),
-    [
-      businessRoleAssignmentForm.scopeType,
-      lookups,
-      selectedBusinessRoleCatalogEntry?.defaultScope,
-      tenantScopeId,
-    ]
-  );
   const workflowPackageScopeOptions = useMemo(
     () =>
       buildScopeOptions(
@@ -2847,191 +2592,6 @@ export default function UserAssignmentsPage() {
       selectedWorkflowPackageCatalogEntry?.defaultScope,
       tenantScopeId,
     ]
-  );
-  const selectedPackageSourceBusinessRoleEntry = useMemo(
-    () =>
-      businessRoleCatalogEntries.find(
-        (entry) => entry.code === normalizeText(packageSourceApplyForm.businessRoleCode)
-      ) || businessRoleCatalogEntries[0] || null,
-    [businessRoleCatalogEntries, packageSourceApplyForm.businessRoleCode]
-  );
-  const selectedPackageSourcePresetEntry = useMemo(
-    () =>
-      workflowPresetCatalogEntries.find(
-        (entry) => entry.code === normalizeText(packageSourceApplyForm.presetCode)
-      ) || workflowPresetCatalogEntries[0] || null,
-    [packageSourceApplyForm.presetCode, workflowPresetCatalogEntries]
-  );
-  const packageSourceCatalogEntries = useMemo(() => {
-    if (packageSourceApplyForm.sourceKind === "PRESET") {
-      return (selectedPackageSourcePresetEntry?.requiredPackageCodes || [])
-        .map((packageCode) => {
-          const packageEntry = workflowPackageCatalogByCode.get(normalizeText(packageCode));
-          if (!packageEntry) {
-            return null;
-          }
-          const stepLabels = (selectedPackageSourcePresetEntry?.steps || [])
-            .filter((step) => step.requiredPackageCode === packageCode)
-            .map((step) => step.actionLabel)
-            .filter(Boolean);
-          return {
-            ...packageEntry,
-            recommendationType: "preset",
-            previewStepLabels: stepLabels,
-            recommendationSourceName: selectedPackageSourcePresetEntry?.displayName || "",
-          };
-        })
-        .filter(Boolean);
-    }
-
-    const starterCodes = selectedPackageSourceBusinessRoleEntry?.starterPackageCodes || [];
-    const optionalCodes = selectedPackageSourceBusinessRoleEntry?.optionalPackageCodes || [];
-    const orderedCodes = [
-      ...starterCodes.map((packageCode) => ({ packageCode, recommendationType: "starter" })),
-      ...optionalCodes.map((packageCode) => ({ packageCode, recommendationType: "optional" })),
-    ];
-    return Array.from(
-      new Map(
-        orderedCodes
-          .map(({ packageCode, recommendationType }) => {
-            const packageEntry = workflowPackageCatalogByCode.get(normalizeText(packageCode));
-            if (!packageEntry) {
-              return null;
-            }
-            return [
-              packageCode,
-              {
-                ...packageEntry,
-                recommendationType,
-                previewStepLabels: [],
-                recommendationSourceName:
-                  selectedPackageSourceBusinessRoleEntry?.displayName || "",
-              },
-            ];
-          })
-          .filter(Boolean)
-      ).values()
-    );
-  }, [
-    packageSourceApplyForm.sourceKind,
-    selectedPackageSourceBusinessRoleEntry,
-    selectedPackageSourcePresetEntry,
-    workflowPackageCatalogByCode,
-  ]);
-  const packageSourceScopeTypeOptions = useMemo(() => {
-    const orderedScopeTypes = ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
-    const sourceDefaultScope =
-      packageSourceApplyForm.sourceKind === "PRESET"
-        ? selectedPackageSourcePresetEntry?.defaultScope
-        : selectedPackageSourceBusinessRoleEntry?.defaultScope;
-    const availableScopeTypes = Array.from(
-      new Set(
-        packageSourceCatalogEntries.flatMap((entry) => entry.allowedScopes || []).filter(Boolean)
-      )
-    ).sort((left, right) => orderedScopeTypes.indexOf(left) - orderedScopeTypes.indexOf(right));
-    if (!sourceDefaultScope || !availableScopeTypes.includes(sourceDefaultScope)) {
-      return availableScopeTypes;
-    }
-    return [
-      sourceDefaultScope,
-      ...availableScopeTypes.filter((scopeType) => scopeType !== sourceDefaultScope),
-    ];
-  }, [
-    packageSourceApplyForm.sourceKind,
-    packageSourceCatalogEntries,
-    selectedPackageSourceBusinessRoleEntry?.defaultScope,
-    selectedPackageSourcePresetEntry?.defaultScope,
-  ]);
-  const packageSourceScopeOptions = useMemo(
-    () =>
-      buildScopeOptions(
-        packageSourceApplyForm.scopeType,
-        lookups,
-        tenantScopeId
-      ),
-    [lookups, packageSourceApplyForm.scopeType, tenantScopeId]
-  );
-  const selectedPackageSourceScopeId =
-    packageSourceApplyForm.scopeType === "TENANT"
-      ? tenantScopeId
-      : Number(packageSourceApplyForm.scopeId || 0);
-  const packageSourceApplyWriteAccess = getPermissionAccess(
-    "security.role_assignment.upsert",
-    selectedPackageSourceScopeId
-      ? {
-        scope: {
-          scopeType: packageSourceApplyForm.scopeType,
-          scopeId: selectedPackageSourceScopeId,
-        },
-      }
-      : undefined
-  );
-  const selectedUserWorkflowPackagesAtSourceScope = useMemo(
-    () =>
-      workflowPackageAssignments.filter(
-        (assignment) =>
-          Number(assignment.userId) === Number(packageSourceApplyForm.userId || 0) &&
-          assignment.scopeType === packageSourceApplyForm.scopeType &&
-          Number(assignment.scopeId) === Number(selectedPackageSourceScopeId || 0)
-      ),
-    [
-      packageSourceApplyForm.scopeType,
-      packageSourceApplyForm.userId,
-      selectedPackageSourceScopeId,
-      workflowPackageAssignments,
-    ]
-  );
-  const selectedPackageSourceBusinessRoleAssigned = useMemo(
-    () =>
-      selectedWorkbenchBusinessRoleAssignments.some(
-        (assignment) =>
-          assignment.businessRoleCode === selectedPackageSourceBusinessRoleEntry?.code &&
-          assignment.scopeType === packageSourceApplyForm.scopeType &&
-          Number(assignment.scopeId) === Number(selectedPackageSourceScopeId || 0)
-      ),
-    [
-      packageSourceApplyForm.scopeType,
-      selectedPackageSourceBusinessRoleEntry?.code,
-      selectedPackageSourceScopeId,
-      selectedWorkbenchBusinessRoleAssignments,
-    ]
-  );
-  const packageSourcePreviewEntries = useMemo(
-    () =>
-      packageSourceCatalogEntries.map((entry) => {
-        const alreadyAssigned = selectedUserWorkflowPackagesAtSourceScope.some(
-          (assignment) => assignment.packageCode === entry.code
-        );
-        const allowedAtScope = (entry.allowedScopes || []).includes(
-          packageSourceApplyForm.scopeType
-        );
-        const assignmentBlockedByExtension =
-          Boolean(entry.plannedExtension) || Number(entry.permissionCount || 0) === 0;
-        return {
-          ...entry,
-          allowedAtScope,
-          alreadyAssigned,
-          assignmentBlockedByExtension,
-          assignable:
-            allowedAtScope &&
-            !alreadyAssigned &&
-            !assignmentBlockedByExtension,
-          selected: packageSourceApplyForm.selectedPackageCodes.includes(entry.code),
-        };
-      }),
-    [
-      packageSourceApplyForm.scopeType,
-      packageSourceApplyForm.selectedPackageCodes,
-      packageSourceCatalogEntries,
-      selectedUserWorkflowPackagesAtSourceScope,
-    ]
-  );
-  const selectedPackageSourcePackageCodes = useMemo(
-    () =>
-      packageSourcePreviewEntries
-        .filter((entry) => entry.selected && entry.assignable)
-        .map((entry) => entry.code),
-    [packageSourcePreviewEntries]
   );
   const pendingInviteRows = useMemo(
     () =>
@@ -3126,112 +2686,6 @@ export default function UserAssignmentsPage() {
       }
       : undefined
   );
-  const selectedBusinessRoleScopeId =
-    businessRoleAssignmentForm.scopeType === "TENANT"
-      ? tenantScopeId
-      : Number(businessRoleAssignmentForm.scopeId || 0);
-  const businessRoleAssignmentWriteAccess = getPermissionAccess(
-    "security.role_assignment.upsert",
-    selectedBusinessRoleScopeId
-      ? {
-        scope: {
-          scopeType: businessRoleAssignmentForm.scopeType,
-          scopeId: selectedBusinessRoleScopeId,
-        },
-      }
-      : undefined
-  );
-  const selectedUserWorkflowPackagesAtBusinessRoleScope = useMemo(
-    () =>
-      workflowPackageAssignments.filter(
-        (assignment) =>
-          Number(assignment.userId) === Number(businessRoleAssignmentForm.userId || 0) &&
-          assignment.scopeType === businessRoleAssignmentForm.scopeType &&
-          Number(assignment.scopeId) === Number(selectedBusinessRoleScopeId || 0)
-      ),
-    [
-      businessRoleAssignmentForm.scopeType,
-      businessRoleAssignmentForm.userId,
-      selectedBusinessRoleScopeId,
-      workflowPackageAssignments,
-    ]
-  );
-  const businessRolePackageCatalogEntries = useMemo(() => {
-    const starterCodes = selectedBusinessRoleCatalogEntry?.starterPackageCodes || [];
-    const optionalCodes = selectedBusinessRoleCatalogEntry?.optionalPackageCodes || [];
-    const orderedCodes = [
-      ...starterCodes.map((packageCode) => ({
-        packageCode,
-        recommendationType: "starter",
-      })),
-      ...optionalCodes.map((packageCode) => ({
-        packageCode,
-        recommendationType: "optional",
-      })),
-    ];
-
-    return Array.from(
-      new Map(
-        orderedCodes
-          .map(({ packageCode, recommendationType }) => {
-            const packageEntry = workflowPackageCatalogByCode.get(
-              normalizeText(packageCode)
-            );
-            if (!packageEntry) {
-              return null;
-            }
-            return [
-              packageCode,
-              {
-                ...packageEntry,
-                recommendationType,
-                previewStepLabels: [],
-                recommendationSourceName:
-                  selectedBusinessRoleCatalogEntry?.displayName || "",
-              },
-            ];
-          })
-          .filter(Boolean)
-      ).values()
-    );
-  }, [selectedBusinessRoleCatalogEntry, workflowPackageCatalogByCode]);
-  const businessRolePackagePreviewEntries = useMemo(
-    () =>
-      businessRolePackageCatalogEntries.map((entry) => {
-        const alreadyAssigned = selectedUserWorkflowPackagesAtBusinessRoleScope.some(
-          (assignment) => assignment.packageCode === entry.code
-        );
-        const allowedAtScope = (entry.allowedScopes || []).includes(
-          businessRoleAssignmentForm.scopeType
-        );
-        const assignmentBlockedByExtension =
-          Boolean(entry.plannedExtension) || Number(entry.permissionCount || 0) === 0;
-        return {
-          ...entry,
-          allowedAtScope,
-          alreadyAssigned,
-          assignmentBlockedByExtension,
-          assignable:
-            allowedAtScope &&
-            !alreadyAssigned &&
-            !assignmentBlockedByExtension,
-          selected: businessRoleAssignmentForm.selectedPackageCodes.includes(entry.code),
-        };
-      }),
-    [
-      businessRoleAssignmentForm.scopeType,
-      businessRoleAssignmentForm.selectedPackageCodes,
-      businessRolePackageCatalogEntries,
-      selectedUserWorkflowPackagesAtBusinessRoleScope,
-    ]
-  );
-  const selectedBusinessRolePackageCodes = useMemo(
-    () =>
-      businessRolePackagePreviewEntries
-        .filter((entry) => entry.selected && entry.assignable)
-        .map((entry) => entry.code),
-    [businessRolePackagePreviewEntries]
-  );
   const selectedWorkflowPackageScopeId =
     workflowPackageAssignmentForm.scopeType === "TENANT"
       ? tenantScopeId
@@ -3290,14 +2744,6 @@ export default function UserAssignmentsPage() {
     }
   }, [rawAssignmentForm.userId, users]);
   useEffect(() => {
-    if (!businessRoleAssignmentForm.userId && users.length > 0) {
-      setBusinessRoleAssignmentForm((prev) => ({
-        ...prev,
-        userId: String(users[0].id),
-      }));
-    }
-  }, [businessRoleAssignmentForm.userId, users]);
-  useEffect(() => {
     if (!workflowPackageAssignmentForm.userId && users.length > 0) {
       setWorkflowPackageAssignmentForm((prev) => ({
         ...prev,
@@ -3306,14 +2752,6 @@ export default function UserAssignmentsPage() {
     }
   }, [workflowPackageAssignmentForm.userId, users]);
   useEffect(() => {
-    if (!packageSourceApplyForm.userId && users.length > 0) {
-      setPackageSourceApplyForm((prev) => ({
-        ...prev,
-        userId: String(users[0].id),
-      }));
-    }
-  }, [packageSourceApplyForm.userId, users]);
-  useEffect(() => {
     const selectedUserId = String(selectedWorkbenchUser?.id || "");
     if (!selectedUserId) {
       return;
@@ -3321,135 +2759,10 @@ export default function UserAssignmentsPage() {
     setRawAssignmentForm((prev) =>
       prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
     );
-    setBusinessRoleAssignmentForm((prev) =>
-      prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
-    );
     setWorkflowPackageAssignmentForm((prev) =>
       prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
     );
-    setPackageSourceApplyForm((prev) =>
-      prev.userId === selectedUserId ? prev : { ...prev, userId: selectedUserId }
-    );
   }, [selectedWorkbenchUser?.id]);
-  useEffect(() => {
-    setBusinessRoleAssignmentForm((prev) => {
-      const nextScopeId =
-        prev.scopeType === "TENANT"
-          ? String(tenantScopeId || "")
-          : String(businessRoleScopeOptions[0]?.id || "");
-      if (prev.scopeType === "TENANT") {
-        return prev.scopeId === nextScopeId ? prev : { ...prev, scopeId: nextScopeId };
-      }
-      const currentScopeId = Number(prev.scopeId || 0);
-      if (
-        currentScopeId &&
-        businessRoleScopeOptions.some((option) => Number(option.id) === currentScopeId)
-      ) {
-        return prev;
-      }
-      return { ...prev, scopeId: nextScopeId };
-    });
-  }, [businessRoleScopeOptions, tenantScopeId]);
-  useEffect(() => {
-    setBusinessRoleAssignmentForm((prev) => {
-      const selectablePackageCodes = businessRolePackagePreviewEntries
-        .filter((entry) => entry.assignable)
-        .map((entry) => entry.code);
-      const starterPackageCodes = businessRolePackagePreviewEntries
-        .filter(
-          (entry) => entry.assignable && entry.recommendationType === "starter"
-        )
-        .map((entry) => entry.code);
-      const filteredSelectedCodes = prev.selectedPackageCodes.filter((packageCode) =>
-        selectablePackageCodes.includes(packageCode)
-      );
-
-      if (
-        prev.autoSelectStarterPackages &&
-        filteredSelectedCodes.length === 0 &&
-        starterPackageCodes.length > 0
-      ) {
-        return {
-          ...prev,
-          selectedPackageCodes: starterPackageCodes,
-          autoSelectStarterPackages: false,
-        };
-      }
-      if (filteredSelectedCodes.length !== prev.selectedPackageCodes.length) {
-        return {
-          ...prev,
-          selectedPackageCodes: filteredSelectedCodes,
-        };
-      }
-      if (prev.autoSelectStarterPackages && starterPackageCodes.length === 0) {
-        return {
-          ...prev,
-          autoSelectStarterPackages: false,
-        };
-      }
-      return prev;
-    });
-  }, [businessRolePackagePreviewEntries]);
-  useEffect(() => {
-    setPackageSourceApplyForm((prev) => {
-      const nextScopeType = packageSourceScopeTypeOptions.includes(prev.scopeType)
-        ? prev.scopeType
-        : packageSourceScopeTypeOptions[0] || "";
-      if (!nextScopeType || nextScopeType === prev.scopeType) {
-        return prev;
-      }
-      return {
-        ...prev,
-        scopeType: nextScopeType,
-        scopeId: "",
-      };
-    });
-  }, [packageSourceScopeTypeOptions]);
-  useEffect(() => {
-    setPackageSourceApplyForm((prev) => {
-      if (!prev.scopeType) {
-        return prev;
-      }
-      const nextScopeId =
-        prev.scopeType === "TENANT"
-          ? String(tenantScopeId || "")
-          : String(packageSourceScopeOptions[0]?.id || "");
-      if (prev.scopeType === "TENANT") {
-        return prev.scopeId === nextScopeId ? prev : { ...prev, scopeId: nextScopeId };
-      }
-      const currentScopeId = Number(prev.scopeId || 0);
-      if (
-        currentScopeId &&
-        packageSourceScopeOptions.some((option) => Number(option.id) === currentScopeId)
-      ) {
-        return prev;
-      }
-      return { ...prev, scopeId: nextScopeId };
-    });
-  }, [packageSourceScopeOptions, tenantScopeId]);
-  useEffect(() => {
-    setPackageSourceApplyForm((prev) => {
-      const selectablePackageCodes = packageSourcePreviewEntries
-        .filter((entry) => entry.assignable)
-        .map((entry) => entry.code);
-      const filteredSelectedCodes = prev.selectedPackageCodes.filter((packageCode) =>
-        selectablePackageCodes.includes(packageCode)
-      );
-      if (filteredSelectedCodes.length === 0 && selectablePackageCodes.length > 0) {
-        return {
-          ...prev,
-          selectedPackageCodes: selectablePackageCodes,
-        };
-      }
-      if (filteredSelectedCodes.length !== prev.selectedPackageCodes.length) {
-        return {
-          ...prev,
-          selectedPackageCodes: filteredSelectedCodes,
-        };
-      }
-      return prev;
-    });
-  }, [packageSourcePreviewEntries]);
   useEffect(() => {
     setWorkflowPackageAssignmentForm((prev) => {
       const allowedScopeTypes = workflowPackageScopeTypeOptions;
@@ -3653,58 +2966,6 @@ export default function UserAssignmentsPage() {
   function updateRawAssignmentField(field, value) {
     setRawAssignmentForm((prev) => ({ ...prev, [field]: value }));
   }
-  function updateBusinessRoleAssignmentField(field, value) {
-    setBusinessRoleAssignmentForm((prev) => {
-      if (field === "businessRoleCode") {
-        const nextRoleDefinition = getBusinessRoleAssignmentRoleDefinition(value);
-        return {
-          ...prev,
-          businessRoleCode: value,
-          scopeType: nextRoleDefinition?.defaultScope || prev.scopeType,
-          scopeId: "",
-          selectedPackageCodes: [],
-          autoSelectStarterPackages: true,
-        };
-      }
-      if (field === "scopeType") {
-        return {
-          ...prev,
-          scopeType: value,
-          scopeId: "",
-          selectedPackageCodes: [],
-          autoSelectStarterPackages: true,
-        };
-      }
-      if (field === "scopeId") {
-        return {
-          ...prev,
-          scopeId: value,
-          selectedPackageCodes: [],
-          autoSelectStarterPackages: true,
-        };
-      }
-      if (field === "selectedPackageCodes") {
-        return {
-          ...prev,
-          selectedPackageCodes: Array.isArray(value) ? value : [],
-          autoSelectStarterPackages: false,
-        };
-      }
-      return { ...prev, [field]: value };
-    });
-  }
-  function toggleBusinessRolePreviewPackage(packageCode) {
-    setBusinessRoleAssignmentForm((prev) => {
-      const nextSelected = prev.selectedPackageCodes.includes(packageCode)
-        ? prev.selectedPackageCodes.filter((code) => code !== packageCode)
-        : [...prev.selectedPackageCodes, packageCode];
-      return {
-        ...prev,
-        selectedPackageCodes: Array.from(new Set(nextSelected)),
-        autoSelectStarterPackages: false,
-      };
-    });
-  }
   function updateWorkflowPackageAssignmentField(field, value) {
     setWorkflowPackageAssignmentForm((prev) => {
       if (field === "packageCode") {
@@ -3724,54 +2985,6 @@ export default function UserAssignmentsPage() {
         };
       }
       return { ...prev, [field]: value };
-    });
-  }
-  function updatePackageSourceApplyField(field, value) {
-    setPackageSourceApplyForm((prev) => {
-      if (field === "sourceKind") {
-        return {
-          ...prev,
-          sourceKind: value,
-          scopeType: "",
-          scopeId: "",
-          selectedPackageCodes: [],
-        };
-      }
-      if (field === "businessRoleCode" || field === "presetCode") {
-        return {
-          ...prev,
-          [field]: value,
-          scopeType: "",
-          scopeId: "",
-          selectedPackageCodes: [],
-        };
-      }
-      if (field === "scopeType") {
-        return {
-          ...prev,
-          scopeType: value,
-          scopeId: "",
-          selectedPackageCodes: [],
-        };
-      }
-      if (field === "selectedPackageCodes") {
-        return {
-          ...prev,
-          selectedPackageCodes: Array.isArray(value) ? value : [],
-        };
-      }
-      return { ...prev, [field]: value };
-    });
-  }
-  function togglePackageSourcePreviewPackage(packageCode) {
-    setPackageSourceApplyForm((prev) => {
-      const nextSelected = prev.selectedPackageCodes.includes(packageCode)
-        ? prev.selectedPackageCodes.filter((code) => code !== packageCode)
-        : [...prev.selectedPackageCodes, packageCode];
-      return {
-        ...prev,
-        selectedPackageCodes: Array.from(new Set(nextSelected)),
-      };
     });
   }
   async function copyInviteLink() {
@@ -4017,50 +3230,6 @@ export default function UserAssignmentsPage() {
       setSaving(false);
     }
   }
-  async function ensureBusinessRoleLabelAssignment({
-    userId,
-    businessRoleCode,
-    scopeType,
-    scopeId,
-  }) {
-    const roleDefinition = getBusinessRoleAssignmentRoleDefinition(businessRoleCode);
-    if (!roleDefinition) {
-      throw new Error(
-        l(
-          "The selected business role label could not be resolved.",
-          "Secilen is rol etiketi cozulemedi."
-        )
-      );
-    }
-    let runtimeRole = rolesByCode.get(roleDefinition.roleCode) || null;
-    if (!runtimeRole) {
-      if (!canUpsertRole) {
-        throw new Error(
-          l(
-            "Creating the label-only runtime role requires security.role.upsert first.",
-            "Etiket-yalniz runtime rolunu olusturmak icin once security.role.upsert gerekir."
-          )
-        );
-      }
-      const createRoleResponse = await createOrUpdateRole({
-        code: roleDefinition.roleCode,
-        name: roleDefinition.roleName,
-      });
-      runtimeRole = {
-        id: Number(createRoleResponse?.id || 0),
-        code: roleDefinition.roleCode,
-        name: roleDefinition.roleName,
-        permissionCodes: [],
-      };
-    }
-    return createRoleAssignment({
-      userId: Number(userId),
-      roleId: Number(runtimeRole.id),
-      scopeType,
-      scopeId,
-      effect: "ALLOW",
-    });
-  }
   async function ensureWorkflowPackageRuntimeRole(packageCode) {
     const packageDefinition = getWorkflowPackageAssignmentRoleDefinition(packageCode);
     if (!packageDefinition) {
@@ -4155,198 +3324,6 @@ export default function UserAssignmentsPage() {
         effect: "ALLOW",
       }),
     };
-  }
-  async function handleAssignBusinessRoleLabel(event) {
-    event.preventDefault();
-    const roleDefinition = getBusinessRoleAssignmentRoleDefinition(
-      businessRoleAssignmentForm.businessRoleCode
-    );
-    if (!normalizeText(businessRoleAssignmentForm.userId) || !roleDefinition) {
-      setError(
-        l(
-          "Choose both a user and a business role label first.",
-          "Once hem kullanici hem de is rol etiketi secin."
-        )
-      );
-      return;
-    }
-    if (!selectedBusinessRoleScopeId) {
-      setError(
-        l(
-          "Choose a valid scope for the business role label.",
-          "Is rol etiketi icin gecerli bir kapsam secin."
-        )
-      );
-      return;
-    }
-    if (!businessRoleAssignmentWriteAccess.allowed) {
-      setError(
-        l(
-          "You do not have permission to assign this business role label at the selected scope.",
-          "Secilen kapsamda bu is rol etiketini atama yetkiniz yok."
-        )
-      );
-      return;
-    }
-    const duplicateAssignment = selectedWorkbenchBusinessRoleAssignments.some(
-      (assignment) =>
-        assignment.businessRoleCode === roleDefinition.businessRoleCode &&
-        assignment.scopeType === businessRoleAssignmentForm.scopeType &&
-        Number(assignment.scopeId) === Number(selectedBusinessRoleScopeId)
-    );
-    if (duplicateAssignment && selectedBusinessRolePackageCodes.length === 0) {
-      setError(
-        l(
-          "This business role label is already assigned at the selected scope, and no new default packages are selected.",
-          "Bu is rol etiketi secilen kapsamda zaten atanmis ve secili yeni varsayilan paket yok."
-        )
-      );
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-    setMessage("");
-    setWarningMessages([]);
-    try {
-      const collectedWarnings = [];
-
-      if (!duplicateAssignment) {
-        await ensureBusinessRoleLabelAssignment({
-          userId: Number(businessRoleAssignmentForm.userId),
-          businessRoleCode: businessRoleAssignmentForm.businessRoleCode,
-          scopeType: businessRoleAssignmentForm.scopeType,
-          scopeId: selectedBusinessRoleScopeId,
-        });
-      }
-
-      for (const packageCode of selectedBusinessRolePackageCodes) {
-        const { response } = await assignWorkflowPackageByCode({
-          userId: Number(businessRoleAssignmentForm.userId),
-          packageCode,
-          scopeType: businessRoleAssignmentForm.scopeType,
-          scopeId: selectedBusinessRoleScopeId,
-        });
-        for (const warning of response?.assignmentWarnings || []) {
-          const text =
-            typeof warning === "string"
-              ? warning
-              : normalizeText(warning?.message || warning?.reason);
-          if (text) {
-            collectedWarnings.push(text);
-          }
-        }
-      }
-
-      setWarningMessages(Array.from(new Set(collectedWarnings)));
-      setMessage(
-        !duplicateAssignment && selectedBusinessRolePackageCodes.length > 0
-          ? selectedBusinessRolePackageCodes.length === 1
-            ? l(
-              "Business role label assigned and 1 default workflow package applied.",
-              "Is rol etiketi atandi ve 1 varsayilan workflow paketi uygulandi."
-            )
-            : l(
-              "Business role label assigned and {{count}} default workflow packages applied.",
-              "Is rol etiketi atandi ve {{count}} varsayilan workflow paketleri uygulandi.",
-              {
-                count: selectedBusinessRolePackageCodes.length,
-              }
-            )
-          : duplicateAssignment && selectedBusinessRolePackageCodes.length > 0
-            ? selectedBusinessRolePackageCodes.length === 1
-              ? l(
-                "1 default workflow package applied for the existing business role label.",
-                "Mevcut is rol etiketi icin 1 varsayilan workflow paketi uygulandi."
-              )
-              : l(
-                "{{count}} default workflow packages applied for the existing business role label.",
-                "Mevcut is rol etiketi icin {{count}} varsayilan workflow paketleri uygulandi.",
-                {
-                  count: selectedBusinessRolePackageCodes.length,
-                }
-              )
-            : l(
-              "Business role label assigned.",
-              "Is rol etiketi atandi."
-            )
-      );
-      await loadData({ showLoadingState: false });
-    } catch (requestError) {
-      setError(
-        getErrorMessage(
-          requestError,
-          l(
-            "The business role label could not be assigned.",
-            "Is rol etiketi atanamadi."
-          )
-        )
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-  async function handleRemoveBusinessRoleLabel(assignment) {
-    if (!assignment?.assignmentId) {
-      return;
-    }
-    const revokeAccess = getPermissionAccess(
-      "security.role_assignment.upsert",
-      assignment.scopeId
-        ? {
-          scope: {
-            scopeType: assignment.scopeType,
-            scopeId: assignment.scopeId,
-          },
-        }
-        : undefined
-    );
-    if (!revokeAccess.allowed) {
-      setError(
-        l(
-          "You do not have permission to remove this business role label.",
-          "Bu is rol etiketini kaldirma yetkiniz yok."
-        )
-      );
-      return;
-    }
-    const confirmed = window.confirm(
-      l(
-        "Remove this business role label only? Workflow package and runtime-role assignments will stay unchanged.",
-        "Yalnizca bu is rol etiketini kaldirmak istiyor musunuz? Workflow paketleri ve runtime rol atamalari degismeden kalir."
-      )
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    setActingRowId(`business-role-${assignment.assignmentId}`);
-    setSaving(true);
-    setError("");
-    setMessage("");
-    try {
-      await deleteRoleAssignment(assignment.assignmentId);
-      setMessage(
-        l(
-          "Business role label removed. Workflow package authority stayed unchanged.",
-          "Is rol etiketi kaldirildi. Workflow paket yetkisi degismeden kaldi."
-        )
-      );
-      await loadData({ showLoadingState: false });
-    } catch (requestError) {
-      setError(
-        getErrorMessage(
-          requestError,
-          l(
-            "The business role label could not be removed.",
-            "Is rol etiketi kaldirilamadi."
-          )
-        )
-      );
-    } finally {
-      setActingRowId("");
-      setSaving(false);
-    }
   }
   async function handleAssignWorkflowPackage(event) {
     event.preventDefault();
@@ -4449,110 +3426,6 @@ export default function UserAssignmentsPage() {
       setSaving(false);
     }
   }
-  async function handleApplyPackageSource(event) {
-    event.preventDefault();
-    if (!normalizeText(packageSourceApplyForm.userId)) {
-      setError(l("Choose an assignee first.", "Once bir atanan kisi secin."));
-      return;
-    }
-    if (!selectedPackageSourceScopeId) {
-      setError(
-        l(
-          "Choose a valid scope before applying starter or preset packages.",
-          "Starter veya preset paketlerini uygulamadan once gecerli bir kapsam secin."
-        )
-      );
-      return;
-    }
-    if (!packageSourceApplyWriteAccess.allowed) {
-      setError(
-        l(
-          "You do not have permission to apply package suggestions at the selected scope.",
-          "Secilen kapsamda paket onerilerini uygulama yetkiniz yok."
-        )
-      );
-      return;
-    }
-    if (selectedPackageSourcePackageCodes.length === 0) {
-      setError(
-        l(
-          "Choose at least one workflow package from the preview first.",
-          "Once onizlemeden en az bir workflow paketi secin."
-        )
-      );
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-    setMessage("");
-    setWarningMessages([]);
-    try {
-      const collectedWarnings = [];
-      if (
-        packageSourceApplyForm.sourceKind === "STARTER" &&
-        packageSourceApplyForm.assignBusinessRoleLabel &&
-        selectedPackageSourceBusinessRoleEntry &&
-        !selectedPackageSourceBusinessRoleAssigned
-      ) {
-        await ensureBusinessRoleLabelAssignment({
-          userId: Number(packageSourceApplyForm.userId),
-          businessRoleCode: selectedPackageSourceBusinessRoleEntry.code,
-          scopeType: packageSourceApplyForm.scopeType,
-          scopeId: selectedPackageSourceScopeId,
-        });
-      }
-
-      for (const packageCode of selectedPackageSourcePackageCodes) {
-        // Package suggestions fan out into direct package grants so admins can
-        // later remove one derived package without tearing down every other
-        // recommendation that came from the same starter or preset preview.
-        const { response } = await assignWorkflowPackageByCode({
-          userId: Number(packageSourceApplyForm.userId),
-          packageCode,
-          scopeType: packageSourceApplyForm.scopeType,
-          scopeId: selectedPackageSourceScopeId,
-        });
-        for (const warning of response?.assignmentWarnings || []) {
-          const text =
-            typeof warning === "string"
-              ? warning
-              : normalizeText(warning?.message || warning?.reason);
-          if (text) {
-            collectedWarnings.push(text);
-          }
-        }
-      }
-      setWarningMessages(Array.from(new Set(collectedWarnings)));
-      const sourceLabel =
-        packageSourceApplyForm.sourceKind === "PRESET"
-          ? selectedPackageSourcePresetEntry?.displayName || l("workflow preset", "workflow preset")
-          : `${selectedPackageSourceBusinessRoleEntry?.displayName || l("business role", "is rolu")} ${l("starter bundle", "starter paketi")}`;
-      setMessage(
-        l(
-          "{{count}} workflow packages applied from {{source}}.",
-          "{{count}} workflow paketi {{source}} kaynagindan uygulandi.",
-          {
-            count: selectedPackageSourcePackageCodes.length,
-            source: sourceLabel,
-          }
-        )
-      );
-      await loadData({ showLoadingState: false });
-    } catch (requestError) {
-      setError(
-        getErrorMessage(
-          requestError,
-          l(
-            "The starter or preset package selection could not be applied.",
-            "Starter veya preset paket secimi uygulanamadi."
-          )
-        )
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
   async function handleRemoveWorkflowPackage(assignment) {
     if (!assignment?.assignmentId) {
       return;
@@ -4579,8 +3452,8 @@ export default function UserAssignmentsPage() {
     }
     const confirmed = window.confirm(
       l(
-        "Remove this direct workflow package grant only? Business role labels and other package grants will stay unchanged.",
-        "Yalnizca bu dogrudan workflow paket yetkisini kaldirmak istiyor musunuz? Is rol etiketleri ve diger paket yetkileri degismeden kalir."
+        "Remove this direct workflow package grant only? Other package grants and runtime-role assignments will stay unchanged.",
+        "Yalnizca bu dogrudan workflow paket yetkisini kaldirmak istiyor musunuz? Diger paket yetkileri ve runtime rol atamalari degismeden kalir."
       )
     );
     if (!confirmed) {
@@ -4999,65 +3872,35 @@ export default function UserAssignmentsPage() {
           <UserAssignmentWorkbench
             onInviteUser={openInviteModal}
             actingRowId={actingRowId}
-            businessRoleAssignmentForm={businessRoleAssignmentForm}
-            businessRoleAssignmentWriteAccess={businessRoleAssignmentWriteAccess}
-            businessRoleCatalogEntries={businessRoleCatalogEntries}
-            businessRolePackagePreviewEntries={businessRolePackagePreviewEntries}
-            businessRoleScopeOptions={businessRoleScopeOptions}
             canAssignRolePermissions={canAssignRolePermissions}
             canUpsertRole={canUpsertRole}
             filteredUsers={filteredUsers}
             l={l}
-            onAssignBusinessRoleLabel={handleAssignBusinessRoleLabel}
-            onApplyPackageSource={handleApplyPackageSource}
             onAssignWorkflowPackage={handleAssignWorkflowPackage}
             onClearFilters={() =>
               setUserFilters({
                 search: "",
                 status: "ALL",
-                roleCode: "",
                 packageCode: "",
                 scopeType: "",
                 scopeTarget: "",
                 sourceType: "",
               })
             }
-            onRemoveBusinessRoleLabel={handleRemoveBusinessRoleLabel}
             onRemoveWorkflowPackage={handleRemoveWorkflowPackage}
             onSelectBundle={setSelectedWorkbenchBundleId}
             onSelectUser={setSelectedWorkbenchUserId}
-            onToggleBusinessRolePreviewPackage={toggleBusinessRolePreviewPackage}
-            onUpdateBusinessRoleAssignmentField={updateBusinessRoleAssignmentField}
-            onUpdatePackageSourceApplyField={updatePackageSourceApplyField}
             onUpdateWorkflowPackageAssignmentField={updateWorkflowPackageAssignmentField}
-            onTogglePackageSourcePreviewPackage={togglePackageSourcePreviewPackage}
             onUpdateBundleRoleRow={handleUpdateBundleRoleRow}
             onRemoveBundleRoleRow={handleRemoveBundleRoleRow}
-            packageSourceApplyForm={packageSourceApplyForm}
-            packageSourceApplyWriteAccess={packageSourceApplyWriteAccess}
-            packageSourcePreviewEntries={packageSourcePreviewEntries}
-            packageSourceScopeOptions={packageSourceScopeOptions}
-            packageSourceScopeTypeOptions={packageSourceScopeTypeOptions}
             packageFilterOptions={packageFilterOptions}
-            roleFilterOptions={roleFilterOptions}
             saving={saving}
-            selectedBusinessRoleAssignments={selectedWorkbenchBusinessRoleAssignments}
-            selectedBusinessRoleCatalogEntry={selectedBusinessRoleCatalogEntry}
-            selectedBusinessRoleRuntimeRoleExists={selectedBusinessRoleRuntimeRoleExists}
-            selectedPackageSourceBusinessRoleAssigned={
-              selectedPackageSourceBusinessRoleAssigned
-            }
-            selectedPackageSourceBusinessRoleEntry={
-              selectedPackageSourceBusinessRoleEntry
-            }
             selectedUserAssignmentAuditReadable={canReadAudit}
             selectedUserAssignmentAuditSummary={
               selectedWorkbenchAssignmentAuditSummary
             }
             selectedUserAuditError={selectedWorkbenchAuditError}
             selectedUserAuditLoading={selectedWorkbenchAuditLoading}
-            selectedPackageSourcePackageCodes={selectedPackageSourcePackageCodes}
-            selectedPackageSourcePresetEntry={selectedPackageSourcePresetEntry}
             selectedUserEffectiveAuthorityPreview={
               selectedWorkbenchEffectiveAuthorityPreview
             }
@@ -5072,7 +3915,6 @@ export default function UserAssignmentsPage() {
             workflowPackageCatalogEntries={workflowPackageCatalogEntries}
             workflowPackageScopeOptions={workflowPackageScopeOptions}
             workflowPackageScopeTypeOptions={workflowPackageScopeTypeOptions}
-            workflowPresetCatalogEntries={workflowPresetCatalogEntries}
             rawAssignmentForm={rawAssignmentForm}
             onUpdateRawAssignmentField={updateRawAssignmentField}
             onCreateRawAssignment={handleCreateRawAssignment}
@@ -5085,7 +3927,6 @@ export default function UserAssignmentsPage() {
             selectedBundle={selectedWorkbenchBundle}
             selectedUser={selectedWorkbenchUser}
             selectedUserBundles={selectedWorkbenchUserBundles}
-            selectedBusinessRolePackageCodes={selectedBusinessRolePackageCodes}
             selectedUserPackageLabels={selectedWorkbenchPackageLabels}
             selectedUserRoleEntries={selectedWorkbenchActiveRoleEntries}
             selectedUserScopeLabels={selectedWorkbenchScopeLabels}

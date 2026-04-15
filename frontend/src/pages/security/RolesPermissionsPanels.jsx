@@ -13,9 +13,6 @@ function normalizeText(value) {
 }
 
 function getRoleAuthorityLabel(entry) {
-  if (entry?.businessLabelOnly) {
-    return "Label only";
-  }
   if (entry?.managedPackageRole) {
     return "Package-backed authority";
   }
@@ -176,7 +173,6 @@ export function SelectedRoleOverviewPanel({
   l,
   selectedRoleAttentionItems,
   selectedRoleDisplayCode,
-  selectedRoleLocksPermissions,
 }) {
   const recommendedScopeLabel =
     Array.isArray(entry?.recommendedScopes) && entry.recommendedScopes.length > 0
@@ -191,15 +187,10 @@ export function SelectedRoleOverviewPanel({
   const reviewItems = hasAttentionItems
     ? selectedRoleAttentionItems
     : [
-        selectedRoleLocksPermissions
-          ? l(
-              "This role stays non-authoritative. Assign workflow packages or user labels instead of direct permissions.",
-              "Bu rol yetki kaynagi olarak kalmaz. Dogrudan yetkiler yerine workflow paketleri veya kullanici etiketleri atayin."
-            )
-          : l(
-              "This role follows the standard composable runtime model.",
-              "Bu rol standart birlestirilebilir runtime modelini izler."
-            ),
+        l(
+          "This role follows the standard composable runtime model.",
+          "Bu rol standart birlestirilebilir runtime modelini izler."
+        ),
       ];
 
   return (
@@ -228,17 +219,10 @@ export function SelectedRoleOverviewPanel({
             <RoleMetadataField
               label={l("Workflow family", "Workflow ailesi")}
               value={entry.workflowFamilyLabel}
-              note={
-                selectedRoleLocksPermissions
-                  ? l(
-                      "Direct permissions stay locked for this record.",
-                      "Dogrudan yetkiler bu kayit icin kilitli kalir."
-                    )
-                  : l(
-                      "Use this role as a direct authority source when assigned at the right scope.",
-                      "Bu rolu dogru kapsamda atandiginda dogrudan yetki kaynagi olarak kullanin."
-                    )
-              }
+              note={l(
+                "Use this role as a direct authority source when assigned at the right scope.",
+                "Bu rolu dogru kapsamda atandiginda dogrudan yetki kaynagi olarak kullanin."
+              )}
             />
             <RoleMetadataField
               label={l("Typical use", "Tipik kullanim")}
@@ -328,7 +312,6 @@ export function PermissionModuleEditor({
   saving,
   stagedChangeCount = 0,
   selectedRole,
-  selectedRoleLocksPermissions,
 }) {
   const safeGroups = Array.isArray(groups) ? groups : [];
   const moduleCount = safeGroups.length;
@@ -340,8 +323,7 @@ export function PermissionModuleEditor({
     (total, group) => total + group.selectedCount,
     0
   );
-  const replaceDisabled =
-    !selectedRole || saving || !canReplaceRolePermissions || selectedRoleLocksPermissions;
+  const replaceDisabled = !selectedRole || saving || !canReplaceRolePermissions;
   const resetDisabled = !selectedRole || saving || stagedChangeCount === 0;
 
   return (
@@ -379,16 +361,7 @@ export function PermissionModuleEditor({
         </div>
       </div>
 
-      {selectedRoleLocksPermissions ? (
-        <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-4 text-sm leading-6 text-sky-900">
-          {l(
-            "Business role label roles are locked to zero permissions. Keep this page read-only and manage authority through workflow packages or runtime roles.",
-            "Is rol etiketi rolleri sifir yetkiye kilitlidir. Bu sayfayi salt okunur tutun ve otoriteyi workflow paketleri veya runtime roller uzerinden yonetin."
-          )}
-        </div>
-      ) : null}
-
-      {!selectedRoleLocksPermissions && !canReplaceRolePermissions ? (
+      {!canReplaceRolePermissions ? (
         <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-900">
           {l(
             "You can inspect grouped permission rows, but replacing the saved set requires the role-permission assignment permission.",
@@ -412,7 +385,7 @@ export function PermissionModuleEditor({
         </div>
       ) : null}
 
-      {!loading && selectedRole && !selectedRoleLocksPermissions ? (
+      {!loading && selectedRole ? (
         <>
           {safeGroups.length > 0 ? (
             <div className="mt-5 space-y-4">

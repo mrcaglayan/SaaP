@@ -535,31 +535,12 @@ function buildRuntimeRoleWarnings(userBundles, l) {
  * and intentionally stays advisory instead of enforcing service-layer policy.
  */
 export function buildAssignmentAuditSummary({
-  businessRoleAssignments,
   workflowPackageAssignments,
   userBundles,
   auditRows,
   auditReadable,
   l,
 }) {
-  const businessRoleItems = (Array.isArray(businessRoleAssignments) ? businessRoleAssignments : []).map(
-    (assignment) =>
-      buildDirectAuditItem({
-        assignment,
-        kindLabel: translate(l, "Business role label", "Is rol etiketi"),
-        title: assignment.businessRoleLabel,
-        sourceLabel: translate(l, "Direct label assignment", "Dogrudan etiket atamasi"),
-        sourceDetail: translate(
-          l,
-          "Non-authoritative business title only.",
-          "Yalnizca otorite vermeyen is unvani."
-        ),
-        auditRows,
-        auditReadable,
-        l,
-      })
-  );
-
   const workflowPackageItems = (Array.isArray(workflowPackageAssignments) ? workflowPackageAssignments : []).map(
     (assignment) =>
       buildDirectAuditItem({
@@ -578,9 +559,7 @@ export function buildAssignmentAuditSummary({
     buildBundleAuditItem(bundle, auditRows, auditReadable, l)
   );
 
-  const auditItems = [...businessRoleItems, ...workflowPackageItems, ...bundleItems].sort(
-    sortAuditItems
-  );
+  const auditItems = [...workflowPackageItems, ...bundleItems].sort(sortAuditItems);
 
   const packageWarnings = buildPackageRuleWarnings(
     buildPackageScopeEntries(workflowPackageAssignments, userBundles),

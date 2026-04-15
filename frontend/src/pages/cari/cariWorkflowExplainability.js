@@ -2,7 +2,6 @@ import {
   normalizeText,
   normalizeWorkflowGateState,
 } from "./cariDocumentsPageHelpers.js";
-import { listBusinessRoleCatalogEntries } from "../security/roleCatalog.js";
 import { formatMoneyAmount } from "../../utils/money.js";
 
 const POSTED_DOCUMENT_STATUSES = new Set(["POSTED", "PARTIALLY_SETTLED", "SETTLED"]);
@@ -184,25 +183,6 @@ function translateApRequiredPackageLabel(packageCode, l) {
     return l("AP Documents / Post", "AP Belgeleri / Kaydet");
   }
   return "";
-}
-
-function resolveApEligibleBusinessRoleLabels(requiredPackageCode, requiredScopeType) {
-  if (!requiredPackageCode || !requiredScopeType) {
-    return [];
-  }
-  return listBusinessRoleCatalogEntries()
-    .filter((entry) => entry.defaultScope === requiredScopeType)
-    .filter((entry) => {
-      const starterPackageCodes = Array.isArray(entry?.starterPackageCodes)
-        ? entry.starterPackageCodes
-        : [];
-      const optionalPackageCodes = Array.isArray(entry?.optionalPackageCodes)
-        ? entry.optionalPackageCodes
-        : [];
-      return [...starterPackageCodes, ...optionalPackageCodes].includes(requiredPackageCode);
-    })
-    .map((entry) => entry.displayName)
-    .filter(Boolean);
 }
 
 function buildApCurrentGateLine(currentActionCode, requiredPackageLabel, requiredScopeLabel, l) {
@@ -697,10 +677,6 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
   const requiredScopeLabel = currentScopeLabel || assignmentScopeLabel;
   const requiredScopeType = resolveWorkflowRequiredScopeType(gate);
   const routeScopeLabel = resolveWorkflowRoutingScopeLabel(gate, l);
-  const eligibleRoleLabels = resolveApEligibleBusinessRoleLabels(
-    requiredPackageCode,
-    requiredScopeType
-  );
   const approvalAuthorityLabel = resolveWorkflowApprovalAuthorityLabel(
     gate,
     currentScopeLabel,
@@ -875,7 +851,6 @@ export function buildCariWorkflowDetailCardModel(row, l, options = {}) {
       requiredScopeLabel,
       l
     ),
-    eligibleRoleLabels,
     userCapabilityLines: [],
     factSectionTitle: l("Routing context", "Yonlendirme baglami"),
     historyItems,

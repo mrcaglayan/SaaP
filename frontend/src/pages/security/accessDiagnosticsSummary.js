@@ -3,7 +3,6 @@ import {
   getRoleCatalogEntry,
   getWorkflowFamilyLabel,
   getWorkflowPackageCatalogEntry,
-  isBusinessRoleAssignmentRoleCode,
   isWorkflowPackageAssignmentRoleCode,
   resolveWorkflowPackagesForRuntimeRoles,
 } from "./roleCatalog.js";
@@ -249,37 +248,6 @@ function sortCoverageItems(left, right) {
   );
 }
 
-function buildBusinessRoleAssignments(assignments, targetScope, lookups, tenantScopeId) {
-  return (Array.isArray(assignments) ? assignments : [])
-    .filter((assignment) => isActiveAllowAssignment(assignment))
-    .filter((assignment) => isBusinessRoleAssignmentRoleCode(assignment?.role_code))
-    .map((assignment) => {
-      const roleEntry = getRoleCatalogEntry(assignment.role_code);
-      const coverage = evaluateScopeCoverage(
-        targetScope,
-        assignment.scope_type,
-        assignment.scope_id
-      );
-      return {
-        id: `business-role-${assignment.id}`,
-        label: roleEntry.code,
-        businessRoleCode: roleEntry.businessRoleCode || "",
-        scopeType: normalizeText(assignment.scope_type).toUpperCase(),
-        scopeId: Number(assignment.scope_id || 0),
-        scopeLabel: buildScopeLabel(
-          assignment.scope_type,
-          assignment.scope_id,
-          lookups,
-          tenantScopeId
-        ),
-        coverageStatus: coverage.status,
-        coverageLabel: coverage.label,
-        coversTarget: coverage.coversTarget,
-      };
-    })
-    .sort(sortCoverageItems);
-}
-
 function buildDirectWorkflowPackageAssignments(
   assignments,
   workflowFamily,
@@ -340,7 +308,6 @@ function buildRuntimeRoleWorkflowPackageAssignments(
   for (const assignment of Array.isArray(assignments) ? assignments : []) {
     if (
       !isActiveAllowAssignment(assignment) ||
-      isBusinessRoleAssignmentRoleCode(assignment?.role_code) ||
       isWorkflowPackageAssignmentRoleCode(assignment?.role_code)
     ) {
       continue;
@@ -451,23 +418,11 @@ function buildMissingScopeText(otherWorkflowPackages, workflowFamilyLabel, l) {
 
 function buildMissingPackageText({
   workflowFamilyLabel,
-  matchingBusinessRoles,
   matchingWorkflowPackages,
   matchingActionPackages,
   matchingViewOnlyPackages,
   l,
 }) {
-  if (
-    matchingWorkflowPackages.length === 0 &&
-    matchingBusinessRoles.length > 0
-  ) {
-    return translate(
-      l,
-      "Business-role labels match the target scope, but no {{family}} package authority is active there yet.",
-      "Is-rolu etiketleri hedef kapsamla eslesiyor; ancak orada henuz etkin bir {{family}} paket yetkisi yok.",
-      { family: workflowFamilyLabel }
-    );
-  }
   if (
     matchingWorkflowPackages.length > 0 &&
     matchingActionPackages.length === 0 &&
@@ -487,7 +442,6 @@ function buildFinalResult({
   ready,
   workflowFamilyLabel,
   targetScopeLabel,
-  matchingBusinessRoles,
   matchingActionPackages,
   matchingViewOnlyPackages,
   otherWorkflowPackages,
@@ -515,14 +469,11 @@ function buildFinalResult({
       title: translate(l, "Action authority present", "Aksiyon yetkisi mevcut"),
       text: translate(
         l,
-        "{{family}} action package authority covers {{scope}}. Matching business-role labels: {{roles}}.",
-        "{{family}} aksiyon paketi yetkisi {{scope}} kapsaminda gecerli. Eslesen is-rolu etiketleri: {{roles}}.",
+        "{{family}} action package authority covers {{scope}}.",
+        "{{family}} aksiyon paketi yetkisi {{scope}} kapsaminda gecerli.",
         {
           family: workflowFamilyLabel,
           scope: targetScopeLabel,
-          roles:
-            joinHumanList(matchingBusinessRoles.map((item) => item.label), l) ||
-            translate(l, "none", "yok"),
         }
       ),
     };
@@ -544,23 +495,6 @@ function buildFinalResult({
     };
   }
 
-  if (matchingBusinessRoles.length > 0) {
-    return {
-      tone: "amber",
-      title: translate(l, "Labels only", "Yalnizca etiket"),
-      text: translate(
-        l,
-        "{{roles}} label the user at {{scope}}, but labels do not grant {{family}} authority without packages.",
-        "{{roles}}, kullaniciyi {{scope}} kapsaminda etiketliyor; ancak etiketler paketler olmadan {{family}} yetkisi vermez.",
-        {
-          roles: joinHumanList(matchingBusinessRoles.map((item) => item.label), l),
-          scope: targetScopeLabel,
-          family: workflowFamilyLabel,
-        }
-      ),
-    };
-  }
-
   if (otherWorkflowPackages.length > 0) {
     return {
       tone: "rose",
@@ -574,8 +508,8 @@ function buildFinalResult({
     title: translate(l, "No relevant authority found", "Ilgili yetki bulunamadi"),
     text: translate(
       l,
-      "No {{family}} business-role label or workflow package was found for {{scope}}.",
-      "{{scope}} kapsaminda {{family}} icin ilgili bir is-rolu etiketi veya workflow paketi bulunamadi.",
+      "No {{family}} workflow package authority was found for {{scope}}.",
+      "{{scope}} kapsaminda {{family}} icin ilgili workflow paket yetkisi bulunamadi.",
       {
         family: workflowFamilyLabel,
         scope: targetScopeLabel,
@@ -594,9 +528,9 @@ function getViewOnlyPackageCodeSet(workflowFamily) {
 
 /**
  * Build the UI-5A business-facing diagnostics summary for one user, one
- * workflow family, and one target scope. This keeps title-only business roles,
- * workflow package assignments, and runtime-role-derived package coverage
- * readable without pretending to be a full policy simulator.
+ * workflow family, and one target scope. This keeps workflow package
+ * assignments and runtime-role-derived package coverage readable without
+ * pretending to be a full policy simulator.
  */
 export function buildAccessDiagnosticsSummary({
   assignments,
@@ -614,12 +548,6 @@ export function buildAccessDiagnosticsSummary({
     ? getWorkflowFamilyLabel(normalizedWorkflowFamily)
     : "";
 
-  const businessRoleAssignments = buildBusinessRoleAssignments(
-    assignments,
-    targetScope,
-    lookups,
-    tenantScopeId
-  );
   const directWorkflowPackages = buildDirectWorkflowPackageAssignments(
     assignments,
     normalizedWorkflowFamily,
@@ -639,8 +567,6 @@ export function buildAccessDiagnosticsSummary({
     ...runtimeRoleWorkflowPackages,
   ]);
 
-  const matchingBusinessRoles = businessRoleAssignments.filter((item) => item.coversTarget);
-  const otherBusinessRoles = businessRoleAssignments.filter((item) => !item.coversTarget);
   const matchingWorkflowPackages = workflowPackages.filter((item) => item.coversTarget);
   const otherWorkflowPackages = workflowPackages.filter((item) => !item.coversTarget);
   const viewOnlyPackageCodeSet = getViewOnlyPackageCodeSet(normalizedWorkflowFamily);
@@ -651,11 +577,7 @@ export function buildAccessDiagnosticsSummary({
     (item) => !viewOnlyPackageCodeSet.has(normalizeText(item.packageCode).toUpperCase())
   );
   const matchingScopeLabels = Array.from(
-    new Set(
-      [...matchingBusinessRoles, ...matchingWorkflowPackages]
-        .map((item) => item.scopeLabel)
-        .filter(Boolean)
-    )
+    new Set(matchingWorkflowPackages.map((item) => item.scopeLabel).filter(Boolean))
   );
   const missingScopeText =
     matchingWorkflowPackages.length === 0
@@ -663,7 +585,6 @@ export function buildAccessDiagnosticsSummary({
       : "";
   const missingPackageText = buildMissingPackageText({
     workflowFamilyLabel,
-    matchingBusinessRoles,
     matchingWorkflowPackages,
     matchingActionPackages,
     matchingViewOnlyPackages,
@@ -673,7 +594,6 @@ export function buildAccessDiagnosticsSummary({
     ready,
     workflowFamilyLabel,
     targetScopeLabel: targetScope.scopeLabel,
-    matchingBusinessRoles,
     matchingActionPackages,
     matchingViewOnlyPackages,
     otherWorkflowPackages,
@@ -682,17 +602,6 @@ export function buildAccessDiagnosticsSummary({
   const blockerTexts = Array.from(
     new Set([missingScopeText, missingPackageText].filter(Boolean))
   );
-
-  const noteTexts = [];
-  if (matchingBusinessRoles.length === 0 && otherBusinessRoles.length > 0) {
-    noteTexts.push(
-      translate(
-        l,
-        "Business-role labels exist, but only at other scopes.",
-        "Is-rolu etiketleri var; ancak yalnizca diger kapsamlarda mevcut."
-      )
-    );
-  }
 
   return {
     ready,
@@ -704,14 +613,11 @@ export function buildAccessDiagnosticsSummary({
     blockerTexts,
     missingScopeText,
     missingPackageText,
-    businessRoleAssignments,
-    matchingBusinessRoles,
-    otherBusinessRoles,
     workflowPackages,
     matchingWorkflowPackages,
     otherWorkflowPackages,
     matchingActionPackages,
     matchingViewOnlyPackages,
-    noteTexts: Array.from(new Set(noteTexts)),
+    noteTexts: [],
   };
 }

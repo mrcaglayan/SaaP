@@ -9,6 +9,7 @@ import { buildRoleDetailPath } from "./rolesPermissions.helpers.js";
 import { getRoleCatalogEntry, groupRolesForManagement } from "./roleCatalog.js";
 
 const FILTER_ALL = "ALL";
+const FILTER_PACKAGE_BACKED = "PACKAGE_BACKED";
 const ROLE_MEANING_FILTERS = Object.freeze([
   Object.freeze({
     key: FILTER_ALL,
@@ -17,16 +18,10 @@ const ROLE_MEANING_FILTERS = Object.freeze([
       "Browse the full role list, then narrow it to the runtime authority model you need.",
   }),
   Object.freeze({
-    key: "COMPOSABLE_RUNTIME",
-    label: "Composable runtime roles",
+    key: FILTER_PACKAGE_BACKED,
+    label: "Package-backed roles",
     description:
-      "Runtime roles that carry direct permission authority, including package-backed and companion patterns.",
-  }),
-  Object.freeze({
-    key: "LABEL_ONLY_BUSINESS",
-    label: "Label-only business roles",
-    description:
-      "Business-facing labels stay visible in the role list but remain read-only and locked to zero permissions.",
+      "Managed runtime roles aligned to workflow-package definitions.",
   }),
 ]);
 
@@ -35,10 +30,10 @@ function normalizeText(value) {
 }
 
 function getRoleMeaningKey(entry) {
-  if (entry?.businessLabelOnly) {
-    return "LABEL_ONLY_BUSINESS";
+  if (entry?.managedPackageRole) {
+    return FILTER_PACKAGE_BACKED;
   }
-  return "COMPOSABLE_RUNTIME";
+  return "OTHER_RUNTIME";
 }
 
 function matchesRoleMeaningFilter(entry, filterKey) {
@@ -160,12 +155,13 @@ export default function RolesPermissionsPage() {
   const roleMeaningCounts = useMemo(() => {
     const counts = {
       [FILTER_ALL]: roles.length,
-      COMPOSABLE_RUNTIME: 0,
-      LABEL_ONLY_BUSINESS: 0,
+      [FILTER_PACKAGE_BACKED]: 0,
     };
     roles.forEach((role) => {
       const roleEntry = getRoleCatalogEntry(role);
-      counts[getRoleMeaningKey(roleEntry)] += 1;
+      if (getRoleMeaningKey(roleEntry) === FILTER_PACKAGE_BACKED) {
+        counts[FILTER_PACKAGE_BACKED] += 1;
+      }
     });
     return counts;
   }, [roles]);
@@ -175,8 +171,7 @@ export default function RolesPermissionsPage() {
     (total, group) => total + group.roles.length,
     0
   );
-  const runtimeRoleCount = roleMeaningCounts.COMPOSABLE_RUNTIME;
-  const businessLabelCount = roleMeaningCounts.LABEL_ONLY_BUSINESS;
+  const packageBackedRoleCount = roleMeaningCounts[FILTER_PACKAGE_BACKED];
 
   async function handleCreateRole(event) {
     event.preventDefault();
@@ -229,12 +224,12 @@ export default function RolesPermissionsPage() {
         <div className="grid gap-0 md:grid-cols-3">
           <PageMetric label={l("Managed roles", "Yonetilen roller")} value={roles.length} />
           <PageMetric
-            label={l("Runtime roles", "Runtime roller")}
-            value={runtimeRoleCount}
+            label={l("Package-backed roles", "Paket destekli roller")}
+            value={packageBackedRoleCount}
           />
           <PageMetric
-            label={l("Label-only roles", "Yalnizca etiket roller")}
-            value={businessLabelCount}
+            label={l("Visible results", "Gorunen sonuclar")}
+            value={filteredRoleCount}
           />
         </div>
 

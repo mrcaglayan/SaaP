@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  getBusinessRoleCatalogEntry,
   getWorkflowPackageCatalogEntry,
   getWorkflowPresetCatalogEntry,
   listAccessModelCatalogSections,
@@ -17,15 +16,13 @@ async function main() {
   );
 
   const sections = listAccessModelCatalogSections();
-  const businessRoleEntry = getBusinessRoleCatalogEntry("ENTITY_ACCOUNTANT");
   const packageEntry = getWorkflowPackageCatalogEntry("PKG-PC-CLOSE");
   const presetEntry = getWorkflowPresetCatalogEntry("AP_LEAN_ENTITY");
 
-  assert.equal(sections.length, 4, "matrix mode should stay on top of the existing four-tab catalog");
-  assert(businessRoleEntry.starterPackageLabels.length > 0, "business-role comparison should use starter package metadata");
+  assert.equal(sections.length, 2, "matrix mode should stay on top of the package and preset catalog tabs");
   assert.match(
     packageEntry.runtimeMappingLabel || "",
-    /companion/i,
+    /GLPostingAuthority/i,
     "workflow-package comparison should surface companion-only mapping posture"
   );
   assert(presetEntry.steps.length > 0, "workflow-preset comparison should use ordered step metadata");
@@ -38,7 +35,6 @@ async function main() {
       accessModelPageSource.includes("AccessModelComparisonMatrix") &&
       accessModelPageSource.includes("buildWorkflowPackageMatrixGroups") &&
       accessModelPageSource.includes("buildWorkflowPresetMatrixGroups") &&
-      accessModelPageSource.includes("buildLegacyMatrixGroups") &&
       accessModelPageSource.includes("view: \"matrix\"") &&
       accessModelPageSource.includes("compare: joinMatrixCompareCodes("),
     "UX-RBAC-05 should add a URL-backed matrix mode without replacing the browse-first shell"
@@ -50,10 +46,9 @@ async function main() {
       accessModelPageSource.includes("Granted") &&
       accessModelPageSource.includes("Not granted") &&
       accessModelPageSource.includes("Companion-only") &&
-      accessModelPageSource.includes("Legacy") &&
-      accessModelPageSource.includes("Suggested starter packages") &&
+      accessModelPageSource.includes("Linked") &&
       accessModelPageSource.includes("Ordered steps"),
-    "UX-RBAC-05 should compare module families, scopes, starter packages, and preset steps with distinct status indicators"
+    "UX-RBAC-05 should compare module families, scopes, package links, and preset steps with distinct status indicators"
   );
 
   assert(
@@ -61,8 +56,8 @@ async function main() {
       accessModelPageSource.includes("Amount-band routing stays reachable from matrix context") &&
       accessModelPageSource.includes("Open workflow routing matrix") &&
       accessModelPageSource.includes("Open access debugger") &&
-      accessModelPageSource.includes("/app/ayarlar/workflow-kurulumu") &&
-      accessModelPageSource.includes("/app/ayarlar/rbac/access-debugger"),
+      accessModelPageSource.includes("/app/ayarlar/security-admin/workflows?tab=definitions") &&
+      accessModelPageSource.includes("/app/ayarlar/security-admin/diagnostics?tab=access"),
     "UX-RBAC-05 should keep workflow routing and diagnostics reachable from matrix context"
   );
 

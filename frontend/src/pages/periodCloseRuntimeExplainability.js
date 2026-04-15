@@ -1,6 +1,5 @@
 import {
   getWorkflowPackageCatalogEntry,
-  listBusinessRoleCatalogEntries,
 } from "./security/roleCatalog.js";
 
 function normalizeText(value) {
@@ -23,25 +22,6 @@ function resolveRequiredPackageCode(stage) {
     return "PKG-PC-READINESS";
   }
   return "PKG-PC-CLOSE";
-}
-
-function buildEligibleRoleLabels(requiredPackageCode) {
-  if (!requiredPackageCode) {
-    return [];
-  }
-  return listBusinessRoleCatalogEntries()
-    .filter((entry) => entry.defaultScope === "LEGAL_ENTITY")
-    .filter((entry) => {
-      const starterPackageCodes = Array.isArray(entry?.starterPackageCodes)
-        ? entry.starterPackageCodes
-        : [];
-      const optionalPackageCodes = Array.isArray(entry?.optionalPackageCodes)
-        ? entry.optionalPackageCodes
-        : [];
-      return [...starterPackageCodes, ...optionalPackageCodes].includes(requiredPackageCode);
-    })
-    .map((entry) => entry.displayName)
-    .filter(Boolean);
 }
 
 function resolveCurrentStage({ latestRun, workflowGateBlock, fxGateBlock }) {
@@ -440,7 +420,6 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
   const requiredPackageCode = resolveRequiredPackageCode(stage);
   const requiredPackageEntry = getWorkflowPackageCatalogEntry(requiredPackageCode);
   const requiredPackageLabel = normalizeText(requiredPackageEntry?.displayName);
-  const eligibleRoleLabels = buildEligibleRoleLabels(requiredPackageCode);
   const requestedCloseStatusLabel = formatCloseStatusLabel(requestedCloseStatus, l);
   const technicalItems = [];
 
@@ -490,7 +469,6 @@ export function buildPeriodCloseRuntimeExplainabilityModel({
     requiredPackageLabel,
     requiredScopeLabel: l("Legal Entity", "Tuzel Kisilik"),
     eligibleActorSummary: resolveEligibleActorSummary(stage, requiredPackageLabel, l),
-    eligibleRoleLabels,
     userCapabilityLines: buildUserCapabilityLines({
       stage,
       canClosePeriod,

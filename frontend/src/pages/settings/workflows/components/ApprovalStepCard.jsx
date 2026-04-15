@@ -29,7 +29,6 @@ export default function ApprovalStepCard({
   stepScopeTypes,
   stepScopeLabels,
   workflowStepPackageOptions = [],
-  workflowStepBusinessRoleOptions = [],
   onChange,
   onRemove,
   disableRemove,
@@ -55,9 +54,6 @@ export default function ApprovalStepCard({
   const warningIssueCount = Array.isArray(validation?.warningIssues)
     ? validation.warningIssues.length
     : 0;
-  const selectedRoleCodes = Array.isArray(step.eligibleBusinessRoleCodes)
-    ? step.eligibleBusinessRoleCodes
-    : [];
   const runtimeBridgeMessage = step.requiredPermissionCode
     ? l(
         `Current runtime bridge permission: ${step.requiredPermissionCode}`,
@@ -273,41 +269,21 @@ export default function ApprovalStepCard({
               </div>
 
               <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                    {l("Eligible business roles", "Uygun is rolleri")}
+                <div className="rounded-2xl border border-slate-200 bg-white/70 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      {l("Authority source", "Yetki kaynagi")}
+                    </p>
+                    <Badge variant="secondary">
+                      {l("Package-backed", "Paket tabanli")}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-600">
+                    {l(
+                      "This step resolves authority from the selected workflow package at the chosen organizational scope.",
+                      "Bu adim, yetkiyi secilen organizasyon kapsamindaki workflow paketinden cozer."
+                    )}
                   </p>
-                  <Badge variant="secondary">
-                    {l("Helper only", "Yardimci bilgi")}
-                  </Badge>
-                </div>
-                <p className="text-xs leading-5 text-slate-600">
-                  {l(
-                    "These role suggestions improve readability and assignee filtering, but the workflow step still resolves authority from the selected package.",
-                    "Bu rol onerileri okunabilirligi ve atanan kisiyi filtrelemeyi kolaylastirir; ancak workflow adimi yetkiyi yine secilen paketten cozer."
-                  )}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {workflowStepBusinessRoleOptions.map((roleOption) => {
-                    const isSelected = selectedRoleCodes.includes(roleOption.code);
-                    const nextRoleCodes = isSelected
-                      ? selectedRoleCodes.filter((roleCode) => roleCode !== roleOption.code)
-                      : [...selectedRoleCodes, roleOption.code];
-                    return (
-                      <button
-                        key={roleOption.code}
-                        type="button"
-                        onClick={() => onChange("eligibleBusinessRoleCodes", nextRoleCodes)}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                          isSelected
-                            ? "border-blue-300 bg-blue-50 text-blue-900"
-                            : "border-border bg-card text-foreground hover:border-blue-200 hover:bg-blue-50/50"
-                        }`}
-                      >
-                        {roleOption.label}
-                      </button>
-                    );
-                  })}
                 </div>
               </div>
             </div>

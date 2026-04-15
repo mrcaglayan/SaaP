@@ -77,7 +77,6 @@ export default function WorkflowStepsBuilderStep({
   stepScopeTypes,
   stepScopeLabels,
   workflowStepPackageOptions = [],
-  workflowStepBusinessRoleOptions = [],
   onStepFieldChange,
   onAddStep,
   onRemoveStep,
@@ -164,7 +163,6 @@ export default function WorkflowStepsBuilderStep({
               stepScopeTypes={stepScopeTypes}
               stepScopeLabels={stepScopeLabels}
               workflowStepPackageOptions={workflowStepPackageOptions}
-              workflowStepBusinessRoleOptions={workflowStepBusinessRoleOptions}
               onChange={(field, value) => onStepFieldChange(index, field, value)}
               onRemove={() => onRemoveStep(index)}
               disableRemove={stepDrafts.length <= 1}

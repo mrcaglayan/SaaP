@@ -1,5 +1,3 @@
-import { Lock } from "lucide-react";
-
 function normalizeText(value) {
   return String(value || "").trim();
 }
@@ -38,9 +36,6 @@ function buildScopeSummary(entry) {
 }
 
 function getRoleTypeLabel(entry) {
-  if (entry?.businessLabelOnly) {
-    return "Label only";
-  }
   if (entry?.managedPackageRole) {
     return "Package-backed";
   }
@@ -54,13 +49,6 @@ function getRoleTypeLabel(entry) {
 }
 
 function getRoleStateMeta(entry) {
-  if (entry?.businessLabelOnly) {
-    return {
-      label: "Locked",
-      className: "border-sky-200 bg-sky-50 text-sky-800",
-      showLock: true,
-    };
-  }
   if (entry?.managedPackageRole) {
     return {
       label: "Package",
@@ -113,7 +101,6 @@ export default function RoleListRow({ entry, l, onOpenRole, role }) {
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <div className="truncate font-medium leading-5 text-slate-900">{entry.displayName}</div>
-          {entry?.businessLabelOnly ? <Lock className="h-3.5 w-3.5 shrink-0 text-slate-400" /> : null}
         </div>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
           <span>{getSecondaryCodeText(role, entry, l)}</span>
@@ -139,7 +126,6 @@ export default function RoleListRow({ entry, l, onOpenRole, role }) {
         <span
           className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${stateMeta.className}`}
         >
-          {stateMeta.showLock ? <Lock className="h-3 w-3" /> : null}
           {stateMeta.label}
         </span>
       </div>

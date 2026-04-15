@@ -1,6 +1,5 @@
 import {
   getWorkflowPackageCatalogEntry,
-  listBusinessRoleCatalogEntries,
 } from "./security/roleCatalog.js";
 
 const PREPARATION_STATUSES = new Set([
@@ -202,25 +201,6 @@ function resolveWorkflowStatusLabel(workflowGate, l) {
     return l("Approved", "Onayli");
   }
   return normalizeText(workflowGate?.workflowInstanceStatus) || l("Pending", "Beklemede");
-}
-
-function buildEligibleRoleLabels(requiredPackageCode, requiredScopeType) {
-  if (!requiredPackageCode || !requiredScopeType) {
-    return [];
-  }
-  return listBusinessRoleCatalogEntries()
-    .filter((entry) => entry.defaultScope === requiredScopeType)
-    .filter((entry) => {
-      const starterPackageCodes = Array.isArray(entry?.starterPackageCodes)
-        ? entry.starterPackageCodes
-        : [];
-      const optionalPackageCodes = Array.isArray(entry?.optionalPackageCodes)
-        ? entry.optionalPackageCodes
-        : [];
-      return [...starterPackageCodes, ...optionalPackageCodes].includes(requiredPackageCode);
-    })
-    .map((entry) => entry.displayName)
-    .filter(Boolean);
 }
 
 function buildEligibleActorSummary(requiredPackageCode, requiredPackageLabel, requiredScopeLabel, currentStatus, l) {
@@ -534,7 +514,6 @@ export function buildLocalCloseRuntimeExplainabilityModel({
   const requiredPackageLabel = normalizeText(requiredPackageEntry?.displayName);
   const requiredScopeType = normalizeText(requiredPackageEntry?.defaultScope).toUpperCase();
   const requiredScopeLabel = translateScopeTypeLabel(requiredScopeType, l);
-  const eligibleRoleLabels = buildEligibleRoleLabels(requiredPackageCode, requiredScopeType);
   const noteItems = [];
   const packContentScopeLabel = formatPackContentScopeLabel(pack, l);
 
@@ -613,7 +592,6 @@ export function buildLocalCloseRuntimeExplainabilityModel({
       currentStatus,
       l
     ),
-    eligibleRoleLabels,
     userCapabilityLines: buildUserCapabilityLines({
       pack,
       reviewGate,

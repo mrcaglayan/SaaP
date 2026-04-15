@@ -21,7 +21,6 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
-  listBusinessRoleCatalogEntries,
   listWorkflowPackageCatalogEntries,
   listWorkflowPresetCatalogEntries,
 } from "../security/roleCatalog.js";
@@ -330,7 +329,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
   );
   const workflowPresetEntries = useMemo(() => listWorkflowPresetCatalogEntries(), []);
   const workflowPackageEntries = useMemo(() => listWorkflowPackageCatalogEntries(), []);
-  const businessRoleEntries = useMemo(() => listBusinessRoleCatalogEntries(), []);
   const workflowStepPackageOptions = useMemo(
     () =>
       listWorkflowStepPackageOptions({
@@ -343,18 +341,8 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
     () => ({
       workflowPackageEntries,
       workflowPresetEntries,
-      businessRoleEntries,
     }),
-    [businessRoleEntries, workflowPackageEntries, workflowPresetEntries]
-  );
-  const workflowStepBusinessRoleOptions = useMemo(
-    () =>
-      businessRoleEntries.map((entry) => ({
-        code: entry.code,
-        label: entry.displayName,
-        defaultScope: entry.defaultScope,
-      })),
-    [businessRoleEntries]
+    [workflowPackageEntries, workflowPresetEntries]
   );
   const workflowPresetOptions = useMemo(
     () =>
@@ -1115,8 +1103,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
                 minApproverCount: normalizedFieldValue === "APPROVE" ? step.minApproverCount : "1",
                 allowSelfApprove:
                   normalizedFieldValue === "APPROVE" ? Boolean(step.allowSelfApprove) : false,
-                eligibleBusinessRoleCodes: [],
-                eligibleBusinessRoleLabels: [],
               }
           : field === "requiredPackageCode"
             ? {
@@ -1125,16 +1111,12 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
                 requiredPackageLabel: "",
                 requiredPermissionCode: "",
                 actionLabel: "",
-                eligibleBusinessRoleCodes: [],
-                eligibleBusinessRoleLabels: [],
               }
             : field === "stageScopeType"
               ? {
-                  ...step,
-                  stageScopeType: normalizedFieldValue,
-                  eligibleBusinessRoleCodes: [],
-                  eligibleBusinessRoleLabels: [],
-                }
+                ...step,
+                stageScopeType: normalizedFieldValue,
+              }
             : {
                 ...step,
                 [field]: normalizedFieldValue,
@@ -1680,7 +1662,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
               stepScopeTypes={STEP_SCOPE_TYPES}
               stepScopeLabels={text.stepScopeLabels}
               workflowStepPackageOptions={workflowStepPackageOptions}
-              workflowStepBusinessRoleOptions={workflowStepBusinessRoleOptions}
               onStepFieldChange={onStepFieldChange}
               onAddStep={onAddStep}
               onRemoveStep={onRemoveStep}

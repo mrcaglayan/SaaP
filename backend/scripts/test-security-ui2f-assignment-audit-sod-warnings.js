@@ -27,22 +27,6 @@ async function main() {
   );
 
   const summary = buildAssignmentAuditSummary({
-    businessRoleAssignments: [
-      {
-        assignmentId: 11,
-        userId: 7,
-        roleId: 501,
-        roleCode: "BUSINESS_ROLE__BRANCH_ACCOUNTANT",
-        businessRoleLabel: "Branch Accountant",
-        scopeType: "OPERATING_UNIT",
-        scopeId: 8,
-        scopeLabel: "KBL - Kabul Branch",
-        createdAt: "2026-02-01T09:00:00Z",
-        effectiveFrom: "2026-02-01",
-        effectiveTo: "",
-        status: "ACTIVE",
-      },
-    ],
     workflowPackageAssignments: [
       {
         assignmentId: 12,
@@ -154,23 +138,9 @@ async function main() {
     "UI-2F should attribute direct package grants to the granting admin when audit logs are available"
   );
   assert.equal(
-    summary.auditItems.some(
-      (item) =>
-        item.title === "Branch Accountant" &&
-        item.kindLabel === "Business role label"
-    ),
-    true,
-    "UI-2F should keep business-role labels in the audit timeline"
-  );
-  assert.equal(
     summary.sodWarnings.some((warning) => warning.title.includes("AP maker and reviewer overlap")),
     true,
     "UI-2F should surface AP maker-checker overlaps at the same scope"
-  );
-  assert.equal(
-    summary.sodWarnings.some((warning) => warning.title.includes("Legacy group controller remains broad")),
-    true,
-    "UI-2F should warn about broad legacy runtime roles in the selected user's mix"
   );
 
   assert(
@@ -183,10 +153,10 @@ async function main() {
 
   assert(
     workbenchSource.includes("Assignment audit & SoD warnings") &&
-      workbenchSource.includes("SoD warning summary") &&
-      workbenchSource.includes("Assignment history") &&
-      workbenchSource.includes("Granted by") &&
-      workbenchSource.includes("Last scope change"),
+      workbenchSource.includes("SoD warnings") &&
+      workbenchSource.includes("Audit items") &&
+      workbenchSource.includes("Type") &&
+      workbenchSource.includes("Status"),
     "UserAssignmentWorkbench should render the UI-2F audit and warning sections"
   );
 

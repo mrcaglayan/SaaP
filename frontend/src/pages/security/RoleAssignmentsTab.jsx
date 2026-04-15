@@ -103,7 +103,6 @@ export default function RoleAssignmentsTab({
   focusRequest = null,
   l,
   relatedWorkflowPackages = [],
-  selectedRoleEntry,
 }) {
   const assignmentsSectionRef = useRef(null);
   const packageMapSectionRef = useRef(null);
@@ -150,15 +149,10 @@ export default function RoleAssignmentsTab({
               {l("Role usage and package context", "Rol kullanimi ve paket baglami")}
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              {selectedRoleEntry?.businessLabelOnly
-                ? l(
-                    "This label-only role stays visible for assignment clarity. Use the existing users-assignment and workflow-package surfaces to inspect how it is applied.",
-                    "Bu yalnizca etiket rol atama netligi icin gorunur kalir. Nasil uygulandigini incelemek icin mevcut kullanici-atama ve workflow-paket yuzeylerini kullanin."
-                  )
-                : l(
-                    "Inspect direct runtime-role assignments here, then jump to the existing users-assignment and workflow-package pages when you need to change sources or scope.",
-                    "Dogrudan runtime rol atamalarini burada inceleyin; sonra kaynak veya kapsam degistirmeniz gerektiginde mevcut kullanici-atama ve workflow-paket sayfalarina gecin."
-                  )}
+              {l(
+                "Inspect direct runtime-role assignments here, then jump to the existing users-assignment and workflow-package pages when you need to change sources or scope.",
+                "Dogrudan runtime rol atamalarini burada inceleyin; sonra kaynak veya kapsam degistirmeniz gerektiginde mevcut kullanici-atama ve workflow-paket sayfalarina gecin."
+              )}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -232,15 +226,10 @@ export default function RoleAssignmentsTab({
 
           {canReadRoleAssignments && normalizedAssignments.length === 0 ? (
             <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-              {selectedRoleEntry?.businessLabelOnly
-                ? l(
-                    "No direct assignments were found for this label-only role. Business labels are typically paired with package or user-assignment flows instead.",
-                    "Bu yalnizca etiket rolu icin dogrudan atama bulunamadi. Is etiketleri genellikle paket veya kullanici-atama akisleriyle eslenir."
-                  )
-                : l(
-                    "No direct assignments were found for this role.",
-                    "Bu rol icin dogrudan atama bulunamadi."
-                  )}
+              {l(
+                "No direct assignments were found for this role.",
+                "Bu rol icin dogrudan atama bulunamadi."
+              )}
             </div>
           ) : null}
 
@@ -338,15 +327,10 @@ export default function RoleAssignmentsTab({
           )}
 
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
-            {selectedRoleEntry?.businessLabelOnly
-              ? l(
-                  "Label-only roles stay non-authoritative. Review user assignment posture and package coverage together when you inspect this record.",
-                  "Yalnizca etiket roller yetki kaynagi olmaz. Bu kaydi incelerken kullanici atama durusunu ve paket kapsamini birlikte gozden gecirin."
-                )
-              : l(
-                  "Direct runtime roles can still be granted without a package, but related package mappings are shown here when the catalog can explain them.",
-                  "Dogrudan runtime roller paket olmadan da atanabilir; ancak katalog bunlari aciklayabildiginde ilgili paket eslemeleri burada gosterilir."
-                )}
+            {l(
+              "Direct runtime roles can still be granted without a package, but related package mappings are shown here when the catalog can explain them.",
+              "Dogrudan runtime roller paket olmadan da atanabilir; ancak katalog bunlari aciklayabildiginde ilgili paket eslemeleri burada gosterilir."
+            )}
           </div>
         </section>
       </div>

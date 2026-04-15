@@ -148,14 +148,10 @@ function sortWorkflowLines(left, right) {
   return sortByScope(left, right);
 }
 
-function buildScopeKey(scopeType, scopeId) {
-  return `${normalizeText(scopeType).toUpperCase()}:${Number(scopeId || 0)}`;
-}
-
 function getManagedPackageSourceLabel(sourceType, l) {
   const normalizedSourceType = normalizeText(sourceType).toUpperCase();
   if (normalizedSourceType === "STARTER_DERIVED") {
-    return translate(l, "Business role label", "Is rol etiketi");
+    return translate(l, "Starter package", "Starter paket");
   }
   if (normalizedSourceType === "PRESET_DERIVED") {
     return translate(l, "Preset-derived package", "Presetten tureyen paket");
@@ -440,24 +436,13 @@ function getRuntimeRoleSummary(roleCode, roleEntry, l) {
 
 /**
  * Builds the readable UI-2E authority preview for the selected user from the
- * current allow-side assignments. It intentionally keeps business-role labels
- * separate from effective authority so scope mismatches stay visible instead
- * of being hidden behind title-only assignments.
+ * current allow-side assignments.
  */
 export function buildEffectiveAuthorityPreview({
-  businessRoleAssignments,
   workflowPackageAssignments,
   userBundles,
   l,
 }) {
-  const activeBusinessRoleAssignments = (Array.isArray(businessRoleAssignments)
-    ? businessRoleAssignments
-    : []
-  ).filter(
-    (assignment) =>
-      normalizeText(assignment?.status).toUpperCase() === "ACTIVE" &&
-      normalizeText(assignment?.effect).toUpperCase() !== "DENY"
-  );
   const activeWorkflowPackageAssignments = (Array.isArray(workflowPackageAssignments)
     ? workflowPackageAssignments
     : []
@@ -614,58 +599,8 @@ export function buildEffectiveAuthorityPreview({
   runtimeLines.sort(sortByScope);
 
   const warningTexts = [];
-  const activeWorkflowScopeKeys = new Set(
-    workflowLines.map((line) => buildScopeKey(line.scopeType, line.scopeId))
-  );
-  const activeBusinessScopeKeys = new Set(
-    activeBusinessRoleAssignments.map((assignment) =>
-      buildScopeKey(assignment.scopeType, assignment.scopeId)
-    )
-  );
-
-  for (const assignment of activeBusinessRoleAssignments) {
-    const scopeKey = buildScopeKey(assignment.scopeType, assignment.scopeId);
-    if (activeWorkflowScopeKeys.has(scopeKey)) {
-      continue;
-    }
-    warningTexts.push(
-      translate(
-        l,
-        "{{role}} is assigned at {{scope}}, but no workflow package authority is active at the same scope yet.",
-        "{{role}}, {{scope}} kapsaminda atanmis; ancak ayni kapsamda henuz etkin bir workflow paket yetkisi yok.",
-        {
-          role: assignment.businessRoleLabel,
-          scope: assignment.scopeLabel,
-        }
-      )
-    );
-  }
-
-  const warnedWorkflowScopeKeys = new Set();
-  for (const line of workflowLines) {
-    const scopeKey = buildScopeKey(line.scopeType, line.scopeId);
-    if (activeBusinessScopeKeys.has(scopeKey) || warnedWorkflowScopeKeys.has(scopeKey)) {
-      continue;
-    }
-    warnedWorkflowScopeKeys.add(scopeKey);
-    warningTexts.push(
-      translate(
-        l,
-        "Workflow package authority is active at {{scope}}, but no business role label is assigned at the same scope yet.",
-        "{{scope}} kapsaminda workflow paket yetkisi etkin; ancak ayni kapsamda henuz bir is rol etiketi atanmamis.",
-        {
-          scope: line.scopeLabel,
-        }
-      )
-    );
-  }
 
   if (
-    (Array.isArray(businessRoleAssignments) ? businessRoleAssignments : []).some(
-      (assignment) =>
-        normalizeText(assignment?.status).toUpperCase() === "ACTIVE" &&
-        normalizeText(assignment?.effect).toUpperCase() === "DENY"
-    ) ||
     (Array.isArray(workflowPackageAssignments) ? workflowPackageAssignments : []).some(
       (assignment) =>
         normalizeText(assignment?.status).toUpperCase() === "ACTIVE" &&

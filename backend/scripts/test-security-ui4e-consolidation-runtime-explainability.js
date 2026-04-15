@@ -101,10 +101,6 @@ async function main() {
     "Consolidation explainability should expose the current adjustment package and group scope",
   );
   assert(
-    model?.eligibleRoleLabels?.includes("Group Approver"),
-    "Consolidation explainability should name the group role that can post adjustments",
-  );
-  assert(
     model?.userCapabilityLines?.includes("You can post draft adjustments for this run now."),
     "Consolidation explainability should tell the current user when they can post draft adjustments",
   );
@@ -112,7 +108,7 @@ async function main() {
     model?.noteItems?.some(
       (item) =>
         item.label === "Prepare stage" &&
-        item.value.includes("Group Checker"),
+        item.value === "Consolidation / Prepare Run governs preparing this run at Group scope.",
     ) &&
       model?.noteItems?.some(
         (item) =>

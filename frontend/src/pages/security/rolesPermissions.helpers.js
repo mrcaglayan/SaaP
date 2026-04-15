@@ -38,14 +38,6 @@ export function buildRoleDetailPath(roleId) {
  */
 export function buildRoleAttentionItems(entry, l) {
   const items = [];
-  if (entry?.businessLabelOnly) {
-    items.push(
-      l(
-        "Business role label only. It does not grant package or permission authority by itself.",
-        "Yalnizca is rol etiketi. Tek basina paket veya yetki otoritesi vermez."
-      )
-    );
-  }
   if (entry?.managedPackageRole) {
     items.push(
       l(

@@ -52,13 +52,6 @@ async function main() {
     assignments: [
       {
         id: 11,
-        role_code: "BUSINESS_ROLE__ENTITY_ACCOUNTANT",
-        scope_type: "LEGAL_ENTITY",
-        scope_id: 1,
-        effect: "ALLOW",
-      },
-      {
-        id: 12,
         role_code: "WORKFLOW_PACKAGE__PKG-AP-VIEW",
         scope_type: "LEGAL_ENTITY",
         scope_id: 1,
@@ -82,11 +75,6 @@ async function main() {
     viewOnlySummary.missingPackageText.includes("can view"),
     true,
     "UI-5A should call out missing action-package coverage when only view authority exists"
-  );
-  assert.equal(
-    viewOnlySummary.matchingBusinessRoles.length,
-    1,
-    "UI-5A should keep business-role labels visible in the same diagnosis"
   );
 
   const scopeMismatchSummary = buildAccessDiagnosticsSummary({

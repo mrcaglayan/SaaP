@@ -33,7 +33,11 @@ async function main() {
   assert.equal(apLean.statusLabel, "Active");
   assert.equal(apLean.usesExtensionLabel, "No");
   assert.equal(apLean.stepCount, 3);
-  assert.deepEqual(apLean.typicalActorLabels, ["Branch Accountant", "Entity Accountant"]);
+  assert.deepEqual(apLean.requiredPackageLabels, [
+    "AP Documents / Draft & Submit",
+    "AP Documents / Approve",
+    "AP Documents / Post",
+  ]);
   assert.equal(apLean.steps[0].scopeType, "OPERATING_UNIT");
   assert.equal(apLean.steps[0].requiredPackageLabel, "AP Documents / Draft & Submit");
   assert.equal(apLean.steps[0].allowSelfApprove, false);
@@ -51,7 +55,7 @@ async function main() {
       accessModelPageSource.includes("Preset name") &&
       accessModelPageSource.includes("Primary scope") &&
       accessModelPageSource.includes("Step count") &&
-      accessModelPageSource.includes("Typical actors") &&
+      accessModelPageSource.includes("Required packages") &&
       accessModelPageSource.includes("Uses extension?") &&
       accessModelPageSource.includes("Step preview") &&
       accessModelPageSource.includes("Scope coverage") &&
@@ -76,8 +80,8 @@ async function main() {
   );
 
   assert(
-    accessModelPageSource.includes('to="/app/ayarlar/workflow-kurulumu"') &&
-      accessModelPageSource.includes('to="/app/ayarlar/rbac/access-model?tab=workflow_packages"'),
+    accessModelPageSource.includes('to="/app/ayarlar/security-admin/workflows?tab=definitions"') &&
+      accessModelPageSource.includes('to="/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages"'),
     "UI-1D should provide workflow-governance and package-catalog handoff paths"
   );
 

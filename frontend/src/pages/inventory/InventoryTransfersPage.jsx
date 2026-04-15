@@ -485,6 +485,7 @@ export default function InventoryTransfersPage() {
           canReadItemCards
             ? listItemCards({
                 legalEntityId,
+                operatingUnitId: operatingUnitId || undefined,
                 status: "ACTIVE",
                 limit: 500,
                 offset: 0,

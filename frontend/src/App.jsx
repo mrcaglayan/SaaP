@@ -175,7 +175,6 @@ const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role_permissions.assign",
 ];
 const LEGACY_CATALOG_MODEL_TABS = new Set([
-  "business_roles",
   "workflow_packages",
   "workflow_presets",
 ]);

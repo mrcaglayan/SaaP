@@ -1,6 +1,5 @@
 import {
   getWorkflowPackageCatalogEntry,
-  listBusinessRoleCatalogEntries,
 } from "./security/roleCatalog.js";
 
 function normalizeText(value) {
@@ -26,28 +25,6 @@ function translate(l, english, turkish, values) {
   const template =
     typeof l === "function" ? l(english, turkish, values) : english;
   return interpolateTemplate(template, values);
-}
-
-function joinHumanList(values, l) {
-  const safeValues = (Array.isArray(values) ? values : [])
-    .map((value) => normalizeText(value))
-    .filter(Boolean);
-  if (safeValues.length === 0) {
-    return "";
-  }
-  if (safeValues.length === 1) {
-    return safeValues[0];
-  }
-  if (safeValues.length === 2) {
-    return translate(l, "{{left}} and {{right}}", "{{left}} ve {{right}}", {
-      left: safeValues[0],
-      right: safeValues[1],
-    });
-  }
-  return translate(l, "{{items}}, and {{last}}", "{{items}} ve {{last}}", {
-    items: safeValues.slice(0, -1).join(", "),
-    last: safeValues[safeValues.length - 1],
-  });
 }
 
 function translateScopeTypeLabel(scopeType, l) {
@@ -88,25 +65,6 @@ function resolveWorkflowStatusLabel(workflowGate, reviewGateLoading, reviewGateE
     normalizeText(workflowGate?.assignment?.status) ||
     translate(l, "Pending", "Beklemede")
   );
-}
-
-function buildEligibleRoleLabels(packageCode, requiredScopeType) {
-  if (!packageCode || !requiredScopeType) {
-    return [];
-  }
-  return listBusinessRoleCatalogEntries()
-    .filter((entry) => normalizeText(entry?.defaultScope).toUpperCase() === requiredScopeType)
-    .filter((entry) => {
-      const starterPackageCodes = Array.isArray(entry?.starterPackageCodes)
-        ? entry.starterPackageCodes
-        : [];
-      const optionalPackageCodes = Array.isArray(entry?.optionalPackageCodes)
-        ? entry.optionalPackageCodes
-        : [];
-      return [...starterPackageCodes, ...optionalPackageCodes].includes(packageCode);
-    })
-    .map((entry) => entry.displayName)
-    .filter(Boolean);
 }
 
 function getSelectedRunStatus(selectedRun, reviewGateData) {
@@ -527,17 +485,15 @@ function buildUserCapabilityLines({
   return lines;
 }
 
-function buildRoleStageNoteItem(packageCode, label, englishVerb, turkishVerb, l) {
+function buildPackageStageNoteItem(packageCode, label, englishVerb, turkishVerb, l) {
   const packageEntry = getWorkflowPackageCatalogEntry(packageCode);
-  const roleLabels = buildEligibleRoleLabels(packageCode, normalizeText(packageEntry?.defaultScope).toUpperCase());
-  const roleSummary = joinHumanList(roleLabels, l);
-  if (!roleSummary || !packageEntry?.defaultScope) {
+  if (!packageEntry?.displayName || !packageEntry?.defaultScope) {
     return null;
   }
   return {
     label,
-    value: translate(l, "{{roles}} are the typical actors for {{verb}} at {{scope}} scope.", "{{roles}}, {{scope}} kapsaminda {{verb}} icin tipik aktorlerdir.", {
-      roles: roleSummary,
+    value: translate(l, "{{package}} governs {{verb}} at {{scope}} scope.", "{{package}}, {{scope}} kapsaminda {{verb}} yonetir.", {
+      package: packageEntry.displayName,
       verb: translate(l, englishVerb, turkishVerb),
       scope: translateScopeTypeLabel(packageEntry.defaultScope, l),
     }),
@@ -551,7 +507,7 @@ function buildStageVisibilityItems(reviewGateData, l) {
   const blockerCount = Array.isArray(reviewGateData?.blockers) ? reviewGateData.blockers.length : 0;
   const warningCount = Array.isArray(reviewGateData?.warnings) ? reviewGateData.warnings.length : 0;
   return [
-    buildRoleStageNoteItem(
+    buildPackageStageNoteItem(
       "PKG-CON-PREPARE",
       translate(l, "Prepare stage", "Hazirlik asamasi"),
       "preparing this run",
@@ -715,7 +671,6 @@ export function buildConsolidationRuntimeExplainabilityModel({
       requiredScopeLabel,
       l
     ),
-    eligibleRoleLabels: buildEligibleRoleLabels(requiredPackageCode, requiredScopeType),
     userCapabilityLines: buildUserCapabilityLines({
       stage,
       canCreateRun,

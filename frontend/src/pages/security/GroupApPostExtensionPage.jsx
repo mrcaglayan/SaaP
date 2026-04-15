@@ -35,9 +35,6 @@ function buildPresetDetail() {
     usesExtension: Boolean(entry.usesExtension),
     extensionNote: entry.extensionNote || "",
     steps: Array.isArray(entry.steps) ? entry.steps : [],
-    typicalActorLabels: Array.isArray(entry.typicalActorLabels)
-      ? entry.typicalActorLabels
-      : [],
     requiredPackageLabels: Array.isArray(entry.requiredPackageLabels)
       ? entry.requiredPackageLabels
       : [],
@@ -47,7 +44,7 @@ function buildPresetDetail() {
 function StatusBanner({ enabled }) {
   if (enabled) {
     return (
-      <section className="rounded-[28px] border border-emerald-200 bg-[linear-gradient(135deg,_rgba(236,253,245,0.96),_rgba(255,255,255,0.98))] px-5 py-5">
+      <section className="rounded-[28px] border border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.96),rgba(255,255,255,0.98))] px-5 py-5">
         <div className="max-w-3xl">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
             Extension enabled
@@ -66,7 +63,7 @@ function StatusBanner({ enabled }) {
   }
 
   return (
-    <section className="rounded-[28px] border border-amber-200 bg-[linear-gradient(135deg,_rgba(255,251,235,0.96),_rgba(255,255,255,0.98))] px-5 py-5">
+    <section className="rounded-[28px] border border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,0.96),rgba(255,255,255,0.98))] px-5 py-5">
       <div className="max-w-3xl">
         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
           Extension not enabled
@@ -126,11 +123,10 @@ function PackageDetailCard({ pkg }) {
           </div>
           <div className="mt-2">
             <span
-              className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                pkg.plannedExtension
+              className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${pkg.plannedExtension
                   ? "border-amber-200 bg-amber-50 text-amber-800"
                   : "border-emerald-200 bg-emerald-50 text-emerald-800"
-              }`}
+                }`}
             >
               {pkg.plannedExtension ? "Planned extension" : "Active"}
             </span>
@@ -187,11 +183,10 @@ function PresetPreviewCard({ preset }) {
             {preset.stepCount} steps
           </span>
           <span
-            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-              preset.usesExtension
+            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${preset.usesExtension
                 ? "border-amber-200 bg-amber-50 text-amber-800"
                 : "border-emerald-200 bg-emerald-50 text-emerald-800"
-            }`}
+              }`}
           >
             {preset.usesExtension ? "Extension" : "Shipped"}
           </span>
@@ -217,7 +212,6 @@ function PresetPreviewCard({ preset }) {
                   <th className="px-4 py-3">Action</th>
                   <th className="px-4 py-3">Scope</th>
                   <th className="px-4 py-3">Required Package</th>
-                  <th className="px-4 py-3">Typical Actor</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -242,11 +236,10 @@ function PresetPreviewCard({ preset }) {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                            isGroupPost
+                          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${isGroupPost
                               ? "border-sky-200 bg-sky-50 text-sky-800"
                               : "border-slate-200 bg-slate-50 text-slate-700"
-                          }`}
+                            }`}
                         >
                           {step.requiredPackageCode}
                         </span>
@@ -256,34 +249,11 @@ function PresetPreviewCard({ preset }) {
                           </div>
                         ) : null}
                       </td>
-                      <td className="px-4 py-3 text-sm text-slate-600">
-                        {Array.isArray(step.eligibleBusinessRoleCodes)
-                          ? step.eligibleBusinessRoleCodes.join(", ")
-                          : "-"}
-                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-          </div>
-        </div>
-      ) : null}
-
-      {preset.typicalActorLabels.length > 0 ? (
-        <div className="mt-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Typical actors
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {preset.typicalActorLabels.map((label) => (
-              <span
-                key={label}
-                className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700"
-              >
-                {label}
-              </span>
-            ))}
           </div>
         </div>
       ) : null}
@@ -370,18 +340,20 @@ export default function GroupApPostExtensionPage() {
             </h3>
             <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
               <p>
-                <strong>Step 1:</strong> Branch Accountant creates and submits the
-                AP document at operating-unit scope using PKG-AP-DRAFT-SUBMIT.
+                <strong>Step 1:</strong> The operating-unit submit step uses
+                {" "}
+                <code>PKG-AP-DRAFT-SUBMIT</code>.
               </p>
               <p>
-                <strong>Step 2:</strong> Entity Accountant approves the document at
-                legal-entity scope using PKG-AP-APPROVE.
+                <strong>Step 2:</strong> The legal-entity approval step uses
+                {" "}
+                <code>PKG-AP-APPROVE</code>.
               </p>
               <p>
-                <strong>Step 3:</strong> Group Approver posts the document at group
-                scope using {GROUP_AP_POST_PACKAGE_CODE}. This is the extension
-                step that replaces entity/country-level posting with group-level
-                authority.
+                <strong>Step 3:</strong> The group posting step uses
+                {" "}
+                <code>{GROUP_AP_POST_PACKAGE_CODE}</code>. This is the extension step that
+                replaces entity or country posting with group-scoped authority.
               </p>
             </div>
             <div className="mt-4 text-sm leading-6 text-slate-600">

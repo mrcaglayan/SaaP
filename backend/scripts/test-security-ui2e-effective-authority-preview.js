@@ -27,24 +27,6 @@ async function main() {
   );
 
   const preview = buildEffectiveAuthorityPreview({
-    businessRoleAssignments: [
-      {
-        businessRoleLabel: "Entity Accountant",
-        scopeType: "LEGAL_ENTITY",
-        scopeId: 1,
-        scopeLabel: "AF - AFGHANTURK MAARIF FOUNDATION",
-        status: "ACTIVE",
-        effect: "ALLOW",
-      },
-      {
-        businessRoleLabel: "Branch Accountant",
-        scopeType: "OPERATING_UNIT",
-        scopeId: 10,
-        scopeLabel: "KBL - Kabul Branch",
-        status: "ACTIVE",
-        effect: "ALLOW",
-      },
-    ],
     workflowPackageAssignments: [
       {
         packageCode: "PKG-AP-APPROVE",
@@ -112,22 +94,9 @@ async function main() {
     "UI-2E should keep non-package runtime authority readable for roles outside the package model"
   );
   assert.equal(
-    preview.warnings.some(
-      (warning) =>
-        warning.text.includes("Branch Accountant") &&
-        warning.text.includes("KBL - Kabul Branch")
-    ),
-    true,
-    "UI-2E should warn when a business-role label has no same-scope workflow package authority"
-  );
-  assert.equal(
-    preview.warnings.some(
-      (warning) =>
-        warning.text.includes("TR - Turkey Entity") &&
-        warning.text.includes("no business role label")
-    ),
-    true,
-    "UI-2E should warn when workflow authority is active without a same-scope business-role label"
+    preview.warnings.length,
+    0,
+    "UI-2E should stay quiet for allow-only package and runtime mixes that have no deny-side caveat"
   );
 
   assert(
@@ -140,8 +109,8 @@ async function main() {
   assert(
     workbenchSource.includes("Effective authority preview") &&
       workbenchSource.includes("Workflow & package authority") &&
-      workbenchSource.includes("Additional runtime authority") &&
-      workbenchSource.includes("Scope alignment warnings") &&
+      workbenchSource.includes("Direct runtime authority") &&
+      workbenchSource.includes("Authority warnings") &&
       workbenchSource.includes("Still missing: {{missing}}."),
     "UserAssignmentWorkbench should render the UI-2E preview card and mismatch messaging"
   );

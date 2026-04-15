@@ -89,11 +89,6 @@ async function main() {
     "Period-close explainability should expose close package and legal-entity scope"
   );
   assert(
-    model?.eligibleRoleLabels?.includes("Entity Manager") &&
-      model?.eligibleRoleLabels?.includes("Entity CEO"),
-    "Period-close explainability should name the legal-entity roles that can close"
-  );
-  assert(
     model?.userCapabilityLines?.includes(
       "You have close authority, but workflow approval is still pending for this period close run."
     ),

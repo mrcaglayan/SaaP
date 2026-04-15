@@ -118,9 +118,6 @@ export default function GovernedRuntimeExplainabilityPanel({
       sectionClass
     ),
   ].filter(Boolean);
-  const eligibleRoleLabels = Array.isArray(model.eligibleRoleLabels)
-    ? model.eligibleRoleLabels
-    : [];
   const factItems = Array.isArray(model.factItems) ? model.factItems : [];
   const noteItems = Array.isArray(model.noteItems) ? model.noteItems : [];
   const technicalItems = Array.isArray(model.technicalItems) ? model.technicalItems : [];
@@ -177,26 +174,12 @@ export default function GovernedRuntimeExplainabilityPanel({
         </div>
       ) : null}
 
-      {model.eligibleActorSummary || eligibleRoleLabels.length > 0 ? (
+      {model.eligibleActorSummary ? (
         <div className={`mt-4 rounded-lg border px-3 py-3 ${sectionClass}`}>
           <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
             {l("Who can act next", "Siradaki islemi kim yapabilir")}
           </p>
-          {model.eligibleActorSummary ? (
-            <p className="mt-2 text-sm">{model.eligibleActorSummary}</p>
-          ) : null}
-          {eligibleRoleLabels.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {eligibleRoleLabels.map((roleLabel) => (
-                <span
-                  key={roleLabel}
-                  className="rounded-full border border-white/80 bg-white/75 px-2.5 py-1 text-[11px] font-medium text-slate-800"
-                >
-                  {roleLabel}
-                </span>
-              ))}
-            </div>
-          ) : null}
+          <p className="mt-2 text-sm">{model.eligibleActorSummary}</p>
         </div>
       ) : null}
 

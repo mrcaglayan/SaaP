@@ -324,8 +324,8 @@ export default function SecurityAdminOverviewPage() {
         title: l("Direct assignments", "Dogrudan atamalar"),
         value: formatMetricValue(metrics.directAssignments),
         description: l(
-          "Runtime roles granted directly, excluding workflow packages and business labels.",
-          "Workflow paketleri ve is rolu etiketleri disindaki dogrudan runtime rol atamalari."
+          "Runtime roles granted directly, excluding managed workflow-package roles.",
+          "Yonetilen workflow paket rolleri disindaki dogrudan runtime rol atamalari."
         ),
         tone: "green",
       });

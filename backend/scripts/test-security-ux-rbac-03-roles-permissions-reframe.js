@@ -10,50 +10,55 @@ async function main() {
     path.resolve(rootDir, "frontend/src/pages/security/RolesPermissionsPage.jsx"),
     "utf8"
   );
+  const detailSource = await readFile(
+    path.resolve(rootDir, "frontend/src/pages/security/RolePermissionsDetailPage.jsx"),
+    "utf8"
+  );
+  const panelsSource = await readFile(
+    path.resolve(rootDir, "frontend/src/pages/security/RolesPermissionsPanels.jsx"),
+    "utf8"
+  );
 
-  const branchBusinessLabel = getRoleCatalogEntry("BUSINESS_ROLE__BRANCH_ACCOUNTANT");
-  const groupController = getRoleCatalogEntry("GroupController");
+  const entityApController = getRoleCatalogEntry("EntityAPController");
   const glPostingAuthority = getRoleCatalogEntry("GLPostingAuthority");
+  const packageRole = getRoleCatalogEntry("WORKFLOW_PACKAGE__PKG-AP-POST");
 
-  assert.equal(branchBusinessLabel.businessLabelOnly, true);
-  assert.equal(branchBusinessLabel.nonAuthoritative, true);
-  assert.equal(groupController.legacy, true);
-  assert.match(groupController.replacementLabel || "", /Group Checker/i);
+  assert.match(entityApController.replacementLabel || "", /AP Submitter/i);
   assert.equal(glPostingAuthority.companionOnly, true);
+  assert.equal(packageRole.managedPackageRole, true);
 
   assert(
-    rolesSource.includes("Browse by role meaning") &&
-      rolesSource.includes("Composable runtime roles") &&
-      rolesSource.includes("Label-only business roles") &&
-      rolesSource.includes("Legacy compatibility roles") &&
-      rolesSource.includes("Role selection") &&
-      rolesSource.includes("Role meaning") &&
-      rolesSource.includes("Role guidance") &&
-      rolesSource.includes("Authority model") &&
-      rolesSource.includes("Recommended scope coverage") &&
-      rolesSource.includes("Permission modules") &&
-      rolesSource.includes("Permission editing stays secondary to role meaning") &&
-      rolesSource.includes("What to watch before editing"),
-    "UX-RBAC-03 should reframe the page around browse-first role meaning, guidance, and secondary permission editing"
+    rolesSource.includes("Package-backed roles") &&
+      rolesSource.includes("Visible results") &&
+      rolesSource.includes("RoleMeaningFilterRail") &&
+      rolesSource.includes("RoleListTable") &&
+      rolesSource.includes("groupRolesForManagement"),
+    "UX-RBAC-03 should keep the browse-first roles surface focused on real runtime and package-backed roles"
   );
 
   assert(
-    rolesSource.includes("RoleMeaningFilterRail") &&
-      rolesSource.includes("RoleSelectionCard") &&
-      rolesSource.includes("buildPermissionModuleGroups") &&
-      rolesSource.includes("Requires READ") &&
-      rolesSource.includes("selectedRoleAttentionItems"),
-    "UX-RBAC-03 should group permission modules and keep attention state visible in the new role detail surface"
+    detailSource.includes("Role detail") &&
+      detailSource.includes("Permissions") &&
+      detailSource.includes("Staged") &&
+      detailSource.includes("replaceRolePermissions"),
+    "UX-RBAC-03 should keep the detail surface centered on editable runtime-role permissions"
   );
 
   assert(
-    rolesSource.includes("Business role label roles are locked to zero permissions.") &&
-      rolesSource.includes("Open migration workspace") &&
-      rolesSource.includes("Open user assignments") &&
-      rolesSource.includes("Open access model") &&
-      rolesSource.includes("Companion role") &&
-      rolesSource.includes("Hidden for new assignments"),
-    "UX-RBAC-03 should preserve label-only, legacy, and companion-role handoffs in the new layout"
+    panelsSource.includes("Authority model") &&
+      panelsSource.includes("Recommended scope coverage") &&
+      panelsSource.includes("Permission modules") &&
+      panelsSource.includes("Package-backed authority") &&
+      panelsSource.includes("Companion authority") &&
+      panelsSource.includes("Broad administration"),
+    "UX-RBAC-03 should keep the overview and permission panels aligned to current runtime-role shapes"
+  );
+
+  assert(
+    !rolesSource.includes("Label-only business roles") &&
+      !detailSource.includes("Business role label roles stay non-authoritative") &&
+      !panelsSource.includes("Business role label roles are locked to zero permissions."),
+    "UX-RBAC-03 should no longer surface retired business-role-label language in the roles UI"
   );
 
   console.log("test-security-ux-rbac-03-roles-permissions-reframe passed");

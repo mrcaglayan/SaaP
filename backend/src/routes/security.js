@@ -143,10 +143,18 @@ function isBusinessRoleAssignmentRoleCode(roleCode) {
 
 function assertBusinessRoleLabelRolePermissionsNotManaged(role) {
   if (isBusinessRoleAssignmentRoleCode(role?.code)) {
-    // Business label roles are stored in the existing role-assignment system
-    // for UI-2B persistence only. They must stay zero-permission by design.
+    // Legacy business-label roles are retired and must stay hidden from new
+    // admin flows until old tenant data is cleaned up.
     throw badRequest(
-      "Business role label roles cannot carry permissions. Assign workflow packages separately."
+      "Legacy business-role label roles are retired and cannot be edited."
+    );
+  }
+}
+
+function assertBusinessRoleLabelRoleRetired(role) {
+  if (isBusinessRoleAssignmentRoleCode(role?.code)) {
+    throw badRequest(
+      "Legacy business-role label assignments are retired. Apply workflow packages or runtime roles instead."
     );
   }
 }
@@ -2002,7 +2010,9 @@ router.get(
     );
 
     const visibleRows = (result.rows || []).filter(
-      (row) => !isRetiredSecurityRoleCode(row.code),
+      (row) =>
+        !isRetiredSecurityRoleCode(row.code) &&
+        !isBusinessRoleAssignmentRoleCode(row.code),
     );
     if (!includePermissions || visibleRows.length === 0) {
       return res.json({ tenantId, rows: visibleRows });
@@ -2052,6 +2062,7 @@ router.post(
     const name = String(req.body.name).trim();
     const isSystem = Boolean(req.body.isSystem);
     assertRetiredSecurityRoleNotManaged(code);
+    assertBusinessRoleLabelRoleRetired({ code });
 
     const existingRoleResult = await query(
       `SELECT id
@@ -2393,6 +2404,7 @@ router.post(
     }
     await assertSystemRoleManageAllowed(req, tenantId, role);
     assertRoleAssignmentUpsertAllowed(role);
+    assertBusinessRoleLabelRoleRetired(role);
     await assertScopeTargetExists(tenantId, scopeType, scopeId);
 
     const operation = await withTransaction(async (tx) => {
@@ -3106,9 +3118,13 @@ router.get(
       params,
     );
 
+    const visibleRows = (result.rows || []).filter(
+      (row) => !isBusinessRoleAssignmentRoleCode(row.role_code),
+    );
+
     return res.json({
       tenantId,
-      rows: result.rows,
+      rows: visibleRows,
     });
   }),
 );

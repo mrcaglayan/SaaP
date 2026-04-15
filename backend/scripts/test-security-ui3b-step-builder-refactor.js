@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  listBusinessRoleCatalogEntries,
   listWorkflowPackageCatalogEntries,
   listWorkflowPresetCatalogEntries,
 } from "../../frontend/src/pages/security/roleCatalog.js";
@@ -41,11 +40,9 @@ async function main() {
 
   const workflowPackageEntries = listWorkflowPackageCatalogEntries();
   const workflowPresetEntries = listWorkflowPresetCatalogEntries();
-  const businessRoleEntries = listBusinessRoleCatalogEntries();
   const workflowStepCatalogContext = {
     workflowPackageEntries,
     workflowPresetEntries,
-    businessRoleEntries,
   };
 
   const localCloseDrafts = buildStepDrafts(
@@ -91,12 +88,6 @@ async function main() {
     "Review",
     "UI-3B should infer a readable action label for bridged workflow steps"
   );
-  assert.equal(
-    localCloseDrafts[0].eligibleBusinessRoleLabels.includes("Entity Manager"),
-    true,
-    "UI-3B should surface business-role suggestions for the selected workflow package"
-  );
-
   assert.equal(
     apDrafts[0].requiredPackageCode,
     "PKG-AP-DRAFT-SUBMIT",
@@ -174,15 +165,13 @@ async function main() {
 
   assert(
     workflowSetupPageSource.includes("listWorkflowPackageCatalogEntries") &&
-      workflowSetupPageSource.includes("listBusinessRoleCatalogEntries") &&
       workflowSetupPageSource.includes("workflowStepPackageOptions") &&
-      workflowSetupPageSource.includes("workflowStepBusinessRoleOptions"),
-    "WorkflowSetupPage should load package and business-role catalog metadata for the step builder"
+      workflowSetupPageSource.includes("workflowStepCatalogContext"),
+    "WorkflowSetupPage should load package and preset catalog metadata for the step builder"
   );
 
   assert(
     workflowStepsBuilderSource.includes("workflowStepPackageOptions") &&
-      workflowStepsBuilderSource.includes("workflowStepBusinessRoleOptions") &&
       workflowStepsBuilderSource.includes(
         "Each step now binds to a workflow package at a specific organizational scope."
       ),
@@ -192,7 +181,7 @@ async function main() {
   assert(
     approvalStepCardSource.includes("workflowStepPackageOptions") &&
       approvalStepCardSource.includes("getApWorkflowRequiredPackageCode") &&
-      approvalStepCardSource.includes('l("Eligible business roles", "Uygun is rolleri")') &&
+      approvalStepCardSource.includes('l("Authority source", "Yetki kaynagi")') &&
       approvalStepCardSource.includes(
         "This AP package is bound by the selected action and resolves authority at the chosen step scope."
       ) &&

@@ -87,8 +87,6 @@ async function main() {
       ) &&
       findItemValue(pendingDetailModel?.noteItems, "Current gate") ===
         "Waiting for approval with AP Documents / Approve at Legal Entity scope." &&
-      pendingDetailModel?.eligibleRoleLabels?.includes("Entity Accountant") &&
-      pendingDetailModel?.eligibleRoleLabels?.includes("Entity Manager") &&
       findItemValue(pendingDetailModel?.technicalItems, "Routing match type") ===
         "Amount band",
     "AP detail explainability should surface the AMX06 route facts and in-scope approval gate"
@@ -188,8 +186,7 @@ async function main() {
       ) &&
       approvedActionModel?.userCapabilityLines?.includes(
         "Posting requires AP Documents / Post at Legal Entity scope."
-      ) &&
-      approvedActionModel?.eligibleRoleLabels?.includes("Entity CEO"),
+      ),
     "AP action explainability should explain fallback-post routing and why a read-only user cannot post"
   );
 

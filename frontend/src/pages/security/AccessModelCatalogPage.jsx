@@ -2,7 +2,6 @@ import { Fragment } from "react";
 import {
   ChevronRight,
   Package,
-  Shield,
   Workflow,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -12,7 +11,6 @@ import SecurityAdminWorkspaceShell from "./SecurityAdminWorkspaceShell.jsx";
 import SecurityCatalogWorkbenchTabs from "./components/catalog/SecurityCatalogWorkbenchTabs.jsx";
 
 const ACCESS_MODEL_TAB_ORDER = Object.freeze([
-  "business_roles",
   "workflow_packages",
   "workflow_presets",
 ]);
@@ -50,7 +48,6 @@ function buildEntrySearchText(entry) {
       step.scopeType,
       step.requiredPackageCode,
       step.requiredPackageLabel,
-      ...(step.eligibleBusinessRoleLabels || []),
       step.minApproverCount,
       step.allowSelfApprove ? "self approve allowed" : "self approve disabled",
       step.escalationAfterHours,
@@ -71,7 +68,6 @@ function buildEntrySearchText(entry) {
     entry?.visibleInNewTenantLabel,
     entry?.usedByCountLabel,
     entry?.usedByCount,
-    ...(entry?.starterPackageLabels || []),
     ...(entry?.optionalPackageLabels || []),
     ...(entry?.allowedScopes || []),
     ...(entry?.permissionCodes || []),
@@ -81,7 +77,6 @@ function buildEntrySearchText(entry) {
     ...(entry?.runtimeNotes || []),
     entry?.runtimeMappingLabel,
     ...(entry?.requiredPackageLabels || []),
-    ...(entry?.typicalActorLabels || []),
     ...(entry?.roleLabels || []),
     ...(entry?.optionalRoleLabels || []),
     ...(entry?.capabilities || []),
@@ -119,14 +114,11 @@ function getEntryScopes(entry) {
 }
 
 function getSearchPlaceholder(tabKey) {
-  if (tabKey === "business_roles") {
-    return "Search by business role, scope, package suggestion, or workflow preset";
-  }
   if (tabKey === "workflow_packages") {
     return "Search by package, workflow family, scope, permission, runtime role, or preset";
   }
   if (tabKey === "workflow_presets") {
-    return "Search by preset, workflow family, actor, package, step action, or scope";
+    return "Search by preset, workflow family, package, step action, or scope";
   }
   return "Search by label, description, scope, package, preset, or replacement";
 }
@@ -428,13 +420,6 @@ function getWorkflowPackageMatrixPosture(entry) {
 }
 
 function getMatrixEntryPosture(entry, tabKey) {
-  if (tabKey === "business_roles") {
-    return {
-      tone: "linked",
-      label: "Label only",
-      hint: "Assign workflow packages separately. Business roles stay non-authoritative.",
-    };
-  }
   if (tabKey === "workflow_packages") {
     return getWorkflowPackageMatrixPosture(entry);
   }
@@ -528,89 +513,6 @@ function buildScopeComparisonGroup(entries) {
       ),
     })),
   };
-}
-
-function buildBusinessRoleMatrixGroups(entries) {
-  const starterPackageLabels = collectMatrixLabels(entries, (entry) => entry.starterPackageLabels);
-  const optionalPackageLabels = collectMatrixLabels(entries, (entry) => entry.optionalPackageLabels);
-  const presetLabels = collectMatrixLabels(entries, (entry) => entry.usedInPresetLabels);
-
-  return [
-    buildSummaryComparisonGroup(entries, "business_roles"),
-    buildScopeComparisonGroup(entries),
-    {
-      key: "starter-packages",
-      title: "Suggested starter packages",
-      description:
-        "Starter suggestions help onboarding, but they do not grant workflow authority by themselves.",
-      rows: starterPackageLabels.map((label) => ({
-        key: `starter-${label}`,
-        label,
-        hint: "Starter bundle suggestion only.",
-        cells: entries.map((entry) =>
-          entry.starterPackageLabels.includes(label)
-            ? {
-              tone: "suggested",
-              label: "Suggested",
-              hint: "Starter package hint for guided onboarding.",
-            }
-            : {
-              tone: "not_granted",
-              label: "Not suggested",
-              hint: "No starter-package hint for this role.",
-            }
-        ),
-      })),
-    },
-    {
-      key: "optional-packages",
-      title: "Optional packages",
-      description:
-        "Optional packages surface useful companion coverage without collapsing the role into a raw authority set.",
-      rows: optionalPackageLabels.map((label) => ({
-        key: `optional-${label}`,
-        label,
-        hint: "Optional package pairing.",
-        cells: entries.map((entry) =>
-          entry.optionalPackageLabels.includes(label)
-            ? {
-              tone: "optional",
-              label: "Optional",
-              hint: "Useful companion package for some tenants.",
-            }
-            : {
-              tone: "not_granted",
-              label: "Not included",
-              hint: "No optional pairing documented.",
-            }
-        ),
-      })),
-    },
-    {
-      key: "preset-coverage",
-      title: "Workflow preset coverage",
-      description:
-        "Preset references keep business-role meaning visible before anyone drops into assignment tools.",
-      rows: presetLabels.map((label) => ({
-        key: `preset-${label}`,
-        label,
-        hint: "Shipped preset reference.",
-        cells: entries.map((entry) =>
-          entry.usedInPresetLabels.includes(label)
-            ? {
-              tone: "linked",
-              label: "Referenced",
-              hint: "Used by a shipped workflow preset.",
-            }
-            : {
-              tone: "not_granted",
-              label: "Not referenced",
-              hint: "No shipped preset reference.",
-            }
-        ),
-      })),
-    },
-  ].filter((group) => group.rows.length > 0);
 }
 
 function buildWorkflowPackageMatrixGroups(entries) {
@@ -751,7 +653,6 @@ function buildWorkflowPackageMatrixGroups(entries) {
 
 function buildWorkflowPresetMatrixGroups(entries) {
   const requiredPackageLabels = collectMatrixLabels(entries, (entry) => entry.requiredPackageLabels);
-  const typicalActorLabels = collectMatrixLabels(entries, (entry) => entry.typicalActorLabels);
   const stepRows = collectMatrixItems(
     entries,
     (entry) =>
@@ -792,30 +693,6 @@ function buildWorkflowPresetMatrixGroups(entries) {
       })),
     },
     {
-      key: "typical-actors",
-      title: "Typical actors",
-      description:
-        "Business-readable actors remain visible even when admins are comparing the underlying package flow.",
-      rows: typicalActorLabels.map((label) => ({
-        key: `typical-actor-${label}`,
-        label,
-        hint: "Business-facing actor guidance.",
-        cells: entries.map((entry) =>
-          entry.typicalActorLabels.includes(label)
-            ? {
-              tone: "linked",
-              label: "Actor",
-              hint: "Typical actor documented for this preset.",
-            }
-            : {
-              tone: "not_granted",
-              label: "Not listed",
-              hint: "Actor is not documented for this preset.",
-            }
-        ),
-      })),
-    },
-    {
       key: "ordered-steps",
       title: "Ordered steps",
       description:
@@ -847,9 +724,6 @@ function buildWorkflowPresetMatrixGroups(entries) {
 }
 
 function buildComparisonGroups(entries, tabKey) {
-  if (tabKey === "business_roles") {
-    return buildBusinessRoleMatrixGroups(entries);
-  }
   if (tabKey === "workflow_packages") {
     return buildWorkflowPackageMatrixGroups(entries);
   }
@@ -942,107 +816,6 @@ function AccessModelTabButton({ active, count, label, onClick }) {
         </span>
       </div>
     </button>
-  );
-}
-
-function BusinessRoleActionButton({ children, disabled = false, onClick }) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${disabled
-        ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-        }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function BusinessRoleActionStrip({ entry, disableWhereUsed = false, onOpen }) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      <BusinessRoleActionButton disabled>Edit label</BusinessRoleActionButton>
-      <BusinessRoleActionButton disabled>
-        {entry.hiddenFromPicker ? "Show in picker" : "Hide from picker"}
-      </BusinessRoleActionButton>
-      <BusinessRoleActionButton disabled>Duplicate</BusinessRoleActionButton>
-      <BusinessRoleActionButton disabled={disableWhereUsed} onClick={onOpen}>
-        View where used
-      </BusinessRoleActionButton>
-    </div>
-  );
-}
-
-function BusinessRoleCatalogTable({ entries, selectedEntryCode, onOpen }) {
-  return (
-    <div className="grid gap-4 xl:grid-cols-2">
-      {entries.map((entry) => {
-        const isSelected = selectedEntryCode === entry.code;
-        return (
-          <CatalogCardShell
-            key={entry.code}
-            active={isSelected}
-            entry={entry}
-            icon={<Shield className="h-5 w-5" />}
-            onOpen={() => onOpen(entry.code)}
-            title={entry.displayName}
-            description={entry.description}
-            footerNote={`Business role name: ${entry.displayName}`}
-          >
-            <div className="grid gap-3 md:grid-cols-3">
-              <CatalogMetric
-                label="Default scope"
-                value={entry.defaultScope || "-"}
-                note="Business role name remains non-authoritative."
-              />
-              <CatalogMetric
-                label="Starter packages"
-                value={entry.starterPackageLabels.length}
-                note="Suggestions only."
-              />
-              <CatalogMetric
-                label="Active / Hidden"
-                value={getStatusLabel(entry)}
-                note={
-                  entry.hiddenFromPicker
-                    ? "Hidden from fresh-tenant pickers."
-                    : "Shown in fresh-tenant pickers."
-                }
-              />
-            </div>
-            <div
-              className={`rounded-2xl border px-4 py-4 ${
-                isSelected ? "border-white/20 bg-white/10" : "border-slate-200 bg-white/80"
-              }`}
-            >
-              <div
-                className={`text-xs font-semibold uppercase tracking-[0.18em] ${
-                  isSelected ? "text-slate-300" : "text-slate-500"
-                }`}
-              >
-                Suggested starter packages
-              </div>
-              <div className="mt-3">
-                <MetadataPillList
-                  values={getPreviewValues(entry.starterPackageLabels, 3)}
-                  emptyLabel="No starter packages are suggested for this role."
-                />
-              </div>
-              <div
-                className={`mt-3 text-xs leading-5 ${
-                  isSelected ? "text-slate-300" : "text-slate-500"
-                }`}
-              >
-                Suggestions only. Package assignment at scope is still what grants authority.
-              </div>
-            </div>
-          </CatalogCardShell>
-        );
-      })}
-    </div>
   );
 }
 
@@ -1161,9 +934,9 @@ function WorkflowPresetCatalogTable({ entries, selectedEntryCode, onOpen }) {
                 note={entry.stepCount === 1 ? "Single-step preset" : "Ordered business flow"}
               />
               <CatalogMetric
-                label="Typical actors"
-                value={entry.typicalActorLabels.length}
-                note="Business titles only."
+                label="Required packages"
+                value={entry.requiredPackageLabels.length}
+                note="Package coverage in this preset."
               />
               <CatalogMetric
                 label="Uses extension?"
@@ -1186,12 +959,12 @@ function WorkflowPresetCatalogTable({ entries, selectedEntryCode, onOpen }) {
                     isSelected ? "text-slate-300" : "text-slate-500"
                   }`}
                 >
-                  Typical actors
+                  Required packages
                 </div>
                 <div className="mt-3">
                   <MetadataPillList
-                    values={getPreviewValues(entry.typicalActorLabels, 4)}
-                    emptyLabel="No typical actors are documented."
+                    values={getPreviewValues(entry.requiredPackageLabels, 4)}
+                    emptyLabel="No required packages are documented."
                   />
                 </div>
               </div>
@@ -1832,70 +1605,10 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
               Scope coverage
             </div>
             <div className="mt-2 text-sm leading-6 text-slate-600">
-              Scope level pills show where this business role, package, or preset is expected to operate.
+              Scope level pills show where this package or preset is expected to operate.
             </div>
             <CatalogScopeCoverage entry={entry} />
           </section>
-
-          {Array.isArray(entry.starterPackageLabels) ? (
-            <section className="rounded-3xl border border-slate-200 bg-white p-5">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Suggested starter packages
-              </div>
-              <div className="mt-2 text-sm leading-6 text-slate-600">
-                These are onboarding suggestions only. Workflow authority still comes from the
-                packages actually assigned at scope.
-              </div>
-              <div className="mt-4">
-                <MetadataPillList
-                  values={entry.starterPackageLabels}
-                  emptyLabel="No starter packages are defined for this business role."
-                />
-              </div>
-              <div className="mt-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Optional packages
-                </div>
-                <div className="mt-3">
-                  <MetadataPillList
-                    values={entry.optionalPackageLabels}
-                    emptyLabel="No optional packages are defined for this business role."
-                  />
-                </div>
-              </div>
-            </section>
-          ) : null}
-
-          {entry.modelType === "business_role" && Array.isArray(entry.usedInPresetLabels) ? (
-            <section className="rounded-3xl border border-slate-200 bg-white p-5">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                View where used
-              </div>
-              <div className="mt-2 text-sm leading-6 text-slate-600">
-                Shipped workflow presets that reference this business role today.
-              </div>
-              <div className="mt-4">
-                <MetadataPillList
-                  values={entry.usedInPresetLabels}
-                  emptyLabel="This business role is not referenced by any shipped workflow preset yet."
-                />
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <Link
-                  to="/app/ayarlar/security-admin/workflows?tab=definitions"
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                >
-                  Open workflow governance
-                </Link>
-                <Link
-                  to="/app/ayarlar/security-admin/users?tab=assignments"
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                >
-                  Open user assignments
-                </Link>
-              </div>
-            </section>
-          ) : null}
 
           {entry.modelType === "workflow_package" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-5">
@@ -1973,44 +1686,9 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
             </section>
           ) : null}
 
-          {entry.modelType === "business_role" ? (
-            <section className="rounded-3xl border border-slate-200 bg-white p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Planned actions
-                  </div>
-                  <div className="mt-2 text-sm leading-6 text-slate-600">
-                    This first business-role slice exposes the action posture without turning the
-                    tab into a raw permission editor.
-                  </div>
-                </div>
-                <BusinessRoleActionButton disabled>Create role label</BusinessRoleActionButton>
-              </div>
-              <div className="mt-4">
-                <BusinessRoleActionStrip
-                  entry={entry}
-                  disableWhereUsed
-                  onOpen={() => undefined}
-                />
-              </div>
-            </section>
-          ) : null}
-
           {entry.modelType === "workflow_preset" ? (
             <section className="rounded-3xl border border-slate-200 bg-white p-5">
               <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Typical actors
-                  </div>
-                  <div className="mt-3">
-                    <MetadataPillList
-                      values={entry.typicalActorLabels}
-                      emptyLabel="No typical actors are documented for this preset."
-                    />
-                  </div>
-                </div>
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                     Required packages
@@ -2071,12 +1749,6 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
                     </div>
                     <div className="mt-2 text-sm text-slate-600">
                       Required package: <span className="font-semibold text-slate-900">{step.requiredPackageLabel}</span>
-                    </div>
-                    <div className="mt-3">
-                      <MetadataPillList
-                        values={step.eligibleBusinessRoleLabels}
-                        emptyLabel="No typical actor labels are defined for this step."
-                      />
                     </div>
                     <div className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-3">
                       <div>
@@ -2146,8 +1818,8 @@ function AccessModelDetailDrawer({ entry, open, onClose }) {
 }
 
 /**
- * Builds the access-model shell so admins can browse business roles,
- * workflow packages, and workflow presets from one tabbed catalog surface.
+ * Builds the access-model shell so admins can browse workflow packages and
+ * workflow presets from one tabbed catalog surface.
  */
 export default function AccessModelCatalogPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -2159,7 +1831,6 @@ export default function AccessModelCatalogPage() {
   const currentModelTab = ACCESS_MODEL_TAB_ORDER.includes(searchParams.get("modelTab"))
     ? searchParams.get("modelTab")
     : ACCESS_MODEL_TAB_ORDER[0];
-  const isBusinessRolesTab = currentModelTab === "business_roles";
   const isWorkflowPackagesTab = currentModelTab === "workflow_packages";
   const isWorkflowPresetsTab = currentModelTab === "workflow_presets";
   const currentSection =
@@ -2190,19 +1861,12 @@ export default function AccessModelCatalogPage() {
     .filter(Boolean);
   const selectedEntry =
     currentEntries.find((entry) => normalizeText(entry.code) === selectedEntryCode) || null;
-  const currentActionLink =
-    currentModelTab === "workflow_packages" || currentModelTab === "workflow_presets"
-      ? {
-        to: "/app/ayarlar/security-admin/workflows?tab=definitions",
-        label: "Open workflow governance",
-      }
-      : {
-        to: ROLES_PERMISSIONS_CANONICAL_PATH,
-        label: "Open roles & permissions",
-      };
+  const currentActionLink = {
+    to: "/app/ayarlar/security-admin/workflows?tab=definitions",
+    label: "Open workflow governance",
+  };
 
   const activeCount = currentEntries.filter((entry) => !entry.hiddenFromPicker).length;
-  const hiddenCount = currentEntries.filter((entry) => entry.hiddenFromPicker).length;
   const extensionCount = currentEntries.filter((entry) => entry.plannedExtension).length;
   const draftCount = currentEntries.filter((entry) => entry.draft).length;
   const accessModelEntryCount = sections.reduce(
@@ -2216,7 +1880,7 @@ export default function AccessModelCatalogPage() {
       sectionKey="access-model"
       eyebrow="Security / Access Model"
       title="Access Model"
-      description="Browse the separated catalog for business roles, workflow packages, and workflow presets. This shell keeps the fresh-tenant security model focused on steady-state assignment paths."
+      description="Browse the separated catalog for workflow packages and workflow presets. This shell keeps the fresh-tenant security model focused on steady-state assignment paths."
       actions={[
         {
           to: currentActionLink.to,
@@ -2233,16 +1897,12 @@ export default function AccessModelCatalogPage() {
         },
         {
           title: "Current mix",
-          value: isBusinessRolesTab
-            ? `${activeCount} active / ${hiddenCount} hidden`
-            : isWorkflowPackagesTab
-              ? `${activeCount - extensionCount} active / ${extensionCount} extension`
-              : `${activeCount - draftCount} active / ${draftCount} draft`,
-          description: isBusinessRolesTab
-            ? "Business roles stay human-friendly and separate from authority packages."
-            : isWorkflowPackagesTab
-              ? "Runtime mappings show how clean packages sit on top of current seeded roles."
-              : "Presets stay readable as business flows before any tenant-specific workflow customization.",
+          value: isWorkflowPackagesTab
+            ? `${activeCount - extensionCount} active / ${extensionCount} extension`
+            : `${activeCount - draftCount} active / ${draftCount} draft`,
+          description: isWorkflowPackagesTab
+            ? "Runtime mappings show how clean packages sit on top of current seeded roles."
+            : "Presets stay readable as business flows before any tenant-specific workflow customization.",
         },
         {
           title: isMatrixView ? "Matrix compare" : "Detail drawer",
@@ -2377,36 +2037,7 @@ export default function AccessModelCatalogPage() {
         </>
       }
     >
-      {isBusinessRolesTab ? (
-            <section className="rounded-[28px] border border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.95),rgba(255,255,255,0.98))] px-5 py-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="max-w-3xl">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
-                    Business role guidance
-                  </div>
-                  <h3 className="mt-2 text-xl font-semibold text-slate-950">
-                    Labels stay separate from workflow authority
-                  </h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Business roles explain who a person is in the organization. Suggested starter
-                    packages help onboarding, but package assignment at scope is still what grants
-                    workflow authority.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <BusinessRoleActionButton disabled>Create role label</BusinessRoleActionButton>
-                  <Link
-                    to="/app/ayarlar/security-admin/users?tab=assignments"
-                    className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-                  >
-                    Open user assignments
-                  </Link>
-                </div>
-              </div>
-            </section>
-          ) : null}
-
-          {isWorkflowPackagesTab ? (
+      {isWorkflowPackagesTab ? (
             <section className="rounded-[28px] border border-emerald-200 bg-[linear-gradient(135deg,rgba(236,253,245,0.96),rgba(255,255,255,0.98))] px-5 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
@@ -2417,9 +2048,9 @@ export default function AccessModelCatalogPage() {
                     Packages are the authority layer
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Workflow steps bind to packages, not to job titles. This tab shows the clean
-                    package model, the scopes each package can run at, and how that model maps back
-                    to current runtime roles and helper bundles.
+                    Workflow steps bind to packages, not to legacy job-title labels. This tab
+                    shows the clean package model, the scopes each package can run at, and how
+                    that model maps back to current runtime roles and helper bundles.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-3">
@@ -2451,8 +2082,8 @@ export default function AccessModelCatalogPage() {
                     Presets should read like business flows
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Presets bundle the ordered steps, package requirements, scopes, and typical
-                    actors into a ready-made governance flow. This tab is preview-only for now and
+                    Presets bundle the ordered steps, package requirements, scopes, and extension
+                    posture into a ready-made governance flow. This tab is preview-only for now and
                     intentionally avoids turning the preset catalog into the actual save/apply UI.
                   </p>
                 </div>
@@ -2532,18 +2163,6 @@ export default function AccessModelCatalogPage() {
                 }
               />
             </>
-          ) : isBusinessRolesTab ? (
-            <BusinessRoleCatalogTable
-              entries={filteredEntries}
-              selectedEntryCode={selectedEntryCode}
-              onOpen={(entryCode) =>
-                setSearchParams(
-                  updateSearchParams(searchParams, {
-                    item: entryCode,
-                  })
-                )
-              }
-            />
           ) : isWorkflowPackagesTab ? (
             <WorkflowPackageCatalogTable
               entries={filteredEntries}

@@ -61,9 +61,9 @@ async function main() {
       workbenchSource.includes("Assigned packages") &&
       workbenchSource.includes("Workflow package") &&
       workbenchSource.includes("Scope type") &&
-      workbenchSource.includes("Remove package") &&
-      workbenchSource.includes("Assign exact package authority by scope") &&
-      workbenchSource.includes("Runtime authority snapshot"),
+      workbenchSource.includes("Scope target") &&
+      workbenchSource.includes("No direct workflow packages assigned yet.") &&
+      workbenchSource.includes("Remove"),
     "UserAssignmentWorkbench should expose direct workflow-package assignment UX in UI-2C"
   );
 

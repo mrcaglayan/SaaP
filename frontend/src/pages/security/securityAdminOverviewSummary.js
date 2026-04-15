@@ -1,5 +1,4 @@
 import {
-  isBusinessRoleAssignmentRoleCode,
   isWorkflowPackageAssignmentRoleCode,
 } from "./roleCatalog.js";
 
@@ -48,11 +47,7 @@ function countDirectRuntimeAssignments(assignments) {
 
   return assignments.filter((row) => {
     const roleCode = row?.role_code || row?.roleCode;
-    return (
-      roleCode &&
-      !isBusinessRoleAssignmentRoleCode(roleCode) &&
-      !isWorkflowPackageAssignmentRoleCode(roleCode)
-    );
+    return roleCode && !isWorkflowPackageAssignmentRoleCode(roleCode);
   }).length;
 }
 
@@ -79,7 +74,7 @@ function countMixedAssignmentUsers(assignments) {
     }
 
     const roleCode = row?.role_code || row?.roleCode;
-    if (!roleCode || isBusinessRoleAssignmentRoleCode(roleCode)) {
+    if (!roleCode) {
       continue;
     }
 
