@@ -208,6 +208,10 @@ export default function CariControlReconciliationPage() {
     () => books.find((row) => Number(row?.id) === Number(filters.bookId)) || null,
     [books, filters.bookId]
   );
+  const activeDetail = useMemo(
+    () => (expandedRowKey ? detailsByRowKey[expandedRowKey] || null : null),
+    [detailsByRowKey, expandedRowKey]
+  );
   const baseCurrencyCode = report?.book?.baseCurrencyCode || selectedBook?.base_currency_code || "";
   const auditSpecs = useMemo(() => {
     if (!report) {
@@ -519,8 +523,6 @@ export default function CariControlReconciliationPage() {
       </div>
     );
   }
-
-  const activeDetail = expandedRowKey ? detailsByRowKey[expandedRowKey] || null : null;
 
   return (
     <div className="space-y-4">

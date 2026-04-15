@@ -800,7 +800,6 @@ export default function Dashboard() {
     canReadCash,
     canReadExceptions,
     canReadFixedAssetAttention,
-    canReadFixedAssetRuns,
     canReadInventory,
     canReadOps,
     fixedAssetScopeParams,
