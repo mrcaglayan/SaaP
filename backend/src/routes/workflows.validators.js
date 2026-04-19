@@ -18,6 +18,7 @@ import {
 import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
+  getApWorkflowRequiredPermissionCode,
 } from "../../../shared/cariDocumentWorkflowGovernance.js";
 
 const PROCESS_TYPES = [
@@ -204,14 +205,6 @@ function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
             AP_DOCUMENT_STEP_ACTION_CODES
           )
         : null;
-    const requiredPackageCode =
-      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-        ? normalizeOptionalCode(
-            step.requiredPackageCode ?? step.required_package_code,
-            `steps[${index}].requiredPackageCode`,
-            120
-          )
-        : null;
     const requiredPermissionCode = normalizeText(
       step.requiredPermissionCode ?? step.required_permission_code,
       `steps[${index}].requiredPermissionCode`,
@@ -225,9 +218,18 @@ function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
     }
     if (
       normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
-      !requiredPackageCode
+      !requiredPermissionCode
     ) {
-      throw badRequest(`steps[${index}].requiredPackageCode is required`);
+      throw badRequest(`steps[${index}].requiredPermissionCode is required`);
+    }
+    if (
+      normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE &&
+      actionCode &&
+      requiredPermissionCode !== getApWorkflowRequiredPermissionCode(actionCode)
+    ) {
+      throw badRequest(
+        `steps[${index}].requiredPermissionCode must be ${getApWorkflowRequiredPermissionCode(actionCode)} for action ${actionCode}`
+      );
     }
 
     return {
@@ -238,10 +240,9 @@ function parseWorkflowCoverageDiagnosticSteps(steps, processType) {
         `steps[${index}].stageScopeType`,
         STAGE_SCOPE_TYPES
       ),
-      requiredPackageCode,
       requiredPermissionCode:
         normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE
-          ? requiredPermissionCode || null
+          ? requiredPermissionCode
           : requiredPermissionCode,
       minApproverCount:
         step.minApproverCount === undefined &&
@@ -404,11 +405,6 @@ export function parseWorkflowDefinitionStepsReplaceInput(req) {
       requiredPermissionCode: normalizeText(
         step.requiredPermissionCode ?? step.required_permission_code,
         `steps[${index}].requiredPermissionCode`,
-        120
-      ),
-      requiredPackageCode: normalizeOptionalCode(
-        step.requiredPackageCode ?? step.required_package_code,
-        `steps[${index}].requiredPackageCode`,
         120
       ),
       minApproverCount:

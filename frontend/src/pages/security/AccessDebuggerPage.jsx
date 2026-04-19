@@ -3,6 +3,7 @@ import {
   listCountries,
   listGroupCompanies,
   listLegalEntities,
+  listRoles,
   listOperatingUnits,
   listRoleAssignments,
   listUsers,
@@ -141,8 +142,8 @@ function ScopeList({ values, emptyLabel }) {
 
 /**
  * Admin-facing page for UI-5A business diagnostics plus the existing layered
- * access checker. It explains workflow-package and scope coverage first, then
- * lets admins drill down into the lower-level access chain when needed.
+ * access checker. It explains role-based authority and scope coverage first,
+ * then lets admins drill down into the lower-level access chain when needed.
  */
 export default function AccessDebuggerPage() {
   const { hasPermission, user } = useAuth();
@@ -152,6 +153,7 @@ export default function AccessDebuggerPage() {
   const [error, setError] = useState("");
   const [assignmentLoading, setAssignmentLoading] = useState(false);
   const [assignmentError, setAssignmentError] = useState("");
+  const [roles, setRoles] = useState([]);
   const [users, setUsers] = useState([]);
   const [selectedUserAssignments, setSelectedUserAssignments] = useState([]);
   const [lookups, setLookups] = useState({
@@ -190,6 +192,16 @@ export default function AccessDebuggerPage() {
       })),
     [l]
   );
+  const rolesByCode = useMemo(
+    () =>
+      new Map(
+        (Array.isArray(roles) ? roles : []).map((row) => [
+          String(row.code || "").trim(),
+          row,
+        ])
+      ),
+    [roles]
+  );
   const selectedUser = useMemo(
     () => users.find((row) => Number(row.id) === Number(form.targetUserId || 0)) || null,
     [form.targetUserId, users]
@@ -198,6 +210,7 @@ export default function AccessDebuggerPage() {
     () =>
       buildAccessDiagnosticsSummary({
         assignments: selectedUserAssignments,
+        rolesByCode,
         workflowFamily: form.workflowFamily,
         scopeType: form.scopeType,
         scopeId: form.scopeId,
@@ -211,6 +224,7 @@ export default function AccessDebuggerPage() {
       form.workflowFamily,
       l,
       lookups,
+      rolesByCode,
       selectedUserAssignments,
       tenantScopeId,
     ]
@@ -220,17 +234,17 @@ export default function AccessDebuggerPage() {
       title: l("Matching scopes", "Eslesen kapsamlar"),
       value: diagnosticsSummary.matchingScopeLabels.length,
       description: l(
-        "Workflow package scopes that currently cover the selected investigation target.",
-        "Secili inceleme hedefini su anda kapsayan workflow paket kapsamları."
+        "Role scopes that currently cover the selected investigation target.",
+        "Secili inceleme hedefini su anda kapsayan rol kapsamlarini."
       ),
       tone: "violet",
     },
     {
-      title: l("Workflow packages", "Workflow paketleri"),
-      value: diagnosticsSummary.matchingWorkflowPackages.length,
+      title: l("Role authorities", "Rol yetkileri"),
+      value: diagnosticsSummary.matchingAuthorities.length,
       description: l(
-        "Workflow governance packages visible in the selected user's effective authority.",
-        "Secili kullanicinin etkili yetkisinde gorunen workflow governance paketleri."
+        "Role-derived authorities visible in the selected user's effective access.",
+        "Secili kullanicinin etkili erisiminde gorunen rol kaynakli yetkiler."
       ),
       tone: "green",
     },
@@ -260,9 +274,10 @@ export default function AccessDebuggerPage() {
     setLoading(true);
     setError("");
     try {
-      const [usersRes, groupsRes, countriesRes, entitiesRes, unitsRes] =
+      const [usersRes, rolesRes, groupsRes, countriesRes, entitiesRes, unitsRes] =
         await Promise.all([
           listUsers(),
+          listRoles({ includePermissions: true }),
           canReadOrgTree ? listGroupCompanies() : Promise.resolve({ rows: [] }),
           canReadOrgTree ? listCountries() : Promise.resolve({ rows: [] }),
           canReadOrgTree ? listLegalEntities() : Promise.resolve({ rows: [] }),
@@ -270,6 +285,7 @@ export default function AccessDebuggerPage() {
         ]);
 
       const nextUsers = usersRes?.rows || [];
+      setRoles(rolesRes?.rows || []);
       setUsers(nextUsers);
       setLookups({
         groups: groupsRes?.rows || [],
@@ -421,8 +437,8 @@ export default function AccessDebuggerPage() {
       eyebrow={l("Diagnostics & Audit", "Tanilama ve Denetim")}
       title={l("Access explainability", "Erisim aciklanabilirligi")}
       description={l(
-        "Start the investigation with business-facing scope and package coverage, then move into the exact permission, workflow, and audit evidence when needed.",
-        "Incelemeye once is-odakli kapsam ve paket kapsamasi ile baslayin, sonra gerektiginde tam yetki, workflow ve denetim kanitlarina inin."
+        "Start the investigation with business-facing scope and role-authority coverage, then move into the exact permission, workflow, and audit evidence when needed.",
+        "Incelemeye once is-odakli kapsam ve rol-yetki kapsami ile baslayin, sonra gerektiginde tam yetki, workflow ve denetim kanitlarina inin."
       )}
       actions={workspaceActions}
       stats={workspaceStats}
@@ -554,8 +570,8 @@ export default function AccessDebuggerPage() {
               {assignmentLoading ? (
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
                 {l(
-                  "Loading workflow packages and runtime mappings for the selected user...",
-                  "Secili kullanici icin workflow paketleri ve runtime eslesmeleri yukleniyor..."
+                  "Loading role authority coverage for the selected user...",
+                  "Secili kullanici icin rol yetki kapsami yukleniyor..."
                 )}
               </div>
             ) : (
@@ -589,8 +605,8 @@ export default function AccessDebuggerPage() {
                   value={diagnosticsSummary.matchingScopeLabels.length}
                 />
                 <MiniStat
-                  label={l("Packages at target", "Hedefte paketler")}
-                  value={diagnosticsSummary.matchingWorkflowPackages.length}
+                  label={l("Authorities at target", "Hedefte yetkiler")}
+                  value={diagnosticsSummary.matchingAuthorities.length}
                 />
                 <MiniStat
                   label={l("Visible blockers", "Gorunur engeller")}
@@ -603,46 +619,60 @@ export default function AccessDebuggerPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h3 className="text-sm font-semibold text-slate-900">
-                        {l("Workflow package coverage", "Workflow paket kapsami")}
+                        {l("Role authority coverage", "Rol yetki kapsami")}
                       </h3>
                       <p className="mt-1 text-sm text-slate-600">
                         {l(
-                          "Active package authority is explained from direct package assignments and runtime role sources so scope mismatches stay explicit.",
-                          "Kapsam uyusmazliklari acik kalsin diye etkin paket yetkisi dogrudan paket atamalari ve runtime rol kaynaklari uzerinden aciklanir."
+                          "Active governed authority is explained directly from assigned roles and their permission sets so scope mismatches stay explicit.",
+                          "Kapsam uyusmazliklari acik kalsin diye etkin yonetilen yetki, atanmis roller ve bunlarin yetki setleri uzerinden dogrudan aciklanir."
                         )}
                       </p>
                     </div>
                     <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                      {diagnosticsSummary.workflowPackages.length}
+                      {diagnosticsSummary.coverageItems.length}
                     </span>
                   </div>
                   <div className="mt-4 space-y-3">
-                    {diagnosticsSummary.workflowPackages.length === 0 ? (
+                    {diagnosticsSummary.coverageItems.length === 0 ? (
                       <div className="text-sm text-slate-500">
                         {diagnosticsSummary.ready
                           ? l(
-                              "No workflow packages were found for the selected family.",
-                              "Secili aile icin workflow paketi bulunamadi."
+                              "No role authority was found for the selected family.",
+                              "Secili aile icin rol yetkisi bulunamadi."
                             )
                           : l(
-                              "Choose a workflow family and target scope to compare packages.",
-                              "Paketleri karsilastirmak icin bir workflow ailesi ve hedef kapsam secin."
+                              "Choose a workflow family and target scope to compare role authority.",
+                              "Rol yetkisini karsilastirmak icin bir workflow ailesi ve hedef kapsam secin."
                             )}
                       </div>
                     ) : (
-                      diagnosticsSummary.workflowPackages.map((item) => (
+                      diagnosticsSummary.coverageItems.map((item) => (
                         <div
                           key={item.id}
                           className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
                         >
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              <div className="font-medium text-slate-900">{item.packageLabel}</div>
+                              <div className="font-medium text-slate-900">{item.roleLabel}</div>
                               <div className="mt-1 text-sm text-slate-600">{item.scopeLabel}</div>
                             </div>
                             <CoverageBadge status={item.coverageStatus} l={l} />
                           </div>
-                          <p className="mt-2 text-sm text-slate-600">{item.packageSummary}</p>
+                          {item.roleSummary ? (
+                            <p className="mt-2 text-sm text-slate-600">{item.roleSummary}</p>
+                          ) : null}
+                          {item.authorityLabels.length > 0 ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {item.authorityLabels.map((authorityLabel) => (
+                                <span
+                                  key={`${item.id}-${authorityLabel}`}
+                                  className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700"
+                                >
+                                  {authorityLabel}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                           <div className="mt-3 flex flex-wrap gap-2">
                             {item.sourceLabels.map((label) => (
                               <span
@@ -653,9 +683,9 @@ export default function AccessDebuggerPage() {
                               </span>
                             ))}
                           </div>
-                          {item.sourceRoleLabels.length > 0 ? (
+                          {item.permissionCodes.length > 0 ? (
                             <div className="mt-2 text-xs text-slate-500">
-                              {l("Source roles", "Kaynak roller")}: {item.sourceRoleLabels.join(", ")}
+                              {l("Matched permissions", "Eslesen yetkiler")}: {item.permissionCodes.join(", ")}
                             </div>
                           ) : null}
                         </div>
@@ -684,8 +714,8 @@ export default function AccessDebuggerPage() {
                     <ScopeList
                       values={diagnosticsSummary.matchingScopeLabels}
                       emptyLabel={l(
-                        "No workflow package currently covers the selected scope.",
-                        "Secili kapsami su anda kapsayan bir workflow paketi yok."
+                        "No role authority currently covers the selected scope.",
+                        "Secili kapsami su anda kapsayan bir rol yetkisi yok."
                       )}
                     />
                   </div>
@@ -696,17 +726,23 @@ export default function AccessDebuggerPage() {
                     </div>
                   ) : null}
 
-                  {diagnosticsSummary.missingPackageText ? (
+                  {diagnosticsSummary.missingAuthorityText ? (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                      {diagnosticsSummary.missingPackageText}
+                      {diagnosticsSummary.missingAuthorityText}
+                    </div>
+                  ) : null}
+
+                  {diagnosticsSummary.candidateRolesText ? (
+                    <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                      {diagnosticsSummary.candidateRolesText}
                     </div>
                   ) : null}
 
                   {diagnosticsSummary.blockerTexts.length === 0 ? (
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
                       {l(
-                        "No package or scope blocker is currently visible in the business-facing diagnosis.",
-                        "Is-odakli tanida su anda gorunur bir paket veya kapsam engeli yok."
+                        "No role or scope blocker is currently visible in the business-facing diagnosis.",
+                        "Is-odakli tanida su anda gorunur bir rol veya kapsam engeli yok."
                       )}
                     </div>
                   ) : null}

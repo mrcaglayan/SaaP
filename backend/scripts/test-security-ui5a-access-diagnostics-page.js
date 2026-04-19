@@ -15,6 +15,28 @@ function l(english, _turkish, values) {
   return formatTemplate(english, values);
 }
 
+function buildRolesByCode() {
+  return new Map(
+    [
+      {
+        code: "APViewOnlyRole",
+        displayName: "AP View Only",
+        permissionCodes: ["cari.doc.read"],
+      },
+      {
+        code: "APApproverRole",
+        displayName: "AP Approver Role",
+        permissionCodes: ["approvals.requests.approve"],
+      },
+      {
+        code: "CountryAPPoster",
+        displayName: "Country AP Poster",
+        permissionCodes: ["cari.doc.post", "cari.doc.reverse"],
+      },
+    ].map((role) => [role.code, role])
+  );
+}
+
 async function main() {
   const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const pageSource = await readFile(
@@ -25,6 +47,7 @@ async function main() {
     path.resolve(rootDir, "frontend/src/layouts/sidebarConfig.js"),
     "utf8"
   );
+  const rolesByCode = buildRolesByCode();
 
   const lookups = {
     groups: [{ id: 7, code: "GRP", name: "Main Group" }],
@@ -52,12 +75,13 @@ async function main() {
     assignments: [
       {
         id: 11,
-        role_code: "WORKFLOW_PACKAGE__PKG-AP-VIEW",
+        role_code: "APViewOnlyRole",
         scope_type: "LEGAL_ENTITY",
         scope_id: 1,
         effect: "ALLOW",
       },
     ],
+    rolesByCode,
     workflowFamily: "AP_DOCUMENT_POSTING",
     scopeType: "LEGAL_ENTITY",
     scopeId: 1,
@@ -72,21 +96,22 @@ async function main() {
     "UI-5A should tell admins when a user can view but cannot act at the selected workflow family and scope"
   );
   assert.equal(
-    viewOnlySummary.missingPackageText.includes("can view"),
+    viewOnlySummary.missingAuthorityText.includes("view-only authority"),
     true,
-    "UI-5A should call out missing action-package coverage when only view authority exists"
+    "UI-5A should call out missing action authority when only view permission exists"
   );
 
   const scopeMismatchSummary = buildAccessDiagnosticsSummary({
     assignments: [
       {
         id: 21,
-        role_code: "WORKFLOW_PACKAGE__PKG-AP-APPROVE",
+        role_code: "APApproverRole",
         scope_type: "COUNTRY",
         scope_id: 88,
         effect: "ALLOW",
       },
     ],
+    rolesByCode,
     workflowFamily: "AP_DOCUMENT_POSTING",
     scopeType: "LEGAL_ENTITY",
     scopeId: 1,
@@ -103,7 +128,7 @@ async function main() {
   assert.equal(
     scopeMismatchSummary.missingScopeText.includes("other scopes"),
     true,
-    "UI-5A should name that package authority exists only at other scopes"
+    "UI-5A should name that relevant authority exists only at other scopes"
   );
 
   const runtimeRoleSummary = buildAccessDiagnosticsSummary({
@@ -116,6 +141,7 @@ async function main() {
         effect: "ALLOW",
       },
     ],
+    rolesByCode,
     workflowFamily: "AP_DOCUMENT_POSTING",
     scopeType: "LEGAL_ENTITY",
     scopeId: 1,
@@ -125,21 +151,21 @@ async function main() {
   });
 
   assert.equal(
-    runtimeRoleSummary.matchingActionPackages.length,
+    runtimeRoleSummary.matchingActionAuthorities.length,
     2,
-    "UI-5A should project current runtime AP poster roles into action-package coverage"
+    "UI-5A should project current runtime AP poster roles into action authority coverage"
   );
   assert.equal(
-    runtimeRoleSummary.matchingActionPackages.every((item) =>
-      Array.isArray(item.sourceLabels) && item.sourceLabels.includes("Runtime role source")
+    runtimeRoleSummary.coverageItems.every((item) =>
+      Array.isArray(item.sourceLabels) && item.sourceLabels.includes("Assigned role")
     ),
     true,
-    "UI-5A should label runtime-role-derived package authority explicitly"
+    "UI-5A should label runtime-role-derived authority explicitly"
   );
   assert.equal(
-    runtimeRoleSummary.matchingActionPackages.some((item) => item.packageCode === "PKG-AP-POST"),
+    runtimeRoleSummary.coverageItems.some((item) => item.authorityCodes.includes("AP_POST")),
     true,
-    "UI-5A should surface the AP post package when CountryAPPoster covers the target scope"
+    "UI-5A should surface the AP post authority when CountryAPPoster covers the target scope"
   );
 
   assert(
@@ -148,8 +174,9 @@ async function main() {
       pageSource.includes('l("Business-facing diagnosis", "Is-odakli tani")') &&
       pageSource.includes('l("Matching scopes", "Eslesen kapsamlar")') &&
       pageSource.includes('l("Matching scopes and blockers", "Eslesen kapsamlar ve engeller")') &&
+      pageSource.includes("role-authority coverage") &&
       pageSource.includes('l("Technical access chain", "Teknik erisim zinciri")'),
-    "AccessDebuggerPage should render the new UI-5A business diagnostics surface on top of the older technical checker"
+    "AccessDebuggerPage should render the UI-5A business diagnostics surface with role-native vocabulary"
   );
 
   assert(

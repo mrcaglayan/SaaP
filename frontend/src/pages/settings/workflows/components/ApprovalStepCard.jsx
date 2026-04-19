@@ -15,7 +15,7 @@ import {
 } from "../../../../../../shared/cariDocumentWorkflowGovernance.js";
 import {
   AP_WORKFLOW_ACTION_CODES,
-  getApWorkflowRequiredPackageCode,
+  getApWorkflowRequiredPermissionCode,
 } from "../utils/workflowSetupHelpers.js";
 
 /**
@@ -28,7 +28,7 @@ export default function ApprovalStepCard({
   processType,
   stepScopeTypes,
   stepScopeLabels,
-  workflowStepPackageOptions = [],
+  workflowStepAuthorityOptions = [],
   onChange,
   onRemove,
   disableRemove,
@@ -47,14 +47,11 @@ export default function ApprovalStepCard({
   const actionableWarningIssues = warningIssues.filter(
     (issue) => String(issue?.code || "").trim() !== "runtime_source_note"
   );
-  const filteredPackageOptions = isAp
-    ? workflowStepPackageOptions.filter((packageEntry) => {
-        const expectedPackageCode = getApWorkflowRequiredPackageCode(selectedApActionCode);
-        return expectedPackageCode
-          ? String(packageEntry?.code || "").trim().toUpperCase() === expectedPackageCode
-          : true;
-      })
-    : workflowStepPackageOptions;
+  const resolvedApPermissionCode =
+    isAp
+      ? String(step?.requiredPermissionCode || "").trim() ||
+        getApWorkflowRequiredPermissionCode(selectedApActionCode)
+      : "";
   const isApproveAction = !isAp || selectedApActionCode === "APPROVE";
   const blockingIssueCount = blockingIssues.length;
   const warningIssueCount = actionableWarningIssues.length;
@@ -66,12 +63,12 @@ export default function ApprovalStepCard({
       )
     : isAp
       ? l(
-          "This AP package is bound by the selected action and resolves authority at the chosen step scope.",
-          "Bu AP paketi secilen eylemle baglanir ve yetkiyi secilen adim kapsaminda cozer."
+          "This AP action resolves to one required permission at the chosen step scope.",
+          "Bu AP eylemi, secilen adim kapsaminda tek bir gerekli yetkiye cozulur."
         )
       : l(
-          "Choose a workflow package to define the acting authority for this step.",
-          "Bu adimin isleyen yetkisini tanimlamak icin bir workflow paketi secin."
+          "Choose a workflow authority to define who acts at this step.",
+          "Bu adimda kimin islem yapacagini tanimlamak icin bir workflow yetkisi secin."
         );
   const statusToneClass =
     blockingIssueCount > 0
@@ -168,22 +165,27 @@ export default function ApprovalStepCard({
         </td>
 
         <td className="min-w-[14rem] px-4 py-2 align-middle">
-          <Select
-            value={step.requiredPackageCode || ""}
-            onValueChange={(value) => onChange("requiredPackageCode", value)}
-            disabled={isAp && filteredPackageOptions.length <= 1}
-          >
-            <SelectTrigger className="h-8 w-full rounded-lg border-slate-200 bg-white text-xs">
-              <SelectValue placeholder={l("Choose a package", "Paket secin")} />
-            </SelectTrigger>
-            <SelectContent>
-              {filteredPackageOptions.map((packageEntry) => (
-                <SelectItem key={packageEntry.code} value={packageEntry.code}>
-                  {packageEntry.displayName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {isAp ? (
+            <div className="flex h-8 items-center rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs text-slate-700">
+              {resolvedApPermissionCode || l("Choose an action", "Bir eylem secin")}
+            </div>
+          ) : (
+            <Select
+              value={step.requiredAuthorityCode || ""}
+              onValueChange={(value) => onChange("requiredAuthorityCode", value)}
+            >
+              <SelectTrigger className="h-8 w-full rounded-lg border-slate-200 bg-white text-xs">
+                <SelectValue placeholder={l("Choose an authority", "Yetki secin")} />
+              </SelectTrigger>
+              <SelectContent>
+                {workflowStepAuthorityOptions.map((authorityEntry) => (
+                  <SelectItem key={authorityEntry.code} value={authorityEntry.code}>
+                    {authorityEntry.displayName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </td>
 
         <td className="min-w-[7rem] px-4 py-2 align-middle">
@@ -289,14 +291,21 @@ export default function ApprovalStepCard({
                       {l("Authority source", "Yetki kaynagi")}
                     </p>
                     <Badge variant="secondary">
-                      {l("Package-backed", "Paket tabanli")}
+                      {isAp
+                        ? l("Permission-backed", "Yetki tabanli")
+                        : l("Authority-backed", "Yetki odakli")}
                     </Badge>
                   </div>
                   <p className="mt-2 text-xs leading-5 text-slate-600">
-                    {l(
-                      "This step resolves authority from the selected workflow package at the chosen organizational scope.",
-                      "Bu adim, yetkiyi secilen organizasyon kapsamindaki workflow paketinden cozer."
-                    )}
+                    {isAp
+                      ? l(
+                          "This step resolves authority from the required AP permission at the chosen organizational scope.",
+                          "Bu adim, yetkiyi secilen organizasyon kapsamindaki gerekli AP yetkisinden cozer."
+                        )
+                      : l(
+                          "This step resolves authority from the selected workflow permission at the chosen organizational scope.",
+                          "Bu adim, yetkiyi secilen organizasyon kapsamindaki workflow yetkisinden cozer."
+                        )}
                   </p>
                 </div>
               </div>

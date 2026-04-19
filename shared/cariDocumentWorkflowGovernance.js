@@ -12,11 +12,11 @@ export const AP_DOCUMENT_WORKFLOW_ACTION_CODES = Object.freeze([
   "APPROVE",
   "POST",
 ]);
-export const AP_DOCUMENT_REQUIRED_PACKAGE_BY_ACTION = Object.freeze({
-  DRAFT: "PKG-AP-DRAFT-SUBMIT",
-  SUBMIT: "PKG-AP-DRAFT-SUBMIT",
-  APPROVE: "PKG-AP-APPROVE",
-  POST: "PKG-AP-POST",
+export const AP_DOCUMENT_REQUIRED_PERMISSION_BY_ACTION = Object.freeze({
+  DRAFT: "cari.doc.update",
+  SUBMIT: "cari.doc.submit",
+  APPROVE: "approvals.requests.approve",
+  POST: "cari.doc.post",
 });
 export const CARI_DOCUMENT_WORKFLOW_GATE_STATES = Object.freeze([
   "NONE",
@@ -220,6 +220,18 @@ export function normalizeApWorkflowActionCode(value) {
 }
 
 /**
+ * Resolves the one permission code that gates each explicit AP workflow
+ * action. AP workflow definitions now persist this permission directly rather
+ * than storing a package code indirection.
+ */
+export function getApWorkflowRequiredPermissionCode(actionCode) {
+  const normalizedActionCode = normalizeApWorkflowActionCode(actionCode);
+  return (
+    AP_DOCUMENT_REQUIRED_PERMISSION_BY_ACTION[normalizedActionCode] || null
+  );
+}
+
+/**
  * Normalize one saved AP workflow step from either workflow-definition rows or
  * bridged approval-policy snapshots.
  */
@@ -245,10 +257,7 @@ export function normalizeApWorkflowStep(step = {}) {
     requiredPermissionCode:
       String(
         step?.requiredPermissionCode ?? step?.required_permission_code ?? ""
-      ).trim() || null,
-    requiredPackageCode:
-      String(step?.requiredPackageCode ?? step?.required_package_code ?? "").trim() ||
-      null,
+      ).trim() || getApWorkflowRequiredPermissionCode(actionCode),
     minApproverCount: Math.max(
       1,
       Number(step?.minApproverCount ?? step?.min_approvals ?? 1) || 1

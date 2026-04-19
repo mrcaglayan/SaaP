@@ -1,6 +1,4 @@
-import {
-  isWorkflowPackageAssignmentRoleCode,
-} from "./roleCatalog.js";
+import { isWorkflowPackageAssignmentRoleCode } from "./roleCatalog.js";
 
 function normalizeArray(value) {
   return Array.isArray(value) ? value : null;
@@ -10,11 +8,6 @@ function normalizeStatus(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
-}
-
-function parsePositiveInt(value) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function formatDateTime(value, language) {
@@ -49,47 +42,6 @@ function countDirectRuntimeAssignments(assignments) {
     const roleCode = row?.role_code || row?.roleCode;
     return roleCode && !isWorkflowPackageAssignmentRoleCode(roleCode);
   }).length;
-}
-
-function countWorkflowPackageAssignments(assignments) {
-  if (!assignments) {
-    return null;
-  }
-
-  return assignments.filter((row) =>
-    isWorkflowPackageAssignmentRoleCode(row?.role_code || row?.roleCode)
-  ).length;
-}
-
-function countMixedAssignmentUsers(assignments) {
-  if (!assignments) {
-    return null;
-  }
-
-  const userFlags = new Map();
-  for (const row of assignments) {
-    const userId = parsePositiveInt(row?.user_id ?? row?.userId);
-    if (!userId) {
-      continue;
-    }
-
-    const roleCode = row?.role_code || row?.roleCode;
-    if (!roleCode) {
-      continue;
-    }
-
-    const current = userFlags.get(userId) || { direct: false, workflowPackage: false };
-    if (isWorkflowPackageAssignmentRoleCode(roleCode)) {
-      current.workflowPackage = true;
-    } else {
-      current.direct = true;
-    }
-    userFlags.set(userId, current);
-  }
-
-  return Array.from(userFlags.values()).filter(
-    (entry) => entry.direct && entry.workflowPackage
-  ).length;
 }
 
 function countActiveDelegations(delegations) {
@@ -180,12 +132,10 @@ export function buildSecurityAdminOverviewSummary({
   const metrics = {
     activeUsers: countActiveUsers(normalizedUsers),
     directAssignments: countDirectRuntimeAssignments(normalizedAssignments),
-    workflowPackageAssignments: countWorkflowPackageAssignments(normalizedAssignments),
     activeDelegations: countActiveDelegations(normalizedDelegations),
     openCoverageRows: countOpenCoverageRows(normalizedCoverageRows),
     workflowDefinitions: countRows(normalizedWorkflowDefinitions),
     workflowAssignments: countRows(normalizedWorkflowAssignments),
-    mixedAssignmentUsers: countMixedAssignmentUsers(normalizedAssignments),
   };
 
   const signals = [];
@@ -228,22 +178,6 @@ export function buildSecurityAdminOverviewSummary({
         "{{count}} workflow assignments exist without visible workflow definitions in this snapshot.",
         "Bu gorunumde gorunur workflow tanimi olmadan {{count}} workflow atamasi bulunuyor.",
         { count: metrics.workflowAssignments }
-      ),
-    });
-  }
-
-  if (metrics.mixedAssignmentUsers !== null && metrics.mixedAssignmentUsers > 0) {
-    signals.push({
-      key: "mixed-assignment-posture",
-      tone: "amber",
-      title: l(
-        "Mixed access posture detected",
-        "Karisik erisim durusu tespit edildi"
-      ),
-      description: l(
-        "{{count}} users currently hold both direct runtime roles and workflow package assignments.",
-        "{{count}} kullanicida hem dogrudan runtime rol hem de workflow paket atamasi bulunuyor.",
-        { count: metrics.mixedAssignmentUsers }
       ),
     });
   }

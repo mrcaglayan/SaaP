@@ -15,6 +15,7 @@ import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
   WORKFLOW_GATE_BLOCKING_REASON_CODES,
+  getApWorkflowRequiredPermissionCode,
 } from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function assert(condition, message) {
@@ -401,17 +402,23 @@ async function createGovernedApWorkflowAssignment({
         step_no,
         action_code,
         stage_scope_type,
-        required_package_code,
         required_permission_code,
         min_approver_count,
         allow_self_approve,
         escalation_after_hours
      )
      VALUES
-       (?, 1, 'SUBMIT', 'COUNTRY', 'PKG-AP-DRAFT-SUBMIT', NULL, 1, FALSE, NULL),
-       (?, 2, 'APPROVE', 'COUNTRY', 'PKG-AP-APPROVE', NULL, 1, FALSE, NULL),
-       (?, 3, 'POST', 'COUNTRY', 'PKG-AP-POST', NULL, 1, FALSE, NULL)`,
-    [workflowDefinitionId, workflowDefinitionId, workflowDefinitionId]
+       (?, 1, 'SUBMIT', 'COUNTRY', ?, 1, FALSE, NULL),
+       (?, 2, 'APPROVE', 'COUNTRY', ?, 1, FALSE, NULL),
+       (?, 3, 'POST', 'COUNTRY', ?, 1, FALSE, NULL)`,
+    [
+      workflowDefinitionId,
+      getApWorkflowRequiredPermissionCode("SUBMIT"),
+      workflowDefinitionId,
+      getApWorkflowRequiredPermissionCode("APPROVE"),
+      workflowDefinitionId,
+      getApWorkflowRequiredPermissionCode("POST"),
+    ]
   );
 
   await query(

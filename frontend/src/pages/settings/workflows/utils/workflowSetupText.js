@@ -59,7 +59,7 @@ export function getWorkflowSetupText(l) {
           level: l("Action-specific", "Eylem bazli"),
           minApprovers: l("Only on APPROVE", "Yalnizca APPROVE icin"),
           selfApproval: l("Only on APPROVE", "Yalnizca APPROVE icin"),
-          permissionCode: l("Package-bound", "Pakete bagli"),
+          permissionCode: l("Action-bound permission", "Eyleme bagli yetki"),
         },
       },
       PERIOD_CLOSE: {
@@ -161,8 +161,8 @@ export function getWorkflowSetupText(l) {
           ),
           l("Turn self-approval off.", "Kendi kendine onayi kapali tutun."),
           l(
-            "The selected action determines the package; scope determines who owns that step.",
-            "Secilen eylem paketi belirler; kapsam ise o adimin kimde olacagini belirler."
+            "The selected action determines the required permission; scope determines who owns that step.",
+            "Secilen eylem gerekli yetkiyi belirler; kapsam ise o adimin kimde olacagini belirler."
           ),
           l("Typical assignment scope: Country.", "Tipik atama kapsami: Ulke."),
         ],
@@ -222,8 +222,8 @@ export function getWorkflowSetupText(l) {
     apBusinessLabels: {
       atWhichScope: l("At which organizational scope", "Hangi organizasyon kapsaminda"),
       effectivePermission: l(
-        "For AP, the selected action locks the package for this step. Scope decides which users can act.",
-        "AP icin, secilen eylem bu adimin paketini kilitler. Hangi kullanicilarin islem yapabilecegini kapsam belirler."
+        "For AP, the selected action locks the required permission for this step. Scope decides which users can act.",
+        "AP icin, secilen eylem bu adimin gerekli yetkisini kilitler. Hangi kullanicilarin islem yapabilecegini kapsam belirler."
       ),
     },
   };

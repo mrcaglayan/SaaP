@@ -76,7 +76,7 @@ export default function WorkflowStepsBuilderStep({
   stepDrafts,
   stepScopeTypes,
   stepScopeLabels,
-  workflowStepPackageOptions = [],
+  workflowStepAuthorityOptions = [],
   onStepFieldChange,
   onAddStep,
   onRemoveStep,
@@ -147,7 +147,9 @@ export default function WorkflowStepsBuilderStep({
                   l("At which organizational scope", "Hangi organizasyon kapsaminda"))
                 : l("Step scope type", "Adim kapsam tipi")}
             </th>
-            <th className="px-4 py-3">{l("Required package", "Gerekli paket")}</th>
+            <th className="px-4 py-3">
+              {isAp ? l("Required permission", "Gerekli yetki") : l("Required authority", "Gerekli yetki")}
+            </th>
             <th className="px-4 py-3">{l("Minimum approvals", "Minimum onay")}</th>
             <th className="px-4 py-3">{l("Self approval", "Kendi onayi")}</th>
             <th className="px-4 py-3">{l("Escalation hours", "Escalation saati")}</th>
@@ -165,7 +167,7 @@ export default function WorkflowStepsBuilderStep({
               processType={processType}
               stepScopeTypes={stepScopeTypes}
               stepScopeLabels={stepScopeLabels}
-              workflowStepPackageOptions={workflowStepPackageOptions}
+              workflowStepAuthorityOptions={workflowStepAuthorityOptions}
               onChange={(field, value) => onStepFieldChange(index, field, value)}
               onRemove={() => onRemoveStep(index)}
               disableRemove={stepDrafts.length <= 1}
@@ -292,8 +294,8 @@ export default function WorkflowStepsBuilderStep({
                 label={l("Design mode", "Tasarim modu")}
                 value={l("Manual action-step flow", "Manuel eylem-adim akisi")}
                 subtext={l(
-                  "No preset is used. Every AP step saves explicit action, scope, and package binding.",
-                  "Preset kullanilmaz. Her AP adimi acik eylem, kapsam ve paket bagini kaydeder."
+                  "No preset is used. Every AP step saves explicit action, scope, and permission binding.",
+                  "Preset kullanilmaz. Her AP adimi acik eylem, kapsam ve yetki bagini kaydeder."
                 )}
               />
             </div>
@@ -387,8 +389,8 @@ export default function WorkflowStepsBuilderStep({
                       tone="slate"
                       title={l("Coverage check is running", "Coverage kontrolu calisiyor")}
                       text={l(
-                        "The system is checking whether active users currently exist for the selected AP scopes and packages.",
-                        "Sistem, secilen AP kapsamlari ve paketleri icin aktif kullanici olup olmadigini kontrol ediyor."
+                        "The system is checking whether active users currently exist for the selected AP scopes and permissions.",
+                        "Sistem, secilen AP kapsamlari ve yetkileri icin aktif kullanici olup olmadigini kontrol ediyor."
                       )}
                     />
                   ) : null}
@@ -466,8 +468,8 @@ export default function WorkflowStepsBuilderStep({
             <CardTitle>{l("Step 4 - Define workflow steps", "Adim 4 - Workflow adimlarini tanimlayin")}</CardTitle>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               {l(
-                "Each step now binds to a workflow package at a specific organizational scope. Business roles stay visible only as human-friendly eligibility helpers.",
-                "Her adim artik belirli bir organizasyon kapsaminda bir workflow paketine baglanir. Is rolleri yalnizca okunabilir uygunluk yardimcisi olarak gorunur."
+                "Each step now binds to one workflow authority at a specific organizational scope. Roles remain the actual runtime source of that authority.",
+                "Her adim artik belirli bir organizasyon kapsaminda tek bir workflow yetkisine baglanir. Roller bu yetkinin gercek runtime kaynagi olarak kalir."
               )}
             </p>
           </div>
@@ -518,8 +520,8 @@ export default function WorkflowStepsBuilderStep({
               <AlertTitle>{l("Checking in-scope actors", "Kapsam ici aktorler kontrol ediliyor")}</AlertTitle>
               <AlertDescription>
                 {l(
-                  "The system is checking whether active users currently exist for the selected step scopes and packages.",
-                  "Sistem, secilen adim kapsamlari ve paketleri icin su anda aktif kullanici olup olmadigini kontrol ediyor."
+                  "The system is checking whether active users currently exist for the selected step scopes and authorities.",
+                  "Sistem, secilen adim kapsamlari ve yetkileri icin su anda aktif kullanici olup olmadigini kontrol ediyor."
                 )}
               </AlertDescription>
             </Alert>
@@ -535,8 +537,8 @@ export default function WorkflowStepsBuilderStep({
               <AlertTitle>{l("Coverage warnings need read access", "Kapsam uyarilari icin okuma erisimi gerekir")}</AlertTitle>
               <AlertDescription>
                 {l(
-                  "workflow.assignment.read is required to warn when no in-scope users currently match a step package.",
-                  "Bir adim paketine uyan kapsam ici kullanici olmadiginda uyari verebilmek icin workflow.assignment.read gerekir."
+                  "workflow.assignment.read is required to warn when no in-scope users currently match a step authority.",
+                  "Bir adim yetkisine uyan kapsam ici kullanici olmadiginda uyari verebilmek icin workflow.assignment.read gerekir."
                 )}
               </AlertDescription>
             </Alert>
@@ -549,8 +551,8 @@ export default function WorkflowStepsBuilderStep({
                 </p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {l(
-                    "Choose a business-readable preset to preview its package flow. The current workflow changes only after you apply the preset below.",
-                    "Paket akisini onizlemek icin is dilinde bir preset secin. Mevcut workflow ancak asagidan preseti uyguladiginizda degisir."
+                    "Choose a business-readable preset to preview its authority flow. The current workflow changes only after you apply the preset below.",
+                    "Yetki akisini onizlemek icin is dilinde bir preset secin. Mevcut workflow ancak asagidan preseti uyguladiginizda degisir."
                   )}
                 </p>
               </div>

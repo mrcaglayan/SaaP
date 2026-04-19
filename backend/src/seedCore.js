@@ -827,6 +827,28 @@ const AP_APPROVER_PERMISSION_CODES = buildPermissionList({
   ],
 });
 
+// Dedicated runtime replacements for package-only governed authorities.
+// Keep these explicit and narrow so role-only explainability and SoD can
+// reason over real business duties without managed package-role indirection.
+const WORKFLOW_GOVERNANCE_ADMIN_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "workflow.definition.read",
+    "workflow.definition.write",
+    "workflow.assignment.read",
+    "workflow.assignment.write",
+    "approvals.policies.read",
+    "approvals.policies.write",
+  ],
+});
+
+const WORKFLOW_QUEUE_VIEWER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "workflow.definition.read",
+    "workflow.assignment.read",
+    "approvals.requests.read",
+  ],
+});
+
 const GL_OPERATOR_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["gl.operations"],
   permissions: [
@@ -929,6 +951,71 @@ const LOCAL_CLOSE_REVIEWER_PERMISSION_CODES = buildPermissionList({
   ],
 });
 
+const LOCAL_CLOSE_APPROVE_LOCK_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "ouclose.read",
+    "ouclose.approve",
+    "ouclose.lock",
+  ],
+});
+
+const LOCAL_CLOSE_REOPEN_ADMIN_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "ouclose.read",
+    "ouclose.reopen",
+    "ouclose.override_post_lock",
+    "ouclose.admin",
+  ],
+});
+
+const PERIOD_CLOSE_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "org.fiscal_period.read",
+    "gl.book.read",
+    "gl.account.read",
+    "gl.journal.read",
+    "gl.trial_balance.read",
+    "gl.report.local.read",
+    "gl.report.ledger.read",
+    "gl.report.statement.read",
+    "gl.period.close",
+  ],
+});
+
+const PERIOD_REOPEN_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "org.fiscal_period.read",
+    "gl.book.read",
+    "gl.journal.read",
+    "gl.trial_balance.read",
+    "gl.period.close",
+    "gl.period.reopen",
+  ],
+});
+
+const PERIOD_ADMIN_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "org.fiscal_period.read",
+    "gl.book.read",
+    "gl.journal.read",
+    "gl.trial_balance.read",
+    "gl.period.close",
+    "gl.period.reopen",
+    "gl.period.admin",
+  ],
+});
+
+const CLOSED_PERIOD_JOURNAL_OVERRIDE_AUTHORITY_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "org.fiscal_period.read",
+    "gl.book.read",
+    "gl.journal.read",
+    "gl.trial_balance.read",
+    "gl.journal.post",
+    "gl.journal.post_to_closed_period",
+  ],
+});
+
 const GROUP_REPORTING_CONTROLLER_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["gl.readonly"],
   permissions: [
@@ -960,6 +1047,61 @@ const GROUP_REPORTING_CONTROLLER_PERMISSION_CODES = buildPermissionList({
     "close.cycle.read",
     "close.cycle.lock",
     "close.cockpit.read",
+  ],
+});
+
+const CONSOLIDATION_RUN_PREPARER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "consolidation.group.read",
+    "consolidation.coa_mapping.read",
+    "consolidation.elimination_placeholder.read",
+    "consolidation.run.read",
+    "consolidation.run.create",
+  ],
+});
+
+const CONSOLIDATION_RUN_EXECUTOR_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "consolidation.run.read",
+    "consolidation.run.execute",
+  ],
+});
+
+const CONSOLIDATION_ADJUSTMENT_POSTER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "consolidation.run.read",
+    "consolidation.adjustment.create",
+    "consolidation.adjustment.post",
+  ],
+});
+
+const CONSOLIDATION_ELIMINATION_POSTER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "consolidation.run.read",
+    "consolidation.elimination.create",
+    "consolidation.elimination.post",
+  ],
+});
+
+const CONSOLIDATION_FINALIZER_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "consolidation.run.read",
+    "consolidation.run.finalize",
+  ],
+});
+
+const CONSOLIDATION_SETUP_ADMIN_PERMISSION_CODES = buildPermissionList({
+  permissions: [
+    "consolidation.group.read",
+    "consolidation.group.upsert",
+    "consolidation.group_member.upsert",
+    "consolidation.coa_mapping.read",
+    "consolidation.coa_mapping.upsert",
+    "consolidation.elimination_placeholder.read",
+    "consolidation.elimination_placeholder.upsert",
+    "intercompany.flag.read",
+    "intercompany.flag.upsert",
+    "intercompany.pair.upsert",
   ],
 });
 
@@ -1095,6 +1237,8 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   CountryAPApprover: Object.freeze([]),
   CountryAPPoster: Object.freeze([]),
   APApprover: Object.freeze([]),
+  WorkflowGovernanceAdmin: Object.freeze([]),
+  WorkflowQueueViewer: Object.freeze([]),
   GLOperator: Object.freeze(["gl.operations"]),
   GLPostingAuthority: Object.freeze(["gl.posting"]),
   ShareholderCapitalOperator: Object.freeze(["org.capital_fulfillment"]),
@@ -1105,7 +1249,19 @@ export const ROLE_CAPABILITY_GROUPS = Object.freeze({
   PayrollApprover: Object.freeze(["payroll.readonly", "payroll.governance"]),
   LocalClosePreparer: Object.freeze(["close.operator"]),
   LocalCloseReviewer: Object.freeze(["close.reviewer"]),
+  LocalCloseApproveLockAuthority: Object.freeze([]),
+  LocalCloseReopenAdminAuthority: Object.freeze([]),
+  PeriodCloseAuthority: Object.freeze([]),
+  PeriodReopenAuthority: Object.freeze([]),
+  PeriodAdminAuthority: Object.freeze([]),
+  ClosedPeriodJournalOverrideAuthority: Object.freeze([]),
   GroupReportingController: Object.freeze(["gl.readonly"]),
+  ConsolidationRunPreparer: Object.freeze([]),
+  ConsolidationRunExecutor: Object.freeze([]),
+  ConsolidationAdjustmentPoster: Object.freeze([]),
+  ConsolidationEliminationPoster: Object.freeze([]),
+  ConsolidationFinalizer: Object.freeze([]),
+  ConsolidationSetupAdmin: Object.freeze([]),
   BranchInventoryViewer: Object.freeze([]),
   EntityInventoryViewer: Object.freeze([]),
   BranchInventoryExecutor: Object.freeze([]),
@@ -1223,6 +1379,16 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     permissions: AP_APPROVER_PERMISSION_CODES,
   },
   {
+    code: "WorkflowGovernanceAdmin",
+    name: "Workflow Governance Admin",
+    permissions: WORKFLOW_GOVERNANCE_ADMIN_PERMISSION_CODES,
+  },
+  {
+    code: "WorkflowQueueViewer",
+    name: "Workflow Queue Viewer",
+    permissions: WORKFLOW_QUEUE_VIEWER_PERMISSION_CODES,
+  },
+  {
     code: "GLOperator",
     name: "GL Operator",
     permissions: GL_OPERATOR_PERMISSION_CODES,
@@ -1276,9 +1442,69 @@ const ALL_ROLE_DEFINITIONS = attachRoleMetadata([
     permissions: LOCAL_CLOSE_REVIEWER_PERMISSION_CODES,
   },
   {
+    code: "LocalCloseApproveLockAuthority",
+    name: "Local Close Approve & Lock Authority",
+    permissions: LOCAL_CLOSE_APPROVE_LOCK_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "LocalCloseReopenAdminAuthority",
+    name: "Local Close Reopen / Admin Authority",
+    permissions: LOCAL_CLOSE_REOPEN_ADMIN_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "PeriodCloseAuthority",
+    name: "Period Close Authority",
+    permissions: PERIOD_CLOSE_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "PeriodReopenAuthority",
+    name: "Period Reopen Authority",
+    permissions: PERIOD_REOPEN_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "PeriodAdminAuthority",
+    name: "Period Close Admin Authority",
+    permissions: PERIOD_ADMIN_AUTHORITY_PERMISSION_CODES,
+  },
+  {
+    code: "ClosedPeriodJournalOverrideAuthority",
+    name: "Closed-Period Journal Override Authority",
+    permissions: CLOSED_PERIOD_JOURNAL_OVERRIDE_AUTHORITY_PERMISSION_CODES,
+  },
+  {
     code: "GroupReportingController",
     name: "Group Reporting Controller",
     permissions: GROUP_REPORTING_CONTROLLER_PERMISSION_CODES,
+  },
+  {
+    code: "ConsolidationRunPreparer",
+    name: "Consolidation Run Preparer",
+    permissions: CONSOLIDATION_RUN_PREPARER_PERMISSION_CODES,
+  },
+  {
+    code: "ConsolidationRunExecutor",
+    name: "Consolidation Run Executor",
+    permissions: CONSOLIDATION_RUN_EXECUTOR_PERMISSION_CODES,
+  },
+  {
+    code: "ConsolidationAdjustmentPoster",
+    name: "Consolidation Adjustment Poster",
+    permissions: CONSOLIDATION_ADJUSTMENT_POSTER_PERMISSION_CODES,
+  },
+  {
+    code: "ConsolidationEliminationPoster",
+    name: "Consolidation Elimination Poster",
+    permissions: CONSOLIDATION_ELIMINATION_POSTER_PERMISSION_CODES,
+  },
+  {
+    code: "ConsolidationFinalizer",
+    name: "Consolidation Finalizer",
+    permissions: CONSOLIDATION_FINALIZER_PERMISSION_CODES,
+  },
+  {
+    code: "ConsolidationSetupAdmin",
+    name: "Consolidation Setup Admin",
+    permissions: CONSOLIDATION_SETUP_ADMIN_PERMISSION_CODES,
   },
   {
     code: "BranchInventoryViewer",

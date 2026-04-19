@@ -321,24 +321,13 @@ export default function SecurityAdminOverviewPage() {
     }
     if (metrics.directAssignments !== null) {
       nextStats.push({
-        title: l("Direct assignments", "Dogrudan atamalar"),
+        title: l("Role assignments", "Rol atamalari"),
         value: formatMetricValue(metrics.directAssignments),
         description: l(
-          "Runtime roles granted directly, excluding managed workflow-package roles.",
-          "Yonetilen workflow paket rolleri disindaki dogrudan runtime rol atamalari."
+          "Current runtime-role rows visible in the security-admin snapshot.",
+          "Guvenlik yonetimi gorunumunde gorunen mevcut runtime rol satirlari."
         ),
         tone: "green",
-      });
-    }
-    if (metrics.workflowPackageAssignments !== null) {
-      nextStats.push({
-        title: l("Workflow package assignments", "Workflow paket atamalari"),
-        value: formatMetricValue(metrics.workflowPackageAssignments),
-        description: l(
-          "Current managed package grants coming from the fresh workflow package flow.",
-          "Fresh workflow package akisindan gelen mevcut yonetilen paket atamalari."
-        ),
-        tone: "violet",
       });
     }
     if (metrics.activeDelegations !== null) {

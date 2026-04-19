@@ -12,7 +12,10 @@ import {
   buildWorkflowPreview,
   buildWorkflowCoverageReviewModel,
 } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
-import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+  getApWorkflowRequiredPermissionCode,
+} from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -65,21 +68,21 @@ async function main() {
         stepNo: 1,
         actionCode: "SUBMIT",
         stageScopeType: "OPERATING_UNIT",
-        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
+        requiredPermissionCode: getApWorkflowRequiredPermissionCode("SUBMIT"),
         minApproverCount: 1,
       },
       {
         stepNo: 2,
         actionCode: "APPROVE",
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-AP-APPROVE",
+        requiredPermissionCode: getApWorkflowRequiredPermissionCode("APPROVE"),
         minApproverCount: 1,
       },
       {
         stepNo: 3,
         actionCode: "POST",
         stageScopeType: "COUNTRY",
-        requiredPackageCode: "PKG-AP-POST",
+        requiredPermissionCode: getApWorkflowRequiredPermissionCode("POST"),
         minApproverCount: 1,
       },
     ],
@@ -92,8 +95,8 @@ async function main() {
   );
   assert(
     apPreviewText ===
-      "This workflow runs in this order: 1. Submit at Operating Unit using PKG-AP-DRAFT-SUBMIT -> 2. Approve at Legal Entity using PKG-AP-APPROVE -> 3. Post at Country using PKG-AP-POST.",
-    "AP setup preview should list the explicit saved action chain without injecting implicit submit/post wording"
+      "This workflow runs in this order: 1. Submit at Operating Unit using cari.doc.submit -> 2. Approve at Legal Entity using approvals.requests.approve -> 3. Post at Country using cari.doc.post.",
+    "AP setup preview should list the explicit saved action chain with the permission-first AP contract"
   );
 
   const routingRulePreview = buildApprovalRoutingRulePreview({

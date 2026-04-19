@@ -187,6 +187,7 @@ import migration198CloseKpiSnapshots from "./m198_close_kpi_snapshots.js";
 import migration199CloseCycleStaleResolution from "./m199_close_cycle_stale_resolution.js";
 import migration200JournalPostedAfterClose from "./m200_journal_posted_after_close.js";
 import migration201JournalOriginalFiscalPeriod from "./m201_journal_original_fiscal_period.js";
+import migration202DropWorkflowDefinitionStepsRequiredPackageCode from "./m202_drop_workflow_definition_steps_required_package_code.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -378,6 +379,7 @@ const migrations = [
   migration199CloseCycleStaleResolution,
   migration200JournalPostedAfterClose,
   migration201JournalOriginalFiscalPeriod,
+  migration202DropWorkflowDefinitionStepsRequiredPackageCode,
 ];
 
 export default migrations;

@@ -1,7 +1,8 @@
 import {
   getRoleCatalogEntry,
-  getWorkflowPackageCatalogEntry,
-  resolveWorkflowPackagesForRuntimeRoles,
+  getWorkflowFamilyLabel,
+  isPackageAuthorityOnlyRole,
+  listWorkflowAuthorityDefinitions,
 } from "./roleCatalog.js";
 
 const SCOPE_ORDER = Object.freeze({
@@ -123,6 +124,16 @@ function joinHumanList(values, l) {
   );
 }
 
+function dedupeSorted(values) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => normalizeText(value))
+        .filter(Boolean)
+    )
+  ).sort((left, right) => left.localeCompare(right));
+}
+
 function sortByScope(left, right) {
   const leftScopeOrder = SCOPE_ORDER[normalizeText(left?.scopeType).toUpperCase()] || 999;
   const rightScopeOrder = SCOPE_ORDER[normalizeText(right?.scopeType).toUpperCase()] || 999;
@@ -137,7 +148,7 @@ function sortByScope(left, right) {
   return normalizeText(left?.id).localeCompare(normalizeText(right?.id));
 }
 
-function sortWorkflowLines(left, right) {
+function sortAuthorityLines(left, right) {
   const leftFamilyOrder =
     WORKFLOW_FAMILY_ORDER[normalizeText(left?.workflowFamily).toUpperCase()] || 999;
   const rightFamilyOrder =
@@ -148,277 +159,264 @@ function sortWorkflowLines(left, right) {
   return sortByScope(left, right);
 }
 
-function getManagedPackageSourceLabel(sourceType, l) {
-  const normalizedSourceType = normalizeText(sourceType).toUpperCase();
-  if (normalizedSourceType === "STARTER_DERIVED") {
-    return translate(l, "Starter package", "Starter paket");
-  }
-  if (normalizedSourceType === "PRESET_DERIVED") {
-    return translate(l, "Preset-derived package", "Presetten tureyen paket");
-  }
-  return translate(l, "Workflow package", "Workflow paketi");
+function buildPermissionCodes(permissionCodes) {
+  return dedupeSorted(permissionCodes).map((permissionCode) =>
+    normalizeText(permissionCode).toLowerCase()
+  );
 }
 
-function getBundleSourceLabel(bundle, l) {
-  if (bundle?.isPresetBundle) {
-    return translate(l, "Preset-derived package", "Presetten tureyen paket");
-  }
-  return translate(l, "Direct runtime role", "Dogrudan runtime rol");
+function buildPermissionSet(permissionCodes) {
+  return new Set(buildPermissionCodes(permissionCodes));
 }
 
-function pushWorkflowGrant(grantsByKey, grant) {
-  const grantKey = [
-    normalizeText(grant.workflowFamily).toUpperCase(),
-    normalizeText(grant.scopeType).toUpperCase(),
-    Number(grant.scopeId || 0),
-    normalizeText(grant.packageCode).toUpperCase(),
-  ].join("|");
-  const existingGrant = grantsByKey.get(grantKey);
-  if (existingGrant) {
-    existingGrant.sourceLabels.add(grant.sourceLabel);
-    existingGrant.hasManagedPackageSource ||= Boolean(grant.hasManagedPackageSource);
-    existingGrant.hasRuntimeRoleSource ||= Boolean(grant.hasRuntimeRoleSource);
-    return;
-  }
-  grantsByKey.set(grantKey, {
-    ...grant,
-    sourceLabels: new Set([grant.sourceLabel].filter(Boolean)),
-    hasManagedPackageSource: Boolean(grant.hasManagedPackageSource),
-    hasRuntimeRoleSource: Boolean(grant.hasRuntimeRoleSource),
-  });
+function resolveRoleRowEntry(roleCode, rolesByCode) {
+  const normalizedRoleCode = normalizeText(roleCode);
+  const liveRole =
+    rolesByCode instanceof Map ? rolesByCode.get(normalizedRoleCode) || null : null;
+  const catalogRole = getRoleCatalogEntry(normalizedRoleCode);
+  return {
+    roleCode: normalizedRoleCode,
+    roleLabel:
+      normalizeText(
+        liveRole?.displayName ||
+          liveRole?.name ||
+          liveRole?.code ||
+          catalogRole?.displayName ||
+          catalogRole?.code
+      ) || normalizedRoleCode,
+    permissionCodes: dedupeSorted([
+      ...(Array.isArray(liveRole?.permissionCodes) ? liveRole.permissionCodes : []),
+      ...(Array.isArray(catalogRole?.permissionCodes) ? catalogRole.permissionCodes : []),
+    ]),
+    sortOrder: Number(catalogRole?.sortOrder || 9999),
+  };
 }
 
-function buildWorkflowCapabilitySummary(workflowFamily, packageCodes, l) {
-  const codeSet = new Set((Array.isArray(packageCodes) ? packageCodes : []).map((code) => normalizeText(code).toUpperCase()));
-  if (normalizeText(workflowFamily).toUpperCase() === "CROSS_WORKFLOW") {
-    const actions = [];
-    if (codeSet.has("PKG-WF-SETUP-ADMIN")) {
-      actions.push(
-        translate(
-          l,
-          "manage workflow governance setup",
-          "workflow yonetim kurulumunu yonetebilir"
-        )
-      );
-    }
-    if (codeSet.has("PKG-WF-QUEUE-VIEW")) {
-      actions.push(
-        translate(l, "view workflow queues", "workflow kuyruklarini goruntuleyebilir")
-      );
-    }
-    return {
-      summaryText: joinHumanList(actions, l),
-      missingText: "",
-    };
+function authorityIsSatisfied(permissionCodeSet, authority) {
+  const requiredPermissionCodes = buildPermissionCodes(
+    authority?.requiredPermissionCodes
+  );
+  const anyPermissionCodes = buildPermissionCodes(authority?.anyPermissionCodes);
+  if (requiredPermissionCodes.length === 0 && anyPermissionCodes.length === 0) {
+    return false;
   }
+  const satisfiesRequired = requiredPermissionCodes.every((permissionCode) =>
+    permissionCodeSet.has(permissionCode)
+  );
+  const satisfiesAny =
+    anyPermissionCodes.length === 0 ||
+    anyPermissionCodes.some((permissionCode) => permissionCodeSet.has(permissionCode));
+  return satisfiesRequired && satisfiesAny;
+}
+
+function listSatisfiedAuthorities(workflowFamily, permissionCodes) {
+  const permissionCodeSet = buildPermissionSet(permissionCodes);
+  return listWorkflowAuthorityDefinitions(workflowFamily).filter((authority) =>
+    authorityIsSatisfied(permissionCodeSet, authority)
+  );
+}
+
+function listCoveredWorkflowFamilies(permissionCodes) {
+  return Object.keys(WORKFLOW_FAMILY_ORDER).filter(
+    (workflowFamily) =>
+      listSatisfiedAuthorities(workflowFamily, permissionCodes).length > 0
+  );
+}
+
+function buildSuggestedMissingAuthorityCodes(workflowFamily, authorityCodes) {
+  const authorityCodeSet = new Set(
+    (Array.isArray(authorityCodes) ? authorityCodes : [])
+      .map((authorityCode) => normalizeText(authorityCode).toUpperCase())
+      .filter(Boolean)
+  );
 
   if (normalizeText(workflowFamily).toUpperCase() === "AP_DOCUMENT_POSTING") {
-    const hasView = codeSet.has("PKG-AP-VIEW");
-    const hasDraftSubmit = codeSet.has("PKG-AP-DRAFT-SUBMIT");
-    const hasApprove = codeSet.has("PKG-AP-APPROVE");
-    const hasPost =
-      codeSet.has("PKG-AP-POST") || codeSet.has("PKG-AP-POST-GROUP");
-    const hasReverse = codeSet.has("PKG-AP-REVERSE");
-    const hasFxOverride = codeSet.has("PKG-AP-FX-OVERRIDE");
-    const actions = [];
+    const hasView = authorityCodeSet.has("AP_VIEW");
+    const hasDraftSubmit = authorityCodeSet.has("AP_DRAFT_SUBMIT");
+    const hasApprove = authorityCodeSet.has("AP_APPROVE");
+    const hasPost = authorityCodeSet.has("AP_POST");
+    const hasReverse = authorityCodeSet.has("AP_REVERSE");
+    const hasFxOverride = authorityCodeSet.has("AP_FX_OVERRIDE");
     if (hasView && !hasDraftSubmit && !hasApprove && !hasPost && !hasReverse && !hasFxOverride) {
-      actions.push(translate(l, "view AP", "AP goruntuleyebilir"));
+      return ["AP_DRAFT_SUBMIT", "AP_APPROVE", "AP_POST"];
     }
-    if (hasDraftSubmit) {
-      actions.push(translate(l, "draft and submit AP", "AP taslagi olusturup gonderebilir"));
+    if (!hasPost && (hasDraftSubmit || hasApprove || hasReverse || hasFxOverride)) {
+      return ["AP_POST"];
     }
-    if (hasApprove) {
-      actions.push(translate(l, "approve AP", "AP onaylayabilir"));
-    }
-    if (hasPost) {
-      actions.push(translate(l, "post AP", "AP post edebilir"));
-    }
-    if (hasReverse) {
-      actions.push(translate(l, "reverse AP", "AP ters kayit yapabilir"));
-    }
-    if (hasFxOverride) {
-      actions.push(translate(l, "override AP FX", "AP kur override yapabilir"));
-    }
-    let missingText = "";
-    if (!hasPost) {
-      missingText =
-        hasView && !hasDraftSubmit && !hasApprove && !hasReverse && !hasFxOverride
-          ? translate(
-              l,
-              "draft, approve, or post AP",
-              "AP taslagi olusturma, onaylama veya post etme"
-            )
-          : translate(l, "post AP", "AP post etme");
-    }
-    return {
-      summaryText: joinHumanList(actions, l),
-      missingText,
-    };
+    return [];
   }
 
   if (normalizeText(workflowFamily).toUpperCase() === "LOCAL_CLOSE_PACK") {
-    const hasView = codeSet.has("PKG-LC-VIEW");
-    const hasPrepare = codeSet.has("PKG-LC-PREPARE");
-    const hasReview = codeSet.has("PKG-LC-REVIEW");
-    const hasApproveLock = codeSet.has("PKG-LC-APPROVE-LOCK");
-    const hasReopenAdmin = codeSet.has("PKG-LC-REOPEN-ADMIN");
-    const actions = [];
-    if (hasView && !hasPrepare && !hasReview && !hasApproveLock && !hasReopenAdmin) {
-      actions.push(translate(l, "view Local Close", "Local Close goruntuleyebilir"));
+    const hasView = authorityCodeSet.has("LOCAL_CLOSE_VIEW");
+    const hasPrepare = authorityCodeSet.has("LOCAL_CLOSE_PREPARE");
+    const hasReview = authorityCodeSet.has("LOCAL_CLOSE_REVIEW");
+    const hasApproveLock = authorityCodeSet.has("LOCAL_CLOSE_APPROVE_LOCK");
+    if (hasView && !hasPrepare && !hasReview && !hasApproveLock) {
+      return ["LOCAL_CLOSE_REVIEW", "LOCAL_CLOSE_APPROVE_LOCK"];
     }
-    if (hasPrepare) {
-      actions.push(
-        translate(l, "prepare and submit Local Close", "Local Close hazirlayip gonderebilir")
-      );
-    }
-    if (hasReview) {
-      actions.push(translate(l, "review Local Close", "Local Close inceleyebilir"));
-    }
-    if (hasApproveLock) {
-      actions.push(
-        translate(l, "approve and lock Local Close", "Local Close onaylayip kilitleyebilir")
-      );
-    }
-    if (hasReopenAdmin) {
-      actions.push(
-        translate(
-          l,
-          "reopen and administer Local Close",
-          "Local Close yeniden acip yonetebilir"
-        )
-      );
-    }
-    let missingText = "";
     if (!hasApproveLock && (hasPrepare || hasReview)) {
-      missingText = translate(
-        l,
-        "approve and lock Local Close",
-        "Local Close onaylayip kilitleme"
-      );
-    } else if (hasView && !hasPrepare && !hasReview && !hasApproveLock && !hasReopenAdmin) {
-      missingText = translate(
-        l,
-        "review or approve Local Close",
-        "Local Close inceleme veya onaylama"
-      );
+      return ["LOCAL_CLOSE_APPROVE_LOCK"];
     }
-    return {
-      summaryText: joinHumanList(actions, l),
-      missingText,
-    };
+    return [];
   }
 
   if (normalizeText(workflowFamily).toUpperCase() === "PERIOD_CLOSE") {
-    const hasReadiness = codeSet.has("PKG-PC-READINESS");
-    const hasClose = codeSet.has("PKG-PC-CLOSE");
-    const actions = [];
-    if (hasReadiness) {
-      actions.push(
-        translate(
-          l,
-          "review period-close readiness",
-          "donem kapanis hazirlik durumunu inceleyebilir"
-        )
-      );
+    if (
+      authorityCodeSet.has("PERIOD_CLOSE_READINESS") &&
+      !authorityCodeSet.has("PERIOD_CLOSE")
+    ) {
+      return ["PERIOD_CLOSE"];
     }
-    if (hasClose) {
-      actions.push(translate(l, "close periods", "donem kapatabilir"));
-    }
-    return {
-      summaryText: joinHumanList(actions, l),
-      missingText:
-        hasReadiness && !hasClose
-          ? translate(l, "close periods", "donem kapatma")
-          : "",
-    };
+    return [];
   }
 
   if (normalizeText(workflowFamily).toUpperCase() === "CONSOLIDATION_RUN") {
-    const hasView = codeSet.has("PKG-CON-VIEW");
-    const hasPrepare = codeSet.has("PKG-CON-PREPARE");
-    const hasExecute = codeSet.has("PKG-CON-EXECUTE");
-    const hasAdjust = codeSet.has("PKG-CON-ADJUST");
-    const hasEliminate = codeSet.has("PKG-CON-ELIM");
-    const hasFinalize = codeSet.has("PKG-CON-FINALIZE");
-    const hasSetup = codeSet.has("PKG-CON-SETUP");
-    const actions = [];
-    if (hasView && !hasPrepare && !hasExecute && !hasAdjust && !hasEliminate && !hasFinalize) {
-      actions.push(translate(l, "view Consolidation", "konsolidasyon goruntuleyebilir"));
+    const hasView = authorityCodeSet.has("CONSOLIDATION_VIEW");
+    const hasPrepare = authorityCodeSet.has("CONSOLIDATION_PREPARE");
+    const hasExecute = authorityCodeSet.has("CONSOLIDATION_EXECUTE");
+    const hasAdjust = authorityCodeSet.has("CONSOLIDATION_ADJUST");
+    const hasEliminate = authorityCodeSet.has("CONSOLIDATION_ELIMINATE");
+    const hasFinalize = authorityCodeSet.has("CONSOLIDATION_FINALIZE");
+    if (
+      hasView &&
+      !hasPrepare &&
+      !hasExecute &&
+      !hasAdjust &&
+      !hasEliminate &&
+      !hasFinalize
+    ) {
+      return [
+        "CONSOLIDATION_PREPARE",
+        "CONSOLIDATION_EXECUTE",
+        "CONSOLIDATION_FINALIZE",
+      ];
     }
-    if (hasPrepare) {
-      actions.push(
-        translate(
-          l,
-          "prepare Consolidation runs",
-          "konsolidasyon calistirmalarini hazirlayabilir"
-        )
-      );
-    }
-    if (hasExecute) {
-      actions.push(
-        translate(
-          l,
-          "execute Consolidation runs",
-          "konsolidasyon calistirmalarini yurutebilir"
-        )
-      );
-    }
-    if (hasAdjust) {
-      actions.push(
-        translate(
-          l,
-          "post Consolidation adjustments",
-          "konsolidasyon duzeltmelerini post edebilir"
-        )
-      );
-    }
-    if (hasEliminate) {
-      actions.push(
-        translate(
-          l,
-          "post Consolidation eliminations",
-          "konsolidasyon eliminasyonlarini post edebilir"
-        )
-      );
-    }
-    if (hasFinalize) {
-      actions.push(
-        translate(l, "finalize Consolidation", "konsolidasyonu sonlandirabilir")
-      );
-    }
-    if (hasSetup) {
-      actions.push(
-        translate(
-          l,
-          "administer Consolidation setup",
-          "konsolidasyon kurulumunu yonetebilir"
-        )
-      );
-    }
-    let missingText = "";
     if (!hasFinalize && (hasPrepare || hasExecute || hasAdjust || hasEliminate)) {
-      missingText = translate(
-        l,
-        "finalize Consolidation",
-        "konsolidasyonu sonlandirma"
-      );
-    } else if (hasView && !hasPrepare && !hasExecute && !hasAdjust && !hasEliminate && !hasFinalize) {
-      missingText = translate(
-        l,
-        "prepare, execute, or finalize Consolidation",
-        "konsolidasyonu hazirlama, yurutme veya sonlandirma"
-      );
+      return ["CONSOLIDATION_FINALIZE"];
     }
-    return {
-      summaryText: joinHumanList(actions, l),
-      missingText,
-    };
+    return [];
   }
 
-  return {
-    summaryText: "",
-    missingText: "",
-  };
+  return [];
+}
+
+function buildMissingPermissionCodes(authorities) {
+  return dedupeSorted(
+    (Array.isArray(authorities) ? authorities : []).flatMap((authority) => [
+      ...(authority?.requiredPermissionCodes || []),
+      ...(authority?.anyPermissionCodes || []),
+    ])
+  );
+}
+
+function buildSatisfiedPermissionCodes(authorities, grantedPermissionCodes) {
+  const grantedPermissionCodeSet = buildPermissionSet(grantedPermissionCodes);
+  return dedupeSorted(
+    (Array.isArray(authorities) ? authorities : []).flatMap((authority) => [
+      ...(Array.isArray(authority?.requiredPermissionCodes)
+        ? authority.requiredPermissionCodes
+        : []),
+      ...(Array.isArray(authority?.anyPermissionCodes)
+        ? authority.anyPermissionCodes
+        : []),
+    ])
+  ).filter((permissionCode) =>
+    grantedPermissionCodeSet.has(normalizeText(permissionCode).toLowerCase())
+  );
+}
+
+function buildCandidateRoleLabels(missingAuthorities, rolesByCode, excludedRoleCodes) {
+  if (!(rolesByCode instanceof Map) || rolesByCode.size === 0) {
+    return [];
+  }
+  const excludedRoleCodeSet = new Set(
+    (Array.isArray(excludedRoleCodes) ? excludedRoleCodes : [])
+      .map((roleCode) => normalizeText(roleCode))
+      .filter(Boolean)
+  );
+  const candidates = Array.from(rolesByCode.values())
+    .map((role) => resolveRoleRowEntry(role?.code, rolesByCode))
+    .filter((role) => role.roleCode && !excludedRoleCodeSet.has(role.roleCode))
+    .filter((role) => !isPackageAuthorityOnlyRole(role.roleCode))
+    .map((role) => {
+      const permissionCodeSet = buildPermissionSet(role.permissionCodes);
+      const matchedAuthorities = (Array.isArray(missingAuthorities)
+        ? missingAuthorities
+        : []
+      ).filter((authority) => authorityIsSatisfied(permissionCodeSet, authority));
+      return {
+        ...role,
+        matchedAuthorityCount: matchedAuthorities.length,
+        permissionCount: role.permissionCodes.length,
+      };
+    })
+    .filter((role) => role.matchedAuthorityCount > 0)
+    .sort((left, right) => {
+      if (left.matchedAuthorityCount !== right.matchedAuthorityCount) {
+        return right.matchedAuthorityCount - left.matchedAuthorityCount;
+      }
+      if (left.permissionCount !== right.permissionCount) {
+        return left.permissionCount - right.permissionCount;
+      }
+      if (left.sortOrder !== right.sortOrder) {
+        return left.sortOrder - right.sortOrder;
+      }
+      return left.roleLabel.localeCompare(right.roleLabel);
+    });
+
+  return dedupeSorted(candidates.map((role) => role.roleLabel)).slice(0, 4);
+}
+
+function getRoleSourceLabel(sourceType, l) {
+  const normalizedSourceType = normalizeText(sourceType).toUpperCase();
+  if (normalizedSourceType === "STARTER_DERIVED" || normalizedSourceType === "PRESET_DERIVED") {
+    return translate(l, "Preset-derived role", "Presetten tureyen rol");
+  }
+  return translate(l, "Assigned role", "Atanmis rol");
+}
+
+function buildActiveRoleRows({ userBundles, rolesByCode, l }) {
+  const activeRows = [];
+  for (const bundle of Array.isArray(userBundles) ? userBundles : []) {
+    if (
+      normalizeText(bundle?.status).toUpperCase() !== "ACTIVE" ||
+      normalizeText(bundle?.effect).toUpperCase() === "DENY"
+    ) {
+      continue;
+    }
+    const sourceLabel = getRoleSourceLabel(bundle?.sourceType, l);
+    const rows = Array.isArray(bundle?.rows) && bundle.rows.length > 0
+      ? bundle.rows
+      : (Array.isArray(bundle?.roleCodes) ? bundle.roleCodes : []).map((roleCode) => ({
+          assignmentId: `${bundle.id}:${roleCode}`,
+          roleCode,
+          scopeType: bundle.scopeType,
+          scopeId: bundle.scopeId,
+          scopeLabel: bundle.scopeLabel,
+          effect: bundle.effect,
+          status: bundle.status,
+        }));
+    for (const row of rows) {
+      if (
+        normalizeText(row?.status || bundle?.status).toUpperCase() !== "ACTIVE" ||
+        normalizeText(row?.effect || bundle?.effect).toUpperCase() === "DENY"
+      ) {
+        continue;
+      }
+      const roleEntry = resolveRoleRowEntry(row?.roleCode, rolesByCode);
+      activeRows.push({
+        id: `bundle-role-${row?.assignmentId || `${bundle.id}:${row?.roleCode}`}`,
+        roleCode: roleEntry.roleCode,
+        roleLabel: roleEntry.roleLabel,
+        permissionCodes: roleEntry.permissionCodes,
+        scopeType: normalizeText(row?.scopeType || bundle?.scopeType).toUpperCase(),
+        scopeId: Number(row?.scopeId || bundle?.scopeId || 0),
+        scopeLabel: row?.scopeLabel || bundle?.scopeLabel || "",
+        sourceLabel,
+      });
+    }
+  }
+  return activeRows;
 }
 
 function getRuntimeRoleSummary(roleCode, roleEntry, l) {
@@ -430,114 +428,105 @@ function getRuntimeRoleSummary(roleCode, roleEntry, l) {
     l,
     "use {{role}} authority",
     "{{role}} yetkisini kullanabilir",
-    { role: roleEntry.code || normalizeText(roleCode) }
+    { role: roleEntry.roleLabel || roleEntry.code || normalizeText(roleCode) }
   );
 }
 
 /**
- * Builds the readable UI-2E authority preview for the selected user from the
- * current allow-side assignments.
+ * Builds the readable authority preview for the selected user from current
+ * allow-side runtime-role assignments and their granted permissions.
  */
 export function buildEffectiveAuthorityPreview({
-  workflowPackageAssignments,
   userBundles,
+  rolesByCode,
   l,
 }) {
-  const activeWorkflowPackageAssignments = (Array.isArray(workflowPackageAssignments)
-    ? workflowPackageAssignments
-    : []
-  ).filter(
-    (assignment) =>
-      normalizeText(assignment?.status).toUpperCase() === "ACTIVE" &&
-      normalizeText(assignment?.effect).toUpperCase() !== "DENY"
-  );
-  const activeUserBundles = (Array.isArray(userBundles) ? userBundles : []).filter(
-    (bundle) =>
-      normalizeText(bundle?.status).toUpperCase() === "ACTIVE" &&
-      normalizeText(bundle?.effect).toUpperCase() !== "DENY"
-  );
+  const activeRoleRows = buildActiveRoleRows({
+    userBundles,
+    rolesByCode,
+    l,
+  });
+  const authorityGroupsByKey = new Map();
+  const residualRoleLines = [];
+  const residualRoleLineKeys = new Set();
 
-  const workflowGrantsByKey = new Map();
-  for (const assignment of activeWorkflowPackageAssignments) {
-    const workflowPackageEntry = getWorkflowPackageCatalogEntry(assignment.packageCode);
-    if (!workflowPackageEntry.code) {
-      continue;
-    }
-    pushWorkflowGrant(workflowGrantsByKey, {
-      workflowFamily: workflowPackageEntry.workflowFamily,
-      workflowFamilyLabel: workflowPackageEntry.workflowFamilyLabel,
-      packageCode: workflowPackageEntry.code,
-      packageLabel: workflowPackageEntry.displayName,
-      scopeType: assignment.scopeType,
-      scopeId: assignment.scopeId,
-      scopeLabel: assignment.scopeLabel,
-      sourceLabel: getManagedPackageSourceLabel(assignment.sourceType, l),
-      hasManagedPackageSource: true,
-      hasRuntimeRoleSource: false,
-    });
-  }
-
-  for (const bundle of activeUserBundles) {
-    for (const packageCode of Array.isArray(bundle?.packageCodes) ? bundle.packageCodes : []) {
-      const workflowPackageEntry = getWorkflowPackageCatalogEntry(packageCode);
-      if (!workflowPackageEntry.code) {
+  for (const roleRow of activeRoleRows) {
+    const coveredWorkflowFamilies = listCoveredWorkflowFamilies(roleRow.permissionCodes);
+    if (coveredWorkflowFamilies.length === 0) {
+      const runtimeLineKey = [
+        normalizeText(roleRow.roleCode),
+        normalizeText(roleRow.scopeType).toUpperCase(),
+        Number(roleRow.scopeId || 0),
+      ].join("|");
+      if (residualRoleLineKeys.has(runtimeLineKey)) {
         continue;
       }
-      pushWorkflowGrant(workflowGrantsByKey, {
-        workflowFamily: workflowPackageEntry.workflowFamily,
-        workflowFamilyLabel: workflowPackageEntry.workflowFamilyLabel,
-        packageCode: workflowPackageEntry.code,
-        packageLabel: workflowPackageEntry.displayName,
-        scopeType: bundle.scopeType,
-        scopeId: bundle.scopeId,
-        scopeLabel: bundle.scopeLabel,
-        sourceLabel: getBundleSourceLabel(bundle, l),
-        hasManagedPackageSource: false,
-        hasRuntimeRoleSource: true,
+      residualRoleLineKeys.add(runtimeLineKey);
+      residualRoleLines.push({
+        id: runtimeLineKey,
+        roleCode: roleRow.roleCode,
+        roleLabel: roleRow.roleLabel,
+        scopeType: roleRow.scopeType,
+        scopeId: Number(roleRow.scopeId || 0),
+        scopeLabel: roleRow.scopeLabel,
+        summaryText: getRuntimeRoleSummary(roleRow.roleCode, roleRow, l),
+        sourceLabels: [roleRow.sourceLabel],
       });
+      continue;
+    }
+
+    for (const workflowFamily of coveredWorkflowFamilies) {
+      const groupKey = [
+        normalizeText(workflowFamily).toUpperCase(),
+        normalizeText(roleRow.scopeType).toUpperCase(),
+        Number(roleRow.scopeId || 0),
+      ].join("|");
+      if (!authorityGroupsByKey.has(groupKey)) {
+        authorityGroupsByKey.set(groupKey, {
+          id: groupKey,
+          workflowFamily,
+          workflowFamilyLabel: getWorkflowFamilyLabel(workflowFamily),
+          scopeType: roleRow.scopeType,
+          scopeId: Number(roleRow.scopeId || 0),
+          scopeLabel: roleRow.scopeLabel,
+          roleCodes: new Set(),
+          roleLabels: new Set(),
+          sourceLabels: new Set(),
+          permissionCodes: new Set(),
+        });
+      }
+      const group = authorityGroupsByKey.get(groupKey);
+      group.roleCodes.add(roleRow.roleCode);
+      group.roleLabels.add(roleRow.roleLabel);
+      group.sourceLabels.add(roleRow.sourceLabel);
+      for (const permissionCode of roleRow.permissionCodes) {
+        group.permissionCodes.add(normalizeText(permissionCode));
+      }
     }
   }
 
-  const workflowGroupsByScope = new Map();
-  for (const grant of workflowGrantsByKey.values()) {
-    const groupKey = [
-      normalizeText(grant.workflowFamily).toUpperCase(),
-      normalizeText(grant.scopeType).toUpperCase(),
-      Number(grant.scopeId || 0),
-    ].join("|");
-    if (!workflowGroupsByScope.has(groupKey)) {
-      workflowGroupsByScope.set(groupKey, {
-        id: groupKey,
-        workflowFamily: grant.workflowFamily,
-        workflowFamilyLabel: grant.workflowFamilyLabel,
-        scopeType: grant.scopeType,
-        scopeId: Number(grant.scopeId || 0),
-        scopeLabel: grant.scopeLabel,
-        packageCodes: new Set(),
-        sourceLabels: new Set(),
-        hasManagedPackageSource: false,
-        hasRuntimeRoleSource: false,
-      });
-    }
-    const group = workflowGroupsByScope.get(groupKey);
-    group.packageCodes.add(grant.packageCode);
-    for (const sourceLabel of grant.sourceLabels) {
-      group.sourceLabels.add(sourceLabel);
-    }
-    group.hasManagedPackageSource ||= Boolean(grant.hasManagedPackageSource);
-    group.hasRuntimeRoleSource ||= Boolean(grant.hasRuntimeRoleSource);
-  }
-
-  const workflowLines = Array.from(workflowGroupsByScope.values())
+  const authorityLines = Array.from(authorityGroupsByKey.values())
     .map((group) => {
-      const summary = buildWorkflowCapabilitySummary(
+      const authorityEntries = listSatisfiedAuthorities(
         group.workflowFamily,
-        Array.from(group.packageCodes),
-        l
+        Array.from(group.permissionCodes)
       );
-      if (!summary.summaryText) {
+      if (authorityEntries.length === 0) {
         return null;
       }
+      const missingAuthorityCodes = buildSuggestedMissingAuthorityCodes(
+        group.workflowFamily,
+        authorityEntries.map((authority) => authority.code)
+      );
+      const missingAuthorities = listWorkflowAuthorityDefinitions(group.workflowFamily).filter(
+        (authority) => missingAuthorityCodes.includes(authority.code)
+      );
+      const roleLabels = Array.from(group.roleLabels).sort();
+      const candidateRoleLabels = buildCandidateRoleLabels(
+        missingAuthorities,
+        rolesByCode,
+        Array.from(group.roleCodes)
+      );
       return {
         id: group.id,
         workflowFamily: group.workflowFamily,
@@ -545,67 +534,36 @@ export function buildEffectiveAuthorityPreview({
         scopeType: group.scopeType,
         scopeId: group.scopeId,
         scopeLabel: group.scopeLabel,
-        summaryText: summary.summaryText,
-        missingText: summary.missingText,
+        roleLabels,
         sourceLabels: Array.from(group.sourceLabels).sort(),
-        noteText:
-          !group.hasManagedPackageSource && group.hasRuntimeRoleSource
-            ? translate(
-                l,
-                "Summarized from the current direct runtime roles at this scope.",
-                "Bu kapsamda mevcut dogrudan runtime rollerinden ozetlendi."
-              )
-            : group.hasManagedPackageSource && group.hasRuntimeRoleSource
-              ? translate(
-                  l,
-                  "Combines workflow packages and direct runtime roles at this scope.",
-                  "Bu kapsamda workflow paketleri ile dogrudan runtime rollerini birlikte gosterir."
-                )
-              : "",
+        summaryText: joinHumanList(
+          authorityEntries.map((authority) => authority.displayName),
+          l
+        ),
+        missingText: joinHumanList(
+          missingAuthorities.map((authority) => authority.displayName),
+          l
+        ),
+        matchedPermissionCodes: buildSatisfiedPermissionCodes(
+          authorityEntries,
+          Array.from(group.permissionCodes)
+        ),
+        missingPermissionCodes: buildMissingPermissionCodes(missingAuthorities),
+        candidateRoleLabels,
+        noteText: translate(
+          l,
+          "Derived directly from active role permissions at this scope.",
+          "Bu kapsamda etkin rol yetkilerinden dogrudan turetildi."
+        ),
       };
     })
     .filter(Boolean)
-    .sort(sortWorkflowLines);
+    .sort(sortAuthorityLines);
 
-  const runtimeLines = [];
-  const runtimeLineKeys = new Set();
-  for (const bundle of activeUserBundles) {
-    for (const roleCode of Array.isArray(bundle?.roleCodes) ? bundle.roleCodes : []) {
-      if (resolveWorkflowPackagesForRuntimeRoles([roleCode]).length > 0) {
-        continue;
-      }
-      const runtimeLineKey = [
-        normalizeText(roleCode),
-        normalizeText(bundle.scopeType).toUpperCase(),
-        Number(bundle.scopeId || 0),
-      ].join("|");
-      if (runtimeLineKeys.has(runtimeLineKey)) {
-        continue;
-      }
-      runtimeLineKeys.add(runtimeLineKey);
-      const roleEntry = getRoleCatalogEntry(roleCode);
-      runtimeLines.push({
-        id: runtimeLineKey,
-        roleCode: normalizeText(roleCode),
-        roleLabel: roleEntry.code,
-        scopeType: bundle.scopeType,
-        scopeId: Number(bundle.scopeId || 0),
-        scopeLabel: bundle.scopeLabel,
-        summaryText: getRuntimeRoleSummary(roleCode, roleEntry, l),
-        sourceLabels: [translate(l, "Direct runtime role", "Dogrudan runtime rol")],
-      });
-    }
-  }
-  runtimeLines.sort(sortByScope);
+  residualRoleLines.sort(sortByScope);
 
   const warningTexts = [];
-
   if (
-    (Array.isArray(workflowPackageAssignments) ? workflowPackageAssignments : []).some(
-      (assignment) =>
-        normalizeText(assignment?.status).toUpperCase() === "ACTIVE" &&
-        normalizeText(assignment?.effect).toUpperCase() === "DENY"
-    ) ||
     (Array.isArray(userBundles) ? userBundles : []).some(
       (bundle) =>
         normalizeText(bundle?.status).toUpperCase() === "ACTIVE" &&
@@ -629,8 +587,8 @@ export function buildEffectiveAuthorityPreview({
     .sort((left, right) => normalizeText(left.text).localeCompare(normalizeText(right.text)));
 
   return {
-    workflowLines,
-    runtimeLines,
+    governedAuthorityLines: authorityLines,
+    otherRoleLines: residualRoleLines,
     warnings,
   };
 }

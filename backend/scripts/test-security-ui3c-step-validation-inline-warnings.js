@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { listWorkflowPackageCatalogEntries } from "../../frontend/src/pages/security/roleCatalog.js";
+import {
+  listWorkflowAuthorityDefinitions,
+  listWorkflowPackageCatalogEntries,
+} from "../../frontend/src/pages/security/roleCatalog.js";
 import { buildWorkflowStepValidationModel } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
+import { getApWorkflowRequiredPermissionCode } from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function l(en) {
   return en;
@@ -38,30 +42,31 @@ async function main() {
     GROUP: "Group",
   };
 
-  const missingPackageValidation = buildWorkflowStepValidationModel({
+  const missingAuthorityValidation = buildWorkflowStepValidationModel({
     stepDrafts: [
       {
         stepNo: 1,
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "",
+        requiredPermissionCode: "",
         allowSelfApprove: false,
       },
     ],
     processType: "LOCAL_CLOSE_PACK",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("LOCAL_CLOSE_PACK"),
     workflowPackageEntries,
     stepScopeLabels,
     l,
   });
 
   assert.equal(
-    missingPackageValidation.hasBlockingIssues,
+    missingAuthorityValidation.hasBlockingIssues,
     true,
-    "UI-3C should block save when a workflow step has no package selected"
+    "UI-3C should block save when a workflow step has no authority selected"
   );
   assert.equal(
-    missingPackageValidation.steps[0].blockingIssues[0].code,
-    "no_package_selected",
-    "UI-3C should label the missing package rule explicitly"
+    missingAuthorityValidation.steps[0].blockingIssues[0].code,
+    "no_authority_selected",
+    "UI-3C should label the missing authority rule explicitly"
   );
 
   const invalidScopeValidation = buildWorkflowStepValidationModel({
@@ -69,12 +74,13 @@ async function main() {
       {
         stepNo: 1,
         stageScopeType: "GROUP",
-        requiredPackageCode: "PKG-LC-PREPARE",
-        requiredPackageLabel: "Local Close Pack / Prepare & Submit",
+        requiredPermissionCode: "ouclose.submit",
+        requiredAuthorityLabel: "Prepare Local Close",
         allowSelfApprove: false,
       },
     ],
     processType: "LOCAL_CLOSE_PACK",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("LOCAL_CLOSE_PACK"),
     workflowPackageEntries,
     stepScopeLabels,
     l,
@@ -85,7 +91,7 @@ async function main() {
       (issue) => issue.code === "package_scope_mismatch"
     ),
     true,
-    "UI-3C should warn when the selected package does not support the selected scope"
+    "UI-3C should warn when the selected authority does not support the selected scope"
   );
 
   const selfApproveAndCoverageValidation = buildWorkflowStepValidationModel({
@@ -93,12 +99,13 @@ async function main() {
       {
         stepNo: 1,
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-PC-CLOSE",
-        requiredPackageLabel: "Period Close / Approve & Close",
+        requiredPermissionCode: "gl.period.close",
+        requiredAuthorityLabel: "Close periods",
         allowSelfApprove: true,
       },
     ],
     processType: "PERIOD_CLOSE",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("PERIOD_CLOSE"),
     workflowPackageEntries,
     coverageDiagnostics: {
       checks: {
@@ -132,7 +139,7 @@ async function main() {
       (issue) => issue.code === "no_eligible_users"
     ),
     true,
-    "UI-3C should warn when no in-scope users currently match the step package"
+    "UI-3C should warn when no in-scope users currently match the step authority"
   );
 
   const apSubmitCoverageValidation = buildWorkflowStepValidationModel({
@@ -141,12 +148,12 @@ async function main() {
         stepNo: 1,
         actionCode: "SUBMIT",
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        requiredPackageLabel: "AP Documents / Draft & Submit",
+        requiredPermissionCode: getApWorkflowRequiredPermissionCode("SUBMIT"),
         allowSelfApprove: false,
       },
     ],
     processType: "AP_DOCUMENT_POSTING",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("AP_DOCUMENT_POSTING"),
     workflowPackageEntries,
     coverageDiagnostics: {
       checks: {
@@ -172,41 +179,18 @@ async function main() {
     "UI-3C should keep AP submit coverage gaps visible instead of limiting warnings to APPROVE only"
   );
 
-  const apExtensionValidation = buildWorkflowStepValidationModel({
-    stepDrafts: [
-      {
-        stepNo: 1,
-        stageScopeType: "GROUP",
-        requiredPackageCode: "PKG-AP-POST-GROUP",
-        requiredPackageLabel: "AP Documents / Group Post",
-        allowSelfApprove: false,
-      },
-    ],
-    processType: "AP_DOCUMENT_POSTING",
-    workflowPackageEntries,
-    stepScopeLabels,
-    l,
-  });
-
-  assert.equal(
-    apExtensionValidation.steps[0].blockingIssues.some(
-      (issue) => issue.code === "ap_group_post_extension_not_enabled"
-    ),
-    true,
-    "UI-3C should block group-scoped AP post until the extension-backed package is enabled"
-  );
-
   const periodCloseExtensionValidation = buildWorkflowStepValidationModel({
     stepDrafts: [
       {
         stepNo: 1,
         stageScopeType: "GROUP",
-        requiredPackageCode: "PKG-PC-CLOSE",
-        requiredPackageLabel: "Period Close / Approve & Close",
+        requiredPermissionCode: "gl.period.close",
+        requiredAuthorityLabel: "Close periods",
         allowSelfApprove: false,
       },
     ],
     processType: "PERIOD_CLOSE",
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("PERIOD_CLOSE"),
     workflowPackageEntries,
     stepScopeLabels,
     l,

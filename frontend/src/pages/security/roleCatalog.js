@@ -5,6 +5,13 @@ function freezeList(values) {
 function freezeStep(step) {
   return Object.freeze(step);
 }
+function freezeAuthority(authority) {
+  return Object.freeze({
+    ...authority,
+    requiredPermissionCodes: freezeList(authority?.requiredPermissionCodes || []),
+    anyPermissionCodes: freezeList(authority?.anyPermissionCodes || []),
+  });
+}
 const CATEGORY_LABELS = Object.freeze({
   system: "System administration",
   composable: "Composable duty-boundary",
@@ -25,6 +32,215 @@ const WORKFLOW_FAMILY_LABELS = Object.freeze({
   LOCAL_CLOSE_PACK: "Local Close Pack",
   PERIOD_CLOSE: "Period Close",
   CONSOLIDATION_RUN: "Consolidation Run",
+});
+const WORKFLOW_AUTHORITY_CATALOG = Object.freeze({
+  CROSS_WORKFLOW: freezeList([
+    freezeAuthority({
+      code: "WF_SETUP_ADMIN",
+      displayName: "Administer workflow setup",
+      description:
+        "Create and maintain workflow definitions, assignments, and approval-policy setup.",
+      anyPermissionCodes: ["workflow.definition.write", "workflow.assignment.write"],
+      sortOrder: 10,
+    }),
+    freezeAuthority({
+      code: "WF_QUEUE_VIEW",
+      displayName: "Review workflow queues",
+      description:
+        "Read workflow assignments and approval requests without setup-write authority.",
+      anyPermissionCodes: [
+        "approvals.requests.read",
+        "workflow.assignment.read",
+        "workflow.definition.read",
+      ],
+      viewOnly: true,
+      sortOrder: 20,
+    }),
+  ]),
+  AP_DOCUMENT_POSTING: freezeList([
+    freezeAuthority({
+      code: "AP_VIEW",
+      displayName: "View AP",
+      description: "Read governed AP documents and diagnostics.",
+      requiredPermissionCodes: ["cari.doc.read"],
+      viewOnly: true,
+      sortOrder: 10,
+    }),
+    freezeAuthority({
+      code: "AP_DRAFT_SUBMIT",
+      displayName: "Draft and submit AP",
+      description: "Create, update, and submit AP work into the approval flow.",
+      requiredPermissionCodes: ["cari.doc.submit"],
+      sortOrder: 20,
+    }),
+    freezeAuthority({
+      code: "AP_APPROVE",
+      displayName: "Approve AP",
+      description: "Review and approve governed AP requests.",
+      requiredPermissionCodes: ["approvals.requests.approve"],
+      sortOrder: 30,
+    }),
+    freezeAuthority({
+      code: "AP_POST",
+      displayName: "Post AP",
+      description: "Perform final AP posting at the selected scope.",
+      requiredPermissionCodes: ["cari.doc.post"],
+      sortOrder: 40,
+    }),
+    freezeAuthority({
+      code: "AP_REVERSE",
+      displayName: "Reverse AP",
+      description: "Reverse already-posted AP documents.",
+      requiredPermissionCodes: ["cari.doc.reverse"],
+      sortOrder: 50,
+    }),
+    freezeAuthority({
+      code: "AP_FX_OVERRIDE",
+      displayName: "Override AP FX",
+      description: "Handle exceptional AP foreign-currency overrides.",
+      requiredPermissionCodes: ["cari.fx.override"],
+      sortOrder: 60,
+    }),
+  ]),
+  LOCAL_CLOSE_PACK: freezeList([
+    freezeAuthority({
+      code: "LOCAL_CLOSE_VIEW",
+      displayName: "View Local Close",
+      description: "Read local-close packs and their status.",
+      requiredPermissionCodes: ["ouclose.read"],
+      viewOnly: true,
+      sortOrder: 10,
+    }),
+    freezeAuthority({
+      code: "LOCAL_CLOSE_PREPARE",
+      displayName: "Prepare Local Close",
+      description: "Prepare and submit local-close work.",
+      requiredPermissionCodes: ["ouclose.prepare"],
+      sortOrder: 20,
+    }),
+    freezeAuthority({
+      code: "LOCAL_CLOSE_REVIEW",
+      displayName: "Review Local Close",
+      description: "Review local-close checkpoints before approval.",
+      requiredPermissionCodes: ["ouclose.review"],
+      sortOrder: 30,
+    }),
+    freezeAuthority({
+      code: "LOCAL_CLOSE_APPROVE_LOCK",
+      displayName: "Approve and lock Local Close",
+      description: "Give final local-close approval and lock the pack.",
+      requiredPermissionCodes: ["ouclose.approve", "ouclose.lock"],
+      sortOrder: 40,
+    }),
+    freezeAuthority({
+      code: "LOCAL_CLOSE_REOPEN",
+      displayName: "Reopen Local Close",
+      description: "Reopen a previously closed local-close pack.",
+      requiredPermissionCodes: ["ouclose.reopen"],
+      sortOrder: 50,
+    }),
+    freezeAuthority({
+      code: "LOCAL_CLOSE_ADMIN",
+      displayName: "Administer Local Close",
+      description: "Apply override or administrative control to local-close packs.",
+      anyPermissionCodes: ["ouclose.admin", "ouclose.override_post_lock"],
+      sortOrder: 60,
+    }),
+  ]),
+  PERIOD_CLOSE: freezeList([
+    freezeAuthority({
+      code: "PERIOD_CLOSE_READINESS",
+      displayName: "Review period-close readiness",
+      description: "Review fiscal periods, journals, and supporting GL visibility before close.",
+      requiredPermissionCodes: ["org.fiscal_period.read"],
+      viewOnly: true,
+      sortOrder: 10,
+    }),
+    freezeAuthority({
+      code: "PERIOD_CLOSE",
+      displayName: "Close periods",
+      description: "Perform final period close after readiness review.",
+      requiredPermissionCodes: ["gl.period.close"],
+      sortOrder: 20,
+    }),
+    freezeAuthority({
+      code: "PERIOD_REOPEN",
+      displayName: "Reopen periods",
+      description: "Reopen a previously closed period.",
+      requiredPermissionCodes: ["gl.period.reopen"],
+      sortOrder: 30,
+    }),
+    freezeAuthority({
+      code: "PERIOD_ADMIN",
+      displayName: "Administer period close",
+      description: "Apply exceptional period-close governance controls.",
+      requiredPermissionCodes: ["gl.period.admin"],
+      sortOrder: 40,
+    }),
+    freezeAuthority({
+      code: "PERIOD_CLOSED_POST",
+      displayName: "Post to soft-closed periods",
+      description: "Post approved journals into soft-closed periods.",
+      requiredPermissionCodes: ["gl.journal.post_to_closed_period"],
+      sortOrder: 50,
+    }),
+  ]),
+  CONSOLIDATION_RUN: freezeList([
+    freezeAuthority({
+      code: "CONSOLIDATION_VIEW",
+      displayName: "View Consolidation",
+      description: "Read consolidation runs, mappings, and reports.",
+      requiredPermissionCodes: ["consolidation.run.read"],
+      viewOnly: true,
+      sortOrder: 10,
+    }),
+    freezeAuthority({
+      code: "CONSOLIDATION_PREPARE",
+      displayName: "Prepare Consolidation runs",
+      description: "Open and stage consolidation runs.",
+      requiredPermissionCodes: ["consolidation.run.create"],
+      sortOrder: 20,
+    }),
+    freezeAuthority({
+      code: "CONSOLIDATION_EXECUTE",
+      displayName: "Execute Consolidation runs",
+      description: "Execute consolidation runs once inputs are ready.",
+      requiredPermissionCodes: ["consolidation.run.execute"],
+      sortOrder: 30,
+    }),
+    freezeAuthority({
+      code: "CONSOLIDATION_ADJUST",
+      displayName: "Post Consolidation adjustments",
+      description: "Post consolidation adjustment entries.",
+      requiredPermissionCodes: ["consolidation.adjustment.post"],
+      sortOrder: 40,
+    }),
+    freezeAuthority({
+      code: "CONSOLIDATION_ELIMINATE",
+      displayName: "Post Consolidation eliminations",
+      description: "Post consolidation elimination entries.",
+      requiredPermissionCodes: ["consolidation.elimination.post"],
+      sortOrder: 50,
+    }),
+    freezeAuthority({
+      code: "CONSOLIDATION_FINALIZE",
+      displayName: "Finalize Consolidation",
+      description: "Finalize the consolidation run after execution and posting.",
+      requiredPermissionCodes: ["consolidation.run.finalize"],
+      sortOrder: 60,
+    }),
+    freezeAuthority({
+      code: "CONSOLIDATION_SETUP",
+      displayName: "Administer Consolidation setup",
+      description: "Maintain consolidation structures, mappings, and setup.",
+      anyPermissionCodes: [
+        "consolidation.group.upsert",
+        "consolidation.coa_mapping.upsert",
+        "consolidation.elimination_placeholder.upsert",
+      ],
+      sortOrder: 70,
+    }),
+  ]),
 });
 const WORKFLOW_PACKAGE_CATEGORY_LABELS = Object.freeze({
   shared_governance: "Shared governance",
@@ -164,6 +380,26 @@ const ROLE_CATALOG = Object.freeze({
     workflowFamily: "AP_DOCUMENT_POSTING",
     sortOrder: 150,
   },
+  WorkflowGovernanceAdmin: {
+    code: "Workflow Governance Admin",
+    category: "composable",
+    summary:
+      "Owns workflow-definition, assignment, and approval-policy setup without requiring full tenant operations administration.",
+    capabilities: ["Workflow setup", "Assignment governance", "Approval policy setup"],
+    recommendedScopes: ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY"],
+    workflowFamily: "CROSS_WORKFLOW",
+    sortOrder: 205,
+  },
+  WorkflowQueueViewer: {
+    code: "Workflow Queue Viewer",
+    category: "composable",
+    summary:
+      "Reads governed workflow definitions, assignments, and approval queues without setup-write authority.",
+    capabilities: ["Workflow visibility", "Approval queue review", "Assignment visibility"],
+    recommendedScopes: ["TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY"],
+    workflowFamily: "CROSS_WORKFLOW",
+    sortOrder: 206,
+  },
   GLOperator: {
     category: "composable",
     summary:
@@ -181,7 +417,7 @@ const ROLE_CATALOG = Object.freeze({
     recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
     companionOnly: true,
     companionNote:
-      "Pair with GLOperator or another read-bearing accounting role at the same or broader scope. Assign period close through workflow packages separately.",
+      "Pair with GLOperator or another read-bearing accounting role at the same or broader scope. Assign period-close authority through the dedicated period-close roles separately.",
     sortOrder: 250,
   },
   ShareholderCapitalOperator: {
@@ -250,6 +486,66 @@ const ROLE_CATALOG = Object.freeze({
     workflowFamily: "LOCAL_CLOSE_PACK",
     sortOrder: 330,
   },
+  LocalCloseApproveLockAuthority: {
+    code: "Local Close Approve & Lock",
+    category: "composable",
+    summary:
+      "Final local-close authority for approval and lock decisions without inheriting preparation or reopen-admin duties.",
+    capabilities: ["Close approval", "Close locking", "Final signoff"],
+    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY"],
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 331,
+  },
+  LocalCloseReopenAdminAuthority: {
+    code: "Local Close Reopen Admin",
+    category: "composable",
+    summary:
+      "Exceptional local-close authority for reopen, override, and admin intervention without acting as the preparer.",
+    capabilities: ["Close reopen", "Override after lock", "Close admin"],
+    recommendedScopes: ["COUNTRY", "GROUP"],
+    workflowFamily: "LOCAL_CLOSE_PACK",
+    sortOrder: 332,
+  },
+  PeriodCloseAuthority: {
+    code: "Period Close Authority",
+    category: "composable",
+    summary:
+      "Closes accounting periods after readiness review without inheriting reopen-admin or manual journal-posting authority.",
+    capabilities: ["Period close", "Final close signoff", "Close governance"],
+    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY"],
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 333,
+  },
+  PeriodReopenAuthority: {
+    code: "Period Reopen Authority",
+    category: "composable",
+    summary:
+      "Reopens previously closed periods when controlled corrections are required.",
+    capabilities: ["Period reopen", "Controlled correction release"],
+    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY"],
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 334,
+  },
+  PeriodAdminAuthority: {
+    code: "Period Close Admin",
+    category: "composable",
+    summary:
+      "Handles exceptional period-close admin controls without becoming the routine manual GL poster.",
+    capabilities: ["Period admin", "Close override control", "Exceptional governance"],
+    recommendedScopes: ["COUNTRY", "GROUP"],
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 335,
+  },
+  ClosedPeriodJournalOverrideAuthority: {
+    code: "Closed-Period Journal Override",
+    category: "composable",
+    summary:
+      "Exceptional authority for posting approved manual journals into soft-closed periods only after finance-governance signoff.",
+    capabilities: ["Closed-period posting", "Exceptional journal override"],
+    recommendedScopes: ["LEGAL_ENTITY", "COUNTRY", "GROUP"],
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 336,
+  },
   GroupReportingController: {
     category: "composable",
     summary:
@@ -258,6 +554,66 @@ const ROLE_CATALOG = Object.freeze({
     recommendedScopes: ["GROUP"],
     workflowFamily: "CONSOLIDATION_RUN",
     sortOrder: 340,
+  },
+  ConsolidationRunPreparer: {
+    code: "Consolidation Run Preparer",
+    category: "composable",
+    summary:
+      "Prepares group consolidation runs without execution, posting, or finalization authority.",
+    capabilities: ["Run preparation", "Input readiness", "Consolidation staging"],
+    recommendedScopes: ["GROUP"],
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 341,
+  },
+  ConsolidationRunExecutor: {
+    code: "Consolidation Run Executor",
+    category: "composable",
+    summary:
+      "Executes consolidation runs after preparation is complete without adjustment or finalization authority.",
+    capabilities: ["Run execution", "Consolidation processing"],
+    recommendedScopes: ["GROUP"],
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 342,
+  },
+  ConsolidationAdjustmentPoster: {
+    code: "Consolidation Adjustment Poster",
+    category: "composable",
+    summary:
+      "Posts consolidation adjustment entries without elimination or finalization authority.",
+    capabilities: ["Adjustment drafting", "Adjustment posting"],
+    recommendedScopes: ["GROUP"],
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 343,
+  },
+  ConsolidationEliminationPoster: {
+    code: "Consolidation Elimination Poster",
+    category: "composable",
+    summary:
+      "Posts elimination entries without taking over the rest of the consolidation workflow.",
+    capabilities: ["Elimination drafting", "Elimination posting"],
+    recommendedScopes: ["GROUP"],
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 344,
+  },
+  ConsolidationFinalizer: {
+    code: "Consolidation Finalizer",
+    category: "composable",
+    summary:
+      "Finalizes the group consolidation run after preparation and execution are complete.",
+    capabilities: ["Run finalization", "Final group signoff"],
+    recommendedScopes: ["GROUP"],
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 345,
+  },
+  ConsolidationSetupAdmin: {
+    code: "Consolidation Setup Admin",
+    category: "composable",
+    summary:
+      "Maintains consolidation groups, mappings, elimination placeholders, and intercompany setup without run finalization authority.",
+    capabilities: ["Consolidation setup", "Mapping maintenance", "Intercompany setup"],
+    recommendedScopes: ["GROUP"],
+    workflowFamily: "CONSOLIDATION_RUN",
+    sortOrder: 346,
   },
   BranchInventoryViewer: {
     code: "Branch Inventory Viewer",
@@ -779,17 +1135,23 @@ const HELPER_BUNDLE_LABELS = Object.freeze({
 // without turning those source rows into the primary assignment model.
 const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
   "PKG-WF-SETUP-ADMIN": Object.freeze({
-    runtimeMappingLabel: "SystemAdmin setup authority",
+    runtimeMappingLabel: "Workflow governance setup roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["SystemAdmin"]),
-    runtimeNotes: freezeList([]),
+    runtimeRoleCodes: freezeList(["WorkflowGovernanceAdmin", "SystemAdmin"]),
+    runtimeNotes: freezeList([
+      "WorkflowGovernanceAdmin is the new narrow runtime role. SystemAdmin remains a broader compatibility source until the later hard-delete passes remove package-era indirection.",
+    ]),
   }),
   "PKG-WF-QUEUE-VIEW": Object.freeze({
-    runtimeMappingLabel: "SystemAdmin + APApprover source roles",
+    runtimeMappingLabel: "Workflow queue visibility roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["SystemAdmin", "APApprover"]),
+    runtimeRoleCodes: freezeList([
+      "WorkflowQueueViewer",
+      "SystemAdmin",
+      "APApprover",
+    ]),
     runtimeNotes: freezeList([
-      "Queue visibility is currently shared across setup/admin roles and the AP approval-engine helper role.",
+      "WorkflowQueueViewer is the new narrow runtime role. SystemAdmin and APApprover remain broader compatibility sources during the transition.",
     ]),
   }),
   "PKG-AP-VIEW": Object.freeze({
@@ -873,19 +1235,25 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     ]),
   }),
   "PKG-LC-APPROVE-LOCK": Object.freeze({
-    runtimeMappingLabel: "LocalCloseReviewer runtime role",
+    runtimeMappingLabel: "Local close final-approval roles",
     helperBundleCodes: freezeList(["close.reviewer"]),
-    runtimeRoleCodes: freezeList(["LocalCloseReviewer"]),
+    runtimeRoleCodes: freezeList([
+      "LocalCloseApproveLockAuthority",
+      "LocalCloseReviewer",
+    ]),
     runtimeNotes: freezeList([
-      "Current LocalCloseReviewer bundles review, approve, lock, and reopen/admin into one broader runtime role.",
+      "LocalCloseApproveLockAuthority is the new narrow runtime role. LocalCloseReviewer remains a broader compatibility source until later role-split cleanup completes.",
     ]),
   }),
   "PKG-LC-REOPEN-ADMIN": Object.freeze({
-    runtimeMappingLabel: "LocalCloseReviewer runtime role",
+    runtimeMappingLabel: "Local close reopen-admin roles",
     helperBundleCodes: freezeList(["close.reviewer"]),
-    runtimeRoleCodes: freezeList(["LocalCloseReviewer"]),
+    runtimeRoleCodes: freezeList([
+      "LocalCloseReopenAdminAuthority",
+      "LocalCloseReviewer",
+    ]),
     runtimeNotes: freezeList([
-      "Current LocalCloseReviewer is broader than this clean reopen/admin slice and still includes review plus final lock powers.",
+      "LocalCloseReopenAdminAuthority is the new narrow runtime role. LocalCloseReviewer remains a broader compatibility source until later role-split cleanup completes.",
     ]),
   }),
   "PKG-PC-READINESS": Object.freeze({
@@ -901,35 +1269,35 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     ]),
   }),
   "PKG-PC-CLOSE": Object.freeze({
-    runtimeMappingLabel: "Direct workflow package authority",
+    runtimeMappingLabel: "Period close runtime role",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList([]),
+    runtimeRoleCodes: freezeList(["PeriodCloseAuthority"]),
     runtimeNotes: freezeList([
-      "Assign this package directly through the workflow-package UX. GLPostingAuthority no longer implies period close.",
+      "PeriodCloseAuthority is the dedicated runtime role for final period close. GLPostingAuthority no longer implies period close.",
     ]),
   }),
   "PKG-PC-REOPEN": Object.freeze({
-    runtimeMappingLabel: "Direct workflow package authority",
+    runtimeMappingLabel: "Period reopen runtime role",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList([]),
+    runtimeRoleCodes: freezeList(["PeriodReopenAuthority"]),
     runtimeNotes: freezeList([
-      "Assign this package directly through the workflow-package UX when reopen authority is needed. Keep it separate from manual GL posting.",
+      "PeriodReopenAuthority is the dedicated runtime role for controlled reopen. Keep it separate from manual GL posting.",
     ]),
   }),
   "PKG-PC-ADMIN": Object.freeze({
-    runtimeMappingLabel: "Direct workflow package authority",
+    runtimeMappingLabel: "Period admin runtime role",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList([]),
+    runtimeRoleCodes: freezeList(["PeriodAdminAuthority"]),
     runtimeNotes: freezeList([
-      "Assign this package directly through the workflow-package UX for exceptional period governance. Closed-period journal posting now lives in a separate override package.",
+      "PeriodAdminAuthority is the dedicated runtime role for exceptional period governance. Closed-period journal posting stays separate.",
     ]),
   }),
   "PKG-PC-CLOSED-PERIOD-POST": Object.freeze({
-    runtimeMappingLabel: "Direct workflow package authority",
+    runtimeMappingLabel: "Closed-period journal override role",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList([]),
+    runtimeRoleCodes: freezeList(["ClosedPeriodJournalOverrideAuthority"]),
     runtimeNotes: freezeList([
-      "Assign this package directly through the workflow-package UX only to tightly controlled exception handlers who may post journals into soft-closed periods.",
+      "ClosedPeriodJournalOverrideAuthority is the dedicated runtime role for tightly controlled exception handlers who may post journals into soft-closed periods.",
     ]),
   }),
   "PKG-CON-VIEW": Object.freeze({
@@ -941,51 +1309,69 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     ]),
   }),
   "PKG-CON-PREPARE": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController runtime role",
+    runtimeMappingLabel: "Consolidation prepare roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["GroupReportingController"]),
+    runtimeRoleCodes: freezeList([
+      "ConsolidationRunPreparer",
+      "GroupReportingController",
+    ]),
     runtimeNotes: freezeList([
-      "Current GroupReportingController still bundles prepare, execute, adjust, eliminate, and finalize-style authority together.",
+      "ConsolidationRunPreparer is the new narrow runtime role. GroupReportingController remains a broader compatibility source during the transition.",
     ]),
   }),
   "PKG-CON-EXECUTE": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController runtime role",
+    runtimeMappingLabel: "Consolidation execute roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["GroupReportingController"]),
+    runtimeRoleCodes: freezeList([
+      "ConsolidationRunExecutor",
+      "GroupReportingController",
+    ]),
     runtimeNotes: freezeList([
-      "Current GroupReportingController is broader than this clean execute-run package.",
+      "ConsolidationRunExecutor is the new narrow runtime role. GroupReportingController remains a broader compatibility source during the transition.",
     ]),
   }),
   "PKG-CON-ADJUST": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController runtime role",
+    runtimeMappingLabel: "Consolidation adjustment roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["GroupReportingController"]),
+    runtimeRoleCodes: freezeList([
+      "ConsolidationAdjustmentPoster",
+      "GroupReportingController",
+    ]),
     runtimeNotes: freezeList([
-      "Current GroupReportingController is broader than this controlled adjustment package.",
+      "ConsolidationAdjustmentPoster is the new narrow runtime role. GroupReportingController remains a broader compatibility source during the transition.",
     ]),
   }),
   "PKG-CON-ELIM": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController runtime role",
+    runtimeMappingLabel: "Consolidation elimination roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["GroupReportingController"]),
+    runtimeRoleCodes: freezeList([
+      "ConsolidationEliminationPoster",
+      "GroupReportingController",
+    ]),
     runtimeNotes: freezeList([
-      "Current GroupReportingController is broader than this controlled elimination package.",
+      "ConsolidationEliminationPoster is the new narrow runtime role. GroupReportingController remains a broader compatibility source during the transition.",
     ]),
   }),
   "PKG-CON-FINALIZE": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController runtime role",
+    runtimeMappingLabel: "Consolidation finalizer roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["GroupReportingController"]),
+    runtimeRoleCodes: freezeList([
+      "ConsolidationFinalizer",
+      "GroupReportingController",
+    ]),
     runtimeNotes: freezeList([
-      "Current GroupReportingController remains broader than the clean finalize-only package target.",
+      "ConsolidationFinalizer is the new narrow runtime role. GroupReportingController remains a broader compatibility source during the transition.",
     ]),
   }),
   "PKG-CON-SETUP": Object.freeze({
-    runtimeMappingLabel: "GroupReportingController runtime role",
+    runtimeMappingLabel: "Consolidation setup roles",
     helperBundleCodes: freezeList([]),
-    runtimeRoleCodes: freezeList(["GroupReportingController"]),
+    runtimeRoleCodes: freezeList([
+      "ConsolidationSetupAdmin",
+      "GroupReportingController",
+    ]),
     runtimeNotes: freezeList([
-      "Current consolidation setup authority still rides on a broader runtime role instead of a dedicated setup-only package.",
+      "ConsolidationSetupAdmin is the new narrow runtime role. GroupReportingController remains a broader compatibility source during the transition.",
     ]),
   }),
 });
@@ -1699,6 +2085,24 @@ export function getWorkflowFamilyLabel(workflowFamily) {
 }
 
 /**
+ * Returns the role-native authority definitions for one governed workflow
+ * family. These definitions stay permission-first so explainability and
+ * diagnostics can reason directly from assigned roles instead of package
+ * coverage.
+ */
+export function listWorkflowAuthorityDefinitions(workflowFamily) {
+  const normalizedWorkflowFamily = normalizeText(workflowFamily).toUpperCase();
+  return cloneList(
+    WORKFLOW_AUTHORITY_CATALOG[normalizedWorkflowFamily] ||
+      WORKFLOW_AUTHORITY_CATALOG.CROSS_WORKFLOW
+  ).map((authority) => ({
+    ...authority,
+    requiredPermissionCodes: cloneList(authority?.requiredPermissionCodes),
+    anyPermissionCodes: cloneList(authority?.anyPermissionCodes),
+  }));
+}
+
+/**
  * Returns the UX metadata for one bootstrap handoff preset.
  */
 export function getBootstrapHandoffPresetEntry(presetCode) {
@@ -1826,6 +2230,14 @@ export function getRoleCatalogEntry(roleOrCode) {
     companionOnly: Boolean(base?.companionOnly),
     companionNote: base?.companionNote || "",
   };
+}
+
+/**
+ * Returns whether the supplied role exists only as a package-backed managed
+ * authority role that should stay hidden from role-native recommendations.
+ */
+export function isPackageAuthorityOnlyRole(roleOrCode) {
+  return Boolean(getRoleCatalogEntry(roleOrCode)?.packageAuthorityOnly);
 }
 
 /**

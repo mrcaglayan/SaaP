@@ -15,7 +15,10 @@ import { evaluateSoD } from "./sod.service.js";
 import { canManageSecurity } from "./systemRoles.service.js";
 import { getRequestDiagnostics } from "./approval.engine.service.js";
 import { evaluateWorkflowApprovalGate } from "./workflows.service.js";
-import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+  getApWorkflowRequiredPermissionCode,
+} from "../../../shared/cariDocumentWorkflowGovernance.js";
 
 const DIAGNOSTIC_LAYER_STATUS = Object.freeze({
   PASS: "PASS",
@@ -723,8 +726,6 @@ function normalizeWorkflowCoverageStep(step, index = 0) {
     stageScopeType: normalizeUpperText(
       step?.stageScopeType ?? step?.stage_scope_type
     ),
-    requiredPackageCode:
-      String(step?.requiredPackageCode ?? step?.required_package_code ?? "").trim() || null,
     requiredPermissionCode:
       String(
         step?.requiredPermissionCode ?? step?.required_permission_code ?? ""
@@ -752,16 +753,11 @@ function mapApCoverageActorType(actionCode) {
 
 function mapApCoveragePermissionCode(step) {
   const normalizedActionCode = normalizeUpperText(step?.actionCode);
-  if (normalizedActionCode === "DRAFT") {
-    return "cari.doc.update";
-  }
-  if (normalizedActionCode === "SUBMIT") {
-    return "cari.doc.submit";
-  }
-  if (normalizedActionCode === "POST") {
-    return "cari.doc.post";
-  }
-  return step?.requiredPermissionCode || "approvals.requests.approve";
+  return (
+    String(step?.requiredPermissionCode || "").trim() ||
+    getApWorkflowRequiredPermissionCode(normalizedActionCode) ||
+    null
+  );
 }
 
 function addHierarchyIds(targetSet, sourceSet) {
@@ -1042,8 +1038,6 @@ function buildWorkflowCoverageWarning(check) {
     stepNo: parsePositiveInt(check.stepNo) || null,
     actionCode: normalizeUpperText(check.actionCode),
     scopeType: normalizeUpperText(check.scopeType),
-    requiredPackageCode:
-      String(check.requiredPackageCode || "").trim() || null,
     permissionCode: String(check.permissionCode || "").trim() || null,
     status,
     minRequiredActors: Math.max(1, Number(check.minRequiredActors || 1) || 1),
@@ -1126,7 +1120,6 @@ export async function evaluateWorkflowCoverageDiagnostics(input, options = {}) {
     const enrichedCheck = {
       ...check,
       actionCode: step.actionCode || null,
-      requiredPackageCode: step.requiredPackageCode || null,
     };
     if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
       stepChecks.push(enrichedCheck);

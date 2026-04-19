@@ -21,6 +21,7 @@ import {
   AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
   CARI_DOCUMENT_WORKFLOW_TARGET_TYPE,
   findApWorkflowStepByNo,
+  getApWorkflowRequiredPermissionCode,
   listApWorkflowApproveSteps,
   listApWorkflowSteps,
   resolveApWorkflowEditableStep,
@@ -38,12 +39,6 @@ const AP_DOCUMENT_STEP_ACTION_CODES = Object.freeze([
   "APPROVE",
   "POST",
 ]);
-const AP_DOCUMENT_REQUIRED_PACKAGE_BY_ACTION = Object.freeze({
-  DRAFT: "PKG-AP-DRAFT-SUBMIT",
-  SUBMIT: "PKG-AP-DRAFT-SUBMIT",
-  APPROVE: "PKG-AP-APPROVE",
-  POST: "PKG-AP-POST",
-});
 
 const WORKFLOW_INSTANCE_TARGET_SCOPE_SELECT_SQL = `COALESCE(
       period_close_book.legal_entity_id,
@@ -233,11 +228,6 @@ function normalizeWorkflowStepPermissionCode(value) {
 
 function normalizeWorkflowStepActionCode(value) {
   const normalized = toUpper(value);
-  return normalized || null;
-}
-
-function normalizeWorkflowStepPackageCode(value) {
-  const normalized = String(value || "").trim().toUpperCase();
   return normalized || null;
 }
 
@@ -498,16 +488,17 @@ function normalizeWorkflowDefinitionStepWriteShape(step = {}) {
   const actionCode = normalizeWorkflowStepActionCode(
     step.actionCode ?? step.action_code ?? null
   );
+  const rawRequiredPermissionCode = normalizeWorkflowStepPermissionCode(
+    step.requiredPermissionCode ?? step.required_permission_code ?? null
+  );
   return {
     stepNo: Number(step.stepNo ?? step.step_no ?? 0),
     stageScopeType: toUpper(step.stageScopeType ?? step.stage_scope_type),
     actionCode,
-    requiredPermissionCode: normalizeWorkflowStepPermissionCode(
-      step.requiredPermissionCode ?? step.required_permission_code ?? null
-    ),
-    requiredPackageCode: normalizeWorkflowStepPackageCode(
-      step.requiredPackageCode ?? step.required_package_code ?? null
-    ),
+    requiredPermissionCode:
+      actionCode
+        ? rawRequiredPermissionCode || getApWorkflowRequiredPermissionCode(actionCode)
+        : rawRequiredPermissionCode,
     minApproverCount: Math.max(
       1,
       Number(step.minApproverCount ?? step.min_approver_count ?? 1) || 1
@@ -540,22 +531,16 @@ function assertApWorkflowDefinitionSteps(steps) {
     if (!AP_DOCUMENT_STEP_ACTION_CODES.includes(step.actionCode)) {
       throw badRequest(`steps[${index}].actionCode is required for AP_DOCUMENT_POSTING`);
     }
-    if (step.requiredPermissionCode) {
+    const expectedPermissionCode =
+      getApWorkflowRequiredPermissionCode(step.actionCode);
+    if (!step.requiredPermissionCode) {
       throw badRequest(
-        `steps[${index}].requiredPermissionCode must be null for AP_DOCUMENT_POSTING`
+        `steps[${index}].requiredPermissionCode is required for AP_DOCUMENT_POSTING`
       );
     }
-
-    const expectedPackageCode =
-      AP_DOCUMENT_REQUIRED_PACKAGE_BY_ACTION[step.actionCode] || null;
-    if (!step.requiredPackageCode) {
+    if (step.requiredPermissionCode !== expectedPermissionCode) {
       throw badRequest(
-        `steps[${index}].requiredPackageCode is required for AP_DOCUMENT_POSTING`
-      );
-    }
-    if (step.requiredPackageCode !== expectedPackageCode) {
-      throw badRequest(
-        `steps[${index}].requiredPackageCode must be ${expectedPackageCode} for action ${step.actionCode}`
+        `steps[${index}].requiredPermissionCode must be ${expectedPermissionCode} for action ${step.actionCode}`
       );
     }
     if (step.actionCode !== "APPROVE" && step.minApproverCount > 1) {
@@ -637,11 +622,6 @@ function normalizeWorkflowDefinitionStepsForProcessType(processType, steps = [])
         `steps[${index}].actionCode is only supported for AP_DOCUMENT_POSTING`
       );
     }
-    if (step.requiredPackageCode) {
-      throw badRequest(
-        `steps[${index}].requiredPackageCode is only supported for AP_DOCUMENT_POSTING`
-      );
-    }
   });
 
   return normalizedSteps;
@@ -653,7 +633,6 @@ function mapWorkflowDefinitionStepToPolicySnapshot(step) {
     step_no: normalized.stepNo,
     action_code: normalized.actionCode,
     required_permission_code: normalized.requiredPermissionCode,
-    required_package_code: normalized.requiredPackageCode,
     scope_resolution_mode: mapStageScopeTypeToUnifiedScopeResolutionMode(
       normalized.stageScopeType
     ),
@@ -805,7 +784,6 @@ function mapWorkflowDefinitionStepRow(row) {
     actionCode: normalized.actionCode,
     stageScopeType: normalized.stageScopeType,
     requiredPermissionCode: normalized.requiredPermissionCode,
-    requiredPackageCode: normalized.requiredPackageCode,
     minApproverCount: normalized.minApproverCount,
     allowSelfApprove: normalized.allowSelfApprove,
     escalationAfterHours: normalized.escalationAfterHours,
@@ -4213,25 +4191,23 @@ export async function replaceWorkflowDefinitionSteps({ input }) {
     for (const step of normalizedSteps) {
       // eslint-disable-next-line no-await-in-loop
       await tx.query(
-        `INSERT INTO workflow_definition_steps (
-           workflow_definition_id,
-           step_no,
-           action_code,
-           stage_scope_type,
-           required_permission_code,
-           required_package_code,
-           min_approver_count,
-           allow_self_approve,
-           escalation_after_hours
-          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         `INSERT INTO workflow_definition_steps (
+            workflow_definition_id,
+            step_no,
+            action_code,
+            stage_scope_type,
+            required_permission_code,
+            min_approver_count,
+            allow_self_approve,
+            escalation_after_hours
+           )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           definitionId,
           step.stepNo,
           step.actionCode,
           step.stageScopeType,
           step.requiredPermissionCode,
-          step.requiredPackageCode,
           step.minApproverCount,
           step.allowSelfApprove ? 1 : 0,
           step.escalationAfterHours,

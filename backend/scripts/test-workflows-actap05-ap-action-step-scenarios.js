@@ -15,7 +15,10 @@ import {
   replaceWorkflowDefinitionSteps,
   resolveWorkflowDecisionPermissionAccess,
 } from "../src/services/workflows.service.js";
-import { AP_DOCUMENT_WORKFLOW_PROCESS_TYPE } from "../../shared/cariDocumentWorkflowGovernance.js";
+import {
+  AP_DOCUMENT_WORKFLOW_PROCESS_TYPE,
+  getApWorkflowRequiredPermissionCode,
+} from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -429,13 +432,8 @@ function makeApStep(stepNo, actionCode, stageScopeType) {
     stepNo,
     actionCode: normalizedActionCode,
     stageScopeType: normalizeUpper(stageScopeType),
-    requiredPackageCode:
-      normalizedActionCode === "APPROVE"
-        ? "PKG-AP-APPROVE"
-        : normalizedActionCode === "POST"
-          ? "PKG-AP-POST"
-          : "PKG-AP-DRAFT-SUBMIT",
-    requiredPermissionCode: null,
+    requiredPermissionCode:
+      getApWorkflowRequiredPermissionCode(normalizedActionCode) || null,
     minApproverCount: 1,
     allowSelfApprove: false,
   };

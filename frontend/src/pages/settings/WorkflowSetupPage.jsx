@@ -21,6 +21,7 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
+  listWorkflowAuthorityDefinitions,
   listWorkflowPackageCatalogEntries,
   listWorkflowPresetCatalogEntries,
 } from "../security/roleCatalog.js";
@@ -56,8 +57,8 @@ import {
   buildStepPreview,
   buildWorkflowStepValidationModel,
   buildWorkflowPreview,
-  getApWorkflowRequiredPackageCode,
-  listWorkflowStepPackageOptions,
+  getApWorkflowRequiredPermissionCode,
+  listWorkflowStepAuthorityOptions,
   normalizeStepDraft,
   PROCESS_TYPES,
   safeParseJsonArray,
@@ -319,20 +320,25 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
   );
   const workflowPresetEntries = useMemo(() => listWorkflowPresetCatalogEntries(), []);
   const workflowPackageEntries = useMemo(() => listWorkflowPackageCatalogEntries(), []);
-  const workflowStepPackageOptions = useMemo(
+  const workflowAuthorityEntries = useMemo(
+    () => listWorkflowAuthorityDefinitions(selectedProcessType),
+    [selectedProcessType]
+  );
+  const workflowStepAuthorityOptions = useMemo(
     () =>
-      listWorkflowStepPackageOptions({
+      listWorkflowStepAuthorityOptions({
         processType: selectedProcessType,
-        workflowPackageEntries,
+        workflowAuthorityEntries,
       }),
-    [selectedProcessType, workflowPackageEntries]
+    [selectedProcessType, workflowAuthorityEntries]
   );
   const workflowStepCatalogContext = useMemo(
     () => ({
+      workflowAuthorityEntries,
       workflowPackageEntries,
       workflowPresetEntries,
     }),
-    [workflowPackageEntries, workflowPresetEntries]
+    [workflowAuthorityEntries, workflowPackageEntries, workflowPresetEntries]
   );
   const workflowPresetOptions = useMemo(
     () =>
@@ -357,9 +363,10 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       buildWorkflowPresetPreviewModel({
         presetEntry: selectedWorkflowPreset,
         stepScopeLabels: text.stepScopeLabels,
+        workflowAuthorityEntries,
         l,
       }),
-    [selectedWorkflowPreset, text.stepScopeLabels, l]
+    [selectedWorkflowPreset, text.stepScopeLabels, workflowAuthorityEntries, l]
   );
   const workflowPresetComparison = useMemo(
     () =>
@@ -367,9 +374,10 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
         presetEntry: selectedWorkflowPreset,
         stepDrafts,
         stepScopeLabels: text.stepScopeLabels,
+        workflowAuthorityEntries,
         l,
       }),
-    [selectedWorkflowPreset, stepDrafts, text.stepScopeLabels, l]
+    [selectedWorkflowPreset, stepDrafts, text.stepScopeLabels, workflowAuthorityEntries, l]
   );
   const apStepBuilderPresetProps = isApWorkflowProcess
     ? {
@@ -406,6 +414,7 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       buildWorkflowStepValidationModel({
         stepDrafts,
         processType: selectedProcessType,
+        workflowAuthorityEntries,
         workflowPackageEntries,
         coverageDiagnostics,
         stepScopeLabels: text.stepScopeLabels,
@@ -416,6 +425,7 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       l,
       selectedProcessType,
       stepDrafts,
+      workflowAuthorityEntries,
       text.stepScopeLabels,
       workflowPackageEntries,
     ]
@@ -1090,11 +1100,17 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
 
   function onStepFieldChange(index, field, value) {
     const normalizedFieldValue =
-      field === "requiredPackageCode" ||
+      field === "requiredAuthorityCode" ||
       field === "actionCode" ||
       field === "stageScopeType"
         ? String(value || "").trim().toUpperCase()
         : value;
+    const selectedAuthority =
+      field === "requiredAuthorityCode"
+        ? workflowStepAuthorityOptions.find(
+            (entry) => String(entry?.code || "").trim().toUpperCase() === normalizedFieldValue
+          ) || null
+        : null;
     applyStepDrafts(
       stepDrafts.map((step, stepIndex) =>
         stepIndex !== index
@@ -1103,20 +1119,21 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
             ? {
                 ...step,
                 actionCode: normalizedFieldValue,
-                requiredPackageCode: getApWorkflowRequiredPackageCode(normalizedFieldValue),
-                requiredPackageLabel: "",
-                requiredPermissionCode: "",
+                requiredAuthorityCode: "",
+                requiredAuthorityLabel: "",
+                requiredPermissionCode:
+                  getApWorkflowRequiredPermissionCode(normalizedFieldValue),
                 actionLabel: "",
                 minApproverCount: normalizedFieldValue === "APPROVE" ? step.minApproverCount : "1",
                 allowSelfApprove:
                   normalizedFieldValue === "APPROVE" ? Boolean(step.allowSelfApprove) : false,
               }
-          : field === "requiredPackageCode"
+          : field === "requiredAuthorityCode"
             ? {
                 ...step,
-                requiredPackageCode: normalizedFieldValue,
-                requiredPackageLabel: "",
-                requiredPermissionCode: "",
+                requiredAuthorityCode: normalizedFieldValue,
+                requiredAuthorityLabel: selectedAuthority?.displayName || "",
+                requiredPermissionCode: selectedAuthority?.primaryPermissionCode || "",
                 actionLabel: "",
               }
             : field === "stageScopeType"
@@ -1146,7 +1163,7 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       const nextDraft = normalizeStepDraft(
         {
           actionCode: "APPROVE",
-          requiredPackageCode: getApWorkflowRequiredPackageCode("APPROVE"),
+          requiredPermissionCode: getApWorkflowRequiredPermissionCode("APPROVE"),
         },
         nextStepNo,
         selectedProcessType,
@@ -1181,7 +1198,10 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
         ...stepDrafts,
         normalizeStepDraft(
           {
-            requiredPackageCode: workflowStepPackageOptions[0]?.code || "",
+            requiredAuthorityCode: workflowStepAuthorityOptions[0]?.code || "",
+            requiredAuthorityLabel: workflowStepAuthorityOptions[0]?.displayName || "",
+            requiredPermissionCode:
+              workflowStepAuthorityOptions[0]?.primaryPermissionCode || "",
           },
           (Array.isArray(stepDrafts) ? stepDrafts.length : 0) + 1,
           selectedProcessType,
@@ -1668,7 +1688,7 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
               stepDrafts={stepDrafts}
               stepScopeTypes={STEP_SCOPE_TYPES}
               stepScopeLabels={text.stepScopeLabels}
-              workflowStepPackageOptions={workflowStepPackageOptions}
+              workflowStepAuthorityOptions={workflowStepAuthorityOptions}
               onStepFieldChange={onStepFieldChange}
               onAddStep={onAddStep}
               onRemoveStep={onRemoveStep}
@@ -1831,8 +1851,8 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
               ),
           },
           {
-            to: "/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages",
-            label: "Open workflow packages",
+            to: "/app/ayarlar/security-admin/catalog?tab=access-model",
+            label: "Open access model catalog",
           },
         ];
 
@@ -2065,8 +2085,8 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
                 {l("Open step builder", "Adim kurucusunu ac")}
               </Button>
               <Button asChild type="button" variant="outline">
-                <Link to="/app/ayarlar/security-admin/catalog?tab=access-model&modelTab=workflow_packages">
-                  {l("Review workflow packages", "Workflow paketlerini incele")}
+                <Link to="/app/ayarlar/security-admin/catalog?tab=access-model">
+                  {l("Review access model catalog", "Erisim model katalogunu incele")}
                 </Link>
               </Button>
             </CardContent>

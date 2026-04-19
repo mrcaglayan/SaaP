@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildWorkflowExplainabilityPreviewModel,
 } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
+import { getApWorkflowRequiredPermissionCode } from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function l(en) {
   return en;
@@ -59,8 +60,8 @@ async function main() {
         stepNo: 1,
         actionLabel: "Prepare & Submit",
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-PREPARE",
-        requiredPackageLabel: "Local Close Pack / Prepare & Submit",
+        requiredPermissionCode: "ouclose.submit",
+        requiredAuthorityLabel: "Prepare Local Close",
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: "",
@@ -69,8 +70,8 @@ async function main() {
         stepNo: 2,
         actionLabel: "Approve & Lock",
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-LC-APPROVE-LOCK",
-        requiredPackageLabel: "Local Close Pack / Approve & Lock",
+        requiredPermissionCode: "ouclose.lock",
+        requiredAuthorityLabel: "Approve and lock Local Close",
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: "",
@@ -87,10 +88,10 @@ async function main() {
   );
   assert.equal(
     localClosePreview.entries[0].lineText.includes(
-      "Step 1: Local Close Pack / Prepare & Submit at Legal Entity scope - usually In-scope package holders"
+      "Step 1: Prepare Local Close at Legal Entity scope - usually In-scope authority holders"
     ),
     true,
-    "UI-3D should explain the package, scope, and package-holder audience for local-close stages"
+    "UI-3D should explain the authority, scope, and in-scope audience for local-close stages"
   );
 
   const apPreview = buildWorkflowExplainabilityPreviewModel({
@@ -101,8 +102,7 @@ async function main() {
         actionCode: "APPROVE",
         actionLabel: "Approve",
         stageScopeType: "LEGAL_ENTITY",
-        requiredPackageCode: "PKG-AP-APPROVE",
-        requiredPackageLabel: "AP Documents / Approve",
+        requiredPermissionCode: getApWorkflowRequiredPermissionCode("APPROVE"),
         minApproverCount: 1,
         allowSelfApprove: false,
         escalationAfterHours: "",
@@ -119,10 +119,10 @@ async function main() {
   );
   assert.equal(
     apPreview.entries[0].lineText.includes(
-      "Step 1: AP Documents / Approve at Legal Entity scope - usually In-scope AP approvers"
+      "Step 1: approvals.requests.approve at Legal Entity scope - usually In-scope AP approvers"
     ),
     true,
-    "UI-3D should explain the explicit AP package and scope in business language"
+    "UI-3D should explain the explicit AP permission and scope in business language"
   );
   assert.equal(
     apPreview.notes.length > 0,

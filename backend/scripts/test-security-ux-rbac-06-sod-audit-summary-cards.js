@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildAssignmentAuditSummary } from "../../frontend/src/pages/security/userAssignmentAuditSummary.js";
+import {
+  buildAssignmentAuditSummary,
+  buildCandidateRoleConflictWarnings,
+} from "../../frontend/src/pages/security/userAssignmentAuditSummary.js";
 
 function formatTemplate(template, values) {
   return String(template || "").replace(/\{\{\s*([.\w]+)\s*\}\}/g, (_, key) => {
@@ -15,6 +18,28 @@ function l(english, _turkish, values) {
   return formatTemplate(english, values);
 }
 
+function buildRolesByCode() {
+  return new Map(
+    [
+      {
+        code: "BranchOperator",
+        displayName: "Branch Accountant",
+        permissionCodes: ["cari.doc.submit", "org.fiscal_period.read", "gl.book.read"],
+      },
+      {
+        code: "APApprover",
+        displayName: "AP Approver",
+        permissionCodes: ["approvals.requests.approve"],
+      },
+      {
+        code: "CountryAPPoster",
+        displayName: "Country AP Poster",
+        permissionCodes: ["cari.doc.post", "cari.doc.reverse"],
+      },
+    ].map((role) => [role.code, role])
+  );
+}
+
 async function main() {
   const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const assignmentsPageSource = await readFile(
@@ -25,100 +50,83 @@ async function main() {
     path.resolve(rootDir, "frontend/src/pages/security/UserAssignmentWorkbench.jsx"),
     "utf8"
   );
+  const rolesByCode = buildRolesByCode();
 
   const summary = buildAssignmentAuditSummary({
-    businessRoleAssignments: [],
-    workflowPackageAssignments: [
-      {
-        assignmentId: 12,
-        userId: 7,
-        roleId: 601,
-        roleCode: "WORKFLOW_PACKAGE__PKG_AP_DRAFT_SUBMIT",
-        packageCode: "PKG-AP-DRAFT-SUBMIT",
-        packageLabel: "AP Documents / Draft & Submit",
-        scopeType: "OPERATING_UNIT",
-        scopeId: 8,
-        scopeLabel: "KBL - Kabul Branch",
-        createdAt: "2026-02-01T09:05:00Z",
-        effectiveFrom: "2026-02-01",
-        effectiveTo: "",
-        status: "ACTIVE",
-        effect: "ALLOW",
-        sourceType: "DIRECT",
-        sourceTypeLabel: "Direct / custom",
-      },
-      {
-        assignmentId: 13,
-        userId: 7,
-        roleId: 602,
-        roleCode: "WORKFLOW_PACKAGE__PKG_AP_APPROVE",
-        packageCode: "PKG-AP-APPROVE",
-        packageLabel: "AP Documents / Approve",
-        scopeType: "OPERATING_UNIT",
-        scopeId: 8,
-        scopeLabel: "KBL - Kabul Branch",
-        createdAt: "2026-02-01T09:10:00Z",
-        effectiveFrom: "2026-02-01",
-        effectiveTo: "",
-        status: "ACTIVE",
-        effect: "ALLOW",
-        sourceType: "DIRECT",
-        sourceTypeLabel: "Direct / custom",
-      },
-    ],
+    workflowPackageAssignments: [],
     userBundles: [
       {
         id: "bundle-1",
         status: "ACTIVE",
         effect: "ALLOW",
-        scopeType: "GROUP",
-        scopeId: 2,
-        scopeLabel: "GRP - Holding",
-        roleCodes: ["GroupController"],
-        packageCodes: [],
+        scopeType: "OPERATING_UNIT",
+        scopeId: 8,
+        scopeLabel: "KBL - Kabul Branch",
+        roleCodes: ["BranchOperator", "APApprover"],
+        rows: [],
       },
     ],
     auditRows: [],
     auditReadable: false,
     l,
+    rolesByCode,
   });
 
-  const packageWarning = summary.sodWarnings.find((warning) =>
+  const overlapWarning = summary.sodWarnings.find((warning) =>
     warning.title.includes("AP maker and reviewer overlap")
   );
-  const roleWarning = summary.sodWarnings.find((warning) =>
-    warning.title.includes("Legacy group controller remains broad")
-  );
-
-  assert.equal(packageWarning?.severity, "warn", "package-level SoD warnings should keep severity");
+  assert.equal(overlapWarning?.severity, "warn", "role-native SoD warnings should keep severity");
   assert.deepEqual(
-    packageWarning?.packageLabels,
-    ["AP Documents / Approve", "AP Documents / Draft & Submit"],
-    "package-level SoD warnings should expose the affected package labels"
+    overlapWarning?.matchedRoleCodes,
+    ["APApprover", "BranchOperator"],
+    "role-native SoD warnings should expose the overlapping runtime roles"
   );
-  assert(
-    Array.isArray(roleWarning?.roleLabels) && roleWarning.roleLabels.length > 0,
-    "runtime-role SoD warnings should expose affected role labels"
+  assert.deepEqual(
+    overlapWarning?.permissionFamilyLabels,
+    ["AP approve", "AP draft & submit"],
+    "role-native SoD warnings should expose the overlapping authority families"
+  );
+
+  const candidateWarnings = buildCandidateRoleConflictWarnings({
+    candidateRoleCode: "CountryAPPoster",
+    scopeType: "OPERATING_UNIT",
+    scopeId: 8,
+    scopeLabel: "KBL - Kabul Branch",
+    userBundles: [
+      {
+        id: "bundle-2",
+        status: "ACTIVE",
+        effect: "ALLOW",
+        scopeType: "OPERATING_UNIT",
+        scopeId: 8,
+        scopeLabel: "KBL - Kabul Branch",
+        roleCodes: ["APApprover"],
+      },
+    ],
+    rolesByCode,
+    l,
+  });
+  assert.equal(candidateWarnings.length, 1, "candidate-role diagnostics should surface one AP reviewer/poster overlap");
+  assert.deepEqual(
+    candidateWarnings[0]?.candidateRoleLabels,
+    ["Country AP Poster"],
+    "candidate-role diagnostics should name the blocked role"
   );
 
   assert(
-    assignmentsPageSource.includes("Audit & SoD summary") &&
-      assignmentsPageSource.includes("generateComplianceAuditReport") &&
-      assignmentsPageSource.includes('reportType: "SOD_ANALYSIS"') &&
-      assignmentsPageSource.includes("BLOCK conflicts") &&
-      assignmentsPageSource.includes("WARN conflicts") &&
-      assignmentsPageSource.includes("Open compliance reports") &&
-      assignmentsPageSource.includes("Open RBAC audit logs") &&
-      assignmentsPageSource.includes("Open access debugger") &&
-      assignmentsPageSource.includes("<AuditSodSummarySurface"),
-    "UX-RBAC-06 should add the SoD summary surface, tenant snapshot fetch, and handoff links"
+    assignmentsPageSource.includes("buildCandidateRoleConflictWarnings") &&
+      assignmentsPageSource.includes("Overlapping authorities") &&
+      assignmentsPageSource.includes("Candidate blocked roles") &&
+      assignmentsPageSource.includes("function AuditSodSummarySurface"),
+    "UX-RBAC-06 should keep the summary surface and show role-native overlap evidence"
   );
 
   assert(
-    workbenchSource.includes("Affected packages") &&
-      workbenchSource.includes("Affected roles") &&
-      workbenchSource.includes("warning.severity"),
-    "UX-RBAC-06 should keep affected-package and affected-role detail visible inside the detailed workbench warnings"
+    workbenchSource.includes("Current overlap evidence") &&
+      workbenchSource.includes("Candidate blocked roles") &&
+      workbenchSource.includes("warning.permissionFamilyLabels") &&
+      workbenchSource.includes("item.kindLabel"),
+    "UX-RBAC-06 should keep role-native warning evidence and audit item rendering in the workbench"
   );
 
   console.log("test-security-ux-rbac-06-sod-audit-summary-cards passed");

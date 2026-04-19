@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  listWorkflowAuthorityDefinitions,
   listWorkflowPackageCatalogEntries,
   listWorkflowPresetCatalogEntries,
 } from "../../frontend/src/pages/security/roleCatalog.js";
@@ -10,8 +11,9 @@ import {
   buildStepDrafts,
   buildStepPreview,
   buildWorkflowStepValidationModel,
-  listWorkflowStepPackageOptions,
+  listWorkflowStepAuthorityOptions,
 } from "../../frontend/src/pages/settings/workflows/utils/workflowSetupHelpers.js";
+import { getApWorkflowRequiredPermissionCode } from "../../shared/cariDocumentWorkflowGovernance.js";
 
 function l(en) {
   return en;
@@ -40,7 +42,13 @@ async function main() {
 
   const workflowPackageEntries = listWorkflowPackageCatalogEntries();
   const workflowPresetEntries = listWorkflowPresetCatalogEntries();
-  const workflowStepCatalogContext = {
+  const localCloseCatalogContext = {
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("LOCAL_CLOSE_PACK"),
+    workflowPackageEntries,
+    workflowPresetEntries,
+  };
+  const apCatalogContext = {
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("AP_DOCUMENT_POSTING"),
     workflowPackageEntries,
     workflowPresetEntries,
   };
@@ -56,7 +64,7 @@ async function main() {
         allowSelfApprove: false,
       },
     ],
-    workflowStepCatalogContext
+    localCloseCatalogContext
   );
   const apDrafts = buildStepDrafts(
     "AP_DOCUMENT_POSTING",
@@ -65,17 +73,16 @@ async function main() {
         stepNo: 1,
         actionCode: "SUBMIT",
         stageScopeType: "COUNTRY",
-        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        requiredPermissionCode: null,
+        requiredPermissionCode: getApWorkflowRequiredPermissionCode("SUBMIT"),
         minApproverCount: 1,
         allowSelfApprove: false,
       },
     ],
-    workflowStepCatalogContext
+    apCatalogContext
   );
-  const consolidationPackageOptions = listWorkflowStepPackageOptions({
+  const consolidationAuthorityOptions = listWorkflowStepAuthorityOptions({
     processType: "CONSOLIDATION_RUN",
-    workflowPackageEntries,
+    workflowAuthorityEntries: listWorkflowAuthorityDefinitions("CONSOLIDATION_RUN"),
   });
 
   assert.equal(
@@ -90,8 +97,13 @@ async function main() {
   );
   assert.equal(
     apDrafts[0].requiredPackageCode,
-    "PKG-AP-DRAFT-SUBMIT",
-    "UI-3B should preserve the explicit AP action/package binding in the step builder"
+    "",
+    "UI-3B should keep AP drafts package-free once the action/permission contract is normalized"
+  );
+  assert.equal(
+    apDrafts[0].requiredPermissionCode,
+    getApWorkflowRequiredPermissionCode("SUBMIT"),
+    "UI-3B should preserve the explicit AP action/permission binding in the step builder"
   );
   assert.equal(
     apDrafts[0].actionCode,
@@ -109,20 +121,20 @@ async function main() {
         GROUP: "Group",
       },
       l
-    ).includes("Local Close Pack / Review"),
+    ).includes("Review Local Close"),
     true,
-    "UI-3B step previews should speak in terms of workflow packages instead of raw permission codes"
+    "UI-3B step previews should speak in terms of workflow authorities instead of raw permission codes"
   );
 
   assert.equal(
-    consolidationPackageOptions.some((entry) => entry.code === "PKG-CON-VIEW"),
+    consolidationAuthorityOptions.some((entry) => entry.code === "CONSOLIDATION_VIEW"),
     false,
-    "UI-3B should exclude view-only workflow packages from the editable step-builder options"
+    "UI-3B should exclude view-only workflow authorities from the editable step-builder options"
   );
   assert.equal(
-    consolidationPackageOptions.some((entry) => entry.code === "PKG-CON-FINALIZE"),
+    consolidationAuthorityOptions.some((entry) => entry.code === "CONSOLIDATION_FINALIZE"),
     true,
-    "UI-3B should include actionable family packages in the editable step-builder options"
+    "UI-3B should include actionable family authorities in the editable step-builder options"
   );
 
   const invalidApValidation = buildWorkflowStepValidationModel({
@@ -132,8 +144,7 @@ async function main() {
         stepNo: 1,
         actionCode: "DRAFT",
         stageScopeType: "OPERATING_UNIT",
-        requiredPackageCode: "PKG-AP-DRAFT-SUBMIT",
-        requiredPermissionCode: null,
+        requiredPermissionCode: getApWorkflowRequiredPermissionCode("DRAFT"),
         minApproverCount: 1,
         allowSelfApprove: false,
       },
@@ -141,8 +152,7 @@ async function main() {
         stepNo: 2,
         actionCode: "POST",
         stageScopeType: "COUNTRY",
-        requiredPackageCode: "PKG-AP-POST",
-        requiredPermissionCode: null,
+        requiredPermissionCode: getApWorkflowRequiredPermissionCode("POST"),
         minApproverCount: 1,
         allowSelfApprove: false,
       },
@@ -164,29 +174,29 @@ async function main() {
   );
 
   assert(
-    workflowSetupPageSource.includes("listWorkflowPackageCatalogEntries") &&
-      workflowSetupPageSource.includes("workflowStepPackageOptions") &&
+    workflowSetupPageSource.includes("listWorkflowAuthorityDefinitions") &&
+      workflowSetupPageSource.includes("workflowStepAuthorityOptions") &&
       workflowSetupPageSource.includes("workflowStepCatalogContext"),
-    "WorkflowSetupPage should load package and preset catalog metadata for the step builder"
+    "WorkflowSetupPage should load authority and preset catalog metadata for the step builder"
   );
 
   assert(
-    workflowStepsBuilderSource.includes("workflowStepPackageOptions") &&
+    workflowStepsBuilderSource.includes("workflowStepAuthorityOptions") &&
       workflowStepsBuilderSource.includes(
-        "Each step now binds to a workflow package at a specific organizational scope."
+        "Each step now binds to one workflow authority at a specific organizational scope."
       ),
-    "WorkflowStepsBuilderStep should state and pass the package-first step-builder model"
+    "WorkflowStepsBuilderStep should state and pass the authority-first step-builder model"
   );
 
   assert(
-    approvalStepCardSource.includes("workflowStepPackageOptions") &&
-      approvalStepCardSource.includes("getApWorkflowRequiredPackageCode") &&
+    approvalStepCardSource.includes("workflowStepAuthorityOptions") &&
+      approvalStepCardSource.includes("getApWorkflowRequiredPermissionCode") &&
       approvalStepCardSource.includes('l("Authority source", "Yetki kaynagi")') &&
       approvalStepCardSource.includes(
-        "This AP package is bound by the selected action and resolves authority at the chosen step scope."
+        "This AP action resolves to one required permission at the chosen step scope."
       ) &&
-      !approvalStepCardSource.includes('l("Required reviewer permission", "Gerekli inceleyen yetkisi")'),
-    "ApprovalStepCard should keep the package-first row editor and remove the raw reviewer-permission field"
+      approvalStepCardSource.includes("Authority-backed"),
+    "ApprovalStepCard should keep AP rows permission-backed while non-AP rows use authority selectors"
   );
 
   console.log("test-security-ui3b-step-builder-refactor passed");
