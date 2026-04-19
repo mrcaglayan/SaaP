@@ -59,10 +59,7 @@ const MODEL_CATEGORY_LABELS = Object.freeze({
 const ROLE_CATALOG_CODE_ALIASES = Object.freeze({
   CountryAPPoster: "CountryAPController",
 });
-const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({
-  EntitySetupManager: "EntityAPController",
-  CountryFinanceSetupManager: "CountryAPApprover",
-});
+const BOOTSTRAP_HANDOFF_PRESET_CODE_ALIASES = Object.freeze({});
 export const WORKFLOW_PACKAGE_ASSIGNMENT_ROLE_PREFIX = "WORKFLOW_PACKAGE__";
 const ROLE_CATALOG = Object.freeze({
   SecurityAdmin: {
@@ -179,13 +176,12 @@ const ROLE_CATALOG = Object.freeze({
   GLPostingAuthority: {
     category: "composable",
     summary:
-      "Companion authority for manual journal post, reversal, and period close. Pair it with a read-bearing accounting role.",
-    capabilities: ["Manual posting", "Manual reversal", "Period close"],
+      "Companion authority for manual journal post and reversal without period-close governance. Pair it with a read-bearing accounting role.",
+    capabilities: ["Manual journal posting", "Manual reversal", "Journal control"],
     recommendedScopes: ["COUNTRY", "LEGAL_ENTITY"],
     companionOnly: true,
     companionNote:
-      "Pair with GLOperator or another read-bearing accounting role at the same or broader scope.",
-    workflowFamily: "PERIOD_CLOSE",
+      "Pair with GLOperator or another read-bearing accounting role at the same or broader scope. Assign period close through workflow packages separately.",
     sortOrder: 250,
   },
   ShareholderCapitalOperator: {
@@ -625,7 +621,7 @@ const WORKFLOW_PACKAGE_CATALOG = Object.freeze({
   "PKG-PC-ADMIN": Object.freeze({
     displayName: "Period Close / Admin",
     description:
-      "Administrative authority package for period close overrides and operational controls. Combines close, reopen, and admin permissions for power-admin use cases.",
+      "Administrative authority package for period close overrides and operational controls without exceptional journal posting into soft-closed periods.",
     category: "core_action",
     defaultScope: "COUNTRY",
     allowedScopes: freezeList(["COUNTRY", "GROUP"]),
@@ -637,10 +633,27 @@ const WORKFLOW_PACKAGE_CATALOG = Object.freeze({
       "gl.period.close",
       "gl.period.reopen",
       "gl.period.admin",
-      "gl.journal.post_to_closed_period",
     ]),
     workflowFamily: "PERIOD_CLOSE",
     sortOrder: 340,
+  }),
+  "PKG-PC-CLOSED-PERIOD-POST": Object.freeze({
+    displayName: "Period Close / Closed-Period Journal Override",
+    description:
+      "Exceptional package for posting approved manual journals into soft-closed periods after finance-governance signoff. Keep it separate from routine posting and period-close duties.",
+    category: "core_action",
+    defaultScope: "COUNTRY",
+    allowedScopes: freezeList(["LEGAL_ENTITY", "COUNTRY", "GROUP"]),
+    permissionCodes: freezeList([
+      "org.fiscal_period.read",
+      "gl.book.read",
+      "gl.journal.read",
+      "gl.trial_balance.read",
+      "gl.journal.post",
+      "gl.journal.post_to_closed_period",
+    ]),
+    workflowFamily: "PERIOD_CLOSE",
+    sortOrder: 350,
   }),
   "PKG-CON-VIEW": Object.freeze({
     displayName: "Consolidation / View",
@@ -759,6 +772,7 @@ const HELPER_BUNDLE_LABELS = Object.freeze({
   "close.reviewer": "Close reviewer bundle (close.reviewer)",
   "gl.readonly": "GL read-only bundle (gl.readonly)",
   "gl.posting": "GL posting bundle (gl.posting)",
+  "gl.period_governance": "GL period governance bundle (gl.period_governance)",
 });
 // These runtime mappings are explainability-only. They document how the
 // package catalog is sourced from today's seeded roles and helper bundles
@@ -880,35 +894,42 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     runtimeRoleCodes: freezeList([
       "BranchOperator",
       "GLOperator",
-      "GLPostingAuthority",
       "GroupReportingController",
     ]),
     runtimeNotes: freezeList([
-      "Today this readiness step can be satisfied by broader seeded accounting roles such as BranchOperator, GLOperator, GLPostingAuthority, or GroupReportingController at the selected scope. That is broader than a dedicated readiness-only reviewer role, but it is still a valid runtime mapping.",
+      "Today this readiness step can be satisfied by broader seeded accounting roles such as BranchOperator, GLOperator, or GroupReportingController at the selected scope. That is broader than a dedicated readiness-only reviewer role, but it is still a valid runtime mapping.",
     ]),
   }),
   "PKG-PC-CLOSE": Object.freeze({
-    runtimeMappingLabel: "GLPostingAuthority companion role",
-    helperBundleCodes: freezeList(["gl.posting"]),
-    runtimeRoleCodes: freezeList(["GLPostingAuthority"]),
+    runtimeMappingLabel: "Direct workflow package authority",
+    helperBundleCodes: freezeList([]),
+    runtimeRoleCodes: freezeList([]),
     runtimeNotes: freezeList([
-      "Today this close step is satisfied by GLPostingAuthority at the selected scope. That role also carries broader manual-posting authority, so it is wider than a close-only governance role, but it is still the current valid runtime mapping.",
+      "Assign this package directly through the workflow-package UX. GLPostingAuthority no longer implies period close.",
     ]),
   }),
   "PKG-PC-REOPEN": Object.freeze({
-    runtimeMappingLabel: "GLPostingAuthority period reopen authority",
-    helperBundleCodes: freezeList(["gl.posting", "gl.period_governance"]),
-    runtimeRoleCodes: freezeList(["GLPostingAuthority"]),
+    runtimeMappingLabel: "Direct workflow package authority",
+    helperBundleCodes: freezeList([]),
+    runtimeRoleCodes: freezeList([]),
     runtimeNotes: freezeList([
-      "Period reopen was previously guarded by the same gl.period.close permission. The new gl.period.reopen permission separates reopen authority from close authority.",
+      "Assign this package directly through the workflow-package UX when reopen authority is needed. Keep it separate from manual GL posting.",
     ]),
   }),
   "PKG-PC-ADMIN": Object.freeze({
-    runtimeMappingLabel: "GLPostingAuthority period admin authority",
-    helperBundleCodes: freezeList(["gl.period_governance"]),
-    runtimeRoleCodes: freezeList(["GLPostingAuthority"]),
+    runtimeMappingLabel: "Direct workflow package authority",
+    helperBundleCodes: freezeList([]),
+    runtimeRoleCodes: freezeList([]),
     runtimeNotes: freezeList([
-      "The gl.period.admin permission keeps period administration separate from close execution.",
+      "Assign this package directly through the workflow-package UX for exceptional period governance. Closed-period journal posting now lives in a separate override package.",
+    ]),
+  }),
+  "PKG-PC-CLOSED-PERIOD-POST": Object.freeze({
+    runtimeMappingLabel: "Direct workflow package authority",
+    helperBundleCodes: freezeList([]),
+    runtimeRoleCodes: freezeList([]),
+    runtimeNotes: freezeList([
+      "Assign this package directly through the workflow-package UX only to tightly controlled exception handlers who may post journals into soft-closed periods.",
     ]),
   }),
   "PKG-CON-VIEW": Object.freeze({
@@ -1459,9 +1480,9 @@ const WORKFLOW_PRESET_CATALOG = Object.freeze({
 export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
   EntityAPController: Object.freeze({
     code: "EntityAPController",
-    displayName: "AP Submitter Setup Lead",
+    displayName: "Default Entity Accountant Roles",
     summary:
-      "Bootstrap preset for one legal-entity AP submitter setup lead using bounded composable operator roles.",
+      "Default legal-entity accountant role bundle for local accounting operations, approvals, and readiness work.",
     workflowFamily: "AP_DOCUMENT_POSTING",
     category: "bootstrap_setup",
     sortOrder: 10,
@@ -1480,25 +1501,22 @@ export const BOOTSTRAP_HANDOFF_PRESET_CATALOG = Object.freeze({
     ]),
     optionalRoleCodes: freezeList(["GLPostingAuthority"]),
   }),
-  CountryAPApprover: Object.freeze({
-    code: "CountryAPApprover",
-    displayName: "AP Reviewer Setup Lead",
+  BranchAccountant: Object.freeze({
+    code: "BranchAccountant",
+    displayName: "Branch Accountant",
     summary:
-      "Bootstrap preset for one country-level AP reviewer setup lead using bounded composable AP, treasury, payroll, and close-review roles.",
+      "Operating-unit branch accountant bundle that currently grants branch accounting plus inventory and fixed-asset execution companions.",
     workflowFamily: "AP_DOCUMENT_POSTING",
     category: "bootstrap_setup",
     sortOrder: 20,
-    scopeType: "COUNTRY",
+    scopeType: "OPERATING_UNIT",
     roleCodes: freezeList([
-      "CountryAPApprover",
-      "CountryAPPoster",
-      "APApprover",
-      "GLOperator",
-      "TreasuryApprover",
-      "PayrollApprover",
-      "LocalCloseReviewer",
+      "BranchOperator",
+      "BranchInventoryExecutor",
+      "BranchFixedAssetOperator",
     ]),
-    optionalRoleCodes: freezeList(["GLPostingAuthority"]),
+    assignmentRoleCodes: freezeList(["BranchOperator"]),
+    optionalRoleCodes: freezeList([]),
   }),
 });
 const CATEGORY_ORDER = Object.freeze([
@@ -1682,7 +1700,6 @@ export function getWorkflowFamilyLabel(workflowFamily) {
 
 /**
  * Returns the UX metadata for one bootstrap handoff preset.
- * Preset aliases resolve to their canonical AP-facing preset codes.
  */
 export function getBootstrapHandoffPresetEntry(presetCode) {
   const normalizedPresetCode = normalizeBootstrapHandoffPresetCode(presetCode);
@@ -1705,6 +1722,7 @@ export function getBootstrapHandoffPresetEntry(presetCode) {
     summary: metadata.description,
     scopeType: base?.scopeType || "",
     roleCodes: cloneList(base?.roleCodes),
+    assignmentRoleCodes: cloneList(base?.assignmentRoleCodes || base?.roleCodes),
     roleLabels: cloneList(base?.roleCodes).map(
       (roleCode) => getRoleCatalogEntry(roleCode).displayName
     ),

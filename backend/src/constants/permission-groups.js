@@ -12,8 +12,9 @@
  * `gl.readonly` preserves OU balance/report visibility even when manual posting authority
  * is removed from a branch or operating-unit role.
  *
- * `gl.posting` is only for free-form manual GL posting, reversal, and period close. It
- * does not imply source-module execution rights in cash, bank, payroll, inventory, or cari.
+ * `gl.posting` is only for free-form manual GL journal posting and reversal. It does
+ * not imply period-close governance or source-module execution rights in cash, bank,
+ * payroll, inventory, or cari.
  *
  * @type {Record<string, PermissionGroupDefinition>}
  */
@@ -51,7 +52,6 @@ export const PERMISSION_GROUPS = {
     permissions: [
       "gl.journal.post",
       "gl.journal.reverse",
-      "gl.period.close",
     ],
   },
   "gl.period_governance": {

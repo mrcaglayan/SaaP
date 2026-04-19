@@ -843,11 +843,7 @@ const GL_POSTING_AUTHORITY_PERMISSION_CODES = buildPermissionList({
     "gl.journal.read",
     "gl.trial_balance.read",
     "gl.journal.post",
-    "gl.journal.post_to_closed_period",
     "gl.journal.reverse",
-    "gl.period.close",
-    "gl.period.reopen",
-    "gl.period.admin",
   ],
 });
 

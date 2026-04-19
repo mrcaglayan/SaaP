@@ -20,6 +20,7 @@ import {
   listRoleAssignments,
   listRoles,
   listUsers,
+  replaceUserDataScopes,
   replaceRoleAssignmentScope,
   replaceRolePermissions,
 } from "../../api/rbacAdmin.js";
@@ -56,144 +57,6 @@ const USER_STATUS_FILTERS = ["ALL", "ACTIVE", "INVITED", "DISABLED"];
 const ASSIGNMENT_STATUS_FILTERS = ["ALL", "ACTIVE", "UPCOMING", "EXPIRED", "CUSTOM"];
 const USER_ASSIGNMENT_CANONICAL_TABS = ["users", "assignments"];
 const DELEGATION_TAB_ORDER = ["coverage", "approval"];
-const ACCESS_MATRIX_ACTIONS = [
-  { key: "view", label: "View", shortLabel: "V" },
-  { key: "create", label: "Create", shortLabel: "C" },
-  { key: "edit", label: "Edit", shortLabel: "E" },
-  { key: "post", label: "Post", shortLabel: "P" },
-  { key: "approve", label: "Approve", shortLabel: "Ap" },
-  { key: "reverse", label: "Reverse", shortLabel: "Rv" },
-  { key: "export", label: "Export", shortLabel: "Ex" },
-  { key: "assign", label: "Assign", shortLabel: "As" },
-];
-const ACCESS_MATRIX_GROUPS = Object.freeze([
-  Object.freeze({
-    key: "security",
-    title: "Organization & Security",
-    rows: Object.freeze([
-      Object.freeze({
-        key: "users-access",
-        module: "Users & access",
-        actions: Object.freeze({
-          view: Object.freeze(["LocalUserAdmin", "SecurityAdmin"]),
-          assign: Object.freeze(["LocalUserAdmin", "SecurityAdmin"]),
-        }),
-      }),
-      Object.freeze({
-        key: "delegation",
-        module: "Delegation & coverage",
-        actions: Object.freeze({
-          view: Object.freeze(["LocalUserAdmin", "SecurityAdmin"]),
-          assign: Object.freeze(["LocalUserAdmin", "SecurityAdmin"]),
-        }),
-      }),
-    ]),
-  }),
-  Object.freeze({
-    key: "organization",
-    title: "Organization Setup",
-    rows: Object.freeze([
-      Object.freeze({
-        key: "organization-master",
-        module: "Org structure & master data",
-        actions: Object.freeze({
-          view: Object.freeze(["MasterDataSteward"]),
-          create: Object.freeze(["MasterDataSteward"]),
-          edit: Object.freeze(["MasterDataSteward"]),
-          assign: Object.freeze(["MasterDataSteward"]),
-        }),
-      }),
-      Object.freeze({
-        key: "shareholder-equity",
-        module: "Shareholder & equity",
-        actions: Object.freeze({
-          view: Object.freeze(["ShareholderCapitalOperator"]),
-          create: Object.freeze(["ShareholderCapitalOperator"]),
-          edit: Object.freeze(["ShareholderCapitalOperator"]),
-          post: Object.freeze(["ShareholderCapitalOperator"]),
-          reverse: Object.freeze(["ShareholderCapitalOperator"]),
-        }),
-      }),
-    ]),
-  }),
-  Object.freeze({
-    key: "finance",
-    title: "Finance Core",
-    rows: Object.freeze([
-      Object.freeze({
-        key: "general-ledger",
-        module: "General Ledger",
-        actions: Object.freeze({
-          view: Object.freeze(["GLOperator"]),
-          create: Object.freeze(["GLOperator"]),
-          edit: Object.freeze(["GLOperator"]),
-          post: Object.freeze(["GLPostingAuthority"]),
-          reverse: Object.freeze(["GLPostingAuthority"]),
-          export: Object.freeze(["GLOperator"]),
-        }),
-      }),
-      Object.freeze({
-        key: "treasury",
-        module: "Cash & Bank",
-        actions: Object.freeze({
-          view: Object.freeze(["TreasuryOperator", "TreasuryApprover"]),
-          create: Object.freeze(["TreasuryOperator"]),
-          edit: Object.freeze(["TreasuryOperator"]),
-          approve: Object.freeze(["TreasuryApprover"]),
-          export: Object.freeze(["TreasuryApprover"]),
-        }),
-      }),
-      Object.freeze({
-        key: "payroll",
-        module: "Payroll",
-        actions: Object.freeze({
-          view: Object.freeze(["PayrollOperator", "PayrollApprover"]),
-          create: Object.freeze(["PayrollOperator"]),
-          edit: Object.freeze(["PayrollOperator"]),
-          approve: Object.freeze(["PayrollApprover"]),
-          export: Object.freeze(["PayrollApprover"]),
-        }),
-      }),
-    ]),
-  }),
-  Object.freeze({
-    key: "governance",
-    title: "Governance",
-    rows: Object.freeze([
-      Object.freeze({
-        key: "local-close",
-        module: "Local close",
-        actions: Object.freeze({
-          view: Object.freeze(["LocalClosePreparer", "LocalCloseReviewer"]),
-          create: Object.freeze(["LocalClosePreparer"]),
-          approve: Object.freeze(["LocalCloseReviewer"]),
-          reverse: Object.freeze(["LocalCloseReviewer"]),
-          export: Object.freeze(["LocalCloseReviewer"]),
-        }),
-      }),
-      Object.freeze({
-        key: "audit-reporting",
-        module: "Reporting & audit",
-        actions: Object.freeze({
-          view: Object.freeze([
-            "AuditorReadOnly",
-            "GLOperator",
-            "TreasuryApprover",
-            "PayrollApprover",
-            "LocalCloseReviewer",
-          ]),
-          export: Object.freeze([
-            "AuditorReadOnly",
-            "GLOperator",
-            "TreasuryApprover",
-            "PayrollApprover",
-            "LocalCloseReviewer",
-          ]),
-        }),
-      }),
-    ]),
-  }),
-]);
 const DEFAULT_ENTITY_ACCOUNTANT_PRESET_CODE = "EntityAPController";
 function normalizeText(value) {
   return String(value || "").trim();
@@ -369,36 +232,17 @@ function buildScopeOptions(scopeType, lookups, tenantScopeId) {
 }
 function buildTemplateRoleCodes(presetCode, includeOptionalRoles = false) {
   const preset = getBootstrapHandoffPresetEntry(presetCode);
-  const requiredRoleCodes = Array.isArray(preset.roleCodes) ? [...preset.roleCodes] : [];
+  const requiredRoleCodes = Array.isArray(preset.assignmentRoleCodes)
+    ? [...preset.assignmentRoleCodes]
+    : Array.isArray(preset.roleCodes)
+      ? [...preset.roleCodes]
+      : [];
   if (includeOptionalRoles) {
     requiredRoleCodes.push(...(preset.optionalRoleCodes || []));
   }
   return Array.from(
     new Set(requiredRoleCodes.map((roleCode) => normalizeText(roleCode)).filter(Boolean))
   );
-}
-function buildTemplateMatrix(roleCodes) {
-  const roleCodeSet = new Set((Array.isArray(roleCodes) ? roleCodes : []).map(String));
-  return ACCESS_MATRIX_GROUPS.map((group) => ({
-    ...group,
-    rows: group.rows.map((row) => ({
-      ...row,
-      enabledActions: ACCESS_MATRIX_ACTIONS.reduce((acc, action) => {
-        const requiredRoleCodes = row.actions?.[action.key] || [];
-        acc[action.key] = requiredRoleCodes.some((roleCode) => roleCodeSet.has(roleCode));
-        return acc;
-      }, {}),
-    })),
-  }));
-}
-function collectVisibleModules(matrixGroups) {
-  return matrixGroups
-    .flatMap((group) =>
-      group.rows
-        .filter((row) => Object.values(row.enabledActions || {}).some(Boolean))
-        .map((row) => row.module)
-    )
-    .filter(Boolean);
 }
 function findPresetMatch(roleCodes) {
   const normalizedRoleCodes = Array.from(
@@ -868,6 +712,55 @@ function getRoleDisplayCode(roleOrCode) {
 
 function getPresetDisplayLabel(presetCode) {
   return getBootstrapHandoffPresetDisplayLabel(presetCode);
+}
+
+function formatScopeTypeLabel(scopeType) {
+  return normalizeText(scopeType)
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function buildPresetRoleSummary(presetEntry, l) {
+  const requiredRoleLabels = Array.isArray(presetEntry?.roleLabels)
+    ? presetEntry.roleLabels.filter(Boolean)
+    : [];
+  const optionalRoleLabels = Array.isArray(presetEntry?.optionalRoleLabels)
+    ? presetEntry.optionalRoleLabels.filter(Boolean)
+    : [];
+  const previewLabels = requiredRoleLabels.slice(0, 3);
+  const baseSummary = previewLabels.join(", ");
+  const remainingRequiredCount = Math.max(
+    requiredRoleLabels.length - previewLabels.length,
+    0
+  );
+  let summary = baseSummary;
+  if (remainingRequiredCount > 0) {
+    summary = baseSummary
+      ? l("{{base}} +{{count}} more", "{{base}} +{{count}} daha", {
+          base: baseSummary,
+          count: remainingRequiredCount,
+        })
+      : l("{{count}} roles", "{{count}} rol", {
+          count: requiredRoleLabels.length,
+        });
+  }
+  if (!summary) {
+    summary = l("No required roles", "Zorunlu rol yok");
+  }
+  if (optionalRoleLabels.length === 0) {
+    return summary;
+  }
+  const optionalPreview = optionalRoleLabels.slice(0, 2).join(", ");
+  const remainingOptionalCount = Math.max(
+    optionalRoleLabels.length - Math.min(optionalRoleLabels.length, 2),
+    0
+  );
+  return `${summary} ${l("Optional", "Opsiyonel")}: ${optionalPreview}${
+    remainingOptionalCount > 0 ? ` +${remainingOptionalCount}` : ""
+  }`;
 }
 
 function buildScopeTargetOptions(
@@ -1516,75 +1409,9 @@ function AuditSodSummarySurface({
   );
 }
 */
-function MatrixCell({ enabled }) {
-  return (
-    <span
-      className={`mx-auto inline-flex h-5 w-5 items-center justify-center rounded-md border text-[10px] font-bold ${enabled
-          ? "border-slate-900 bg-slate-900 text-white"
-          : "border-slate-200 bg-white text-slate-300"
-        }`}
-    >
-      {enabled ? "x" : ""}
-    </span>
-  );
-}
-function AccessMatrix({ matrixGroups, l }) {
-  return (
-    <div className="space-y-3">
-      {matrixGroups.map((group) => (
-        <div key={group.key} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700">
-            {group.title}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-136 table-fixed divide-y divide-slate-200">
-              <colgroup>
-                <col className="w-44" />
-                {ACCESS_MATRIX_ACTIONS.map((action) => (
-                  <col key={`${group.key}-${action.key}-col`} className="w-10" />
-                ))}
-              </colgroup>
-              <thead className="bg-white">
-                <tr className="text-left text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                  <th className="px-3 py-2.5">{l("Module", "Modul")}</th>
-                  {ACCESS_MATRIX_ACTIONS.map((action) => (
-                    <th
-                      key={`${group.key}-${action.key}`}
-                      title={action.label}
-                      className="px-1 py-2.5 text-center"
-                    >
-                      <span aria-hidden="true">{action.shortLabel || action.label}</span>
-                      <span className="sr-only">{action.label}</span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {group.rows.map((row) => (
-                  <tr key={row.key}>
-                    <td className="px-3 py-2.5 text-xs font-medium text-slate-900">
-                      <div className="truncate" title={row.module}>
-                        {row.module}
-                      </div>
-                    </td>
-                    {ACCESS_MATRIX_ACTIONS.map((action) => (
-                      <td key={`${row.key}-${action.key}`} className="px-1 py-2 text-center">
-                        <MatrixCell enabled={Boolean(row.enabledActions?.[action.key])} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-function AssignmentBundleCard({
+function AssignmentBundleRow({
   bundle,
-  expanded,
+  selected,
   l,
   onSelect,
   onOpenUser,
@@ -1593,125 +1420,93 @@ function AssignmentBundleCard({
 }) {
   const statusMeta = getBundleStatusMeta(bundle.status);
   return (
-    <button
-      type="button"
+    <tr
       onClick={() => onSelect(bundle.id)}
-      className={`w-full rounded-[22px] border px-4 py-4 text-left transition ${expanded
-          ? "border-sky-300 bg-sky-50 shadow-sm"
-          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
-        }`}
+      className={`cursor-pointer border-b border-slate-100 align-top transition-colors ${
+        selected ? "bg-sky-50" : "hover:bg-slate-50"
+      }`}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-base font-semibold text-slate-950">
-              {bundle.presetDisplayName || bundle.presetCode || l("Custom assignment bundle", "Ozel atama paketi")}
-            </div>
-            <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
-            {bundle.effect !== "ALLOW" ? (
-              <StatusPill label={bundle.effect} tone="rose" />
-            ) : null}
-          </div>
-          <div className="mt-2 text-sm text-slate-700">
-            {bundle.userName} - {bundle.scopeLabel}
+      <td className="px-4 py-3">
+        <div className="min-w-0">
+          <div className="font-semibold text-slate-950">
+            {bundle.presetDisplayName ||
+              bundle.presetCode ||
+              l("Custom assignment bundle", "Ozel atama paketi")}
           </div>
           <div className="mt-1 text-xs text-slate-500">
-            {l("Effective", "Yururluk")} {formatDate(bundle.effectiveFrom)} to{" "}
-            {formatDate(bundle.effectiveTo)}
+            {bundle.sourceTypeLabel}
+            {bundle.workflowFamilyLabels.length > 0
+              ? ` - ${bundle.workflowFamilyLabels[0]}`
+              : ""}
           </div>
         </div>
-        <div className="text-right text-xs text-slate-500">
-          <div>{bundle.roleCodes.length} {l("underlying roles", "alttaki rol")}</div>
-          <div className="mt-1">{bundle.scopeType}</div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="text-sm text-slate-900">{bundle.userName}</div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="text-sm text-slate-900">{bundle.scopeLabel}</div>
+        <div className="mt-1 text-xs text-slate-500">{bundle.scopeType}</div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="text-sm text-slate-900">
+          {l("{{count}} roles", "{{count}} rol", {
+            count: bundle.roleCodes.length,
+          })}
         </div>
-      </div>
-      {expanded ? (
-        <div className="mt-4 grid gap-4 border-t border-sky-200 pt-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-          <div>
-            {bundle.presetSummary ? (
-              <p className="text-sm leading-6 text-slate-600">{bundle.presetSummary}</p>
-            ) : (
-              <p className="text-sm leading-6 text-slate-600">
-                {l(
-                  "This bundle does not match a shipped preset exactly, so it is shown as a custom access package.",
-                  "Bu paket yayinlanan bir preset ile tam eslesmiyor; bu nedenle ozel erisim paketi olarak gosterilir."
-                )}
-              </p>
-            )}
-            <div className="mt-3 flex flex-wrap gap-2">
-              <StatusPill
-                label={bundle.sourceTypeLabel}
-                tone={bundle.isPresetBundle ? "blue" : "slate"}
-              />
-              {bundle.workflowFamilyLabels.map((familyLabel) => (
-                <StatusPill key={`${bundle.id}-${familyLabel}`} label={familyLabel} tone="violet" />
-              ))}
-            </div>
-            {bundle.packageLabels.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {bundle.packageLabels.map((packageLabel) => (
-                  <span
-                    key={`${bundle.id}-${packageLabel}`}
-                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800"
-                  >
-                    {packageLabel}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <div className="mt-3 flex flex-wrap gap-2">
-              {bundle.roleCodes.map((roleCode) => {
-                const roleEntry = getRoleCatalogEntry(roleCode);
-                return (
-                  <span
-                    key={`${bundle.id}-${roleCode}`}
-                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${getToneClasses(
-                      roleEntry.category === "readonly"
-                        ? "slate"
-                        : roleEntry.category === "scoped"
-                          ? "green"
-                          : roleEntry.category === "system"
-                            ? "blue"
-                            : "violet"
-                    )}`}
-                  >
-                    {roleEntry.code}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              {l("Actions", "Aksiyonlar")}
-            </div>
-            <div className="mt-3 space-y-2">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenUser(bundle.userId);
-                }}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700"
-              >
-                {l("Open user editor", "Kullanici editorunu ac")}
-              </button>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onRevoke(bundle);
-                }}
-                disabled={revoking}
-                className="w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {revoking ? l("Revoking...", "Geri aliniyor...") : l("Revoke bundle", "Paketi geri al")}
-              </button>
-            </div>
-          </div>
+        <div className="mt-1 text-xs text-slate-500">
+          {bundle.packageLabels.length > 0
+            ? bundle.packageLabels.length === 1
+              ? bundle.packageLabels[0]
+              : l("{{first}} +{{count}} more", "{{first}} +{{count}} daha", {
+                  first: bundle.packageLabels[0],
+                  count: bundle.packageLabels.length - 1,
+                })
+            : l("No package", "Paket yok")}
         </div>
-      ) : null}
-    </button>
+      </td>
+      <td className="px-4 py-3">
+        <div className="text-sm text-slate-900">
+          {formatDate(bundle.effectiveFrom)}
+        </div>
+        <div className="mt-1 text-xs text-slate-500">
+          {formatDate(bundle.effectiveTo)}
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex flex-col items-start gap-1">
+          <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
+          {bundle.effect !== "ALLOW" ? (
+            <StatusPill label={bundle.effect} tone="rose" />
+          ) : null}
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenUser(bundle.userId);
+            }}
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700"
+          >
+            {l("Open", "Ac")}
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRevoke(bundle);
+            }}
+            disabled={revoking}
+            className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {revoking ? l("Revoking...", "Geri aliniyor...") : l("Revoke", "Geri al")}
+          </button>
+        </div>
+      </td>
+    </tr>
   );
 }
 function UserAccessModal({
@@ -1724,43 +1519,92 @@ function UserAccessModal({
   saving,
   l,
   permissionAccess,
-  currentUserRoleCodes,
-  currentUserBundles,
   modalScopeOptions,
-  matrixGroups,
-  visibleModules,
   missingRoleCodes,
   inviteLink,
+  visibilityRules,
+  visibilityDraft,
+  visibilityDraftScopeOptions,
+  visibilityWriteAccess,
+  onUpdateVisibilityDraftField,
+  onAddVisibilityRule,
+  onRemoveVisibilityRule,
+  lookups,
+  tenantScopeId,
 }) {
-  if (!open) {
-    return null;
-  }
   const isInvite = mode === "invite";
+  const hasVisibilityRules = visibilityRules.length > 0;
+  const inviteRequiresVisibilityRules = isInvite && !hasVisibilityRules;
   const isPresetSelected = Boolean(normalizeText(form.presetCode));
+  const selectedPresetEntry = useMemo(
+    () => (isPresetSelected ? getBootstrapHandoffPresetEntry(form.presetCode) : null),
+    [form.presetCode, isPresetSelected]
+  );
+  const presetCatalogEntries = useMemo(
+    () =>
+      Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG)
+        .map((presetCode) => getBootstrapHandoffPresetEntry(presetCode))
+        .sort((left, right) => {
+          const leftOrder = Number(left?.sortOrder || 9999);
+          const rightOrder = Number(right?.sortOrder || 9999);
+          if (leftOrder !== rightOrder) {
+            return leftOrder - rightOrder;
+          }
+          return normalizeText(left?.displayName).localeCompare(
+            normalizeText(right?.displayName)
+          );
+        }),
+    []
+  );
+  const accessTemplateRows = useMemo(
+    () => [
+      {
+        code: "",
+        displayName: l("Invite only", "Sadece davet et"),
+        summary: l(
+          "Create the invite now and leave access empty for later review.",
+          "Daveti simdi olusturun ve erisimi daha sonra incelemek uzere bos birakin."
+        ),
+        scopeTypeLabel: l("No scope", "Kapsam yok"),
+        includedRoles: l("No immediate access", "Anlik erisim yok"),
+      },
+      ...presetCatalogEntries.map((presetEntry) => ({
+        code: presetEntry.code,
+        displayName: presetEntry.displayName,
+        summary: presetEntry.summary,
+        scopeTypeLabel: formatScopeTypeLabel(presetEntry.scopeType),
+        includedRoles: buildPresetRoleSummary(presetEntry, l),
+      })),
+    ],
+    [l, presetCatalogEntries]
+  );
   const sectionClassName =
-    "space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4";
+    "space-y-4 rounded-xl border border-slate-200 bg-white p-4";
   const fieldClassName =
     "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm shadow-slate-950/5 focus:border-slate-400 focus:outline-none disabled:bg-slate-100 disabled:text-slate-500";
   const readOnlyFieldClassName =
-    "rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700";
+    "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700";
+  if (!open) {
+    return null;
+  }
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/45 px-4 py-4 backdrop-blur-sm sm:px-6 sm:py-6">
       <div className="flex min-h-full items-start justify-center">
-        <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl sm:max-h-[calc(100vh-3rem)]">
+        <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-[1380px] flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-2xl sm:max-h-[calc(100vh-3rem)]">
           <div className="shrink-0 flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                 {l("User editor", "Kullanici editoru")}
               </div>
-              <h2 className="mt-2 text-2xl font-semibold text-slate-950">
+              <h2 className="mt-2 text-xl font-semibold text-slate-950">
                 {isInvite
                   ? l("Invite user", "Kullanici davet et")
                   : l("Edit user access", "Kullanici erisimini duzenle")}
               </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+              <p className="mt-2 max-w-2xl text-sm text-slate-600">
                 {l(
-                  "Use a template-first editor for real user admin work: general info at the top, scoped assignment in the middle, and a permission matrix preview before save.",
-                  "Gercek kullanici yonetimi icin template-oncelikli bir editor kullanin: ustte genel bilgi, ortada kapsamli atama ve kaydetmeden once izin matrisi onizlemesi."
+                  "Use a compact admin form: identity first, then one access template and one scope.",
+                  "Kompakt yonetici formunu kullanin: once kimlik bilgisi, sonra tek erisim template'i ve tek kapsam."
                 )}
               </p>
             </div>
@@ -1774,17 +1618,13 @@ function UserAccessModal({
           </div>
           <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="grid gap-0 xl:min-h-full xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
-                <div className="space-y-5 border-b border-slate-200 px-5 py-5 xl:border-b-0 xl:border-r xl:px-6 xl:py-6">
+              <div className="space-y-5 px-5 py-5 xl:px-8 xl:py-6">
+                <div className="space-y-5">
                   <section className={sectionClassName}>
                     <div>
-                      <h3 className="text-lg font-semibold text-slate-950">{l("General Info", "Genel Bilgi")}</h3>
-                      <p className="mt-1 text-sm text-slate-600">
-                        {l(
-                          "Keep this section calm and factual: who the user is, how they sign in, and whether the current flow can still edit those fields.",
-                          "Bu bolumu sakin ve olgusal tutun: kullanicinin kim oldugu, nasil giris yaptigi ve mevcut akisin bu alanlari hala duzenleyip duzenleyemedigi."
-                        )}
-                      </p>
+                      <h3 className="text-base font-semibold text-slate-950">
+                        {l("General Info", "Genel Bilgi")}
+                      </h3>
                     </div>
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
@@ -1825,58 +1665,346 @@ function UserAccessModal({
                       </div>
                     </div>
                     {!isInvite ? (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
                         {l(
-                          "This live surface can apply or review access, but it does not currently persist direct profile edits for existing users because the backend user-update seam is not part of this page's API.",
-                          "Bu canli yuzey erisimi uygulayabilir veya inceleyebilir; ancak mevcut kullanicilar icin dogrudan profil degisikliklerini kalici yapmaz, cunku backend user-update seam'i bu sayfanin API kapsaminda degildir."
+                          "This form applies access only. Direct profile updates for existing users are outside this page.",
+                          "Bu form yalnizca erisim uygular. Mevcut kullanicilar icin dogrudan profil guncellemesi bu sayfanin disindadir."
                         )}
                       </div>
                     ) : null}
                   </section>
                   <section className={sectionClassName}>
                     <div>
-                      <h3 className="text-lg font-semibold text-slate-950">{l("Role & Access", "Rol ve Erisim")}</h3>
-                      <p className="mt-1 text-sm text-slate-600">
-                        {l(
-                          "Choose the business template first, then choose the scope once. The matrix below shows what that template opens in the ERP.",
-                          "Once is template'ini secin, sonra kapsami bir kez secin. Alttaki matris bu template'in ERP'de neleri actigini gosterir."
-                        )}
-                      </p>
+                      <h3 className="text-base font-semibold text-slate-950">
+                        {l("Role & Access", "Rol ve Erisim")}
+                      </h3>
                     </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <label className="text-sm font-semibold text-slate-700">{l("Role template", "Rol template'i")}</label>
-                        <select
-                          value={form.presetCode}
-                          onChange={(event) => onChange("presetCode", event.target.value)}
-                          className={fieldClassName}
-                        >
-                          <option value="">{l("Invite without immediate assignment", "Anlik atama olmadan davet et")}</option>
-                          {Object.keys(BOOTSTRAP_HANDOFF_PRESET_CATALOG).map((presetCode) => (
-                            <option key={presetCode} value={presetCode}>
-                              {getPresetDisplayLabel(presetCode)}
-                            </option>
-                          ))}
-                        </select>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">
+                        {l("Access template", "Erisim template'i")}
+                      </label>
+                      <div className="border-y border-slate-200 bg-white">
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[980px] table-fixed border-collapse text-sm">
+                            <thead>
+                              <tr className="border-b border-slate-200 bg-white">
+                                <th className="w-12 px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                  {l("Pick", "Sec")}
+                                </th>
+                                <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                  {l("Role bundle", "Rol paketi")}
+                                </th>
+                                <th className="w-32 px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                  {l("Scope type", "Kapsam tipi")}
+                                </th>
+                                <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                  {l("Included roles", "Dahil roller")}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {accessTemplateRows.map((row) => {
+                                const selected =
+                                  normalizeText(form.presetCode) ===
+                                  normalizeText(row.code);
+                                return (
+                                  <tr
+                                    key={`modal-preset-row-${row.code || "invite-only"}`}
+                                    onClick={() => onChange("presetCode", row.code)}
+                                    className={`cursor-pointer border-b border-slate-200 align-top transition-colors ${
+                                      selected ? "bg-slate-100" : "bg-white hover:bg-slate-50/60"
+                                    }`}
+                                  >
+                                    <td className="px-3 py-2.5">
+                                      <input
+                                        type="radio"
+                                        name="user-access-template"
+                                        checked={selected}
+                                        onChange={() => onChange("presetCode", row.code)}
+                                        className="mt-0.5 h-4 w-4 border-slate-300 text-slate-900"
+                                      />
+                                    </td>
+                                    <td className="px-3 py-2.5">
+                                      <div className="font-semibold text-slate-950">
+                                        {row.displayName}
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2.5 text-sm text-slate-700">
+                                      {row.scopeTypeLabel}
+                                    </td>
+                                    <td className="px-3 py-2.5 text-sm text-slate-700">
+                                      <div className="truncate whitespace-nowrap" title={row.includedRoles}>
+                                        {row.includedRoles}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-semibold text-slate-700">{l("Scope", "Kapsam")}</label>
+                      <div className="text-xs leading-5 text-slate-500">
+                        {l(
+                          "Select one default bundle from the list, or keep the invite without access for later review.",
+                          "Listeden bir varsayilan paket secin veya daha sonraki inceleme icin daveti erisimsiz birakin."
+                        )}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700">
+                        {l("Scope", "Kapsam")}
+                        {isPresetSelected && selectedPresetEntry?.scopeType
+                          ? ` (${formatScopeTypeLabel(selectedPresetEntry.scopeType)})`
+                          : ""}
+                      </label>
+                      {isPresetSelected ? (
                         <select
                           value={form.scopeId}
-                          onChange={(event) => onChange("scopeId", event.target.value)}
-                          disabled={!isPresetSelected}
+                          onChange={(event) =>
+                            onChange("scopeId", event.target.value)
+                          }
                           className={fieldClassName}
                         >
-                          {modalScopeOptions.length === 0 ? (
-                            <option value="">{l("No scope available", "Kapsam yok")}</option>
-                          ) : null}
+                          <option value="">
+                            {modalScopeOptions.length === 0
+                              ? l("No scope available", "Kullanilabilir kapsam yok")
+                              : l("Choose scope target", "Kapsam hedefi secin")}
+                          </option>
                           {modalScopeOptions.map((option) => (
-                            <option key={option.id} value={String(option.id)}>
+                            <option
+                              key={`modal-scope-${option.id}`}
+                              value={String(option.id)}
+                            >
                               {option.label}
                             </option>
                           ))}
                         </select>
+                      ) : (
+                        <div className={readOnlyFieldClassName}>
+                          {l("No scope needed", "Kapsam gerekmiyor")}
+                        </div>
+                      )}
+                      <div className="text-xs leading-5 text-slate-500">
+                        {isPresetSelected
+                          ? l(
+                              "Apply the selected template at one explicit scope boundary.",
+                              "Secilen template'i tek ve acik bir kapsam sinirinda uygulayin."
+                            )
+                          : l(
+                              "Leave access blank when the assignment decision is not final yet.",
+                              "Atama karari henuz net degilse erisimi bos birakin."
+                            )}
                       </div>
+                    </div>
+                    {isInvite ? (
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">
+                              {l(
+                                "Organizational visibility rules",
+                                "Organizasyon gorunurluk kurallari"
+                              )}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {l(
+                                "Required before sending the invite. Choose which organizational records the invited user can see after activation.",
+                                "Daveti gondermeden once zorunludur. Davet edilen kullanicinin aktivasyondan sonra gorecegi organizasyon kayitlarini secin."
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-xs font-semibold text-slate-500">
+                            {l("{{count}} rules", "{{count}} kural", {
+                              count: visibilityRules.length,
+                            })}
+                          </div>
+                        </div>
+                        <div className="grid gap-3 lg:grid-cols-[170px_minmax(0,1fr)_140px_96px]">
+                          <select
+                            value={visibilityDraft.scopeType}
+                            onChange={(event) =>
+                              onUpdateVisibilityDraftField("scopeType", event.target.value)
+                            }
+                            disabled={!visibilityWriteAccess.allowed}
+                            className={fieldClassName}
+                          >
+                            {SCOPE_TYPES.map((scopeType) => (
+                              <option
+                                key={`invite-visibility-scope-type-${scopeType}`}
+                                value={scopeType}
+                              >
+                                {scopeType}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={visibilityDraft.scopeId}
+                            onChange={(event) =>
+                              onUpdateVisibilityDraftField("scopeId", event.target.value)
+                            }
+                            disabled={
+                              !visibilityWriteAccess.allowed ||
+                              (visibilityDraft.scopeType !== "TENANT" &&
+                                visibilityDraftScopeOptions.length === 0)
+                            }
+                            className={fieldClassName}
+                          >
+                            <option value="">
+                              {visibilityDraft.scopeType === "TENANT"
+                                ? l("Tenant", "Tenant")
+                                : l("Choose target", "Hedef secin")}
+                            </option>
+                            {visibilityDraftScopeOptions.map((option) => (
+                              <option
+                                key={`invite-visibility-scope-${option.id}`}
+                                value={String(option.id)}
+                              >
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={visibilityDraft.effect}
+                            onChange={(event) =>
+                              onUpdateVisibilityDraftField("effect", event.target.value)
+                            }
+                            disabled={!visibilityWriteAccess.allowed}
+                            className={fieldClassName}
+                          >
+                            {EFFECT_OPTIONS.map((effect) => (
+                              <option key={`invite-visibility-effect-${effect}`} value={effect}>
+                                {effect}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={onAddVisibilityRule}
+                            disabled={
+                              !visibilityWriteAccess.allowed ||
+                              (!visibilityDraft.scopeId &&
+                                visibilityDraft.scopeType !== "TENANT")
+                            }
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+                          >
+                            {l("Add", "Ekle")}
+                          </button>
+                        </div>
+                        <div className="border-y border-slate-200 bg-white">
+                          {visibilityRules.length === 0 ? (
+                            <div className="px-3 py-3 text-sm text-slate-500">
+                              {l(
+                                "No organizational visibility rules added yet. Add at least one rule before sending the invite.",
+                                "Henuz organizasyon gorunurluk kurali eklenmedi. Daveti gondermeden once en az bir kural ekleyin."
+                              )}
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
+                                <thead>
+                                  <tr className="border-b border-slate-200 bg-white">
+                                    <th className="w-36 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                      {l("Scope type", "Kapsam tipi")}
+                                    </th>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                      {l("Target", "Hedef")}
+                                    </th>
+                                    <th className="w-28 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                      {l("Effect", "Etki")}
+                                    </th>
+                                    <th className="w-24 px-3 py-2 text-right text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                      {l("Remove", "Kaldir")}
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {visibilityRules.map((row) => (
+                                    <tr
+                                      key={`invite-visibility-row-${row.scopeType}-${row.scopeId}`}
+                                      className="border-b border-slate-100"
+                                    >
+                                      <td className="px-3 py-2.5 text-slate-700">
+                                        {row.scopeType}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-slate-700">
+                                        {buildScopeLabel(
+                                          row.scopeType,
+                                          row.scopeId,
+                                          lookups || {},
+                                          tenantScopeId || null
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-slate-700">
+                                        {row.effect}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            onRemoveVisibilityRule(row.scopeType, row.scopeId)
+                                          }
+                                          disabled={!visibilityWriteAccess.allowed}
+                                          className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50"
+                                        >
+                                          {l("Remove", "Kaldir")}
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                        <PermissionAccessNotice
+                          access={visibilityWriteAccess}
+                          permissionCode="security.data_scope.upsert"
+                        />
+                      </div>
+                    ) : null}
+                    {isPresetSelected ? (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_140px_160px]">
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              {l("Included roles", "Dahil roller")}
+                            </div>
+                            <div className="mt-1 text-sm leading-6 text-slate-700">
+                              {(selectedPresetEntry?.roleLabels || []).join(", ")}
+                              {(selectedPresetEntry?.optionalRoleLabels || []).length > 0
+                                ? ` ${l("Optional add-on", "Opsiyonel eklenti")}: ${selectedPresetEntry.optionalRoleLabels.join(", ")}`
+                                : ""}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              {l("Scope type", "Kapsam tipi")}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-900">
+                              {formatScopeTypeLabel(selectedPresetEntry?.scopeType)}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              {l("Role rows", "Rol satiri")}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-900">
+                              {(selectedPresetEntry?.roleLabels || []).length +
+                                (selectedPresetEntry?.optionalRoleLabels || []).length}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                        {l(
+                          "This invite will create the onboarding link without applying access yet.",
+                          "Bu davet, erisimi henuz uygulamadan onboarding baglantisini olusturur."
+                        )}
+                      </div>
+                    )}
+                    <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <label className="text-sm font-semibold text-slate-700">{l("Effective from", "Baslangic tarihi")}</label>
                         <input
@@ -1896,21 +2024,28 @@ function UserAccessModal({
                         />
                       </div>
                     </div>
-                    <label className="flex items-start gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
+                    <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
                       <input
                         type="checkbox"
                         checked={Boolean(form.includePostingAuthority)}
                         onChange={(event) => onChange("includePostingAuthority", event.target.checked)}
-                        className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600"
+                        disabled={
+                          !isPresetSelected ||
+                          (selectedPresetEntry?.optionalRoleCodes || []).length === 0
+                        }
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900"
                       />
                       <span>
-                        <span className="block text-sm font-semibold text-violet-950">
-                          {l("Include GL posting authority", "GL posting authority dahil et")}
-                        </span>
-                        <span className="mt-1 block text-sm leading-6 text-violet-900">
+                        <span className="block text-sm font-semibold text-slate-900">
                           {l(
-                            "Keep elevated posting power visible as a deliberate add-on, not as a hidden side effect of the template.",
-                            "Yuksek posting yetkisini template'in gizli yan etkisi olarak degil, bilincli bir eklenti olarak gorunur tutun."
+                            "Add manual GL posting authority",
+                            "Manuel GL posting authority ekle"
+                          )}
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">
+                          {l(
+                            "Optional explicit add-on for manual GL journal posting and reversal. Period close stays separate.",
+                            "Manuel GL fis postlama ve ters kayit icin opsiyonel ve acik eklenti. Donem kapatma ayri kalir."
                           )}
                         </span>
                       </span>
@@ -1927,138 +2062,28 @@ function UserAccessModal({
                     ) : null}
                   </section>
                 </div>
-                <div className="space-y-5 bg-slate-50/40 px-5 py-5 xl:px-6 xl:py-6">
-                  <section className={sectionClassName}>
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-950">{l("Permission matrix", "Izin matrisi")}</h3>
-                      <p className="mt-1 text-sm text-slate-600">
-                        {l(
-                          "Separate module visibility, business actions, and scope in one preview. Templates stay primary. Overrides stay rare.",
-                          "Modul gorunurlugunu, is aksiyonlarini ve kapsami tek bir onizlemede ayirin. Template'ler birincil kalsin. Override'lar nadir kalsin."
-                        )}
-                      </p>
-                    </div>
-                    {isPresetSelected ? (
-                      <AccessMatrix matrixGroups={matrixGroups} l={l} />
-                    ) : (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                        {l(
-                          "Choose a template to preview module visibility and business actions.",
-                          "Modul gorunurlugunu ve is aksiyonlarini onizlemek icin bir template secin."
-                        )}
-                      </div>
+                {missingRoleCodes.length > 0 ? (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-800">
+                    {l(
+                      "Preset roles missing from tenant catalog: {{roles}}",
+                      "Tenant katalogunda eksik preset rolleri: {{roles}}",
+                      { roles: missingRoleCodes.join(", ") }
                     )}
-                  </section>
-                  <section className={sectionClassName}>
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-950">{l("Navigation preview", "Navigasyon onizlemesi")}</h3>
-                      <p className="mt-1 text-sm text-slate-600">
-                        {l(
-                          "Admins should understand immediately which modules the user will see once the template is applied.",
-                          "Yoneticiler template uygulandiginda kullanicinin hangi modulleri gorecegini hemen anlamalidir."
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Visible modules", "Gorunen moduller")}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {visibleModules.length > 0 ? (
-                          visibleModules.map((moduleLabel) => (
-                            <span
-                              key={moduleLabel}
-                              className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800"
-                            >
-                              {moduleLabel}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-sm text-slate-500">
-                            {l("No modules selected yet.", "Henuz modul secilmedi.")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </section>
-                  <section className={sectionClassName}>
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-950">{l("Current access snapshot", "Mevcut erisim ozeti")}</h3>
-                      <p className="mt-1 text-sm text-slate-600">
-                        {l(
-                          "Keep the current storage model honest: composable RBAC roles still exist underneath, but the editor shows them as grouped business access.",
-                          "Mevcut saklama modelini durust tutun: altta birlesik RBAC rolleri hala vardir, ancak editor bunlari gruplanmis is erisimi olarak gosterir."
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Current bundles", "Mevcut paketler")}
-                      </div>
-                      <div className="mt-3 space-y-2">
-                        {currentUserBundles.length > 0 ? (
-                          currentUserBundles.map((bundle) => (
-                            <div
-                              key={`modal-bundle-${bundle.id}`}
-                              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
-                            >
-                              <div className="flex flex-wrap items-center gap-2">
-                                <div className="text-sm font-semibold text-slate-900">
-                                  {bundle.presetDisplayName || bundle.presetCode || l("Custom bundle", "Ozel paket")}
-                                </div>
-                                <StatusPill
-                                  label={getBundleStatusMeta(bundle.status).label}
-                                  tone={getBundleStatusMeta(bundle.status).tone}
-                                />
-                              </div>
-                              <div className="mt-1 text-xs text-slate-500">{bundle.scopeLabel}</div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="text-sm text-slate-500">
-                            {l("No current business assignments.", "Mevcut is atamasi yok.")}
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {l("Underlying role rows", "Alttaki rol satirlari")}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {currentUserRoleCodes.length > 0 ? (
-                          currentUserRoleCodes.map((roleCode) => (
-                            <span
-                              key={`modal-current-role-${roleCode}`}
-                              className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
-                            >
-                              {getRoleDisplayCode(roleCode)}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-sm text-slate-500">
-                            {l("No raw role rows yet.", "Henuz ham rol satiri yok.")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </section>
-                  {missingRoleCodes.length > 0 ? (
-                    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-800">
-                      {l(
-                        "Preset roles missing from tenant catalog: {{roles}}",
-                        "Tenant katalogunda eksik preset rolleri: {{roles}}",
-                        { roles: missingRoleCodes.join(", ") }
-                      )}
-                    </div>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-4">
               <div className="text-sm text-slate-500">
-                {l(
-                  "Save applies the access decision. Existing profile editing remains outside this page's current API seam.",
-                  "Kaydetme, erisim kararini uygular. Mevcut profil duzenleme bu sayfanin mevcut API seam'inin disindadir."
-                )}
+                {inviteRequiresVisibilityRules
+                  ? l(
+                      "Add at least one organizational visibility rule before sending the invite.",
+                      "Daveti gondermeden once en az bir organizasyon gorunurluk kurali ekleyin."
+                    )
+                  : l(
+                      "Save creates the invite and applies the selected access.",
+                      "Kaydetme, daveti olusturur ve secilen erisimi uygular."
+                    )}
               </div>
               <div className="flex flex-wrap gap-3">
                 <button
@@ -2070,7 +2095,7 @@ function UserAccessModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
+                  disabled={saving || inviteRequiresVisibilityRules}
                   className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {saving
@@ -2146,6 +2171,7 @@ export default function UserAssignmentsPage() {
   const [selectedWorkbenchBundleId, setSelectedWorkbenchBundleId] = useState("");
   const [selectedBundleId, setSelectedBundleId] = useState("");
   const [userModalOpen, setUserModalOpen] = useState(false);
+  const [userModalVersion, setUserModalVersion] = useState(0);
   const [userModalMode, setUserModalMode] = useState("invite");
   const [userModalForm, setUserModalForm] = useState({
     userId: "",
@@ -2156,7 +2182,13 @@ export default function UserAssignmentsPage() {
     scopeId: "",
     effectiveFrom: "",
     effectiveTo: "",
-    includePostingAuthority: true,
+    includePostingAuthority: false,
+  });
+  const [userModalVisibilityRules, setUserModalVisibilityRules] = useState([]);
+  const [userModalVisibilityDraft, setUserModalVisibilityDraft] = useState({
+    scopeType: "LEGAL_ENTITY",
+    scopeId: "",
+    effect: "ALLOW",
   });
   const [rawAssignmentForm, setRawAssignmentForm] = useState({
     userId: "",
@@ -2622,6 +2654,15 @@ export default function UserAssignmentsPage() {
     () => buildScopeOptions(userModalPreset.scopeType, lookups, tenantScopeId),
     [lookups, tenantScopeId, userModalPreset.scopeType]
   );
+  const userModalVisibilityDraftScopeOptions = useMemo(
+    () =>
+      buildScopeOptions(
+        userModalVisibilityDraft.scopeType,
+        lookups,
+        tenantScopeId
+      ),
+    [lookups, tenantScopeId, userModalVisibilityDraft.scopeType]
+  );
   const userModalRoleCodes = useMemo(
     () =>
       buildTemplateRoleCodes(
@@ -2629,14 +2670,6 @@ export default function UserAssignmentsPage() {
         Boolean(userModalForm.includePostingAuthority)
       ),
     [userModalForm.includePostingAuthority, userModalForm.presetCode]
-  );
-  const userModalMatrix = useMemo(
-    () => buildTemplateMatrix(userModalRoleCodes),
-    [userModalRoleCodes]
-  );
-  const userModalVisibleModules = useMemo(
-    () => collectVisibleModules(userModalMatrix),
-    [userModalMatrix]
   );
   const userModalMissingRoleCodes = useMemo(
     () => userModalRoleCodes.filter((roleCode) => !rolesByCode.get(roleCode)),
@@ -2654,20 +2687,9 @@ export default function UserAssignmentsPage() {
       }
       : undefined
   );
-  const currentModalUserRoleCodes = useMemo(() => {
-    const userId = Number(userModalForm.userId || 0);
-    return Array.from(
-      new Set(
-        assignmentBundles
-          .filter((bundle) => Number(bundle.userId) === userId)
-          .flatMap((bundle) => bundle.roleCodes)
-      )
-    );
-  }, [assignmentBundles, userModalForm.userId]);
-  const currentModalUserBundles = useMemo(() => {
-    const userId = Number(userModalForm.userId || 0);
-    return assignmentBundles.filter((bundle) => Number(bundle.userId) === userId);
-  }, [assignmentBundles, userModalForm.userId]);
+  const userModalVisibilityWriteAccess = getPermissionAccess(
+    "security.data_scope.upsert"
+  );
   const rawScopeOptions = useMemo(
     () => buildScopeOptions(rawAssignmentForm.scopeType, lookups, tenantScopeId),
     [lookups, rawAssignmentForm.scopeType, tenantScopeId]
@@ -2824,6 +2846,30 @@ export default function UserAssignmentsPage() {
     });
   }, [userModalOpen, userModalScopeOptions]);
   useEffect(() => {
+    setUserModalVisibilityDraft((prev) => {
+      if (!userModalOpen) {
+        return prev;
+      }
+      if (prev.scopeType === "TENANT") {
+        const nextScopeId = String(tenantScopeId || "");
+        return prev.scopeId === nextScopeId ? prev : { ...prev, scopeId: nextScopeId };
+      }
+      const currentScopeId = Number(prev.scopeId || 0);
+      if (
+        currentScopeId &&
+        userModalVisibilityDraftScopeOptions.some(
+          (option) => Number(option.id) === currentScopeId
+        )
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        scopeId: String(userModalVisibilityDraftScopeOptions[0]?.id || ""),
+      };
+    });
+  }, [tenantScopeId, userModalOpen, userModalVisibilityDraftScopeOptions]);
+  useEffect(() => {
     setRawAssignmentForm((prev) => {
       const currentScopeId = Number(prev.scopeId || 0);
       if (prev.scopeType === "TENANT") {
@@ -2929,7 +2975,20 @@ export default function UserAssignmentsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+  function createUserModalVisibilityDraft(scopeType = "LEGAL_ENTITY") {
+    const normalizedScopeType = normalizeText(scopeType).toUpperCase() || "LEGAL_ENTITY";
+    const scopeOptions = buildScopeOptions(normalizedScopeType, lookups, tenantScopeId);
+    return {
+      scopeType: normalizedScopeType,
+      scopeId:
+        normalizedScopeType === "TENANT"
+          ? String(tenantScopeId || scopeOptions[0]?.id || "")
+          : String(scopeOptions[0]?.id || ""),
+      effect: "ALLOW",
+    };
+  }
   function openInviteModal() {
+    setUserModalVersion((prev) => prev + 1);
     setUserModalMode("invite");
     setUserModalForm({
       userId: "",
@@ -2940,13 +2999,16 @@ export default function UserAssignmentsPage() {
       scopeId: "",
       effectiveFrom: "",
       effectiveTo: "",
-      includePostingAuthority: true,
+      includePostingAuthority: false,
     });
+    setUserModalVisibilityRules([]);
+    setUserModalVisibilityDraft(createUserModalVisibilityDraft());
     setUserModalOpen(true);
   }
   function openExistingUserModal(userRow) {
     const userId = Number(userRow?.id || 0);
     const firstBundle = assignmentBundles.find((bundle) => Number(bundle.userId) === userId) || null;
+    setUserModalVersion((prev) => prev + 1);
     setUserModalMode("existing");
     setUserModalForm({
       userId: String(userId),
@@ -2959,10 +3021,90 @@ export default function UserAssignmentsPage() {
       effectiveTo: firstBundle?.effectiveTo || "",
       includePostingAuthority: Boolean(firstBundle?.optionalRoleCodes?.includes("GLPostingAuthority")),
     });
+    setUserModalVisibilityRules([]);
+    setUserModalVisibilityDraft(createUserModalVisibilityDraft());
     setUserModalOpen(true);
   }
   function updateUserModalField(field, value) {
-    setUserModalForm((prev) => ({ ...prev, [field]: value }));
+    setUserModalForm((prev) => {
+      if (field === "presetCode") {
+        return {
+          ...prev,
+          presetCode: value,
+          scopeId: "",
+          includePostingAuthority: value
+            ? prev.includePostingAuthority
+            : false,
+        };
+      }
+      return { ...prev, [field]: value };
+    });
+  }
+  function updateUserModalVisibilityDraftField(field, value) {
+    setUserModalVisibilityDraft((prev) => {
+      if (field === "scopeType") {
+        const normalizedScopeType =
+          normalizeText(value).toUpperCase() || "LEGAL_ENTITY";
+        const scopeOptions = buildScopeOptions(
+          normalizedScopeType,
+          lookups,
+          tenantScopeId
+        );
+        return {
+          ...prev,
+          scopeType: normalizedScopeType,
+          scopeId:
+            normalizedScopeType === "TENANT"
+              ? String(tenantScopeId || scopeOptions[0]?.id || "")
+              : String(scopeOptions[0]?.id || ""),
+        };
+      }
+      return { ...prev, [field]: value };
+    });
+  }
+  function addUserModalVisibilityRule() {
+    const normalizedScopeType = normalizeText(userModalVisibilityDraft.scopeType).toUpperCase();
+    const scopeId =
+      normalizedScopeType === "TENANT"
+        ? Number(tenantScopeId || userModalVisibilityDraft.scopeId || 0)
+        : Number(userModalVisibilityDraft.scopeId || 0);
+    if (!scopeId) {
+      setError(
+        l(
+          "Choose a valid organizational visibility target first.",
+          "Once gecerli bir organizasyon gorunurluk hedefi secin."
+        )
+      );
+      return;
+    }
+    setError("");
+    setUserModalVisibilityRules((prev) => {
+      const nextRow = {
+        scopeType: normalizedScopeType,
+        scopeId,
+        effect: normalizeText(userModalVisibilityDraft.effect).toUpperCase() || "ALLOW",
+      };
+      const withoutMatch = prev.filter(
+        (row) =>
+          !(
+            normalizeText(row.scopeType).toUpperCase() === nextRow.scopeType &&
+            Number(row.scopeId || 0) === nextRow.scopeId
+          )
+      );
+      return [...withoutMatch, nextRow];
+    });
+  }
+  function removeUserModalVisibilityRule(scopeType, scopeId) {
+    setUserModalVisibilityRules((prev) =>
+      prev.filter(
+        (row) =>
+          !(
+            normalizeText(row.scopeType).toUpperCase() ===
+              normalizeText(scopeType).toUpperCase() &&
+            Number(row.scopeId || 0) === Number(scopeId || 0)
+          )
+      )
+    );
   }
   function updateRawAssignmentField(field, value) {
     setRawAssignmentForm((prev) => ({ ...prev, [field]: value }));
@@ -3133,12 +3275,22 @@ export default function UserAssignmentsPage() {
     event.preventDefault();
     const isInvite = userModalMode === "invite";
     const hasPreset = Boolean(normalizeText(userModalForm.presetCode));
+    const hasVisibilityRules = userModalVisibilityRules.length > 0;
     if (isInvite) {
       if (!normalizeText(userModalForm.name) || !normalizeText(userModalForm.email)) {
         setError(
           l(
             "Full name and email are required before sending an invite.",
             "Davet gondermeden once ad soyad ve e-posta zorunludur."
+          )
+        );
+        return;
+      }
+      if (!hasVisibilityRules) {
+        setError(
+          l(
+            "Add at least one organizational visibility rule before sending the invite.",
+            "Daveti gondermeden once en az bir organizasyon gorunurluk kurali ekleyin."
           )
         );
         return;
@@ -3162,6 +3314,19 @@ export default function UserAssignmentsPage() {
         l(
           "Choose a role template to add access for this user.",
           "Bu kullaniciya erisim eklemek icin bir rol template'i secin."
+        )
+      );
+      return;
+    }
+    if (
+      isInvite &&
+      hasVisibilityRules &&
+      !userModalVisibilityWriteAccess.allowed
+    ) {
+      setError(
+        l(
+          "You do not have permission to save organizational visibility rules.",
+          "Organizasyon gorunurluk kurallarini kaydetme yetkiniz yok."
         )
       );
       return;
@@ -3201,12 +3366,25 @@ export default function UserAssignmentsPage() {
           effectiveTo: userModalForm.effectiveTo,
         });
       }
+      if (isInvite && hasVisibilityRules) {
+        await replaceUserDataScopes(targetUserId, userModalVisibilityRules);
+      }
       setWarningMessages(warnings);
       setMessage(
         isInvite
           ? hasPreset
-            ? l("Invite created and access template applied.", "Davet olusturuldu ve erisim template'i uygulandi.")
-            : l("Invite created.", "Davet olusturuldu.")
+            ? hasVisibilityRules
+              ? l(
+                  "Invite created, access template applied, and organizational visibility rules saved.",
+                  "Davet olusturuldu, erisim template'i uygulandi ve organizasyon gorunurluk kurallari kaydedildi."
+                )
+              : l("Invite created and access template applied.", "Davet olusturuldu ve erisim template'i uygulandi.")
+            : hasVisibilityRules
+              ? l(
+                  "Invite created and organizational visibility rules saved.",
+                  "Davet olusturuldu ve organizasyon gorunurluk kurallari kaydedildi."
+                )
+              : l("Invite created.", "Davet olusturuldu.")
           : l("Access template applied.", "Erisim template'i uygulandi.")
       );
       setUserModalOpen(false);
@@ -4025,12 +4203,24 @@ export default function UserAssignmentsPage() {
       {!loading && activeTab === "assignments" ? (
         <section className="space-y-5">
           <div className="space-y-5">
-            <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+            <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white">
               <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
-                <h2 className="text-sm font-semibold text-slate-950">
-                  {l("Business assignments", "Is atamalari")}
-                </h2>
-                <StatusPill label={l("Preset-based", "Preset tabanli")} tone="blue" />
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-950">
+                    {l("Business assignments", "Is atamalari")}
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {l(
+                      "Compact assignment registry by assignee, template, scope, and date.",
+                      "Atanan kisi, template, kapsam ve tarihe gore kompakt atama kaydi."
+                    )}
+                  </p>
+                </div>
+                <div className="text-sm text-slate-500">
+                  {l("{{count}} rows", "{{count}} satir", {
+                    count: filteredBundles.length,
+                  })}
+                </div>
               </div>
               <div className="grid gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 md:grid-cols-[minmax(0,1fr)_180px_180px]">
                 <input
@@ -4080,26 +4270,57 @@ export default function UserAssignmentsPage() {
               <div className="space-y-3 px-5 py-5">
                 {filteredBundles.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                    {l("No assignment bundles match the current filters.", "Mevcut filtrelere uyan atama paketi yok.")}
+                  {l("No assignment bundles match the current filters.", "Mevcut filtrelere uyan atama paketi yok.")}
                   </div>
                 ) : (
-                  filteredBundles.map((bundle) => (
-                    <AssignmentBundleCard
-                      key={bundle.id}
-                      bundle={bundle}
-                      expanded={selectedBundle?.id === bundle.id}
-                      l={l}
-                      onSelect={setSelectedBundleId}
-                      onOpenUser={(userId) => {
-                        const userRow = usersById.get(Number(userId));
-                        if (userRow) {
-                          openExistingUserModal(userRow);
-                        }
-                      }}
-                      onRevoke={handleRevokeBundle}
-                      revoking={saving && actingRowId === bundle.id}
-                    />
-                  ))
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[980px] border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50/70">
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                            {l("Assignment", "Atama")}
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                            {l("Assignee", "Atanan")}
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                            {l("Scope", "Kapsam")}
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                            {l("Composition", "Icerik")}
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                            {l("Effective", "Yururluk")}
+                          </th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                            {l("Status", "Durum")}
+                          </th>
+                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                            {l("Actions", "Aksiyonlar")}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredBundles.map((bundle) => (
+                          <AssignmentBundleRow
+                            key={bundle.id}
+                            bundle={bundle}
+                            selected={selectedBundle?.id === bundle.id}
+                            l={l}
+                            onSelect={setSelectedBundleId}
+                            onOpenUser={(userId) => {
+                              const userRow = usersById.get(Number(userId));
+                              if (userRow) {
+                                openExistingUserModal(userRow);
+                              }
+                            }}
+                            onRevoke={handleRevokeBundle}
+                            revoking={saving && actingRowId === bundle.id}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </div>
@@ -4196,12 +4417,15 @@ export default function UserAssignmentsPage() {
                     />
                     <span>
                       <span className="block text-sm font-semibold text-violet-950">
-                        {l("Include GL posting authority", "GL posting authority dahil et")}
+                        {l(
+                          "Include manual GL posting authority",
+                          "Manuel GL posting authority dahil et"
+                        )}
                       </span>
                       <span className="mt-1 block text-sm leading-6 text-violet-900">
                         {l(
-                          "Keep posting authority explicit instead of hiding it as an automatic side effect of the preset.",
-                          "Posting yetkisini preset'in otomatik bir yan etkisi olarak gizlemek yerine acik tutun."
+                          "Keep manual GL journal posting explicit instead of hiding it as an automatic side effect of the preset. Period close stays separate.",
+                          "Manuel GL fis postlama yetkisini preset'in otomatik bir yan etkisi olarak gizlemek yerine acik tutun. Donem kapatma ayri kalir."
                         )}
                       </span>
                     </span>
@@ -4443,71 +4667,104 @@ export default function UserAssignmentsPage() {
             </aside> : null}
             */}
           </div>
-          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+          <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-950">
+                <h2 className="text-sm font-semibold text-slate-950">
                   {l("Pending invites", "Bekleyen davetler")}
                 </h2>
-                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                <p className="mt-1 max-w-3xl text-xs text-slate-500">
                   {l(
-                    "Invites stay separate from live assignments, but still point to the same user onboarding and access-grant flows.",
-                    "Davetler canli atamalardan ayri kalir; ancak yine de ayni kullanici onboarding ve erisim verme akislerine isaret eder."
+                    "Open invite records without mixing them into live user assignments.",
+                    "Davet kayitlarini canli kullanici atamalarina karistirmadan acin."
                   )}
                 </p>
               </div>
-              <StatusPill
-                label={String(pendingInviteRows.length)}
-                tone={pendingInviteRows.length > 0 ? "amber" : "slate"}
-              />
+              <div className="text-sm text-slate-500">
+                {l("{{count}} rows", "{{count}} satir", {
+                  count: pendingInviteRows.length,
+                })}
+              </div>
             </div>
-            <div className="space-y-3 px-5 py-5">
+            <div className="px-5 py-5">
               {pendingInviteRows.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
                   {l("No pending invites.", "Bekleyen davet yok.")}
                 </div>
               ) : (
-                pendingInviteRows.map((row) => (
-                  <div
-                    key={`pending-invite-${row.id}`}
-                    className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
-                  >
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-sm font-semibold text-slate-900">{row.name}</div>
-                        <StatusPill label={l("Pending invite", "Bekleyen davet")} tone="amber" />
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500">{row.email}</div>
-                      <div className="mt-2 text-xs text-slate-600">
-                        {l("Created", "Olusturuldu")} {formatDateTime(row.created_at)}
-                      </div>
-                      {row.invite_expires_at ? (
-                        <div className="mt-1 text-xs font-medium text-amber-800">
-                          {l("Invite expires", "Davet suresi dolar")}{" "}
-                          {formatDateTime(row.invite_expires_at)}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openExistingUserModal(row)}
-                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
-                      >
-                        {l("Open user editor", "Kullanici editorunu ac")}
-                      </button>
-                      {lastInviteLink ? (
-                        <button
-                          type="button"
-                          onClick={copyInviteLink}
-                          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800"
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[780px] border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50/70">
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          {l("Invitee", "Davetli")}
+                        </th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          {l("Email", "E-posta")}
+                        </th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          {l("Created", "Olusturuldu")}
+                        </th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          {l("Expires", "Bitis")}
+                        </th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          {l("Status", "Durum")}
+                        </th>
+                        <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          {l("Actions", "Aksiyonlar")}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pendingInviteRows.map((row) => (
+                        <tr
+                          key={`pending-invite-${row.id}`}
+                          className="border-b border-slate-100 align-top"
                         >
-                          {l("Copy latest link", "Son baglantiyi kopyala")}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                ))
+                          <td className="px-4 py-3 font-semibold text-slate-900">
+                            {row.name}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">{row.email}</td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {formatDateTime(row.created_at)}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {row.invite_expires_at
+                              ? formatDateTime(row.invite_expires_at)
+                              : "-"}
+                          </td>
+                          <td className="px-4 py-3">
+                            <StatusPill
+                              label={l("Pending invite", "Bekleyen davet")}
+                              tone="amber"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openExistingUserModal(row)}
+                                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700"
+                              >
+                                {l("Open", "Ac")}
+                              </button>
+                              {lastInviteLink ? (
+                                <button
+                                  type="button"
+                                  onClick={copyInviteLink}
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800"
+                                >
+                                  {l("Copy link", "Baglantiyi kopyala")}
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </div>
@@ -4684,6 +4941,7 @@ export default function UserAssignmentsPage() {
         </section>
       ) : null}
       <UserAccessModal
+        key={userModalVersion}
         open={userModalOpen}
         mode={userModalMode}
         form={userModalForm}
@@ -4693,13 +4951,18 @@ export default function UserAssignmentsPage() {
         saving={saving}
         l={l}
         permissionAccess={userModalAccess}
-        currentUserRoleCodes={currentModalUserRoleCodes}
-        currentUserBundles={currentModalUserBundles}
         modalScopeOptions={userModalScopeOptions}
-        matrixGroups={userModalMatrix}
-        visibleModules={userModalVisibleModules}
         missingRoleCodes={userModalMissingRoleCodes}
         inviteLink={lastInviteLink}
+        visibilityRules={userModalVisibilityRules}
+        visibilityDraft={userModalVisibilityDraft}
+        visibilityDraftScopeOptions={userModalVisibilityDraftScopeOptions}
+        visibilityWriteAccess={userModalVisibilityWriteAccess}
+        onUpdateVisibilityDraftField={updateUserModalVisibilityDraftField}
+        onAddVisibilityRule={addUserModalVisibilityRule}
+        onRemoveVisibilityRule={removeUserModalVisibilityRule}
+        lookups={lookups}
+        tenantScopeId={tenantScopeId}
       />
     </SecurityAdminWorkspaceShell>
   );
