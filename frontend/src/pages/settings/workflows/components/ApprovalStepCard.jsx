@@ -39,6 +39,14 @@ export default function ApprovalStepCard({
   const [isExpanded, setIsExpanded] = useState(false);
   const isAp = String(processType || "").toUpperCase() === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE;
   const selectedApActionCode = isAp ? String(step?.actionCode || "").trim().toUpperCase() : "";
+  const blockingIssues = Array.isArray(validation?.blockingIssues) ? validation.blockingIssues : [];
+  const warningIssues = Array.isArray(validation?.warningIssues) ? validation.warningIssues : [];
+  const informationalIssues = warningIssues.filter(
+    (issue) => String(issue?.code || "").trim() === "runtime_source_note"
+  );
+  const actionableWarningIssues = warningIssues.filter(
+    (issue) => String(issue?.code || "").trim() !== "runtime_source_note"
+  );
   const filteredPackageOptions = isAp
     ? workflowStepPackageOptions.filter((packageEntry) => {
         const expectedPackageCode = getApWorkflowRequiredPackageCode(selectedApActionCode);
@@ -48,12 +56,9 @@ export default function ApprovalStepCard({
       })
     : workflowStepPackageOptions;
   const isApproveAction = !isAp || selectedApActionCode === "APPROVE";
-  const blockingIssueCount = Array.isArray(validation?.blockingIssues)
-    ? validation.blockingIssues.length
-    : 0;
-  const warningIssueCount = Array.isArray(validation?.warningIssues)
-    ? validation.warningIssues.length
-    : 0;
+  const blockingIssueCount = blockingIssues.length;
+  const warningIssueCount = actionableWarningIssues.length;
+  const informationalIssueCount = informationalIssues.length;
   const runtimeBridgeMessage = step.requiredPermissionCode
     ? l(
         `Current runtime bridge permission: ${step.requiredPermissionCode}`,
@@ -73,12 +78,16 @@ export default function ApprovalStepCard({
       ? "border-rose-200 bg-rose-50 text-rose-700"
       : warningIssueCount > 0
         ? "border-amber-200 bg-amber-50 text-amber-700"
+        : informationalIssueCount > 0
+          ? "border-blue-200 bg-blue-50 text-blue-700"
         : "border-emerald-200 bg-emerald-50 text-emerald-700";
   const statusLabel =
     blockingIssueCount > 0
       ? l("Blocked", "Engelli")
       : warningIssueCount > 0
         ? l("Warning", "Uyari")
+        : informationalIssueCount > 0
+          ? l("Info", "Bilgi")
         : l("Ready", "Hazir");
   const statusDetail =
     blockingIssueCount > 0
@@ -88,6 +97,11 @@ export default function ApprovalStepCard({
         )
       : warningIssueCount > 0
         ? l(`${warningIssueCount} warning(s)`, `${warningIssueCount} uyari`)
+        : informationalIssueCount > 0
+          ? l(
+              `${informationalIssueCount} informational note(s)`,
+              `${informationalIssueCount} bilgi notu`
+            )
         : l("No open issues", "Acik sorun yok");
 
   return (
@@ -261,7 +275,7 @@ export default function ApprovalStepCard({
                   <p className="mt-2 text-sm leading-6 text-slate-900">{previewText}</p>
                 </div>
                 <p className="text-xs leading-5 text-slate-600">{runtimeBridgeMessage}</p>
-                {apBusinessLabels?.effectivePermission ? (
+                {isAp && apBusinessLabels?.effectivePermission ? (
                   <p className="text-xs leading-5 text-slate-600">
                     {apBusinessLabels.effectivePermission}
                   </p>
@@ -291,24 +305,37 @@ export default function ApprovalStepCard({
             {Array.isArray(validation?.allIssues) && validation.allIssues.length > 0 ? (
               <div className="mt-4 space-y-2">
                 {validation.allIssues.map((issue) => (
-                  <div
-                    key={`${issue.code}-${issue.severity}`}
-                    className={`rounded-2xl border px-4 py-3 ${
+                  (() => {
+                    const issueCode = String(issue?.code || "").trim();
+                    const isInformationalIssue = issueCode === "runtime_source_note";
+                    const issueClassName =
                       issue.severity === "error"
                         ? "border-rose-200 bg-rose-50/80 text-rose-950"
-                        : "border-amber-200 bg-amber-50/80 text-amber-950"
-                    }`}
+                        : isInformationalIssue
+                          ? "border-blue-200 bg-blue-50/80 text-blue-950"
+                          : "border-amber-200 bg-amber-50/80 text-amber-950";
+                    const issueBadgeLabel =
+                      issue.severity === "error"
+                        ? l("Blocking issue", "Engelleyici sorun")
+                        : isInformationalIssue
+                          ? l("Info", "Bilgi")
+                          : l("Warning", "Uyari");
+
+                    return (
+                  <div
+                    key={`${issue.code}-${issue.severity}`}
+                    className={`rounded-2xl border px-4 py-3 ${issueClassName}`}
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-semibold uppercase tracking-[0.16em]">
-                        {issue.severity === "error"
-                          ? l("Blocking issue", "Engelleyici sorun")
-                          : l("Warning", "Uyari")}
+                        {issueBadgeLabel}
                       </span>
                       <span className="text-sm font-medium">{issue.title}</span>
                     </div>
                     <p className="mt-1 text-sm leading-6">{issue.description}</p>
                   </div>
+                    );
+                  })()
                 ))}
               </div>
             ) : null}

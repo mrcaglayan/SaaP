@@ -9,6 +9,7 @@ import {
 } from "./evidence.storage.adapter.js";
 import { getLocalClosePackById } from "./local.close-packs.service.js";
 import { LOCAL_CLOSE_PACK } from "../utils/source-ref-types.js";
+import { refreshLocalClosePackCertification } from "./local.close-pack.certification.service.js";
 
 const STATUS_PENDING_UPLOAD = "PENDING_UPLOAD";
 const STATUS_ACTIVE = "ACTIVE";
@@ -390,6 +391,16 @@ export async function uploadLocalClosePackEvidenceContent({
       if (!row) {
         throw new Error("Local close-pack evidence upload readback failed");
       }
+
+      await refreshLocalClosePackCertification({
+        req,
+        tenantId: scope.tenantId,
+        packId: scope.packId,
+        userId: parsePositiveInt(req?.user?.userId),
+        assertScopeAccess,
+        runQuery: tx.query,
+      });
+
       return mapEvidenceRow(row);
     });
   } catch (err) {
@@ -515,6 +526,15 @@ export async function deleteLocalClosePackEvidenceByIdForTenant({
         [STATUS_DELETED, userId, scope.tenantId, scope.legalEntityId, evidenceId]
       );
     }
+
+    await refreshLocalClosePackCertification({
+      req,
+      tenantId: scope.tenantId,
+      packId: scope.packId,
+      userId,
+      assertScopeAccess,
+      runQuery: tx.query,
+    });
 
     return findLocalClosePackEvidenceRow({
       tenantId: scope.tenantId,

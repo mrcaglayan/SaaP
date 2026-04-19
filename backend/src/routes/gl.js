@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { query, withTransaction } from "../db.js";
 import {
   assertScopeAccess,
+  assertSecondaryPermission,
   buildScopeFilter,
   hasScopeAccess,
   requirePermission,
@@ -211,6 +212,18 @@ async function ensurePeriodOpen(bookId, fiscalPeriodId, actionLabel, runQuery = 
   if (status !== "OPEN") {
     throw badRequest(`Period is ${status}; cannot ${actionLabel}`);
   }
+}
+
+async function ensurePeriodPostable(bookId, fiscalPeriodId, actionLabel, req, runQuery = query) {
+  const status = await getEffectivePeriodStatus(bookId, fiscalPeriodId, runQuery);
+  if (status === "OPEN") {
+    return { wasClosedPeriod: false };
+  }
+  if (status === "SOFT_CLOSED") {
+    await assertSecondaryPermission(req, "gl.journal.post_to_closed_period");
+    return { wasClosedPeriod: true };
+  }
+  throw badRequest(`Period is ${status}; cannot ${actionLabel}`);
 }
 
 async function loadJournal(tenantId, journalId) {
@@ -2238,6 +2251,7 @@ registerGlWriteJournalRoutes(router, {
   applyShareholderCommitmentSyncForPostedJournalTx,
   buildIntercompanyAutoMirrorDraftSpecs,
   ensurePeriodOpen,
+  ensurePeriodPostable,
   generateJournalNo,
   insertDraftJournalEntry,
   loadCentralEquityJournalValidationContext,
@@ -2255,7 +2269,7 @@ registerGlWriteJournalRoutes(router, {
 registerGlReclassificationRoutes(router, {
   assertPostableLeafAccountForLegalEntity,
   buildSystemJournalNo,
-  ensurePeriodOpen,
+  ensurePeriodPostable,
   isNearlyZero,
   normalizeReclassAllocationMode,
   parseJsonColumn,

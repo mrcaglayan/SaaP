@@ -131,6 +131,25 @@ export async function listReclassificationRuns(params = {}) {
   return response.data;
 }
 
+export async function getPeriodStatus(bookId, periodId) {
+  const response = await api.get(`/api/v1/gl/period-statuses/${bookId}/${periodId}`);
+  return response.data;
+}
+
+export async function reclassifyJournalPeriod(journalId, targetFiscalPeriodId) {
+  const response = await api.post(`/api/v1/gl/journals/${journalId}/reclassify-period`, {
+    targetFiscalPeriodId,
+  });
+  return response.data;
+}
+
+export async function getPreCloseReview(bookId, periodId) {
+  const response = await api.get(
+    `/api/v1/gl/period-closing/${bookId}/${periodId}/pre-close-review`,
+  );
+  return response.data;
+}
+
 export async function closePeriod(bookId, periodId, payload) {
   const response = await api.post(
     `/api/v1/gl/period-statuses/${bookId}/${periodId}/close`,

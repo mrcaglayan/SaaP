@@ -49,6 +49,16 @@ import {
   upsertGroupAccountCanonicalMapping,
   upsertLocalAccountCanonicalMapping,
 } from "../services/consolidation.canonical-mappings.service.js";
+import {
+  autoLinkAndSyncSource,
+  listExpectedConsolidationCycleItems,
+  syncCycleItemsBySource,
+} from "../services/close.cycle-items.service.js";
+import { OFFICIAL_CONSOLIDATION_RUN_NAME } from "../services/close.cycles.shared.js";
+import {
+  normalizeConsolidationScenarioCode,
+  normalizeConsolidationVersionNo,
+} from "../services/consolidation.scenarios.shared.js";
 
 const router = express.Router();
 
@@ -1353,6 +1363,8 @@ async function getRunWithContext(tenantId, runId) {
        cr.consolidation_group_id,
        cr.fiscal_period_id,
        cr.run_name,
+       cr.scenario_code,
+       cr.version_no,
        cr.status,
        cr.presentation_currency_code,
        cr.started_by_user_id,
@@ -1833,6 +1845,11 @@ async function executeConsolidationRun({
         runId,
       ],
     );
+    await syncCycleItemsBySource("CONSOLIDATION_RUN", runId, {
+      tenantId,
+      userId: executedByUserId,
+      runQuery: tx.query,
+    });
 
     const memberResult = await tx.query(
       `SELECT
@@ -1985,6 +2002,11 @@ async function executeConsolidationRun({
         runId,
       ],
     );
+    await syncCycleItemsBySource("CONSOLIDATION_RUN", runId, {
+      tenantId,
+      userId: executedByUserId,
+      runQuery: tx.query,
+    });
 
     return {
       insertedRowCount: inserted,
@@ -3480,6 +3502,8 @@ router.get(
          cr.consolidation_group_id,
          cr.fiscal_period_id,
          cr.run_name,
+         cr.scenario_code,
+         cr.version_no,
          cr.status,
          cr.presentation_currency_code,
          cr.started_by_user_id,
@@ -3520,7 +3544,6 @@ router.post(
       "consolidationGroupId",
       "fiscalPeriodId",
       "runName",
-      "presentationCurrencyCode",
     ]);
 
     const consolidationGroupId = parsePositiveInt(
@@ -3528,9 +3551,17 @@ router.post(
     );
     const fiscalPeriodId = parsePositiveInt(req.body.fiscalPeriodId);
     const startedByUserId = parsePositiveInt(req.user?.userId);
-    const presentationCurrencyCode = String(
+    const requestedPresentationCurrencyCode = String(
       req.body.presentationCurrencyCode || "",
-    ).toUpperCase();
+    )
+      .trim()
+      .toUpperCase();
+    const runName = String(req.body.runName || "").trim().toUpperCase();
+    const scenarioCode = normalizeConsolidationScenarioCode(
+      req.body.scenarioCode,
+      { runName },
+    );
+    const versionNo = normalizeConsolidationVersionNo(req.body.versionNo);
 
     if (!consolidationGroupId || !fiscalPeriodId || !startedByUserId) {
       throw badRequest(
@@ -3560,24 +3591,100 @@ router.post(
       "fiscalPeriodId",
     );
 
-    const result = await query(
-      `INSERT INTO consolidation_runs (
-          consolidation_group_id, fiscal_period_id, run_name, status, presentation_currency_code, started_by_user_id
-       )
-       VALUES (?, ?, ?, 'DRAFT', ?, ?)`,
-      [
-        consolidationGroupId,
-        fiscalPeriodId,
-        String(req.body.runName),
-        presentationCurrencyCode,
-        startedByUserId,
-      ],
-    );
+    // Close-cycle governed OFFICIAL runs must use the frozen cycle snapshot.
+    // Ad hoc runs can still carry a caller-selected currency, but when omitted
+    // they fall back to the consolidation group's default presentation currency.
+    let effectivePresentationCurrencyCode =
+      requestedPresentationCurrencyCode ||
+      String(group.presentation_currency_code || "")
+        .trim()
+        .toUpperCase();
+    const runId = await withTransaction(async (tx) => {
+      if (runName === OFFICIAL_CONSOLIDATION_RUN_NAME) {
+        const governedItemsResult = await listExpectedConsolidationCycleItems(
+          {
+            tenantId,
+            consolidationGroupId,
+            fiscalPeriodId,
+            runName,
+          },
+          {
+            runQuery: tx.query,
+          },
+        );
+        const frozenCurrencies = Array.from(
+          new Set(
+            (governedItemsResult.rows || [])
+              .map((row) =>
+                String(row?.presentationCurrencyCode || "")
+                  .trim()
+                  .toUpperCase(),
+              )
+              .filter(Boolean),
+          ),
+        );
+        if (frozenCurrencies.length > 1) {
+          throw badRequest(
+            "Conflicting close-cycle presentation currency snapshots were found for the requested OFFICIAL consolidation run",
+          );
+        }
+        if (frozenCurrencies[0]) {
+          effectivePresentationCurrencyCode = frozenCurrencies[0];
+          if (
+            requestedPresentationCurrencyCode &&
+            requestedPresentationCurrencyCode !== effectivePresentationCurrencyCode
+          ) {
+            throw badRequest(
+              "presentationCurrencyCode must match the frozen close-cycle snapshot for OFFICIAL consolidation runs",
+            );
+          }
+        }
+      }
+
+      if (!effectivePresentationCurrencyCode) {
+        throw badRequest(
+          "presentationCurrencyCode is required when no consolidation-group default or cycle-governed OFFICIAL snapshot is available",
+        );
+      }
+
+      const result = await tx.query(
+        `INSERT INTO consolidation_runs (
+            consolidation_group_id,
+            fiscal_period_id,
+            run_name,
+            scenario_code,
+            version_no,
+            status,
+            presentation_currency_code,
+            started_by_user_id
+         )
+         VALUES (?, ?, ?, ?, ?, 'DRAFT', ?, ?)`,
+        [
+          consolidationGroupId,
+          fiscalPeriodId,
+          runName,
+          scenarioCode,
+          versionNo,
+          effectivePresentationCurrencyCode,
+          startedByUserId,
+        ],
+      );
+
+      return parsePositiveInt(result.rows?.insertId);
+    });
+
+    await autoLinkAndSyncSource("CONSOLIDATION_RUN", runId, {
+      tenantId,
+      userId: startedByUserId,
+    });
 
     return res.status(201).json({
       ok: true,
       tenantId,
-      runId: result.rows.insertId || null,
+      runId,
+      scenarioCode,
+      versionNo,
+      presentationCurrencyCode: effectivePresentationCurrencyCode,
     });
   }),
 );
@@ -3698,6 +3805,10 @@ router.post(
          WHERE id = ?`,
         [String(err.message || "Execution failed").slice(0, 500), runId],
       );
+      await syncCycleItemsBySource("CONSOLIDATION_RUN", runId, {
+        tenantId,
+        userId: executedByUserId,
+      });
       if (isCanonicalCoverageFailure(err)) {
         try {
           await recordCanonicalExecuteFailureEvent({
@@ -4469,6 +4580,10 @@ router.post(
        WHERE id = ?`,
       [runId],
     );
+    await syncCycleItemsBySource("CONSOLIDATION_RUN", runId, {
+      tenantId,
+      userId,
+    });
 
     return res.json({ ok: true, runId, status: "LOCKED" });
   }),

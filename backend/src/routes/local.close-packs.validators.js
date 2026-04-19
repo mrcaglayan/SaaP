@@ -255,6 +255,44 @@ export function parseLocalClosePackReportReviewInput(req) {
   };
 }
 
+/**
+ * Parse the certification section key route param for one local close pack.
+ */
+export function parseLocalClosePackCertificationSectionKeyParam(req) {
+  const sectionKey = String(req.params?.sectionKey || "")
+    .trim()
+    .toUpperCase();
+  if (!/^[A-Z0-9_]{2,64}$/.test(sectionKey)) {
+    throw badRequest("sectionKey is invalid");
+  }
+  return sectionKey;
+}
+
+/**
+ * Parse one local close-pack certification section update payload.
+ */
+export function parseLocalClosePackCertificationSectionUpdateInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const packId = parseLocalClosePackIdParam(req);
+  const sectionKey = parseLocalClosePackCertificationSectionKeyParam(req);
+  const body = req.body || {};
+  const status = normalizeEnum(
+    body.status ?? body.sectionStatus ?? body.section_status,
+    "status",
+    ["OPEN", "COMPLETE"]
+  );
+
+  return {
+    tenantId,
+    userId,
+    packId,
+    sectionKey,
+    status,
+    note: normalizeText(body.note ?? body.sectionNote, "note", 1000),
+  };
+}
+
 export default {
   parseLocalClosePackIdParam,
   parseLocalClosePackListInput,
@@ -264,4 +302,6 @@ export default {
   parseLocalClosePackCommentCreateInput,
   parseLocalClosePackAuditListInput,
   parseLocalClosePackReportReviewInput,
+  parseLocalClosePackCertificationSectionKeyParam,
+  parseLocalClosePackCertificationSectionUpdateInput,
 };

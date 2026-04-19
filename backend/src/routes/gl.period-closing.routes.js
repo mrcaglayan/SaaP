@@ -17,11 +17,20 @@ import { loadPermissionBundle } from "../services/authz.scope.service.js";
 import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
 import { evaluateCashFxRevaluationCloseGate } from "../services/cash.fx.revaluation.service.js";
 import {
+  autoLinkAndSyncSource,
+  syncCycleItemsBySource,
+} from "../services/close.cycle-items.service.js";
+import { propagateStaleFromSourceEvent } from "../services/close.stale.service.js";
+import {
   parsePeriodCloseRunFilters,
   parsePeriodStatusCloseInput,
 } from "./gl.period-closing.validators.js";
 import { asyncHandler, badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
 
+/**
+ * Register period-close routes and keep linked close-cycle items synchronized
+ * with the repo's existing technical close-run lifecycle.
+ */
 export function registerGlPeriodClosingRoutes(router, deps = {}) {
   const {
     buildSystemJournalNo,
@@ -154,6 +163,45 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
     });
     return !bundle?.missingPermission;
   }
+
+  router.get(
+    "/period-closing/:bookId/:periodId/pre-close-review",
+    requirePermission("gl.period.close", {
+      resolveScope: async (req, tenantId) => {
+        return resolveScopeFromBookId(req.params?.bookId, tenantId);
+      },
+    }),
+    asyncHandler(async (req, res) => {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) throw badRequest("tenantId is required");
+
+      const bookId = parsePositiveInt(req.params.bookId);
+      const fiscalPeriodId = parsePositiveInt(req.params.periodId);
+      if (!bookId || !fiscalPeriodId) {
+        throw badRequest("bookId and periodId must be positive integers");
+      }
+
+      const draftsResult = await query(
+        `SELECT je.id, je.journal_no, je.description, je.total_debit_base, je.created_by_user_id,
+                u.name AS created_by_name
+           FROM journal_entries je
+           LEFT JOIN users u ON u.id = je.created_by_user_id AND u.tenant_id = je.tenant_id
+          WHERE je.tenant_id = ?
+            AND je.book_id = ?
+            AND je.fiscal_period_id = ?
+            AND je.status = 'DRAFT'
+          ORDER BY je.id DESC
+          LIMIT 200`,
+        [tenantId, bookId, fiscalPeriodId]
+      );
+
+      return res.json({
+        unpostedDrafts: draftsResult.rows || [],
+        pendingApprovals: [],
+        unapprovedSubledger: [],
+      });
+    })
+  );
 
   router.get(
     "/period-closing/runs",
@@ -957,6 +1005,13 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
           );
       }
 
+      if (closeResult.run?.id) {
+        await autoLinkAndSyncSource("PERIOD_CLOSE_RUN", closeResult.run.id, {
+          tenantId,
+          userId,
+        });
+      }
+
       return res.status(closeResult.idempotent ? 200 : 201).json({
         ok: true,
         tenantId,
@@ -1137,6 +1192,28 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
         };
       });
 
+      if (reopenResult.run?.id) {
+        await syncCycleItemsBySource("PERIOD_CLOSE_RUN", reopenResult.run.id, {
+          tenantId,
+          userId,
+        });
+        await propagateStaleFromSourceEvent(
+          {
+            sourceTargetType: "PERIOD_CLOSE_RUN",
+            sourceTargetId: reopenResult.run.id,
+            eventCode: "PERIOD_CLOSE_REOPENED",
+            payload: {
+              reason,
+              previousStatus: reopenResult.previousStatus,
+            },
+          },
+          {
+            tenantId,
+            userId,
+          }
+        );
+      }
+
       return res.status(201).json({
         ok: true,
         tenantId,
@@ -1147,6 +1224,30 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
         run: reopenResult.run,
         reversalJournalEntryIds: reopenResult.reversalJournalEntryIds,
       });
+    })
+  );
+
+  router.get(
+    "/period-statuses/:bookId/:periodId",
+    requirePermission("gl.journal.read", {
+      resolveScope: async (req, tenantId) => {
+        return resolveScopeFromBookId(req.params?.bookId, tenantId);
+      },
+    }),
+    asyncHandler(async (req, res) => {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) throw badRequest("tenantId is required");
+      const bookId = parsePositiveInt(req.params.bookId);
+      const fiscalPeriodId = parsePositiveInt(req.params.periodId);
+      if (!bookId || !fiscalPeriodId) {
+        throw badRequest("bookId and periodId must be positive integers");
+      }
+      const result = await query(
+        `SELECT status FROM period_statuses WHERE book_id = ? AND fiscal_period_id = ? LIMIT 1`,
+        [bookId, fiscalPeriodId]
+      );
+      const status = String(result.rows[0]?.status || "OPEN").toUpperCase();
+      return res.json({ bookId, fiscalPeriodId, status });
     })
   );
 

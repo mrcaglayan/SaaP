@@ -125,6 +125,10 @@ const LocalCloseWorkspacePage = lazy(
 const LocalClosePackDetailPage = lazy(
   () => import("./pages/LocalClosePackDetailPage.jsx"),
 );
+const CloseCycleManagerPage = lazy(
+  () => import("./pages/CloseCycleManagerPage.jsx"),
+);
+const CloseCockpitPage = lazy(() => import("./pages/CloseCockpitPage.jsx"));
 
 function toRoutePath(value) {
   return String(value || "").replace(/[?#].*$/, "");
@@ -839,6 +843,16 @@ const implementedRoutes = [
     appPath: "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
     childPath: "donem-sonu-islemler/yillik/kapanis-islemleri",
     element: withLazyRoute(YearEndRevrecChecklistPage),
+  },
+  {
+    appPath: "/app/donem-sonu-islemler/yillik/kapanis-donguleri",
+    childPath: "donem-sonu-islemler/yillik/kapanis-donguleri",
+    element: withLazyRoute(CloseCycleManagerPage),
+  },
+  {
+    appPath: "/app/donem-sonu-islemler/yillik/kapanis-kokpiti",
+    childPath: "donem-sonu-islemler/yillik/kapanis-kokpiti",
+    element: withLazyRoute(CloseCockpitPage),
   },
   {
     appPath: "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",

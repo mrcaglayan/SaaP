@@ -751,6 +751,7 @@ function buildWorkflowExplainabilityEntry({
   minApproverCount,
   allowSelfApprove,
   escalationAfterHours,
+  validation,
   stepScopeLabels,
   l,
 }) {
@@ -763,6 +764,25 @@ function buildWorkflowExplainabilityEntry({
     l("In-scope package holders", "Kapsam ici paket sahipleri");
   const minCount = Math.max(1, Number(minApproverCount || 1) || 1);
   const escalationText = String(escalationAfterHours || "").trim();
+  const blockingIssues = Array.isArray(validation?.blockingIssues)
+    ? validation.blockingIssues
+    : [];
+  const warningIssues = Array.isArray(validation?.warningIssues)
+    ? validation.warningIssues
+    : [];
+  const primaryIssue = blockingIssues[0] || warningIssues[0] || null;
+  const statusTone =
+    blockingIssues.length > 0
+      ? "rose"
+      : warningIssues.length > 0
+        ? "amber"
+        : "";
+  const statusLabel =
+    blockingIssues.length > 0
+      ? l("Blocked", "Engelli")
+      : warningIssues.length > 0
+        ? l("Warning", "Uyari")
+        : "";
 
   const detailBadges = [
     {
@@ -791,6 +811,12 @@ function buildWorkflowExplainabilityEntry({
         : l("Self-approve off", "Kendi kendine onay kapali"),
     },
   ];
+  if (primaryIssue?.title) {
+    detailBadges.push({
+      key: "issue",
+      label: primaryIssue.title,
+    });
+  }
 
   if (escalationText) {
     detailBadges.push({
@@ -814,11 +840,15 @@ function buildWorkflowExplainabilityEntry({
       `Step ${stepNo}: ${normalizedPackageLabel} at ${scopeLabel} scope - usually ${normalizedActorText}`,
       `${stepNo}. adim: ${normalizedPackageLabel} - ${scopeLabel} kapsaminda - genelde ${normalizedActorText}`
     ),
-    helperText: l(
-      `${normalizedActionLabel} runs at ${scopeLabel} scope.`,
-      `${normalizedActionLabel}, ${scopeLabel} kapsaminda calisir.`
-    ),
+    helperText:
+      primaryIssue?.description ||
+      l(
+        `${normalizedActionLabel} runs at ${scopeLabel} scope.`,
+        `${normalizedActionLabel}, ${scopeLabel} kapsaminda calisir.`
+      ),
     detailBadges,
+    statusLabel,
+    statusTone,
   };
 }
 
@@ -830,6 +860,7 @@ function buildWorkflowExplainabilityEntry({
 export function buildWorkflowExplainabilityPreviewModel({
   stepDrafts,
   processType,
+  workflowStepValidation = null,
   stepScopeLabels,
   l,
 }) {
@@ -837,6 +868,28 @@ export function buildWorkflowExplainabilityPreviewModel({
   const normalizedSteps = Array.isArray(stepDrafts) ? stepDrafts : [];
   const previewEntries = [];
   const notes = [];
+  const validationEntries = Array.isArray(workflowStepValidation?.steps)
+    ? workflowStepValidation.steps
+    : [];
+  const validationByIndex = new Map(
+    validationEntries.map((entry) => [Number(entry?.index || 0), entry])
+  );
+
+  if (workflowStepValidation?.hasBlockingIssues) {
+    notes.push(
+      l(
+        "Some steps are blocked. This preview reflects the current draft rows, not a guarantee that the draft is valid or saveable.",
+        "Bazi adimlar engelli. Bu onizleme mevcut taslak satirlarini gosterir; taslagin gecerli veya kaydedilebilir oldugunu garanti etmez."
+      )
+    );
+  } else if (workflowStepValidation?.hasWarnings) {
+    notes.push(
+      l(
+        "Some steps still have warnings. Review the highlighted preview entries before saving.",
+        "Bazi adimlarda hala uyarilar var. Kaydetmeden once vurgulanan onizleme girdilerini gozden gecirin."
+      )
+    );
+  }
 
   if (normalizedProcessType === AP_DOCUMENT_WORKFLOW_PROCESS_TYPE) {
     normalizedSteps.forEach((step, index) => {
@@ -863,6 +916,7 @@ export function buildWorkflowExplainabilityPreviewModel({
           minApproverCount: actionCode === "APPROVE" ? step?.minApproverCount : 1,
           allowSelfApprove: actionCode === "APPROVE" ? step?.allowSelfApprove : false,
           escalationAfterHours: step?.escalationAfterHours,
+          validation: validationByIndex.get(index) || null,
           stepScopeLabels,
           l,
         })
@@ -891,6 +945,7 @@ export function buildWorkflowExplainabilityPreviewModel({
           minApproverCount: step?.minApproverCount,
           allowSelfApprove: step?.allowSelfApprove,
           escalationAfterHours: step?.escalationAfterHours,
+          validation: validationByIndex.get(index) || null,
           stepScopeLabels,
           l,
         })
@@ -1196,8 +1251,11 @@ export function buildWorkflowStepValidationModel({
           buildWorkflowStepIssue(
             "warning",
             "runtime_source_note",
-            l("Runtime source note", "Runtime kaynak notu"),
-            runtimeNotes[0]
+            l("Current seeded-role mapping", "Mevcut seeded-role eslemesi"),
+            l(
+              `Informational only. ${runtimeNotes[0]}`,
+              `Yalnizca bilgi icindir. ${runtimeNotes[0]}`
+            )
           )
         );
       }

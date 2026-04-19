@@ -2,6 +2,7 @@ import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { getLocalClosePackById } from "./local.close-packs.service.js";
 import { LOCAL_CLOSE_PACK } from "../utils/source-ref-types.js";
+import { refreshLocalClosePackCertification } from "./local.close-pack.certification.service.js";
 
 const STATUS_ACTIVE = "ACTIVE";
 const STATUS_DELETED = "DELETED";
@@ -196,6 +197,16 @@ export async function createLocalClosePackInternalComment({
   if (!created) {
     throw new Error("Local close-pack comment record readback failed");
   }
+
+  await refreshLocalClosePackCertification({
+    req,
+    tenantId: scope.tenantId,
+    packId: scope.packId,
+    userId,
+    assertScopeAccess,
+    runQuery,
+  });
+
   return mapInternalCommentRow(created);
 }
 

@@ -222,8 +222,8 @@ export function getWorkflowSetupText(l) {
     apBusinessLabels: {
       atWhichScope: l("At which organizational scope", "Hangi organizasyon kapsaminda"),
       effectivePermission: l(
-        "The selected AP action locks the package for this step. Scope decides which users can act.",
-        "Secilen AP eylemi bu adimin paketini kilitler. Hangi kullanicilarin islem yapabilecegini kapsam belirler."
+        "For AP, the selected action locks the package for this step. Scope decides which users can act.",
+        "AP icin, secilen eylem bu adimin paketini kilitler. Hangi kullanicilarin islem yapabilecegini kapsam belirler."
       ),
     },
   };

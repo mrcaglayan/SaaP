@@ -936,8 +936,10 @@ This function must:
 
 1. `PERIOD_CLOSE_RUN completed -> LOCAL_CLOSE_PACK approve`
 2. `PERIOD_CLOSE_RUN completed -> LOCAL_CLOSE_PACK lock`
-3. `LOCAL_CLOSE_PACK locked -> CONSOLIDATION_RUN lock/finalize path`
-4. `CONSOLIDATION_RUN locked -> close cycle lock`
+3. `PERIOD_CLOSE_RUN completed -> close cycle lock`
+4. `LOCAL_CLOSE_PACK locked -> CONSOLIDATION_RUN lock/finalize path`
+5. `LOCAL_CLOSE_PACK locked -> close cycle lock`
+6. `CONSOLIDATION_RUN locked -> close cycle lock`
 
 ## Important modeling rule
 
@@ -1088,6 +1090,8 @@ Patch:
 - auto-create or reuse local close packs
 - register expected period close items
 - register expected consolidation item with `run_name = OFFICIAL`
+- register dependency rows during provision
+- seed support-schedule and reconciliation-control scaffolds during provision
 - keep non-`OFFICIAL` consolidation runs allowed but outside PR-01 cycle-governed expected-run linking
 - store `business_status`
 - store `stale_status`
@@ -1101,7 +1105,6 @@ Patch:
 
 ### What PR-01 does not do
 
-- dependency rows
 - cockpit
 - new close-cycle blockers
 - stale events
@@ -1289,6 +1292,13 @@ PR-02b builds dependency-based hard blocking on top of that same cycle-linked pa
 - local close reopen / unlock
 - later extensible official reversals
 
+### Stale meaning
+
+- `stale_status` is a current-state flag, not a permanent scar
+- successful rerun / reapprove / relock / refinalize clears active stale back to `FRESH`
+- stale resolution stamps `stale_resolved_at` and optionally `stale_resolved_by`
+- `close_stale_events` remains the permanent audit history even after current stale clears
+
 ### Risk
 
 High
@@ -1351,6 +1361,18 @@ Make the process operationally manageable without manual chasing.
 - due soon
 - overdue
 - better blocked-button explainability
+
+### Step 65 boundary
+
+PR-05 in Step 65 delivers live operational alert visibility on cockpit reads.
+
+This means:
+
+- alerts are derived live from due-state, blocker, and stale inputs at read time
+- due-soon and overdue visibility are active now
+- `escalate_after_hours` currently raises live overdue severity only; it does not create durable scheduled escalations
+- `close_alerts` is still a foundation table for later persisted notification / escalation snapshots
+- `stale_grace_hours` is reserved in the SLA catalog but is not active in current Step 65 SLA state transitions
 
 ### Risk
 
@@ -1450,7 +1472,9 @@ Add scenario distinction and management monitoring.
 - close completion %
 - overdue count
 - stale count
-- reopen count
+- reopen events total
+- items reopened at least once
+- currently reopened items
 - avg approval SLA
 - bottleneck step
 - entity readiness heatmap
@@ -1458,6 +1482,27 @@ Add scenario distinction and management monitoring.
 ### Risk
 
 Low
+
+---
+
+# 11A) As Implemented
+
+- initial cycle provision already registers dependency rows inside the same provision flow
+- initial cycle provision already syncs support schedules and reconciliation controls
+- cockpit reads persist KPI snapshot rows as the interim snapshot mechanism
+- original PR boundaries are therefore partially collapsed in code; operational behavior is governed by runtime guarantees, not by the historical phase labels alone
+
+---
+
+# 11B) Behavioral Guarantees
+
+- cycle lock is a completion gate, not a manual admin freeze
+- entity cycle lock requires provisioned period-close items to be `COMPLETED` and provisioned local-close items to be `LOCKED`
+- group cycle lock requires provisioned period-close items to be `COMPLETED`, provisioned local-close items to be `LOCKED`, and the provisioned `OFFICIAL` consolidation item to be `LOCKED`
+- stale means currently outdated; it clears when the downstream official step is successfully rerun, reapproved, relocked, or refinalized
+- stale audit history remains durable in `close_stale_events` even after current stale clears
+- reopen KPIs are event-backed, so fixing the item later does not erase reopen history
+- `OFFICIAL` remains the only cycle-governed official consolidation run; other scenarios stay preview / analysis surfaces unless separately promoted by governance
 
 ---
 
@@ -1473,6 +1518,99 @@ Low
 8. PR-07 - Support schedules / disclosure packs
 9. PR-08 - Reconciliation + intercompany control foundation
 10. PR-09 - Consolidation scenarios / versions + KPI dashboards
+
+---
+
+# 11C) Release-close cleanup before signoff
+
+Step 65 is in release-close cleanup territory, not core architecture-reopen territory.
+
+The remaining work is:
+
+- 1 runtime visibility fix
+- 1 documentation source-of-truth cleanup
+- 1 PR-05 boundary clarification
+- 2 targeted regression tests
+
+## Required before Step 65 signoff
+
+### PR-A - Period-close cockpit blocker hydration
+
+Extend the PR-03 source-gate blocker hydration so `PERIOD_CLOSE_RUN` items surface the same live source blockers that already exist at action time.
+
+This includes:
+
+- workflow approval-gate blockers
+- later period-close source gates if more are added in the same source review model
+
+Done means:
+
+- the cockpit shows blocked `PERIOD_CLOSE_RUN` items
+- the cycle item shows those blocker rows
+- managers do not need to discover the blocker only by attempting the close action
+
+### PR-B - Step 65 source-of-truth cleanup
+
+Canonical Step 65 plan:
+
+- `PR-STEPS/65-Close + Consolidation Operating Model.md`
+
+Completed cleanup:
+
+- `redesigning/65-Close + Consolidation Operating Model.md`
+
+was deleted so the repo no longer carries a second Step 65 business-meaning variant.
+
+Done means the reviewer reads one canonical Step 65 operating model only.
+
+### PR-C - PR-05 boundary clarification
+
+Implemented boundary:
+
+- live operational alert visibility
+- not yet durable scheduled escalation
+
+Documented explicitly that:
+
+- alerts are computed live at cockpit read time
+- `escalate_after_hours` affects live overdue severity, not durable scheduler-backed escalation
+- durable escalation snapshots / scheduler-backed escalation remain future work
+- `stale_grace_hours` is reserved but not active in SLA state evaluation yet
+
+This closes the boundary ambiguity without reopening the architecture.
+
+## Strongly recommended hardening
+
+### PR-D - Two targeted regression additions
+
+Implemented exactly these two regression cases:
+
+1. Multi-book ambiguity
+2. OFFICIAL frozen-currency rejection
+
+Test A asserts that consolidation review/finalize surfaces `ENTITY_CLOSE_BOOK_AMBIGUOUS` when multiple local-close books exist for a member and no single governed close chain can be resolved.
+
+Test B asserts that `OFFICIAL` consolidation rejects a caller-supplied presentation currency that conflicts with the frozen close-cycle snapshot.
+
+Implemented scripts:
+
+- `backend/scripts/test-close-cycle-consolidation-book-ambiguity.js`
+- `backend/scripts/test-close-cycle-official-frozen-currency-rejection.js`
+
+## Step 65 signoff gate
+
+Required:
+
+- cockpit shows `PERIOD_CLOSE_RUN` source blockers
+- only one Step 65 plan doc is canonical
+- PR-05 wording explicitly matches live visibility behavior
+
+Strongly recommended:
+
+- regression covers `ENTITY_CLOSE_BOOK_AMBIGUOUS`
+- regression covers OFFICIAL frozen-currency rejection
+
+Once the required items are true, Step 65 can be signed off as implemented with targeted follow-up hardening only.
 
 ---
 

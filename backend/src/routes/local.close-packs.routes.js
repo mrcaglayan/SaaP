@@ -43,9 +43,14 @@ import {
   upsertLocalClosePackReportReview,
 } from "../services/local.close-pack.workspace.service.js";
 import {
+  getLocalClosePackCertification,
+  updateLocalClosePackCertificationSection,
+} from "../services/local.close-pack.certification.service.js";
+import {
   parseLocalClosePackActionInput,
   parseLocalClosePackAuditListInput,
   parseLocalClosePackCommentCreateInput,
+  parseLocalClosePackCertificationSectionUpdateInput,
   parseLocalClosePackCreateInput,
   parseLocalClosePackEvidenceIdParam,
   parseLocalClosePackIdParam,
@@ -159,11 +164,24 @@ export function registerLocalClosePackRoutes(router) {
         packId,
         assertScopeAccess,
       });
+      const certification = await getLocalClosePackCertification({
+        req,
+        tenantId,
+        packId,
+        assertScopeAccess,
+      });
+      const refreshedRow = await getLocalClosePackById({
+        req,
+        tenantId,
+        packId,
+        assertScopeAccess,
+      });
       return res.json({
         tenantId,
-        row,
+        row: refreshedRow || row,
         entityReadiness,
         reviewGate,
+        certification,
       });
     })
   );
@@ -412,6 +430,28 @@ export function registerLocalClosePackRoutes(router) {
         tenantId: input.tenantId,
         packId: input.packId,
         row,
+      });
+    })
+  );
+
+  router.put(
+    "/local-close-packs/:packId/certification-sections/:sectionKey",
+    requirePermission("ouclose.lock", {
+      resolveScope: (req, tenantId) =>
+        resolveLocalClosePackScope(req.params?.packId, tenantId),
+    }),
+    asyncHandler(async (req, res) => {
+      const input = parseLocalClosePackCertificationSectionUpdateInput(req);
+      const certification = await updateLocalClosePackCertificationSection({
+        req,
+        input,
+        assertScopeAccess,
+      });
+      return res.json({
+        ok: true,
+        tenantId: input.tenantId,
+        packId: input.packId,
+        certification,
       });
     })
   );

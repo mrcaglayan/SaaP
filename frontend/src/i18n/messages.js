@@ -473,6 +473,10 @@ export const messages = {
         "/app/donem-sonu-islemler/yillik": "Yılsonu İşlemler",
         "/app/donem-sonu-islemler/yillik/envanter-islemleri":
           "Envanter Islemleri",
+        "/app/donem-sonu-islemler/yillik/kapanis-kokpiti":
+          "Kapanis Kokpiti",
+        "/app/donem-sonu-islemler/yillik/kapanis-donguleri":
+          "Kapanis Donguleri",
         "/app/donem-sonu-islemler/yillik/kapanis-islemleri":
           "Kapanis Islemleri",
         "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri":
@@ -2929,6 +2933,10 @@ export const messages = {
         "/app/donem-sonu-islemler/yillik": "Year-End Operations",
         "/app/donem-sonu-islemler/yillik/envanter-islemleri":
           "Inventory Transactions",
+        "/app/donem-sonu-islemler/yillik/kapanis-kokpiti":
+          "Close Cockpit",
+        "/app/donem-sonu-islemler/yillik/kapanis-donguleri":
+          "Close Cycles",
         "/app/donem-sonu-islemler/yillik/kapanis-islemleri":
           "Closing Transactions",
         "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri":

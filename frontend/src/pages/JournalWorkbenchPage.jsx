@@ -6,6 +6,9 @@ import {
   cancelJournalDraft,
   createJournal,
   getJournal,
+  getPreCloseReview,
+  getPeriodStatus,
+  reclassifyJournalPeriod,
   listIntercompanyComplianceIssues,
   listPeriodCloseRuns,
   listIntercompanyEntityFlags,
@@ -648,6 +651,8 @@ export default function JournalWorkbenchPage() {
   const [periodCloseRuns, setPeriodCloseRuns] = useState([]);
   const [periodCloseFxGate, setPeriodCloseFxGate] = useState(null);
   const [periodCloseWorkflowGate, setPeriodCloseWorkflowGate] = useState(null);
+  const [preCloseReview, setPreCloseReview] = useState(null);
+  const [loadingPreCloseReview, setLoadingPreCloseReview] = useState(false);
 
   const [historyFilters, setHistoryFilters, resetHistoryFilters] = usePersistedFilters(
     JOURNAL_HISTORY_FILTERS_STORAGE_SCOPE,
@@ -666,6 +671,7 @@ export default function JournalWorkbenchPage() {
   });
   const [selectedJournalId, setSelectedJournalId] = useState("");
   const [selectedJournal, setSelectedJournal] = useState(null);
+  const [selectedJournalPeriodStatus, setSelectedJournalPeriodStatus] = useState(null);
   const [showRawJournalDetailLines, setShowRawJournalDetailLines] = useState(false);
   const lastObservedUrlJournalIdRef = useRef(null);
   const pendingUrlSelectionJournalIdRef = useRef(null);
@@ -1260,6 +1266,20 @@ export default function JournalWorkbenchPage() {
   useEffect(() => {
     setPeriodCloseFxGate(null);
     setPeriodCloseWorkflowGate(null);
+    setPreCloseReview(null);
+  }, [periodForm.bookId, periodForm.periodId]);
+
+  useEffect(() => {
+    const bookId = toInt(periodForm.bookId);
+    const periodId = toInt(periodForm.periodId);
+    if (!bookId || !periodId) return;
+    let cancelled = false;
+    setLoadingPreCloseReview(true);
+    getPreCloseReview(bookId, periodId)
+      .then((data) => { if (!cancelled) setPreCloseReview(data); })
+      .catch(() => { if (!cancelled) setPreCloseReview(null); })
+      .finally(() => { if (!cancelled) setLoadingPreCloseReview(false); });
+    return () => { cancelled = true; };
   }, [periodForm.bookId, periodForm.periodId]);
   const selectedEntityIntercompanyEnabled = Boolean(
     selectedLegalEntity?.is_intercompany_enabled ?? true
@@ -1933,6 +1953,113 @@ export default function JournalWorkbenchPage() {
     await fetchJournalHistory(nextFilters);
   }
 
+  async function onBulkCancelSelected() {
+    if (!canCancelDraft) {
+      setError(l("Missing permission: gl.journal.cancel", "Eksik yetki: gl.journal.cancel"));
+      return;
+    }
+    if (selectedDraftHistoryRows.length === 0) {
+      setError(l("Select at least one DRAFT journal.", "En az bir DRAFT fis secin."));
+      return;
+    }
+    const reason = window.prompt(
+      l(
+        `Cancel reason for ${selectedDraftHistoryRows.length} selected draft(s):`,
+        `${selectedDraftHistoryRows.length} secili taslak icin iptal nedeni:`
+      )
+    );
+    if (reason === null) return;
+    const reasonText = String(reason || "").trim();
+    if (!reasonText) {
+      setError(l("Cancel reason is required.", "Iptal nedeni zorunludur."));
+      return;
+    }
+
+    setSaving("cancelJournalDraft");
+    setError("");
+    setMessage("");
+    const cancelledIds = [];
+    const failedItems = [];
+    try {
+      for (const row of selectedDraftHistoryRows) {
+        try {
+          await cancelJournalDraft(row.id, { reason: reasonText });
+          cancelledIds.push(row.id);
+        } catch (err) {
+          const msg = err?.response?.data?.message || err?.message || "Unknown error";
+          failedItems.push(`#${row.id} (${msg})`);
+        }
+      }
+
+      if (cancelledIds.length > 0) {
+        setMessage(
+          l(
+            `${cancelledIds.length} draft(s) cancelled.${failedItems.length > 0 ? ` ${failedItems.length} failed.` : ""}`,
+            `${cancelledIds.length} taslak iptal edildi.${failedItems.length > 0 ? ` ${failedItems.length} basarisiz.` : ""}`
+          )
+        );
+        setSelectedHistoryJournalIds((prev) =>
+          prev.filter((id) => !cancelledIds.includes(Number(id)))
+        );
+        if (canReadJournals) {
+          await fetchJournalHistory({ ...historyFilters, offset: "0" });
+        }
+      }
+      if (failedItems.length > 0) {
+        setError(
+          l(
+            `Failed to cancel: ${failedItems.join("; ")}`,
+            `Iptal edilemedi: ${failedItems.join("; ")}`
+          )
+        );
+      }
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function onReclassifyJournalPeriod(journal) {
+    if (!canUpdateDraft) {
+      setError(l("Missing permission: gl.journal.update", "Eksik yetki: gl.journal.update"));
+      return;
+    }
+    const periodOptions = historyPeriods
+      .map((p) => `${p.id} — ${formatPeriodLabel(p)}`)
+      .join("\n");
+    const input = window.prompt(
+      l(
+        `Reclassify journal #${journal.id} (current period: ${selectedJournalPeriodStatus}) to an open period.\nEnter the target period ID:\n\n${periodOptions}`,
+        `${journal.id} numarali fisi (mevcut donem: ${selectedJournalPeriodStatus}) acik bir doneme siniflandir.\nHedef donem ID girin:\n\n${periodOptions}`
+      )
+    );
+    if (input === null) return;
+    const targetFiscalPeriodId = Number(String(input).trim());
+    if (!targetFiscalPeriodId || !Number.isInteger(targetFiscalPeriodId)) {
+      setError(l("Invalid period ID.", "Gecersiz donem ID."));
+      return;
+    }
+    setSaving("reclassifyPeriod");
+    setError("");
+    setMessage("");
+    try {
+      await reclassifyJournalPeriod(journal.id, targetFiscalPeriodId);
+      setMessage(
+        l(
+          `Journal #${journal.id} moved to period ${targetFiscalPeriodId}.`,
+          `Fis #${journal.id} donem ${targetFiscalPeriodId}'e tasindi.`
+        )
+      );
+      if (canReadJournals) {
+        await fetchJournalHistory({ ...historyFilters, offset: "0" });
+        await loadJournalDetail(journal.id);
+      }
+    } catch (err) {
+      setError(err?.response?.data?.message || l("Failed to reclassify journal.", "Fis donemi degistirilemedi."));
+    } finally {
+      setSaving("");
+    }
+  }
+
   function onOpenSinglePostConfirm(row) {
     openPostConfirm([row], { postLinkedMirrors: false });
   }
@@ -1964,8 +2091,16 @@ export default function JournalWorkbenchPage() {
     setError("");
     try {
       const res = await getJournal(parsedId);
+      const row = res?.row || null;
       setSelectedJournalId(String(parsedId));
-      setSelectedJournal(res?.row || null);
+      setSelectedJournal(row);
+      if (row?.book_id && row?.fiscal_period_id) {
+        getPeriodStatus(toInt(row.book_id), toInt(row.fiscal_period_id))
+          .then((s) => setSelectedJournalPeriodStatus(String(s?.status || "OPEN").toUpperCase()))
+          .catch(() => setSelectedJournalPeriodStatus(null));
+      } else {
+        setSelectedJournalPeriodStatus(null);
+      }
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to load journal detail.", "Fis detayi yuklenemedi."));
     } finally {
@@ -3719,6 +3854,56 @@ export default function JournalWorkbenchPage() {
             </div>
           ) : null}
 
+          {preCloseReview && preCloseReview.unpostedDrafts.length > 0 ? (
+            <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="flex items-center justify-between">
+                <div className="font-semibold">
+                  {l("Pre-Close Review", "Kapanis Oncesi Inceleme")}
+                  {" — "}
+                  {preCloseReview.unpostedDrafts.length}{" "}
+                  {l("unposted draft(s)", "taslak kayit(lar) gonderilmemis")}
+                </div>
+                <button
+                  type="button"
+                  className="text-xs text-amber-700 underline"
+                  onClick={() => {
+                    const bookId = toInt(periodForm.bookId);
+                    const periodId = toInt(periodForm.periodId);
+                    if (!bookId || !periodId) return;
+                    setLoadingPreCloseReview(true);
+                    getPreCloseReview(bookId, periodId)
+                      .then((data) => setPreCloseReview(data))
+                      .catch(() => setPreCloseReview(null))
+                      .finally(() => setLoadingPreCloseReview(false));
+                  }}
+                  disabled={loadingPreCloseReview}
+                >
+                  {loadingPreCloseReview ? l("Refreshing...", "Yenileniyor...") : l("Refresh", "Yenile")}
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-amber-800">
+                {l(
+                  "These drafts will not block close, but consider posting or cancelling them before proceeding.",
+                  "Bu taslaklar kapanisi engellemez, ancak devam etmeden once gondermek veya iptal etmeyi dusunun."
+                )}
+              </div>
+              <ul className="mt-2 space-y-1">
+                {preCloseReview.unpostedDrafts.slice(0, 10).map((d) => (
+                  <li key={d.id} className="flex items-center justify-between rounded bg-white/70 px-2 py-1 text-xs">
+                    <span className="font-mono text-slate-700">{d.journal_no}</span>
+                    <span className="max-w-[40%] truncate text-slate-600">{d.description || "—"}</span>
+                    <span className="text-slate-500">{d.created_by_name || d.created_by_user_id}</span>
+                  </li>
+                ))}
+                {preCloseReview.unpostedDrafts.length > 10 ? (
+                  <li className="text-xs text-amber-700">
+                    {l("...and", "...ve")} {preCloseReview.unpostedDrafts.length - 10} {l("more", "daha")}
+                  </li>
+                ) : null}
+              </ul>
+            </div>
+          ) : null}
+
           <form onSubmit={onExecutePeriodClose} className="grid gap-2 md:grid-cols-2">
             <Combobox
               value={periodCloseForm.closeStatus || null}
@@ -3895,6 +4080,21 @@ export default function JournalWorkbenchPage() {
               className="rounded bg-cyan-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
             >
               {l("Post Selected", "Secilenleri Post Et")} ({selectedDraftHistoryRows.length})
+            </button>
+            <button
+              type="button"
+              onClick={onBulkCancelSelected}
+              disabled={
+                !canCancelDraft ||
+                cancelBusy ||
+                postingBusy ||
+                selectedDraftHistoryRows.length === 0
+              }
+              className="rounded bg-rose-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+            >
+              {cancelBusy
+                ? l("Cancelling...", "Iptal ediliyor...")
+                : `${l("Cancel Selected", "Secilenleri Iptal Et")} (${selectedDraftHistoryRows.length})`}
             </button>
           </div>
         </div>
@@ -4360,6 +4560,24 @@ export default function JournalWorkbenchPage() {
                           className="rounded border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
                         >
                           {cancelBusy ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel Draft", "Taslagi Iptal Et")}
+                        </button>
+                      ) : null}
+                      {canUpdateDraft &&
+                       (selectedJournalPeriodStatus === "SOFT_CLOSED" ||
+                        selectedJournalPeriodStatus === "HARD_CLOSED") ? (
+                        <button
+                          type="button"
+                          onClick={() => onReclassifyJournalPeriod(selectedJournal)}
+                          disabled={saving === "reclassifyPeriod" || postingBusy || cancelBusy}
+                          className="rounded border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 disabled:opacity-60"
+                          title={l(
+                            `Period is ${selectedJournalPeriodStatus} — move this draft to an open period`,
+                            `Donem ${selectedJournalPeriodStatus} — bu taslagi acik bir doneme tasin`
+                          )}
+                        >
+                          {saving === "reclassifyPeriod"
+                            ? l("Reclassifying...", "Yeniden siniflandiriliyor...")
+                            : l("Reclassify to Next Period", "Sonraki Doneme Siniflandir")}
                         </button>
                       ) : null}
                     </div>

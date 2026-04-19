@@ -165,6 +165,18 @@ export async function createLocalClosePackComment(packId, payload = {}) {
   return response.data;
 }
 
+export async function updateLocalClosePackCertificationSection(
+  packId,
+  sectionKey,
+  payload = {}
+) {
+  const response = await api.put(
+    `/api/v1/gl/local-close-packs/${packId}/certification-sections/${sectionKey}`,
+    payload
+  );
+  return response.data;
+}
+
 export async function listLocalClosePackAudit(packId, params = {}) {
   const response = await api.get(
     `/api/v1/gl/local-close-packs/${packId}/audit${toQueryString(params)}`

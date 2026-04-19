@@ -5,8 +5,10 @@ import {
   loadConsolidationRunReportAccountBalances,
   summarizeConsolidationRunReportMath,
 } from "./consolidation.report-math.service.js";
+import { listSourceActionDependencyBlockers } from "./close.blockers.service.js";
 import { getEntityCloseReadiness } from "./entity.close-readiness.service.js";
 import { evaluateWorkflowApprovalGate } from "./workflows.service.js";
+import { findCurrentCycleItemsBySource } from "./close.cycle-items.service.js";
 
 function toUpperText(value) {
   return String(value || "")
@@ -22,14 +24,15 @@ async function loadConsolidationRunContext({
   const result = await runQuery(
     `SELECT
        cr.id,
-       cr.status,
-       cr.consolidation_group_id,
-       cr.fiscal_period_id,
-       cr.presentation_currency_code,
-       fp.end_date AS period_end_date,
-       cg.group_company_id,
-       cg.code AS consolidation_group_code,
-       cg.name AS consolidation_group_name
+     cr.status,
+     cr.consolidation_group_id,
+     cr.fiscal_period_id,
+     cr.presentation_currency_code,
+     fp.start_date AS period_start_date,
+     fp.end_date AS period_end_date,
+     cg.group_company_id,
+     cg.code AS consolidation_group_code,
+     cg.name AS consolidation_group_name
      FROM consolidation_runs cr
      JOIN consolidation_groups cg ON cg.id = cr.consolidation_group_id
      JOIN fiscal_periods fp ON fp.id = cr.fiscal_period_id
@@ -69,6 +72,21 @@ function mapReviewItem({
   };
 }
 
+function mapDependencyBlockerToReviewItem(blocker) {
+  return mapReviewItem({
+    code: blocker?.code || "CLOSE_DEPENDENCY_UNRESOLVED",
+    message:
+      blocker?.message || "Consolidation finalize is blocked by unresolved close dependencies",
+    ...(blocker?.drillPath
+      ? {
+          drill: {
+            path: blocker.drillPath,
+          },
+        }
+      : {}),
+  });
+}
+
 function formatMetricAmount(value, currencyCode) {
   const numeric = Number(value || 0);
   return `${numeric.toLocaleString(undefined, {
@@ -100,6 +118,12 @@ function buildLocalCloseWorkspacePath({
 
 function buildLocalClosePackPath(packId) {
   return `/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri/${packId}`;
+}
+
+function formatBookLabel(bookRow = {}) {
+  const code = String(bookRow?.bookCode || "").trim();
+  const name = String(bookRow?.bookName || "").trim();
+  return code && name ? `${code} - ${name}` : code || name || `BOOK #${bookRow.bookId}`;
 }
 
 function formatLocalCloseScopeLabel(scopeRow) {
@@ -186,6 +210,71 @@ async function listLocalCloseCandidateBooksForEntity({
   }));
 }
 
+async function listCycleGovernedBooksForRun({
+  tenantId,
+  runId,
+  runQuery = query,
+}) {
+  const linkedCycleItems = await findCurrentCycleItemsBySource(
+    "CONSOLIDATION_RUN",
+    runId,
+    {
+      tenantId,
+      runQuery,
+    }
+  );
+  const cycleIds = Array.from(
+    new Set(
+      linkedCycleItems
+        .map((row) => parsePositiveInt(row?.closeCycleId))
+        .filter(Boolean)
+    )
+  );
+  if (cycleIds.length === 0) {
+    return [];
+  }
+
+  const result = await runQuery(
+    `SELECT DISTINCT
+       cci.close_cycle_id,
+       cci.legal_entity_id,
+       cci.book_id,
+       b.code AS book_code,
+       b.name AS book_name
+     FROM close_cycle_items cci
+     JOIN close_cycles cc ON cc.id = cci.close_cycle_id
+     JOIN books b ON b.id = cci.book_id
+     WHERE cc.tenant_id = ?
+       AND cci.item_type = 'LOCAL_CLOSE_PACK'
+       AND cci.close_cycle_id IN (${cycleIds.map(() => "?").join(", ")})
+     ORDER BY cci.legal_entity_id ASC, cci.book_id ASC, cci.close_cycle_id ASC`,
+    [tenantId, ...cycleIds]
+  );
+
+  const dedupedRows = [];
+  const seenKeys = new Set();
+  for (const row of result.rows || []) {
+    const legalEntityId = parsePositiveInt(row?.legal_entity_id);
+    const bookId = parsePositiveInt(row?.book_id);
+    if (!legalEntityId || !bookId) {
+      continue;
+    }
+    const dedupeKey = `${legalEntityId}:${bookId}`;
+    if (seenKeys.has(dedupeKey)) {
+      continue;
+    }
+    seenKeys.add(dedupeKey);
+    dedupedRows.push({
+      closeCycleId: parsePositiveInt(row?.close_cycle_id),
+      legalEntityId,
+      bookId,
+      bookCode: row?.book_code || null,
+      bookName: row?.book_name || null,
+    });
+  }
+  return dedupedRows;
+}
+
 async function buildMemberReadinessReviewItems({
   tenantId,
   run,
@@ -194,6 +283,22 @@ async function buildMemberReadinessReviewItems({
   const fiscalPeriodId = parsePositiveInt(run?.fiscal_period_id);
   if (!fiscalPeriodId) {
     return [];
+  }
+
+  const cycleGovernedBooks = await listCycleGovernedBooksForRun({
+    tenantId,
+    runId: parsePositiveInt(run?.id),
+    runQuery,
+  });
+  const cycleGovernedBooksByEntityId = new Map();
+  for (const bookRow of cycleGovernedBooks) {
+    const legalEntityId = parsePositiveInt(bookRow?.legalEntityId);
+    if (!legalEntityId) {
+      continue;
+    }
+    const rows = cycleGovernedBooksByEntityId.get(legalEntityId) || [];
+    rows.push(bookRow);
+    cycleGovernedBooksByEntityId.set(legalEntityId, rows);
   }
 
   const memberRows = await listActiveRunMembers({
@@ -209,11 +314,15 @@ async function buildMemberReadinessReviewItems({
         fiscalPeriodId,
         runQuery,
       });
+      const cycleLinkedBooks =
+        cycleGovernedBooksByEntityId.get(memberRow.legalEntityId) || null;
+      const effectiveBooks =
+        Array.isArray(cycleLinkedBooks) && cycleLinkedBooks.length > 0 ? cycleLinkedBooks : books;
       const entityLabel = memberRow.legalEntityCode
         ? `${memberRow.legalEntityCode} - ${memberRow.legalEntityName || ""}`.trim()
         : memberRow.legalEntityName || `#${memberRow.legalEntityId}`;
 
-      if (books.length === 0) {
+      if (effectiveBooks.length === 0) {
         return [
           mapReviewItem({
             code: "ENTITY_CLOSE_BOOK_UNRESOLVED",
@@ -229,7 +338,7 @@ async function buildMemberReadinessReviewItems({
         ];
       }
 
-      if (books.length > 1) {
+      if ((!cycleLinkedBooks || cycleLinkedBooks.length === 0) && effectiveBooks.length > 1) {
         return [
           mapReviewItem({
             code: "ENTITY_CLOSE_BOOK_AMBIGUOUS",
@@ -245,49 +354,57 @@ async function buildMemberReadinessReviewItems({
         ];
       }
 
-      const selectedBook = books[0];
-      const readiness = await getEntityCloseReadiness({
-        tenantId,
-        legalEntityId: memberRow.legalEntityId,
-        bookId: selectedBook.bookId,
-        fiscalPeriodId,
-        runQuery,
-      });
-      const unresolvedScopes = (Array.isArray(readiness?.mandatoryScopes)
-        ? readiness.mandatoryScopes
-        : []
-      ).filter((scopeRow) => toUpperText(scopeRow?.status) !== "LOCKED");
-
-      // RP12 follow-up upgrades consolidation finalize from approved-or-locked
-      // readiness to lock-only readiness so every mandatory CENTRAL / OU scope
-      // has completed the exact local close chain before group publish.
-      return unresolvedScopes.map((scopeRow) => {
-        const scopeLabel = formatLocalCloseScopeLabel(scopeRow);
-        const currentStatus = toUpperText(scopeRow?.status) || "NOT_OPENED";
-        const localClosePackId = parsePositiveInt(scopeRow?.localClosePackId);
-        return mapReviewItem({
-          code:
-            currentStatus === "NOT_OPENED"
-              ? "ENTITY_CLOSE_SCOPE_NOT_OPENED"
-              : "ENTITY_CLOSE_SCOPE_NOT_LOCKED",
-          message:
-            currentStatus === "NOT_OPENED"
-              ? `Member ${entityLabel} is missing the mandatory ${scopeLabel} local close pack`
-              : `Member ${entityLabel} scope ${scopeLabel} is ${currentStatus}; mandatory local close packs must be LOCKED before finalize`,
-          drill: {
-            path: localClosePackId
-              ? buildLocalClosePackPath(localClosePackId)
-              : buildLocalCloseWorkspacePath({
-                  legalEntityId: memberRow.legalEntityId,
-                  bookId: selectedBook.bookId,
-                  fiscalPeriodId,
-                }),
-            label: localClosePackId
-              ? "Open local close pack"
-              : "Open local close workspace",
-          },
+      const readinessItems = [];
+      for (const selectedBook of effectiveBooks) {
+        // eslint-disable-next-line no-await-in-loop
+        const readiness = await getEntityCloseReadiness({
+          tenantId,
+          legalEntityId: memberRow.legalEntityId,
+          bookId: selectedBook.bookId,
+          fiscalPeriodId,
+          runQuery,
         });
-      });
+        const unresolvedScopes = (Array.isArray(readiness?.mandatoryScopes)
+          ? readiness.mandatoryScopes
+          : []
+        ).filter((scopeRow) => toUpperText(scopeRow?.status) !== "LOCKED");
+        const bookLabelPrefix =
+          effectiveBooks.length > 1 ? ` book ${formatBookLabel(selectedBook)}` : "";
+
+        // RP12 follow-up upgrades consolidation finalize from approved-or-locked
+        // readiness to lock-only readiness so every mandatory CENTRAL / OU scope
+        // has completed the exact local close chain before group publish.
+        readinessItems.push(
+          ...unresolvedScopes.map((scopeRow) => {
+            const scopeLabel = formatLocalCloseScopeLabel(scopeRow);
+            const currentStatus = toUpperText(scopeRow?.status) || "NOT_OPENED";
+            const localClosePackId = parsePositiveInt(scopeRow?.localClosePackId);
+            return mapReviewItem({
+              code:
+                currentStatus === "NOT_OPENED"
+                  ? "ENTITY_CLOSE_SCOPE_NOT_OPENED"
+                  : "ENTITY_CLOSE_SCOPE_NOT_LOCKED",
+              message:
+                currentStatus === "NOT_OPENED"
+                  ? `Member ${entityLabel}${bookLabelPrefix} is missing the mandatory ${scopeLabel} local close pack`
+                  : `Member ${entityLabel}${bookLabelPrefix} scope ${scopeLabel} is ${currentStatus}; mandatory local close packs must be LOCKED before finalize`,
+              drill: {
+                path: localClosePackId
+                  ? buildLocalClosePackPath(localClosePackId)
+                  : buildLocalCloseWorkspacePath({
+                      legalEntityId: memberRow.legalEntityId,
+                      bookId: selectedBook.bookId,
+                      fiscalPeriodId,
+                    }),
+                label: localClosePackId
+                  ? "Open local close pack"
+                  : "Open local close workspace",
+              },
+            });
+          })
+        );
+      }
+      return readinessItems;
     })
   );
 
@@ -500,6 +617,23 @@ export async function getConsolidationRunReviewGate({
         })
       );
     }
+  }
+
+  if (currentStatus !== "LOCKED") {
+    const dependencyBlockers = await listSourceActionDependencyBlockers(
+      {
+        sourceTargetType: "CONSOLIDATION_RUN",
+        sourceTargetId: normalizedRunId,
+        action: "FINALIZE",
+      },
+      {
+        tenantId: normalizedTenantId,
+        runQuery,
+      }
+    );
+    blockers.push(
+      ...(dependencyBlockers.rows || []).map((row) => mapDependencyBlockerToReviewItem(row))
+    );
   }
 
   if (currentStatus === "LOCKED") {

@@ -290,6 +290,7 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
     applyShareholderCommitmentSyncForPostedJournalTx,
     buildIntercompanyAutoMirrorDraftSpecs,
     ensurePeriodOpen,
+    ensurePeriodPostable,
     generateJournalNo,
     insertDraftJournalEntry,
     loadCentralEquityJournalValidationContext,
@@ -315,6 +316,9 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
   }
   if (typeof ensurePeriodOpen !== "function") {
     throw new Error("registerGlWriteJournalRoutes requires ensurePeriodOpen");
+  }
+  if (typeof ensurePeriodPostable !== "function") {
+    throw new Error("registerGlWriteJournalRoutes requires ensurePeriodPostable");
   }
   if (typeof generateJournalNo !== "function") {
     throw new Error("registerGlWriteJournalRoutes requires generateJournalNo");
@@ -1006,10 +1010,11 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
         }
 
         result = await withTransaction(async (tx) => {
-          await ensurePeriodOpen(
+          const { wasClosedPeriod } = await ensurePeriodPostable(
             parsePositiveInt(journal.book_id),
             parsePositiveInt(journal.fiscal_period_id),
             "post journal",
+            req,
             tx.query.bind(tx)
           );
 
@@ -1018,6 +1023,7 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
              SET status = 'POSTED',
                  posted_by_user_id = ?,
                  posted_at = CURRENT_TIMESTAMP
+                 ${wasClosedPeriod ? ", posted_after_close = 1, posted_after_close_at = CURRENT_TIMESTAMP" : ""}
              WHERE id = ?
                AND tenant_id = ?
                AND status = 'DRAFT'`,
@@ -1157,14 +1163,17 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
         }
 
         result = await withTransaction(async (tx) => {
+          const closedPeriodJournalIds = new Set();
           for (const row of draftRows) {
             // eslint-disable-next-line no-await-in-loop
-            await ensurePeriodOpen(
+            const { wasClosedPeriod } = await ensurePeriodPostable(
               parsePositiveInt(row.book_id),
               parsePositiveInt(row.fiscal_period_id),
               "post linked intercompany journals",
+              req,
               tx.query.bind(tx)
             );
+            if (wasClosedPeriod) closedPeriodJournalIds.add(parsePositiveInt(row.id));
           }
 
           const placeholders = draftJournalIds.map(() => "?").join(", ");
@@ -1178,6 +1187,16 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
                 AND id IN (${placeholders})`,
             [userId, tenantId, ...draftJournalIds]
           );
+
+          if (closedPeriodJournalIds.size > 0) {
+            const closedPlaceholders = [...closedPeriodJournalIds].map(() => "?").join(", ");
+            await tx.query(
+              `UPDATE journal_entries
+               SET posted_after_close = 1, posted_after_close_at = CURRENT_TIMESTAMP
+               WHERE id IN (${closedPlaceholders})`,
+              [...closedPeriodJournalIds]
+            );
+          }
 
           const affectedRows = Number(updateResult?.rows?.affectedRows || 0);
           const syncRows = [];
@@ -1297,7 +1316,12 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
         "reversalPeriodId"
       );
 
-      await ensurePeriodOpen(bookId, reversalPeriodId, "reverse journal");
+      const { wasClosedPeriod: reversalWasClosedPeriod } = await ensurePeriodPostable(
+        bookId,
+        reversalPeriodId,
+        "reverse journal",
+        req
+      );
 
       const reversalJournalNo = req.body?.journalNo || `${original.journal_no}-REV`;
       const entryDate = toIsoDate(req.body?.entryDate || original.entry_date, "entryDate");
@@ -1317,6 +1341,7 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
           documentDate,
           journalNo: reversalJournalNo,
           autoPost,
+          wasClosedPeriod: reversalWasClosedPeriod,
         });
       });
 
@@ -1326,6 +1351,76 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
         reversalJournalId,
         reversalStatus: autoPost ? "POSTED" : "DRAFT",
         originalMarkedReversed: originalUpdated,
+      });
+    })
+  );
+
+  router.post(
+    "/journals/:journalId/reclassify-period",
+    requirePermission("gl.journal.update", {
+      resolveScope: async (req, tenantId) => {
+        return resolveScopeFromJournalId(req.params?.journalId, tenantId);
+      },
+    }),
+    asyncHandler(async (req, res) => {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) throw badRequest("tenantId is required");
+
+      const journalId = parsePositiveInt(req.params.journalId);
+      if (!journalId) throw badRequest("journalId must be a positive integer");
+
+      const targetFiscalPeriodId = parsePositiveInt(req.body?.targetFiscalPeriodId);
+      if (!targetFiscalPeriodId) throw badRequest("targetFiscalPeriodId is required");
+
+      const journal = await loadJournal(tenantId, journalId);
+      if (!journal) throw badRequest("Journal not found");
+      if (String(journal.status).toUpperCase() !== "DRAFT") {
+        throw badRequest("Only DRAFT journals can be reclassified");
+      }
+
+      const sourcePeriodResult = await query(
+        `SELECT status FROM period_statuses WHERE book_id = ? AND fiscal_period_id = ? LIMIT 1`,
+        [journal.book_id, journal.fiscal_period_id]
+      );
+      const sourceStatus = String(
+        sourcePeriodResult.rows[0]?.status || "OPEN"
+      ).toUpperCase();
+      if (sourceStatus === "OPEN") {
+        throw badRequest(
+          "Period is OPEN; use regular posting instead of reclassifying"
+        );
+      }
+
+      await assertFiscalPeriodBelongsToCalendar(
+        parsePositiveInt(
+          (await assertBookBelongsToTenant(tenantId, parsePositiveInt(journal.book_id), "bookId"))
+            .calendar_id
+        ),
+        targetFiscalPeriodId,
+        "targetFiscalPeriodId"
+      );
+
+      await ensurePeriodOpen(
+        parsePositiveInt(journal.book_id),
+        targetFiscalPeriodId,
+        "reclassify journal into target period"
+      );
+
+      await query(
+        `UPDATE journal_entries
+            SET fiscal_period_id = ?,
+                original_fiscal_period_id = COALESCE(original_fiscal_period_id, fiscal_period_id)
+          WHERE id = ?
+            AND tenant_id = ?
+            AND status = 'DRAFT'`,
+        [targetFiscalPeriodId, journalId, tenantId]
+      );
+
+      return res.json({
+        ok: true,
+        journalId,
+        previousFiscalPeriodId: parsePositiveInt(journal.fiscal_period_id),
+        targetFiscalPeriodId,
       });
     })
   );

@@ -524,6 +524,7 @@ function assertApWorkflowDefinitionSteps(steps) {
   let previousStepNo = 0;
   let postStepCount = 0;
   let submitStepCount = 0;
+  let approveStepCount = 0;
   let currentPhase = "START";
 
   for (let index = 0; index < steps.length; index += 1) {
@@ -587,6 +588,7 @@ function assertApWorkflowDefinitionSteps(steps) {
           `steps[${index}].actionCode APPROVE must appear after SUBMIT and before POST`
         );
       }
+      approveStepCount += 1;
       currentPhase = "AFTER_APPROVE";
       continue;
     }
@@ -602,6 +604,9 @@ function assertApWorkflowDefinitionSteps(steps) {
 
   if (submitStepCount !== 1) {
     throw badRequest("AP_DOCUMENT_POSTING workflows must contain exactly one SUBMIT step");
+  }
+  if (approveStepCount < 1) {
+    throw badRequest("AP_DOCUMENT_POSTING workflows must contain at least one APPROVE step");
   }
   if (postStepCount !== 1) {
     throw badRequest("AP_DOCUMENT_POSTING workflows must contain exactly one final POST step");

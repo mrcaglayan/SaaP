@@ -317,16 +317,6 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
     () => buildWorkflowPreview(stepDrafts, text.stepScopeLabels, l),
     [stepDrafts, text.stepScopeLabels, l]
   );
-  const workflowExplainabilityPreview = useMemo(
-    () =>
-      buildWorkflowExplainabilityPreviewModel({
-        stepDrafts,
-        processType: selectedProcessType,
-        stepScopeLabels: text.stepScopeLabels,
-        l,
-      }),
-    [l, selectedProcessType, stepDrafts, text.stepScopeLabels]
-  );
   const workflowPresetEntries = useMemo(() => listWorkflowPresetCatalogEntries(), []);
   const workflowPackageEntries = useMemo(() => listWorkflowPackageCatalogEntries(), []);
   const workflowStepPackageOptions = useMemo(
@@ -428,6 +418,23 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
       stepDrafts,
       text.stepScopeLabels,
       workflowPackageEntries,
+    ]
+  );
+  const workflowExplainabilityPreview = useMemo(
+    () =>
+      buildWorkflowExplainabilityPreviewModel({
+        stepDrafts,
+        processType: selectedProcessType,
+        workflowStepValidation,
+        stepScopeLabels: text.stepScopeLabels,
+        l,
+      }),
+    [
+      l,
+      selectedProcessType,
+      stepDrafts,
+      text.stepScopeLabels,
+      workflowStepValidation,
     ]
   );
   const assignmentEffectText = useMemo(
@@ -1227,8 +1234,8 @@ export default function WorkflowSetupPage({ workspaceMode = "" }) {
   function onCloneWorkflowPreset() {
     applySelectedWorkflowPresetBaseline(
       l(
-        "Preset cloned into this workflow. Review the steps before saving.",
-        "Preset bu workflow'a kopyalandi. Kaydetmeden once adimlari gozden gecirin."
+        "Preset applied to this workflow. Review the steps before saving.",
+        "Preset bu workflow'a uygulandi. Kaydetmeden once adimlari gozden gecirin."
       )
     );
   }

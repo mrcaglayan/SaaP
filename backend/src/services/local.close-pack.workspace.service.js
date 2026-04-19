@@ -6,6 +6,7 @@ import {
   LOCAL_CLOSE_PACK_REPORT_LAUNCH_MODES,
   LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS,
 } from "./local.close-packs.shared.js";
+import { refreshLocalClosePackCertification } from "./local.close-pack.certification.service.js";
 
 function toDateTime(value) {
   return value || null;
@@ -317,6 +318,16 @@ export async function upsertLocalClosePackReportReview({
     if (!row) {
       throw new Error("Local close-pack report review readback failed");
     }
+
+    await refreshLocalClosePackCertification({
+      req,
+      tenantId,
+      packId,
+      userId,
+      assertScopeAccess,
+      runQuery: tx.query,
+    });
+
     return mapLocalClosePackReportReviewRow(row);
   });
 }

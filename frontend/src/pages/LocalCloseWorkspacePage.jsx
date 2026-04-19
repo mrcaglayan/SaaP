@@ -148,6 +148,28 @@ function getStatusLabel(status, l) {
   }
 }
 
+function getCertificationStatusTone(status) {
+  switch (String(status || "").trim().toUpperCase()) {
+    case "COMPLETE":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "IN_PROGRESS":
+      return "border-cyan-200 bg-cyan-50 text-cyan-700";
+    default:
+      return "border-slate-200 bg-slate-100 text-slate-700";
+  }
+}
+
+function getCertificationStatusLabel(status, l) {
+  switch (String(status || "").trim().toUpperCase()) {
+    case "COMPLETE":
+      return l("Complete", "Tamam");
+    case "IN_PROGRESS":
+      return l("In progress", "Devam ediyor");
+    default:
+      return l("Not started", "Baslamadi");
+  }
+}
+
 function formatScopeLabel(row, l) {
   if (String(row?.closeScopeType || "").toUpperCase() === "OPERATING_UNIT") {
     const code = String(row?.operatingUnitCode || "").trim();
@@ -158,7 +180,7 @@ function formatScopeLabel(row, l) {
 }
 
 /**
- * First-pass RP07 local close workspace shell.
+ * Local close workspace with PR-04 certification visibility.
  */
 export default function LocalCloseWorkspacePage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -627,8 +649,8 @@ export default function LocalCloseWorkspacePage() {
           </h2>
           <p className="mt-1 text-sm text-slate-600">
             {l(
-              "RP07 uses a dedicated local-close route family because the repo already uses the old year-end closing page for a different workflow.",
-              "RP07, repoda eski yil sonu kapanis sayfasi baska bir is akisinda kullanildigi icin ayri bir yerel kapanis route ailesi kullanir."
+              "The local-close route family stays separate because the repo already uses the old year-end closing page for a different workflow, and PR-04 extends that same workspace with certification visibility instead of replacing it.",
+              "Yerel kapanis route ailesi ayri kalir; cunku repo eski yil sonu kapanis sayfasini baska bir is akisinda kullaniyor ve PR-04 bunu degistirmek yerine ayni calisma alanini sertifikasyon gorunurluguyle genisletir."
             )}
           </p>
           <form onSubmit={handleCreatePack} className="mt-4 grid gap-3 lg:grid-cols-4">
@@ -724,8 +746,8 @@ export default function LocalCloseWorkspacePage() {
           </h2>
           <p className="mt-1 text-sm text-slate-600">
             {l(
-              "Completion, blocker, and warning fields are first-pass derived RP07 metrics built from reviewed-report, evidence, comment, and reopen indicators.",
-              "Tamamlanma, blokaj ve uyari alanlari; incelenen rapor, kanit, yorum ve yeniden acma gostergelerinden uretilen ilk gecis RP07 metrikleridir."
+              "Completion, blocker, warning, and certification fields now combine the first-pass pack indicators with the explicit PR-04 certification section model.",
+              "Tamamlanma, blokaj, uyari ve sertifikasyon alanlari artik ilk gecis paket gostergelerini acik PR-04 sertifikasyon bolum modeliyle birlestirir."
             )}
           </p>
         </div>
@@ -737,6 +759,7 @@ export default function LocalCloseWorkspacePage() {
                 <th className="px-4 py-3 font-semibold">{l("Scope", "Scope")}</th>
                 <th className="px-4 py-3 font-semibold">{l("Status", "Durum")}</th>
                 <th className="px-4 py-3 font-semibold">{l("Completion", "Tamamlanma")}</th>
+                <th className="px-4 py-3 font-semibold">{l("Certification", "Sertifikasyon")}</th>
                 <th className="px-4 py-3 font-semibold">{l("Issues", "Sorunlar")}</th>
                 <th className="px-4 py-3 font-semibold">{l("Evidence", "Kanit")}</th>
                 <th className="px-4 py-3 font-semibold">{l("Activity", "Aktivite")}</th>
@@ -746,13 +769,13 @@ export default function LocalCloseWorkspacePage() {
             <tbody className="divide-y divide-slate-100">
               {loadingRows ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={9} className="px-4 py-6 text-center text-slate-500">
                     {l("Loading local close packs...", "Yerel kapanis paketleri yukleniyor...")}
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={9} className="px-4 py-6 text-center text-slate-500">
                     {l("No local close packs found for the current filters.", "Mevcut filtreler icin yerel kapanis paketi bulunamadi.")}
                   </td>
                 </tr>
@@ -789,6 +812,22 @@ export default function LocalCloseWorkspacePage() {
                       <div className="mt-1 text-xs text-slate-500">
                         {row.reportReviewCount || 0}/{row.requiredReportCount || 0}{" "}
                         {l("report reviews", "rapor incelemesi")}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      <div>
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${getCertificationStatusTone(
+                            row.certificationStatus
+                          )}`}
+                        >
+                          {getCertificationStatusLabel(row.certificationStatus, l)}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {row.certificationCompletedRequiredSectionCount || 0}/
+                        {row.certificationRequiredSectionCount || 0}{" "}
+                        {l("required sections", "zorunlu bolum")}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-700">

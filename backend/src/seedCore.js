@@ -129,6 +129,7 @@ const PERMISSIONS = [
   ["gl.journal.update", "Update draft journals"],
   ["gl.journal.cancel", "Cancel draft journals"],
   ["gl.journal.post", "Post journals"],
+  ["gl.journal.post_to_closed_period", "Post journals into SOFT_CLOSED periods (elevated override)"],
   ["gl.journal.reverse", "Reverse posted journals"],
   ["gl.trial_balance.read", "Read trial balance"],
   ["gl.report.local.read", "Read local summary reports"],
@@ -150,6 +151,14 @@ const PERMISSIONS = [
     "Override approved or locked local close-pack controls",
   ],
   ["ouclose.admin", "Administer local close-pack configuration and governance"],
+  ["close.cycle.read", "Read close cycles and provisioned close-cycle items"],
+  ["close.cycle.write", "Create close cycles"],
+  [
+    "close.cycle.provision",
+    "Provision close cycles and auto-create or reuse safe underlying local close packs",
+  ],
+  ["close.cycle.lock", "Lock close cycles once all required terminal dependencies are resolved"],
+  ["close.cockpit.read", "Read the close cockpit, worklist, blockers, and readiness views"],
   ["cash.register.read", "Read cash registers"],
   ["cash.register.upsert", "Create/update cash registers"],
   ["cash.session.open", "Open cash sessions"],
@@ -834,6 +843,7 @@ const GL_POSTING_AUTHORITY_PERMISSION_CODES = buildPermissionList({
     "gl.journal.read",
     "gl.trial_balance.read",
     "gl.journal.post",
+    "gl.journal.post_to_closed_period",
     "gl.journal.reverse",
     "gl.period.close",
     "gl.period.reopen",
@@ -908,12 +918,19 @@ const LOCAL_CLOSE_PREPARER_PERMISSION_CODES = buildPermissionList({
   permissions: [
     ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
     ...OPERATIONAL_COVERAGE_REQUEST_PERMISSION_CODES,
+    "close.cycle.read",
+    "close.cockpit.read",
   ],
 });
 
 const LOCAL_CLOSE_REVIEWER_PERMISSION_CODES = buildPermissionList({
   permissionGroups: ["close.reviewer"],
-  permissions: ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+  permissions: [
+    ...ROLE_SCOPE_CONTEXT_PERMISSION_CODES,
+    "close.cycle.read",
+    "close.cycle.lock",
+    "close.cockpit.read",
+  ],
 });
 
 const GROUP_REPORTING_CONTROLLER_PERMISSION_CODES = buildPermissionList({
@@ -944,6 +961,9 @@ const GROUP_REPORTING_CONTROLLER_PERMISSION_CODES = buildPermissionList({
     "consolidation.report.summary.read",
     "consolidation.report.balance_sheet.read",
     "consolidation.report.income_statement.read",
+    "close.cycle.read",
+    "close.cycle.lock",
+    "close.cockpit.read",
   ],
 });
 

@@ -68,6 +68,7 @@ function isSystemAdminPermission(permissionCode) {
   }
   return (
     normalizedPermissionCode.startsWith("ops.") ||
+    normalizedPermissionCode.startsWith("close.") ||
     normalizedPermissionCode.startsWith("onboarding.") ||
     SYSTEM_ADMIN_ADDITIONAL_PERMISSION_CODES.has(normalizedPermissionCode)
   );

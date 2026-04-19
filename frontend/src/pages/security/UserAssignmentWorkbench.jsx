@@ -6,9 +6,12 @@ import {
 } from "../../api/rbacAdmin.js";
 import {
   buildScopeLabel,
+  getBootstrapHandoffPresetEntry,
   getBootstrapHandoffPresetDisplayLabel,
   getRoleCatalogEntry,
 } from "./roleCatalog.js";
+
+const DEFAULT_ENTITY_ACCOUNTANT_PRESET_CODE = "EntityAPController";
 
 function getToneClasses(tone) {
   if (tone === "blue") {
@@ -565,6 +568,7 @@ export default function UserAssignmentWorkbench(props) {
     rawAssignmentForm,
     onUpdateRawAssignmentField,
     onCreateRawAssignment,
+    onAssignDefaultEntityAccountantRoles,
     rawScopeOptions,
     assignableRoleGroups,
     // Scope lookups
@@ -583,6 +587,7 @@ export default function UserAssignmentWorkbench(props) {
   const [draftScope, setDraftScope] = useState({ scopeType: "LEGAL_ENTITY", scopeId: "", effect: "ALLOW" });
   const [editingRoleRowId, setEditingRoleRowId] = useState("");
   const [roleRowDraft, setRoleRowDraft] = useState(createEmptyRoleRowDraft());
+  const [defaultEntityAccountantScopeId, setDefaultEntityAccountantScopeId] = useState("");
 
   useEffect(() => {
     if (!manageModalOpen || manageModalTab !== "scopes" || !selectedUser?.id) return;
@@ -634,10 +639,56 @@ export default function UserAssignmentWorkbench(props) {
     return [];
   }
 
+  const entityAccountantPreset = getBootstrapHandoffPresetEntry(
+    DEFAULT_ENTITY_ACCOUNTANT_PRESET_CODE
+  );
+  const entityAccountantScopeOptions = getScopeOptions(
+    "LEGAL_ENTITY",
+    lookups,
+    tenantScopeId
+  );
+  const entityAccountantRoleLabels = Array.from(
+    new Set(
+      (Array.isArray(entityAccountantPreset?.roleCodes)
+        ? entityAccountantPreset.roleCodes
+        : []
+      )
+        .map(
+          (roleCode) =>
+            getRoleCatalogEntry(roleCode)?.code || String(roleCode || "").trim()
+        )
+        .filter(Boolean)
+    )
+  );
+  const entityAccountantBusy =
+    saving &&
+    actingRowId === `default-entity-accountant-${Number(selectedUser?.id || 0)}`;
+
   useEffect(() => {
     setEditingRoleRowId("");
     setRoleRowDraft(createEmptyRoleRowDraft());
   }, [manageModalOpen, selectedBundle?.id, selectedUser?.id]);
+
+  useEffect(() => {
+    if (!manageModalOpen || !selectedUser?.id) {
+      return;
+    }
+    const userBundles = Array.isArray(selectedUserBundles)
+      ? selectedUserBundles
+      : [];
+    const preferredScopeId =
+      userBundles.find(
+        (bundle) => String(bundle?.scopeType || "").toUpperCase() === "LEGAL_ENTITY"
+      )?.scopeId ||
+      entityAccountantScopeOptions[0]?.id ||
+      "";
+    setDefaultEntityAccountantScopeId(String(preferredScopeId || ""));
+  }, [
+    entityAccountantScopeOptions,
+    manageModalOpen,
+    selectedUser?.id,
+    selectedUserBundles,
+  ]);
 
   function startRoleRowEdit(roleRow) {
     const scopeType = String(roleRow?.scopeType || "LEGAL_ENTITY").toUpperCase();
@@ -1270,6 +1321,81 @@ export default function UserAssignmentWorkbench(props) {
               {/* ── ASSIGN TAB ── */}
               {manageModalTab === "assign" ? (
                 <div className="space-y-5">
+                  <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                      <h3 className="text-sm font-semibold text-slate-950">
+                        {l(
+                          "Assign default entity accountant roles",
+                          "Varsayilan entity accountant rollerini ata"
+                        )}
+                      </h3>
+                    </div>
+                    <div className="space-y-4 px-5 py-5">
+                      <p className="text-sm leading-6 text-slate-600">
+                        {l(
+                          "Apply the shipped legal-entity accountant setup in one step. This includes GLOperator, APApprover, and the current default operational roles such as LocalClosePreparer and ShareholderCapitalOperator.",
+                          "Hazir legal-entity accountant kurulumunu tek adimda uygula. Buna GLOperator, APApprover ve LocalClosePreparer ile ShareholderCapitalOperator gibi guncel varsayilan operasyon rolleri dahildir."
+                        )}
+                      </p>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          {entityAccountantRoleLabels.map((roleLabel) => (
+                            <Pill
+                              key={`default-entity-accountant-role-${roleLabel}`}
+                              label={roleLabel}
+                              tone="violet"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-slate-700">
+                          {l("Legal entity", "Legal entity")}
+                        </label>
+                        <select
+                          value={defaultEntityAccountantScopeId}
+                          onChange={(e) =>
+                            setDefaultEntityAccountantScopeId(e.target.value)
+                          }
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm"
+                        >
+                          <option value="">
+                            {l("Choose legal entity", "Legal entity secin")}
+                          </option>
+                          {entityAccountantScopeOptions.map((option) => (
+                            <option
+                              key={`default-entity-accountant-scope-${option.id}`}
+                              value={String(option.id)}
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onAssignDefaultEntityAccountantRoles?.({
+                            targetUserId: Number(selectedUser?.id || 0),
+                            scopeId: Number(defaultEntityAccountantScopeId || 0),
+                          })
+                        }
+                        disabled={
+                          entityAccountantBusy ||
+                          !selectedUser?.id ||
+                          !Number(defaultEntityAccountantScopeId || 0)
+                        }
+                        className="w-full rounded-xl border border-slate-900 bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                      >
+                        {entityAccountantBusy
+                          ? l("Assigning...", "Ataniyor...")
+                          : l(
+                              "Assign default entity accountant roles",
+                              "Varsayilan entity accountant rollerini ata"
+                            )}
+                      </button>
+                    </div>
+                  </div>
                   <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
                     <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
                       <h3 className="text-sm font-semibold text-slate-950">{l("Advanced raw role row", "Gelismis ham rol satiri")}</h3>

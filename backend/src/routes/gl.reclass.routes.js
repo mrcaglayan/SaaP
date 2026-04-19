@@ -18,11 +18,15 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 
+/**
+ * Register GL reclassification helpers for balance-split and transaction-line
+ * draft generation.
+ */
 export function registerGlReclassificationRoutes(router, deps = {}) {
   const {
     assertPostableLeafAccountForLegalEntity,
     buildSystemJournalNo,
-    ensurePeriodOpen,
+    ensurePeriodPostable,
     isNearlyZero,
     normalizeReclassAllocationMode,
     parseJsonColumn,
@@ -39,8 +43,8 @@ export function registerGlReclassificationRoutes(router, deps = {}) {
   if (typeof buildSystemJournalNo !== "function") {
     throw new Error("registerGlReclassificationRoutes requires buildSystemJournalNo");
   }
-  if (typeof ensurePeriodOpen !== "function") {
-    throw new Error("registerGlReclassificationRoutes requires ensurePeriodOpen");
+  if (typeof ensurePeriodPostable !== "function") {
+    throw new Error("registerGlReclassificationRoutes requires ensurePeriodPostable");
   }
   if (typeof isNearlyZero !== "function") {
     throw new Error("registerGlReclassificationRoutes requires isNearlyZero");
@@ -212,10 +216,11 @@ export function registerGlReclassificationRoutes(router, deps = {}) {
       const note = req.body.note ? String(req.body.note).slice(0, 500) : null;
 
       const result = await withTransaction(async (tx) => {
-        await ensurePeriodOpen(
+        await ensurePeriodPostable(
           bookId,
           fiscalPeriodId,
           "create reclassification draft journal",
+          req,
           tx.query.bind(tx)
         );
 
@@ -881,10 +886,11 @@ export function registerGlReclassificationRoutes(router, deps = {}) {
       const note = req.body.note ? String(req.body.note).slice(0, 500) : null;
 
       const result = await withTransaction(async (tx) => {
-        await ensurePeriodOpen(
+        await ensurePeriodPostable(
           bookId,
           fiscalPeriodId,
           "create transaction reclassification draft journal",
+          req,
           tx.query.bind(tx)
         );
 

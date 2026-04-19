@@ -1,5 +1,5 @@
 import { query, withTransaction } from "../db.js";
-import { getVisibilityScope } from "../middleware/rbac.js";
+import { getVisibilityScope, assertSecondaryPermission } from "../middleware/rbac.js";
 import {
   assertAccountBelongsToTenant,
   assertCurrencyExists,
@@ -2528,6 +2528,7 @@ async function resolveBookAndOpenPeriodForDate({
   targetDate,
   preferredBookId = null,
   runQuery = query,
+  assertSoftClosedPermissionFn = null,
 }) {
   const normalizedDate = normalizeDateInput(targetDate, "documentDate");
 
@@ -2597,7 +2598,15 @@ async function resolveBookAndOpenPeriodForDate({
     [bookId, fiscalPeriodId]
   );
   const periodStatus = normalizeUpperText(statusResult.rows?.[0]?.status || "OPEN");
-  if (periodStatus !== "OPEN") {
+  let wasClosedPeriod = false;
+  if (periodStatus === "SOFT_CLOSED") {
+    if (assertSoftClosedPermissionFn) {
+      await assertSoftClosedPermissionFn();
+      wasClosedPeriod = true;
+    } else {
+      throw badRequest(`Period is SOFT_CLOSED; cannot post/reverse document`);
+    }
+  } else if (periodStatus !== "OPEN") {
     throw badRequest(`Period is ${periodStatus}; cannot post/reverse document`);
   }
 
@@ -2607,6 +2616,7 @@ async function resolveBookAndOpenPeriodForDate({
     fiscalPeriodId,
     fiscalYear: Number(period.fiscal_year),
     baseCurrencyCode: normalizeUpperText(book.base_currency_code),
+    wasClosedPeriod,
   };
 }
 
@@ -3385,9 +3395,11 @@ export async function insertPostedJournalWithLinesTx(tx, payload) {
         total_credit_base,
         created_by_user_id,
         posted_by_user_id,
-        posted_at
+        posted_at,
+        posted_after_close,
+        posted_after_close_at
      )
-     VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'POSTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+     VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'POSTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
     [
       payload.tenantId,
       payload.legalEntityId,
@@ -3403,6 +3415,8 @@ export async function insertPostedJournalWithLinesTx(tx, payload) {
       totals.totalCredit,
       payload.userId,
       payload.userId,
+      payload.postedAfterClose ? 1 : 0,
+      payload.postedAfterClose ? new Date() : null,
     ]
   );
   const journalEntryId = parsePositiveInt(insertResult.rows?.insertId);
@@ -9990,6 +10004,7 @@ async function postCariDocumentByIdTx(
       legalEntityId: lockedLegalEntityId,
       targetDate: documentDate,
       runQuery: tx.query,
+      assertSoftClosedPermissionFn: () => assertSecondaryPermission(req, "gl.journal.post_to_closed_period"),
     });
     const fixedAssetPostingState = await prepareFixedAssetPostingAugmentationsTx({
       tx,
@@ -10024,6 +10039,7 @@ async function postCariDocumentByIdTx(
       ),
       referenceNo: toNullableString(postedNumbering.documentNo, 100),
       lines: postingLines,
+      postedAfterClose: journalContext.wasClosedPeriod,
     });
     await upsertJournalSourceLinkTx(tx, {
       tenantId,
@@ -10803,6 +10819,7 @@ export async function reverseCariPostedDocumentById({
         targetDate: reversalDate,
         preferredBookId: parsePositiveInt(originalJournal.book_id),
         runQuery: tx.query,
+        assertSoftClosedPermissionFn: () => assertSecondaryPermission(req, "gl.journal.post_to_closed_period"),
       });
 
       const reversalSubledgerReferenceNo = `${CARI_SUBLEDGER_REVERSE_REFERENCE_PREFIX}${documentId}`;
@@ -10838,6 +10855,7 @@ export async function reverseCariPostedDocumentById({
         ),
         referenceNo: toNullableString(`REV:${original.document_no || documentId}`, 100),
         lines: reversalLines,
+        postedAfterClose: reversalPeriodContext.wasClosedPeriod,
       });
       await upsertJournalSourceLinkTx(tx, {
         tenantId,

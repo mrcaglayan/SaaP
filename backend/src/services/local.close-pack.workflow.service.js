@@ -13,6 +13,9 @@ import {
   cancelUnifiedWorkflowInstanceBridge,
   ensureUnifiedWorkflowInstanceBridge,
 } from "./workflows.service.js";
+import { syncCycleItemsBySource } from "./close.cycle-items.service.js";
+import { listSourceActionDependencyBlockers } from "./close.blockers.service.js";
+import { getLocalClosePackCertification } from "./local.close-pack.certification.service.js";
 
 const SUBMITTABLE_LOCAL_CLOSE_PACK_STATUSES = new Set([
   "NOT_OPENED",
@@ -323,6 +326,40 @@ function buildRecommendedAction(currentStatus, actionAvailability) {
   return "RESOLVE_BLOCKERS";
 }
 
+function mapDependencyBlockerToLocalReviewItem(blocker, appliesToActions = []) {
+  return {
+    level: "BLOCKER",
+    code: String(blocker?.code || "").trim().toUpperCase() || "CLOSE_DEPENDENCY_UNRESOLVED",
+    message:
+      String(blocker?.message || "").trim() ||
+      "Close dependency remains unresolved for this local close pack",
+    appliesToActions,
+    ...(blocker?.drillPath
+      ? {
+          drill: {
+            path: blocker.drillPath,
+          },
+        }
+      : {}),
+  };
+}
+
+function mapCertificationSectionToLocalReviewItem(section) {
+  return {
+    level: "BLOCKER",
+    code:
+      `LOCAL_CLOSE_CERTIFICATION_${String(section?.sectionKey || "")
+        .trim()
+        .toUpperCase()}_INCOMPLETE`,
+    message:
+      `${section?.sectionTitle || "Certification section"} is still incomplete before lock`,
+    appliesToActions: ["lock"],
+    drill: {
+      tab: "certification",
+    },
+  };
+}
+
 async function loadRevrecYearEndContinuityReviewForPack({
   packRow,
   runQuery = query,
@@ -436,6 +473,13 @@ async function evaluateLocalClosePackReviewGate({
     packRow: headerRow,
     runQuery,
   });
+  const certification = await getLocalClosePackCertification({
+    req,
+    tenantId: normalizedTenantId,
+    packId: normalizedPackId,
+    assertScopeAccess,
+    runQuery,
+  });
   const revrecContinuity = await loadRevrecYearEndContinuityReviewForPack({
     packRow: headerRow,
     runQuery,
@@ -519,6 +563,48 @@ async function evaluateLocalClosePackReviewGate({
 
   blockers.push(...buildRevrecContinuityBlockers(revrecContinuity));
 
+  const [approveDependencyBlockers, lockDependencyBlockers] = await Promise.all([
+    listSourceActionDependencyBlockers(
+      {
+        sourceTargetType: "LOCAL_CLOSE_PACK",
+        sourceTargetId: packId,
+        action: "APPROVE",
+      },
+      {
+        tenantId: normalizedTenantId,
+        runQuery,
+      }
+    ),
+    listSourceActionDependencyBlockers(
+      {
+        sourceTargetType: "LOCAL_CLOSE_PACK",
+        sourceTargetId: packId,
+        action: "LOCK",
+      },
+      {
+        tenantId: normalizedTenantId,
+        runQuery,
+      }
+    ),
+  ]);
+
+  // PR-02b keeps the existing local-close review gate intact, then layers the
+  // explicit cycle dependency graph on top so operators can see and enforce the
+  // same blocker family without replacing workflow or REVREC truth.
+  blockers.push(
+    ...(approveDependencyBlockers.rows || []).map((row) =>
+      mapDependencyBlockerToLocalReviewItem(row, ["approve"])
+    ),
+    ...(lockDependencyBlockers.rows || []).map((row) =>
+      mapDependencyBlockerToLocalReviewItem(row, ["lock"])
+    )
+  );
+  blockers.push(
+    ...(certification.incompleteRequiredSections || []).map((section) =>
+      mapCertificationSectionToLocalReviewItem(section)
+    )
+  );
+
   if (!(Number(packRow?.evidenceCount || 0) > 0)) {
     warnings.push({
       level: "WARNING",
@@ -574,6 +660,12 @@ async function evaluateLocalClosePackReviewGate({
         ? revrecContinuity.blockingRows.length
         : 0,
       evidenceCount: Number(packRow?.evidenceCount || 0),
+      certificationRequiredSectionCount:
+        certification.summary?.requiredSectionCount || 0,
+      certificationCompletedRequiredSectionCount:
+        certification.summary?.completedRequiredSectionCount || 0,
+      certificationIncompleteRequiredCount:
+        certification.summary?.incompleteRequiredSectionCount || 0,
       invalidatingScopeCount,
     },
     workflowGate,
@@ -1246,6 +1338,11 @@ export async function submitLocalClosePack({
       packId: input.packId,
       runQuery: tx.query,
     });
+    await syncCycleItemsBySource("LOCAL_CLOSE_PACK", input.packId, {
+      tenantId: input.tenantId,
+      userId: input.userId,
+      runQuery: tx.query,
+    });
     await writeLocalClosePackAuditLog({
       runQuery: tx.query,
       req,
@@ -1321,6 +1418,11 @@ export async function returnLocalClosePack({
     const updatedPackRow = await loadLocalClosePackHeader({
       tenantId: input.tenantId,
       packId: input.packId,
+      runQuery: tx.query,
+    });
+    await syncCycleItemsBySource("LOCAL_CLOSE_PACK", input.packId, {
+      tenantId: input.tenantId,
+      userId: input.userId,
       runQuery: tx.query,
     });
     await writeLocalClosePackAuditLog({
@@ -1436,6 +1538,28 @@ export async function approveLocalClosePack({
       );
     }
 
+    const dependencyBlockers = await listSourceActionDependencyBlockers(
+      {
+        sourceTargetType: "LOCAL_CLOSE_PACK",
+        sourceTargetId: input.packId,
+        action: "APPROVE",
+      },
+      {
+        tenantId: input.tenantId,
+        runQuery: tx.query,
+      }
+    );
+    if ((dependencyBlockers.rows || []).length > 0) {
+      const firstBlocker = dependencyBlockers.rows[0];
+      throw conflict(
+        firstBlocker?.message || "Local close pack approval is blocked by unresolved close dependencies",
+        {
+          dependencyBlockers: dependencyBlockers.rows,
+        },
+        firstBlocker?.code || "LOCAL_CLOSE_PACK_DEPENDENCY_BLOCK"
+      );
+    }
+
     await tx.query(
       `UPDATE local_close_packs
        SET status = 'APPROVED',
@@ -1452,6 +1576,11 @@ export async function approveLocalClosePack({
     const updatedPackRow = await loadLocalClosePackHeader({
       tenantId: input.tenantId,
       packId: input.packId,
+      runQuery: tx.query,
+    });
+    await syncCycleItemsBySource("LOCAL_CLOSE_PACK", input.packId, {
+      tenantId: input.tenantId,
+      userId: input.userId,
       runQuery: tx.query,
     });
     await writeLocalClosePackAuditLog({
@@ -1533,6 +1662,47 @@ export async function lockLocalClosePack({
       );
     }
 
+    const dependencyBlockers = await listSourceActionDependencyBlockers(
+      {
+        sourceTargetType: "LOCAL_CLOSE_PACK",
+        sourceTargetId: input.packId,
+        action: "LOCK",
+      },
+      {
+        tenantId: input.tenantId,
+        runQuery: tx.query,
+      }
+    );
+    if ((dependencyBlockers.rows || []).length > 0) {
+      const firstBlocker = dependencyBlockers.rows[0];
+      throw conflict(
+        firstBlocker?.message || "Local close pack lock is blocked by unresolved close dependencies",
+        {
+          dependencyBlockers: dependencyBlockers.rows,
+        },
+        firstBlocker?.code || "LOCAL_CLOSE_PACK_DEPENDENCY_BLOCK"
+      );
+    }
+
+    const certification = await getLocalClosePackCertification({
+      req,
+      tenantId: input.tenantId,
+      packId: input.packId,
+      userId: input.userId,
+      assertScopeAccess,
+      runQuery: tx.query,
+    });
+    if ((certification.incompleteRequiredSections || []).length > 0) {
+      const firstIncompleteSection = certification.incompleteRequiredSections[0];
+      throw conflict(
+        `${firstIncompleteSection?.sectionTitle || "Certification section"} must be completed before lock`,
+        {
+          certification,
+        },
+        "LOCAL_CLOSE_PACK_CERTIFICATION_INCOMPLETE"
+      );
+    }
+
     await tx.query(
       `UPDATE local_close_packs
        SET status = 'LOCKED',
@@ -1548,6 +1718,11 @@ export async function lockLocalClosePack({
     const updatedPackRow = await loadLocalClosePackHeader({
       tenantId: input.tenantId,
       packId: input.packId,
+      runQuery: tx.query,
+    });
+    await syncCycleItemsBySource("LOCAL_CLOSE_PACK", input.packId, {
+      tenantId: input.tenantId,
+      userId: input.userId,
       runQuery: tx.query,
     });
     await writeLocalClosePackAuditLog({

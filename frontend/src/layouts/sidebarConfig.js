@@ -654,6 +654,12 @@ const CONSOLIDATION_REPORT_PAGE_PERMISSIONS = [
   "consolidation.report.balance_sheet.read",
   "consolidation.report.income_statement.read",
 ];
+const CLOSE_CYCLE_MANAGER_PAGE_PERMISSIONS = [
+  "close.cycle.read",
+  "close.cycle.write",
+  "close.cycle.provision",
+  "close.cycle.lock",
+];
 const FX_RATE_PAGE_PERMISSIONS = ["fx.rate.read", "fx.rate.bulk_upsert"];
 const TAX_SETUP_PAGE_PERMISSIONS = [
   "org.tree.read",
@@ -1140,6 +1146,18 @@ export const sidebarItems = [
           {
             label: "Kapanis Islemleri",
             to: "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
+            implemented: true,
+          },
+          {
+            label: "Kapanis Kokpiti",
+            to: "/app/donem-sonu-islemler/yillik/kapanis-kokpiti",
+            requiredPermissions: ["close.cockpit.read"],
+            implemented: true,
+          },
+          {
+            label: "Kapanis Donguleri",
+            to: "/app/donem-sonu-islemler/yillik/kapanis-donguleri",
+            requiredPermissions: CLOSE_CYCLE_MANAGER_PAGE_PERMISSIONS,
             implemented: true,
           },
           {

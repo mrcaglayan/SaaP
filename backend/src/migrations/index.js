@@ -166,6 +166,27 @@ import migration177CariReviewStateLegacyCheckCleanup from "./m177_cari_review_st
 import migration178WorkflowAssignmentRoutingMatrix from "./m178_workflow_assignment_routing_matrix.js";
 import migration179ApWorkflowActionStepContract from "./m179_ap_workflow_action_step_contract.js";
 import migration180InventoryWarehouseReceiptPolicy from "./m180_inventory_warehouse_receipt_policy.js";
+import migration181CloseCycles from "./m181_close_cycles.js";
+import migration182CloseCycleItems from "./m182_close_cycle_items.js";
+import migration183CloseCycleItemLinks from "./m183_close_cycle_item_links.js";
+import migration184CloseDependencies from "./m184_close_dependencies.js";
+import migration185CloseStaleEvents from "./m185_close_stale_events.js";
+import migration186LocalClosePackCertification from "./m186_local_close_pack_certification.js";
+import migration187LocalClosePackSections from "./m187_local_close_pack_sections.js";
+import migration188CloseAlerts from "./m188_close_alerts.js";
+import migration189CloseSlaRules from "./m189_close_sla_rules.js";
+import migration190CloseJournalProfiles from "./m190_close_journal_profiles.js";
+import migration191CloseJournalTemplates from "./m191_close_journal_templates.js";
+import migration192CloseSupportScheduleTemplates from "./m192_close_support_schedule_templates.js";
+import migration193CloseSupportSchedules from "./m193_close_support_schedules.js";
+import migration194CloseReconciliationSets from "./m194_close_reconciliation_sets.js";
+import migration195CloseReconciliationItems from "./m195_close_reconciliation_items.js";
+import migration196IntercompanyMismatchQueue from "./m196_intercompany_mismatch_queue.js";
+import migration197ConsolidationRunScenarios from "./m197_consolidation_run_scenarios.js";
+import migration198CloseKpiSnapshots from "./m198_close_kpi_snapshots.js";
+import migration199CloseCycleStaleResolution from "./m199_close_cycle_stale_resolution.js";
+import migration200JournalPostedAfterClose from "./m200_journal_posted_after_close.js";
+import migration201JournalOriginalFiscalPeriod from "./m201_journal_original_fiscal_period.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -336,6 +357,27 @@ const migrations = [
   migration178WorkflowAssignmentRoutingMatrix,
   migration179ApWorkflowActionStepContract,
   migration180InventoryWarehouseReceiptPolicy,
+  migration181CloseCycles,
+  migration182CloseCycleItems,
+  migration183CloseCycleItemLinks,
+  migration184CloseDependencies,
+  migration185CloseStaleEvents,
+  migration186LocalClosePackCertification,
+  migration187LocalClosePackSections,
+  migration188CloseAlerts,
+  migration189CloseSlaRules,
+  migration190CloseJournalProfiles,
+  migration191CloseJournalTemplates,
+  migration192CloseSupportScheduleTemplates,
+  migration193CloseSupportSchedules,
+  migration194CloseReconciliationSets,
+  migration195CloseReconciliationItems,
+  migration196IntercompanyMismatchQueue,
+  migration197ConsolidationRunScenarios,
+  migration198CloseKpiSnapshots,
+  migration199CloseCycleStaleResolution,
+  migration200JournalPostedAfterClose,
+  migration201JournalOriginalFiscalPeriod,
 ];
 
 export default migrations;

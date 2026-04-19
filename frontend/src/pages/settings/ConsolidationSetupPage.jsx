@@ -265,6 +265,10 @@ function resolveCanonicalCoverageSnapshot(runPayload) {
   };
 }
 
+/**
+ * Render the consolidation setup workspace, including additive PR-09
+ * scenario/version authoring on the existing consolidation run runtime.
+ */
 export default function ConsolidationSetupPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
@@ -385,6 +389,8 @@ export default function ConsolidationSetupPage() {
   const [runForm, setRunForm] = useState({
     fiscalPeriodId: "",
     runName: "",
+    scenarioCode: "TRIAL",
+    versionNo: "1",
     presentationCurrencyCode: "USD",
     rateType: "CLOSING",
   });
@@ -2191,6 +2197,17 @@ export default function ConsolidationSetupPage() {
       setError(l("Group, fiscalPeriodId and runName are required.", "Grup, fiscalPeriodId ve runName zorunludur."));
       return;
     }
+    const normalizedRunName = String(runForm.runName || "").trim().toUpperCase();
+    const normalizedScenarioCode = String(runForm.scenarioCode || "TRIAL").trim().toUpperCase();
+    if (normalizedScenarioCode === "OFFICIAL" && normalizedRunName !== "OFFICIAL") {
+      setError(
+        l(
+          "Official scenario requires runName = OFFICIAL.",
+          "Resmi senaryo icin runName = OFFICIAL olmalidir.",
+        ),
+      );
+      return;
+    }
 
     await runAction(
       "run-create",
@@ -2199,6 +2216,9 @@ export default function ConsolidationSetupPage() {
           consolidationGroupId: groupId,
           fiscalPeriodId,
           runName: runForm.runName.trim(),
+          scenarioCode:
+            normalizedRunName === "OFFICIAL" ? "OFFICIAL" : normalizedScenarioCode,
+          versionNo: toPositiveInt(runForm.versionNo) || 1,
           presentationCurrencyCode: String(runForm.presentationCurrencyCode).toUpperCase(),
         });
       },
@@ -3752,7 +3772,7 @@ export default function ConsolidationSetupPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Runs", "Runlar")}</h2>
-            <form onSubmit={onCreateRun} className="grid gap-2 md:grid-cols-4">
+            <form onSubmit={onCreateRun} className="grid gap-2 md:grid-cols-6">
               <Combobox
                 value={runForm.fiscalPeriodId || null}
                 options={periodSelectOptions}
@@ -3768,10 +3788,50 @@ export default function ConsolidationSetupPage() {
               />
               <input
                 value={runForm.runName}
-                onChange={(event) => setRunForm((prev) => ({ ...prev, runName: event.target.value }))}
+                onChange={(event) => {
+                  const nextRunName = event.target.value;
+                  const normalizedRunName = String(nextRunName || "").trim().toUpperCase();
+                  setRunForm((prev) => ({
+                    ...prev,
+                    runName: nextRunName,
+                    scenarioCode:
+                      normalizedRunName === "OFFICIAL"
+                        ? "OFFICIAL"
+                        : prev.scenarioCode === "OFFICIAL"
+                          ? "TRIAL"
+                          : prev.scenarioCode,
+                  }));
+                }}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 placeholder={l("Run name", "Run adi")}
                 required
+              />
+              <select
+                value={runForm.scenarioCode}
+                onChange={(event) =>
+                  setRunForm((prev) => ({
+                    ...prev,
+                    scenarioCode: String(event.target.value || "TRIAL").toUpperCase(),
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="TRIAL">{l("Trial", "Deneme")}</option>
+                <option value="OFFICIAL">{l("Official", "Resmi")}</option>
+                <option value="RESTATED">{l("Restated", "Yeniden duzenlenmis")}</option>
+                <option value="SIMULATION">{l("Simulation", "Simulasyon")}</option>
+              </select>
+              <input
+                value={runForm.versionNo}
+                onChange={(event) =>
+                  setRunForm((prev) => ({
+                    ...prev,
+                    versionNo: event.target.value.replace(/[^\d]/g, "") || "1",
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder={l("Version", "Versiyon")}
+                inputMode="numeric"
               />
               <input
                 value={runForm.presentationCurrencyCode}
@@ -3781,7 +3841,7 @@ export default function ConsolidationSetupPage() {
                 placeholder={l("Currency", "Para birimi")}
                 required
               />
-              <button type="submit" disabled={saving === "run-create"} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
+              <button type="submit" disabled={saving === "run-create"} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-2">
                 {saving === "run-create" ? l("Creating...", "Olusturuluyor...") : l("Create Run", "Run Olustur")}
               </button>
               <Combobox
@@ -3859,7 +3919,8 @@ export default function ConsolidationSetupPage() {
                       <div className="flex items-center justify-between gap-2">
                         <div>
                           #{row.id} | {row.run_name} | {row.fiscal_year}-P
-                          {padPeriod(row.period_no)} | {row.status}
+                          {padPeriod(row.period_no)} | {row.scenario_code || "TRIAL"} v
+                          {row.version_no || 1} | {row.status}
                         </div>
                         <div className="flex gap-1">
                           <button

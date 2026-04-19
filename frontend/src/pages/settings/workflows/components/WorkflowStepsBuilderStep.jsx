@@ -129,6 +129,9 @@ export default function WorkflowStepsBuilderStep({
   const explainabilityLeadEntry = Array.isArray(workflowExplainabilityPreview?.entries)
     ? workflowExplainabilityPreview.entries[0]
     : null;
+  const selectedPresetApplied = Boolean(
+    selectedWorkflowPreset && workflowPresetComparison?.matchesBaseline
+  );
   const stepTable = (
     <div className="overflow-x-auto rounded-xl border border-slate-200">
       <table className="w-full min-w-260 text-sm">
@@ -546,8 +549,8 @@ export default function WorkflowStepsBuilderStep({
                 </p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {l(
-                    "Choose a business-readable preset, preview the package flow, then clone its baseline into this tenant workflow.",
-                    "Is dilinde bir preset secin, paket akisina onizleme yapin, sonra temelini bu tenant workflow'una kopyalayin."
+                    "Choose a business-readable preset to preview its package flow. The current workflow changes only after you apply the preset below.",
+                    "Paket akisini onizlemek icin is dilinde bir preset secin. Mevcut workflow ancak asagidan preseti uyguladiginizda degisir."
                   )}
                 </p>
               </div>
@@ -573,6 +576,11 @@ export default function WorkflowStepsBuilderStep({
                           <Badge variant="secondary">
                             {preset.primaryScope || preset.defaultScope || "-"}
                           </Badge>
+                          {isActive ? (
+                            <Badge variant="outline">
+                              {l("Preview selected", "Onizleme secili")}
+                            </Badge>
+                          ) : null}
                           <Badge
                             variant={preset.usesExtension ? "outline" : "secondary"}
                           >
@@ -618,6 +626,13 @@ export default function WorkflowStepsBuilderStep({
                     {selectedWorkflowPreset.stepCount} {l("steps", "adim")}
                   </Badge>
                   <Badge
+                    variant={selectedPresetApplied ? "secondary" : "outline"}
+                  >
+                    {selectedPresetApplied
+                      ? l("Applied to workflow", "Workflow'a uygulandi")
+                      : l("Preview only", "Yalnizca onizleme")}
+                  </Badge>
+                  <Badge
                     variant={selectedWorkflowPreset.usesExtension ? "outline" : "secondary"}
                   >
                     {selectedWorkflowPreset.usesExtension
@@ -655,6 +670,17 @@ export default function WorkflowStepsBuilderStep({
                       <p className="mt-2 text-xs leading-5 text-slate-500">
                         {workflowPresetComparison.supportNote}
                       </p>
+                      <p className="mt-2 text-xs leading-5 text-slate-600">
+                        {selectedPresetApplied
+                          ? l(
+                              "This preset baseline is already applied to the current editable workflow steps.",
+                              "Bu preset temeli mevcut duzenlenebilir workflow adimlarina zaten uygulanmis durumda."
+                            )
+                          : l(
+                              "Selecting a preset only previews it. Apply it below if you want the current editable workflow to match this preset.",
+                              "Preset secmek yalnizca onizleme yapar. Mevcut duzenlenebilir workflow'un bu presetle eslesmesini istiyorsaniz asagidan uygulayin."
+                            )}
+                      </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -668,8 +694,8 @@ export default function WorkflowStepsBuilderStep({
                         }
                       >
                         {l(
-                          "Clone preset into this workflow",
-                          "Preseti bu workflow'a kopyala"
+                          "Apply preset to current workflow",
+                          "Preseti mevcut workflow'a uygula"
                         )}
                       </Button>
                       <Button

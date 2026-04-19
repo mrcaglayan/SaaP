@@ -14,6 +14,8 @@ import {
 import { submitApprovalRequest } from "./approvalPolicies.service.js";
 import { executeRequest, recordDecision } from "./approval.engine.service.js";
 import { assertSoD } from "./sod.service.js";
+import { syncCycleItemsBySource } from "./close.cycle-items.service.js";
+import { propagateStaleFromSourceEvent } from "./close.stale.service.js";
 
 const FINANCIALLY_REOPENABLE_PACK_STATUSES = new Set(["APPROVED", "LOCKED"]);
 
@@ -815,6 +817,30 @@ export async function approveLocalClosePackReopenRequest({
       packId: input.packId,
       runQuery: tx.query,
     });
+    if (requestStatus === "EXECUTED") {
+      await syncCycleItemsBySource("LOCAL_CLOSE_PACK", input.packId, {
+        tenantId: input.tenantId,
+        userId: input.userId,
+        runQuery: tx.query,
+      });
+      await propagateStaleFromSourceEvent(
+        {
+          sourceTargetType: "LOCAL_CLOSE_PACK",
+          sourceTargetId: input.packId,
+          eventCode: "LOCAL_CLOSE_REOPENED",
+          payload: {
+            requestId: input.requestId,
+            requestedActionType: requestActionType,
+            requestStatus,
+          },
+        },
+        {
+          tenantId: input.tenantId,
+          userId: input.userId,
+          runQuery: tx.query,
+        }
+      );
+    }
 
     await writeLocalClosePackAuditLog({
       runQuery: tx.query,
@@ -826,7 +852,9 @@ export async function approveLocalClosePackReopenRequest({
         requestStatus === "EXECUTED"
           ? "ouclose.reopen.execute"
           : "ouclose.reopen.approve_evidence_only",
-      resourceId: input.requestId,
+      // Reopen execution KPIs need the audit target to stay anchored on the
+      // actual pack source id rather than the transient reopen-request id.
+      resourceId: input.packId,
       payload: {
         requestId: input.requestId,
         localClosePackId: input.packId,

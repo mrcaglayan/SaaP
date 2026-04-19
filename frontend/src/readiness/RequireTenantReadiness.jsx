@@ -13,6 +13,8 @@ const SETUP_ALLOWLIST = new Set([
   "/app/ayarlar/hesap-plani-ayarlari",
   "/app/ayarlar/workflow-kurulumu",
   "/app/ayarlar/sube-operatorleri",
+  "/app/donem-sonu-islemler/yillik/kapanis-donguleri",
+  "/app/donem-sonu-islemler/yillik/kapanis-kokpiti",
   "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
   "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",
   "/app/donem-sonu-islemler/yillik/yerel-kapanis-paketleri",

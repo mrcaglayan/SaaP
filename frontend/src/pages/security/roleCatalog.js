@@ -637,6 +637,7 @@ const WORKFLOW_PACKAGE_CATALOG = Object.freeze({
       "gl.period.close",
       "gl.period.reopen",
       "gl.period.admin",
+      "gl.journal.post_to_closed_period",
     ]),
     workflowFamily: "PERIOD_CLOSE",
     sortOrder: 340,
@@ -883,7 +884,7 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
       "GroupReportingController",
     ]),
     runtimeNotes: freezeList([
-      "The current runtime model exposes readiness visibility through broader accounting roles rather than a dedicated period-close reviewer package.",
+      "Today this readiness step can be satisfied by broader seeded accounting roles such as BranchOperator, GLOperator, GLPostingAuthority, or GroupReportingController at the selected scope. That is broader than a dedicated readiness-only reviewer role, but it is still a valid runtime mapping.",
     ]),
   }),
   "PKG-PC-CLOSE": Object.freeze({
@@ -891,7 +892,7 @@ const WORKFLOW_PACKAGE_RUNTIME_METADATA = Object.freeze({
     helperBundleCodes: freezeList(["gl.posting"]),
     runtimeRoleCodes: freezeList(["GLPostingAuthority"]),
     runtimeNotes: freezeList([
-      "The current runtime role is a broad manual-posting companion, not a full period-close governance family yet.",
+      "Today this close step is satisfied by GLPostingAuthority at the selected scope. That role also carries broader manual-posting authority, so it is wider than a close-only governance role, but it is still the current valid runtime mapping.",
     ]),
   }),
   "PKG-PC-REOPEN": Object.freeze({

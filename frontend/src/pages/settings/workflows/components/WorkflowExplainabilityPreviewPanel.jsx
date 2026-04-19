@@ -20,6 +20,16 @@ const TONE_STYLES = {
   },
 };
 
+function getEntryStatusClassName(statusTone) {
+  if (statusTone === "rose") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+  if (statusTone === "amber") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  return "border-slate-200 bg-slate-100 text-slate-700";
+}
+
 /**
  * Renders the shared design-time explainability preview for workflow setup.
  */
@@ -62,9 +72,18 @@ export default function WorkflowExplainabilityPreviewPanel({
                   <p className={`mt-2 text-xs leading-5 ${styles.helper}`}>{entry.helperText}</p>
                 ) : null}
               </div>
-              <Badge variant="secondary">
-                {entry.stepNo}
-              </Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                {entry.statusLabel ? (
+                  <span
+                    className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getEntryStatusClassName(entry.statusTone)}`}
+                  >
+                    {entry.statusLabel}
+                  </span>
+                ) : null}
+                <Badge variant="secondary">
+                  {entry.stepNo}
+                </Badge>
+              </div>
             </div>
 
             {Array.isArray(entry.detailBadges) && entry.detailBadges.length > 0 ? (

@@ -2,6 +2,7 @@ import { PERMISSION_GROUPS } from "./permission-groups.js";
 
 export const PERMISSION_DEPENDENCIES = Object.freeze({
   "gl.journal.post": Object.freeze(["gl.journal.read"]),
+  "gl.journal.post_to_closed_period": Object.freeze(["gl.journal.post"]),
   "gl.journal.reverse": Object.freeze(["gl.journal.read"]),
   "gl.period.close": Object.freeze(["gl.journal.read", "gl.trial_balance.read"]),
   "gl.period.reopen": Object.freeze(["gl.journal.read", "gl.trial_balance.read", "gl.period.close"]),

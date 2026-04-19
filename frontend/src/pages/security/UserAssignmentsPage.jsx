@@ -194,6 +194,7 @@ const ACCESS_MATRIX_GROUPS = Object.freeze([
     ]),
   }),
 ]);
+const DEFAULT_ENTITY_ACCOUNTANT_PRESET_CODE = "EntityAPController";
 function normalizeText(value) {
   return String(value || "").trim();
 }
@@ -3045,6 +3046,89 @@ export default function UserAssignmentsPage() {
     }
     return Array.from(new Set(collectedWarnings));
   }
+  async function handleAssignDefaultEntityAccountantRoles({
+    targetUserId,
+    scopeId,
+  }) {
+    const normalizedUserId = Number(targetUserId || 0);
+    const normalizedScopeId = Number(scopeId || 0);
+    const preset = getBootstrapHandoffPresetEntry(
+      DEFAULT_ENTITY_ACCOUNTANT_PRESET_CODE
+    );
+    if (!normalizedUserId) {
+      setError(
+        l(
+          "Choose a user before assigning the default entity accountant roles.",
+          "Varsayilan entity accountant rollerini atamadan once bir kullanici secin."
+        )
+      );
+      return;
+    }
+    if (!normalizedScopeId || !preset?.scopeType) {
+      setError(
+        l(
+          "Choose a legal entity before assigning the default entity accountant roles.",
+          "Varsayilan entity accountant rollerini atamadan once bir legal entity secin."
+        )
+      );
+      return;
+    }
+    const assignmentAccess = getPermissionAccess(
+      "security.role_assignment.upsert",
+      {
+        scope: {
+          scopeType: preset.scopeType,
+          scopeId: normalizedScopeId,
+        },
+      }
+    );
+    if (!assignmentAccess.allowed) {
+      setError(
+        l(
+          "You do not have permission to assign the default entity accountant roles at this legal entity.",
+          "Bu legal entity kapsaminda varsayilan entity accountant rollerini atama yetkiniz yok."
+        )
+      );
+      return;
+    }
+
+    setActingRowId(`default-entity-accountant-${normalizedUserId}`);
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setWarningMessages([]);
+    try {
+      const warnings = await applyPresetAssignments({
+        targetUserId: normalizedUserId,
+        presetCode: DEFAULT_ENTITY_ACCOUNTANT_PRESET_CODE,
+        scopeId: normalizedScopeId,
+        includePostingAuthority: false,
+        effectiveFrom: "",
+        effectiveTo: "",
+      });
+      setWarningMessages(warnings);
+      setMessage(
+        l(
+          "Default entity accountant roles assigned.",
+          "Varsayilan entity accountant rolleri atandi."
+        )
+      );
+      await loadData({ showLoadingState: false });
+    } catch (requestError) {
+      setError(
+        getErrorMessage(
+          requestError,
+          l(
+            "The default entity accountant roles could not be assigned.",
+            "Varsayilan entity accountant rolleri atanamadi."
+          )
+        )
+      );
+    } finally {
+      setActingRowId("");
+      setSaving(false);
+    }
+  }
   async function handleSaveUserModal(event) {
     event.preventDefault();
     const isInvite = userModalMode === "invite";
@@ -3916,6 +4000,9 @@ export default function UserAssignmentsPage() {
             workflowPackageScopeOptions={workflowPackageScopeOptions}
             workflowPackageScopeTypeOptions={workflowPackageScopeTypeOptions}
             rawAssignmentForm={rawAssignmentForm}
+            onAssignDefaultEntityAccountantRoles={
+              handleAssignDefaultEntityAccountantRoles
+            }
             onUpdateRawAssignmentField={updateRawAssignmentField}
             onCreateRawAssignment={handleCreateRawAssignment}
             rawAssignmentWriteAccess={rawAssignmentWriteAccess}

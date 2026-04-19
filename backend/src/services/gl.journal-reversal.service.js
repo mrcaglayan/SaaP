@@ -81,6 +81,7 @@ export async function reverseJournalEntryTx(tx, {
   journalNo,
   autoPost = true,
   idempotentOnAlreadyReversed = false,
+  wasClosedPeriod = false,
 } = {}) {
   const original = await loadOriginalJournalTx(tx, tenantId, journalId);
   if (!original) {
@@ -126,6 +127,7 @@ export async function reverseJournalEntryTx(tx, {
   const reversalEntryDate = entryDate || original.entry_date;
   const reversalDocumentDate = documentDate || original.document_date;
 
+  const setPostedAfterClose = autoPost && wasClosedPeriod;
   const reversalResult = await tx.query(
     `INSERT INTO journal_entries (
         tenant_id,
@@ -145,9 +147,11 @@ export async function reverseJournalEntryTx(tx, {
         created_by_user_id,
         posted_by_user_id,
         posted_at,
-        reverse_reason
+        reverse_reason,
+        posted_after_close,
+        posted_after_close_at
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       parsePositiveInt(tenantId),
       parsePositiveInt(original.legal_entity_id),
@@ -167,6 +171,8 @@ export async function reverseJournalEntryTx(tx, {
       autoPost ? parsePositiveInt(userId) : null,
       autoPost ? new Date() : null,
       reversalReason,
+      setPostedAfterClose ? 1 : 0,
+      setPostedAfterClose ? new Date() : null,
     ]
   );
 

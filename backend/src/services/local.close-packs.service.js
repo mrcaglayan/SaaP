@@ -1,4 +1,4 @@
-import { query } from "../db.js";
+import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   assertBookBelongsToTenant,
@@ -9,10 +9,12 @@ import {
 import {
   buildLocalClosePackScopeKey,
   LOCAL_CLOSE_PACK_REPORT_REVIEW_KEYS,
+  LOCAL_CLOSE_PACK_SCOPE_TYPES,
   LOCAL_CLOSE_PACK_STATUS_VALUES,
   resolveLocalClosePackRowScope,
 } from "./local.close-packs.shared.js";
 import { LOCAL_CLOSE_PACK } from "../utils/source-ref-types.js";
+import { autoLinkAndSyncSource } from "./close.cycle-items.service.js";
 
 function toUpperText(value) {
   return String(value || "")
@@ -87,6 +89,15 @@ function mapLocalClosePackRow(row) {
   const lastEvidenceAt = toDateTime(row.last_evidence_at);
   const lastCommentAt = toDateTime(row.last_comment_at);
   const lastAuditAt = toDateTime(row.last_audit_at);
+  const certificationStatus = toUpperText(row.certification_status) || "NOT_STARTED";
+  const certificationRequiredSectionCount =
+    Number(row.certification_required_section_count || 0) || 0;
+  const certificationCompletedRequiredSectionCount =
+    Number(row.certification_completed_required_section_count || 0) || 0;
+  const certificationIncompleteRequiredCount =
+    Number(row.certification_incomplete_required_count || 0) || 0;
+  const certificationProgressPercentage =
+    Number(row.certification_progress_percentage || 0) || 0;
 
   return {
     id: parsePositiveInt(row.id),
@@ -125,6 +136,14 @@ function mapLocalClosePackRow(row) {
     completionPercentage,
     blockerCount,
     warningCount,
+    certificationStatus,
+    certificationRequiredSectionCount,
+    certificationCompletedRequiredSectionCount,
+    certificationIncompleteRequiredCount,
+    certificationProgressPercentage,
+    certifiedByUserId: parsePositiveInt(row.certified_by_user_id),
+    certifiedByUserName: row.certified_by_user_name || null,
+    certifiedAt: toDateTime(row.certified_at),
     lastReportReviewedAt,
     lastEvidenceAt,
     lastCommentAt,
@@ -185,8 +204,16 @@ function buildLocalClosePackBaseSelect(whereSql) {
       reviewer_user.name AS reviewer_user_name,
       creator.name AS created_by_user_name,
       updater.name AS updated_by_user_name,
+      certifier.name AS certified_by_user_name,
       wi.status AS workflow_instance_status,
       wi.current_step_no AS workflow_current_step_no,
+      certification.status AS certification_status,
+      certification.required_section_count AS certification_required_section_count,
+      certification.completed_required_section_count AS certification_completed_required_section_count,
+      certification.incomplete_required_section_count AS certification_incomplete_required_count,
+      certification.progress_percentage AS certification_progress_percentage,
+      certification.certified_by_user_id AS certified_by_user_id,
+      certification.certified_at AS certified_at,
       (
         SELECT COUNT(*)
         FROM local_close_pack_reopen_requests lcrr
@@ -261,8 +288,151 @@ function buildLocalClosePackBaseSelect(whereSql) {
     LEFT JOIN users reviewer_user ON reviewer_user.id = lcp.reviewer_user_id
     LEFT JOIN users creator ON creator.id = lcp.created_by_user_id
     LEFT JOIN users updater ON updater.id = lcp.updated_by_user_id
+    LEFT JOIN local_close_pack_certifications certification
+      ON certification.tenant_id = lcp.tenant_id
+     AND certification.local_close_pack_id = lcp.id
+    LEFT JOIN users certifier ON certifier.id = certification.certified_by_user_id
     LEFT JOIN workflow_instances wi ON wi.id = lcp.workflow_instance_id
     WHERE ${whereSql}`;
+}
+
+function noopAssertScopeAccess() {
+  return true;
+}
+
+async function normalizeLocalClosePackInput({
+  req = null,
+  input,
+  assertScopeAccess = null,
+  runQuery = query,
+  enforceScopeAccess = true,
+}) {
+  const tenantId = parsePositiveInt(input?.tenantId);
+  const userId = parsePositiveInt(input?.userId);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+  if (!userId) {
+    throw badRequest("userId is required");
+  }
+
+  const closeScopeType = toUpperText(input?.closeScopeType);
+  const status = toUpperText(input?.status);
+  if (!LOCAL_CLOSE_PACK_SCOPE_TYPES.includes(closeScopeType)) {
+    throw badRequest("closeScopeType is invalid for local close packs");
+  }
+  if (!LOCAL_CLOSE_PACK_STATUS_VALUES.includes(status)) {
+    throw badRequest("status is invalid for local close packs");
+  }
+
+  const legalEntity = await assertLegalEntityBelongsToTenant(
+    tenantId,
+    input?.legalEntityId,
+    "legalEntityId"
+  );
+  const book = await assertBookBelongsToTenant(tenantId, input?.bookId, "bookId");
+  if (parsePositiveInt(book.legal_entity_id) !== parsePositiveInt(legalEntity.id)) {
+    throw badRequest("bookId must belong to the selected legalEntityId");
+  }
+  await assertFiscalPeriodBelongsToCalendar(
+    parsePositiveInt(book.calendar_id),
+    input?.fiscalPeriodId,
+    "fiscalPeriodId"
+  );
+
+  let operatingUnitId = null;
+  if (closeScopeType === "OPERATING_UNIT") {
+    const operatingUnit = await assertOperatingUnitBelongsToTenant(
+      tenantId,
+      input?.operatingUnitId,
+      "operatingUnitId"
+    );
+    if (parsePositiveInt(operatingUnit.legal_entity_id) !== parsePositiveInt(legalEntity.id)) {
+      throw badRequest("operatingUnitId must belong to the selected legalEntityId");
+    }
+    operatingUnitId = parsePositiveInt(operatingUnit.id);
+  }
+
+  const scopeRow = {
+    close_scope_type: closeScopeType,
+    operating_unit_id: operatingUnitId,
+    legal_entity_id: parsePositiveInt(legalEntity.id),
+  };
+  if (enforceScopeAccess && typeof assertScopeAccess === "function") {
+    assertLocalClosePackRowReadable(req, scopeRow, assertScopeAccess);
+  }
+
+  return {
+    tenantId,
+    userId,
+    legalEntityId: parsePositiveInt(legalEntity.id),
+    bookId: parsePositiveInt(book.id),
+    fiscalPeriodId: parsePositiveInt(input?.fiscalPeriodId),
+    closeScopeType,
+    operatingUnitId,
+    scopeKey: buildLocalClosePackScopeKey({
+      closeScopeType,
+      operatingUnitId,
+    }),
+    status,
+    note: input?.note || null,
+    cycleId: parsePositiveInt(input?.cycleId) || null,
+  };
+}
+
+async function loadLocalClosePackIdByIdentity({
+  tenantId,
+  bookId,
+  fiscalPeriodId,
+  scopeKey,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT id
+     FROM local_close_packs
+     WHERE tenant_id = ?
+       AND book_id = ?
+       AND fiscal_period_id = ?
+       AND scope_key = ?
+     LIMIT 1`,
+    [tenantId, bookId, fiscalPeriodId, scopeKey]
+  );
+  return parsePositiveInt(result.rows?.[0]?.id) || null;
+}
+
+async function writeLocalClosePackSystemAuditLog({
+  runQuery = query,
+  tenantId,
+  userId,
+  legalEntityId,
+  packId,
+  action,
+  payload,
+}) {
+  await runQuery(
+    `INSERT INTO audit_logs (
+        tenant_id,
+        user_id,
+        action,
+        resource_type,
+        resource_id,
+        scope_type,
+        scope_id,
+        request_id,
+        ip_address,
+        user_agent,
+        payload_json
+     )
+     VALUES (?, ?, ?, 'local_close_pack', ?, 'LEGAL_ENTITY', ?, NULL, NULL, NULL, ?)`,
+    [
+      parsePositiveInt(tenantId),
+      parsePositiveInt(userId) || null,
+      String(action || "close.cycle.provision.local_close_pack"),
+      String(packId || ""),
+      parsePositiveInt(legalEntityId) || null,
+      payload ? JSON.stringify(payload) : null,
+    ]
+  );
 }
 
 /**
@@ -409,105 +579,124 @@ export async function createLocalClosePack({
   assertScopeAccess,
   runQuery = query,
 }) {
-  const tenantId = parsePositiveInt(input?.tenantId);
-  const userId = parsePositiveInt(input?.userId);
-  if (!tenantId) {
-    throw badRequest("tenantId is required");
-  }
-  if (!userId) {
-    throw badRequest("userId is required");
-  }
-
-  const closeScopeType = toUpperText(input.closeScopeType);
-  if (!LOCAL_CLOSE_PACK_STATUS_VALUES.includes(toUpperText(input.status))) {
-    throw badRequest("status is invalid for local close packs");
-  }
-
-  const legalEntity = await assertLegalEntityBelongsToTenant(
-    tenantId,
-    input.legalEntityId,
-    "legalEntityId"
-  );
-  const book = await assertBookBelongsToTenant(tenantId, input.bookId, "bookId");
-  if (parsePositiveInt(book.legal_entity_id) !== parsePositiveInt(legalEntity.id)) {
-    throw badRequest("bookId must belong to the selected legalEntityId");
-  }
-  await assertFiscalPeriodBelongsToCalendar(
-    parsePositiveInt(book.calendar_id),
-    input.fiscalPeriodId,
-    "fiscalPeriodId"
-  );
-
-  let operatingUnitId = null;
-  if (closeScopeType === "OPERATING_UNIT") {
-    const operatingUnit = await assertOperatingUnitBelongsToTenant(
-      tenantId,
-      input.operatingUnitId,
-      "operatingUnitId"
-    );
-    if (parsePositiveInt(operatingUnit.legal_entity_id) !== parsePositiveInt(legalEntity.id)) {
-      throw badRequest("operatingUnitId must belong to the selected legalEntityId");
-    }
-    operatingUnitId = parsePositiveInt(operatingUnit.id);
-  }
-
-  const scopeRow = {
-    close_scope_type: closeScopeType,
-    operating_unit_id: operatingUnitId,
-    legal_entity_id: parsePositiveInt(legalEntity.id),
-  };
-  assertLocalClosePackRowReadable(req, scopeRow, assertScopeAccess);
-
-  const scopeKey = buildLocalClosePackScopeKey({
-    closeScopeType,
-    operatingUnitId,
+  await normalizeLocalClosePackInput({
+    req,
+    input,
+    assertScopeAccess,
+    runQuery,
+    enforceScopeAccess: true,
   });
 
-  try {
-    const insertResult = await runQuery(
-      `INSERT INTO local_close_packs (
-         tenant_id,
-         legal_entity_id,
-         book_id,
-         fiscal_period_id,
-         close_scope_type,
-         scope_key,
-         operating_unit_id,
-         status,
-         note,
-         created_by_user_id,
-         updated_by_user_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        tenantId,
-        parsePositiveInt(legalEntity.id),
-        parsePositiveInt(book.id),
-        parsePositiveInt(input.fiscalPeriodId),
-        closeScopeType,
-        scopeKey,
-        operatingUnitId,
-        toUpperText(input.status),
-        input.note || null,
-        userId,
-        userId,
-      ]
-    );
-
-    return getLocalClosePackById({
-      req,
-      tenantId,
-      packId: parsePositiveInt(insertResult.rows?.insertId),
-      assertScopeAccess,
-      runQuery,
+  const work = async (effectiveRunQuery) => {
+    const ensured = await ensureLocalClosePack(input, {
+      runQuery: effectiveRunQuery,
     });
-  } catch (err) {
-    if (isDuplicateKeyError(err)) {
+    if (!ensured.created) {
       throw conflict(
         "Local close pack already exists for the selected book, fiscal period, and scope"
       );
     }
-    throw err;
+    return ensured.row;
+  };
+
+  if (runQuery === query) {
+    return withTransaction(async (tx) => work(tx.query));
   }
+  return work(runQuery);
+}
+
+/**
+ * Create or reuse the exact local close pack identified by
+ * `(tenant_id, book_id, fiscal_period_id, scope_key)` without routing through
+ * the public request-bound prepare contract.
+ */
+export async function ensureLocalClosePack(input, options = {}) {
+  const runQuery = typeof options?.runQuery === "function" ? options.runQuery : query;
+  const normalized = await normalizeLocalClosePackInput({
+    input,
+    runQuery,
+    enforceScopeAccess: false,
+  });
+
+  const insertResult = await runQuery(
+    `INSERT INTO local_close_packs (
+       tenant_id,
+       legal_entity_id,
+       book_id,
+       fiscal_period_id,
+       close_scope_type,
+       scope_key,
+       operating_unit_id,
+       status,
+       note,
+       created_by_user_id,
+       updated_by_user_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       id = LAST_INSERT_ID(id)`,
+    [
+      normalized.tenantId,
+      normalized.legalEntityId,
+      normalized.bookId,
+      normalized.fiscalPeriodId,
+      normalized.closeScopeType,
+      normalized.scopeKey,
+      normalized.operatingUnitId,
+      normalized.status,
+      normalized.note,
+      normalized.userId,
+      normalized.userId,
+    ]
+  );
+
+  const packId =
+    parsePositiveInt(insertResult.rows?.insertId) ||
+    (await loadLocalClosePackIdByIdentity({
+      tenantId: normalized.tenantId,
+      bookId: normalized.bookId,
+      fiscalPeriodId: normalized.fiscalPeriodId,
+      scopeKey: normalized.scopeKey,
+      runQuery,
+    }));
+  if (!packId) {
+    throw badRequest("Failed to resolve local close-pack identity");
+  }
+  const created = Number(insertResult.rows?.affectedRows || 0) === 1;
+
+  // Provision retries must converge on the same pack without resetting any
+  // live status or note that may already have progressed on the existing row.
+  await autoLinkAndSyncSource("LOCAL_CLOSE_PACK", packId, {
+    tenantId: normalized.tenantId,
+    userId: normalized.userId,
+    runQuery,
+  });
+  await writeLocalClosePackSystemAuditLog({
+    runQuery,
+    tenantId: normalized.tenantId,
+    userId: normalized.userId,
+    legalEntityId: normalized.legalEntityId,
+    packId,
+    action: created
+      ? "close.cycle.provision.local_close_pack_create"
+      : "close.cycle.provision.local_close_pack_reuse",
+    payload: {
+      cycleId: normalized.cycleId,
+      bookId: normalized.bookId,
+      fiscalPeriodId: normalized.fiscalPeriodId,
+      scopeKey: normalized.scopeKey,
+    },
+  });
+
+  return {
+    created,
+    row: await getLocalClosePackById({
+      req: null,
+      tenantId: normalized.tenantId,
+      packId,
+      assertScopeAccess: noopAssertScopeAccess,
+      runQuery,
+    }),
+  };
 }
 
 export default {
@@ -515,4 +704,5 @@ export default {
   listLocalClosePacks,
   getLocalClosePackById,
   createLocalClosePack,
+  ensureLocalClosePack,
 };

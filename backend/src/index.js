@@ -26,6 +26,7 @@ import onboardingActivationReadinessRoutes from "./routes/onboarding.activation-
 import workflowsRoutes from "./routes/workflows.routes.js";
 import taxRoutes from "./routes/tax.routes.js";
 import rbacRoutes from "./routes/rbac.js";
+import closeCyclesRoutes from "./routes/close.cycles.routes.js";
 import providerRoutes from "./routes/provider.js";
 import cashRegisterRoutes from "./routes/cash.register.routes.js";
 import cashSessionRoutes from "./routes/cash.session.routes.js";
@@ -254,6 +255,7 @@ app.use("/api/v1/onboarding", requireAuth, onboardingActivationReadinessRoutes);
 app.use("/api/v1/workflows", requireAuth, workflowsRoutes);
 app.use("/api/v1/tax", requireAuth, taxRoutes);
 app.use("/api/v1/rbac", requireAuth, rbacRoutes);
+app.use("/api/v1/close", requireAuth, closeCyclesRoutes);
 app.use("/api/v1/cash/registers", requireAuth, cashRegisterRoutes);
 app.use("/api/v1/cash/sessions", requireAuth, cashSessionRoutes);
 app.use("/api/v1/cash/transactions", requireAuth, cashTransactionRoutes);

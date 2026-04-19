@@ -1,4 +1,5 @@
 import { query, withTransaction } from "../db.js";
+import { assertSecondaryPermission } from "../middleware/rbac.js";
 import {
   assertAccountBelongsToTenant,
   assertCurrencyExists,
@@ -1286,6 +1287,7 @@ async function resolveBookAndOpenPeriodForDate({
   targetDate,
   preferredBookId = null,
   runQuery = query,
+  assertSoftClosedPermissionFn = null,
 }) {
   const normalizedDate = normalizeDateInput(targetDate, "settlementDate");
   let book = null;
@@ -1355,7 +1357,15 @@ async function resolveBookAndOpenPeriodForDate({
     [bookId, fiscalPeriodId]
   );
   const periodStatus = normalizeUpperText(statusResult.rows?.[0]?.status || "OPEN");
-  if (periodStatus !== "OPEN") {
+  let wasClosedPeriod = false;
+  if (periodStatus === "SOFT_CLOSED") {
+    if (assertSoftClosedPermissionFn) {
+      await assertSoftClosedPermissionFn();
+      wasClosedPeriod = true;
+    } else {
+      throw badRequest(`Period is SOFT_CLOSED; cannot apply/reverse settlement`);
+    }
+  } else if (periodStatus !== "OPEN") {
     throw badRequest(`Period is ${periodStatus}; cannot apply/reverse settlement`);
   }
 
@@ -1364,6 +1374,7 @@ async function resolveBookAndOpenPeriodForDate({
     fiscalPeriodId,
     fiscalYear: Number(period.fiscal_year),
     baseCurrencyCode: normalizeUpperText(book.base_currency_code),
+    wasClosedPeriod,
   };
 }
 
@@ -2143,9 +2154,11 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
         total_credit_base,
         created_by_user_id,
         posted_by_user_id,
-        posted_at
+        posted_at,
+        posted_after_close,
+        posted_after_close_at
      )
-     VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'POSTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+     VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'POSTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
     [
       payload.tenantId,
       payload.legalEntityId,
@@ -2161,6 +2174,8 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
       totals.totalCredit,
       payload.userId,
       payload.userId,
+      payload.postedAfterClose ? 1 : 0,
+      payload.postedAfterClose ? new Date() : null,
     ]
   );
   const journalEntryId = parsePositiveInt(insertResult.rows?.insertId);
@@ -5289,6 +5304,7 @@ export async function applyCariSettlementTx(
           legalEntityId,
           targetDate: settlementDate,
           runQuery: tx.query,
+          assertSoftClosedPermissionFn: () => assertSecondaryPermission(req, "gl.journal.post_to_closed_period"),
         });
 
         const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
@@ -5361,6 +5377,7 @@ export async function applyCariSettlementTx(
           description: `Cari settlement apply ${sequence.settlementNo}`.slice(0, 500),
           referenceNo: toNullableString(sequence.settlementNo, 100),
           lines: postingLines,
+          postedAfterClose: journalContext.wasClosedPeriod,
         });
         postedJournalEntryId = parsePositiveInt(journalResult?.journalEntryId);
       } else {
@@ -5447,6 +5464,7 @@ export async function applyCariSettlementTx(
             legalEntityId,
             targetDate: settlementDate,
             runQuery: tx.query,
+            assertSoftClosedPermissionFn: () => assertSecondaryPermission(req, "gl.journal.post_to_closed_period"),
           });
           const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
           const collectorControlReclassAccountId =
@@ -5480,6 +5498,7 @@ export async function applyCariSettlementTx(
             description: `Cari settlement split ${sequence.settlementNo}`.slice(0, 500),
             referenceNo: toNullableString(sequence.settlementNo, 100),
             lines: postingLines,
+            postedAfterClose: journalContext.wasClosedPeriod,
           });
           postedJournalEntryId = parsePositiveInt(journalResult?.journalEntryId);
         } else if (realizedFxPosting.hasFx) {
@@ -5488,6 +5507,7 @@ export async function applyCariSettlementTx(
             legalEntityId,
             targetDate: settlementDate,
             runQuery: tx.query,
+            assertSoftClosedPermissionFn: () => assertSecondaryPermission(req, "gl.journal.post_to_closed_period"),
           });
           const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
           const postingLines = buildCashLinkedSettlementFxAdjustmentLines({
@@ -5518,6 +5538,7 @@ export async function applyCariSettlementTx(
             description: `Cari settlement FX apply ${sequence.settlementNo}`.slice(0, 500),
             referenceNo: toNullableString(sequence.settlementNo, 100),
             lines: postingLines,
+            postedAfterClose: journalContext.wasClosedPeriod,
           });
           postedJournalEntryId = parsePositiveInt(journalResult?.journalEntryId);
         }
@@ -6987,6 +7008,7 @@ async function reverseCariSettlementCore(
           targetDate: reversalDate,
           preferredBookId: parsePositiveInt(originalJournal.book_id),
           runQuery: tx.query,
+          assertSoftClosedPermissionFn: () => assertSecondaryPermission(req, "gl.journal.post_to_closed_period"),
         });
 
         const reversalSubledgerReferenceNo = `${CARI_SETTLEMENT_REVERSE_REFERENCE_PREFIX}${settlementBatchId}`;
@@ -7021,6 +7043,7 @@ async function reverseCariSettlementCore(
           ),
           referenceNo: toNullableString(`REV:${original.settlement_no || settlementBatchId}`, 100),
           lines: reversalLines,
+          postedAfterClose: reversalPeriodContext.wasClosedPeriod,
         });
         await upsertJournalSourceLinkTx(tx, {
           tenantId,

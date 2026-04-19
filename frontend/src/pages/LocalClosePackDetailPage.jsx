@@ -17,6 +17,7 @@ import {
   listLocalClosePackReportReviews,
   returnLocalClosePack,
   submitLocalClosePack,
+  updateLocalClosePackCertificationSection,
   uploadLocalClosePackEvidenceContent,
 } from "../api/localClosePacks.js";
 import { buildLocalReportLocation } from "../api/glReports.js";
@@ -28,6 +29,7 @@ import {
 } from "./localCloseRuntimeExplainability.js";
 const TAB_KEYS = Object.freeze([
   "overview",
+  "certification",
   "checklist",
   "reports",
   "exceptions",
@@ -160,6 +162,40 @@ function getGatePillTone(level) {
   }
   return "border-amber-200 bg-amber-100 text-amber-700";
 }
+function getCertificationStatusTone(status) {
+  switch (String(status || "").trim().toUpperCase()) {
+    case "COMPLETE":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "IN_PROGRESS":
+      return "border-cyan-200 bg-cyan-50 text-cyan-700";
+    default:
+      return "border-slate-200 bg-slate-100 text-slate-700";
+  }
+}
+function getCertificationStatusLabel(status, l) {
+  switch (String(status || "").trim().toUpperCase()) {
+    case "COMPLETE":
+      return l("Complete", "Tamam");
+    case "IN_PROGRESS":
+      return l("In progress", "Devam ediyor");
+    default:
+      return l("Not started", "Baslamadi");
+  }
+}
+function getCertificationSectionTone(section) {
+  if (String(section?.status || "").trim().toUpperCase() === "COMPLETE") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+  if (section?.isRequired) {
+    return "border-rose-200 bg-rose-50 text-rose-800";
+  }
+  return "border-amber-200 bg-amber-50 text-amber-900";
+}
+function getCertificationSectionStatusLabel(status, l) {
+  return String(status || "").trim().toUpperCase() === "COMPLETE"
+    ? l("Complete", "Tamam")
+    : l("Open", "Acik");
+}
 function buildPackReportLaunches(pack, l) {
   if (!pack) {
     return [];
@@ -251,6 +287,9 @@ function resolveGateDrillLabel(gateRow, l) {
   }
   if (tab === "reports") {
     return l("Open reports tab", "Raporlar sekmesini ac");
+  }
+  if (tab === "certification") {
+    return l("Open certification tab", "Sertifikasyon sekmesini ac");
   }
   if (tab === "exceptions") {
     return l("Open exceptions tab", "Istisnalar sekmesini ac");
@@ -350,8 +389,8 @@ function ActionButtonWithTooltip({
   );
 }
 /**
- * First-pass RP07 local close-pack detail shell with reports, evidence,
- * comments, reopen context, and audit in one page.
+ * Local close-pack detail shell with reports, certification sections,
+ * evidence, comments, reopen context, and audit in one page.
  */
 export default function LocalClosePackDetailPage() {
   const { packId } = useParams();
@@ -377,6 +416,7 @@ export default function LocalClosePackDetailPage() {
   const [pack, setPack] = useState(null);
   const [entityReadiness, setEntityReadiness] = useState(null);
   const [reviewGate, setReviewGate] = useState(null);
+  const [certification, setCertification] = useState(null);
   const [reportReviews, setReportReviews] = useState([]);
   const [evidenceRows, setEvidenceRows] = useState([]);
   const [commentRows, setCommentRows] = useState([]);
@@ -390,6 +430,8 @@ export default function LocalClosePackDetailPage() {
   const [commentSaving, setCommentSaving] = useState(false);
   const [decisionNote, setDecisionNote] = useState("");
   const [actionSaving, setActionSaving] = useState("");
+  const [certificationNotes, setCertificationNotes] = useState({});
+  const [certificationSavingKey, setCertificationSavingKey] = useState("");
   useEffect(() => {
     const normalizedTab = TAB_KEYS.includes(requestedTab) ? requestedTab : "overview";
     setActiveTab((prev) => (prev === normalizedTab ? prev : normalizedTab));
@@ -420,6 +462,7 @@ export default function LocalClosePackDetailPage() {
       setPack(packResponse?.row || null);
       setEntityReadiness(packResponse?.entityReadiness || null);
       setReviewGate(packResponse?.reviewGate || null);
+      setCertification(packResponse?.certification || null);
       setReportReviews(Array.isArray(reviewResponse?.rows) ? reviewResponse.rows : []);
       setEvidenceRows(Array.isArray(evidenceResponse?.rows) ? evidenceResponse.rows : []);
       setCommentRows(Array.isArray(commentResponse?.rows) ? commentResponse.rows : []);
@@ -437,6 +480,13 @@ export default function LocalClosePackDetailPage() {
   useEffect(() => {
     void loadWorkspaceData();
   }, [loadWorkspaceData]);
+  useEffect(() => {
+    const nextNotes = {};
+    for (const section of certification?.sections || []) {
+      nextNotes[section.sectionKey] = section.note || "";
+    }
+    setCertificationNotes(nextNotes);
+  }, [certification]);
   const reportLaunches = useMemo(() => buildPackReportLaunches(pack, l), [l, pack]);
   const reportLaunchByKey = useMemo(
     () => new Map(reportLaunches.map((row) => [row.key, row])),
@@ -453,6 +503,7 @@ export default function LocalClosePackDetailPage() {
     () => deriveChecklist(pack, reportReviews, evidenceRows, commentRows, reopenRows, entityReadiness, l),
     [commentRows, entityReadiness, evidenceRows, l, pack, reportReviews, reopenRows]
   );
+  const certificationSummary = certification?.summary || null;
   const runtimeExplainabilityModel = useMemo(
     () =>
       buildLocalCloseRuntimeExplainabilityModel({
@@ -701,6 +752,42 @@ export default function LocalClosePackDetailPage() {
       setActionSaving("");
     }
   }
+  async function handleCertificationSectionAction(section, nextStatus) {
+    if (!normalizedPackId || !section?.sectionKey || !canLock) {
+      return;
+    }
+    setCertificationSavingKey(section.sectionKey);
+    setError("");
+    setMessage("");
+    try {
+      const response = await updateLocalClosePackCertificationSection(
+        normalizedPackId,
+        section.sectionKey,
+        {
+          status: nextStatus,
+          note:
+            String(certificationNotes?.[section.sectionKey] || "").trim() || undefined,
+        }
+      );
+      setCertification(response?.certification || null);
+      setMessage(
+        nextStatus === "COMPLETE"
+          ? l("Certification section completed.", "Sertifikasyon bolumu tamamlandi.")
+          : l("Certification section reopened.", "Sertifikasyon bolumu yeniden acildi.")
+      );
+      await loadWorkspaceData();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to update the certification section.",
+            "Sertifikasyon bolumu guncellenemedi."
+          )
+      );
+    } finally {
+      setCertificationSavingKey("");
+    }
+  }
   if (!canRead) {
     return (
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
@@ -741,7 +828,7 @@ export default function LocalClosePackDetailPage() {
           </button>
         </div>
         {pack ? (
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 {l("Scope", "Scope")}
@@ -778,6 +865,33 @@ export default function LocalClosePackDetailPage() {
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {l("Certification", "Sertifikasyon")}
+              </div>
+              <div className="mt-1">
+                <span
+                  className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${getCertificationStatusTone(
+                    certificationSummary?.status || pack.certificationStatus
+                  )}`}
+                >
+                  {getCertificationStatusLabel(
+                    certificationSummary?.status || pack.certificationStatus,
+                    l
+                  )}
+                </span>
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {certificationSummary?.completedRequiredSectionCount ||
+                  pack.certificationCompletedRequiredSectionCount ||
+                  0}
+                /
+                {certificationSummary?.requiredSectionCount ||
+                  pack.certificationRequiredSectionCount ||
+                  0}{" "}
+                {l("required sections complete", "zorunlu bolum tamam")}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 {l("Issues", "Sorunlar")}
               </div>
               <div className="mt-1 text-sm font-semibold text-slate-900">
@@ -796,7 +910,8 @@ export default function LocalClosePackDetailPage() {
                 {formatDateTime(pack.lastActivityAt)}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                {l("Submitted", "Gonderildi")}: {formatDateTime(pack.submittedAt)}
+                {l("Certified", "Sertifikalandi")}:{" "}
+                {formatDateTime(certification?.row?.certifiedAt || pack.certifiedAt)}
               </div>
             </div>
           </div>
@@ -831,7 +946,7 @@ export default function LocalClosePackDetailPage() {
             model={runtimeExplainabilityModel}
             title={l("Close-stage explainability", "Kapanis asamasi aciklamasi")}
           />
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 {l("Current status", "Mevcut durum")}
@@ -854,6 +969,19 @@ export default function LocalClosePackDetailPage() {
               </div>
               <div className="mt-1 text-sm font-semibold text-slate-900">
                 {reviewGate.blockerCount || 0} / {reviewGate.warningCount || 0}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {l("Certification pack", "Sertifikasyon paketi")}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">
+                {reviewGate.counts?.certificationCompletedRequiredSectionCount || 0}/
+                {reviewGate.counts?.certificationRequiredSectionCount || 0}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {l("Incomplete required", "Eksik zorunlu")}:{" "}
+                {reviewGate.counts?.certificationIncompleteRequiredCount || 0}
               </div>
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -1044,6 +1172,8 @@ export default function LocalClosePackDetailPage() {
           >
             {tabKey === "overview"
               ? l("Overview", "Genel Bakis")
+              : tabKey === "certification"
+                ? l("Certification", "Sertifikasyon")
               : tabKey === "checklist"
                 ? l("Checklist", "Kontrol Listesi")
                 : tabKey === "reports"
@@ -1158,6 +1288,160 @@ export default function LocalClosePackDetailPage() {
               ) : null}
             </div>
           ) : null}
+        </SectionCard>
+      ) : null}
+      {activeTab === "certification" ? (
+        <SectionCard
+          title={l("Certification pack v2", "Sertifikasyon paketi v2")}
+          subtitle={l(
+            "PR-04 adds explicit certification sections on top of the existing report, evidence, and workflow pack so lock can depend on visible certification work instead of hidden assumptions.",
+            "PR-04, kilitlemenin gizli varsayimlar yerine gorunur sertifikasyon calismasina dayanabilmesi icin mevcut rapor, kanit ve workflow paketinin ustune acik sertifikasyon bolumleri ekler."
+          )}
+        >
+          {certificationSummary ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  {l("Certification status", "Sertifikasyon durumu")}
+                </div>
+                <div className="mt-1">
+                  <span
+                    className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${getCertificationStatusTone(
+                      certificationSummary.status
+                    )}`}
+                  >
+                    {getCertificationStatusLabel(certificationSummary.status, l)}
+                  </span>
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  {l("Required sections", "Zorunlu bolumler")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {certificationSummary.completedRequiredSectionCount || 0}/
+                  {certificationSummary.requiredSectionCount || 0}
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  {l("Progress", "Ilerleme")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {certificationSummary.progressPercentage || 0}%
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  {l("Certified at", "Sertifika zamani")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {formatDateTime(certification?.row?.certifiedAt)}
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <div className="mt-4 space-y-3">
+            {(certification?.sections || []).map((section) => {
+              const isManual = section.sectionType === "MANUAL";
+              const isComplete = section.status === "COMPLETE";
+              const noteValue = certificationNotes?.[section.sectionKey] || "";
+              return (
+                <div
+                  key={section.sectionKey}
+                  className={`rounded-2xl border px-4 py-4 ${getCertificationSectionTone(section)}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold">{section.sectionTitle}</span>
+                        <span className="rounded-full border border-current px-2 py-1 text-[11px] font-semibold">
+                          {section.isRequired
+                            ? l("Required", "Zorunlu")
+                            : l("Optional", "Opsiyonel")}
+                        </span>
+                        <span className="rounded-full border border-current px-2 py-1 text-[11px] font-semibold">
+                          {section.sectionType === "MANUAL"
+                            ? l("Manual", "Manuel")
+                            : l("System", "Sistem")}
+                        </span>
+                      </div>
+                      <div className="mt-2 text-sm">{section.sectionDescription}</div>
+                      <div className="mt-2 text-xs opacity-80">
+                        {l("Status", "Durum")}: {getCertificationSectionStatusLabel(section.status, l)}
+                        {" | "}
+                        {l("Completed", "Tamamlandi")}: {formatDateTime(section.completedAt)}
+                        {section.completedByUserName
+                          ? ` | ${l("By", "Yapan")}: ${section.completedByUserName}`
+                          : ""}
+                      </div>
+                    </div>
+                    {!isManual ? (
+                      <div className="rounded-lg border border-current bg-white/70 px-3 py-2 text-xs font-semibold">
+                        {section.completionSource === "SYSTEM"
+                          ? l("Derived from live pack state", "Canli paket durumundan turetilir")
+                          : l("Waiting for live pack state", "Canli paket durumu bekleniyor")}
+                      </div>
+                    ) : null}
+                  </div>
+                  {isManual ? (
+                    <div className="mt-4 space-y-3">
+                      <label className="block text-xs font-semibold uppercase tracking-wide">
+                        {l("Attestation note", "Teyit notu")}
+                      </label>
+                      <textarea
+                        value={noteValue}
+                        onChange={(event) =>
+                          setCertificationNotes((prev) => ({
+                            ...prev,
+                            [section.sectionKey]: event.target.value,
+                          }))
+                        }
+                        rows={3}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                        placeholder={l(
+                          "Explain why the pack is ready to be locked.",
+                          "Paketin neden kilitlenmeye hazir oldugunu aciklayin."
+                        )}
+                        disabled={Boolean(certificationSavingKey)}
+                      />
+                      {canLock ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void handleCertificationSectionAction(
+                                section,
+                                isComplete ? "OPEN" : "COMPLETE"
+                              )
+                            }
+                            disabled={Boolean(certificationSavingKey)}
+                            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 ${isComplete
+                              ? "border border-amber-600 bg-amber-600"
+                              : "border border-slate-900 bg-slate-900"
+                              }`}
+                          >
+                            {certificationSavingKey === section.sectionKey
+                              ? l("Saving...", "Kaydediliyor...")
+                              : isComplete
+                                ? l("Reopen section", "Bolumu yeniden ac")
+                                : l("Complete section", "Bolumu tamamla")}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                          {l(
+                            "Missing permission: ouclose.lock",
+                            "Eksik yetki: ouclose.lock"
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         </SectionCard>
       ) : null}
       {activeTab === "checklist" ? (
